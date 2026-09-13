@@ -19,9 +19,8 @@ export interface SearchPlaceIndexForTextRequest extends Omit<
  * `geo:SearchPlaceIndexForText`), scoped to one {@link PlaceIndex}. Provide the implementation with
  * `Effect.provide(AWS.Location.SearchPlaceIndexForTextHttp)`.
  *
- * @binding
- * @section Searching Places
- * @example Geocode an Address
+ * ### Searching Places
+ * **Example:** Geocode an Address
  * ```typescript
  * const searchText = yield* Location.SearchPlaceIndexForText(index);
  *
@@ -31,6 +30,8 @@ export interface SearchPlaceIndexForTextRequest extends Omit<
  * });
  * // results.Results[0].Place.Geometry.Point → [longitude, latitude]
  * ```
+ *
+ * @binding
  */
 export interface SearchPlaceIndexForText extends Binding.Service<
   SearchPlaceIndexForText,

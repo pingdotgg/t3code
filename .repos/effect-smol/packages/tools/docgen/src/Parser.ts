@@ -1,4 +1,6 @@
 /**
+ * Parses TypeScript declarations and JSDoc into docgen models.
+ *
  * @since 0.6.0
  */
 import * as doctrine from "doctrine"
@@ -15,7 +17,9 @@ import * as Configuration from "./Configuration.ts"
 import * as Domain from "./Domain.ts"
 
 /**
- * @category models
+ * Source file and path currently being parsed.
+ *
+ * @category services
  * @since 0.6.0
  */
 export interface SourceShape {
@@ -142,7 +146,9 @@ const parseInterfaceDeclarations = (interfaces: ReadonlyArray<ast.InterfaceDecla
 }
 
 /**
- * @category parsers
+ * Parses exported interfaces from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseInterfaces = Effect.flatMap(
@@ -150,8 +156,8 @@ export const parseInterfaces = Effect.flatMap(
   (source) => parseInterfaceDeclarations(source.sourceFile.getInterfaces())
 )
 
-const parseType = (node: ast.Node) => {
-  const text = node.getType().getText(
+const getTypeText = (node: ast.Node) =>
+  node.getType().getText(
     node,
     ast.ts.TypeFormatFlags.NoTruncation
       | ast.ts.TypeFormatFlags.WriteArrayAsGenericType
@@ -160,6 +166,20 @@ const parseType = (node: ast.Node) => {
       | ast.ts.TypeFormatFlags.AllowUniqueESSymbolType
       | ast.ts.TypeFormatFlags.WriteArrowStyleSignature
   )
+
+const parseType = (node: ast.Node) => {
+  let text = getTypeText(node)
+  for (const property of node.getDescendantsOfKind(ast.ts.SyntaxKind.PropertySignature)) {
+    if (!shouldIgnore(parseDoc(getJSDocText(property.getJsDocs())))) continue
+    const readonly = property.getFirstModifierByKind(ast.ts.SyntaxKind.ReadonlyKeyword) ? "readonly " : ""
+    const optional = property.hasQuestionToken() ? "?" : ""
+    const type = property.getTypeNode()?.getText() ?? getTypeText(property)
+    const signature = `${readonly}${property.getName()}${optional}: ${type}`
+    text = text
+      .replaceAll(`; ${signature}`, "")
+      .replaceAll(`${signature}; `, "")
+      .replaceAll(signature, "")
+  }
   return text
 }
 
@@ -249,7 +269,9 @@ const getFunctionDeclarations = Effect.gen(function*() {
 })
 
 /**
- * @category parsers
+ * Parses exported function declarations and function-valued variables.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseFunctions = Effect.gen(function*() {
@@ -294,7 +316,9 @@ const parseTypeAliasDeclarations = (typeAliases: ReadonlyArray<ast.TypeAliasDecl
 }
 
 /**
- * @category parsers
+ * Parses exported type aliases from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseTypeAliases = Effect.flatMap(
@@ -324,7 +348,9 @@ const parseConstantVariableDeclaration = (vd: ast.VariableDeclaration) =>
   })
 
 /**
- * @category parsers
+ * Parses exported non-function constants from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseConstants = Effect.gen(function*() {
@@ -401,7 +427,9 @@ const parseNamedExports = (ed: ast.ExportDeclaration) => {
 }
 
 /**
- * @category parsers
+ * Parses explicit export declarations from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseExports = pipe(
@@ -447,7 +475,9 @@ const parseModuleDeclarations = (namespaces: ReadonlyArray<ast.ModuleDeclaration
 }
 
 /**
- * @category parsers
+ * Parses exported namespaces from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseNamespaces = Effect.gen(function*() {
@@ -594,7 +624,9 @@ const parseClass = (c: ast.ClassDeclaration) =>
   })
 
 /**
- * @category parsers
+ * Parses exported classes and their documented members from the current source file.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseClasses = Effect.gen(function*() {
@@ -620,7 +652,9 @@ export const parseModuleDocumentation = Effect.gen(function*() {
 })
 
 /**
- * @category parsers
+ * Parses the current source file into a module documentation model.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseModule = Effect.gen(function*() {
@@ -695,7 +729,9 @@ const createProject = (files: ReadonlyArray<Domain.File>) =>
   })
 
 /**
- * @category parsers
+ * Parses source files into module documentation models sorted by path.
+ *
+ * @category parsing
  * @since 0.6.0
  */
 export const parseFiles = (files: ReadonlyArray<Domain.File>) =>

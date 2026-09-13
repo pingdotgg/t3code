@@ -75,13 +75,13 @@ export interface ReplicationSet extends Resource<
  * capture-and-restore singleton: adopting a pre-existing replication set that
  * Alchemy did not create requires `--adopt`.
  *
- * @section Onboarding Incident Manager
- * @example Replication set in the current Region
+ * ### Onboarding Incident Manager
+ * **Example:** Replication set in the current Region
  * ```typescript
  * const replicationSet = yield* SSMIncidents.ReplicationSet("Incidents", {});
  * ```
  *
- * @example Multi-Region replication with a KMS key
+ * **Example:** Multi-Region replication with a KMS key
  * ```typescript
  * const replicationSet = yield* SSMIncidents.ReplicationSet("Incidents", {
  *   regions: {

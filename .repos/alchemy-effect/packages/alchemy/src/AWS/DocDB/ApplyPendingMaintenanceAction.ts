@@ -13,9 +13,8 @@ import * as Binding from "../../Binding.ts";
  * automation. The target is an ARN carried in the request, so the grant
  * spans the account. Provide the implementation with
  * `Effect.provide(AWS.DocDB.ApplyPendingMaintenanceActionHttp)`.
- * @binding
- * @section Maintenance
- * @example Apply Maintenance at the Next Window
+ * ### Maintenance
+ * **Example:** Apply Maintenance at the Next Window
  * ```typescript
  * const applyPending = yield* DocDB.ApplyPendingMaintenanceAction();
  *
@@ -25,6 +24,8 @@ import * as Binding from "../../Binding.ts";
  *   OptInType: "next-maintenance",
  * });
  * ```
+ *
+ * @binding
  */
 export interface ApplyPendingMaintenanceAction extends Binding.Service<
   ApplyPendingMaintenanceAction,

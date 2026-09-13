@@ -74,9 +74,8 @@ export interface Schema extends Resource<
  * of a dataset (Interactions, Items, Users, …). Schemas are immutable once
  * created; changing any property replaces the schema.
  *
- * @resource
- * @section Creating a Schema
- * @example Interactions Schema
+ * ### Creating a Schema
+ * **Example:** Interactions Schema
  * ```typescript
  * const schema = yield* Personalize.Schema("Interactions", {
  *   schema: JSON.stringify({
@@ -92,6 +91,8 @@ export interface Schema extends Resource<
  *   }),
  * });
  * ```
+ *
+ * @resource
  */
 export const Schema = Resource<Schema>("AWS.Personalize.Schema");
 

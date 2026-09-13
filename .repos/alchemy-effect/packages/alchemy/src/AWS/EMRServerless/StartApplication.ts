@@ -10,9 +10,8 @@ import type { Application } from "./Application.ts";
  * capacity ahead of a burst of job submissions so the first job skips the
  * application cold start. Provide the implementation with
  * `Effect.provide(AWS.EMRServerless.StartApplicationHttp)`.
- * @binding
- * @section Application Control
- * @example Warm Up Before A Batch Window
+ * ### Application Control
+ * **Example:** Warm Up Before A Batch Window
  * ```typescript
  * // init
  * const startApplication = yield* AWS.EMRServerless.StartApplication(app);
@@ -20,6 +19,8 @@ import type { Application } from "./Application.ts";
  * // runtime
  * yield* startApplication();
  * ```
+ *
+ * @binding
  */
 export interface StartApplication extends Binding.Service<
   StartApplication,

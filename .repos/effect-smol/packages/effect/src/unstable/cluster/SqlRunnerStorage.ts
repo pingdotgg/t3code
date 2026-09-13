@@ -28,6 +28,17 @@ import * as ShardingConfig from "./ShardingConfig.ts"
 
 const withTracerDisabled = Effect.withTracerEnabled(false)
 
+// This exact FNV-1a hash, including its tag and UTF-8 encoding, is a persistent
+// advisory-lock wire format and must never change.
+const postgresLockNamespace = (prefix: string): number => {
+  const bytes = new TextEncoder().encode(`effect-cluster:${prefix}`)
+  let hash = 0x811c9dc5
+  for (let i = 0; i < bytes.length; i++) {
+    hash = Math.imul(hash ^ bytes[i], 0x01000193)
+  }
+  return hash | 0
+}
+
 /**
  * Creates a SQL-backed `RunnerStorage` implementation for registered runners and
  * shard locks, using the configured table prefix and advisory locks where
@@ -68,6 +79,9 @@ export const make = Effect.fnUntraced(function*(options: {
   const layerScope = yield* Effect.scope
   const prefix = options?.prefix ?? "cluster"
   const table = (name: string) => `${prefix}_${name}`
+  const pgLockNamespace = postgresLockNamespace(prefix)
+  // PostgreSQL exposes the signed int4 lock key through pg_locks as an unsigned oid.
+  const pgLockNamespaceOid = pgLockNamespace >>> 0
 
   // Keep all PostgreSQL and MySQL shard-lock operations on a rebuildable
   // reserved connection, including when advisory locks are disabled.
@@ -408,12 +422,14 @@ export const make = Effect.fnUntraced(function*(options: {
         const acquiredShardIds: Array<string> = []
         const toAcquire = new Map(shardIds.map((shardId) => [lockNumbers.get(shardId)!, shardId]))
         const takenLocks = yield* conn.executeValues(
-          `SELECT objid FROM pg_locks WHERE locktype = 'advisory' AND granted = true AND pid = ${pid} ORDER BY objid`,
+          `SELECT objid FROM pg_locks WHERE locktype = 'advisory' AND granted = true AND classid = ${pgLockNamespaceOid} AND objsubid = 2 AND pid = ${pid} ORDER BY objid`,
           []
         )
         for (let i = 0; i < takenLocks.length; i++) {
           const lockNum = takenLocks[i][0] as number
-          acquiredShardIds.push(lockNumbersReverse.get(lockNum)!)
+          const shardId = lockNumbersReverse.get(lockNum)
+          if (shardId === undefined) continue
+          acquiredShardIds.push(shardId)
           toAcquire.delete(lockNum)
         }
         if (toAcquire.size === 0) {
@@ -546,7 +562,7 @@ export const make = Effect.fnUntraced(function*(options: {
   const pgLocks = (shardIdsMap: Map<number, string>) =>
     Array.from(
       shardIdsMap.entries(),
-      ([lockNum, shardId]) => `pg_try_advisory_lock(${lockNum}) AS "${shardId}"`
+      ([lockNum, shardId]) => `pg_try_advisory_lock(${pgLockNamespace}, ${lockNum}) AS "${shardId}"`
     ).join(", ")
 
   const mysqlLocks = (shardIds: ReadonlyArray<string>) =>
@@ -634,9 +650,9 @@ export const make = Effect.fnUntraced(function*(options: {
           const lockNum = lockNumbers.get(shardId)!
           for (let i = 0; i < 5; i++) {
             const [conn] = yield* lockConn!.await
-            yield* conn.executeRaw(`SELECT pg_advisory_unlock(${lockNum})`, [])
+            yield* conn.executeRaw(`SELECT pg_advisory_unlock(${pgLockNamespace}, ${lockNum})`, [])
             const takenLocks = yield* conn.executeValues(
-              `SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted = true AND pid = pg_backend_pid() AND objid = ${lockNum}`,
+              `SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND granted = true AND classid = ${pgLockNamespaceOid} AND objid = ${lockNum} AND objsubid = 2 AND pid = pg_backend_pid()`,
               []
             )
             if (takenLocks.length === 0) return

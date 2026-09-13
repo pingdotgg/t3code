@@ -17,7 +17,7 @@ export class MediaConvertTestFunction extends Lambda.Function<Lambda.Function>()
 export default MediaConvertTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // MediaConvert control-plane calls routinely take a few seconds; AWS's
     // default 3s Lambda timeout is too tight under cold starts.
     timeout: Duration.seconds(30),

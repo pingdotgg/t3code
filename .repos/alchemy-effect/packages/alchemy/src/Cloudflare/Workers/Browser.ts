@@ -126,11 +126,8 @@ export interface BrowserClient {
  * inside an Effect-native Worker to attach the binding and obtain the
  * {@link BrowserClient}.
  *
- * @binding
- * @product Browser Rendering
- * @category Developer Platform
- * @section Effect-style Worker (recommended)
- * @example Bind the runtime client and convert a page to Markdown
+ * ### Effect-style Worker (recommended)
+ * **Example:** Bind the runtime client and convert a page to Markdown
  * ```typescript
  * import * as Effect from "effect/Effect";
  *
@@ -149,8 +146,8 @@ export interface BrowserClient {
  * );
  * ```
  *
- * @section Worker binding metadata
- * @example Declare the binding on `env`
+ * ### Worker binding metadata
+ * **Example:** Declare the binding on `env`
  * ```typescript
  * export const Worker = Cloudflare.Worker("Worker", {
  *   main: "./src/worker.ts",
@@ -161,7 +158,23 @@ export interface BrowserClient {
  * //   { BROWSER: BrowserRun }
  * ```
  *
+ * ### Local development
+ * **Example:** Proxy to the real Browser Rendering service in dev
+ * ```typescript
+ * // Default: a real headless Chrome is launched locally and driven over
+ * // CDP under `alchemy dev`. Alchemy.remote() opts the binding into the
+ * // real Browser Rendering service instead — in an Effect-native Worker:
+ * const browser = yield* Cloudflare.Browser("BROWSER").pipe(Alchemy.remote());
+ *
+ * // or declared on an async Worker's env:
+ * env: { BROWSER: Cloudflare.Browser("BROWSER").pipe(Alchemy.remote()) }
+ * ```
+ *
  * @see https://developers.cloudflare.com/browser-rendering/workers-binding-api/
+ *
+ * @binding
+ * @product Browser Rendering
+ * @category Developer Platform
  */
 export interface Browser extends Binding.Service<
   Browser,
@@ -178,7 +191,10 @@ export interface Browser extends Binding.Service<
 export const Browser = Binding.Service<Browser>({
   id: TypeId,
   defaultName: "BROWSER",
-  toWorkerBinding: (binding) => ({ type: "browser", name: binding.name }),
+  toWorkerBinding: (binding) => ({
+    type: "browser",
+    name: binding.name,
+  }),
 });
 
 export const isBrowser = (value: unknown): value is BrowserBinding =>

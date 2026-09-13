@@ -20,7 +20,7 @@ import type { Request } from "./Envelope.ts"
  *
  * The default value is `false`.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Persisted = Context.Reference<boolean>("effect/cluster/ClusterSchema/Persisted", {
@@ -46,7 +46,7 @@ export const Persisted = Context.Reference<boolean>("effect/cluster/ClusterSchem
  * This annotation has transactional behavior only when the configured
  * `MessageStorage` implements it.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const WithTransaction = Context.Reference<boolean>(
@@ -64,7 +64,7 @@ export const WithTransaction = Context.Reference<boolean>(
  * handling only, `"server"` for server-side handling only, or `false` to allow
  * interruption.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Uninterruptible = Context.Reference<boolean | "client" | "server">(
@@ -83,7 +83,7 @@ export const Uninterruptible = Context.Reference<boolean | "client" | "server">(
  * @see {@link Uninterruptible} for the annotation values interpreted by this helper
  * @see {@link isUninterruptibleForClient} for the client-side counterpart
  *
- * @category annotations
+ * @category predicates
  * @since 4.0.0
  */
 export const isUninterruptibleForServer = (context: Context.Context<never>): boolean => {
@@ -108,7 +108,7 @@ export const isUninterruptibleForServer = (context: Context.Context<never>): boo
  * @see {@link Uninterruptible} for the annotation values interpreted by this helper
  * @see {@link isUninterruptibleForServer} for the server-side counterpart
  *
- * @category annotations
+ * @category predicates
  * @since 4.0.0
  */
 export const isUninterruptibleForClient = (context: Context.Context<never>): boolean => {
@@ -123,7 +123,7 @@ export const isUninterruptibleForClient = (context: Context.Context<never>): boo
  *
  * By default, every entity id is assigned to the `"default"` shard group.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const ShardGroup = Context.Reference<(entityId: EntityId) => string>(
@@ -139,7 +139,7 @@ export const ShardGroup = Context.Reference<(entityId: EntityId) => string>(
  *
  * The default value is `true`.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const ClientTracingEnabled = Context.Reference<boolean>("effect/cluster/ClusterSchema/ClientTracingEnabled", {
@@ -159,7 +159,7 @@ export const ClientTracingEnabled = Context.Reference<boolean>("effect/cluster/C
  * This only applies to requests handled by the entity, not to the generated
  * client.
  *
- * @category annotations
+ * @category services
  * @since 4.0.0
  */
 export const Dynamic = Context.Reference<

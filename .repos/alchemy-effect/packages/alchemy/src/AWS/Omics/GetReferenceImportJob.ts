@@ -15,15 +15,16 @@ export interface GetReferenceImportJobRequest extends Omit<
  * store/workflow id is injected automatically and the action is granted on the
  * bound resource. Provide the implementation with
  * `Effect.provide(AWS.Omics.GetReferenceImportJobHttp)`.
- * @binding
- * @section References
- * @example Bind GetReferenceImportJob to a ReferenceStore
+ * ### References
+ * **Example:** Bind GetReferenceImportJob to a ReferenceStore
  * ```typescript
  * // init
  * const getReferenceImportJob = yield* AWS.Omics.GetReferenceImportJob(store);
  * // runtime
  * const result = yield* getReferenceImportJob({});
  * ```
+ *
+ * @binding
  */
 export interface GetReferenceImportJob extends Binding.Service<
   GetReferenceImportJob,

@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * `polly:ListSpeechSynthesisTasks`. Provide the implementation with
  * `Effect.provide(AWS.Polly.ListSpeechSynthesisTasksHttp)`.
  *
- * @binding
- * @section Asynchronous Synthesis
- * @example List recently completed tasks
+ * ### Asynchronous Synthesis
+ * **Example:** List recently completed tasks
  * ```typescript
  * // init
  * const listSpeechSynthesisTasks = yield* AWS.Polly.ListSpeechSynthesisTasks();
@@ -24,6 +23,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * const taskIds = (result.SynthesisTasks ?? []).map((task) => task.TaskId);
  * ```
+ *
+ * @binding
  */
 export interface ListSpeechSynthesisTasks extends Binding.Service<
   ListSpeechSynthesisTasks,

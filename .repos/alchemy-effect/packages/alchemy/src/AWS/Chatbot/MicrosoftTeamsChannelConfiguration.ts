@@ -121,9 +121,8 @@ export interface MicrosoftTeamsChannelConfiguration extends Resource<
  * the console OAuth flow (Chatbot console -> Configure new client ->
  * Microsoft Teams) — team authorization cannot be automated.
  *
- * @resource
- * @section Creating Microsoft Teams Channel Configurations
- * @example Notify a Teams channel from an SNS topic
+ * ### Creating Microsoft Teams Channel Configurations
+ * **Example:** Notify a Teams channel from an SNS topic
  * ```typescript
  * import * as Chatbot from "alchemy/AWS/Chatbot";
  * import { Role } from "alchemy/AWS/IAM/Role";
@@ -152,6 +151,8 @@ export interface MicrosoftTeamsChannelConfiguration extends Resource<
  *   snsTopicArns: [topic.topicArn],
  * });
  * ```
+ *
+ * @resource
  */
 export const MicrosoftTeamsChannelConfiguration =
   Resource<MicrosoftTeamsChannelConfiguration>(

@@ -7,19 +7,19 @@
     "destroy": "alchemy destroy"
   },
   "dependencies": {
-    "@tanstack/react-router": "^1.167.4",
-    "@tanstack/react-start": "^1.166.15",
+    "@tanstack/react-router": "catalog:frontend",
+    "@tanstack/react-start": "catalog:frontend",
     "alchemy": "workspace:*",
-    "effect": "catalog:",
+    "effect": "catalog:effect",
     "react": "^19.2.4",
     "react-dom": "^19.2.4"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:",
+    "@cloudflare/workers-types": "catalog:cloudflare",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
     "@vitejs/plugin-react": "^6.0.1",
-    "typescript": "^5.9.3",
-    "vite": "catalog:"
+    "typescript": "catalog:build",
+    "vite": "catalog:build"
   }
 }

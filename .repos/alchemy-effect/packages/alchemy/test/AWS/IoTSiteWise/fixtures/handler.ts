@@ -17,7 +17,7 @@ export class IoTSiteWiseTestFunction extends Lambda.Function<Lambda.Function>()(
 export default IoTSiteWiseTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

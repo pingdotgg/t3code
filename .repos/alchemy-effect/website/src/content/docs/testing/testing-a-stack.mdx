@@ -69,6 +69,19 @@ bun test test/integ.test.ts
 
 The first run deploys; re-runs diff and skip unchanged Resources, and tests default to the isolated `test` [stage](/environments/stages) so they never clobber your dev deployment.
 
+## Run it locally with dev mode
+
+The same suite can run entirely on your machine. `dev: true` gives the file [`alchemy dev`](/environments/local-development) semantics — Workers, Durable Objects, KV, R2, D1, Queues, and Workflows run in workerd, AWS Lambda and its emulated services run in Docker — so `deploy(Stack)` boots local simulators and the `url` output points at `http://localhost:<port>`:
+
+```typescript
+const { test, beforeAll, afterAll, deploy, destroy } = Test.make({
+  providers: Cloudflare.providers(),
+  dev: true,
+});
+```
+
+Every assertion below works unchanged against the local stack. To keep one file that runs locally on your laptop and live in CI, omit the flag and set `ALCHEMY_DEV=1` in your shell instead — see [Test harness → dev](/testing/test-harness#dev) for the full semantics and [Tutorial Part 4](/cloudflare/tutorial/part-4) for the walkthrough.
+
 ## Drive the live URL
 
 `HttpClient` is already in scope in every test Effect:

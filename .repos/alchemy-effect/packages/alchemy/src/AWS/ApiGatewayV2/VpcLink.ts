@@ -67,9 +67,8 @@ export interface VpcLink extends Resource<
  *
  * Unlike the v1 VPC link (NLB-only, ~10 min provisioning), the v2 link is
  * subnet/security-group based and provisions in ~1–2 minutes.
- * @resource
- * @section Private integrations
- * @example VPC link + private integration
+ * ### Private integrations
+ * **Example:** VPC link + private integration
  * ```typescript
  * const link = yield* ApiGatewayV2.VpcLink("Link", {
  *   subnetIds: [subnetA.subnetId, subnetB.subnetId],
@@ -86,6 +85,8 @@ export interface VpcLink extends Resource<
  *   payloadFormatVersion: "1.0",
  * });
  * ```
+ *
+ * @resource
  */
 export const VpcLink = Resource<VpcLink>("AWS.ApiGatewayV2.VpcLink");
 

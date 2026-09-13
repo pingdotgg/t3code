@@ -4,7 +4,6 @@ import * as Path from "effect/Path";
 import type * as rolldown from "rolldown";
 import * as Bundle from "../../Bundle/Bundle.ts";
 import { findCwdForBundle } from "../../Bundle/TempRoot.ts";
-import { Self } from "../../Self.ts";
 import { Stack } from "../../Stack.ts";
 
 /**
@@ -69,6 +68,7 @@ export const bundleMicrovmProgram = Effect.fn(function* ({
   isExternal = false,
   external = [],
   port,
+  build,
 }: {
   main: string;
   runtime: "bun" | "node";
@@ -76,6 +76,7 @@ export const bundleMicrovmProgram = Effect.fn(function* ({
   isExternal?: boolean;
   external?: string[];
   port: number;
+  build?: Bundle.BundleConfig;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const stack = yield* Stack;
@@ -90,32 +91,37 @@ export const bundleMicrovmProgram = Effect.fn(function* ({
   ) {
     return yield* Bundle.build(
       {
+        ...build?.input,
         input: entry,
         cwd,
         external: [
           "@aws-sdk/*",
           ...(runtime === "bun" ? ["bun", "bun:*"] : []),
           ...external,
+          ...((build?.input?.external as string[] | undefined) ?? []),
         ],
         platform: "node",
         resolve: {
           conditionNames:
             runtime === "bun"
-              ? ["bun", "import", "module", "default"]
-              : ["node", "import", "module", "default"],
+              ? [...Bundle.BUN_CONDITION_NAMES]
+              : [...Bundle.NODE_CONDITION_NAMES],
+          ...build?.input?.resolve,
         },
-        plugins,
+        plugins: [build?.input?.plugins, plugins],
         treeshake: true,
       },
       {
+        ...build?.output,
         format: "esm",
-        sourcemap: false,
-        minify: false,
+        sourcemap: build?.output?.sourcemap ?? false,
+        minify: build?.output?.minify ?? false,
         entryFileNames: "index.mjs",
         // Emit chunks as `.mjs` too so Node treats them as ESM unconditionally
         // (no `package.json` `"type":"module"` needed in the image).
         chunkFileNames: "[name]-[hash].mjs",
       },
+      build,
     );
   });
 
@@ -125,63 +131,18 @@ export const bundleMicrovmProgram = Effect.fn(function* ({
         realMain,
         virtualEntryPlugin(
           (importPath) => `
-${
-  runtime === "bun"
-    ? `import { BunServices } from "@effect/platform-bun";
-import { BunHttpServer } from "alchemy/Http";
-const HttpServer = BunHttpServer;`
-    : `import { NodeServices } from "@effect/platform-node";
-import { NodeHttpServer } from "alchemy/Http";
-const HttpServer = NodeHttpServer;`
-}
-import { Stack } from "alchemy/Stack";
-import { makeEntrypointLayer } from "alchemy/Runtime";
-import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import * as Layer from "effect/Layer";
-import * as Logger from "effect/Logger";
-import * as Context from "effect/Context";
-import { MinimumLogLevel } from "effect/References";
-
+import { bootstrap } from ${JSON.stringify(
+            runtime === "bun"
+              ? "alchemy/Runtime/Bootstrap/MicrovmBun"
+              : "alchemy/Runtime/Bootstrap/MicrovmNode",
+          )};
 import ${handler === "default" ? "entrypoint" : `{ ${handler} as entrypoint }`} from ${JSON.stringify(importPath)};
 
-const tag = Context.Service("${Self.key}")
-const layer = makeEntrypointLayer(tag, entrypoint);
-
-const platform = Layer.mergeAll(
-  ${runtime === "bun" ? "BunServices.layer" : "NodeServices.layer"},
-  FetchHttpClient.layer,
-  Logger.layer([Logger.consolePretty()]),
-);
-
-const stack = Layer.succeed(Stack, {
-  name: ${JSON.stringify(stack.name)},
-  stage: ${JSON.stringify(stack.stage)},
-  bindings: {},
-  resources: {}
-});
-
-const serverEffect = tag.pipe(
-  Effect.flatMap(func => func.RuntimeContext.exports),
-  Effect.flatMap(exports => exports.default),
-  Effect.provide(
-    layer.pipe(
-      Layer.provideMerge(stack),
-      Layer.provideMerge(HttpServer({ port: Number(process.env.PORT ?? ${port}) })),
-      Layer.provideMerge(platform),
-      Layer.provideMerge(
-        Layer.succeed(MinimumLogLevel, process.env.DEBUG ? "Debug" : "Info")
-      ),
-    )
-  ),
-  Effect.scoped
-);
-
-console.log("MicroVM bootstrap starting on port ${port}...");
-await Effect.runPromise(serverEffect).catch((err) => {
-  console.error("MicroVM bootstrap failed:", err);
-  process.exit(1);
-})`,
+await bootstrap(entrypoint, ${JSON.stringify({
+            port,
+            stack: { name: stack.name, stage: stack.stage },
+          })});
+`,
         ),
       );
 

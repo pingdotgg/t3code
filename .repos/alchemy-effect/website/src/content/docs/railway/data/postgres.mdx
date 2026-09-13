@@ -1,0 +1,148 @@
+---
+title: Postgres
+description: Official SSL Postgres in a Project. Bind Railway.ConnectPostgres and query with Drizzle or SQL.
+---
+
+A [`Railway.Postgres`](/providers/railway/postgres) is Postgres as a
+Service: the official
+`ghcr.io/railwayapp-templates/postgres-ssl:16` image, a Volume at
+`/var/lib/postgresql/data`, `POSTGRES_*` / `DATABASE_URL` variables,
+and an optional TCP proxy for the public URL.
+
+Private hostname is `{name}.railway.internal`. From a
+[Service](/railway/compute/services), yield
+[`ConnectPostgres`](/providers/railway/connectpostgres). From a
+laptop, use `publicConnectionUri`.
+
+## Create Postgres
+
+Pass a Project. Alchemy generates a unique name, password, volume,
+and a public TCP proxy.
+
+```typescript
+const site = yield* Railway.Project("Site");
+const db = yield* Railway.Postgres("Db", { project: site });
+```
+
+:::caution[Changing `project` replaces Postgres]
+A new service + volume are created in the new Project. The old
+service and volume are deleted. Data is not copied.
+:::
+
+## Connect from a Service
+
+Yield `ConnectPostgres` in Service init. Provide
+`ConnectPostgresHttp`. Pass `conn.connectionString` to Drizzle or
+SQL.
+
+```typescript
+import * as Drizzle from "alchemy/Drizzle/Postgres";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Api extends Railway.Service<Api>()(
+  "Api",
+  {
+    project: Site,
+    main: import.meta.url,
+    build: { install: ["pg"] },
+  },
+  Effect.gen(function* () {
+    const conn = yield* Railway.ConnectPostgres(Db);
+    const db = yield* Drizzle.Postgres(conn.connectionString);
+    return {
+      fetch: Effect.gen(function* () {
+        const rows = yield* db.execute("select 1 as ok");
+        return HttpServerResponse.json({ rows });
+      }),
+    };
+  }).pipe(Effect.provide(Railway.ConnectPostgresHttp)),
+) {}
+```
+
+`connectionString` is the private URI
+(`{name}.railway.internal:5432`). Both come from `Railway.Postgres`,
+packed into the Service env — not `Config.redacted`.
+
+To store Railway's `${{Db.DATABASE_URL}}` template instead of a
+resolved URI, pass [`Railway.ref`](/providers/railway/ref)
+(`Railway.ref(Db, "DATABASE_URL")`) as a
+[Variable](/railway/data/variables) `value`.
+
+`build.install: ["pg"]` is required. Rolldown's CJS interop breaks
+`pg.Client` if you bundle it.
+
+## Public TCP
+
+`public` (default `true`) creates a TCP proxy on 5432.
+`publicConnectionUri` is `{domain}:{proxyPort}` for laptop access
+and deploy-time migrations. In-service connections always use the
+private hostname.
+
+```typescript
+const db = yield* Railway.Postgres("Db", {
+  project: site,
+  public: false,
+});
+```
+
+Attach a standalone [`TcpProxy`](/railway/networking#tcp-proxies)
+when you need public TCP on a Redis service, or on Postgres created
+with `public: false`.
+
+## Image
+
+Default is Postgres 16 with SSL. Pass `image` to pin another tag.
+
+```typescript
+const db = yield* Railway.Postgres("Db", {
+  project: site,
+  image: "ghcr.io/railwayapp-templates/postgres-ssl:17",
+});
+```
+
+## Superuser
+
+`user` (default `postgres`) and `database` (default `railway`) are
+create-only. Wrap `password` with `Redacted.make(...)`. If omitted,
+a password is generated on first create.
+
+```typescript
+import * as Redacted from "effect/Redacted";
+
+const db = yield* Railway.Postgres("Db", {
+  project: site,
+  user: "app",
+  database: "app",
+  password: Redacted.make("…"),
+});
+```
+
+## Module-scope declarations
+
+Resource-valued props accept the resource or an Effect producing it.
+
+```typescript
+// src/db.ts
+import * as Railway from "alchemy/Railway";
+
+export const Site = Railway.Project("Site");
+export const Db = Railway.Postgres("Db", { project: Site });
+```
+
+## Where next
+
+[Regions](/railway/compute/regions) lists codes.
+[Services](/railway/compute/services) is the container that binds
+the cluster.
+[MySQL](/railway/data/mysql) and [Mongo](/railway/data/mongo) are the
+same shape for those engines.
+[Drizzle on Postgres](/sql/drizzle/postgres) is the schema-to-query
+flow.
+[Variables](/railway/data/variables) covers `Config.redacted` and
+`Railway.ref`.
+The [`Postgres` reference](/providers/railway/postgres) lists every
+prop.
+The [`ConnectPostgres` reference](/providers/railway/connectpostgres)
+is the runtime binding.
+[Example: railway-service](https://github.com/alchemy-run/alchemy/tree/main/examples/railway-service)
+is the complete runnable project.

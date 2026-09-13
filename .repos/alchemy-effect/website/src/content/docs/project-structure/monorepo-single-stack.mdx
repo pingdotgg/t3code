@@ -1,227 +1,25 @@
 ---
 title: Single Stack
-description: One alchemy.run.ts at the workspace root deploys the backend Worker and the frontend website together — one plan, one state file, no cross-stack references.
+description: One alchemy.run.ts at the workspace root deploys every app in the monorepo — one plan, one state file, and every path anchored to the file that declares it.
 ---
 
-One `alchemy.run.ts` at the workspace root deploys both packages
+One `alchemy.run.ts` at the workspace root deploys every app in the monorepo
 ([`examples/monorepo-single-stack`](https://github.com/alchemy-run/alchemy/tree/main/examples/monorepo-single-stack)):
 
 ```sh
 .
 ├── package.json          # workspaces: ["frontend", "backend"]
-├── alchemy.run.ts        # the one Stack — deploys backend + frontend
+├── alchemy.run.ts        # the one Stack — deploys both apps
 ├── backend/
-│   ├── package.json      # exports "." and "./Client"
 │   └── src/
-│       ├── Spec.ts       # HttpApi schema — shared by Worker and browser
-│       ├── Service.ts    # the Worker serving the API
-│       ├── Client.ts     # typed HttpApiClient factory
-│       └── index.ts      # re-exports Spec + Client
+│       └── Service.ts    # the Worker — this file is its own entry
 └── frontend/
-    ├── package.json      # depends on "backend": "workspace:*"
-    ├── index.html
+    ├── index.html        # Vite app
     └── src/
-        └── main.tsx      # React app — calls BackendClient(VITE_API_URL)
+        └── main.tsx
 ```
 
-The Worker and the Vite-built website are siblings inside one
-Stack; the frontend reads the Worker's URL directly off the
-in-memory Output.
-
-## Workspace root
-
-```json
-{
-  "name": "monorepo",
-  "private": true,
-  "type": "module",
-  "workspaces": ["frontend", "backend"]
-}
-```
-
-Workspaces let `frontend` import from `backend` by package name —
-that's the channel the runtime client flows through.
-
-## Backend package
-
-```json
-{
-  "name": "backend",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "alchemy": "workspace:*",
-    "effect": "catalog:"
-  },
-  "exports": {
-    ".": {
-      "bun": "./src/index.ts",
-      "import": "./lib/index.js",
-      "default": "./lib/index.js"
-    }
-  }
-}
-```
-
-The `bun` condition resolves `import "backend"` straight to the
-TypeScript source under Bun, which keeps inner-loop iteration
-fast.
-
-## API schema
-
-Put the `HttpApi` schema in its own file so both the Worker
-(which serves it) and the React app (which calls it) import the
-same constant:
-
-```typescript
-// backend/src/Spec.ts
-import * as Schema from "effect/Schema";
-import * as HttpApi from "effect/unstable/httpapi/HttpApi";
-import * as HttpApiEndpoint from "effect/unstable/httpapi/HttpApiEndpoint";
-import * as HttpApiGroup from "effect/unstable/httpapi/HttpApiGroup";
-
-export class Greeting extends Schema.Class<Greeting>("Greeting")({
-  message: Schema.String,
-}) {}
-
-export const hello = HttpApiEndpoint.get("hello", "/", {
-  success: Greeting,
-});
-
-export class HelloGroup extends HttpApiGroup.make("Hello").add(hello) {}
-
-export class BackendApi extends HttpApi.make("BackendApi").add(HelloGroup) {}
-```
-
-## The Worker
-
-```typescript
-// backend/src/Service.ts
-import * as Cloudflare from "alchemy/Cloudflare";
-import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
-import * as Etag from "effect/unstable/http/Etag";
-import * as HttpPlatform from "effect/unstable/http/HttpPlatform";
-import * as HttpRouter from "effect/unstable/http/HttpRouter";
-import * as HttpApiBuilder from "effect/unstable/httpapi/HttpApiBuilder";
-import { BackendApi, Greeting } from "./Spec.ts";
-
-export default class Service extends Cloudflare.Worker<Service>()(
-  "Service",
-  { main: import.meta.url },
-  Effect.gen(function* () {
-    const helloGroup = HttpApiBuilder.group(BackendApi, "Hello", (handlers) =>
-      handlers.handle("hello", () =>
-        Effect.succeed(new Greeting({ message: "Hello World" })),
-      ),
-    );
-    return {
-      fetch: HttpApiBuilder.layer(BackendApi).pipe(
-        Layer.provide(helloGroup),
-        Layer.provide([HttpPlatform.layer, Etag.layer]),
-        HttpRouter.toHttpEffect,
-      ),
-    };
-  }),
-) {}
-```
-
-Standard `HttpApi` plumbing — see
-[Effect HTTP API](/cloudflare/apis/effect-http-api) for the
-long-form walkthrough.
-
-## Typed client
-
-```typescript
-// backend/src/Client.ts
-import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
-import { BackendApi } from "./Spec.ts";
-
-export const BackendClient = (baseUrl: string) =>
-  HttpApiClient.make(BackendApi, { baseUrl });
-```
-
-A function that takes the deployed URL and returns a fully-typed
-`HttpApiClient` for `BackendApi`.
-
-## Re-export the runtime modules
-
-```typescript
-// backend/src/index.ts
-export * from "./Client.ts";
-export * from "./Spec.ts";
-```
-
-`import { BackendApi, BackendClient } from "backend"` now works
-across the workspace.
-
-## Add a `./Client` subpath for the browser
-
-```diff lang="json"
-   "exports": {
-     ".": {
-       "bun": "./src/index.ts",
-       "import": "./lib/index.js",
-       "default": "./lib/index.js"
-+    },
-+    "./Client": {
-+      "bun": "./src/Client.ts",
-+      "import": "./lib/Client.js",
-+      "default": "./lib/Client.js"
-     }
-   }
-```
-
-The browser only needs `BackendClient` — importing it through its
-own subpath keeps the React bundle scoped to the runtime client
-instead of the whole package barrel.
-
-## Frontend package
-
-```json
-{
-  "name": "frontend",
-  "private": true,
-  "type": "module",
-  "dependencies": {
-    "alchemy": "workspace:*",
-    "backend": "workspace:*",
-    "effect": "catalog:",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "vite": "catalog:"
-  }
-}
-```
-
-## React entry point
-
-```typescript
-// frontend/src/main.tsx
-import { BackendClient } from "backend/Client";
-import * as Effect from "effect/Effect";
-import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
-import React from "react";
-import ReactDOM from "react-dom/client";
-
-const API_URL = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
-
-const client = BackendClient(API_URL).pipe(
-  Effect.provide(FetchHttpClient.layer),
-);
-
-function App() {
-  // … call `client.Hello.hello()` and render the result
-}
-
-ReactDOM.createRoot(document.getElementById("root")!).render(<App />);
-```
-
-The browser imports from `"backend/Client"`, never from
-`"backend"` — nothing else from the backend package leaks into
-the bundle.
-
-## The Stack
+The entire Stack:
 
 ```typescript
 // alchemy.run.ts
@@ -256,13 +54,138 @@ export default Alchemy.Stack(
 );
 ```
 
-Two things to call out:
+Run `alchemy deploy` (or `alchemy dev`) from the workspace root and both apps
+go up in one plan, tracked in one state file. The rest of this page explains
+the two lines that make the monorepo shape work: `main: import.meta.url` and
+`rootDir`.
 
-- `backend.url` is an `Output<string>` — passing it into the
-  `env` makes Alchemy build the website *after* the Worker is
-  deployed, with the resolved URL baked in.
-- `rootDir` lets one Stack build a Vite project that lives
-  elsewhere in the workspace — here, `frontend/`.
+## Anchor every path
+
+:::caution
+`alchemy deploy` and `alchemy dev` run from the workspace root, so **relative
+paths resolve from the root**, not from the file that declares the resource.
+A Worker declared in `backend/` with `main: "src/worker.ts"` resolves to
+`<root>/src/worker.ts` — a file that doesn't exist.
+:::
+
+Anchor every path to the file that declares it, using `import.meta`:
+
+| Declaring                                  | Use                                                     |
+| ------------------------------------------ | ------------------------------------------------------- |
+| a Worker whose defining file is its entry  | `main: import.meta.url`                                 |
+| a Worker with a separate entry file        | `main: new URL("./src/worker.ts", import.meta.url).href` |
+| a Vite website in a subdirectory           | `rootDir: path.resolve(import.meta.dirname, "frontend")` |
+| a custom Worker entry inside a Vite app    | `vite: { main: "src/worker.ts" }` — resolves from `rootDir` |
+
+`import.meta.url` and `import.meta.dirname` always point at the file being
+evaluated, so the resource resolves the same way no matter which directory
+`alchemy` runs from.
+
+## The backend Worker
+
+Each app declares its own Worker in its own package:
+
+```typescript
+// backend/src/Service.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export default class Service extends Cloudflare.Worker<Service>()(
+  "Service",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("Hello from the backend")),
+    };
+  }),
+) {}
+```
+
+`main: import.meta.url` makes this file its own entry — a file URL, absolute
+by construction, so the root `alchemy.run.ts` can import `Service` from
+anywhere and bundling still finds the right module.
+
+The example serves a typed `HttpApi` instead of a plain `fetch` handler and
+shares its typed client with the frontend — see
+[Effect HTTP API](/cloudflare/apis/effect-http-api) for that pattern.
+
+## The Vite website
+
+```typescript
+const website = yield* Cloudflare.Website.Vite("Website", {
+  rootDir: path.resolve(import.meta.dirname, "frontend"),
+});
+```
+
+`rootDir` is Vite's `root` — where `index.html`, `vite.config.ts`, and the
+app source live. It defaults to `process.cwd()`, which in a monorepo is the
+workspace root, so point it at the app's directory explicitly. Anchoring with
+`import.meta.dirname` keeps it correct regardless of where `alchemy` runs.
+
+## Wire the Worker's URL into the frontend
+
+```typescript
+const website = yield* Cloudflare.Website.Vite("Website", {
+  rootDir: path.resolve(import.meta.dirname, "frontend"),
+  env: {
+    VITE_API_URL: backend.url.as<string>(),
+  },
+});
+```
+
+`backend.url` is an `Output<string>` — passing it into `env` makes Alchemy
+deploy the Worker first, then build the website with the resolved URL baked
+in. The frontend reads it like any other Vite env var:
+
+```typescript
+// frontend/src/main.tsx
+const API_URL = import.meta.env.VITE_API_URL;
+```
+
+This is the payoff of the single-stack shape: the frontend consumes the
+backend's URL directly off the in-memory Output — no cross-stack references,
+no deploy ordering to manage.
+
+## Custom Worker entry inside the Vite app
+
+By default `Website.Vite` deploys the server entry your framework produces.
+If the app ships its own Worker module (extra handlers, Durable Objects),
+point `vite.main` at it:
+
+```typescript
+const website = yield* Cloudflare.Website.Vite("Website", {
+  rootDir: path.resolve(import.meta.dirname, "frontend"),
+  vite: {
+    main: "src/worker.ts",
+  },
+});
+```
+
+`vite.main` is the one relative path that does *not* resolve from the
+workspace root — it resolves from `rootDir`, so `src/worker.ts` means
+`frontend/src/worker.ts`.
+
+## Add more apps
+
+The pattern scales by repetition: declare each app's Worker in its own
+package with an anchored `main`, import them all into the one Stack, and
+`yield*` each one. A Worker whose entry is a separate file anchors it with
+`new URL`:
+
+```typescript
+// apps/api/Api.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Api = Cloudflare.Worker("Api", {
+  main: new URL("./src/worker.ts", import.meta.url).href,
+});
+```
+
+```typescript
+// alchemy.run.ts
+const api = yield* Api;
+```
 
 ## Deploy
 
@@ -270,8 +193,8 @@ Two things to call out:
 alchemy deploy
 ```
 
-One plan, one apply, one set of state. Both resources go up
-together; both come down together with `alchemy destroy`.
+One plan, one apply, one state file. Both apps go up together; both come
+down together with `alchemy destroy`.
 
 ## Where next
 
@@ -280,5 +203,5 @@ together; both come down together with `alchemy destroy`.
   deploy per package when cadences diverge.
 - [File layout](/project-structure/file-layout) — the single-package layout
   this builds on.
-- [Effect HTTP API](/cloudflare/apis/effect-http-api) — the
-  `HttpApi` schema/builder/client pattern in depth.
+- [Effect HTTP API](/cloudflare/apis/effect-http-api) — share a typed
+  `HttpApi` schema and client between the Worker and the frontend.

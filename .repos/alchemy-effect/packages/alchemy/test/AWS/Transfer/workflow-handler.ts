@@ -23,7 +23,7 @@ export class TransferWorkflowTestFunction extends Lambda.Function<Lambda.Functio
 export default TransferWorkflowTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

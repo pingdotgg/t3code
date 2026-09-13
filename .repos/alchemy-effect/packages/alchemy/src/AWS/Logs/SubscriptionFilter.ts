@@ -78,9 +78,8 @@ export interface SubscriptionFilter extends Resource<
  * For the Lambda-consumer DX (subscribe a Lambda to a log group with automatic
  * permission wiring and payload decoding), prefer
  * {@link import("./LogGroupEventSource.ts").consumeLogEvents}.
- * @resource
- * @section Subscribing a Lambda Function
- * @example Deliver Error Logs to a Lambda Function
+ * ### Subscribing a Lambda Function
+ * **Example:** Deliver Error Logs to a Lambda Function
  * ```typescript
  * const filter = yield* SubscriptionFilter("ErrorFanout", {
  *   logGroupName: logGroup.logGroupName,
@@ -89,8 +88,8 @@ export interface SubscriptionFilter extends Resource<
  * });
  * ```
  *
- * @section Subscribing a Kinesis Stream
- * @example Deliver All Logs to Kinesis
+ * ### Subscribing a Kinesis Stream
+ * **Example:** Deliver All Logs to Kinesis
  * ```typescript
  * const filter = yield* SubscriptionFilter("StreamFanout", {
  *   logGroupName: logGroup.logGroupName,
@@ -100,6 +99,8 @@ export interface SubscriptionFilter extends Resource<
  *   distribution: "ByLogStream",
  * });
  * ```
+ *
+ * @resource
  */
 export const SubscriptionFilter = Resource<SubscriptionFilter>(
   "AWS.Logs.SubscriptionFilter",

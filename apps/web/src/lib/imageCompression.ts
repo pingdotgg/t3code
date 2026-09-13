@@ -38,7 +38,10 @@ const FALLBACK_SCALE_STEPS = [0.75, 0.55] as const;
 const HEIC_IMAGE_MIME_TYPE = /^image\/hei(?:c|f)$/i;
 const HEIC_IMAGE_EXTENSION = /\.(?:heic|heif)$/i;
 
+type ImageSize = { width: number; height: number };
+
 export interface CompressedStashImage {
+  imageSize?: ImageSize;
   dataUrl: string;
   mimeType: string;
   sizeBytes: number;
@@ -57,7 +60,7 @@ export type CompressStashImageResult =
   | { ok: false; reason: ImageCompressionFailureReason };
 
 export type CompressImageFileResult =
-  | { ok: true; file: File; recompressed: boolean }
+  | { ok: true; file: File; recompressed: boolean; imageSize?: ImageSize }
   | { ok: false; reason: ImageCompressionFailureReason };
 
 /** Finder and some browsers omit the MIME type when dragging HEIC photos. */
@@ -170,7 +173,7 @@ function dataUrlByteLength(dataUrl: string): number {
 }
 
 /** Base64 payload of a data URL decoded back into a `File`. */
-function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
+export function dataUrlToFile(dataUrl: string, name: string, mimeType: string): File {
   const payload = dataUrl.slice(dataUrl.indexOf(",") + 1);
   const binary = atob(payload);
   const bytes = new Uint8Array(binary.length);
@@ -253,7 +256,7 @@ async function encodeWithinBudget(
   maxDimension: number,
   budgetChars: number,
   preferredMimeType?: "image/jpeg",
-): Promise<{ dataUrl: string; mimeType: string } | null> {
+): Promise<{ dataUrl: string; mimeType: string; imageSize: ImageSize } | null> {
   const scale = Math.min(1, maxDimension / Math.max(bitmap.width, bitmap.height));
   const width = Math.max(1, Math.round(bitmap.width * scale));
   const height = Math.max(1, Math.round(bitmap.height * scale));
@@ -278,14 +281,14 @@ async function encodeWithinBudget(
     const encoded = await encodeCanvas(target.canvas, quality, mimeType, budgetChars);
     if (!encoded) break;
     if (encoded.dataUrl !== null) {
-      return { dataUrl: encoded.dataUrl, mimeType: encoded.mimeType };
+      return { dataUrl: encoded.dataUrl, mimeType: encoded.mimeType, imageSize: { width, height } };
     }
   }
   return null;
 }
 
 type ReencodeResult =
-  | { ok: true; dataUrl: string; mimeType: string }
+  | { ok: true; dataUrl: string; mimeType: string; imageSize: ImageSize }
   | { ok: false; reason: ImageCompressionFailureReason };
 
 /**
@@ -320,7 +323,7 @@ async function reencodeWithinBudget(
     let encodeFailed = false;
     for (const dimensionScale of [1, ...FALLBACK_SCALE_STEPS]) {
       const targetDimension = Math.max(1, Math.round(baseDimension * dimensionScale));
-      let encoded: { dataUrl: string; mimeType: string } | null;
+      let encoded: Awaited<ReturnType<typeof encodeWithinBudget>>;
       try {
         encoded = await encodeWithinBudget(bitmap, targetDimension, budgetChars, preferredMimeType);
       } catch {
@@ -335,7 +338,12 @@ async function reencodeWithinBudget(
       }
       encodeFailed = false;
       if (encoded && encoded.dataUrl.length <= budgetChars) {
-        return { ok: true, dataUrl: encoded.dataUrl, mimeType: encoded.mimeType };
+        return {
+          ok: true,
+          dataUrl: encoded.dataUrl,
+          mimeType: encoded.mimeType,
+          imageSize: encoded.imageSize,
+        };
       }
     }
     return { ok: false, reason: encodeFailed ? "unreadable" : "too-large" };
@@ -384,6 +392,7 @@ export async function compressImageForStash(
       mimeType: reencoded.mimeType,
       sizeBytes: dataUrlByteLength(reencoded.dataUrl),
       recompressed: true,
+      imageSize: reencoded.imageSize,
     },
   };
 }
@@ -424,6 +433,7 @@ export async function compressImageToByteLimit(
       reencoded.mimeType,
     ),
     recompressed: true,
+    imageSize: reencoded.imageSize,
   };
 }
 

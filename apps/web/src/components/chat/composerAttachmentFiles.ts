@@ -88,6 +88,17 @@ export function isPreviewableComposerVideo(
   );
 }
 
+/** Non-media files without an inline reference still need the legacy attachment row. */
+export function composerOtherFilesForPresentation(
+  files: ReadonlyArray<ComposerFileAttachment>,
+  environmentId: EnvironmentId,
+  inlineFileIds: ReadonlySet<string>,
+): ComposerFileAttachment[] {
+  return files.filter(
+    (file) => !isPreviewableComposerVideo(file, environmentId) && !inlineFileIds.has(file.id),
+  );
+}
+
 /** Byte limit for adding a generic file to the local composer draft. */
 export function fileAttachmentStagingLimit(input: FileAttachmentCapabilityState): number | null {
   if (!input.attachmentUploadsCapabilityKnown) {

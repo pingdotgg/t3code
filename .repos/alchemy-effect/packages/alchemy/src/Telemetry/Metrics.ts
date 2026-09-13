@@ -144,10 +144,16 @@ export const recordStateStoreOp =
 export const recordStateStoreInit = <A extends { readonly id: string }, E, R>(
   self: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, E, R> =>
-  self.pipe(
+  // The debug lines bracket the first phase of a deploy that can block on
+  // credential resolution (see `Auth/Lock.ts`). Without them a stalled
+  // deploy produces no output at all, at any log level, and there is
+  // nothing to tell "hung" apart from "slow".
+  Effect.logDebug("state store: initializing").pipe(
+    Effect.andThen(self),
     Effect.tap((service) =>
       Effect.all(
         [
+          Effect.logDebug(`state store: ready (${service.id})`),
           Metric.update(
             Metric.withAttributes(stateStoreInitCounter, { id: service.id }),
             1,

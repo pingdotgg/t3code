@@ -28,6 +28,13 @@ export interface BaseRuntimeContext {
   shape?: () => Record<string, unknown>;
   /** additional services to provide to the plan  */
   planServices?: Layer.Layer<any>;
+  /**
+   * Telemetry exporter Layer registered during init via
+   * `Telemetry.layer(...)` / `Telemetry.layerOtlp(...)` (see Telemetry.ts).
+   * The runtime bridges build it into every event's request scope,
+   * overriding the env-driven default.
+   */
+  telemetry?: Layer.Layer<never, any, any>;
 }
 
 /**
@@ -67,8 +74,34 @@ export const isRedactedMarker = (value: unknown): value is RedactedMarker =>
   "value" in value;
 
 /**
+ * Returns true when {@link unpackEnvValue}'s `JSON.parse` would reinterpret
+ * the raw string as something other than itself — a number (`"123"`), a
+ * boolean, `null`, or a JSON document. Such strings must stay
+ * `JSON.stringify`-packed; everything else round-trips verbatim through the
+ * parse-failure fallback.
+ */
+const parsesAsJson = (value: string): boolean => {
+  try {
+    JSON.parse(value);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+/**
  * Serialize a binding value for an env var: `Redacted` values are packed as
- * a {@link RedactedMarker}, everything else is plain `JSON.stringify`.
+ * a {@link RedactedMarker}, non-string values as JSON.
+ *
+ * A plain string is stored **verbatim** whenever `JSON.parse` would reject
+ * it — which is almost every real-world string (names, URLs, ids). Packing
+ * those too would put `"my-queue"` (quote characters included) on the wire,
+ * where anything that consumes the raw binding without going through
+ * {@link unpackEnvValue} — the Cloudflare dashboard, a hand-written env
+ * read, a queue-name comparison against `MessageBatch.queue` — sees the
+ * quoted form and mismatches (#1243). Only ambiguous strings (`"123"`,
+ * `"null"`, JSON documents) keep the pack so the read side can't
+ * reinterpret them.
  */
 export const packEnvValue = (value: unknown): string =>
   Redacted.isRedacted(value)
@@ -76,7 +109,9 @@ export const packEnvValue = (value: unknown): string =>
         _tag: "Redacted",
         value: Redacted.value(value),
       } satisfies RedactedMarker)
-    : JSON.stringify(value);
+    : typeof value === "string" && !parsesAsJson(value)
+      ? value
+      : JSON.stringify(value);
 
 /**
  * Like {@link packEnvValue}, but a `Redacted` input keeps its `Redacted`
@@ -95,8 +130,9 @@ export const packEnvValueKeepRedacted = (
 /**
  * Parse an env-var string produced by {@link packEnvValue} back into its
  * value: rebuild `Redacted` from the marker, return other JSON values
- * as-is, and fall back to the raw string for non-JSON input (e.g. an env
- * var the user set directly). `undefined` passes through.
+ * as-is, and fall back to the raw string for non-JSON input (a verbatim
+ * string from `packEnvValue`, or an env var the user set directly).
+ * `undefined` passes through.
  *
  * Runtime `get` accessors MUST feed this from the raw environment
  * (`process.env[key]` / the platform env object) — never through

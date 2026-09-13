@@ -18,7 +18,7 @@ export class CodeConnectionsTestFunction extends Lambda.Function<Lambda.Function
 export default CodeConnectionsTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
   },
   Effect.gen(function* () {
     // The fixture connection stays PENDING (its OAuth handshake is a manual
