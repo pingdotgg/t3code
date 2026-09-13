@@ -88,8 +88,14 @@ export function cliReleaseChannelOf(version: string): CliReleaseChannel {
   return channel === "nightly" || channel === "preview" ? channel : "stable";
 }
 
-/** GitHub's list-releases endpoint; newest first, so the first match wins. */
-export const CLI_RELEASE_INDEX_URL = `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=50`;
+/**
+ * One page of GitHub's list-releases endpoint, newest first. Callers walk pages
+ * until a channel match turns up; a busy nightly train can push the newest
+ * preview or stable release past any single page.
+ */
+export function cliReleaseIndexPageUrl(page: number): string {
+  return `https://api.github.com/repos/${CLI_RELEASE_REPOSITORY}/releases?per_page=100&page=${page}`;
+}
 
 /**
  * Picks the newest version on a channel from the release index. Tags are

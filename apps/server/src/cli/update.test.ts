@@ -24,7 +24,11 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.symlink(oldExe, launcher);
 
-      const repointed = yield* repointLauncher({ launchedAs: launcher, targetEntryPath: newExe });
+      const repointed = yield* repointLauncher({
+        launchedAs: launcher,
+        versionsDir: path.join(root, "runtime/versions"),
+        targetEntryPath: newExe,
+      });
 
       assert.deepStrictEqual(Option.getOrUndefined(repointed), launcher);
       assert.equal(yield* fs.readLink(launcher), newExe);
@@ -40,18 +44,28 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       const copy = path.join(root, "copy/t3");
       const foreign = path.join(root, "foreign/t3");
       const elsewhere = path.join(root, "elsewhere/t3");
-      for (const file of [newExe, copy, elsewhere]) {
+      // Another install's versions tree: same shape, different home.
+      const otherHome = path.join(root, "other/runtime/versions/1.0.0/t3");
+      const otherLauncher = path.join(root, "other/bin/t3");
+      for (const file of [newExe, copy, elsewhere, otherHome]) {
         yield* fs.makeDirectory(path.dirname(file), { recursive: true });
         yield* fs.writeFileString(file, "");
       }
       yield* fs.makeDirectory(path.dirname(foreign), { recursive: true });
       yield* fs.symlink(elsewhere, foreign);
+      yield* fs.makeDirectory(path.dirname(otherLauncher), { recursive: true });
+      yield* fs.symlink(otherHome, otherLauncher);
 
-      for (const launchedAs of [copy, foreign, undefined]) {
-        const repointed = yield* repointLauncher({ launchedAs, targetEntryPath: newExe });
+      for (const launchedAs of [copy, foreign, otherLauncher, undefined]) {
+        const repointed = yield* repointLauncher({
+          launchedAs,
+          versionsDir: path.join(root, "runtime/versions"),
+          targetEntryPath: newExe,
+        });
         assert.equal(repointed._tag, "None", launchedAs ?? "undefined");
       }
       assert.equal(yield* fs.readLink(foreign), elsewhere);
+      assert.equal(yield* fs.readLink(otherLauncher), otherHome);
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 });

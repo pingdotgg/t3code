@@ -9,7 +9,7 @@ import {
 import {
   CLI_RELEASE_BASE_URL_ENV,
   CLI_RELEASE_CHANNELS,
-  CLI_RELEASE_INDEX_URL,
+  cliReleaseIndexPageUrl,
   cliReleaseChannelOf,
   isArchiveDistributedVersion,
   newestCliReleaseVersion,
@@ -62,64 +62,77 @@ const ReleaseIndex = Schema.Array(
 const decodeReleaseIndex = Schema.decodeUnknownEffect(Schema.fromJsonString(ReleaseIndex));
 
 const RELEASE_INDEX_TIMEOUT = Duration.seconds(30);
+// Enough to walk past a long run of nightlies without hammering the API when
+// a channel genuinely has nothing published.
+const RELEASE_INDEX_MAX_PAGES = 10;
 
-/** Asks GitHub for the newest published version on a channel. */
+/** Asks GitHub for the newest published version on a channel, page by page. */
 const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   channel: CliReleaseChannel,
 ) {
   const httpClient = yield* HttpClient.HttpClient;
-  const body = yield* httpClient
-    .execute(
-      HttpClientRequest.get(CLI_RELEASE_INDEX_URL).pipe(
-        HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
+  for (let page = 1; page <= RELEASE_INDEX_MAX_PAGES; page += 1) {
+    const body = yield* httpClient
+      .execute(
+        HttpClientRequest.get(cliReleaseIndexPageUrl(page)).pipe(
+          HttpClientRequest.setHeader("Accept", "application/vnd.github+json"),
+        ),
+      )
+      .pipe(
+        Effect.flatMap(HttpClientResponse.filterStatusOk),
+        Effect.flatMap((response) => response.text),
+        Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
+        Effect.timeoutOrElse({
+          duration: RELEASE_INDEX_TIMEOUT,
+          orElse: () =>
+            Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
+        }),
+      );
+    const releases = yield* decodeReleaseIndex(body).pipe(
+      Effect.mapError(
+        () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
       ),
-    )
-    .pipe(
-      Effect.flatMap(HttpClientResponse.filterStatusOk),
-      Effect.flatMap((response) => response.text),
-      Effect.timeoutOrElse({
-        duration: RELEASE_INDEX_TIMEOUT,
-        orElse: () => Effect.fail(new CliUpdateError({ reason: "Timed out listing t3 releases." })),
-      }),
-      Effect.mapError(() => new CliUpdateError({ reason: "Could not list t3 releases." })),
     );
-  const releases = yield* decodeReleaseIndex(body).pipe(
-    Effect.mapError(
-      () => new CliUpdateError({ reason: "The t3 release index had an unexpected shape." }),
-    ),
-  );
-  const version = newestCliReleaseVersion(releases, channel);
-  if (version === undefined) {
-    return yield* new CliUpdateError({
-      reason: `No published ${channel} release was found.`,
-    });
+    const version = newestCliReleaseVersion(releases, channel);
+    if (version !== undefined) return version;
+    if (releases.length === 0) break;
   }
-  return version;
+  return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
 });
 
 /**
- * The launcher the install scripts leave behind: a symlink at
- * `<bin>/t3` on POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so
- * the next `t3` invocation is the new version. The bin directory is whatever
- * the running executable was launched through; a `t3` that was run by its
- * full path inside the versions directory has no launcher to repoint.
+ * The launcher the install scripts leave behind: a symlink at `<bin>/t3` on
+ * POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so the next `t3`
+ * invocation is the new version. Only a launcher that already points into
+ * this home's `runtime/versions` tree is touched; a plain copy of the
+ * executable, or a launcher for some other install, is left alone.
  */
 export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function* (input: {
+  /** Path the current process was started through, if known. */
   readonly launchedAs: string | undefined;
+  /** `<baseDir>/runtime/versions` of the home being updated. */
+  readonly versionsDir: string;
   readonly targetEntryPath: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   if (input.launchedAs === undefined) return Option.none<string>();
+  const ownsTarget = (candidate: string) => {
+    const relative = path.relative(input.versionsDir, path.resolve(candidate));
+    return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+  };
 
   if (platform === "win32") {
-    const shimPath = /\.cmd$/i.test(input.launchedAs)
-      ? input.launchedAs
-      : path.join(path.dirname(input.launchedAs), "t3.cmd");
-    if (!(yield* fs.exists(shimPath).pipe(Effect.orElseSucceed(() => false)))) {
-      return Option.none<string>();
-    }
+    // The shim runs the executable by absolute path, so the executable sees
+    // itself as argv0; the shim is the `t3.cmd` next to it only when launched
+    // from an install script's bin directory. Find it by searching the
+    // directories that would resolve `t3` on this shell's PATH.
+    const shimPath = yield* findWindowsShim(input.launchedAs);
+    if (shimPath === undefined) return Option.none<string>();
+    const current = yield* fs.readFileString(shimPath).pipe(Effect.option);
+    const quoted = Option.isSome(current) ? /^"([^"]+)"/m.exec(current.value)?.[1] : undefined;
+    if (quoted === undefined || !ownsTarget(quoted)) return Option.none<string>();
     yield* fs
       .writeFileString(shimPath, `@echo off\r\n"${input.targetEntryPath}" %*`)
       .pipe(
@@ -131,13 +144,9 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   }
 
   const linkTarget = yield* fs.readLink(input.launchedAs).pipe(Effect.option);
-  // Only a launcher we own gets repointed. A plain copy of the executable, or
-  // a symlink to somewhere else, is left alone.
   if (Option.isNone(linkTarget)) return Option.none<string>();
   const resolvedTarget = path.resolve(path.dirname(input.launchedAs), linkTarget.value);
-  if (path.basename(path.dirname(path.dirname(resolvedTarget))) !== "versions") {
-    return Option.none<string>();
-  }
+  if (!ownsTarget(resolvedTarget)) return Option.none<string>();
   const tempLink = `${input.launchedAs}.${process.pid}.tmp`;
   yield* fs.symlink(input.targetEntryPath, tempLink).pipe(
     Effect.andThen(fs.rename(tempLink, input.launchedAs)),
@@ -147,6 +156,36 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     ),
   );
   return Option.some(input.launchedAs);
+});
+
+/**
+ * On Windows a `.cmd` shim is what PATH resolves, but the executable it runs
+ * only ever sees its own path. Walk PATH for a `t3.cmd` whose target is the
+ * running executable; that is the launcher the install script wrote.
+ */
+const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
+  executablePath: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const environment = yield* HostProcessEnvironment;
+  const candidates = [
+    ...(environment["T3CODE_INSTALL_BIN_DIR"] ? [environment["T3CODE_INSTALL_BIN_DIR"]] : []),
+    ...(environment["PATH"] ?? environment["Path"] ?? "").split(";"),
+  ].filter((entry) => entry.trim().length > 0);
+  for (const directory of candidates) {
+    const shimPath = path.join(directory, "t3.cmd");
+    const contents = yield* fs.readFileString(shimPath).pipe(Effect.option);
+    if (Option.isNone(contents)) continue;
+    const target = /^"([^"]+)"/m.exec(contents.value)?.[1];
+    if (
+      target !== undefined &&
+      path.resolve(target).toLowerCase() === path.resolve(executablePath).toLowerCase()
+    ) {
+      return shimPath;
+    }
+  }
+  return undefined;
 });
 
 const updateFlags = {
@@ -300,12 +339,17 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     serverRuntimeStatePath: input.serverRuntimeStatePath,
     serviceInstalled,
   });
-  // "Already on" is about what this machine runs, not what this executable
-  // is: a newer t3 downloaded by hand and pointed at a home whose service
-  // still runs the old version has an update to do, and the service's
-  // version is the one the downgrade check has to protect.
+  // What this machine runs is the executable behind the launcher and, when a
+  // service is installed for this home, the version that service runs. Either
+  // being stale is an update to do, and the newest of the two is what the
+  // downgrade check protects.
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
-  const installedVersion = serviceVersion ?? currentVersion;
+  const executableCurrent = targetVersion === currentVersion;
+  const serviceCurrent = serviceVersion === undefined || serviceVersion === targetVersion;
+  const newestInstalled =
+    serviceVersion !== undefined && compareExactServiceVersions(serviceVersion, currentVersion) > 0
+      ? serviceVersion
+      : currentVersion;
 
   // Only archive-distributed versions install without Node and npm on the
   // machine. Until nightly and stable ship archives, updating onto them from
@@ -315,17 +359,17 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       reason: `t3@${targetVersion} is published on npm only. Install it with \`npm install -g t3@${targetVersion}\`, or pick a version from the preview channel.`,
     });
   }
-  if (targetVersion === installedVersion) {
+  if (executableCurrent && serviceCurrent) {
     yield* Console.log(
       serviceVersion !== undefined
-        ? `t3 and its background service are already on ${installedVersion} (${targetChannel}).`
-        : `t3 is already on ${installedVersion} (${targetChannel}).`,
+        ? `t3 and its background service are already on ${targetVersion} (${targetChannel}).`
+        : `t3 is already on ${targetVersion} (${targetChannel}).`,
     );
     return;
   }
-  if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, installedVersion) < 0) {
+  if (!input.allowDowngrade && compareExactServiceVersions(targetVersion, newestInstalled) < 0) {
     return yield* new CliUpdateError({
-      reason: `t3@${targetVersion} is older than the installed ${installedVersion}. Pass --allow-downgrade to install it anyway.`,
+      reason: `t3@${targetVersion} is older than the installed ${newestInstalled}. Pass --allow-downgrade to install it anyway.`,
     });
   }
 
@@ -337,12 +381,14 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
 
   yield* Console.log(
-    alreadyOnDisk
-      ? `Switching t3 ${installedVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
-      : `Updating t3 ${installedVersion} -> ${targetVersion} (${targetChannel}).`,
+    executableCurrent
+      ? `Updating the background service ${serviceVersion} -> ${targetVersion} (${targetChannel}).`
+      : alreadyOnDisk
+        ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
+        : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
   );
   let restartService = false;
-  if (serviceInstalled) {
+  if (serviceInstalled && !serviceCurrent) {
     yield* Console.log(
       "  A background service is installed for this T3 home. Restarting it interrupts anything running in it: agent turns, terminals, remote clients.",
     );
@@ -417,6 +463,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const launchedAs = NodeSea.isSea() ? path.resolve(process.argv0) : undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
+    versionsDir: path.dirname(runtime.versionDir),
     targetEntryPath: runtime.entryPath,
   });
 
@@ -452,9 +499,11 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   }
   if (serviceUpdated) {
     yield* Console.log(`  Background service restarted on ${targetVersion}`);
+  } else if (serviceInstalled && serviceCurrent) {
+    yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${installedVersion}. Run \`t3 service update\` when you are ready to restart it.`,
+      `  Background service still running ${serviceVersion}. Run \`t3 service update\` when you are ready to restart it.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

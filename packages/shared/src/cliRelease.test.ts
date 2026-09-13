@@ -6,6 +6,7 @@ import {
   cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
   cliReleaseChannelOf,
+  cliReleaseIndexPageUrl,
   isArchiveDistributedVersion,
   newestCliReleaseVersion,
   parseChecksums,
@@ -90,5 +91,12 @@ describe("cliRelease", () => {
     expect(newestCliReleaseVersion(releases, "nightly")).toBe("1.2.4-nightly.20260912.7");
     expect(newestCliReleaseVersion(releases, "stable")).toBe("1.2.3");
     expect(newestCliReleaseVersion([{ tag_name: "v1.2.3" }], "preview")).toBeUndefined();
+  });
+
+  it("pages through the release index at the largest page GitHub allows", () => {
+    expect(cliReleaseIndexPageUrl(1)).toBe(
+      "https://api.github.com/repos/pingdotgg/t3code/releases?per_page=100&page=1",
+    );
+    expect(cliReleaseIndexPageUrl(3)).toContain("page=3");
   });
 });
