@@ -2462,7 +2462,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const mainWindow = yield* Ref.get(mainWindowRef);
         if (Option.isNone(mainWindow)) return yield* new PreviewMainWindowClosedError({ tabId });
         const wc = yield* attempt({ operation: "mountBrowser", tabId }, () => {
-          browserHost ??= new BrowserViewHost(mainWindow.value, configureBrowserContents);
+          browserHost ??= new BrowserViewHost(
+            mainWindow.value,
+            hostPlatform,
+            configureBrowserContents,
+          );
           return browserHost.create(tabId, session, preload, tab.zoomFactor);
         });
         yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
@@ -3601,6 +3605,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       ),
       parentScope,
     );
+    return armed;
   });
 
   // Installed once per session: answers the renderer's `getDisplayMedia()` with the tab that
@@ -3627,6 +3632,34 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       callback({ video: armed.webContents.mainFrame });
     });
   };
+
+  const requestCapture = Effect.fn("PreviewManager.requestCapture")(function* (
+    tabId: string,
+    source: Electron.WebContents,
+    requester: Electron.WebContents,
+  ) {
+    installDisplayMediaRequestHandler(requester.session);
+    const armed = yield* armPendingRecording(tabId, source, requester.mainFrame.frameTreeNodeId);
+    yield* Effect.gen(function* () {
+      const requested = yield* attemptPromise(
+        { operation: "recording.requestCapture", tabId, webContentsId: requester.id },
+        () => requester.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
+      );
+      if (requested !== true) {
+        return yield* new PreviewRecordingCaptureUnavailableError({
+          tabId,
+          webContentsId: requester.id,
+        });
+      }
+    }).pipe(
+      Effect.onError(() =>
+        Effect.sync(() => {
+          // A concurrent capture may have replaced this request's grant.
+          if (pendingRecording === armed) pendingRecording = null;
+        }),
+      ),
+    );
+  });
 
   // Installed once per session. Electron opens a native Save dialog for a
   // download with no save path, so every export an agent clicked while testing
@@ -3694,29 +3727,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         if (!frameCaptureWindowOpen || requestWebContents.isDestroyed()) {
           return yield* new PreviewMainWindowClosedError({ tabId });
         }
-        installDisplayMediaRequestHandler(requestWebContents.session);
-        yield* armPendingRecording(tabId, wc, requestWebContents.mainFrame.frameTreeNodeId);
-        const captureRequested = yield* attemptPromise(
-          {
-            operation: "recording.requestCapture",
-            tabId,
-            webContentsId: requestWebContents.id,
-          },
-          () =>
-            requestWebContents.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
-        );
-        if (captureRequested !== true) {
-          return yield* new PreviewRecordingCaptureUnavailableError({
-            tabId,
-            webContentsId: requestWebContents.id,
-          });
-        }
-      }).pipe(
-        Effect.onError(() => {
-          clearPendingRecording(tabId);
-          return stopFrameCapture(tabId, "recording").pipe(Effect.ignore);
-        }),
-      ),
+        yield* requestCapture(tabId, wc, requestWebContents);
+      }).pipe(Effect.onError(() => stopFrameCapture(tabId, "recording").pipe(Effect.ignore))),
     );
   });
 
@@ -3726,19 +3738,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = yield* requireWebContents(tabId);
     const mainWindow = yield* Ref.get(mainWindowRef);
     if (Option.isNone(mainWindow)) return yield* new PreviewMainWindowClosedError({ tabId });
-    const requester = mainWindow.value.webContents;
-    installDisplayMediaRequestHandler(requester.session);
-    yield* armPendingRecording(tabId, wc, requester.mainFrame.frameTreeNodeId);
-    const requested = yield* attemptPromise({ operation: "startBrowserStream", tabId }, () =>
-      requester.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
-    ).pipe(Effect.onError(() => Effect.sync(() => clearPendingRecording(tabId))));
-    if (requested !== true) {
-      clearPendingRecording(tabId);
-      return yield* new PreviewRecordingCaptureUnavailableError({
-        tabId,
-        webContentsId: requester.id,
-      });
-    }
+    yield* requestCapture(tabId, wc, mainWindow.value.webContents);
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {

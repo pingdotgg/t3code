@@ -49,8 +49,8 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   }
 
   if (renderingActive) {
-    // Keep active video streams paintable behind the app while background
-    // automation waits for their first captured frame.
+    // Keep the retained surface measurable while background automation uses
+    // the native page in its automation window.
     return {
       left: 0,
       top: 0,

@@ -82,7 +82,7 @@ if (!process.argv.includes("--focus-test-child")) {
       );
       window = new BrowserWindow({ width: 1000, height: 700 });
       await window.loadFile(editorPath);
-      host = new BrowserViewHost(window);
+      host = new BrowserViewHost(window, "linux");
       const guests = [];
       for (const tabId of ["first", "second"]) {
         const contents = host.create(tabId, session.fromPartition("focus-test"), preload, 1);
@@ -118,8 +118,27 @@ if (!process.argv.includes("--focus-test-child")) {
       };
       const focusEditor = async () => {
         window.show();
-        window.webContents.focus();
-        await window.webContents.executeJavaScript("editor.focus()");
+        const bounds = window.getContentBounds();
+        const point = await window.webContents.executeJavaScript(
+          "({x: editor.offsetLeft + 20, y: editor.offsetTop + 20})",
+        );
+        // A programmatic focus would pass even if a native page covered the chat.
+        await exec("xdotool", [
+          "mousemove",
+          String(bounds.x + point.x),
+          String(bounds.y + point.y),
+          "click",
+          "1",
+        ]);
+        NodeAssert.equal(
+          await window.webContents.executeJavaScript(
+            "document.hasFocus() && document.activeElement === editor",
+          ),
+          true,
+        );
+        await window.webContents.executeJavaScript(
+          "editor.setSelectionRange(editor.value.length, editor.value.length)",
+        );
       };
       await focusEditor();
       let text = "x".repeat(200);

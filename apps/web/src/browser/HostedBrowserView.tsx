@@ -1,6 +1,7 @@
 "use client";
 
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import { useShallow } from "zustand/react/shallow";
 import {
   useCallback,
@@ -16,7 +17,11 @@ import { useClientSettingsHydrated } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
-import { captureBrowserViewStream, useActiveBrowserRecordingTabIds } from "./browserRecording";
+import {
+  BrowserRecordingUnavailableError,
+  captureBrowserViewStream,
+  useActiveBrowserRecordingTabIds,
+} from "./browserRecording";
 import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
@@ -247,7 +252,8 @@ export function HostedBrowserView(props: {
         })
         .catch((error) => {
           if (disposed) return;
-          if (++failures < 3) retry = setTimeout(capture, failures * 250);
+          if (!Schema.is(BrowserRecordingUnavailableError)(error) && ++failures < 3)
+            retry = setTimeout(capture, failures * 250);
           else {
             setFailedCaptureAttempt(captureAttempt);
             reportError(error);

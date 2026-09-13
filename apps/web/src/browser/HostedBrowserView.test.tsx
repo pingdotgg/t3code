@@ -43,7 +43,8 @@ vi.mock("~/components/preview/usePreviewBridge", () => ({
   usePreviewBridge: () => undefined,
 }));
 
-vi.mock("./browserRecording", () => ({
+vi.mock("./browserRecording", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./browserRecording")>()),
   captureBrowserViewStream: mocks.captureBrowserViewStream,
   useActiveBrowserRecordingTabIds: () => mocks.activeRecordings,
   stopBrowserRecording: async () => null,
@@ -56,6 +57,7 @@ import {
 import { acquireBrowserSurface, useBrowserSurfaceStore } from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
 import { HostedBrowserView } from "./HostedBrowserView";
+import { BrowserRecordingUnavailableError } from "./browserRecording";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -280,6 +282,16 @@ describe("HostedBrowserView capture recovery", () => {
     expect(retry).toBeDefined();
     await act(() => retry!.props.onClick());
     expect(node.srcObject).toBe(recovered.stream);
+  });
+
+  it("reports an unavailable desktop bridge without automatic retries", async () => {
+    vi.useFakeTimers();
+    const error = new BrowserRecordingUnavailableError({ tabId: "capture-tab" });
+    mocks.captureBrowserViewStream.mockRejectedValue(error);
+    await mount();
+    await act(() => vi.advanceTimersByTimeAsync(1_000));
+    expect(mocks.captureBrowserViewStream).toHaveBeenCalledOnce();
+    expect(reportError).toHaveBeenCalledWith(error);
   });
 
   it("cancels a scheduled retry when the page becomes inactive", async () => {

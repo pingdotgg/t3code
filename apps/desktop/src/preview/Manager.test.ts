@@ -2326,6 +2326,37 @@ describe("PreviewManager", () => {
     ),
   );
 
+  for (const start of ["startBrowserStream", "startRecording"] as const) {
+    for (const failure of ["reject", "unavailable"] as const) {
+      effectIt.effect(`preserves a newer capture grant after ${start} ${failure}`, () =>
+        withManager((manager) =>
+          Effect.gen(function* () {
+            const { host, grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
+            yield* manager.setMainWindow({
+              isDestroyed: () => false,
+              once: vi.fn(),
+              webContents: Object.assign(host, { setBackgroundThrottling: vi.fn() }),
+            } as never);
+            const requested = yield* Deferred.make<void>();
+            const pending = Promise.withResolvers<boolean>();
+            host.executeJavaScript.mockImplementationOnce(() => {
+              Deferred.doneUnsafe(requested, Exit.succeed(undefined));
+              return pending.promise;
+            });
+            const first = yield* manager[start]("tab_race_a").pipe(Effect.exit, Effect.forkChild);
+            yield* Deferred.await(requested);
+            yield* manager.startBrowserStream("tab_race_a");
+            if (failure === "reject") pending.reject(new Error("capture failed"));
+            else pending.resolve(false);
+            expect(Exit.isFailure(yield* Fiber.join(first))).toBe(true);
+            takeGrant();
+            expect(grants).toEqual([{ video: { routingId: 41 } }]);
+          }),
+        ),
+      );
+    }
+  }
+
   effectIt.effect("keeps every recorded guest unthrottled until its frame capture stops", () =>
     withManager((manager) =>
       Effect.gen(function* () {

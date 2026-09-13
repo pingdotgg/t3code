@@ -1,4 +1,4 @@
-import { View, WebContentsView, type BrowserWindow, type Session } from "electron";
+import { BrowserWindow, View, WebContentsView, type Session } from "electron";
 
 import type { DesktopBrowserLayout, DesktopBrowserInput } from "@t3tools/contracts";
 import { BROWSER_CURSOR_CHANNEL } from "../ipc/channels.ts";
@@ -12,23 +12,43 @@ interface BrowserViewEntry {
 }
 
 /**
- * Unlike a webview guest, a WebContentsView has its own frame focus. CDP input
- * can focus the page without selecting a frame inside the app renderer.
- * Passive pages sit behind the renderer; human input raises the native view.
+ * Standalone pages have independent frame focus. Keep passive views in a
+ * nonfocusable window because BrowserWindow.contentView always paints above
+ * the app renderer. Human input moves the same page into the app window.
  */
 export class BrowserViewHost {
   readonly #mainWindow: BrowserWindow;
+  readonly #window: BrowserWindow;
   readonly #mainContents: Electron.WebContents;
   readonly #configureContents: ((contents: Electron.WebContents) => void) | undefined;
   readonly #tabs = new Map<string, BrowserViewEntry>();
 
   constructor(
     mainWindow: BrowserWindow,
+    platform: NodeJS.Platform,
     configureContents?: (contents: Electron.WebContents) => void,
   ) {
     this.#mainContents = mainWindow.webContents;
     this.#configureContents = configureContents;
     this.#mainWindow = mainWindow;
+    this.#window = new BrowserWindow({
+      x: 0,
+      y: 0,
+      frame: false,
+      width: 1280,
+      height: 800,
+      title: "T3 browser automation host",
+      show: false,
+      focusable: false,
+      opacity: 0,
+      skipTaskbar: true,
+      webPreferences: { sandbox: true, backgroundThrottling: false },
+    });
+    // X11 without a compositor ignores opacity. An empty shape keeps the host
+    // invisible there without hiding its WebContents or suspending capture.
+    if (platform === "linux") this.#window.setShape([{ x: 0, y: 0, width: 0, height: 0 }]);
+    this.#window.setIgnoreMouseEvents(true);
+    this.#window.showInactive();
     mainWindow.webContents.on("focus", this.#parkAll);
     mainWindow.on("blur", this.#parkAll);
     mainWindow.once("closed", this.destroy);
@@ -62,7 +82,7 @@ export class BrowserViewHost {
       interactive: false,
     };
     entry.container.addChildView(view);
-    this.#mainWindow.contentView.addChildView(entry.container, 0);
+    this.#window.contentView.addChildView(entry.container);
     this.#tabs.set(tabId, entry);
     this.#configureContents?.(view.webContents);
     view.webContents.on("cursor-changed", (_event, type, image, scale, _size, hotspot) => {
@@ -113,6 +133,7 @@ export class BrowserViewHost {
       if (!entry.layout.clip) return;
       if (!entry.interactive) {
         this.#parkAll();
+        this.#window.contentView.removeChildView(entry.container);
         this.#mainWindow.contentView.addChildView(entry.container);
         entry.interactive = true;
         this.#applyLayout(entry);
@@ -138,8 +159,7 @@ export class BrowserViewHost {
     const focused = !entry.view.webContents.isDestroyed() && entry.view.webContents.isFocused();
     if (!this.#mainWindow.isDestroyed())
       this.#mainWindow.contentView.removeChildView(entry.container);
-    if (!this.#mainWindow.isDestroyed())
-      this.#mainWindow.contentView.addChildView(entry.container, 0);
+    if (!this.#window.isDestroyed()) this.#window.contentView.addChildView(entry.container);
     entry.interactive = false;
     this.#applyLayout(entry);
     if (focused && !this.#mainWindow.isDestroyed() && this.#mainWindow.isFocused())
@@ -151,8 +171,7 @@ export class BrowserViewHost {
     if (!entry) return;
     this.park(tabId);
     this.#tabs.delete(tabId);
-    if (!this.#mainWindow.isDestroyed())
-      this.#mainWindow.contentView.removeChildView(entry.container);
+    if (!this.#window.isDestroyed()) this.#window.contentView.removeChildView(entry.container);
     if (!entry.view.webContents.isDestroyed()) entry.view.webContents.close();
   }
 
@@ -161,6 +180,7 @@ export class BrowserViewHost {
     this.#mainWindow.removeListener("blur", this.#parkAll);
     this.#mainWindow.removeListener("closed", this.destroy);
     for (const tabId of this.#tabs.keys()) this.close(tabId);
+    if (!this.#window.isDestroyed()) this.#window.destroy();
   };
 
   readonly #parkAll = () => {
@@ -175,7 +195,8 @@ export class BrowserViewHost {
     // races Chromium's input-coordinate update and can hit the wrong element.
     const scale = clip ? content.scale * appZoom : 1;
     // Keep the native view attached and visible: Chromium drops injected clicks
-    // when its View is hidden. The app renderer covers passive pages instead.
+    // when its View is hidden. The transparent, nonfocusable host stays on-screen
+    // because Chromium suspends display-media frames for fully offscreen windows.
     entry.view.webContents.setBackgroundThrottling(!entry.interactive && !entry.layout.rendering);
     const width = Math.max(1, Math.round(viewport.width * entry.zoomFactor * scale));
     const height = Math.max(1, Math.round(viewport.height * entry.zoomFactor * scale));
@@ -196,5 +217,17 @@ export class BrowserViewHost {
       height,
     });
     entry.view.webContents.setZoomFactor(entry.zoomFactor * scale);
+    const sizes = Array.from(this.#tabs.values())
+      .filter((tab) => !tab.interactive)
+      .map((tab) => ({
+        width: Math.round(tab.layout.viewport.width * tab.zoomFactor),
+        height: Math.round(tab.layout.viewport.height * tab.zoomFactor),
+      }));
+    const parkedWidth = Math.max(1, ...sizes.map((size) => size.width));
+    const parkedHeight = Math.max(1, ...sizes.map((size) => size.height));
+    if (this.#window.isDestroyed()) return;
+    const [currentWidth, currentHeight] = this.#window.getContentSize();
+    if (currentWidth !== parkedWidth || currentHeight !== parkedHeight)
+      this.#window.setContentSize(parkedWidth, parkedHeight);
   }
 }
