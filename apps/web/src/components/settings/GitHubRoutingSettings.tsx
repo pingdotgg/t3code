@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import type { EnvironmentId } from "@t3tools/contracts";
 import {
   gitHubRoutingConnectionKey,
   gitHubRoutingPermissionFor,
@@ -22,24 +23,30 @@ const options: ReadonlyArray<{ value: GitHubRoutingPermission; label: string }> 
 
 export function GitHubRoutingSettings({
   environments,
+  selectedEnvironmentId,
 }: {
   readonly environments: ReadonlyArray<EnvironmentPresentation>;
+  readonly selectedEnvironmentId: EnvironmentId;
 }) {
   const permissions = useAtomValue(environmentCatalog.githubRoutingPermissionsValueAtom);
   const catalog = useAtomValue(environmentCatalog.catalogValueAtom);
   const update = useAtomCommand(environmentCatalog.setGitHubRoutingPermission);
   const [saving, setSaving] = useState(false);
+  const selectedEnvironments = environments.filter(
+    (environment) => environment.environmentId === selectedEnvironmentId,
+  );
 
   return (
     <SettingsSection {...searchableSetting("github-routing")}>
       <SettingsRow
         title="Share GitHub access"
+        className="sm:[&>div]:grid-cols-1 [&_p]:max-w-none"
         description="Choose environments you trust to share PR data and use each other's GitHub access. Enable both environments. Read and act may use broader permissions than the original environment. This applies only to this client."
       />
-      {environments.map((environment) => (
+      {selectedEnvironments.map((environment) => (
         <SettingsRow
           key={environment.environmentId}
-          title={environment.label}
+          title="GitHub access"
           description={environment.displayUrl ?? "T3 Connect"}
           control={
             <Select

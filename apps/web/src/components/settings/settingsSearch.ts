@@ -160,6 +160,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
+    id: "compact-sidebar",
+    title: "Compact sidebar",
+    to: "/settings/appearance",
+    searchTerms: ["collapsed icons rail hover navigation preview"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
@@ -240,6 +246,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Thread notifications",
     to: "/settings/general",
     searchTerms: ["notification sound alert completion input approval desktop"],
+  },
+  {
+    id: "in-app-notifications",
+    title: "In-app notifications",
+    to: "/settings/general",
+    searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
     id: "time-format",

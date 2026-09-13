@@ -591,9 +591,11 @@ function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof S
 function SidebarContent({
   className,
   fixedHeader,
+  fixedFooter,
   ...props
 }: React.ComponentProps<"div"> & {
   fixedHeader?: React.ReactNode;
+  fixedFooter?: React.ReactNode;
 }) {
   return (
     <>
@@ -617,6 +619,7 @@ function SidebarContent({
           {...props}
         />
       </ScrollArea>
+      {fixedFooter ? <div className="w-full shrink-0">{fixedFooter}</div> : null}
     </>
   );
 }
