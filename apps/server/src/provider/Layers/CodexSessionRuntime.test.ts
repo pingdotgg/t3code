@@ -608,6 +608,10 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.match(instructions, /t3-code/);
       NodeAssert.match(instructions, /preview_status/);
       NodeAssert.match(instructions, /preview_open/);
+      NodeAssert.match(instructions, /cua_repl/);
+      NodeAssert.match(instructions, /unified-computer-use/);
+      NodeAssert.match(instructions, /Browser is not available: iab/);
+      NodeAssert.match(instructions, /do not infer T3 browser availability from its errors/);
       NodeAssert.match(instructions, /Do not switch to global browser skills/);
     }
   });
@@ -618,6 +622,9 @@ describe("T3 browser developer instructions", () => {
       NodeAssert.doesNotMatch(instructions, /preview_status/);
       NodeAssert.doesNotMatch(instructions, /preview_open/);
       NodeAssert.doesNotMatch(instructions, /T3 Code collaborative browser/);
+      NodeAssert.doesNotMatch(instructions, /cua_repl/);
+      NodeAssert.doesNotMatch(instructions, /unified-computer-use/);
+      NodeAssert.doesNotMatch(instructions, /Browser is not available: iab/);
       // Steering away from other browser automation must go with the tools;
       // keeping it would leave the model talked out of its only option.
       NodeAssert.doesNotMatch(instructions, /Do not switch to global browser skills/);
@@ -633,6 +640,18 @@ describe("T3 browser developer instructions", () => {
       buildCodexDeveloperInstructions("default", runtime, false),
       /preview_open/,
     );
+  });
+
+  it("does not add browser collision steering when only device tools are attached", () => {
+    const instructions = buildCodexDeveloperInstructions("default", runtime, {
+      browser: false,
+      device: true,
+    });
+
+    NodeAssert.match(instructions, /device_open/);
+    NodeAssert.doesNotMatch(instructions, /preview_status/);
+    NodeAssert.doesNotMatch(instructions, /cua_repl/);
+    NodeAssert.doesNotMatch(instructions, /unified-computer-use/);
   });
 });
 
