@@ -151,7 +151,21 @@ export function TaskSidebar(props: {
       }}
       onDragOver={(event) => {
         if (placement !== placementRef.current) setPlacement(placementRef.current);
-        setTargetKey(event.over ? String(event.over.id) : null);
+        const overKey = event.over ? String(event.over.id) : null;
+        const intent = overKey
+          ? resolveTaskSidebarDrop(items, String(event.active.id), overKey, placementRef.current)
+          : null;
+        // Membership drops highlight the owning task even when hovering over its children.
+        const owner =
+          intent?.kind === "move-to-task"
+            ? items.find(
+                (item) =>
+                  item.kind === "task" &&
+                  item.taskRef.taskId === intent.taskRef.taskId &&
+                  item.taskRef.environmentId === intent.taskRef.environmentId,
+              )
+            : undefined;
+        setTargetKey(owner ? taskSidebarItemId(owner) : overKey);
       }}
       onDragEnd={(event) => {
         if (!event.over) return;

@@ -868,8 +868,8 @@ describe("task block drag projection", () => {
     },
   ];
   for (const section of ["settled", "snoozed"] as const) {
-    it.each([101, 118, 135])(
-      `accepts an outside thread across the whole ${section} task row at y=%s`,
+    it.each([101, 118, 135, 137, 154, 171])(
+      `accepts an outside thread across the expanded ${section} task at y=%s`,
       (y) => {
         const task = items[0]!;
         if (task.kind !== "task") throw new Error("Expected task fixture");
@@ -916,7 +916,7 @@ describe("task block drag projection", () => {
         const detector = createTaskSidebarCollisionDetection(rows);
         const { collisions, placement } = detector(args);
         const hit = collisions[0];
-        expect(hit?.id).toBe(task.key);
+        expect(hit?.id).toBe(y < 136 ? task.key : "settled");
         expect(
           taskSidebar.resolveTaskSidebarDrop(rows, "outside", String(hit?.id), placement ?? "on"),
         ).toMatchObject({
@@ -926,6 +926,17 @@ describe("task block drag projection", () => {
       },
     );
   }
+  it.each(["member", "draft", "new", "shelf", "settled"])(
+    "resolves the expanded task's %s row to its owner for incoming threads",
+    (target) => {
+      for (const placement of ["on", "before", "after"] as const) {
+        expect(taskSidebar.resolveTaskSidebarDrop(items, "free", target, placement)).toMatchObject({
+          kind: "move-to-task",
+          taskRef,
+        });
+      }
+    },
+  );
   function taskLayout(activeIndex: number, overIndex: number, scale = 1) {
     let top = 100;
     const rects = [82, 82, 36, 28, 28, 36, 82].map((height) => {

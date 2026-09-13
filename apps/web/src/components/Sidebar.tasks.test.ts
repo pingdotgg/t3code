@@ -255,7 +255,7 @@ describe("task drop intent", () => {
     expect(resolveTaskSidebarDrop(items, `task:${taskKey}`, other)).toBeNull();
   });
 
-  it("reorders siblings, prevents unrelated member drops and requires removal before pinning", () => {
+  it("reorders siblings, accepts incoming members and requires removal before pinning", () => {
     const { items } = inventory();
     expect(resolveTaskSidebarDrop(items, key("one"), key("two"))).toMatchObject({
       kind: "reorder",
@@ -270,8 +270,23 @@ describe("task drop intent", () => {
       threadRef: scopeThreadRef(environmentId, ThreadId.make("one")),
       section: "active",
     });
-    expect(resolveTaskSidebarDrop(items, key("free"), key("one"))).toBeNull();
+    expect(resolveTaskSidebarDrop(items, key("free"), key("one"))?.kind).toBe("move-to-task");
   });
+
+  it.each(["on", "before", "after"] as const)(
+    "adds outside threads through member rows with %s placement",
+    (placement) => {
+      const { items } = inventory();
+      expect(resolveTaskSidebarDrop(items, key("free"), key("one"), placement)).toMatchObject({
+        kind: "move-to-task",
+        taskRef: scopeTaskRef(environmentId, task().id),
+      });
+      expect(resolveTaskSidebarDrop(items, key("foreign"), key("one"), placement)).toBeNull();
+      expect(
+        resolveTaskSidebarDrop(items, `task:${taskKey}`, key("foreign"), placement),
+      ).toBeNull();
+    },
+  );
 
   for (const parentSettled of [false, true]) {
     it(`detaches settled members into Settled with parent settled=${parentSettled}`, () => {

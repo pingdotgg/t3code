@@ -499,7 +499,7 @@ export type TaskSidebarDrop =
       readonly taskKey?: string;
     };
 
-/** Card centers accept membership; before/after slots reorder whole top-level blocks. */
+/** Task contents accept incoming members; existing siblings and top-level edges retain ordering. */
 export function resolveTaskSidebarDrop(
   items: readonly TaskSidebarItem[],
   sourceKey: string,
@@ -515,14 +515,25 @@ export function resolveTaskSidebarDrop(
     sourceKey === targetKey
   )
     return null;
-  if (target.kind === "task" && placement === "on") {
+  const membershipTarget =
+    target.kind === "task"
+      ? placement === "on"
+        ? target
+        : undefined
+      : source.kind === "thread" &&
+          "taskKey" in target &&
+          target.taskKey &&
+          target.taskKey !== source.taskKey
+        ? items.find((item) => item.kind === "task" && item.taskKey === target.taskKey)
+        : undefined;
+  if (membershipTarget?.kind === "task") {
     if (
       source.kind !== "thread" ||
-      source.taskKey === target.taskKey ||
-      source.threadRef.environmentId !== target.taskRef.environmentId
+      source.taskKey === membershipTarget.taskKey ||
+      source.threadRef.environmentId !== membershipTarget.taskRef.environmentId
     )
       return null;
-    return { kind: "move-to-task", threadRef: source.threadRef, taskRef: target.taskRef };
+    return { kind: "move-to-task", threadRef: source.threadRef, taskRef: membershipTarget.taskRef };
   }
   if (target.kind === "draft" || target.kind === "task-thread-limit") return null;
   const section =

@@ -393,7 +393,7 @@ export function createTaskSidebarSortingStrategy(input: {
   };
 }
 
-/** Parked task rows accept membership across their full height; active cards keep ordering edges. */
+/** Task contents and parked headers accept pointer hits; active card edges keep ordering slots. */
 export function createTaskSidebarCollisionDetection(items: readonly TaskSidebarItem[]) {
   const byId = new Map(items.map((item) => [taskSidebarItemId(item), item]));
   return (args: Parameters<CollisionDetection>[0]) => {
@@ -403,9 +403,13 @@ export function createTaskSidebarCollisionDetection(items: readonly TaskSidebarI
         ? pointerWithin(args).find((hit) => {
             const target = byId.get(String(hit.id));
             return (
-              target?.kind === "task" &&
+              target !== undefined &&
+              "taskKey" in target &&
+              target.taskKey !== undefined &&
               target.taskKey !== source.taskKey &&
-              (target.section === "settled" || target.section === "snoozed")
+              (target.kind !== "task" ||
+                target.section === "settled" ||
+                target.section === "snoozed")
             );
           })
         : undefined;
@@ -425,7 +429,7 @@ export function createTaskSidebarCollisionDetection(items: readonly TaskSidebarI
     const intent = resolveTaskSidebarDrop(items, String(args.active.id), String(nearest.id), next);
     return {
       collisions: intent ? collisions : collisions.filter((entry) => entry.id === args.active.id),
-      placement: next,
+      placement: intent?.kind === "move-to-task" ? "on" : next,
     } as const;
   };
 }
