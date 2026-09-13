@@ -478,12 +478,15 @@ export const layer = Layer.effect(
           }
           return task;
         }
+        // A next_run_at corrupted between the poll read and this re-read must
+        // not defect the poll; an unparseable value is treated as not due.
+        const parsedNextRunAt =
+          active.nextRunAt === null ? Option.none() : DateTime.make(active.nextRunAt);
         if (
           trigger === "scheduled" &&
           (!active.enabled ||
-            active.nextRunAt === null ||
-            DateTime.toEpochMillis(DateTime.makeUnsafe(active.nextRunAt)) >
-              DateTime.toEpochMillis(startedAt))
+            Option.isNone(parsedNextRunAt) ||
+            DateTime.toEpochMillis(parsedNextRunAt.value) > DateTime.toEpochMillis(startedAt))
         ) {
           return active;
         }

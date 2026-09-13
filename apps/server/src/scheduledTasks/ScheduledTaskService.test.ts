@@ -266,3 +266,82 @@ it.effect(
       assert.equal(byId.get("due-bad-date")?.run_count, 0);
     }).pipe(Effect.provide(SqlitePersistenceMemory)),
 );
+
+it.effect(
+  "treats a next_run_at corrupted before the dispatch re-read as not due instead of defecting the poll",
+  () =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-09-09T12:00:00.000Z";
+      // Equal next_run_at means dispatch order follows task_id order.
+      for (const row of [
+        { id: "run-a", next: now, status: "never" },
+        { id: "run-b-victim", next: now, status: "never" },
+        { id: "run-c", next: now, status: "never" },
+        { id: "run-d", next: now, status: "never" },
+      ]) {
+        yield* insertRow(sql, { ...row, enabled: 1 }, now);
+      }
+      yield* TestClock.setTime(Date.parse(now) + 1_000);
+      const dispatched = yield* Ref.make(0);
+      const lastDispatched = yield* Deferred.make<void>();
+      const releaseLast = yield* Deferred.make<void>();
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* Layer.build(
+            Layer.provideMerge(
+              scheduledTaskServiceLayer,
+              Layer.mergeAll(
+                Layer.mock(ThreadLaunchService.ThreadLaunchService)({
+                  launch: () =>
+                    Ref.updateAndGet(dispatched, (n) => n + 1).pipe(
+                      // A concurrent writer (the CLI shares the SQLite file)
+                      // corrupts the next row between the poll read and its
+                      // dispatch re-read. Serial dispatch makes the
+                      // interleaving deterministic.
+                      Effect.andThen((n) =>
+                        n === 1
+                          ? sql`UPDATE scheduled_tasks
+                                SET next_run_at = ''
+                                WHERE task_id = 'run-b-victim'`.pipe(Effect.asVoid, Effect.orDie)
+                          : n === 3
+                            ? Deferred.succeed(lastDispatched, undefined).pipe(
+                                Effect.andThen(Deferred.await(releaseLast)),
+                              )
+                            : Effect.void,
+                      ),
+                      Effect.andThen(Effect.die(new Error("test launch failure"))),
+                    ),
+                }),
+                Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+                NodeCrypto.layer,
+              ),
+            ),
+          );
+          yield* TestClock.adjust("6 seconds");
+          // The third dispatch (run-d) can only happen after the victim's
+          // re-read was handled — a receipt that the poll fiber survived.
+          yield* Deferred.await(lastDispatched);
+          assert.equal(yield* Ref.get(dispatched), 3);
+          const rows = yield* sql<{
+            task_id: string;
+            last_run_status: string;
+            next_run_at: string | null;
+            run_count: number;
+          }>`SELECT task_id, last_run_status, next_run_at, run_count
+             FROM scheduled_tasks ORDER BY task_id`;
+          const byId = new Map(rows.map((row) => [row.task_id, row]));
+          const victim = byId.get("run-b-victim");
+          assert.equal(victim?.last_run_status, "never");
+          assert.equal(victim?.run_count, 0);
+          assert.equal(victim?.next_run_at, "");
+          for (const id of ["run-a", "run-c"]) {
+            const row = byId.get(id);
+            assert.equal(row?.last_run_status, "failed");
+            assert.equal(row?.run_count, 1);
+          }
+          yield* Deferred.succeed(releaseLast, undefined);
+        }),
+      );
+    }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
