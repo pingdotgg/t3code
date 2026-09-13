@@ -29,6 +29,14 @@ describe("resolveProjectSettings", () => {
     );
   });
 
+  it("treats a null project like an absent one before the shell snapshot arrives", () => {
+    // The mobile new-task flow resolves settings while its selected project is
+    // still null; reading the aggregate's legacy fields off null crashed launch.
+    expect(resolveProjectSettings(DEFAULT_SERVER_SETTINGS, null, null).settings).toBe(
+      DEFAULT_SERVER_SETTINGS,
+    );
+  });
+
   it("applies overrides per key and reports their source", () => {
     const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
       defaultAutoPull: true,
