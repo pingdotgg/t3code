@@ -294,6 +294,66 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
     }),
   );
 
+  it.effect("retires a crashed process so a deliberate retry can resume", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-crash-recovery");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "grok-crash-recovery-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapper = yield* Effect.promise(() =>
+        makeMockGrokWrapper({
+          T3_ACP_CRASH_PROMPT: "1",
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapper);
+      const exited =
+        yield* Deferred.make<Extract<ProviderRuntimeEvent, { type: "session.exited" }>>();
+      const events = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        event.type === "session.exited"
+          ? Deferred.succeed(exited, event).pipe(Effect.asVoid)
+          : Effect.void,
+      ).pipe(Effect.forkChild);
+      const input = {
+        threadId,
+        provider: ProviderDriverKind.make("grok"),
+        cwd: process.cwd(),
+        runtimeMode: "full-access" as const,
+      };
+      const session = yield* adapter.startSession(input);
+      const failure = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "crash now", attachments: [] }),
+      );
+      assert.isDefined(failure);
+      assert.isFalse(yield* adapter.hasSession(threadId));
+      const retryDuringTeardown = yield* Effect.flip(
+        adapter.sendTurn({ threadId, input: "retry during teardown", attachments: [] }),
+      );
+      assert.equal(retryDuringTeardown._tag, "ProviderAdapterSessionNotFoundError");
+      assert.equal((yield* Deferred.await(exited)).payload.exitKind, "error");
+      assert.deepStrictEqual(yield* adapter.listSessions(), []);
+      yield* Fiber.interrupt(events);
+      yield* adapter.startSession({ ...input, resumeCursor: session.resumeCursor });
+      const turn = yield* adapter.sendTurn({ threadId, input: "retry now", attachments: [] });
+      assert.equal(turn.threadId, threadId);
+      yield* adapter.stopSession(threadId);
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      assert.equal(requests.filter((request) => request.method === "session/new").length, 1);
+      assert.deepStrictEqual(session.resumeCursor, {
+        schemaVersion: 1,
+        sessionId: "mock-session-1",
+      });
+      const resumes = requests.filter((request) => request.method === "session/load");
+      assert.equal(resumes.length, 1);
+      assert.deepStrictEqual(resumes[0]?.params, {
+        sessionId: "mock-session-1",
+        cwd: process.cwd(),
+        mcpServers: [],
+      });
+    }),
+  );
+
   it.effect("starts a session and maps mock ACP prompt flow to runtime events", () =>
     Effect.gen(function* () {
       const threadId = ThreadId.make("grok-mock-thread");
