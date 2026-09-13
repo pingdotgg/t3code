@@ -33,6 +33,30 @@ describe("GitHub GraphQL budget", () => {
     }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
   );
 
+  it.effect("adds rate metadata to the operation before trailing fragments", () =>
+    Effect.gen(function* () {
+      const budget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+      const document = `query {
+  repository(owner: "acme", name: "web") { ...RepositoryName }
+}
+
+fragment RepositoryName on Repository {
+  name
+}`;
+      const query = yield* budget.query("github.com", document);
+
+      expect(query).toBe(`query {
+  repository(owner: "acme", name: "web") { ...RepositoryName }
+
+  rateLimit { cost limit remaining resetAt }
+}
+
+fragment RepositoryName on Repository {
+  name
+}`);
+    }).pipe(Effect.provide(GitHubGraphQlBudget.layer)),
+  );
+
   it.effect("protects the last ten percent with the shared provider cooldown error", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(BEFORE_RESET);

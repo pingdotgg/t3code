@@ -1,5 +1,7 @@
 import type {
   EnvironmentId,
+  IssueLink,
+  WorkItemMatch,
   PullRequestActor,
   PullRequestComment,
   PullRequestDetailView,
@@ -15,7 +17,7 @@ import {
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useId, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -23,6 +25,13 @@ import { cn } from "~/lib/utils";
 import { useOpenLink } from "~/browser/useOpenLink";
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 
+import { openLinkInBrowser } from "~/lib/openIssueLink";
+import { IssueStateGlyph } from "../issue/issuePresentation";
+import {
+  useWorkItemMatches,
+  WorkItemMatchButton,
+  WorkItemMatchRows,
+} from "../workItems/WorkItemMatches";
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
 import { toastManager } from "../ui/toast";
@@ -41,6 +50,7 @@ import { PullRequestLabelPicker } from "./PullRequestLabelPicker";
 import { PullRequestReviewerPicker } from "./PullRequestReviewerPicker";
 import { PullRequestActivityUnavailableState } from "./PullRequestActivityUnavailableState";
 import {
+  LINK_ISSUES_HANDOFF_KIND,
   latestPullRequestReviewOutcomes,
   orderPullRequestComments,
   pullRequestFindingKey,
@@ -57,7 +67,10 @@ import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
 import { PullRequestConversationGhost } from "./PullRequestGhosts";
 import { pullRequestLabelColor } from "./pullRequestList.logic";
-import { sectionCollapseAnchorScrollTop } from "./pullRequestSummaryScroll.logic";
+import {
+  SummaryMetaRow as MetaRow,
+  SummarySection as Section,
+} from "../sourceControl/SummaryMetaRow";
 
 /** One reviewer, however a host happens to have cased their login this time. */
 function reviewerKey(login: string): string {
@@ -214,91 +227,6 @@ function CollapsedComment({
   );
 }
 
-function MetaRow({
-  icon,
-  label,
-  children,
-}: {
-  icon: ReactNode;
-  label: string;
-  children: ReactNode;
-}) {
-  return (
-    <div className="grid min-w-0 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2 text-xs">
-      <span className="flex items-center gap-1.5 text-muted-foreground">
-        {icon}
-        {label}
-      </span>
-      <span className="min-w-0 text-foreground">{children}</span>
-    </div>
-  );
-}
-
-function Section({
-  title,
-  defaultOpen = true,
-  actions,
-  children,
-}: {
-  title: string;
-  defaultOpen?: boolean;
-  /** Heading controls stay separate from the collapse trigger so they remain independently usable. */
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  const headingRef = useRef<HTMLDivElement>(null);
-  const setOpenWithScrollAnchor = (nextOpen: boolean) => {
-    if (!nextOpen) {
-      const heading = headingRef.current;
-      const section = heading?.closest<HTMLElement>("[data-pull-request-summary-section]");
-      const scroller = heading?.closest<HTMLElement>("[data-pull-request-summary-scroll]");
-      if (heading && section && scroller) {
-        const target = sectionCollapseAnchorScrollTop({
-          scrollTop: scroller.scrollTop,
-          viewportTop: scroller.getBoundingClientRect().top,
-          sectionTop: section.getBoundingClientRect().top,
-          headingTop: heading.getBoundingClientRect().top,
-        });
-        // Synchronous with the press: React commits the collapsed height before the browser
-        // paints, so the reader sees the heading they pressed stay put rather than a jump first.
-        if (target !== null) scroller.scrollTop = target;
-      }
-    }
-    setOpen(nextOpen);
-  };
-  return (
-    <Collapsible
-      open={open}
-      onOpenChange={setOpenWithScrollAnchor}
-      data-pull-request-summary-section
-    >
-      {/* The heading rides the top of the scroll box the way a diff's file header does, so a
-          section can be collapsed from wherever its body has been read to rather than only from
-          where it started. Opaque, because the rows it covers scroll beneath it. */}
-      <div
-        ref={headingRef}
-        className="sticky top-0 z-10 flex w-full items-center bg-background pr-4"
-      >
-        <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-1.5 px-4 py-3 text-left text-xs font-medium text-muted-foreground hover:text-foreground">
-          <span>{title}</span>
-          <ChevronRightIcon
-            aria-hidden
-            className={cn(
-              "size-3.5 text-muted-foreground/60 transition-transform",
-              open && "rotate-90",
-            )}
-          />
-        </CollapsibleTrigger>
-        {actions}
-      </div>
-      <CollapsiblePanel>
-        <div className="px-4 pb-4">{children}</div>
-      </CollapsiblePanel>
-    </Collapsible>
-  );
-}
-
 /**
  * What a first render of the conversation carries. A pull request with two hundred comments is
  * two hundred markdown documents, and the ones worth arriving for are the recent ones.
@@ -316,6 +244,8 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
+  onLinkIssues,
+  onOpenLinkedIssue,
   onRefresh,
 }: {
   environmentId: EnvironmentId;
@@ -329,11 +259,37 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
+  /**
+   * Hands one selected issue to an agent for linking. Supplied by whoever
+   * mounted the panel, because only they can open a thread for it; without one the section
+   * offers nothing, which is never a dead control.
+   */
+  onLinkIssues?: (match: WorkItemMatch) => void;
+  /**
+   * Opens one of the issues this pull request references. Supplied by whoever mounted the panel,
+   * because only they know which thread's panel a peer tab belongs beside; without one the row
+   * opens the issue on its host instead, which is never a dead control.
+   */
+  onOpenLinkedIssue?: (link: IssueLink & { readonly provider: string }) => void;
   onRefresh: () => void;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
+  const aiMatches = useWorkItemMatches({
+    environmentId,
+    projectId: reference.projectId,
+    source: {
+      kind: "pull-request",
+      provider: detail.provider,
+      repository: reference.repository,
+      number: reference.number,
+    },
+    version: detail.updatedAt,
+  });
+  const openAiMatch = (match: { readonly url: string }) => {
+    openLinkInBrowser(match.url);
+  };
   const checksId = useId();
   const [expandedChecksUrl, setExpandedChecksUrl] = useState<string | null>(null);
   const showChecks = expandedChecksUrl === detail.url;
@@ -641,6 +597,71 @@ export function PullRequestSummaryTab({
           )}
         </div>
       </section>
+
+      <Section
+        title="Related issues"
+        {...(detail.linkedIssues === undefined ? {} : { count: detail.linkedIssues.length })}
+        actions={
+          <WorkItemMatchButton
+            busy={aiMatches.pending === "related"}
+            disabled={aiMatches.pending !== null}
+            loaded={aiMatches.related !== undefined}
+            onClick={() => void aiMatches.find("related")}
+          />
+        }
+      >
+        {detail.linkedIssues === undefined ? (
+          <p className="text-xs text-muted-foreground">This host does not report issue links.</p>
+        ) : detail.linkedIssues.length === 0 ? (
+          <p className="text-xs text-muted-foreground">This change mentions no issue.</p>
+        ) : (
+          <div className="space-y-0.5">
+            {detail.linkedIssues.map((link) => (
+              <button
+                key={`${link.repository}#${link.number}`}
+                type="button"
+                // Beside the change rather than instead of it: reading what a change is for is
+                // reading the two together.
+                onClick={() =>
+                  onOpenLinkedIssue === undefined
+                    ? openAiMatch(link)
+                    : onOpenLinkedIssue({ ...link, provider: detail.provider })
+                }
+                className="flex w-full min-w-0 items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs hover:bg-accent/60"
+              >
+                <IssueStateGlyph state={link.state} stateReason={null} className="size-3.5" />
+                <span className="min-w-0 flex-1 truncate">{link.title}</span>
+                {link.closesIssue ? (
+                  <span className="shrink-0 rounded-full border border-border/60 px-1.5 text-[10px] text-muted-foreground">
+                    closed by this
+                  </span>
+                ) : null}
+                <span className="shrink-0 text-muted-foreground tabular-nums">#{link.number}</span>
+              </button>
+            ))}
+            {detail.linkedIssuesTruncated === true ? (
+              <p className="px-2 pt-1 text-xs text-muted-foreground">
+                More linked issues exist on the host.
+              </p>
+            ) : null}
+          </div>
+        )}
+        {aiMatches.related === undefined ? null : (
+          <div className="mt-2">
+            <WorkItemMatchRows
+              matches={aiMatches.related}
+              emptyText="No likely related issues found."
+              onOpen={openAiMatch}
+              {...(detail.linkedIssues !== undefined && onLinkIssues
+                ? {
+                    onLink: onLinkIssues,
+                    linking: pendingFinding === LINK_ISSUES_HANDOFF_KIND,
+                  }
+                : {})}
+            />
+          </div>
+        )}
+      </Section>
 
       <section aria-label="Checks" className="px-4 py-3">
         {detail.checks.length === 0 ? (

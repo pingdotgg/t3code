@@ -89,6 +89,7 @@ function changeRequest(number: number, updatedAt: string): ProviderChangeRequest
 
 function hostedChangeRequest(body: string, additions = 1) {
   return {
+    linkedIssues: [],
     ...changeRequest(1, "2026-07-02T00:00:00Z"),
     body,
     additions,
@@ -3668,6 +3669,7 @@ it.effect(
                   verdicts: ["comment", "approve", "request-changes"],
                   requestReviewers: true,
                 },
+                linkedIssues: [],
               });
             },
             getChangeRequestActivity: () => {
@@ -4149,6 +4151,7 @@ it.effect("keeps recent detail on a transient refresh failure but not after inva
               : Effect.succeed({
                   ...changeRequest(1, "2026-07-02T00:00:00Z"),
                   body: "last good body",
+                  linkedIssues: [],
                   changedFiles: 2,
                   mergedAt: null,
                   closedAt: null,
@@ -4200,6 +4203,7 @@ it.effect("carries an armed auto-merge through to the detail, and silence as sil
                   closedAt: null,
                   reviewers: [],
                   checks: [],
+                  linkedIssues: [],
                   mergeCapabilities: { merge: true, squash: true, rebase: true },
                   viewerPermissions: {
                     actions: ["merge"],
@@ -4753,6 +4757,7 @@ it.effect("forgets the cached detail after a rewrite or terminal turn", () =>
               closedAt: null,
               reviewers: [],
               checks: [],
+              linkedIssues: [],
               mergeCapabilities: { merge: true, squash: true, rebase: true },
               viewerPermissions: {
                 actions: ["merge"],
@@ -4804,6 +4809,7 @@ it.effect("names the signed-in account in the detail, and says nothing where the
           closedAt: null,
           reviewers: [],
           checks: [],
+          linkedIssues: [],
           mergeCapabilities: { merge: true, squash: true, rebase: true },
           viewerPermissions: {
             actions: ["merge"],

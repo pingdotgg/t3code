@@ -270,6 +270,7 @@ export function applyServerSettingsPatch(
     providerHealthRefreshInterval,
     backgroundActivityProfile,
     backgroundActivity,
+    issueTracking,
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
@@ -282,6 +283,23 @@ export function applyServerSettingsPatch(
     projectScriptOverrides: _legacyScripts,
     ...patchForMerge
   } = patch;
+  const { linear: linearPatch, ...issueTrackingPatch } = issueTracking ?? {};
+  const {
+    projectBindingsToDelete = [],
+    projectTeamsToDelete = [],
+    ...linearPatchForMerge
+  } = linearPatch ?? {};
+  const settingsPatchForMerge = {
+    ...patchForMerge,
+    ...(issueTracking === undefined
+      ? {}
+      : {
+          issueTracking: {
+            ...issueTrackingPatch,
+            ...(linearPatch === undefined ? {} : { linear: linearPatchForMerge }),
+          },
+        }),
+  };
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
   const backgroundActivityPatch =
     backgroundActivityProfile !== undefined
@@ -317,7 +335,36 @@ export function applyServerSettingsPatch(
             },
           }
         : undefined;
-  const next = deepMerge(current, patchForMerge);
+  const merged = deepMerge(current, settingsPatchForMerge);
+  const projectBindings = { ...merged.issueTracking.linear.projectBindings };
+  for (const projectId of projectBindingsToDelete) delete projectBindings[projectId];
+  const changedProjectTeams = Object.keys(linearPatchForMerge.projectTeams ?? {});
+  for (const projectId of changedProjectTeams) {
+    const id = projectId as ProjectId;
+    const existing = projectBindings[id];
+    const teamKey = linearPatchForMerge.projectTeams?.[id];
+    if (
+      existing != null &&
+      teamKey !== undefined &&
+      linearPatchForMerge.projectBindings?.[id] === undefined &&
+      !projectBindingsToDelete.includes(id)
+    ) {
+      projectBindings[id] = { ...existing, teamKey };
+    }
+  }
+  const projectTeams = { ...merged.issueTracking.linear.projectTeams };
+  for (const projectId of projectTeamsToDelete) delete projectTeams[projectId];
+  const next =
+    projectBindingsToDelete.length === 0 &&
+    projectTeamsToDelete.length === 0 &&
+    changedProjectTeams.length === 0
+      ? merged
+      : {
+          ...merged,
+          issueTracking: {
+            linear: { ...merged.issueTracking.linear, projectBindings, projectTeams },
+          },
+        };
   const nextWithReplacementsBase = {
     ...next,
     ...(backgroundActivity !== undefined

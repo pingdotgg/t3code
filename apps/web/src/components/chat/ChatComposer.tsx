@@ -90,7 +90,6 @@ import {
 import {
   composerFloatingLayerProps,
   isInsideCollapsedComposerControls,
-  isInsideComposerFloatingLayer,
   isInsideRestingComposerControlScope,
 } from "./composerEventScope";
 import {
@@ -177,6 +176,7 @@ import {
   type TerminalContextSelection,
 } from "../../lib/terminalContext";
 import { useComposerPathSearch } from "../../lib/composerPathSearchState";
+import { issueEnvironment } from "../../state/issues";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import {
   COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX,
@@ -239,7 +239,12 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
+import {
+  buildComposerPathMenuItems,
+  type ComposerCommandItem,
+  ComposerCommandMenu,
+  serializeComposerIssueMention,
+} from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
 import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
@@ -1287,6 +1292,7 @@ export interface ChatComposerProps {
   activeThreadId: ThreadId | null;
   activeThreadEnvironmentId: EnvironmentId | undefined;
   activeThread: Thread | undefined;
+  issueSearchProjectId: ProjectId | null;
   /** The routed server thread's shell, present before its detail loads. */
   activeThreadShell: ThreadShell | null;
   /** Timeline messages including optimistic sends, for ArrowUp prompt recall. */
@@ -1442,6 +1448,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadId,
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
+    issueSearchProjectId,
     promptHistoryMessages,
     isServerThread: _isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
@@ -2201,6 +2208,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     cwd: isPathTrigger ? gitCwd : null,
     query: isPathTrigger ? pathTriggerQuery : null,
   });
+  const debouncedIssueQuery = useDebouncedValue(pathTriggerQuery.trim(), 120);
+  const composerIssues = useEnvironmentQuery(
+    isPathTrigger && issueSearchProjectId !== null
+      ? issueEnvironment.list({
+          environmentId,
+          input: {
+            projectId: issueSearchProjectId,
+            state: debouncedIssueQuery ? "all" : "open",
+            involvement: "all",
+            limit: 8,
+            sort: debouncedIssueQuery ? "best-match" : "updated",
+            order: "desc",
+            ...(debouncedIssueQuery ? { query: debouncedIssueQuery } : {}),
+          },
+        })
+      : null,
+  );
   const compactSlashCommandAvailable =
     composerTrigger?.kind === "slash-command" &&
     prompt.slice(0, composerTrigger.rangeStart).trim() === "" &&
@@ -2277,14 +2301,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      return workspaceEntries.entries.map((entry) => ({
-        id: `path:${entry.kind}:${entry.path}`,
-        type: "path",
-        path: entry.path,
-        pathKind: entry.kind,
-        label: basenameOfPath(entry.path),
-        description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
-      }));
+      return buildComposerPathMenuItems({
+        issues: composerIssues.data?.entries ?? [],
+        pathItems: workspaceEntries.entries.map((entry) => ({
+          id: `path:${entry.kind}:${entry.path}`,
+          type: "path" as const,
+          path: entry.path,
+          pathKind: entry.kind,
+          label: basenameOfPath(entry.path),
+          description: entry.path.slice(0, Math.max(0, entry.path.lastIndexOf("/"))),
+        })),
+        query: pathTriggerQuery.trim(),
+        settledIssueQuery: debouncedIssueQuery,
+      });
     }
     if (composerTrigger.kind === "slash-command") {
       const builtInSlashCommandItems = [
@@ -2418,6 +2447,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   }, [
     compactSlashCommandAvailable,
     composerTrigger,
+    composerIssues.data?.entries,
+    debouncedIssueQuery,
+    pathTriggerQuery,
     exactPullRequestLookup.data,
     planModeUiEnabled,
     pullRequestLookup.data,
@@ -2500,7 +2532,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const isComposerMenuLoading =
-    (composerTriggerKind === "path" && pathTriggerQuery.length > 0 && workspaceEntries.isPending) ||
+    (composerTriggerKind === "path" &&
+      (composerIssues.isPending || (pathTriggerQuery.length > 0 && workspaceEntries.isPending))) ||
     (composerTriggerKind === "pull-request" &&
       pullRequestProjectId !== null &&
       pullRequestRepository !== null &&
@@ -2527,11 +2560,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         : "No pull requests found in this repository.";
     }
     return composerTriggerKind === "path"
-      ? "No matching files or folders."
+      ? issueSearchProjectId !== null
+        ? "No matching issues, files, or folders."
+        : "No matching files or folders."
       : "No matching command.";
   }, [
     composerTrigger,
     composerTriggerKind,
+    issueSearchProjectId,
     pullRequestLookup.data?.errors,
     pullRequestLookup.error,
     pullRequestProjectId,
@@ -3515,6 +3551,22 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       });
       const { snapshot, trigger } = resolveActiveComposerTrigger();
       if (!trigger) return;
+      if (item.type === "issue") {
+        const replacement = serializeComposerIssueMention(item.issue);
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        if (
+          applyPromptReplacement(trigger.rangeStart, replacementRangeEnd, replacement, {
+            expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd),
+          })
+        ) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
       if (item.type === "path") {
         const replacement = `${serializeComposerFileLink(item.path)} `;
         const replacementRangeEnd = extendReplacementRangeForTrailingSpace(

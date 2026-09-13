@@ -254,6 +254,7 @@ export const make = Effect.gen(function* () {
           return actor ? [actor] : [];
         }),
         checks: forgejoChecks(statuses.items),
+        linkedIssues: [],
         baseComparison: !pr.merge_base
           ? "unknown"
           : pr.merge_base === pr.base.sha
