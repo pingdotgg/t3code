@@ -6,6 +6,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import { VcsProcessSpawnError, VcsProcessTimeoutError } from "@t3tools/contracts";
@@ -403,7 +404,12 @@ it.effect("reports implemented tools separately from locally available executabl
           operation: input.operation,
           command: input.command,
           cwd: input.cwd,
-          cause: new Error(`${input.command} not found`),
+          cause: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: `${input.command} not found`,
+          }),
         }),
       );
     },
@@ -554,7 +560,12 @@ Logged in to gitlab.com as gitlab-user
           operation: input.operation,
           command: input.command,
           cwd: input.cwd,
-          cause: new Error(`${input.command} not found`),
+          cause: PlatformError.systemError({
+            _tag: "NotFound",
+            module: "ChildProcess",
+            method: "spawn",
+            description: `${input.command} not found`,
+          }),
         }),
       );
     },
@@ -1272,7 +1283,12 @@ it.effect("falls back to tea when fj is missing or has no account for this serve
                     operation: input.operation,
                     command: input.command,
                     cwd: input.cwd,
-                    cause: new Error("fj not found"),
+                    cause: PlatformError.systemError({
+                      _tag: "NotFound",
+                      module: "ChildProcess",
+                      method: "spawn",
+                      description: "fj not found",
+                    }),
                   }),
                 );
               assert.strictEqual(input.command, "tea");
@@ -1456,7 +1472,12 @@ it.effect(
                           operation: input.operation,
                           command: input.command,
                           cwd: input.cwd,
-                          cause: new Error("fj not found"),
+                          cause: PlatformError.systemError({
+                            _tag: "NotFound",
+                            module: "ChildProcess",
+                            method: "spawn",
+                            description: "fj not found",
+                          }),
                         }),
                       );
                     if (input.args[0] === "version")
@@ -1684,4 +1705,65 @@ it.effect(
       Effect.scoped,
       Effect.provide(VcsProcess.layer.pipe(Layer.provideMerge(NodeServices.layer))),
     ),
+);
+
+it.effect.each([
+  [
+    PlatformError.systemError({ _tag: "NotFound", module: "ChildProcess", method: "spawn" }),
+    "missing",
+  ],
+  [
+    PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "ChildProcess",
+      method: "spawn",
+    }),
+    "available",
+  ],
+  [
+    PlatformError.systemError({ _tag: "NotFound", module: "FileSystem", method: "readFile" }),
+    "available",
+  ],
+  [new Error("unclassified spawn failure"), "available"],
+] as const)(
+  "classifies a failed CLI probe without guessing from its error text: %s",
+  ([cause, status]) =>
+    Effect.gen(function* () {
+      const calls: string[] = [];
+      const result = yield* probeSourceControlProvider({
+        cwd: "/workspace",
+        spec: {
+          type: "cli",
+          kind: "github",
+          label: "GitHub CLI",
+          executable: "gh",
+          versionArgs: ["--version"],
+          authArgs: ["auth", "status"],
+          installHint: "Install gh",
+          parseAuth: () => ({
+            status: "authenticated",
+            account: Option.none(),
+            host: Option.none(),
+            detail: Option.none(),
+          }),
+        },
+        process: {
+          run: (input) => {
+            calls.push(input.args.join(" "));
+            return Effect.fail(
+              new VcsProcessSpawnError({
+                operation: input.operation,
+                command: input.command,
+                cwd: input.cwd,
+                cause,
+              }),
+            );
+          },
+        },
+      });
+      assert.strictEqual(result.status, status);
+      assert.strictEqual(result.auth.status, "unknown");
+      assert.isTrue(Option.isSome(result.detail));
+      assert.deepStrictEqual(calls, ["--version"]);
+    }),
 );

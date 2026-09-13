@@ -7,6 +7,7 @@ import type {
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 
 import type * as SourceControlProvider from "./SourceControlProvider.ts";
 import type * as VcsProcess from "../vcs/VcsProcess.ts";
@@ -212,9 +213,15 @@ function probeCli(input: {
           kind: input.spec.kind,
           label: input.spec.label,
           executable: input.spec.executable,
-          // A response deadline is not evidence that the executable is absent.
+          // Only an executable lookup failure establishes that the CLI is missing.
           status:
-            cause._tag === "VcsProcessTimeoutError" ? ("available" as const) : ("missing" as const),
+            cause._tag === "VcsProcessSpawnError" &&
+            cause.cause instanceof PlatformError.PlatformError &&
+            cause.cause.reason._tag === "NotFound" &&
+            cause.cause.reason.module === "ChildProcess" &&
+            cause.cause.reason.method === "spawn"
+              ? ("missing" as const)
+              : ("available" as const),
           version: Option.none<string>(),
           installHint: input.spec.installHint,
           detail: detailFromCause(cause),
