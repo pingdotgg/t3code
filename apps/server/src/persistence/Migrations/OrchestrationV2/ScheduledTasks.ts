@@ -22,6 +22,7 @@ export default Effect.gen(function* () {
       creation_source TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
+      enabled_seq INTEGER,
       next_run_at TEXT,
       last_run_at TEXT,
       last_run_status TEXT NOT NULL,

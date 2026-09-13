@@ -465,6 +465,7 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+    pauseForThread: () => Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
   }),
 );
 
@@ -642,6 +643,8 @@ describe("orchestrator MCP toolkit", () => {
                   all.filter((candidate) => candidate.id !== input.id),
                 ).pipe(Effect.as({ id: input.id })),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
+              pauseForThread: () =>
+                Effect.die("ScheduledTaskService.pauseForThread is unused in this test"),
             }),
           );
           const testLayer = Layer.merge(
