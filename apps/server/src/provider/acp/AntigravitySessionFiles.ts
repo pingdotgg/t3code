@@ -76,23 +76,27 @@ export const cleanOrphanedAntigravityTempDirs = Effect.fn("cleanOrphanedAntigrav
       }
     }
 
-    // 2. Clean orphaned _MEI folders in system temp directory left by previous Antigravity probes
-    const systemTemp = process.env.TEMP || process.env.TMP;
-    if (systemTemp && (yield* fs.exists(systemTemp))) {
-      const entries = yield* fs.readDirectory(systemTemp).pipe(Effect.orElseSucceed(() => []));
-      for (const entry of entries) {
-        if (entry.startsWith("_MEI")) {
-          const fullPath = path.join(systemTemp, entry);
-          const hasGoogle3 = yield* fs
-            .exists(path.join(fullPath, "google3"))
-            .pipe(Effect.orElseSucceed(() => false));
-          const hasGoogle =
-            hasGoogle3 ||
-            (yield* fs
-              .exists(path.join(fullPath, "google"))
-              .pipe(Effect.orElseSucceed(() => false)));
-          if (hasGoogle) {
-            yield* fs.remove(fullPath, { recursive: true, force: true }).pipe(Effect.ignore);
+    // 2. Clean orphaned _MEI folders in system temp directory left by previous Antigravity probes on Windows
+    // On Unix, concurrent processes can have their files deleted without file locking protection,
+    // so system temp sweeping is restricted to Windows where active files are lock-protected.
+    if (process.platform === "win32") {
+      const systemTemp = process.env.TEMP || process.env.TMP;
+      if (systemTemp && (yield* fs.exists(systemTemp))) {
+        const entries = yield* fs.readDirectory(systemTemp).pipe(Effect.orElseSucceed(() => []));
+        for (const entry of entries) {
+          if (entry.startsWith("_MEI")) {
+            const fullPath = path.join(systemTemp, entry);
+            const hasGoogle3 = yield* fs
+              .exists(path.join(fullPath, "google3"))
+              .pipe(Effect.orElseSucceed(() => false));
+            const hasGoogle =
+              hasGoogle3 ||
+              (yield* fs
+                .exists(path.join(fullPath, "google"))
+                .pipe(Effect.orElseSucceed(() => false)));
+            if (hasGoogle) {
+              yield* fs.remove(fullPath, { recursive: true, force: true }).pipe(Effect.ignore);
+            }
           }
         }
       }

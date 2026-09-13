@@ -308,7 +308,8 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     browserCommand.includes(platform === "win32" ? ";" : ":") ||
     helperExecutable.includes("\r") ||
     helperExecutable.includes("\n") ||
-    helperExecutable.includes("\0")
+    helperExecutable.includes("\0") ||
+    helperExecutable.includes("%s")
   ) {
     return yield* authSupportError(
       "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
