@@ -182,18 +182,18 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                   height: screenshot.height,
                 },
               };
+              // Screenshot pixel data is deliberately excluded from the MCP
+              // tool result. Embedding full-resolution base64 PNGs in tool
+              // history bricks sessions when providers reject inline images —
+              // the oversized payload cannot be removed from history and every
+              // subsequent turn fails. The structured content already carries
+              // screenshot dimensions and mime type for reference; the client
+              // preview renders the actual image from its own copy.
               return Effect.succeed(
                 new McpSchema.CallToolResult({
                   isError: false,
                   structuredContent: metadata,
-                  content: [
-                    { type: "text", text: JSON.stringify(metadata) },
-                    {
-                      type: "image",
-                      data: new Uint8Array(Buffer.from(screenshot.data, "base64")),
-                      mimeType: screenshot.mimeType,
-                    },
-                  ],
+                  content: [{ type: "text", text: JSON.stringify(metadata) }],
                 }),
               );
             },

@@ -257,7 +257,13 @@ it.effect("registers annotated tools and preserves authenticated request context
           Effect.provideService(McpSchema.McpServerClient, client),
         );
       expect(snapshot.isError).toBe(false);
-      expect(snapshot.content.some((content) => content.type === "image")).toBe(true);
+      // Regression #11295: inline image content was removed from snapshot
+      // results because full-resolution base64 PNGs in tool history brick
+      // sessions when providers reject inline images.
+      expect(snapshot.content.some((content) => content.type === "image")).toBe(false);
+      expect(snapshot.content).toEqual([
+        { type: "text", text: expect.any(String) },
+      ]);
       expect(snapshot.structuredContent).toMatchObject({
         screenshot: { mimeType: "image/png", width: 10, height: 5 },
       });
