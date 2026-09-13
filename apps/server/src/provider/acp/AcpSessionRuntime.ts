@@ -340,6 +340,10 @@ export function isPromptCancellationError(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Checks whether an Effect failure cause represents an interrupt or an
+ * underlying ACP prompt cancellation error.
+ */
 function isPromptCancellationCause(cause: Cause.Cause<unknown>): boolean {
   if (Cause.hasInterrupts(cause)) {
     return true;
