@@ -156,6 +156,7 @@ describe("searchSettings", () => {
     });
 
     const gatedIds = new Set<string>([
+      "hosting-cli-path",
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",

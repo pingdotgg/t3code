@@ -443,6 +443,8 @@ function HostingCliPathSettings({
                 event.currentTarget.blur();
               }
               if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
                 setDraft(savedPath);
               }
             }}
