@@ -16,6 +16,7 @@ import { HttpBody, HttpClient, HttpRouter, HttpServerResponse } from "effect/uns
 import { OrchestrationEngineService } from "../orchestration/Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerConfig from "../config.ts";
+import * as DeviceService from "../device/DeviceService.ts";
 import * as McpSessionRegistry from "./McpSessionRegistry.ts";
 import * as MonitorSession from "./MonitorSession.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -782,7 +783,7 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
       const { config } = yield* registry.issue({
         threadId,
         providerInstanceId: ProviderInstanceId.make("test"),
-        capabilities,
+        capabilities: new Set(capabilities),
       });
       const headers = {
         authorization: config.authorizationHeader,
@@ -832,6 +833,9 @@ it.effect("HTTP tool discovery only advertises monitors to monitoring credential
         McpSessionRegistry.layer,
         PreviewAutomationBroker.layer,
         MonitorSession.layer,
+        Layer.mock(DeviceService.DeviceService)({}),
+        Layer.mock(OrchestrationEngineService)({}),
+        Layer.mock(ProjectionSnapshotQuery)({}),
       ).pipe(
         Layer.provide(
           Layer.succeed(

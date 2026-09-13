@@ -47,7 +47,10 @@ import {
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
-import { buildCodexDeveloperInstructions, type T3CodeToolAvailability } from "../CodexDeveloperInstructions.ts";
+import {
+  buildCodexDeveloperInstructions,
+  type T3CodeToolAvailability,
+} from "../CodexDeveloperInstructions.ts";
 import * as MonitorSession from "../../mcp/MonitorSession.ts";
 const isCodexRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
 const isMonitorStoppedError = Schema.is(MonitorSession.MonitorStoppedError);
@@ -2728,8 +2731,10 @@ export const makeCodexSessionRuntime = (
                   // Derived from the session's own MCP configuration rather than the
                   // setting, so the prompt describes the tools this turn actually
                   // has even if the setting changed after the session started.
-                  browserToolsAvailable:
-                    configuredMcpToolAvailability(options.appServerArgs, options.mcpCapabilities),
+                  browserToolsAvailable: configuredMcpToolAvailability(
+                    options.appServerArgs,
+                    options.mcpCapabilities,
+                  ),
                 });
                 const rawResponse = yield* client.raw.request("turn/start", params);
                 const response = yield* decodeV2TurnStartResponse(rawResponse).pipe(
