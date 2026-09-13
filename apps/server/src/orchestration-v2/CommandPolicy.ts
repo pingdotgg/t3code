@@ -258,7 +258,7 @@ const decideSteeringExecution: CommandPolicyV2Shape["decideSteeringExecution"] =
         ? "interrupt_restart_steering"
         : "active_steering",
       input.forceRestart
-        ? "providerInstanceId cannot satisfy an explicit interrupt-and-restart request"
+        ? "providerInstanceId cannot satisfy a required interrupt-and-restart"
         : "providerInstanceId cannot steer active turns directly or by interrupt-and-restart",
     ),
   );

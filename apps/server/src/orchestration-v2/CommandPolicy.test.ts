@@ -200,7 +200,7 @@ layer("CommandPolicyV2", (it) => {
       const fallbackDetail =
         "providerInstanceId cannot steer active turns directly or by interrupt-and-restart";
       const forcedRestartDetail =
-        "providerInstanceId cannot satisfy an explicit interrupt-and-restart request";
+        "providerInstanceId cannot satisfy a required interrupt-and-restart";
 
       const cases: ReadonlyArray<{
         readonly forceRestart: boolean;
@@ -278,7 +278,7 @@ layer("CommandPolicyV2", (it) => {
           supportsSteeringByInterruptRestart: false,
           expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
         },
-        // An explicit restart skips direct steering and only succeeds via
+        // A forced restart skips direct steering and only succeeds via
         // interrupt-and-restart; every other combination must report that
         // capability instead of claiming live steering is unsupported.
         {
