@@ -59,11 +59,13 @@ export interface LegacyProjectSettingsFields {
 export function resolveProjectSettings(
   settings: ServerSettings,
   projectId: ProjectId | null,
-  project?: LegacyProjectSettingsFields,
+  // Nullable, not just optional: the mobile new-task flow passes its selected
+  // project straight through, and that is null until the shell snapshot lands.
+  project?: LegacyProjectSettingsFields | null,
 ): ResolvedProjectSettings {
   const stored = projectId === null ? undefined : settings.projectSettingsOverrides[projectId];
   const overrides: ProjectSettingsOverrides =
-    project === undefined || settings.projectSettingsFolded
+    project == null || settings.projectSettingsFolded
       ? (stored ?? EMPTY_OVERRIDES)
       : {
           ...(project.defaultModelSelection != null
