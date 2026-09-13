@@ -35,6 +35,7 @@ const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TA
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
 const completeFirstPromptOnCancel = process.env.T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL === "1";
+const failPromptOnCancel = process.env.T3_ACP_FAIL_PROMPT_ON_CANCEL === "1";
 const floodStderr = process.env.T3_ACP_FLOOD_STDERR === "1";
 const hangPromptForever = process.env.T3_ACP_HANG_PROMPT_FOREVER === "1";
 const hangFirstPromptForever = process.env.T3_ACP_HANG_FIRST_PROMPT_FOREVER === "1";
@@ -590,7 +591,7 @@ const program = Effect.gen(function* () {
     Effect.gen(function* () {
       const cancelledSessionId = String(sessionId ?? "mock-session-1");
       cancelledSessions.add(cancelledSessionId);
-      if (completeFirstPromptOnCancel) {
+      if (completeFirstPromptOnCancel || failPromptOnCancel) {
         yield* Deferred.succeed(nativeCancelRequested, undefined);
         yield* agent.client.sessionUpdate({
           sessionId: cancelledSessionId,
@@ -620,7 +621,7 @@ const program = Effect.gen(function* () {
       const requestedSessionId = String(request.sessionId ?? sessionId);
       promptCount += 1;
 
-      if (completeFirstPromptOnCancel && promptCount === 1) {
+      if ((completeFirstPromptOnCancel || failPromptOnCancel) && promptCount === 1) {
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {
@@ -633,6 +634,12 @@ const program = Effect.gen(function* () {
         });
         yield* Deferred.await(nativeCancelRequested);
         yield* Deferred.await(nativeCancelRelease);
+        if (failPromptOnCancel) {
+          return yield* new AcpError.AcpRequestError({
+            code: -32000,
+            errorMessage: "context canceled: The request was canceled by the client.",
+          });
+        }
         yield* agent.client.sessionUpdate({
           sessionId: requestedSessionId,
           update: {

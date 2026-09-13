@@ -317,6 +317,28 @@ interface EnsureActiveAssistantSegmentResult {
 interface AcpActivePrompt {
   readonly fiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError>;
   readonly completed: Deferred.Deferred<void>;
+  readonly cancelled: Ref.Ref<boolean>;
+}
+
+function isPromptCancellationError(error: unknown): boolean {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "_tag" in error &&
+    error._tag === "AcpRequestError"
+  ) {
+    const reqErr = error as EffectAcpErrors.AcpRequestError;
+    const msg = (reqErr.errorMessage ?? "").toLowerCase();
+    return reqErr.code === -32000 || msg.includes("cancel") || msg.includes("abort");
+  }
+  return false;
+}
+
+function isPromptCancellationCause(cause: Cause.Cause<unknown>): boolean {
+  if (Cause.hasInterrupts(cause)) {
+    return true;
+  }
+  return isPromptCancellationError(Cause.squash(cause));
 }
 
 export const make = (
@@ -919,6 +941,9 @@ export const make = (
     const cancel = Effect.gen(function* () {
       const started = yield* getStartedState;
       const activePrompt = yield* Ref.get(activePromptRef);
+      if (Option.isSome(activePrompt)) {
+        yield* Ref.set(activePrompt.value.cancelled, true);
+      }
       if (options.cancelBehavior !== "wait-for-prompt") {
         if (Option.isSome(activePrompt)) {
           yield* Fiber.interrupt(activePrompt.value.fiber).pipe(Effect.ignore);
@@ -951,7 +976,9 @@ export const make = (
         return yield* error;
       }
       if (Exit.isFailure(completed.value)) {
-        return yield* Effect.failCause(completed.value.cause);
+        if (!isPromptCancellationCause(completed.value.cause)) {
+          return yield* Effect.failCause(completed.value.cause);
+        }
       }
     });
 
@@ -989,12 +1016,13 @@ export const make = (
                   ...payload,
                 } satisfies EffectAcpSchema.PromptRequest;
                 const completed = yield* Deferred.make<void>();
+                const cancelled = yield* Ref.make(false);
                 const fiber = yield* runLoggedRequest(
                   "session/prompt",
                   requestPayload,
                   acp.agent.prompt(requestPayload),
                 ).pipe(Effect.forkIn(runtimeScope));
-                const active = { fiber, completed } satisfies AcpActivePrompt;
+                const active = { fiber, completed, cancelled } satisfies AcpActivePrompt;
                 yield* Ref.set(activePromptRef, Option.some(active));
                 if (promptOptions?.dispatched) {
                   yield* Deferred.succeed(promptOptions.dispatched, undefined);
@@ -1005,11 +1033,19 @@ export const make = (
             (activePrompt) =>
               Fiber.join(activePrompt.fiber).pipe(
                 Effect.catchCause((cause) =>
-                  options.cancelBehavior !== "wait-for-prompt" && Cause.hasInterruptsOnly(cause)
-                    ? Effect.succeed({
+                  Effect.gen(function* () {
+                    const isCancelled = yield* Ref.get(activePrompt.cancelled);
+                    if (
+                      (options.cancelBehavior !== "wait-for-prompt" &&
+                        Cause.hasInterruptsOnly(cause)) ||
+                      (isCancelled && isPromptCancellationCause(cause))
+                    ) {
+                      return {
                         stopReason: "cancelled",
-                      } satisfies EffectAcpSchema.PromptResponse)
-                    : Effect.failCause(cause),
+                      } satisfies EffectAcpSchema.PromptResponse;
+                    }
+                    return yield* Effect.failCause(cause);
+                  }),
                 ),
                 Effect.tap(() =>
                   closeActiveAssistantSegment({ queue: eventQueue, assistantSegmentRef }),
