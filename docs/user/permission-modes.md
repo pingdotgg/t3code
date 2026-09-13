@@ -3,14 +3,11 @@
 Permission modes control when an agent needs your approval to act. Choose a mode in the message
 composer; it applies to that thread.
 
-The mode is set per thread from the mode control in the message composer. Changing it in an
-existing thread does not change any other thread.
-
-On web or desktop, **Settings → Providers** sets the fallback for new threads on that environment.
-Each provider instance can override that fallback from its **Runtime** settings. A new draft
-follows the selected provider instance until you explicitly pick a mode in the composer; that
-explicit choice then remains fixed when you switch providers. A new thread never inherits the mode
-of another thread.
+Set the fallback for new threads in **Settings → General → New threads → Permissions**.
+Projects can override the environment fallback. Each provider instance can override the fallback
+in **Settings → Providers → Runtime**. A new draft follows the selected provider instance until
+you explicitly pick a mode in the composer; that choice remains fixed when you switch providers.
+New threads never inherit the mode of another thread, and existing threads keep their permissions.
 
 | Mode                  | Behavior                                                                              |
 | --------------------- | ------------------------------------------------------------------------------------- |
