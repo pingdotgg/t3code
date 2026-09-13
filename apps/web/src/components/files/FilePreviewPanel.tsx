@@ -56,6 +56,7 @@ import { BrowserDocumentFrame, isPdfPreviewFile } from "./BrowserDocumentFrame";
 import { DelimitedTablePreview } from "./DelimitedTablePreview";
 import FileBrowserPanel from "./FileBrowserPanel";
 import { FileBreadcrumbs } from "./FileBreadcrumbs";
+import { FileMarkdownEditor } from "./FileMarkdownEditor";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
 import {
   type FileCommentAnnotationEntry,
@@ -84,6 +85,7 @@ import {
   setMarkdownTaskChecked,
   shouldShowFileExplorer,
 } from "./filePreviewMode";
+import { useInPlaceMarkdownEditing } from "./markdownInPlaceEditing";
 import { useFileSaveCoordinator } from "./useFileSaveCoordinator";
 import {
   getOptimisticProjectFileQueryData,
@@ -862,28 +864,46 @@ function RenderedMarkdownSurface({
     relativePath,
     onPendingChange,
   });
+  // Editing here rewrites the file from the editor's own tree, so a file it
+  // cannot reproduce keeps the preview and stays editable from the source view.
+  const { supportsEditing, rememberEditorText } = useInPlaceMarkdownEditing(contents, !readOnly);
 
   return (
     <ScrollArea className="min-h-0 flex-1">
-      <FileMarkdownPreview
-        text={contents}
-        cwd={cwd}
-        relativePath={relativePath}
-        threadRef={threadRef}
-        onTaskListChange={
-          readOnly
-            ? undefined
-            : ({ markerOffset, checked }) => {
-                const currentContents =
-                  getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
-                  contents;
-                const nextContents = setMarkdownTaskChecked(currentContents, markerOffset, checked);
-                if (nextContents === currentContents) return;
-                setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
-                saveCoordinator.change(nextContents);
-              }
-        }
-      />
+      {supportsEditing ? (
+        <FileMarkdownEditor
+          text={contents}
+          onChange={(nextContents) => {
+            rememberEditorText(nextContents);
+            setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+            saveCoordinator.change(nextContents);
+          }}
+        />
+      ) : (
+        <FileMarkdownPreview
+          text={contents}
+          cwd={cwd}
+          relativePath={relativePath}
+          threadRef={threadRef}
+          onTaskListChange={
+            readOnly
+              ? undefined
+              : ({ markerOffset, checked }) => {
+                  const currentContents =
+                    getOptimisticProjectFileQueryData(environmentId, cwd, relativePath)?.contents ??
+                    contents;
+                  const nextContents = setMarkdownTaskChecked(
+                    currentContents,
+                    markerOffset,
+                    checked,
+                  );
+                  if (nextContents === currentContents) return;
+                  setProjectFileQueryData(environmentId, cwd, relativePath, nextContents);
+                  saveCoordinator.change(nextContents);
+                }
+          }
+        />
+      )}
     </ScrollArea>
   );
 }
