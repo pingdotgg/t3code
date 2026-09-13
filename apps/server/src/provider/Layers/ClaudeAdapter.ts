@@ -7,7 +7,6 @@
  *
  * @module ClaudeAdapterLive
  */
-import * as NodeSea from "node:sea";
 
 import {
   type CanUseTool,
@@ -70,6 +69,7 @@ import {
   CLAUDE_RESUME_COMPACTION_NEVER_ANSWER,
   formatClaudeResumeCompactionQuestion,
 } from "@t3tools/shared/claudeCompaction";
+import { HostProcessIsExecutable } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -5133,7 +5133,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       // The single-executable has no sibling script and no Node to run one
       // with, so it hosts the worker as a hidden subcommand of itself.
-      const historyWorkerArguments = NodeSea.isSea()
+      const historyWorkerArguments = (yield* HostProcessIsExecutable)
         ? ["__claude-history"]
         : [
             yield* path

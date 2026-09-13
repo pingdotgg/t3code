@@ -4,9 +4,14 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessInvokedAs,
+  HostProcessPlatform,
+  HostProcessWorkingDirectory,
+} from "@t3tools/shared/hostProcess";
 
-import { repointLauncher } from "./update.ts";
+import { repointLauncher, resolveLauncherPath } from "./update.ts";
 
 it.layer(NodeServices.layer)("t3 update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
@@ -66,6 +71,39 @@ it.layer(NodeServices.layer)("t3 update launcher", (it) => {
       }
       assert.equal(yield* fs.readLink(foreign), elsewhere);
       assert.equal(yield* fs.readLink(otherLauncher), otherHome);
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+  );
+
+  it.effect("finds the launcher a bare command name resolved to on PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-update-" });
+      const launcher = path.join(root, "bin/t3");
+      yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+      yield* fs.writeFileString(launcher, "");
+
+      const bare = yield* resolveLauncherPath.pipe(
+        Effect.provideService(HostProcessInvokedAs, "t3"),
+        Effect.provideService(HostProcessEnvironment, {
+          PATH: `${path.join(root, "missing")}:${path.join(root, "bin")}`,
+        }),
+        Effect.provideService(HostProcessWorkingDirectory, root),
+      );
+      const relative = yield* resolveLauncherPath.pipe(
+        Effect.provideService(HostProcessInvokedAs, "./bin/t3"),
+        Effect.provideService(HostProcessEnvironment, { PATH: "" }),
+        Effect.provideService(HostProcessWorkingDirectory, root),
+      );
+      const absent = yield* resolveLauncherPath.pipe(
+        Effect.provideService(HostProcessInvokedAs, "t3"),
+        Effect.provideService(HostProcessEnvironment, { PATH: path.join(root, "missing") }),
+        Effect.provideService(HostProcessWorkingDirectory, root),
+      );
+
+      assert.equal(bare, launcher);
+      assert.equal(relative, launcher);
+      assert.equal(absent, undefined);
     }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 });

@@ -77,7 +77,11 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     try {
       Invoke-WebRequest -Uri "$baseUrl/v$version/SHA256SUMS" -OutFile (Join-Path $staging "SHA256SUMS") -UseBasicParsing
     } catch {
-      Fail "t3 $version has no self-contained archive; install it with 'npm install -g t3@$version' instead"
+      $status = $_.Exception.Response.StatusCode.value__
+      if ($status -eq 404) {
+        Fail "t3 $version has no self-contained archive; install it with 'npm install -g t3@$version' instead"
+      }
+      throw
     }
     Invoke-WebRequest -Uri "$baseUrl/v$version/$archive" -OutFile (Join-Path $staging $archive) -UseBasicParsing
 

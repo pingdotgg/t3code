@@ -1,10 +1,11 @@
-import * as NodeSea from "node:sea";
-
 import {
   HostProcessArchitecture,
   HostProcessEnvironment,
   HostProcessExecutablePath,
+  HostProcessInvokedAs,
+  HostProcessIsExecutable,
   HostProcessPlatform,
+  HostProcessWorkingDirectory,
 } from "@t3tools/shared/hostProcess";
 import {
   CLI_RELEASE_BASE_URL_ENV,
@@ -156,6 +157,33 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
     ),
   );
   return Option.some(input.launchedAs);
+});
+
+/**
+ * The path the executable was started through. Node keeps the shell's
+ * spelling in argv0: a launcher symlink or `./t3` resolves against the
+ * working directory, while a bare `t3` was found on PATH and has to be
+ * looked up there again, or the launcher symlink is never seen.
+ */
+export const resolveLauncherPath = Effect.gen(function* () {
+  const path = yield* Path.Path;
+  const fs = yield* FileSystem.FileSystem;
+  const invokedAs = yield* HostProcessInvokedAs;
+  const cwd = yield* HostProcessWorkingDirectory;
+  const environment = yield* HostProcessEnvironment;
+  const platform = yield* HostProcessPlatform;
+  if (invokedAs.includes("/") || invokedAs.includes("\\")) {
+    return path.resolve(cwd, invokedAs);
+  }
+  const delimiter = platform === "win32" ? ";" : ":";
+  for (const directory of (environment["PATH"] ?? "").split(delimiter)) {
+    if (directory.length === 0) continue;
+    const candidate = path.join(directory, invokedAs);
+    if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false))) {
+      return candidate;
+    }
+  }
+  return undefined;
 });
 
 /**
@@ -374,7 +402,9 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   // downgrade check protects.
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
   const executableCurrent = targetVersion === currentVersion;
-  const serviceCurrent = serviceVersion === undefined || serviceVersion === targetVersion;
+  // A service whose recorded version is missing or unreadable is not known
+  // to be current, so it gets the update rather than being skipped.
+  const serviceCurrent = !serviceInstalled || serviceVersion === targetVersion;
   const newestInstalled =
     serviceVersion !== undefined && compareExactServiceVersions(serviceVersion, currentVersion) > 0
       ? serviceVersion
@@ -411,7 +441,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
 
   yield* Console.log(
     executableCurrent
-      ? `Updating the background service ${serviceVersion} -> ${targetVersion} (${targetChannel}).`
+      ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
       : alreadyOnDisk
         ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
         : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
@@ -485,11 +515,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     ),
   );
 
-  // Node rewrites argv[0] and execPath to the resolved binary, but argv0 is
-  // the string the shell actually passed, which is the launcher symlink when
-  // the executable was started through one. A relative argv0 (`./t3`) is
-  // resolved against the working directory the process started in.
-  const launchedAs = NodeSea.isSea() ? path.resolve(process.argv0) : undefined;
+  const launchedAs = (yield* HostProcessIsExecutable) ? yield* resolveLauncherPath : undefined;
   const repointed = yield* repointLauncher({
     launchedAs,
     versionsDir: path.dirname(runtime.versionDir),
@@ -532,7 +558,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${serviceVersion}. Run \`t3 service update\` when you are ready to restart it.`,
+      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service update\` when you are ready to restart it.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

@@ -27,11 +27,19 @@ fail() {
   exit 1
 }
 
+# Exit 44 on a 404 so callers can tell "no such asset" from a network failure.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    status="$(curl -sSL -w '%{http_code}' "$1" -o "$2")" || return 1
+    case "$status" in
+      2??) return 0 ;;
+      404) return 44 ;;
+      *) printf 'GET %s returned HTTP %s\n' "$1" "$status" >&2; return 1 ;;
+    esac
   elif command -v wget >/dev/null 2>&1; then
-    wget -q "$1" -O "$2"
+    wget -q --server-response "$1" -O "$2" 2>"$2.headers" && rm -f "$2.headers" && return 0
+    if grep -q ' 404 ' "$2.headers" 2>/dev/null; then rm -f "$2.headers"; return 44; fi
+    cat "$2.headers" >&2; rm -f "$2.headers"; return 1
   else
     fail "curl or wget is required"
   fi
@@ -99,8 +107,13 @@ else
   trap 'rm -rf "$staging"' EXIT
 
   printf 'Downloading %s...\n' "$archive"
-  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" ||
+  fetch_status=0
+  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
+  if [ "$fetch_status" -eq 44 ]; then
     fail "t3 ${version} has no self-contained archive; install it with \`npm install -g t3@${version}\` instead"
+  elif [ "$fetch_status" -ne 0 ]; then
+    fail "could not download the release checksums"
+  fi
   fetch "${base_url}/v${version}/${archive}" "${staging}/${archive}"
 
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
