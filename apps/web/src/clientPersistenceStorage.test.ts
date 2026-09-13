@@ -114,6 +114,21 @@ describe("clientPersistenceStorage", () => {
     expect(settings).not.toHaveProperty("diffWordWrap");
   });
 
+  it("keeps the default diff file state across reloads and defaults it to expanded", async () => {
+    const testWindow = getTestWindow();
+    const { readBrowserClientSettings, writeBrowserClientSettings } =
+      await import("./clientPersistenceStorage");
+
+    testWindow.localStorage.setItem("t3code:client-settings:v1", JSON.stringify({}));
+    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(false);
+
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: true });
+    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(true);
+
+    writeBrowserClientSettings({ ...DEFAULT_CLIENT_SETTINGS, diffFilesCollapsed: false });
+    expect(readBrowserClientSettings()?.diffFilesCollapsed).toBe(false);
+  });
+
   it("keeps the diff layout across reloads and defaults it to stacked", async () => {
     const testWindow = getTestWindow();
     const { readBrowserClientSettings, writeBrowserClientSettings } =
