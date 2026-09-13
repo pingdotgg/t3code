@@ -556,6 +556,20 @@ describe("sidebar list motion", () => {
 });
 
 describe("pinning motion", () => {
+  it("does not replay pinning when an already pinned slim row returns to the pinned section", () => {
+    const first = new TestRow("first");
+    const pin = new TestRow("settled pin", 36);
+    const { motion, layout } = fixture([first, pin]);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    motion.update(true);
+    expect(pin.animate).not.toHaveBeenCalled();
+    pin.offsetHeight = 82;
+    layout([pin, first]);
+    motion.update(true);
+    expectMove(pin, 83);
+  });
+
   it("finishes an offscreen pin at the top clipping edge instead of rushing through the viewport", () => {
     const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
     const pin = rows.at(-1)!;
