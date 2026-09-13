@@ -1,4 +1,9 @@
 import {
+  DesktopBrowserMountInputSchema,
+  DesktopBrowserMotionInputSchema,
+  DesktopBrowserLayoutInputSchema,
+  DesktopBrowserInteractInputSchema,
+  DesktopBrowserViewportSchema,
   DesktopPreviewAnnotationThemeInputSchema,
   DesktopPreviewArtifactInputSchema,
   DesktopPreviewAutomationClickInputSchema,
@@ -482,7 +487,77 @@ export const saveRecording = DesktopIpc.makeIpcMethod({
   }),
 });
 
+export const mountBrowser = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_MOUNT_CHANNEL,
+  payload: DesktopBrowserMountInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.mountBrowser")(function* ({
+    tabId,
+    environmentId,
+    profileId,
+    initialUrl,
+  }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    const { scope, persistent, namespace } = resolvePartitionScope(environmentId, profileId);
+    const session = yield* manager.getBrowserSession(scope, persistent, namespace);
+    yield* manager.mountBrowser(
+      tabId,
+      session,
+      `${__dirname}/preview-pick-preload.cjs`,
+      initialUrl,
+    );
+  }),
+});
+export const layoutBrowser = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_LAYOUT_CHANNEL,
+  payload: DesktopBrowserLayoutInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.layoutBrowser")(function* ({ tabId, layout }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.layoutBrowser(tabId, layout);
+  }),
+});
+export const interactWithBrowser = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_INTERACT_CHANNEL,
+  payload: DesktopBrowserInteractInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.interactWithBrowser")(function* ({ tabId, pointer }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.interactWithBrowser(tabId, pointer);
+  }),
+});
+export const readBrowserViewport = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_VIEWPORT_CHANNEL,
+  payload: DesktopPreviewTabInputSchema,
+  result: DesktopBrowserViewportSchema,
+  handler: Effect.fn("desktop.ipc.preview.readBrowserViewport")(function* ({ tabId }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    return yield* manager.readBrowserViewport(tabId);
+  }),
+});
+export const startBrowserStream = tabMethod(
+  IpcChannels.BROWSER_STREAM_CHANNEL,
+  "desktop.ipc.preview.startBrowserStream",
+  (manager, tabId) => manager.startBrowserStream(tabId),
+);
+
+export const browserMotion = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.BROWSER_MOTION_CHANNEL,
+  payload: DesktopBrowserMotionInputSchema,
+  result: Schema.Void,
+  handler: Effect.fn("desktop.ipc.preview.browserMotion")(function* ({ tabId, input }) {
+    const manager = yield* PreviewManager.PreviewManager;
+    yield* manager.browserMotion(tabId, input);
+  }),
+});
+
 export const methods = [
+  browserMotion,
+  mountBrowser,
+  layoutBrowser,
+  interactWithBrowser,
+  readBrowserViewport,
+  startBrowserStream,
   createTab,
   closeTab,
   registerWebview,

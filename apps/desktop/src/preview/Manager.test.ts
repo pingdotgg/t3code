@@ -233,6 +233,33 @@ vi.mock("electron", () => ({
   },
 }));
 
+// Native focus routing is exercised by scripts/test-browser-focus.mjs. Here the
+// host supplies ownership so we can verify the manager's navigation/control rules.
+vi.mock("./IsolatedBrowserHost.ts", () => ({
+  IsolatedBrowserHost: class {
+    contents = fromId(42);
+    interactive = false;
+    create() {
+      return this.contents;
+    }
+    owns(_tabId: string, contents: Electron.WebContents) {
+      return contents === this.contents;
+    }
+    isInteractive() {
+      return this.interactive;
+    }
+    interact() {
+      this.interactive = true;
+    }
+    park() {
+      this.interactive = false;
+    }
+    setZoomFactor() {}
+    destroy() {}
+    close() {}
+  },
+}));
+
 const browserSessionLayer = Layer.succeed(
   BrowserSession.BrowserSession,
   BrowserSession.BrowserSession.of({
@@ -557,6 +584,60 @@ describe("PreviewManager", () => {
     createFromPath.mockClear();
     webviewSend.mockClear();
   });
+
+  effectIt.effect("mounts a native page without waiting for its initial navigation", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents({ url: "" });
+        const started = Promise.withResolvers<void>();
+        const navigation = Promise.withResolvers<void>();
+        preview.loadURL.mockImplementation(() => {
+          started.resolve();
+          return navigation.promise;
+        });
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: {},
+        } as never);
+        yield* manager.createTab("tab_native");
+        yield* manager.mountBrowser(
+          "tab_native",
+          {} as Electron.Session,
+          "preload.cjs",
+          "https://example.com",
+        );
+        yield* Effect.promise(() => started.promise);
+        expect(preview.listeners.has("did-fail-load")).toBe(true);
+        navigation.resolve();
+      }),
+    ),
+  );
+
+  effectIt.effect("rejects automated input while a native page belongs to the human", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const preview = makeFaviconWebContents();
+        fromId.mockReturnValue(preview.webContents);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: {},
+        } as never);
+        yield* manager.createTab("tab_native");
+        yield* manager.mountBrowser("tab_native", {} as Electron.Session, "preload.cjs", null);
+        yield* manager.interactWithBrowser("tab_native", null);
+        const result = yield* manager
+          .automationClick("tab_native", { x: 10, y: 10 })
+          .pipe(Effect.exit);
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(
+          (preview.webContents as Electron.WebContents).debugger.sendCommand,
+        ).not.toHaveBeenCalledWith("Input.dispatchMouseEvent", expect.anything());
+      }),
+    ),
+  );
 
   effectIt.effect("keeps preview shortcuts out of the host window", () =>
     withManager((manager) =>
@@ -2222,6 +2303,25 @@ describe("PreviewManager", () => {
           webContentsId: 42,
           cause: captureCause,
         });
+      }),
+    ),
+  );
+
+  effectIt.effect("releases a failed view capture grant so another tab can stream", () =>
+    withManager((manager) =>
+      Effect.gen(function* () {
+        const { host, grants, takeGrant } = yield* setupRecordingRaceTabs(manager);
+        yield* manager.setMainWindow({
+          isDestroyed: () => false,
+          once: vi.fn(),
+          webContents: host,
+        } as never);
+        host.executeJavaScript.mockRejectedValueOnce(new Error("Renderer closed during capture"));
+        const failed = yield* manager.startBrowserStream("tab_race_a").pipe(Effect.exit);
+        expect(Exit.isFailure(failed)).toBe(true);
+        yield* manager.startBrowserStream("tab_race_b");
+        takeGrant();
+        expect(grants).toEqual([{ video: { routingId: 42 } }]);
       }),
     ),
   );

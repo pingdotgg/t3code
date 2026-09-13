@@ -15,7 +15,8 @@ const mocks = vi.hoisted(() => ({
   setClientSettings: vi.fn<(settings: ClientSettings) => Promise<void>>(),
   createTab: vi.fn<DesktopPreviewBridge["createTab"]>(),
   closeTab: vi.fn<DesktopPreviewBridge["closeTab"]>(),
-  registerWebview: vi.fn<DesktopPreviewBridge["registerWebview"]>(),
+  mountBrowser: vi.fn<DesktopPreviewBridge["browser"]["mount"]>(),
+  layoutBrowser: vi.fn<DesktopPreviewBridge["browser"]["layout"]>(),
   getPreviewConfig: vi.fn<DesktopPreviewBridge["getPreviewConfig"]>(),
   activeRecordings: new Set<string>(),
 }));
@@ -28,7 +29,7 @@ vi.mock("~/components/preview/previewBridge", () => ({
   previewBridge: {
     createTab: mocks.createTab,
     closeTab: mocks.closeTab,
-    registerWebview: mocks.registerWebview,
+    browser: { mount: mocks.mountBrowser, layout: mocks.layoutBrowser },
     getPreviewConfig: mocks.getPreviewConfig,
   },
 }));
@@ -38,6 +39,7 @@ vi.mock("~/components/preview/usePreviewBridge", () => ({
 }));
 
 vi.mock("./browserRecording", () => ({
+  captureBrowserViewStream: async () => ({ getTracks: () => [] }),
   useActiveBrowserRecordingTabIds: () => mocks.activeRecordings,
   stopBrowserRecording: async () => null,
 }));
@@ -48,7 +50,7 @@ import {
 } from "~/hooks/useSettings";
 import { useBrowserSurfaceStore } from "./browserSurfaceStore";
 import * as desktopTabLifetime from "./desktopTabLifetime";
-import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { HostedBrowserView } from "./HostedBrowserView";
 
 let renderer: ReactTestRenderer | undefined;
 
@@ -69,7 +71,8 @@ beforeEach(() => {
   mocks.setClientSettings.mockReset().mockResolvedValue(undefined);
   mocks.createTab.mockReset().mockResolvedValue(undefined);
   mocks.closeTab.mockReset().mockResolvedValue(undefined);
-  mocks.registerWebview.mockReset().mockResolvedValue(undefined);
+  mocks.mountBrowser.mockReset().mockResolvedValue(undefined);
+  mocks.layoutBrowser.mockReset().mockResolvedValue(undefined);
   mocks.getPreviewConfig.mockReset().mockResolvedValue({
     partition: "persist:t3-preview-work",
     webPreferences: "contextIsolation=yes",
@@ -77,6 +80,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", globalThis);
+  vi.stubGlobal("reportError", vi.fn());
   vi.stubGlobal("navigator", { platform: "Linux" });
   vi.stubGlobal(
     "requestAnimationFrame",
@@ -98,7 +102,7 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-describe("HostedBrowserWebview settings hydration", () => {
+describe("HostedBrowserView settings hydration", () => {
   it("starts a retained background tab only after a settings read succeeds on retry", async () => {
     const firstRead = deferred<ClientSettings | null>();
     const retryRead = deferred<ClientSettings | null>();
@@ -108,9 +112,6 @@ describe("HostedBrowserWebview settings hydration", () => {
       .mockReturnValueOnce(retryRead.promise);
     mocks.createTab.mockReturnValueOnce(tabCreation.promise);
     const acquire = vi.spyOn(desktopTabLifetime, "acquireDesktopTab");
-    const createGuest = vi.fn((_attributes: unknown) =>
-      Object.assign(new EventTarget(), { getWebContentsId: () => 41 }),
-    );
     const threadRef = {
       environmentId: EnvironmentId.make("host-settings-retry"),
       threadId: ThreadId.make("thread-settings-retry"),
@@ -120,7 +121,7 @@ describe("HostedBrowserWebview settings hydration", () => {
 
     await act(() => {
       renderer = create(
-        <HostedBrowserWebview
+        <HostedBrowserView
           threadRef={threadRef}
           tabId="server-tab"
           runtimeTabId={runtimeTabId}
@@ -131,17 +132,14 @@ describe("HostedBrowserWebview settings hydration", () => {
           zoomFactor={1.25}
         />,
         {
-          createNodeMock: (element) =>
-            element.type === "webview"
-              ? createGuest(element.props)
-              : { scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined },
+          createNodeMock: () => ({ scrollLeft: 0, scrollTop: 0, scrollTo: () => undefined }),
         },
       );
     });
 
     expect(mocks.getClientSettings).toHaveBeenCalledOnce();
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(mocks.mountBrowser).not.toHaveBeenCalled();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     const failure = new Error("Saved settings are unavailable");
@@ -151,7 +149,7 @@ describe("HostedBrowserWebview settings hydration", () => {
       await expect(hydration).rejects.toBe(failure);
     });
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(mocks.mountBrowser).not.toHaveBeenCalled();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     let retry!: Promise<void>;
@@ -160,7 +158,7 @@ describe("HostedBrowserWebview settings hydration", () => {
     });
     expect(mocks.getClientSettings).toHaveBeenCalledTimes(2);
     expect(acquire).not.toHaveBeenCalled();
-    expect(createGuest).not.toHaveBeenCalled();
+    expect(mocks.mountBrowser).not.toHaveBeenCalled();
     expect(mocks.createTab).not.toHaveBeenCalled();
 
     await act(async () => {
@@ -175,25 +173,22 @@ describe("HostedBrowserWebview settings hydration", () => {
     });
 
     expect(acquire).toHaveBeenCalledExactlyOnceWith(runtimeTabId);
-    expect(mocks.getPreviewConfig).toHaveBeenCalledExactlyOnceWith(threadRef.environmentId, "work");
-    expect(createGuest).toHaveBeenCalledOnce();
-    expect(createGuest).toHaveBeenCalledWith(
-      expect.objectContaining({
-        partition: "persist:t3-preview-work",
-        src: "https://example.com",
-      }),
-    );
     expect(mocks.createTab).toHaveBeenCalledExactlyOnceWith(runtimeTabId, {
       zoomFactor: 1.25,
       colorScheme: "dark",
     });
-    expect(mocks.registerWebview).not.toHaveBeenCalled();
+    expect(mocks.mountBrowser).not.toHaveBeenCalled();
 
     await act(async () => {
       tabCreation.resolve();
       await tabCreation.promise;
     });
-    expect(mocks.registerWebview).toHaveBeenCalledExactlyOnceWith(runtimeTabId, 41);
+    expect(mocks.mountBrowser).toHaveBeenCalledExactlyOnceWith(
+      runtimeTabId,
+      threadRef.environmentId,
+      "work",
+      "https://example.com",
+    );
     expect(mocks.closeTab).not.toHaveBeenCalled();
     expect(mocks.setClientSettings).not.toHaveBeenCalled();
   });

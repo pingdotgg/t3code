@@ -10,7 +10,7 @@ import { useActivePreviewSessions } from "~/previewStateStore";
 
 import { readPreviewAnnotationTheme } from "./annotationTheme";
 import { useBrowserPointerStore } from "./browserPointerStore";
-import { HostedBrowserWebview } from "./HostedBrowserWebview";
+import { HostedBrowserView } from "./HostedBrowserView";
 import { previewRuntimeTabId } from "./previewRuntimeTabId";
 
 export function ElectronBrowserHost() {
@@ -85,7 +85,7 @@ export function ElectronBrowserHost() {
       {sessions.map(({ threadRef, snapshot, runtimeTabId, pictureInPicture, zoomFactor }) => {
         const url = snapshot.navStatus._tag === "Idle" ? null : snapshot.navStatus.url;
         return (
-          <HostedBrowserWebview
+          <HostedBrowserView
             key={runtimeTabId}
             threadRef={threadRef}
             tabId={snapshot.tabId}

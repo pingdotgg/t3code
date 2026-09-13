@@ -2,15 +2,21 @@
 
 import type { PreviewViewportSetting, ScopedThreadRef } from "@t3tools/contracts";
 import { useShallow } from "zustand/react/shallow";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 
 import { previewBridge } from "~/components/preview/previewBridge";
 import { usePreviewBridge } from "~/components/preview/usePreviewBridge";
 import { useClientSettingsHydrated } from "~/hooks/useSettings";
-import { cn, isMacPlatform } from "~/lib/utils";
+import { cn } from "~/lib/utils";
 
 import { resolveBrowserSurfacePanelRect, useBrowserSurfaceStore } from "./browserSurfaceStore";
-import { useActiveBrowserRecordingTabIds } from "./browserRecording";
+import { captureBrowserViewStream, useActiveBrowserRecordingTabIds } from "./browserRecording";
 import {
   browserViewportSettingKey,
   resolveBrowserViewportLayout,
@@ -18,32 +24,26 @@ import {
 } from "./browserViewportLayout";
 import { BrowserDeviceToolbar } from "./BrowserDeviceToolbar";
 import { BrowserViewportResizeHandles } from "./BrowserViewportResizeHandles";
-import { acquireDesktopTab, type AcquiredDesktopTab } from "./desktopTabLifetime";
+import { acquireDesktopTab } from "./desktopTabLifetime";
 import { resolveHostedBrowserWebviewWrapperStyle } from "./hostedBrowserWebviewStyle";
-import { usePreviewWebviewConfig } from "./previewWebviewConfigState";
 import { useBrowserViewportResize } from "./useBrowserViewportResize";
-import {
-  INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
-  planWebviewCrashRecovery,
-  type WebviewCrashRecoveryState,
-} from "./webviewCrashRecovery";
+const browserModifiers = (
+  event: Pick<MouseEvent, "shiftKey" | "ctrlKey" | "altKey" | "metaKey" | "buttons">,
+) => {
+  const modifiers: Array<
+    "shift" | "control" | "alt" | "meta" | "leftbuttondown" | "middlebuttondown" | "rightbuttondown"
+  > = [];
+  if (event.shiftKey) modifiers.push("shift");
+  if (event.ctrlKey) modifiers.push("control");
+  if (event.altKey) modifiers.push("alt");
+  if (event.metaKey) modifiers.push("meta");
+  if (event.buttons & 1) modifiers.push("leftbuttondown");
+  if (event.buttons & 2) modifiers.push("rightbuttondown");
+  if (event.buttons & 4) modifiers.push("middlebuttondown");
+  return modifiers;
+};
 
-interface ElectronWebview extends HTMLElement {
-  src: string;
-  partition: string;
-  preload?: string;
-  webpreferences?: string;
-  getWebContentsId: () => number;
-  executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
-}
-
-declare global {
-  interface HTMLElementTagNameMap {
-    webview: ElectronWebview;
-  }
-}
-
-export function HostedBrowserWebview(props: {
+export function HostedBrowserView(props: {
   readonly threadRef: ScopedThreadRef;
   readonly tabId: string;
   readonly runtimeTabId: string;
@@ -51,29 +51,21 @@ export function HostedBrowserWebview(props: {
   readonly viewport: PreviewViewportSetting;
   readonly pictureInPicture: boolean;
   /**
-   * Fixed for the tab's lifetime: Electron only honours `partition` before the
-   * guest attaches, so a live change here would not move the tab anyway.
+   * Fixed for the tab's lifetime: moving a loaded page between profiles would
+   * discard its session and document state.
    */
   readonly profileId: string | undefined;
   readonly zoomFactor: number;
 }) {
-  const {
-    threadRef,
-    tabId,
-    runtimeTabId,
-    initialUrl,
-    viewport,
-    pictureInPicture,
-    zoomFactor,
-    profileId,
-  } = props;
+  const { threadRef, tabId, runtimeTabId, viewport, pictureInPicture, zoomFactor, profileId } =
+    props;
   const clientSettingsHydrated = useClientSettingsHydrated();
-  const config = usePreviewWebviewConfig(threadRef.environmentId, profileId);
-  const [initialSrc] = useState(() => initialUrl ?? "about:blank");
-  const tabLeaseRef = useRef<AcquiredDesktopTab | null>(null);
+  const [initialUrl] = useState(props.initialUrl);
+  const [mounted, setMounted] = useState(false);
+  const [streamReady, setStreamReady] = useState(false);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const focusingFromPointer = useRef(false);
   const wrapperRef = useRef<HTMLDivElement | null>(null);
-  const webviewRef = useRef<ElectronWebview | null>(null);
-  const crashRecoveryRef = useRef<WebviewCrashRecoveryState>(INITIAL_WEBVIEW_CRASH_RECOVERY_STATE);
   const [aspectRatioLocked, setAspectRatioLocked] = useState(false);
   const presentation = useBrowserSurfaceStore(
     useShallow((state) => {
@@ -97,87 +89,26 @@ export function HostedBrowserWebview(props: {
 
   useEffect(() => {
     if (!clientSettingsHydrated) return;
-    crashRecoveryRef.current = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
-    const lease = acquireDesktopTab(runtimeTabId);
-    tabLeaseRef.current = lease;
-    return () => {
-      if (tabLeaseRef.current === lease) tabLeaseRef.current = null;
-      lease.release();
-    };
-  }, [clientSettingsHydrated, runtimeTabId]);
-
-  const [webviewGeneration, setWebviewGeneration] = useState(0);
-  const [recoverySrc, setRecoverySrc] = useState(initialSrc);
-  const latestUrlRef = useRef(initialUrl);
-
-  useEffect(() => {
-    latestUrlRef.current = initialUrl;
-  }, [initialUrl]);
-
-  const setWebviewRef = useCallback((node: HTMLElement | null) => {
-    webviewRef.current = node as ElectronWebview | null;
-  }, []);
-
-  useEffect(() => {
-    const webview = webviewRef.current;
-    const bridge = previewBridge;
-    if (!clientSettingsHydrated || !webview || !config || !bridge) return;
     let disposed = false;
-    let recoveryTimeout: ReturnType<typeof setTimeout> | null = null;
-    const register = () => {
-      const lease = tabLeaseRef.current;
-      if (!lease) return;
-      void (async () => {
-        try {
-          // The main-process tab and the DOM webview are created by separate
-          // effects. Wait for the former so registration cannot race and fail
-          // with PreviewTabNotFoundError on a fast about:blank attachment.
-          await lease.ready;
-          if (disposed || webviewRef.current !== webview) return;
-          const webContentsId = webview.getWebContentsId();
-          if (Number.isInteger(webContentsId) && webContentsId > 0) {
-            await bridge.registerWebview(runtimeTabId, webContentsId);
-          }
-        } catch {
-          // did-attach/dom-ready will retry if the guest was not ready yet.
-        }
-      })();
-    };
-    const recoverGuest = () => {
-      if (disposed || recoveryTimeout !== null) return;
-      const recovery = planWebviewCrashRecovery(crashRecoveryRef.current, Date.now());
-      if (!recovery) return;
-      crashRecoveryRef.current = recovery.state;
-      recoveryTimeout = setTimeout(() => {
-        recoveryTimeout = null;
-        if (!disposed) {
-          setRecoverySrc(latestUrlRef.current ?? initialSrc);
-          setWebviewGeneration((generation) => generation + 1);
-        }
-      }, recovery.delayMs);
-    };
-    // A click inside the guest only reaches this document as a webview focus
-    // event, so open menus and popovers never see the outside press that
-    // would dismiss them. Replay it as a pointerdown on the webview itself.
-    const dismissHostPopups = () => {
-      webview.dispatchEvent(
-        new PointerEvent("pointerdown", { bubbles: true, pointerType: "mouse" }),
-      );
-    };
-    webview.addEventListener("did-attach", register);
-    webview.addEventListener("dom-ready", register);
-    webview.addEventListener("render-process-gone", recoverGuest);
-    webview.addEventListener("focus", dismissHostPopups);
-    register();
+    const lease = acquireDesktopTab(runtimeTabId);
+    void lease.ready
+      .then(async () => {
+        if (disposed) return;
+        await previewBridge?.browser.mount(
+          runtimeTabId,
+          threadRef.environmentId,
+          profileId,
+          initialUrl,
+        );
+        if (!disposed) setMounted(true);
+      })
+      .catch(reportError);
     return () => {
       disposed = true;
-      if (recoveryTimeout !== null) clearTimeout(recoveryTimeout);
-      webview.removeEventListener("did-attach", register);
-      webview.removeEventListener("dom-ready", register);
-      webview.removeEventListener("render-process-gone", recoverGuest);
-      webview.removeEventListener("focus", dismissHostPopups);
+      setMounted(false);
+      lease.release();
     };
-  }, [clientSettingsHydrated, config, initialSrc, runtimeTabId, webviewGeneration]);
+  }, [clientSettingsHydrated, runtimeTabId, threadRef.environmentId, profileId, initialUrl]);
 
   const active = presentation.visible && presentation.rect !== null;
   const lastRect = presentation.rect;
@@ -237,6 +168,8 @@ export function HostedBrowserWebview(props: {
       ? resolveBrowserViewportLayout(lastRect, fittedSourceViewport, normalizedZoomFactor)
       : viewportLayout;
 
+  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+
   const syncContentPresentation = useCallback(() => {
     const wrapper = wrapperRef.current;
     if (!wrapper) return;
@@ -249,7 +182,31 @@ export function HostedBrowserWebview(props: {
       scrollLeft: wrapper.scrollLeft,
       scrollTop: wrapper.scrollTop,
     });
-  }, [layout, runtimeTabId]);
+    const video = videoRef.current;
+    if (mounted && video) {
+      const panel = wrapper.getBoundingClientRect();
+      const rect = video.getBoundingClientRect();
+      const x = Math.max(panel.x, rect.x);
+      const y = Math.max(panel.y, rect.y);
+      const width = Math.min(panel.right, rect.right) - x;
+      const height = Math.min(panel.bottom, rect.bottom) - y;
+      const clip = active && width > 0 && height > 0 ? { x, y, width, height } : null;
+      void previewBridge?.browser
+        .layout(runtimeTabId, {
+          rendering: renderingActive,
+          viewport: {
+            width: Math.max(1, layout.viewportWidth / layout.viewportScale / normalizedZoomFactor),
+            height: Math.max(
+              1,
+              layout.viewportHeight / layout.viewportScale / normalizedZoomFactor,
+            ),
+          },
+          clip,
+          content: { x: rect.x - x, y: rect.y - y, scale: layout.viewportScale },
+        })
+        .catch(reportError);
+    }
+  }, [active, layout, mounted, normalizedZoomFactor, renderingActive, runtimeTabId]);
 
   useEffect(() => {
     const frameId = window.requestAnimationFrame(syncContentPresentation);
@@ -262,16 +219,100 @@ export function HostedBrowserWebview(props: {
     wrapper.scrollTo({ left: 0, top: 0 });
   }, [runtimeTabId, viewport._tag, viewportHeight, viewportWidth]);
 
-  if (!clientSettingsHydrated || !config) return null;
+  useEffect(() => {
+    if (!mounted) return;
+    let disposed = false;
+    let stream: MediaStream | null = null;
+    if (renderingActive) {
+      void captureBrowserViewStream(runtimeTabId)
+        .then((captured) => {
+          if (disposed) {
+            captured.getTracks().forEach((track) => track.stop());
+            return;
+          }
+          stream = captured;
+          if (videoRef.current) videoRef.current.srcObject = captured;
+        })
+        .catch(reportError);
+    }
+    return () => {
+      disposed = true;
+      setStreamReady(false);
+      stream?.getTracks().forEach((track) => track.stop());
+      if (videoRef.current?.srcObject === stream) videoRef.current.srcObject = null;
+    };
+  }, [renderingActive, mounted, runtimeTabId]);
 
-  const renderingActive = active || backgroundActivity || pictureInPicture || recordingActive;
+  useEffect(() => {
+    const video = videoRef.current;
+    const bridge = previewBridge;
+    if (!mounted || !active || !video || !bridge) return;
+    const point = (event: MouseEvent) => {
+      const rect = video.getBoundingClientRect();
+      return {
+        x: event.clientX - rect.x,
+        y: event.clientY - rect.y,
+        modifiers: browserModifiers(event),
+      };
+    };
+    const move = (event: PointerEvent) => {
+      void bridge.browser
+        .motion(runtimeTabId, { type: "mouseMove", ...point(event) })
+        .catch(reportError);
+    };
+    const leave = (event: PointerEvent) => {
+      void bridge.browser
+        .motion(runtimeTabId, { type: "mouseLeave", ...point(event) })
+        .catch(reportError);
+    };
+    const wheel = (event: WheelEvent) => {
+      event.preventDefault();
+      const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? video.clientHeight : 1;
+      void bridge.browser
+        .motion(runtimeTabId, {
+          type: "mouseWheel",
+          ...point(event),
+          deltaX: -event.deltaX * unit,
+          deltaY: -event.deltaY * unit,
+        })
+        .catch(reportError);
+    };
+    const unsubscribe = bridge.browser.onCursorChange((tabId, cursor) => {
+      if (tabId === runtimeTabId) video.style.cursor = cursor;
+    });
+    video.addEventListener("pointermove", move);
+    video.addEventListener("pointerleave", leave);
+    video.addEventListener("wheel", wheel, { passive: false });
+    return () => {
+      unsubscribe();
+      video.removeEventListener("pointermove", move);
+      video.removeEventListener("pointerleave", leave);
+      video.removeEventListener("wheel", wheel);
+    };
+  }, [active, mounted, runtimeTabId]);
+
+  const releasePointer = (event: ReactPointerEvent<HTMLVideoElement>) => {
+    event.preventDefault();
+    if (!mounted || event.button > 2) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    void previewBridge?.browser
+      .interact(runtimeTabId, {
+        type: "mouseUp",
+        x: event.clientX - rect.x,
+        y: event.clientY - rect.y,
+        button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+        clickCount: Math.max(1, event.detail),
+        modifiers: browserModifiers(event),
+      })
+      .catch(reportError);
+  };
+
+  if (!clientSettingsHydrated) return null;
+
   const wrapperStyle = resolveHostedBrowserWebviewWrapperStyle({
     active,
     renderingActive,
-    // Electron 43 can permanently blank a macOS webview after `visibility: hidden`.
-    // Inactive macOS guests intentionally remain paintable offscreen; other platforms still
-    // suspend them, and automation continues to see the macOS guests as inactive.
-    keepPaintableWhenInactive: isMacPlatform(navigator.platform),
+    keepPaintableWhenInactive: false,
     cornerRadius: presentation.cornerRadius,
     zIndex: presentation.zIndex,
     rect: lastRect,
@@ -284,7 +325,7 @@ export function HostedBrowserWebview(props: {
       className="fixed overflow-hidden bg-muted/35"
       style={{ ...wrapperStyle, overscrollBehavior: "contain" }}
       onScroll={syncContentPresentation}
-      data-preview-rendering={renderingActive ? "active" : "suspended"}
+      data-preview-rendering={renderingActive && streamReady ? "active" : "suspended"}
       data-preview-viewport={runtimeTabId}
     >
       <div className="relative" style={{ width: layout.canvasWidth, height: layout.canvasHeight }}>
@@ -297,19 +338,49 @@ export function HostedBrowserWebview(props: {
             onChange={commitViewportChange}
           />
         ) : null}
-        <webview
-          key={webviewGeneration}
-          ref={setWebviewRef}
-          // Must be an attribute on the element itself: Electron reads it when the
-          // guest attaches, so setting it from the ref callback lands too late and
-          // the guest attaches with popups disabled. React types `allowpopups` as a
-          // boolean, but react-dom drops boolean values for unrecognized attributes,
-          // so the literal string has to be spread past the type.
-          {...({ allowpopups: "true" } as unknown as { readonly allowpopups?: boolean })}
-          src={webviewGeneration === 0 ? initialSrc : recoverySrc}
-          partition={config.partition}
-          webpreferences={config.webPreferences}
-          {...(config.preloadUrl ? { preload: config.preloadUrl } : {})}
+        <video
+          ref={videoRef}
+          autoPlay
+          onLoadedData={() => setStreamReady(true)}
+          muted
+          playsInline
+          tabIndex={active && mounted ? 0 : -1}
+          aria-label="Browser page"
+          onPointerDown={(event) => {
+            event.preventDefault();
+            if (!mounted) return;
+            if (event.button === 3 || event.button === 4) {
+              void (
+                event.button === 3
+                  ? previewBridge?.goBack(runtimeTabId)
+                  : previewBridge?.goForward(runtimeTabId)
+              )?.catch(reportError);
+              return;
+            }
+            // Keep DOM focus on the browser while the native page handles input.
+            focusingFromPointer.current = true;
+            event.currentTarget.focus({ preventScroll: true });
+            focusingFromPointer.current = false;
+            const rect = event.currentTarget.getBoundingClientRect();
+            void previewBridge?.browser
+              .interact(runtimeTabId, {
+                type: "mouseDown",
+                x: event.clientX - rect.x,
+                y: event.clientY - rect.y,
+                button: event.button === 2 ? "right" : event.button === 1 ? "middle" : "left",
+                clickCount: Math.max(1, event.detail),
+                modifiers: browserModifiers(event),
+              })
+              .catch(reportError);
+          }}
+          onPointerUp={releasePointer}
+          onPointerCancel={releasePointer}
+          onContextMenu={(event) => event.preventDefault()}
+          onFocus={(event) => {
+            if (event.relatedTarget && !focusingFromPointer.current) {
+              void previewBridge?.browser.interact(runtimeTabId, null).catch(reportError);
+            }
+          }}
           data-preview-tab={runtimeTabId}
           data-preview-server-tab={tabId}
           data-preview-viewport-mode={effectiveViewport._tag}
@@ -330,7 +401,7 @@ export function HostedBrowserWebview(props: {
           }
           aria-hidden={active ? undefined : true}
           className={cn(
-            "absolute flex overflow-hidden bg-white",
+            "absolute flex max-w-none overflow-hidden bg-white",
             active && !layout.fillsPanel && "ring-1 ring-border/70 shadow-sm",
           )}
           style={{

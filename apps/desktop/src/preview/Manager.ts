@@ -8,9 +8,13 @@
 import * as NodeCrypto from "node:crypto";
 import {
   DesktopPreviewRecordingInputSchema,
+  DesktopBrowserViewportSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@t3tools/contracts";
 import type {
+  DesktopBrowserLayout,
+  DesktopBrowserMotion,
+  DesktopBrowserPointer,
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
@@ -68,6 +72,11 @@ import * as SynchronizedRef from "effect/SynchronizedRef";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as BrowserSession from "./BrowserSession.ts";
+import { IsolatedBrowserHost } from "./IsolatedBrowserHost.ts";
+import {
+  INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
+  planWebviewCrashRecovery,
+} from "./webviewCrashRecovery.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
@@ -121,6 +130,8 @@ export interface PreviewTabState {
   favicon?: DesktopPreviewFavicon;
   updatedAt: string;
 }
+
+const decodeBrowserViewport = Schema.decodeUnknownSync(DesktopBrowserViewportSchema);
 
 /** Discrete zoom levels mirroring Chrome's preset list. */
 const ZOOM_LEVELS: ReadonlyArray<number> = [
@@ -687,6 +698,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   // `getMediaSourceId` + `chromeMediaSource: "tab"` capture path was removed upstream
   // (electron#44618) and now always rejects with NotAllowedError.
   let pendingRecording: PendingRecording | null = null;
+  let browserHost: IsolatedBrowserHost | undefined;
+  let configureBrowserContents: ((contents: Electron.WebContents) => void) | undefined;
   const displayMediaHandlerSessions = new WeakSet<Session>();
   const downloadHandlerSessions = new WeakSet<Session>();
   let downloadCount = 0;
@@ -1027,7 +1040,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const wc = webContents.fromId(tab.webContentsId);
     if (!wc || wc.isDestroyed()) return;
     yield* attempt({ operation: "assertTabZoom", tabId, webContentsId: wc.id }, () =>
-      wc.setZoomFactor(tab.zoomFactor),
+      browserHost?.owns(tabId, wc)
+        ? browserHost.setZoomFactor(tabId, tab.zoomFactor)
+        : wc.setZoomFactor(tab.zoomFactor),
     ).pipe(Effect.ignore);
   });
 
@@ -1481,6 +1496,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       checkControl: Effect.Effect<void, PreviewManagerError>,
     ) => Effect.Effect<A, PreviewManagerError>,
   ) {
+    if (browserHost?.isInteractive(tabId)) {
+      return yield* new PreviewAutomationControlInterruptedError({
+        operation: action,
+        tabId,
+        webContentsId: wc.id,
+      });
+    }
     const sequence = yield* nextCounter(actionSequenceRef);
     const startedAt = yield* currentIso;
     const millis = yield* currentMillis;
@@ -1496,7 +1518,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const execute = Effect.fn("PreviewManager.executeControlAction")(function* () {
       const checkControl = Effect.gen(function* () {
         const currentEpoch = (yield* Ref.get(controlEpochRef)).get(tabId) ?? 0;
-        if (currentEpoch !== epoch) {
+        if (currentEpoch !== epoch || browserHost?.isInteractive(tabId)) {
           return yield* new PreviewAutomationControlInterruptedError({
             operation: action,
             tabId,
@@ -1989,6 +2011,23 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
+    let crashRecovery = INITIAL_WEBVIEW_CRASH_RECOVERY_STATE;
+    const recoverFromCrash = Effect.fn("PreviewManager.recoverFromCrash")(function* () {
+      if (!browserHost?.owns(tabId, wc)) return;
+      const plan = planWebviewCrashRecovery(crashRecovery, yield* Clock.currentTimeMillis);
+      if (!plan) return;
+      crashRecovery = plan.state;
+      yield* attempt({ operation: "recoverFromCrash.park", tabId }, () => browserHost?.park(tabId));
+      yield* Effect.sleep(plan.delayMs);
+      const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+      if (current?.webContentsId !== wc.id || wc.isDestroyed()) return;
+      yield* attemptPromise({ operation: "recoverFromCrash.reload", tabId }, () =>
+        wc.loadURL(wc.getURL() || "about:blank"),
+      );
+    });
+    const renderProcessGone = () => {
+      runFork(recoverFromCrash().pipe(Effect.ignore, Effect.forkIn(scope)));
+    };
     const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
       if (input.type !== "keyDown") return;
       // Native editing roles must remain available after the page handles the key.
@@ -2024,6 +2063,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       scope,
       attempt({ operation: "detachListeners", tabId, webContentsId: wc.id }, () => {
         cancelFaviconCapture();
+        wc.off("render-process-gone", renderProcessGone);
         wc.off("did-start-navigation", navigationStarted);
         wc.off("did-navigate", syncNavigation);
         wc.off("did-navigate-in-page", syncInPageNavigation);
@@ -2046,6 +2086,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         // Only focused native editing shortcuts may reach the application menu.
         // Other preview input, including CDP keys, belongs to the page.
         wc.setIgnoreMenuShortcuts(true);
+        wc.on("render-process-gone", renderProcessGone);
         wc.on("did-start-navigation", navigationStarted);
         wc.on("did-navigate", syncNavigation);
         wc.on("did-navigate-in-page", syncInPageNavigation);
@@ -2084,7 +2125,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
 
   const setMainWindow = Effect.fn("PreviewManager.setMainWindow")(function* (
     window: BrowserWindow,
+    configureContents?: (contents: Electron.WebContents) => void,
   ) {
+    configureBrowserContents = configureContents;
+    browserHost?.destroy();
+    browserHost = undefined;
     if (mainWindowCleanupFiber) {
       yield* Fiber.join(mainWindowCleanupFiber);
       mainWindowCleanupFiber = undefined;
@@ -2190,6 +2235,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     });
     if (Option.isNone(tab)) return;
     const closedTab = tab.value;
+    yield* attempt({ operation: "closeBrowser", tabId }, () => browserHost?.close(tabId));
     if (closedTab.webContentsId != null) {
       yield* Effect.all(
         [detachControlSession(closedTab.webContentsId), detachListeners(closedTab.webContentsId)],
@@ -2250,8 +2296,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     if (
       !wc ||
       wc.isDestroyed() ||
-      wc.getType() !== "webview" ||
-      (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)
+      (!browserHost?.owns(tabId, wc) &&
+        (wc.getType() !== "webview" ||
+          (Option.isSome(mainWindow) && wc.hostWebContents !== mainWindow.value.webContents)))
     ) {
       return yield* new PreviewWebContentsNotFoundError({ tabId, webContentsId });
     }
@@ -2400,6 +2447,81 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       tabId,
       registerWebviewUnlocked(tabId, webContentsId, expectedGeneration),
     );
+  });
+
+  const mountBrowser = Effect.fn("PreviewManager.mountBrowser")(function* (
+    tabId: string,
+    session: Session,
+    preload: string,
+    initialUrl: string | null,
+  ) {
+    yield* withTabLifecycleLock(
+      tabId,
+      Effect.gen(function* () {
+        const tab = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+        if (!tab) return yield* new PreviewTabNotFoundError({ tabId });
+        const mainWindow = yield* Ref.get(mainWindowRef);
+        if (Option.isNone(mainWindow)) return yield* new PreviewMainWindowClosedError({ tabId });
+        const wc = yield* attempt({ operation: "mountBrowser", tabId }, () => {
+          browserHost ??= new IsolatedBrowserHost(mainWindow.value, configureBrowserContents);
+          return browserHost.create(tabId, session, preload, tab.zoomFactor);
+        });
+        yield* registerWebviewUnlocked(tabId, wc.id, tabLifecycleGenerations.get(tabId));
+        const attachment = (yield* Ref.get(attachedRef)).get(wc.id);
+        if (!wc.getURL() && attachment) {
+          // Mount independently of navigation so slow or failed pages retain their controls.
+          yield* attemptPromise({ operation: "mountBrowser.load", tabId }, () =>
+            wc.loadURL(initialUrl ?? "about:blank"),
+          ).pipe(Effect.ignore, Effect.forkIn(attachment.scope));
+        }
+      }),
+    );
+  });
+
+  const layoutBrowser = (tabId: string, layout: DesktopBrowserLayout) =>
+    attempt({ operation: "layoutBrowser", tabId }, () => browserHost?.layout(tabId, layout));
+
+  const interactWithBrowser = Effect.fn("PreviewManager.interactWithBrowser")(function* (
+    tabId: string,
+    pointer: DesktopBrowserPointer | null,
+  ) {
+    yield* Ref.update(controlEpochRef, (epochs) =>
+      replaceMap(epochs, (copy) => {
+        copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
+      }),
+    );
+    yield* attempt({ operation: "interactWithBrowser", tabId }, () =>
+      browserHost?.interact(
+        tabId,
+        pointer ? { ...pointer, modifiers: [...pointer.modifiers] } : null,
+      ),
+    );
+  });
+
+  const browserMotion = Effect.fn("PreviewManager.browserMotion")(function* (
+    tabId: string,
+    input: DesktopBrowserMotion,
+  ) {
+    if (input.type === "mouseWheel") {
+      yield* Ref.update(controlEpochRef, (epochs) =>
+        replaceMap(epochs, (copy) => {
+          copy.set(tabId, (epochs.get(tabId) ?? 0) + 1);
+        }),
+      );
+    }
+    yield* attempt({ operation: "browserMotion", tabId }, () => browserHost?.motion(tabId, input));
+  });
+
+  const readBrowserViewport = Effect.fn("PreviewManager.readBrowserViewport")(function* (
+    tabId: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    return yield* attemptPromise({ operation: "readBrowserViewport", tabId }, async () => {
+      const value: unknown = await wc.executeJavaScript(
+        "({ width: innerWidth, height: innerHeight })",
+      );
+      return decodeBrowserViewport(value);
+    });
   });
 
   const navigate = Effect.fn("PreviewManager.navigate")(function* (tabId: string, rawUrl: string) {
@@ -2568,6 +2690,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const pickElement = Effect.fn("PreviewManager.pickElement")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
     yield* cancelPickElement(tabId);
+    yield* interactWithBrowser(tabId, null);
     const annotationTheme = yield* Ref.get(annotationThemeRef);
     return yield* Effect.callback<PreviewAnnotationSubmissionResult | null, PreviewManagerError>(
       (resume) => {
@@ -2604,6 +2727,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           payload: PreviewAnnotationSubmissionResult | null,
         ) {
           yield* cleanup();
+          yield* attempt({ operation: "pickElement.park", tabId }, () =>
+            browserHost?.park(tabId),
+          ).pipe(Effect.ignore);
           resume(Effect.succeed(payload));
         });
         const settlePick = Effect.fn("PreviewManager.settlePickElement")(function* (
@@ -2618,6 +2744,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         const cancelPickSession = Effect.fn("PreviewManager.cancelPickSession")(function* () {
           if (!claimSettle()) return;
           yield* cleanup();
+          yield* attempt({ operation: "cancelPickElement.park", tabId }, () =>
+            browserHost?.park(tabId),
+          ).pipe(Effect.ignore);
           const tabs = yield* SynchronizedRef.get(tabsRef);
           const activeTab = tabs.get(tabId);
           if (activeTab?.webContentsId != null) {
@@ -2741,7 +2870,9 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       const wc = webContents.fromId(tab.webContentsId);
       if (wc && !wc.isDestroyed()) {
         yield* attempt({ operation: "applyZoom", tabId, webContentsId: wc.id }, () =>
-          wc.setZoomFactor(next),
+          browserHost?.owns(tabId, wc)
+            ? browserHost.setZoomFactor(tabId, next)
+            : wc.setZoomFactor(next),
         );
       }
     }
@@ -3551,7 +3682,11 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
           }),
         );
         const wc = yield* requireWebContents(tabId);
-        const requestWebContents = wc.hostWebContents;
+        const mainWindow = yield* Ref.get(mainWindowRef);
+        const requestWebContents =
+          browserHost?.owns(tabId, wc) && Option.isSome(mainWindow)
+            ? mainWindow.value.webContents
+            : wc.hostWebContents;
         if (requestWebContents === null) {
           return yield* new PreviewMainWindowClosedError({ tabId });
         }
@@ -3601,6 +3736,27 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }),
       ),
     );
+  });
+
+  const startBrowserStream = Effect.fn("PreviewManager.startBrowserStream")(function* (
+    tabId: string,
+  ) {
+    const wc = yield* requireWebContents(tabId);
+    const mainWindow = yield* Ref.get(mainWindowRef);
+    if (Option.isNone(mainWindow)) return yield* new PreviewMainWindowClosedError({ tabId });
+    const requester = mainWindow.value.webContents;
+    installDisplayMediaRequestHandler(requester.session);
+    yield* armPendingRecording(tabId, wc, requester.mainFrame.frameTreeNodeId);
+    const requested = yield* attemptPromise({ operation: "startBrowserStream", tabId }, () =>
+      requester.executeJavaScript(requestRecordingCaptureExpression(tabId), true),
+    ).pipe(Effect.onError(() => Effect.sync(() => clearPendingRecording(tabId))));
+    if (requested !== true) {
+      clearPendingRecording(tabId);
+      return yield* new PreviewRecordingCaptureUnavailableError({
+        tabId,
+        webContentsId: requester.id,
+      });
+    }
   });
 
   const stopRecording = Effect.fn("PreviewManager.stopRecording")(function* (tabId: string) {
@@ -3941,7 +4097,16 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   ) {
     const wc = yield* requireWebContents(tabId);
     yield* withControlSession(tabId, wc, "click", (send) =>
-      performAutomationClick(tabId, input, send),
+      Effect.gen(function* () {
+        if (browserHost?.owns(tabId, wc)) {
+          // An offscreen navigation can finish before Chromium updates hit testing.
+          // Await a frame before injecting the click, without focusing its window.
+          yield* attemptPromise({ operation: "automationClick.warmSource", tabId }, () =>
+            wc.capturePage().then(() => undefined),
+          ).pipe(Effect.retry({ times: 1 }));
+        }
+        yield* performAutomationClick(tabId, input, send);
+      }),
     );
   });
 
@@ -4639,8 +4804,17 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   yield* Effect.addFinalizer(() => destroy().pipe(Effect.ignore));
+  yield* Effect.addFinalizer(() =>
+    attempt({ operation: "destroyBrowserHost" }, () => browserHost?.destroy()).pipe(Effect.ignore),
+  );
 
   return {
+    mountBrowser,
+    browserMotion,
+    layoutBrowser,
+    interactWithBrowser,
+    readBrowserViewport,
+    startBrowserStream,
     automationClick,
     automationEvaluate,
     automationPress,
@@ -4982,7 +5156,10 @@ const isPreviewAutomationInvalidSelectorError = Schema.is(PreviewAutomationInval
 export class PreviewManager extends Context.Service<
   PreviewManager,
   {
-    readonly setMainWindow: (window: BrowserWindow) => Effect.Effect<void, PreviewManagerError>;
+    readonly setMainWindow: (
+      window: BrowserWindow,
+      configureContents?: (contents: Electron.WebContents) => void,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly getBrowserSession: (
       scope?: string,
       persistent?: boolean,
@@ -4994,6 +5171,28 @@ export class PreviewManager extends Context.Service<
       defaults?: DesktopPreviewTabDefaults,
     ) => Effect.Effect<PreviewTabState, PreviewManagerError>;
     readonly closeTab: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
+    readonly browserMotion: (
+      tabId: string,
+      input: DesktopBrowserMotion,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly mountBrowser: (
+      tabId: string,
+      session: Session,
+      preload: string,
+      initialUrl: string | null,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly layoutBrowser: (
+      tabId: string,
+      layout: DesktopBrowserLayout,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly interactWithBrowser: (
+      tabId: string,
+      pointer: DesktopBrowserPointer | null,
+    ) => Effect.Effect<void, PreviewManagerError>;
+    readonly readBrowserViewport: (
+      tabId: string,
+    ) => Effect.Effect<{ readonly width: number; readonly height: number }, PreviewManagerError>;
+    readonly startBrowserStream: (tabId: string) => Effect.Effect<void, PreviewManagerError>;
     readonly registerWebview: (
       tabId: string,
       webContentsId: number,
@@ -5123,6 +5322,12 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     isBrowserPartition: browserSession.isPartition,
     createTab: operations.createTab,
     closeTab: operations.closeTab,
+    mountBrowser: operations.mountBrowser,
+    browserMotion: operations.browserMotion,
+    layoutBrowser: operations.layoutBrowser,
+    interactWithBrowser: operations.interactWithBrowser,
+    readBrowserViewport: operations.readBrowserViewport,
+    startBrowserStream: operations.startBrowserStream,
     registerWebview: operations.registerWebview,
     navigate: operations.navigate,
     goBack: operations.goBack,

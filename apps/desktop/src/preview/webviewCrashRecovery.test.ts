@@ -4,7 +4,7 @@ import {
   INITIAL_WEBVIEW_CRASH_RECOVERY_STATE,
   planWebviewCrashRecovery,
   WEBVIEW_CRASH_RECOVERY_WINDOW_MS,
-} from "./webviewCrashRecovery";
+} from "./webviewCrashRecovery.ts";
 
 describe("planWebviewCrashRecovery", () => {
   it("backs off and stops after a bounded number of rapid crashes", () => {
