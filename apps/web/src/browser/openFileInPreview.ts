@@ -6,7 +6,7 @@ import type {
   PreviewSessionSnapshot,
   ScopedThreadRef,
 } from "@t3tools/contracts";
-import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
+import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import {
   type AtomCommandResult,
   mapAtomCommandResult,
@@ -86,9 +86,9 @@ export async function openUrlInPreview<E>(input: {
  * page may load sibling assets; a file outside it is served on its own.
  */
 export async function openFileInPreview<AssetError, PreviewError>(input: {
-  readonly threadRef: ScopedThreadRef;
+  readonly ownerRef: ScopedThreadRef;
   readonly filePath: string;
-  readonly workspaceRoot: string | undefined;
+  readonly sourceCwd: string | undefined;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
     readonly environmentId: EnvironmentId;
@@ -110,17 +110,19 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       ),
     );
   }
-  const insideWorkspace =
-    mediaFileReference(input.filePath, input.workspaceRoot).relativePath !== undefined;
+  const resource = workspaceFileAssetResource({ cwd: input.sourceCwd, path: input.filePath });
+  if (resource === null) {
+    return AsyncResult.failure(
+      Cause.fail(
+        new BrowserPreviewUnavailableError({
+          message: "The file's workspace is unavailable.",
+        }),
+      ),
+    );
+  }
   const assetResult = await input.createAssetUrl({
-    environmentId: input.threadRef.environmentId,
-    input: {
-      resource: {
-        _tag: insideWorkspace ? "workspace-file" : "media-file",
-        threadId: input.threadRef.threadId,
-        path: input.filePath,
-      },
-    },
+    environmentId: input.ownerRef.environmentId,
+    input: { resource },
   });
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
@@ -132,7 +134,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     );
   }
   return openUrlInPreview({
-    threadRef: input.threadRef,
+    threadRef: input.ownerRef,
     url: assetUrl,
     openPreview: input.openPreview,
   });

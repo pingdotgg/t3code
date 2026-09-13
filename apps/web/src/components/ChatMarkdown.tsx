@@ -1,3 +1,4 @@
+import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -217,6 +218,8 @@ interface ChatMarkdownProps {
   /** Directory that anchors relative links and images; defaults to `cwd`. Set
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
+  /** Explicit source workspace for file-panel media; transcript media retains its thread. */
+  assetSourceCwd?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
@@ -1574,7 +1577,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "draft-workspace-file" }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1592,11 +1595,13 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, props.resource);
   const resource = props.resource;
   const path =
-    resource._tag === "media-file"
-      ? resource.path
-      : resource._tag === "workspace-file" && props.workspaceRoot
-        ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
-        : undefined;
+    resource._tag === "draft-workspace-file"
+      ? resolvePathLinkTarget(resource.path, resource.cwd)
+      : resource._tag === "media-file"
+        ? resource.path
+        : resource._tag === "workspace-file" && props.workspaceRoot
+          ? `${props.workspaceRoot.replace(/[\\/]+$/, "")}/${resource.path}`
+          : undefined;
   const reference = path ? mediaFileReference(path, props.workspaceRoot) : undefined;
   const relativePath = reference?.relativePath;
   const src = assetUrl._tag === "Success" ? assetUrl.url + (props.srcFragment ?? "") : null;
@@ -2227,6 +2232,7 @@ function useChatMarkdownState({
   skills = EMPTY_MARKDOWN_SKILLS,
   onUseArtifactTemplate,
   imageBaseDir,
+  assetSourceCwd,
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
@@ -2241,7 +2247,14 @@ function useChatMarkdownState({
     return () => {
       mediaRequestId.current += 1;
     };
-  }, [threadRef?.environmentId, threadRef?.threadId, explicitEnvironmentId, cwd, imageBaseDir]);
+  }, [
+    threadRef?.environmentId,
+    threadRef?.threadId,
+    explicitEnvironmentId,
+    cwd,
+    imageBaseDir,
+    assetSourceCwd,
+  ]);
   const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -2268,6 +2281,7 @@ function useChatMarkdownState({
         source,
         resolvedFilePath,
         cwd,
+        assetSourceCwd,
         threadRef,
         httpBaseUrl:
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
@@ -2276,7 +2290,12 @@ function useChatMarkdownState({
           ? (path) =>
               useRightPanelStore
                 .getState()
-                .openFile(readWorkbenchRef(threadRef), path, undefined, cwd)
+                .openFile(
+                  assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef),
+                  path,
+                  undefined,
+                  cwd,
+                )
           : undefined,
       }).then(
         (preview) => {
@@ -2304,7 +2323,7 @@ function useChatMarkdownState({
         },
       );
     },
-    [createAssetUrl, cwd, expandMedia, preparedConnection, threadRef],
+    [assetSourceCwd, createAssetUrl, cwd, expandMedia, preparedConnection, threadRef],
   );
   const serverConfig = useAtomValue(serverEnvironment.configValueAtom(environmentId));
   const projects = useProjects();
@@ -2466,7 +2485,9 @@ function useChatMarkdownState({
   );
   const openMarkdownFileInPreview = useCallback(
     (path: string) => {
-      if (!threadRef || preparedConnection._tag === "None") {
+      const ownerRef =
+        threadRef && (assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef));
+      if (!ownerRef || preparedConnection._tag === "None") {
         return Promise.resolve(
           AsyncResult.failure<void, BrowserPreviewUnavailableError>(
             Cause.fail(
@@ -2478,15 +2499,15 @@ function useChatMarkdownState({
         );
       }
       return openFileInPreview({
-        threadRef,
+        ownerRef,
         filePath: path,
-        workspaceRoot: cwd,
+        sourceCwd: assetSourceCwd ?? cwd,
         httpBaseUrl: preparedConnection.value.httpBaseUrl,
         createAssetUrl,
         openPreview,
       });
     },
-    [createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
+    [assetSourceCwd, createAssetUrl, cwd, openPreview, preparedConnection, threadRef],
   );
   const findWorkspaceBasenameMatch = useCallback(
     async (workspaceRelativePath: string) => {
@@ -2517,7 +2538,14 @@ function useChatMarkdownState({
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
       const openAt = (path: string) =>
-        useRightPanelStore.getState().openFile(readWorkbenchRef(threadRef), path, line, cwd);
+        useRightPanelStore
+          .getState()
+          .openFile(
+            assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef),
+            path,
+            line,
+            cwd,
+          );
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -2528,7 +2556,7 @@ function useChatMarkdownState({
         openAt(match ?? panelPath);
       })();
     },
-    [cwd, findWorkspaceBasenameMatch, threadRef],
+    [assetSourceCwd, cwd, findWorkspaceBasenameMatch, threadRef],
   );
   const revealMarkdownFileInFileManager = useCallback(
     async (fileLinkMeta: MarkdownFileLinkMeta) => {
@@ -2633,6 +2661,7 @@ function useChatMarkdownState({
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
+      assetSourceCwd,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -2662,6 +2691,7 @@ function useChatMarkdownState({
       renderContextReference,
       headingLevelOffset,
       imageBaseDir,
+      assetSourceCwd,
       inlineCodeFileLinkMetaByText,
       isStreaming,
       linkTargetPreference,
@@ -3088,9 +3118,8 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef, renderContextReference } = use(
-      ChatMarkdownRendererContext,
-    );
+    const { expandMedia, cwd, imageBaseDir, assetSourceCwd, threadRef, renderContextReference } =
+      use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
     if (contextReference) {
@@ -3156,14 +3185,17 @@ const CHAT_MARKDOWN_COMPONENTS = {
       );
     }
     if (imageSource._tag === "WorkspaceFile" && threadRef) {
+      const resource =
+        assetSourceCwd !== undefined
+          ? workspaceFileAssetResource({ cwd: assetSourceCwd, path: imageSource.path })
+          : { _tag: "media-file" as const, threadId: threadRef.threadId, path: imageSource.path };
+      if (resource === null) {
+        return <ChatMarkdownImageFallback alt={altText} copyMarkdown={copyMarkdown} kind={kind} />;
+      }
       return (
         <ChatMarkdownAssetImage
           environmentId={threadRef.environmentId}
-          resource={{
-            _tag: "media-file",
-            threadId: threadRef.threadId,
-            path: imageSource.path,
-          }}
+          resource={resource}
           alt={altText}
           kind={kind}
           copyMarkdown={copyMarkdown}

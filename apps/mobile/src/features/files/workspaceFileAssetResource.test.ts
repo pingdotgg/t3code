@@ -31,6 +31,20 @@ describe("workspace file preview resources", () => {
       path: "image.png",
     });
   });
+  it("makes absolute in-root HTML relative so its sibling assets remain available", () => {
+    expect(
+      workspaceFileAssetResource({
+        cwd: "/primary",
+        explicitCwd: "/member",
+        threadId: null,
+        relativePath: "/member/docs/preview.html",
+      }),
+    ).toEqual({
+      _tag: "draft-workspace-file",
+      cwd: "/member",
+      path: "docs/preview.html",
+    });
+  });
   it("preserves old thread media links and their exact absolute path", () => {
     expect(
       workspaceFileAssetResource({

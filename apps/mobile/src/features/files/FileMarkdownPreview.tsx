@@ -1,3 +1,4 @@
+import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { getBrowseDirectoryPath } from "@t3tools/client-runtime/state/projects";
@@ -233,10 +234,12 @@ export function FileMarkdownPreview(props: {
       ) {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       }
+      const resource = workspaceFileAssetResource({ cwd: props.cwd, path: media.reference.path });
+      if (resource === null) return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={{ _tag: "draft-workspace-file", cwd: props.cwd, path: media.reference.path }}
+          resource={resource}
           alt={image.alt}
           srcFragment={media.srcFragment}
           onPressPreview={() => undefined}

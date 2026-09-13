@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
-import { EnvironmentId } from "@t3tools/contracts";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
 import {
@@ -14,6 +15,41 @@ describe("resolveMarkdownMediaPreview", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
   });
+
+  it.each([undefined, "/foreign"])(
+    "retains transcript ownership unless a panel source cwd is supplied (%s)",
+    async (assetSourceCwd) => {
+      const createAssetUrl = vi.fn(async () =>
+        AsyncResult.success({ relativeUrl: "/api/assets/token/image.png", expiresAt: 999999 }),
+      );
+      const threadRef = {
+        environmentId: EnvironmentId.make("remote"),
+        threadId: ThreadId.make("member"),
+      };
+      const preview = await resolveMarkdownMediaPreview({
+        source: "image.png",
+        cwd: "/foreign",
+        assetSourceCwd,
+        threadRef,
+        httpBaseUrl: "https://remote.example/",
+        createAssetUrl,
+      });
+      expect(createAssetUrl).toHaveBeenCalledWith({
+        environmentId: threadRef.environmentId,
+        input: {
+          resource:
+            assetSourceCwd === undefined
+              ? { _tag: "media-file", threadId: threadRef.threadId, path: "/foreign/image.png" }
+              : { _tag: "draft-workspace-file", cwd: "/foreign", path: "image.png" },
+        },
+      });
+      expect(preview?.images[0]?.actionsSource?.reference).toEqual({
+        kind: "file",
+        path: "/foreign/image.png",
+        relativePath: "image.png",
+      });
+    },
+  );
 
   it.each([
     ["t3code:", "https:"],

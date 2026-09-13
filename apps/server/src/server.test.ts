@@ -5652,6 +5652,48 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("serves task workbench assets from their source cwd without a synthetic thread", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest();
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const primary = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-task-assets-" });
+      const foreign = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-member-assets-" });
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            for (const [cwd, label] of [
+              [primary, "primary"],
+              [foreign, "foreign"],
+            ] as const) {
+              for (const [name, bytes, mimeType] of [
+                ["image.png", `${label} image`, "image/png"],
+                ["preview.html", `<img src="image.png">${label}`, "text/html; charset=utf-8"],
+                ["report.pdf", `%PDF-1.4 ${label}`, "application/pdf"],
+              ] as const) {
+                yield* fileSystem.writeFileString(path.join(cwd, name), bytes);
+                const issued = yield* client[WS_METHODS.assetsCreateUrl]({
+                  resource: { _tag: "draft-workspace-file", cwd, path: name },
+                });
+                const response = yield* HttpClient.get(issued.relativeUrl);
+                assert.equal(response.status, 200);
+                assert.equal(response.headers["content-type"], mimeType);
+                assert.equal(yield* response.text, bytes);
+                if (name === "preview.html") {
+                  const siblingUrl = issued.relativeUrl.replace(/preview\.html$/, "image.png");
+                  const sibling = yield* HttpClient.get(siblingUrl);
+                  assert.equal(sibling.status, 200);
+                  assert.equal(yield* sibling.text, `${label} image`);
+                }
+              }
+            }
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("uploads image bytes through a signed URL issued by websocket rpc", () =>
     Effect.gen(function* () {
       const config = yield* buildAppUnderTest();

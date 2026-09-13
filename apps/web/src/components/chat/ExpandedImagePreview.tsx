@@ -1,3 +1,4 @@
+import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import type { SnapShotSource } from "@t3tools/contracts";
 
 import type { ComposerFileAttachment } from "../../composerDraftStore";
@@ -47,6 +48,7 @@ export async function resolveMarkdownMediaPreview(input: {
   source: string;
   resolvedFilePath?: string | undefined;
   cwd?: string | undefined;
+  assetSourceCwd?: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
   httpBaseUrl?: string | undefined;
   onOpenFile?: ((relativePath: string) => void) | undefined;
@@ -72,7 +74,12 @@ export async function resolveMarkdownMediaPreview(input: {
     if (media.access === "unavailable" || !input.threadRef || !input.httpBaseUrl) {
       throw new Error("Reconnect to this environment and open the media again.");
     }
-    asset = { environmentId: input.threadRef.environmentId, resource: media.resource };
+    const resource =
+      input.assetSourceCwd === undefined
+        ? media.resource
+        : workspaceFileAssetResource({ cwd: input.assetSourceCwd, path: media.resource.path });
+    if (resource === null) throw new Error("The file's workspace is unavailable.");
+    asset = { environmentId: input.threadRef.environmentId, resource };
     const result = await input.createAssetUrl({
       environmentId: asset.environmentId,
       input: { resource: asset.resource },

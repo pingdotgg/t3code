@@ -1,3 +1,4 @@
+import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import { Spinner } from "~/components/ui/spinner";
 import type {
   ChatFileAttachment,
@@ -117,19 +118,14 @@ type FilePostRender = NonNullable<FileOptions<unknown>["onPostRender"]>;
 
 function WorkspaceImagePreview(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly alt: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "workspace-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () => workspaceFileAssetResource({ cwd: props.workspaceRoot, path: props.absolutePath }),
+    [props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -143,7 +139,7 @@ function WorkspaceImagePreview(props: {
     name: props.alt,
     src: imageUrl,
     reference: mediaFileReference(props.absolutePath, props.workspaceRoot),
-    asset: { environmentId: props.environmentId, resource },
+    ...(resource ? { asset: { environmentId: props.environmentId, resource } } : {}),
   };
 
   if (assetUrl._tag === "Failure" || (imageUrl !== null && failedUrl === imageUrl)) {
@@ -182,21 +178,14 @@ function WorkspaceImagePreview(props: {
  */
 function WorkspaceBrowserPreview(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly title: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const insideWorkspace =
-    mediaFileReference(props.absolutePath, props.workspaceRoot).relativePath !== undefined;
   const resource = useMemo(
-    () => ({
-      _tag: insideWorkspace ? ("workspace-file" as const) : ("media-file" as const),
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [insideWorkspace, props.threadRef.threadId, props.absolutePath],
+    () => workspaceFileAssetResource({ cwd: props.workspaceRoot, path: props.absolutePath }),
+    [props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const revisionSuffix =
@@ -229,19 +218,14 @@ function WorkspaceBrowserPreview(props: {
 
 function WorkspaceVideoPreview(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
   readonly absolutePath: string;
   readonly workspaceRoot: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () => workspaceFileAssetResource({ cwd: props.workspaceRoot, path: props.absolutePath }),
+    [props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -274,7 +258,7 @@ function WorkspaceVideoPreview(props: {
           name: props.name,
           src: latestUrl,
           reference: mediaFileReference(props.absolutePath, props.workspaceRoot),
-          asset: { environmentId: props.environmentId, resource },
+          ...(resource ? { asset: { environmentId: props.environmentId, resource } } : {}),
         }}
       />
     </div>
@@ -283,18 +267,14 @@ function WorkspaceVideoPreview(props: {
 
 function WorkspaceAudioPreview(props: {
   readonly environmentId: EnvironmentId;
-  readonly threadRef: ScopedThreadRef;
+  readonly workspaceRoot: string;
   readonly absolutePath: string;
   readonly name: string;
   readonly workspaceMutationId: string | null;
 }) {
   const resource = useMemo(
-    () => ({
-      _tag: "media-file" as const,
-      threadId: props.threadRef.threadId,
-      path: props.absolutePath,
-    }),
-    [props.threadRef.threadId, props.absolutePath],
+    () => workspaceFileAssetResource({ cwd: props.workspaceRoot, path: props.absolutePath }),
+    [props.workspaceRoot, props.absolutePath],
   );
   const assetUrl = useAssetUrlState(props.environmentId, resource);
   const refreshAssetUrl = useAssetUrlRefresh(props.environmentId, resource);
@@ -1054,9 +1034,9 @@ export default function FilePreviewPanel({
     if (!absolutePath || !environmentHttpBaseUrl) return;
     void (async () => {
       const result = await openFileInPreview({
-        threadRef,
+        ownerRef: threadRef,
         filePath: absolutePath,
-        workspaceRoot: cwd,
+        sourceCwd: cwd,
         httpBaseUrl: environmentHttpBaseUrl,
         createAssetUrl,
         openPreview,
@@ -1182,9 +1162,8 @@ export default function FilePreviewPanel({
             />
           ) : relativePath && isVideo && absolutePath ? (
             <WorkspaceVideoPreview
-              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
+              key={`${environmentId}:${cwd}:${absolutePath}`}
               environmentId={environmentId}
-              threadRef={threadRef}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               name={relativePath}
@@ -1192,18 +1171,17 @@ export default function FilePreviewPanel({
             />
           ) : relativePath && isAudio && absolutePath ? (
             <WorkspaceAudioPreview
-              key={`${environmentId}:${threadRef.threadId}:${absolutePath}`}
+              key={`${environmentId}:${cwd}:${absolutePath}`}
               environmentId={environmentId}
-              threadRef={threadRef}
               absolutePath={absolutePath}
+              workspaceRoot={cwd}
               name={relativePath}
               workspaceMutationId={workspaceMutationId}
             />
           ) : relativePath && isImage && absolutePath ? (
             <WorkspaceImagePreview
-              key={absolutePath}
+              key={`${environmentId}:${cwd}:${absolutePath}`}
               environmentId={environmentId}
-              threadRef={threadRef}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               alt={relativePath}
@@ -1211,9 +1189,8 @@ export default function FilePreviewPanel({
             />
           ) : relativePath && renderBrowserFile && absolutePath ? (
             <WorkspaceBrowserPreview
-              key={absolutePath}
+              key={`${environmentId}:${cwd}:${absolutePath}`}
               environmentId={environmentId}
-              threadRef={threadRef}
               absolutePath={absolutePath}
               workspaceRoot={cwd}
               title={relativePath}

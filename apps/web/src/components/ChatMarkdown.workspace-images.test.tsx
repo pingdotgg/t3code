@@ -101,20 +101,16 @@ describe("ChatMarkdown workspace images", () => {
   });
 
   it.each([
-    ["/workspace/project", "docs/README.md", "/workspace/project/docs/images/diagram.png"],
-    [
-      "C:\\Users\\shawn\\project",
-      "docs\\README.md",
-      "C:\\Users\\shawn\\project\\docs\\images\\diagram.png",
-    ],
-    ["/workspace/project", "README.md", "/workspace/project/images/diagram.png"],
+    ["/workspace/project", "docs/README.md", "docs/images/diagram.png"],
+    ["C:\\Users\\shawn\\project", "docs\\README.md", "docs/images/diagram.png"],
+    ["/workspace/project", "README.md", "images/diagram.png"],
   ])("resolves images beside a nested file in %s", (cwd, relativePath, expectedPath) => {
     renderFilePreview(cwd, relativePath);
 
     expect(testState.resources).toEqual([
       {
-        _tag: "media-file",
-        threadId: threadRef.threadId,
+        _tag: "draft-workspace-file",
+        cwd,
         path: expectedPath,
       },
     ]);

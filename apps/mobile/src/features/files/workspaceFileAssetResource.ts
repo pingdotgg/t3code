@@ -1,3 +1,4 @@
+import { workspaceFileAssetResource as explicitWorkspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import type { AssetResource, ThreadId } from "@t3tools/contracts";
 import {
   isAbsolutePath,
@@ -15,7 +16,7 @@ export function workspaceFileAssetResource(input: {
 }): AssetResource | null {
   if (input.cwd === null || input.relativePath === null) return null;
   if (input.explicitCwd != null) {
-    return { _tag: "draft-workspace-file", cwd: input.explicitCwd, path: input.relativePath };
+    return explicitWorkspaceFileAssetResource({ cwd: input.explicitCwd, path: input.relativePath });
   }
   if (input.threadId === null) return null;
   const path = resolveWorkspaceFilePath(input.cwd, input.relativePath);
