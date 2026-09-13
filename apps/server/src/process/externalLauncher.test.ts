@@ -159,6 +159,95 @@ it.effect("launches an installed editor with platform-safe arguments", () =>
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
+for (const platform of ["darwin", "linux"] as const) {
+  it.effect.skipIf(windowsHost)(`launches Cursor in classic IDE mode on ${platform}`, () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+      const cursorPath = path.join(binDir, "cursor");
+      yield* fileSystem.writeFileString(cursorPath, "#!/bin/sh\n");
+      yield* fileSystem.chmod(cursorPath, 0o755);
+
+      const spawned: ChildProcess.StandardCommand[] = [];
+      yield* Effect.gen(function* () {
+        const launcher = yield* ExternalLauncher.ExternalLauncher;
+        for (const cwd of [
+          "/workspace with spaces",
+          "/workspace with spaces/src/index.ts",
+          "/workspace with spaces/src/index.ts:12",
+          "/workspace with spaces/src/index.ts:12:4",
+        ]) {
+          yield* launcher.launchEditor({ editor: "cursor", cwd });
+        }
+      }).pipe(
+        Effect.provide(
+          testLayer({
+            platform,
+            env: { PATH: binDir },
+            onSpawn: (command) => spawned.push(command),
+          }),
+        ),
+      );
+
+      assert.deepEqual(
+        spawned.map((command) => ({ command: command.command, args: command.args })),
+        [
+          { command: "cursor", args: ["--classic", "/workspace with spaces"] },
+          { command: "cursor", args: ["--classic", "/workspace with spaces/src/index.ts"] },
+          {
+            command: "cursor",
+            args: ["--classic", "--goto", "/workspace with spaces/src/index.ts:12"],
+          },
+          {
+            command: "cursor",
+            args: ["--classic", "--goto", "/workspace with spaces/src/index.ts:12:4"],
+          },
+        ],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+}
+
+it.effect("launches Cursor in classic IDE mode through the Windows command shim", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const binDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-editors-" });
+    yield* fileSystem.writeFileString(path.join(binDir, "cursor.CMD"), "@echo off\r\n");
+
+    let spawned: ChildProcess.StandardCommand | undefined;
+    yield* Effect.gen(function* () {
+      const launcher = yield* ExternalLauncher.ExternalLauncher;
+      yield* launcher.launchEditor({
+        editor: "cursor",
+        cwd: "C:\\workspace with spaces\\src\\index.ts:12:4",
+      });
+    }).pipe(
+      Effect.provide(
+        testLayer({
+          platform: "win32",
+          env: { PATH: binDir, PATHEXT: ".COM;.EXE;.BAT;.CMD" },
+          resolveExecutable: (command) =>
+            command === "cursor" ? "C:\\Program Files\\Cursor\\bin\\cursor.CMD" : command,
+          onSpawn: (command) => {
+            spawned = command;
+          },
+        }),
+      ),
+    );
+
+    assert.ok(spawned);
+    assert.equal(spawned.command, '^"C:\\Program^ Files\\Cursor\\bin\\cursor.CMD^"');
+    assert.deepEqual(spawned.args, [
+      '^"--classic^"',
+      '^"--goto^"',
+      '^"C:\\workspace^ with^ spaces\\src\\index.ts:12:4^"',
+    ]);
+    assert.equal(spawned.options.shell, true);
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
 it.effect.skipIf(windowsHost)("reveals a file in Finder with open -R on macOS", () =>
   Effect.gen(function* () {
     const fileSystem = yield* FileSystem.FileSystem;

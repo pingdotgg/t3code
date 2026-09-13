@@ -24,6 +24,8 @@ export const EDITORS = [
     id: "cursor",
     label: "Cursor",
     commands: ["cursor"],
+    // File and workspace opens must target the IDE even when the Agents Window is active.
+    baseArgs: ["--classic"],
     launchStyle: "goto",
     remoteScheme: "cursor",
   },
