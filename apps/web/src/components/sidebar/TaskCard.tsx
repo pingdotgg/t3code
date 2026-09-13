@@ -190,7 +190,13 @@ export const TaskCard = memo(function TaskCard({
       </div>
       <div className="mt-1 flex min-w-0 items-center gap-1.5">
         <LayersIcon className="size-3.5 shrink-0 text-primary/80" />
-        <span className="min-w-0 flex-1 truncate text-sm font-medium" aria-label={task.name}>
+        <span
+          className={cn(
+            "min-w-0 flex-1 truncate text-sm",
+            selected ? "font-medium" : "font-normal",
+          )}
+          aria-label={task.name}
+        >
           {task.name}
         </span>
         <span

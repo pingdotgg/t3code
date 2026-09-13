@@ -53,7 +53,10 @@ export const TaskSlimRow = memo(function TaskSlimRow({
       />
       <LayersIcon className="size-3.5 shrink-0 text-primary/60" />
       <span
-        className="min-w-0 flex-1 truncate text-sm text-secondary-label"
+        className={cn(
+          "min-w-0 flex-1 truncate text-sm text-secondary-label",
+          selected ? "font-medium" : "font-normal",
+        )}
         aria-label={`${task.name} — ${primaryProjectName}`}
       >
         {task.name}

@@ -105,7 +105,7 @@ export const TaskListRow = memo(
               </Text>
             </View>
           ) : null}
-          <Text numberOfLines={1} className="font-t3-semibold">
+          <Text numberOfLines={1} className={item.selected ? "font-t3-medium" : "font-sans"}>
             {task.name}
           </Text>
           <Text className="text-xs text-foreground-muted">
