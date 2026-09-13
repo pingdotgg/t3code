@@ -221,6 +221,96 @@ describe("AcpSessionRuntime", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.effect(
+    "drains active prompt successfully when session/cancel notification fails with transport error",
+    () =>
+      Effect.gen(function* () {
+        const toolStarted = yield* Deferred.make<void>();
+        const cancelReceived = yield* Deferred.make<void>();
+        let promptRequests = 0;
+        const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: {
+              T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
+              T3_ACP_FAIL_CANCEL: "1",
+            },
+          },
+          cancelBehavior: "wait-for-prompt",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.method === "session/prompt" && event.status === "started")
+                promptRequests += 1;
+            }),
+        });
+        yield* runtime.getEvents().pipe(
+          Stream.runForEach((event) => {
+            if (event._tag === "EventStreamBarrier") {
+              return Deferred.succeed(event.acknowledge, undefined);
+            }
+            events.push(event);
+            if (event._tag === "ToolCallUpdated" && event.toolCall.status === "inProgress") {
+              return Deferred.succeed(toolStarted, undefined);
+            }
+            if (event._tag === "ThoughtDelta" && event.text === "native-cancel-received") {
+              return Deferred.succeed(cancelReceived, undefined);
+            }
+            return Effect.void;
+          }),
+          Effect.forkChild,
+        );
+        yield* runtime.start();
+        const prompt = yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "first" }],
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(toolStarted);
+        const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
+        yield* Deferred.await(cancelReceived);
+        const replacement = yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "second" }],
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        expect(prompt.pollUnsafe()).toBeUndefined();
+        expect(cancellation.pollUnsafe()).toBeUndefined();
+        expect(promptRequests).toBe(1);
+        yield* runtime.request("_test/finish-cancel", {});
+        yield* Fiber.join(cancellation);
+
+        expect(yield* Fiber.join(prompt)).toEqual({
+          stopReason: "cancelled",
+          _meta: { nativeCancel: true },
+        });
+        expect(
+          events.some(
+            (event) =>
+              event._tag === "ToolCallUpdated" &&
+              event.toolCall.status === "failed" &&
+              event.toolCall.detail === "Cancelled.",
+          ),
+        ).toBe(true);
+        const cancelledDelta = events.find(
+          (event) => event._tag === "ContentDelta" && event.text === "Request cancelled.",
+        );
+        expect(cancelledDelta?._tag).toBe("ContentDelta");
+        if (cancelledDelta?._tag === "ContentDelta") {
+          expect(
+            events.filter(
+              (event) =>
+                event._tag === "AssistantItemCompleted" && event.itemId === cancelledDelta.itemId,
+            ),
+          ).toHaveLength(1);
+        }
+        expect(yield* Fiber.join(replacement)).toMatchObject({ stopReason: "end_turn" });
+        expect(promptRequests).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("retires a process when native cancellation times out", () =>
     Effect.gen(function* () {
       const toolStarted = yield* Deferred.make<void>();
