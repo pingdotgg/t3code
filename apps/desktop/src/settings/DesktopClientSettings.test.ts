@@ -34,6 +34,7 @@ const clientSettings: ClientSettings = {
   contextWindowMeterEnabled: false,
   composerCollapseOnScroll: true,
   dismissedProviderUpdateNotificationKeys: [],
+  diffFilesCollapsed: true,
   diffIgnoreWhitespace: true,
   diffLayout: "stacked",
   environmentIdentificationMode: "artwork",

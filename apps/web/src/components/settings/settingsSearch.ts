@@ -248,6 +248,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["diff ignore spaces edits default"],
   },
   {
+    id: "default-diff-file-state",
+    title: "Default diff file state",
+    to: "/settings/general",
+    searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
+  },
+  {
     id: "diff-layout",
     title: "Diff layout",
     to: "/settings/general",
