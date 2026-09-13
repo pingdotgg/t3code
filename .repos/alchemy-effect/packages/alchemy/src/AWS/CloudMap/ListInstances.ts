@@ -19,9 +19,8 @@ export interface ListInstancesRequest extends Omit<
  * control-plane view: strongly consistent with registration, one page at a
  * time via `NextToken`. Provide the implementation with
  * `Effect.provide(AWS.CloudMap.ListInstancesHttp)`.
- * @binding
- * @section Reading Instances
- * @example List Registered Instances
+ * ### Reading Instances
+ * **Example:** List Registered Instances
  * ```typescript
  * const listInstances = yield* AWS.CloudMap.ListInstances(service);
  *
@@ -30,6 +29,8 @@ export interface ListInstancesRequest extends Omit<
  *   console.log(instance.Id, instance.Attributes);
  * }
  * ```
+ *
+ * @binding
  */
 export interface ListInstances extends Binding.Service<
   ListInstances,

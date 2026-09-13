@@ -71,14 +71,14 @@ export interface View extends Resource<
  * When an index and a view deploy together, the view provider retries
  * through the window where the index is still provisioning.
  *
- * @section Creating Views
- * @example Unfiltered view over the whole account
+ * ### Creating Views
+ * **Example:** Unfiltered view over the whole account
  * ```typescript
  * const index = yield* AWS.ResourceExplorer.Index("Index", {});
  * const view = yield* AWS.ResourceExplorer.View("AllResources", {});
  * ```
  *
- * @example Filtered view with tags included in results
+ * **Example:** Filtered view with tags included in results
  * ```typescript
  * const view = yield* AWS.ResourceExplorer.View("S3Only", {
  *   filterString: "service:s3",
@@ -86,8 +86,8 @@ export interface View extends Resource<
  * });
  * ```
  *
- * @section Searching
- * @example Search from a Lambda function
+ * ### Searching
+ * **Example:** Search from a Lambda function
  * ```typescript
  * // init
  * const search = yield* AWS.ResourceExplorer.Search(view);

@@ -122,16 +122,14 @@ export function buildShortcutActions(recents: ReadonlyArray<RecentThreadShortcut
       icon: SHORTCUT_ICON,
       params: { href: NEW_TASK_SHORTCUT_HREF },
     },
-    ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map(
-      (thread): Action => ({
-        // The encoded href doubles as the launcher id: URI-encoding makes the
-        // env/thread join unambiguous (a plain `-` join lets different pairs
-        // collide and overwrite each other's launcher slots).
-        id: `thread:${threadShortcutHref(thread)}`,
-        title: threadShortcutLabel(thread),
-        icon: SHORTCUT_ICON,
-        params: { href: threadShortcutHref(thread) },
-      }),
-    ),
+    ...recents.slice(0, MAX_RECENT_THREAD_SHORTCUTS).map((thread): Action => ({
+      // The encoded href doubles as the launcher id: URI-encoding makes the
+      // env/thread join unambiguous (a plain `-` join lets different pairs
+      // collide and overwrite each other's launcher slots).
+      id: `thread:${threadShortcutHref(thread)}`,
+      title: threadShortcutLabel(thread),
+      icon: SHORTCUT_ICON,
+      params: { href: threadShortcutHref(thread) },
+    })),
   ];
 }

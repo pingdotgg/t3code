@@ -7,15 +7,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads one import task by id — status, progress statistics, and parsed-record counts. Task ids are server-generated runtime data. Provide the implementation with
  * `Effect.provide(AWS.NeptuneGraph.GetImportTaskHttp)`.
- * @binding
- * @section Importing and Exporting Data
- * @example Poll an import task
+ * ### Importing and Exporting Data
+ * **Example:** Poll an import task
  * ```typescript
  * const getImportTask = yield* NeptuneGraph.GetImportTask();
  *
  * const task = yield* getImportTask({ taskIdentifier });
  * // task.status → "SUCCEEDED"
  * ```
+ *
+ * @binding
  */
 export interface GetImportTask extends Binding.Service<
   GetImportTask,

@@ -23,9 +23,8 @@ export interface ExportApiRequest extends Partial<
  * `ApiGatewayV2.ExportApiHttp` on the Function effect to implement the
  * binding.
  *
- * @binding
- * @section Exporting API definitions
- * @example Serve the live OpenAPI document
+ * ### Exporting API definitions
+ * **Example:** Serve the live OpenAPI document
  * ```typescript
  * // init
  * const exportApi = yield* ApiGatewayV2.ExportApi(api);
@@ -34,6 +33,8 @@ export interface ExportApiRequest extends Partial<
  * const exported = yield* exportApi({ OutputType: "JSON" });
  * const document = yield* Stream.mkString(Stream.decodeText(exported.body!));
  * ```
+ *
+ * @binding
  */
 export interface ExportApi extends Binding.Service<
   ExportApi,

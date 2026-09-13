@@ -27,7 +27,8 @@ const toolResultMessage = (id: string) =>
         id,
         name: "test_tool",
         result: { ok: true },
-        isFailure: false
+        isFailure: false,
+        providerExecuted: false
       })
     ]
   })

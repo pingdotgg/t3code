@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * requester, revocation state, and signature expiry window. Account-level
  * operation — the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Signer.ListSigningJobsHttp)`.
- * @binding
- * @section Observing Signing Jobs
- * @example List In-Progress Jobs
+ * ### Observing Signing Jobs
+ * **Example:** List In-Progress Jobs
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listSigningJobs = yield* AWS.Signer.ListSigningJobs();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { jobs } = yield* listSigningJobs({ status: "InProgress" });
  * ```
+ *
+ * @binding
  */
 export interface ListSigningJobs extends Binding.Service<
   ListSigningJobs,

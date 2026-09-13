@@ -11,9 +11,8 @@ import type { AccessPoint } from "./AccessPoint.ts";
  * exposed access points. An access point without a policy fails with the
  * typed `NoSuchAccessPointPolicy` tag. Provide the implementation with
  * `Effect.provide(AWS.S3Control.GetAccessPointPolicyStatusHttp)`.
- * @binding
- * @section Observing an Access Point
- * @example Check Whether the Access Point Is Public
+ * ### Observing an Access Point
+ * **Example:** Check Whether the Access Point Is Public
  * ```typescript
  * // init — bind the operation to the access point
  * const getPolicyStatus =
@@ -23,6 +22,8 @@ import type { AccessPoint } from "./AccessPoint.ts";
  * const status = yield* getPolicyStatus();
  * // status.PolicyStatus?.IsPublic === false
  * ```
+ *
+ * @binding
  */
 export interface GetAccessPointPolicyStatus extends Binding.Service<
   GetAccessPointPolicyStatus,

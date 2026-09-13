@@ -9,7 +9,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import * as Ref from "effect/Ref";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
@@ -84,7 +83,7 @@ const DesktopSavedEnvironmentSecretProtectionOperation = Schema.Literals([
   "decrypt-secret",
 ]);
 
-export class DesktopSavedEnvironmentsWriteError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsWriteError>()(
+export class DesktopSavedEnvironmentsWriteError extends Schema.TaggedError<DesktopSavedEnvironmentsWriteError>()(
   "DesktopSavedEnvironmentsWriteError",
   {
     operation: DesktopSavedEnvironmentsWriteOperation,
@@ -97,7 +96,7 @@ export class DesktopSavedEnvironmentsWriteError extends Schema.TaggedErrorClass<
   }
 }
 
-export class DesktopSavedEnvironmentsReadError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsReadError>()(
+export class DesktopSavedEnvironmentsReadError extends Schema.TaggedError<DesktopSavedEnvironmentsReadError>()(
   "DesktopSavedEnvironmentsReadError",
   {
     registryPath: Schema.String,
@@ -109,7 +108,7 @@ export class DesktopSavedEnvironmentsReadError extends Schema.TaggedErrorClass<D
   }
 }
 
-export class DesktopSavedEnvironmentsDocumentDecodeError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentsDocumentDecodeError>()(
+export class DesktopSavedEnvironmentsDocumentDecodeError extends Schema.TaggedError<DesktopSavedEnvironmentsDocumentDecodeError>()(
   "DesktopSavedEnvironmentsDocumentDecodeError",
   {
     registryPath: Schema.String,
@@ -121,7 +120,7 @@ export class DesktopSavedEnvironmentsDocumentDecodeError extends Schema.TaggedEr
   }
 }
 
-export class DesktopSavedEnvironmentSecretDecodeError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentSecretDecodeError>()(
+export class DesktopSavedEnvironmentSecretDecodeError extends Schema.TaggedError<DesktopSavedEnvironmentSecretDecodeError>()(
   "DesktopSavedEnvironmentSecretDecodeError",
   {
     environmentId: Schema.String,
@@ -135,7 +134,7 @@ export class DesktopSavedEnvironmentSecretDecodeError extends Schema.TaggedError
   }
 }
 
-export class DesktopSavedEnvironmentSecretProtectionError extends Schema.TaggedErrorClass<DesktopSavedEnvironmentSecretProtectionError>()(
+export class DesktopSavedEnvironmentSecretProtectionError extends Schema.TaggedError<DesktopSavedEnvironmentSecretProtectionError>()(
   "DesktopSavedEnvironmentSecretProtectionError",
   {
     operation: DesktopSavedEnvironmentSecretProtectionOperation,
@@ -365,6 +364,7 @@ function decodeSecretBytes(
   );
 }
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
@@ -555,55 +555,3 @@ export const make = Effect.gen(function* () {
 });
 
 export const layer = Layer.effect(DesktopSavedEnvironments, make);
-
-export const layerTest = (input?: {
-  readonly records?: readonly PersistedSavedEnvironmentRecord[];
-  readonly secrets?: ReadonlyMap<string, string>;
-}) =>
-  Layer.effect(
-    DesktopSavedEnvironments,
-    Effect.gen(function* () {
-      const recordsRef = yield* Ref.make(input?.records ?? []);
-      const secretsRef = yield* Ref.make(new Map(input?.secrets ?? []));
-
-      return DesktopSavedEnvironments.of({
-        getRegistry: Ref.get(recordsRef),
-        setRegistry: (records) => Ref.set(recordsRef, records),
-        removeEnvironment: (environmentId) =>
-          Ref.update(recordsRef, (records) =>
-            records.filter((record) => record.environmentId !== environmentId),
-          ).pipe(
-            Effect.andThen(
-              Ref.update(secretsRef, (secrets) => {
-                const nextSecrets = new Map(secrets);
-                nextSecrets.delete(environmentId);
-                return nextSecrets;
-              }),
-            ),
-          ),
-        getSecret: (environmentId) =>
-          Ref.get(secretsRef).pipe(
-            Effect.map((secrets) => Option.fromNullishOr(secrets.get(environmentId))),
-          ),
-        setSecret: ({ environmentId, secret }) =>
-          Ref.get(recordsRef).pipe(
-            Effect.flatMap((records) => {
-              if (!records.some((record) => record.environmentId === environmentId)) {
-                return Effect.succeed(false);
-              }
-              return Ref.update(secretsRef, (secrets) => {
-                const nextSecrets = new Map(secrets);
-                nextSecrets.set(environmentId, secret);
-                return nextSecrets;
-              }).pipe(Effect.as(true));
-            }),
-          ),
-        removeSecret: (environmentId) =>
-          Ref.update(secretsRef, (secrets) => {
-            const nextSecrets = new Map(secrets);
-            nextSecrets.delete(environmentId);
-            return nextSecrets;
-          }),
-      });
-    }),
-  );

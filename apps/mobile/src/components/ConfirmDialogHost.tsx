@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { Modal, Pressable, View } from "react-native";
 
-import { useThemeColor } from "../lib/useThemeColor";
 import { cn } from "../lib/cn";
 import { AppText } from "./AppText";
 
@@ -35,8 +34,6 @@ export function showConfirmDialog(request: ConfirmDialogRequest): void {
  */
 export function ConfirmDialogHost() {
   const [request, setRequest] = useState<ConfirmDialogRequest | null>(null);
-  const pressedOverlay = useThemeColor("--color-subtle");
-
   useEffect(() => {
     presentRequest = setRequest;
     return () => {
@@ -76,8 +73,7 @@ export function ConfirmDialogHost() {
               <View className="overflow-hidden rounded-full">
                 <Pressable
                   accessibilityRole="button"
-                  className="min-h-10 items-center justify-center px-4"
-                  android_ripple={{ color: pressedOverlay }}
+                  className="min-h-10 items-center justify-center px-4 active:bg-subtle"
                   onPress={handleCancel}
                 >
                   <AppText className="text-base font-t3-medium">
@@ -88,8 +84,7 @@ export function ConfirmDialogHost() {
               <View className="overflow-hidden rounded-full">
                 <Pressable
                   accessibilityRole="button"
-                  className="min-h-10 items-center justify-center px-4"
-                  android_ripple={{ color: pressedOverlay }}
+                  className="min-h-10 items-center justify-center px-4 active:bg-subtle"
                   onPress={handleConfirm}
                 >
                   <AppText

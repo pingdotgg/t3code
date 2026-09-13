@@ -1,5 +1,4 @@
 import * as Alchemy from "alchemy";
-import * as AdoptPolicy from "alchemy/AdoptPolicy";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as GitHub from "alchemy/GitHub";
 import * as Output from "alchemy/Output";
@@ -11,39 +10,65 @@ export type WorkerEnv = Cloudflare.InferEnv<typeof Website>;
 
 const Website = Cloudflare.Website.StaticSite(
   "Website",
-  Alchemy.Stack.useSync((stack) => ({
-    command: "bun run build",
-    name:
-      stack.stage === "prod"
-        ? // FUCK: i deleted state lol, let's adopt this to avoid potential DNS prop issue
-          "alchemyeffectwebsite-worker-prod-piyvp3qw7565vvin"
+  Effect.gen(function* () {
+    const stack = yield* Alchemy.Stack;
+    const previewParent = stack.stage.startsWith("pr-")
+      ? yield* Cloudflare.Worker.ref("Website", { stage: "preview-base" })
+      : undefined;
+    const name =
+      stack.stage === "preview-base"
+        ? "alchemy-website-preview"
+        : stack.stage === "main"
+          ? "alchemy-website-main"
+          : stack.stage === "prod"
+            ? "alchemy-website-prod"
+            : undefined;
+
+    return {
+      name,
+      command: "bun run build",
+      main: "./src/worker.ts",
+      outdir: "dist",
+      version: previewParent
+        ? {
+            parent: previewParent,
+            alias: stack.stage,
+            message: process.env.PULL_REQUEST
+              ? `PR #${process.env.PULL_REQUEST}`
+              : undefined,
+          }
         : undefined,
-    main: "./src/worker.ts",
-    outdir: "dist",
-    // `alchemy.run` first: the Worker's `url` output is `domains[0]`.
-    // `v2.alchemy.run` stays attached (DNS + cert) but is 301-redirected
-    // to `alchemy.run` by the redirect Ruleset below.
-    domain:
-      stack.stage === "prod" ? ["alchemy.run", "v2.alchemy.run"] : undefined,
-    memo: {
-      include: [
-        "src/**",
-        "astro.config.mjs",
-        "package.json",
-        "plugins/**",
-        "public/**",
-        "scripts/**",
-        "../bun.lock",
-      ],
-    },
-    compatibility: {
-      date: "2026-04-02",
-      flags: ["nodejs_compat"],
-    },
-    assets: {
-      runWorkerFirst: true,
-    },
-  })),
+      workersDev: stack.stage === "prod" ? false : undefined,
+      domain:
+        stack.stage === "prod"
+          ? { name: "alchemy.run", redirects: ["v2.alchemy.run"] }
+          : stack.stage === "main"
+            ? { name: "main.alchemy.run" }
+            : undefined,
+      memo: {
+        include: [
+          "src/**",
+          "astro.config.mjs",
+          "package.json",
+          "plugins/**",
+          "public/**",
+          "scripts/**",
+          "../bun.lock",
+        ],
+      },
+      compatibility: {
+        date: "2026-04-02",
+        flags: ["nodejs_compat"],
+      },
+      assets: {
+        runWorkerFirst: true,
+      },
+    } satisfies Cloudflare.Website.StaticSiteProps<{}>;
+  }),
+).pipe(
+  RemovalPolicy.retain(
+    Alchemy.Stack.pipe(Effect.map(({ stage }) => !stage.startsWith("pr-"))),
+  ),
 );
 
 export default Alchemy.Stack(
@@ -55,39 +80,6 @@ export default Alchemy.Stack(
   Effect.gen(function* () {
     const { stage } = yield* Alchemy.Stack;
     const website = yield* Website;
-
-    if (stage === "prod") {
-      // The `alchemy.run` zone predates this stack (the v1 website created
-      // it), so adopt it — and never delete it on destroy.
-      const zone = yield* Cloudflare.Zone.Zone("Zone", {
-        name: "alchemy.run",
-      }).pipe(AdoptPolicy.adopt(true), RemovalPolicy.retain());
-
-      // Single Redirects run at the edge before Workers, so requests to
-      // `v2.alchemy.run` never reach the Worker — they 301 to `alchemy.run`
-      // with path and query preserved.
-      yield* Cloudflare.Ruleset.Ruleset("V2Redirect", {
-        zone,
-        phase: "http_request_dynamic_redirect",
-        rules: [
-          {
-            description: "Redirect v2.alchemy.run to alchemy.run",
-            expression: 'http.host eq "v2.alchemy.run"',
-            action: "redirect",
-            actionParameters: {
-              fromValue: {
-                targetUrl: {
-                  expression:
-                    'concat("https://alchemy.run", http.request.uri.path)',
-                },
-                preserveQueryString: true,
-                statusCode: 301,
-              },
-            },
-          },
-        ],
-      });
-    }
 
     if (stage.startsWith("pr-")) {
       yield* GitHub.Comment("preview-comment", {

@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
 import * as HttpApiSchema from "effect/unstable/httpapi/HttpApiSchema";
 
-import { AuthSessionId, ClientSurface, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import {
+  AuthSessionId,
+  ClientSurface,
+  ClientWebDeployment,
+  TrimmedNonEmptyString,
+} from "./baseSchemas.ts";
 
 /**
  * Declares the server's overall authentication posture.
@@ -172,6 +177,8 @@ export const AuthClientPresentationMetadata = Schema.Struct({
   osMajorVersion: Schema.optionalKey(Schema.Int),
   deviceModel: Schema.optionalKey(TrimmedNonEmptyString),
   surface: Schema.optionalKey(ClientSurface),
+  webDeployment: Schema.optionalKey(ClientWebDeployment),
+  browser: Schema.optionalKey(TrimmedNonEmptyString),
   appVersion: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type AuthClientPresentationMetadata = typeof AuthClientPresentationMetadata.Type;
@@ -211,9 +218,9 @@ export const AuthPairingCredentialResult = Schema.Struct({
 });
 export type AuthPairingCredentialResult = typeof AuthPairingCredentialResult.Type;
 
+// Read models contain metadata only. Credentials are returned by creation alone.
 export const AuthPairingLink = Schema.Struct({
   id: TrimmedNonEmptyString,
-  credential: TrimmedNonEmptyString,
   scopes: AuthEnvironmentScopes,
   subject: TrimmedNonEmptyString,
   label: Schema.optionalKey(TrimmedNonEmptyString),
@@ -280,14 +287,14 @@ export const AuthAccessStreamPairingLinkRemovedEvent = Schema.Struct({
 export type AuthAccessStreamPairingLinkRemovedEvent =
   typeof AuthAccessStreamPairingLinkRemovedEvent.Type;
 
-export class AuthAccessStreamError extends Schema.TaggedErrorClass<AuthAccessStreamError>()(
+export class AuthAccessStreamError extends Schema.TaggedError<AuthAccessStreamError>()(
   "AuthAccessStreamError",
   {
     message: Schema.String,
   },
 ) {}
 
-export class EnvironmentAuthorizationError extends Schema.TaggedErrorClass<EnvironmentAuthorizationError>()(
+export class EnvironmentAuthorizationError extends Schema.TaggedError<EnvironmentAuthorizationError>()(
   "EnvironmentAuthorizationError",
   {
     message: Schema.String,

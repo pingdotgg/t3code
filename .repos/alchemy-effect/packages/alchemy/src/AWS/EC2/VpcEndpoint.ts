@@ -230,12 +230,11 @@ export interface VpcEndpoint extends Resource<
  * Changing `vpcId`, `serviceName`, or `vpcEndpointType` replaces the endpoint;
  * route tables, subnets, security groups, DNS, and the policy update in place.
  *
- * @resource
- * @section Gateway Endpoints
+ * ### Gateway Endpoints
  * Gateway endpoints target S3 and DynamoDB and work by injecting a prefix-list
  * route into each route table you list, so requests to the service stay on the
  * AWS network.
- * @example S3 Gateway Endpoint
+ * **Example:** S3 Gateway Endpoint
  * ```typescript
  * const s3Endpoint = yield* AWS.EC2.VpcEndpoint("S3Endpoint", {
  *   vpcId: vpc.vpcId,
@@ -249,11 +248,11 @@ export interface VpcEndpoint extends Resource<
  * subnets reach S3 directly, removing NAT data-processing charges for S3 traffic
  * and keeping it off the public internet.
  *
- * @section Interface Endpoints
+ * ### Interface Endpoints
  * Interface endpoints place an ENI in each chosen subnet and are reached over
  * private IPs; enabling private DNS lets existing SDK calls resolve to the
  * endpoint transparently.
- * @example Secrets Manager Interface Endpoint
+ * **Example:** Secrets Manager Interface Endpoint
  * ```typescript
  * const secretsEndpoint = yield* AWS.EC2.VpcEndpoint("SecretsEndpoint", {
  *   vpcId: vpc.vpcId,
@@ -273,8 +272,8 @@ export interface VpcEndpoint extends Resource<
  * the service's default DNS name resolve to the endpoint; `ipAddressType` and
  * `dnsOptions` tune the IP family used for the interfaces and their DNS records.
  *
- * @section Restricting Access with a Policy
- * @example Endpoint Policy Limiting Access to One Bucket
+ * ### Restricting Access with a Policy
+ * **Example:** Endpoint Policy Limiting Access to One Bucket
  * ```typescript
  * const s3Endpoint = yield* AWS.EC2.VpcEndpoint("RestrictedS3Endpoint", {
  *   vpcId: vpc.vpcId,
@@ -297,6 +296,8 @@ export interface VpcEndpoint extends Resource<
  * `policyDocument` attaches an endpoint policy (JSON) that constrains which
  * service actions and resources can be reached through the endpoint; omit it to
  * allow full access to the service.
+ *
+ * @resource
  */
 export const VpcEndpoint = Resource<VpcEndpoint>("AWS.EC2.VpcEndpoint");
 

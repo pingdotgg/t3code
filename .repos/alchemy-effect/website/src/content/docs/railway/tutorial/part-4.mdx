@@ -1,0 +1,189 @@
+---
+title: "Part 4: Variables and Cleanup"
+description: Store a Project variable, read it from the Service at runtime, and destroy the stack.
+sidebar:
+  order: 4
+---
+
+import Terminal from "../../../../components/Terminal.astro";
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+A secret only this Service needs from `.env` is
+`Config.redacted`. See [Variables](/railway/data/variables).
+
+This part is for a value Railway should own: a **Variable** Railway
+injects into services. You will read it with `Config`, then tear
+the stack down so billing stops.
+
+## Declare a Variable
+
+Add a Variable next to the Project. Wrap the value with
+`Redacted.make` so it is never logged:
+
+```diff lang="typescript"
+// src/project.ts
+import * as Railway from "alchemy/Railway";
++import * as Redacted from "effect/Redacted";
+
+export const Site = Railway.Project("Site");
+
+export const Data = Railway.Volume("Data", { /* ... */ });
++
++export const ApiToken = Railway.Variable("ApiToken", {
++  project: Site,
++  name: "API_TOKEN",
++  value: Redacted.make("not-a-real-token"),
++});
+```
+
+`name` is the env-var Railway injects into services (`API_TOKEN`).
+Omit it and Alchemy generates an ownership-stamped name instead.
+
+## Read it from the Service
+
+Railway injects the Variable as env. Yield it in init so it is
+part of the graph, then read the name with `Config` — never the
+plaintext:
+
+```diff lang="typescript"
+// src/api.ts
+-import { Data, Site } from "./project.ts";
++import { ApiToken, Data, Site } from "./project.ts";
++import * as Config from "effect/Config";
+
+  Effect.gen(function* () {
+    const mount = yield* Railway.MountVolume(Data, { path: "/data" });
+    const fs = yield* FileSystem.FileSystem;
++    yield* ApiToken;
++    const tokenName = "API_TOKEN";
++    const token = yield* Config.string(tokenName).pipe(
++      Effect.orElseSucceed(() => ""),
++    );
+
+    return {
+      fetch: /* ... */,
+    };
+  }).pipe(Effect.provide(Railway.MountVolumeLive)),
+```
+
+## Serve the variable's name
+
+Add a `/secret` route that returns the variable's **name**, never
+the plaintext:
+
+```typescript
+if (url.pathname === "/health") {
+  return HttpServerResponse.json({ ok: true });
+}
+if (url.pathname === "/secret") {
+  return HttpServerResponse.json({
+    name: tokenName,
+    set: token.length > 0,
+  });
+}
+const file = `${mount.path}${url.pathname}`;
+```
+
+## Yield the Variable from the Stack
+
+```diff lang="typescript"
+// alchemy.run.ts
+-import { Data, Site } from "./src/project.ts";
++import { ApiToken, Data, Site } from "./src/project.ts";
+
+  Effect.gen(function* () {
+    const site = yield* Site;
+    yield* Data;
++    yield* ApiToken;
+    const api = yield* Api;
+```
+
+## Deploy
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy deploy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy deploy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+<Terminal content={`[u]Plan[/u]: [g]1 to create[/g], [y]1 to update[/y]
+
+[g]+[/g] [b]ApiToken[/b] [d](Railway.Variable)[/d]
+[y]~[/y] [b]Api[/b] [d](Railway.Service)[/d]
+
+Proceed?
+◉ Yes ○ No
+[g]✓[/g] [b]ApiToken[/b] [d](Railway.Variable)[/d] [g]created[/g]
+[g]✓[/g] [b]Api[/b] [d](Railway.Service)[/d] [y]updated[/y]`} />
+
+## Try it out
+
+```sh
+curl https://myapp-api-dev-a1b2c3d4.up.railway.app/secret
+# → {"name":"API_TOKEN","set":true}
+```
+
+:::tip[Your own domain?]
+Declare a [`Railway.CustomDomain`](/railway/networking#custom-domains)
+for a hostname you control and point DNS at
+`verificationDnsHost` / `verificationToken`. Postgres and Redis on
+the private network stay on `{name}.railway.internal`; a
+[`TcpProxy`](/railway/networking#tcp-proxies) is what a laptop uses.
+:::
+
+## Clean up
+
+You're done — tear everything down so Service and Volume billing
+stops:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code="bun alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code="npm run alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code="pnpm alchemy destroy" lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code="yarn alchemy destroy" lang="sh" />
+  </TabItem>
+</Tabs>
+
+Alchemy deletes everything in reverse dependency order — Service,
+Variable, Volume, Project.
+
+## Recap
+
+Over four parts you built a complete Railway deployment:
+
+- A Project with a generated unique name and a production environment
+- An HTTP Service bundled into a container, updated only when its
+  code hash changes
+- A Volume mounted at `/data` whose contents outlive deploys
+- A Variable readable from the Service, never logged
+
+## Where next
+
+- [Services](/railway/compute/services) — background workers, env,
+  multiple Services per Project, image-based Services.
+- [Volumes](/railway/data/volumes) — attach at create time, region
+  rules.
+- [Variables](/railway/data/variables) — `Config.redacted` vs
+  `Railway.Variable`.
+- [Postgres](/railway/data/postgres) — bind `ConnectPostgres` and
+  query with Drizzle.
+- [Testing](/testing) — deploy this stack from an integration test
+  and drive it over HTTP.
+- [CI](/environments/ci) — run `alchemy deploy` from GitHub Actions
+  with `RAILWAY_API_TOKEN`.

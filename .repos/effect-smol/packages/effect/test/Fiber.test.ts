@@ -7,6 +7,23 @@ describe("Fiber", () => {
     assert.isTrue(Fiber.isFiber(result))
   })
 
+  it("notifies all observers when an observer cancels during exit", () => {
+    const fiber = Effect.runFork(Effect.never)
+    const observed: Array<number> = []
+    let cancel = () => {}
+    cancel = fiber.addObserver(() => {
+      observed.push(1)
+      cancel()
+    })
+    fiber.addObserver(() => {
+      observed.push(2)
+    })
+
+    fiber.interruptUnsafe()
+
+    assert.deepStrictEqual(observed, [1, 2])
+  })
+
   describe("joinAll", () => {
     it.effect("cleans up observers on interruption", () =>
       Effect.gen(function*() {

@@ -19,8 +19,10 @@
  * @since 4.0.0
  */
 import * as Arr from "effect/Array"
+import * as JsonPointer from "effect/JsonPointer"
 import * as JsonSchema from "effect/JsonSchema"
 import * as Rec from "effect/Record"
+import * as Schema from "effect/Schema"
 import * as SchemaRepresentation from "effect/SchemaRepresentation"
 
 type Source = "openapi-3.0" | "openapi-3.1"
@@ -211,19 +213,50 @@ function makeWithRepresentation() {
       schemas,
       definitions
     }
-    const importerOptions = {
+    const schemasWithExamples: Array<JsonSchema.JsonSchema> = []
+    const preparedSchemas = new WeakMap<JsonSchema.JsonSchema, JsonSchema.JsonSchema>()
+    const preparedOutputs = new WeakSet<JsonSchema.JsonSchema>()
+    const importerOptions: SchemaRepresentation.FromJsonSchemaOptions = {
+      patterns: "apply",
       onEnter(js: JsonSchema.JsonSchema) {
+        if (preparedOutputs.has(js)) return js
+        const cached = preparedSchemas.get(js)
+        if (cached !== undefined) return cached
+
         const out = { ...js }
         if (out.type === "object" && out.additionalProperties === undefined) {
           out.additionalProperties = false
         }
-        return options?.onEnter === undefined ? out : options.onEnter(out)
+        const transformed = { ...(options?.onEnter === undefined ? out : options.onEnter(out)) }
+        preparedSchemas.set(js, transformed)
+        preparedOutputs.add(transformed)
+        if (Array.isArray(transformed.examples)) {
+          schemasWithExamples.push(transformed)
+        }
+        return transformed
       }
     }
-    const codeDocument = SchemaRepresentation.toCodeDocument(
-      SchemaRepresentation.fromSchemaMultiDocument(
-        SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
+    let rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
+    if (Arr.isArrayNonEmpty(schemasWithExamples)) {
+      const exampleSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(
+        { ...document, schemas: schemasWithExamples },
+        importerOptions
       )
+      for (let i = 0; i < schemasWithExamples.length; i++) {
+        const node = schemasWithExamples[i]
+        const examples = node.examples as ReadonlyArray<unknown>
+        const validExamples = examples.filter(Schema.is(exampleSchemas[i]))
+        if (validExamples.length === examples.length) continue
+        if (validExamples.length === 0) {
+          delete node.examples
+        } else {
+          node.examples = validExamples
+        }
+      }
+      rootSchemas = SchemaRepresentation.fromJsonSchemaMultiDocument(document, importerOptions)
+    }
+    const codeDocument = SchemaRepresentation.toCodeDocument(
+      SchemaRepresentation.toRepresentations(Arr.map(rootSchemas, (schema) => schema.ast))
     )
 
     return {
@@ -325,7 +358,7 @@ function collectReferenceKeys(input: unknown): Set<string> {
   visitReferences(input, ($ref) => {
     const token = $ref.split("/").at(-1)
     if (token !== undefined && token.length > 0) {
-      references.add(token.replaceAll("~1", "/").replaceAll("~0", "~"))
+      references.add(JsonPointer.unescapeToken(token))
     }
   })
   return references

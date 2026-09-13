@@ -12,9 +12,8 @@ export interface ListDeployActionExecutionTargetsRequest extends Omit<
  * Runtime binding for `codepipeline:ListDeployActionExecutionTargets` —
  * enumerates the targets (instances, tasks, functions) a deploy action
  * execution rolled out to.
- * @binding
- * @section Observing Pipelines
- * @example List Deploy Targets
+ * ### Observing Pipelines
+ * **Example:** List Deploy Targets
  * ```typescript
  * const listTargets =
  *   yield* AWS.CodePipeline.ListDeployActionExecutionTargets(pipeline);
@@ -23,6 +22,8 @@ export interface ListDeployActionExecutionTargetsRequest extends Omit<
  *   actionExecutionId: actionExecutionId,
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListDeployActionExecutionTargets extends Binding.Service<
   ListDeployActionExecutionTargets,

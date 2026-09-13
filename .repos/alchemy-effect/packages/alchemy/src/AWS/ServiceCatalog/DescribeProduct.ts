@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * is governed by portfolio principal associations, so the binding takes no
  * resource argument. Provide the implementation with
  * `Effect.provide(AWS.ServiceCatalog.DescribeProductHttp)`.
- * @binding
- * @section Browsing the Catalog
- * @example Get a Product's Artifacts and Launch Paths
+ * ### Browsing the Catalog
+ * **Example:** Get a Product's Artifacts and Launch Paths
  * ```typescript
  * // init — account-level binding, no resource argument
  * const describeProduct = yield* AWS.ServiceCatalog.DescribeProduct();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const { ProductViewSummary, ProvisioningArtifacts } =
  *   yield* describeProduct({ Id: "prod-abc123" });
  * ```
+ *
+ * @binding
  */
 export interface DescribeProduct extends Binding.Service<
   DescribeProduct,

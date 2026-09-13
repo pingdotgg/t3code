@@ -12,9 +12,8 @@ export interface RegisterApplicationRevisionRequest extends Omit<
  * Runtime binding for `codedeploy:RegisterApplicationRevision` — registers
  * a revision (S3 bundle or inline AppSpec) with the bound application so it
  * shows up for deployment.
- * @binding
- * @section Managing Revisions
- * @example Register an S3 Revision
+ * ### Managing Revisions
+ * **Example:** Register an S3 Revision
  * ```typescript
  * const registerApplicationRevision =
  *   yield* AWS.CodeDeploy.RegisterApplicationRevision(app);
@@ -26,6 +25,8 @@ export interface RegisterApplicationRevisionRequest extends Omit<
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface RegisterApplicationRevision extends Binding.Service<
   RegisterApplicationRevision,

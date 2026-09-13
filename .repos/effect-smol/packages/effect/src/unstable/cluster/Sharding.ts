@@ -124,7 +124,7 @@ export class Sharding extends Context.Service<Sharding, {
       entityId: string
     ) => RpcClient.RpcClient.From<
       Rpcs,
-      MailboxFull | AlreadyProcessingMessage | PersistenceError
+      MailboxFull | AlreadyProcessingMessage | PersistenceError | EntityNotAssignedToRunner
     >
   >
 
@@ -178,7 +178,7 @@ export class Sharding extends Context.Service<Sharding, {
     discard: boolean
   ) => Effect.Effect<
     void,
-    MailboxFull | AlreadyProcessingMessage | PersistenceError
+    MailboxFull | AlreadyProcessingMessage | PersistenceError | EntityNotAssignedToRunner
   >
 
   /**
@@ -240,6 +240,8 @@ const make = Effect.gen(function*() {
   const runnerStorage = yield* RunnerStorage
 
   const entityManagers = new Map<string, EntityManagerState>()
+  let entityRegistrationStartMillis: number | undefined
+  let entityRegistrationFallbackStartMillis: number | undefined
 
   const shardAssignments = MutableHashMap.empty<ShardId, RunnerAddress>()
   const selfShards = MutableHashSet.empty<ShardId>()
@@ -586,12 +588,38 @@ const make = Effect.gen(function*() {
   const storageReadLock = Semaphore.makeUnsafe(1)
   const withStorageReadLock = storageReadLock.withPermits(1)
 
+  // --- Entity residency ---
+  //
+  // A runner-wide counter that bounds how many entities can be resident at
+  // the same time. Entity managers reserve a slot before spawning an entity,
+  // so the sequential storage read loop and concurrent volatile sends share
+  // the same cap.
+
+  const maxResidentEntities = config.maxResidentEntities
+  let residentEntityCount = 0
+  const residencyAtCapacityUnsafe = () =>
+    maxResidentEntities !== "unbounded" && residentEntityCount >= maxResidentEntities
+  const residency: EntityManager.Residency = {
+    admitUnsafe() {
+      if (residencyAtCapacityUnsafe()) return false
+      residentEntityCount++
+      return true
+    },
+    releaseUnsafe() {
+      residentEntityCount--
+      // a slot has freed up, so the storage read loop can admit messages for
+      // entities it previously had to skip
+      if (maxResidentEntities !== "unbounded") {
+        storageReadLatch.openUnsafe()
+      }
+    }
+  }
+
   if (storageEnabled && initialRunnerAddress) {
     const selfAddress = initialRunnerAddress
     const entityRegistrationTimeoutMillis = Duration.toMillis(
       Duration.fromInputUnsafe(config.entityRegistrationTimeout)
     )
-    const storageStartMillis = clock.currentTimeMillisUnsafe()
 
     yield* Effect.gen(function*() {
       yield* Effect.logDebug("Starting")
@@ -599,13 +627,29 @@ const make = Effect.gen(function*() {
 
       let index = 0
       let messages: Array<Message.Incoming<any>> = []
+      let deliveredThisRead = false
       const removableNotifications = new Set<PendingNotification>()
       const resetAddresses = MutableHashSet.empty<EntityAddress>()
+      const cappedAddresses = MutableHashSet.empty<EntityAddress>()
+
+      const markDelivered = Effect.sync(() => {
+        deliveredThisRead = true
+      })
 
       const processMessages = Effect.whileLoop({
         while: () => index < messages.length,
         step: () => index++,
         body: () => send
+      })
+
+      const readAndProcess = Effect.fnUntraced(function*(options?: {
+        readonly limit?: number | undefined
+        readonly addresses?: ReadonlyArray<EntityAddress> | undefined
+      }) {
+        messages = yield* storage.unprocessedMessages(acquiredShards, options)
+        index = 0
+        yield* processMessages
+        return messages.length
       })
 
       const send = Effect.catchCause(
@@ -617,8 +661,15 @@ const make = Effect.gen(function*() {
           }
           const state = entityManagers.get(address.entityType)
           if (!state) {
-            const sinceStart = clock.currentTimeMillisUnsafe() - storageStartMillis
-            if (sinceStart < entityRegistrationTimeoutMillis) {
+            const now = clock.currentTimeMillisUnsafe()
+            const registrationStarted = entityRegistrationStartMillis !== undefined
+            const timeoutStartMillis = entityRegistrationStartMillis ??
+              (entityRegistrationFallbackStartMillis ??= now)
+            // If registration never starts, allow two intervals from the first missing read before failing.
+            const timeoutMillis = registrationStarted
+              ? entityRegistrationTimeoutMillis
+              : entityRegistrationTimeoutMillis * 2
+            if (now - timeoutStartMillis < timeoutMillis) {
               // reset address in the case that the entity is slow to register
               MutableHashSet.add(resetAddresses, address)
               return Effect.void
@@ -634,7 +685,7 @@ const make = Effect.gen(function*() {
           if (message._tag === "IncomingEnvelope" && isProcessing) {
             // If the message might affect a currently processing request, we
             // send it to the entity manager to be processed.
-            return state.manager.send(message)
+            return Effect.tap(state.manager.send(message), markDelivered)
           } else if (isProcessing || state.status === "closing") {
             // If the request is already processing, we skip it.
             // Or if the entity is closing, we skip all incoming messages.
@@ -644,6 +695,14 @@ const make = Effect.gen(function*() {
             pendingNotifications.delete(message.envelope.requestId)
             removableNotifications.delete(entry)
             entry.resume(Effect.void)
+          }
+
+          // The runner is at entity capacity, so messages for entities that
+          // are not already resident are skipped. Their claims are released
+          // after the read, so they stay eligible for once a slot frees up.
+          if (residencyAtCapacityUnsafe() && !state.manager.isResidentUnsafe(address)) {
+            MutableHashSet.add(cappedAddresses, address)
+            return Effect.void
           }
 
           // If the entity was resuming in another fiber, we add the message
@@ -656,7 +715,7 @@ const make = Effect.gen(function*() {
             }
             return Effect.void
           }
-          return state.manager.send(message)
+          return Effect.tap(state.manager.send(message), markDelivered)
         }),
         (cause) => {
           const message = messages[index]
@@ -673,12 +732,24 @@ const make = Effect.gen(function*() {
             }))
           }
           if (error.success._tag === "MailboxFull") {
+            const address = message.envelope.address
+            const state = entityManagers.get(address.entityType)
+            // A resident entity has a full per-entity mailbox; its messages
+            // are resumed from storage once there is capacity again.
             // MailboxFull can only happen for requests, so this cast is safe
-            return resumeEntityFromStorage(message as Message.IncomingRequest<any>)
+            if (message._tag === "IncomingRequest" && state?.manager.isResidentUnsafe(address)) {
+              return resumeEntityFromStorage(message as Message.IncomingRequest<any>)
+            }
+            // Otherwise the runner ran out of entity slots while the message
+            // was in flight; leave it in storage.
+            MutableHashSet.add(cappedAddresses, address)
+            return Effect.void
           }
           return Effect.void
         }
       )
+
+      const batchSize = Math.max(1, config.unprocessedMessageBatchSize)
 
       while (true) {
         // wait for the next poll interval, or if we get notified of a change
@@ -698,15 +769,58 @@ const make = Effect.gen(function*() {
           pendingNotifications.forEach((entry) => removableNotifications.add(entry))
         }
 
-        messages = yield* storage.unprocessedMessages(acquiredShards)
-        index = 0
-        yield* processMessages
+        deliveredThisRead = false
+        let readCount = 0
+        let fullBatch = false
+        let exhaustive = false
+
+        // First deliver messages for entities that are already resident, so
+        // they keep making progress even when the runner is at entity
+        // capacity.
+        if (residencyAtCapacityUnsafe()) {
+          const residentAddresses: Array<EntityAddress> = []
+          for (const state of entityManagers.values()) {
+            if (state.status === "closed") continue
+            for (const address of state.manager.residentAddressesUnsafe()) {
+              residentAddresses.push(address)
+            }
+          }
+          if (residentAddresses.length > 0) {
+            readCount = yield* readAndProcess({ limit: batchSize, addresses: residentAddresses })
+            fullBatch = readCount >= batchSize
+          }
+        }
+
+        // Then walk the remaining messages, spawning new entities while the
+        // runner has entity slots left.
+        if (!residencyAtCapacityUnsafe() && readCount < batchSize) {
+          const limit = batchSize - readCount
+          const read = yield* readAndProcess({ limit })
+          if (read >= limit) {
+            fullBatch = true
+          } else if (MutableHashSet.size(cappedAddresses) === 0) {
+            exhaustive = true
+          }
+        }
 
         if (removableNotifications.size > 0) {
-          removableNotifications.forEach(({ message, resume }) => {
-            pendingNotifications.delete(message.envelope.requestId)
-            resume(Effect.fail(new EntityNotAssignedToRunner({ address: message.envelope.address })))
-          })
+          // On an exhaustive read, a message that was not seen is no longer
+          // processable by this runner. At the entity cap, the messages are
+          // safely persisted and delivered once a slot frees up, so persisted
+          // senders succeed instead of failing. Otherwise the read was
+          // truncated by the batch size and the notifications stay registered
+          // for the immediately following read.
+          const capped = MutableHashSet.size(cappedAddresses) > 0 || residencyAtCapacityUnsafe()
+          if (exhaustive || capped) {
+            removableNotifications.forEach(({ message, resume }) => {
+              pendingNotifications.delete(message.envelope.requestId)
+              resume(
+                exhaustive
+                  ? Effect.fail(new EntityNotAssignedToRunner({ address: message.envelope.address }))
+                  : Effect.void
+              )
+            })
+          }
           removableNotifications.clear()
         }
         if (MutableHashSet.size(resetAddresses) > 0) {
@@ -718,9 +832,29 @@ const make = Effect.gen(function*() {
           }
           MutableHashSet.clear(resetAddresses)
         }
+        // Capture claims skipped because of the entity cap. They are reset in
+        // one storage operation after releasing the read lock.
+        let cappedAddressesToReset: Array<EntityAddress> | undefined
+        if (MutableHashSet.size(cappedAddresses) > 0) {
+          cappedAddressesToReset = Arr.fromIterable(cappedAddresses)
+          MutableHashSet.clear(cappedAddresses)
+        }
 
         // let the resuming entities check if they are done
         yield* storageReadLock.release(1)
+
+        if (cappedAddressesToReset !== undefined) {
+          yield* Effect.ignore(storage.resetAddresses(cappedAddressesToReset))
+        }
+
+        // A full batch means more messages could be waiting; start the next
+        // read immediately, as long as this read made progress (a full batch
+        // of skipped messages must not spin the loop). When the runner is at
+        // capacity, the next read waits for an entity to be removed or the
+        // next poll interval instead.
+        if (fullBatch && deliveredThisRead) {
+          storageReadLatch.openUnsafe()
+        }
       }
     }).pipe(
       Effect.scoped,
@@ -771,7 +905,7 @@ const make = Effect.gen(function*() {
         const resumptionState = Option.getOrThrow(MutableHashMap.get(entityResumptionState, address))
         let done = false
 
-        while (!done) {
+        while (!done) { // oxlint-disable-line no-unmodified-loop-condition
           // if the shard is no longer assigned to this runner, we stop
           if (!MutableHashSet.has(acquiredShards, address.shardId)) {
             return
@@ -959,17 +1093,39 @@ const make = Effect.gen(function*() {
     retries?: number
   ): Effect.Effect<
     void,
-    MailboxFull | AlreadyProcessingMessage | PersistenceError
+    MailboxFull | AlreadyProcessingMessage | PersistenceError | EntityNotAssignedToRunner
   > {
+    const isPersisted = Context.get(
+      message._tag === "OutgoingRequest" ? message.annotations : message.rpc.annotations,
+      Persisted
+    )
+    const shouldFail = !discard &&
+      (message._tag === "OutgoingRequest" || message.envelope._tag === "AckChunk")
+    const abandon = (error: EntityNotAssignedToRunner) => {
+      if (!isPersisted) {
+        return shouldFail
+          ? Effect.fail(error)
+          : Effect.logDebug("Abandoning outgoing message during shutdown", message.envelope.address)
+      }
+      const persist = message._tag === "OutgoingRequest"
+        ? storage.saveRequest(message)
+        : storage.saveEnvelope(message)
+      return Effect.catchTag(persist, "MalformedMessage", Effect.die).pipe(
+        Effect.andThen(
+          shouldFail
+            ? Effect.fail(error)
+            : Effect.logWarning("Persisting outgoing message abandoned during shutdown", message.envelope.address)
+        )
+      )
+    }
     return Effect.catchFilter(
       Effect.suspend(() => {
         const address = message.envelope.address
-        const isPersisted = Context.get(
-          message._tag === "OutgoingRequest" ? message.annotations : message.rpc.annotations,
-          Persisted
-        )
         if (isPersisted && !storageEnabled) {
           return Effect.die("Sharding.sendOutgoing: Persisted messages require MessageStorage")
+        }
+        if (shouldFail && MutableRef.get(isShutdown)) {
+          return Effect.fail(new EntityNotAssignedToRunner({ address }))
         }
         const maybeRunner = MutableHashMap.get(shardAssignments, address.shardId)
         const runnerIsLocal = Option.isSome(maybeRunner) && isLocalRunner(maybeRunner.value)
@@ -982,6 +1138,8 @@ const make = Effect.gen(function*() {
         }
         return runnerIsLocal
           ? sendLocal(message)
+          : discard
+          ? runnersService.notify({ address: maybeRunner, message, discard })
           : runnersService.send({ address: maybeRunner.value, message })
       }),
       (error) =>
@@ -989,6 +1147,15 @@ const make = Effect.gen(function*() {
           ? Result.succeed(error)
           : Result.fail(error),
       (error) => {
+        // Abandon the message during teardown: retrying would loop forever once the runner is shutting down
+        if (error._tag === "EntityNotAssignedToRunner") {
+          const targetManager = entityManagers.get(message.envelope.address.entityType)
+          const cannotRecover = MutableRef.get(isShutdown) ||
+            (targetManager !== undefined && targetManager.status !== "alive")
+          if (cannotRecover) {
+            return abandon(error)
+          }
+        }
         if (retries === 0) {
           return Effect.die(error)
         }
@@ -1156,7 +1323,7 @@ const make = Effect.gen(function*() {
     Entity<any, any>,
     (entityId: string) => RpcClient.RpcClient<
       any,
-      MailboxFull | AlreadyProcessingMessage
+      MailboxFull | AlreadyProcessingMessage | EntityNotAssignedToRunner
     >,
     never
   > = yield* ResourceMap.make(
@@ -1169,7 +1336,7 @@ const make = Effect.gen(function*() {
         flatten: true,
         onFromClient(options): Effect.Effect<
           void,
-          MailboxFull | AlreadyProcessingMessage | PersistenceError
+          MailboxFull | AlreadyProcessingMessage | PersistenceError | EntityNotAssignedToRunner
         > {
           const address = Context.getUnsafe(options.context, ClientAddressTag)
           switch (options.message._tag) {
@@ -1202,7 +1369,7 @@ const make = Effect.gen(function*() {
               if (!options.discard) {
                 const entry: ClientRequestEntry = {
                   rpc: rpc as any,
-                  context: fiber.currentContext,
+                  context: fiber.context,
                   message
                 }
                 clientRequests.set(id, entry)
@@ -1310,7 +1477,7 @@ const make = Effect.gen(function*() {
   const makeClient = <Type extends string, Rpcs extends Rpc.Any>(entity: Entity<Type, Rpcs>): Effect.Effect<
     (
       entityId: string
-    ) => RpcClient.RpcClient.From<Rpcs, MailboxFull | AlreadyProcessingMessage>
+    ) => RpcClient.RpcClient.From<Rpcs, MailboxFull | AlreadyProcessingMessage | EntityNotAssignedToRunner>
   > => clients.get(entity) as any
 
   const clientRespondDiscard = (_reply: Reply.Reply<any>) => Effect.void
@@ -1434,14 +1601,14 @@ const make = Effect.gen(function*() {
         ...options,
         storage,
         runnerAddress,
+        residency,
         sharding
       }).pipe(
-        Effect.provideContext(Context.mutate(services, (services) =>
-          services.pipe(
-            Context.add(EntityReaper, reaper),
-            Context.add(Scope.Scope, scope),
-            Context.add(Snowflake.Generator, snowflakeGen)
-          )))
+        Effect.provideContext(services.pipe(
+          Context.add(EntityReaper, reaper),
+          Context.add(Scope.Scope, scope),
+          Context.add(Snowflake.Generator, snowflakeGen)
+        ))
       ) as Effect.Effect<EntityManager.EntityManager>
       const state: EntityManagerState = {
         entity,
@@ -1462,6 +1629,7 @@ const make = Effect.gen(function*() {
       // register entities while storage is idle
       // this ensures message order is preserved
       yield* withStorageReadLock(Effect.sync(() => {
+        entityRegistrationStartMillis ??= clock.currentTimeMillisUnsafe()
         entityManagers.set(entity.type, state)
         if (entityManagerLatches.has(entity.type)) {
           entityManagerLatches.get(entity.type)!.openUnsafe()

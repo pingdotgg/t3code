@@ -11,9 +11,8 @@ export interface ListKeysRequest extends Omit<kvs.ListKeysRequest, "KvsARN"> {}
  * Lists key/value pairs in the bound KeyValueStore's data plane (paginated
  * via `NextToken`/`MaxResults`). Provide the implementation with
  * `Effect.provide(AWS.CloudFront.ListKeysHttp)`.
- * @binding
- * @section Reading KeyValueStore Data
- * @example List Keys
+ * ### Reading KeyValueStore Data
+ * **Example:** List Keys
  * ```typescript
  * // init — bind the operation to the store
  * const listKeys = yield* CloudFront.ListKeys(store);
@@ -22,6 +21,8 @@ export interface ListKeysRequest extends Omit<kvs.ListKeysRequest, "KvsARN"> {}
  * const res = yield* listKeys({ MaxResults: 50 });
  * console.log(res.Items?.map((item) => item.Key));
  * ```
+ *
+ * @binding
  */
 export interface ListKeys extends Binding.Service<
   ListKeys,

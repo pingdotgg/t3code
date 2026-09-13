@@ -37,8 +37,8 @@ export interface GatewayResponse extends Resource<
 /**
  * Gateway response mapping for a REST API (e.g. DEFAULT_4XX, DEFAULT_5XX).
  *
- * @section Gateway responses
- * @example Default 4xx JSON body
+ * ### Gateway responses
+ * **Example:** Default 4xx JSON body
  * ```typescript
  * yield* ApiGateway.GatewayResponse("Default4xx", {
  *   restApiId: api.restApiId,

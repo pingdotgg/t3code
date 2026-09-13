@@ -8,15 +8,16 @@ import * as Binding from "../../Binding.ts";
  *
  * Reads a domain's current status — endpoint, engine version, creation and processing state — e.g. an operational health check that verifies a domain is active before routing search traffic. Provide the implementation with
  * `Effect.provide(AWS.OpenSearch.DescribeDomainHttp)`.
- * @binding
- * @section Monitoring Domains
- * @example Check a Domain's Status
+ * ### Monitoring Domains
+ * **Example:** Check a Domain's Status
  * ```typescript
  * const describeDomain = yield* OpenSearch.DescribeDomain();
  *
  * const result = yield* describeDomain({ DomainName: name });
  * // result.DomainStatus.Processing → false
  * ```
+ *
+ * @binding
  */
 export interface DescribeDomain extends Binding.Service<
   DescribeDomain,

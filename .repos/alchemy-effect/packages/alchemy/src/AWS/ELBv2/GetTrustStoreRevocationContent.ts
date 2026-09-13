@@ -23,9 +23,8 @@ export interface GetTrustStoreRevocationContentRequest extends Omit<
  * revoked. A missing revocation id surfaces as the typed
  * `RevocationIdNotFoundException`. Provide the implementation with
  * `Effect.provide(AWS.ELBv2.GetTrustStoreRevocationContentHttp)`.
- * @binding
- * @section Trust Store Content
- * @example Fetch a revocation list's presigned location
+ * ### Trust Store Content
+ * **Example:** Fetch a revocation list's presigned location
  * ```typescript
  * // init — bind the operation to the trust store
  * const getRevocation = yield* AWS.ELBv2.GetTrustStoreRevocationContent(trustStore);
@@ -33,6 +32,8 @@ export interface GetTrustStoreRevocationContentRequest extends Omit<
  * // runtime
  * const { Location } = yield* getRevocation({ RevocationId: 1 });
  * ```
+ *
+ * @binding
  */
 export interface GetTrustStoreRevocationContent extends Binding.Service<
   GetTrustStoreRevocationContent,

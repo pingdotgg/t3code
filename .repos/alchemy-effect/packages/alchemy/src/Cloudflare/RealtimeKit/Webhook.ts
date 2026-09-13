@@ -106,11 +106,8 @@ export type Webhook = Resource<
  *
  * Name, URL, events, and enablement are all mutable in place; only moving
  * the webhook to a different app forces a replacement.
- * @resource
- * @product Realtime Kit
- * @category Media
- * @section Creating a Webhook
- * @example Meeting lifecycle events
+ * ### Creating a Webhook
+ * **Example:** Meeting lifecycle events
  * ```typescript
  * const app = yield* Cloudflare.RealtimeKit.App("Meetings", {});
  *
@@ -121,7 +118,7 @@ export type Webhook = Resource<
  * });
  * ```
  *
- * @example Recording events to a Worker
+ * **Example:** Recording events to a Worker
  * ```typescript
  * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Recordings", {
  *   appId: app.appId,
@@ -130,8 +127,8 @@ export type Webhook = Resource<
  * });
  * ```
  *
- * @section Updating a Webhook
- * @example Pause delivery without deleting
+ * ### Updating a Webhook
+ * **Example:** Pause delivery without deleting
  * ```typescript
  * const webhook = yield* Cloudflare.RealtimeKit.Webhook("Lifecycle", {
  *   appId: app.appId,
@@ -142,6 +139,10 @@ export type Webhook = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/realtime/realtimekit/
+ *
+ * @resource
+ * @product Realtime Kit
+ * @category Media
  */
 export const Webhook = Resource<Webhook>(TypeId);
 

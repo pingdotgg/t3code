@@ -1,15 +1,26 @@
 import * as Alchemy from "alchemy";
 import * as Cloudflare from "alchemy/Cloudflare";
+import * as Drizzle from "alchemy/Drizzle";
 import * as Planetscale from "alchemy/Planetscale";
 import * as Effect from "effect/Effect";
 
 /**
- * A Drizzle schema + PlanetScale MySQL database + feature branch. Generate
- * migrations with `bun generate:migrations`; the branch scans the checked-in
- * migration directory and applies new files transactionally.
+ * A Drizzle schema + PlanetScale MySQL database + feature branch. The
+ * branch's `migrations` prop is wired to the schema resource, so
+ * the provider order becomes:
+ *
+ *   1. `Drizzle.Schema` regenerates pending migration SQL files.
+ *   2. `Planetscale.MySQLBranch` scans the directory and applies new
+ *      migrations transactionally.
  */
 export const PlanetscaleDb = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
+
+  const schema = yield* Drizzle.Schema("app-schema", {
+    schema: "./src/schema.ts",
+    out: "./migrations",
+    dialect: "mysql",
+  });
 
   // Stages are organised in two tiers:
   //
@@ -32,7 +43,7 @@ export const PlanetscaleDb = Effect.gen(function* () {
   const branch = yield* Planetscale.MySQLBranch("app-branch", {
     database,
     isProduction: false,
-    migrationsDir: "./migrations",
+    migrations: schema,
   });
 
   const password = yield* Planetscale.MySQLPassword("app-password", {

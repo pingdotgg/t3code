@@ -13,13 +13,14 @@ export interface GetMicrovmImageRequest extends Omit<
  *
  * Bind it to a {@link MicrovmImage} to read the image's state and versions at
  * runtime (the `imageIdentifier` is injected).
- * @binding
- * @section Image Reads
- * @example Get the image
+ * ### Image Reads
+ * **Example:** Get the image
  * ```typescript
  * const getMicrovmImage = yield* AWS.Lambda.GetMicrovmImage(Sandbox);
  * const image = yield* getMicrovmImage({});
  * ```
+ *
+ * @binding
  */
 export interface GetMicrovmImage extends Binding.Service<
   GetMicrovmImage,

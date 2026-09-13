@@ -1,10 +1,8 @@
 import type {
   GitRunStackedActionInput,
-  GitRunStackedActionResult,
   GitStackedAction,
   VcsStatusResult,
 } from "@t3tools/contracts";
-import { isTemporaryWorktreeBranch } from "@t3tools/shared/git";
 
 export type GitActionIconName = "commit" | "push" | "pr";
 
@@ -43,44 +41,6 @@ export type GitActionRequestInput = Pick<
   GitRunStackedActionInput,
   "action" | "commitMessage" | "featureBranch" | "filePaths"
 >;
-
-export function buildGitActionProgressStages(input: {
-  action: GitStackedAction;
-  hasCustomCommitMessage: boolean;
-  hasWorkingTreeChanges: boolean;
-  pushTarget?: string;
-  featureBranch?: boolean;
-  shouldPushBeforePr?: boolean;
-}): string[] {
-  const branchStages = input.featureBranch ? ["Preparing feature branch..."] : [];
-  const pushStage = input.pushTarget ? `Pushing to ${input.pushTarget}...` : "Pushing...";
-  const prStages = [
-    "Preparing PR...",
-    "Generating PR content...",
-    "Creating GitHub pull request...",
-  ];
-
-  if (input.action === "push") {
-    return [pushStage];
-  }
-  if (input.action === "create_pr") {
-    return input.shouldPushBeforePr ? [pushStage, ...prStages] : prStages;
-  }
-
-  const shouldIncludeCommitStages = input.action === "commit" || input.hasWorkingTreeChanges;
-  const commitStages = !shouldIncludeCommitStages
-    ? []
-    : input.hasCustomCommitMessage
-      ? ["Committing..."]
-      : ["Generating commit message...", "Committing..."];
-  if (input.action === "commit") {
-    return [...branchStages, ...commitStages];
-  }
-  if (input.action === "commit_push") {
-    return [...branchStages, ...commitStages, pushStage];
-  }
-  return [...branchStages, ...commitStages, pushStage, ...prStages];
-}
 
 export function buildMenuItems(
   gitStatus: VcsStatusResult | null,
@@ -394,47 +354,5 @@ export function resolveDefaultBranchActionDialogCopy(input: {
     title: "Push & create PR from default branch?",
     description: `This action will push local commits and create a PR${suffix}`,
     continueLabel: "Push & create PR",
-  };
-}
-
-export function resolveThreadBranchUpdate(
-  result: GitRunStackedActionResult,
-): { branch: string } | null {
-  if (result.branch.status !== "created" || !result.branch.name) {
-    return null;
-  }
-
-  return {
-    branch: result.branch.name,
-  };
-}
-
-export function resolveLiveThreadBranchUpdate(input: {
-  threadBranch: string | null;
-  gitStatus: VcsStatusResult | null;
-}): { branch: string | null } | null {
-  if (!input.gitStatus) {
-    return null;
-  }
-
-  if (input.gitStatus.refName === null && input.threadBranch !== null) {
-    return null;
-  }
-
-  if (input.threadBranch === input.gitStatus.refName) {
-    return null;
-  }
-
-  if (
-    input.threadBranch !== null &&
-    input.gitStatus.refName !== null &&
-    !isTemporaryWorktreeBranch(input.threadBranch) &&
-    isTemporaryWorktreeBranch(input.gitStatus.refName)
-  ) {
-    return null;
-  }
-
-  return {
-    branch: input.gitStatus.refName,
   };
 }

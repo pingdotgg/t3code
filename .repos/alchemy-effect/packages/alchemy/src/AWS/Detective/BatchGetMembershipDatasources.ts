@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * graph is ingesting from this account.
  * Provide the implementation with
  * `Effect.provide(AWS.Detective.BatchGetMembershipDatasourcesHttp)`.
- * @binding
- * @section Responding to Invitations
- * @example Inspect Membership Data Sources
+ * ### Responding to Invitations
+ * **Example:** Inspect Membership Data Sources
  * ```typescript
  * // init — account-level binding, no resource argument
  * const batchGetMembershipDatasources =
@@ -23,6 +22,8 @@ import * as Binding from "../../Binding.ts";
  *   GraphArns: [adminGraphArn],
  * });
  * ```
+ *
+ * @binding
  */
 export interface BatchGetMembershipDatasources extends Binding.Service<
   BatchGetMembershipDatasources,

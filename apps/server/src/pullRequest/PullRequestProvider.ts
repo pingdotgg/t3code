@@ -1,7 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import type {
+  PullRequestStackMembership,
   PullRequestAction,
+  PullRequestStackHead,
   PullRequestActor,
   PullRequestBaseComparison,
   PullRequestCapabilities,
@@ -26,6 +28,7 @@ import type {
   PullRequestReviewVerdict,
   PullRequestReviewerCandidateList,
   PullRequestReviewerKind,
+  PullRequestLabelCandidateList,
   PullRequestState,
   PullRequestUpdateMethod,
   PullRequestViewerPermissions,
@@ -41,7 +44,7 @@ import { SourceControlProviderKind as SourceControlProviderKindSchema } from "@t
  * provider for the whole workspace, a rate limit pauses its host, and anything else is specific
  * to the request.
  */
-export class PullRequestProviderError extends Schema.TaggedErrorClass<PullRequestProviderError>()(
+export class PullRequestProviderError extends Schema.TaggedError<PullRequestProviderError>()(
   "PullRequestProviderError",
   {
     provider: SourceControlProviderKindSchema,
@@ -64,11 +67,13 @@ export interface PullRequestProviderFailure {
 
 /** A change request as the provider sees it, before the service attaches project context. */
 export interface ProviderChangeRequest {
+  readonly stack?: PullRequestStackMembership;
   readonly number: number;
   readonly title: string;
   readonly url: string;
   readonly author: PullRequestActor | null;
   readonly headBranch: string;
+  readonly headRepositoryNameWithOwner?: string | null;
   readonly baseBranch: string;
   readonly state: PullRequestState;
   readonly isDraft: boolean;
@@ -76,6 +81,8 @@ export interface ProviderChangeRequest {
   readonly additions: number;
   readonly deletions: number;
   readonly createdAt: string;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: string;
   /** Accounts with a review requested. Team-level requests are excluded by each provider. */
   readonly reviewRequestLogins: ReadonlyArray<string>;
@@ -84,6 +91,52 @@ export interface ProviderChangeRequest {
   readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
   /** Absent from a host that reports no check rollup on its listings. */
   readonly checksState?: PullRequestChecksState | null | undefined;
+}
+
+/** The fields needed to keep a linked thread's pull request status live. */
+export interface ProviderChangeRequestSummary {
+  readonly number: number;
+  readonly title: string;
+  readonly url: string;
+  readonly headBranch: string;
+  readonly baseBranch: string;
+  readonly state: PullRequestState;
+  /** Present when the host says an open pull request is still a draft. */
+  readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
+  readonly updatedAt: string;
+  /** Overview fields, present where the host's single read returns them at no extra cost. */
+  readonly author?: PullRequestActor | null | undefined;
+  readonly additions?: number | undefined;
+  readonly deletions?: number | undefined;
+  readonly changedFiles?: number | undefined;
+  readonly reviewDecision?: PullRequestReviewDecision | null | undefined;
+  readonly checksState?: PullRequestChecksState | null | undefined;
+  readonly mergeability?: PullRequestMergeability | undefined;
+}
+
+/** One layer of a host-native stack, bottom to top order is the array's. */
+export interface ProviderChangeRequestStackLayer {
+  readonly title?: string;
+  readonly isDraft?: boolean;
+  readonly headSha?: string;
+  readonly number: number;
+  readonly headBranch: string;
+  readonly state: PullRequestState;
+}
+
+/**
+ * A host-native stack: an ordered set of change requests the host itself merges and retargets as
+ * a unit. Only GitHub offers one today; the neutral shape lets the sync reactor and the UI stay
+ * ignorant of which host said so.
+ */
+export interface ProviderChangeRequestStack {
+  readonly id: string;
+  readonly number: number;
+  readonly url: string;
+  readonly base: string;
+  readonly layers: ReadonlyArray<ProviderChangeRequestStackLayer>;
 }
 
 export interface ProviderChangeRequestPage {
@@ -165,6 +218,10 @@ export interface ProviderChangeRequestDetail extends ProviderChangeRequest {
   readonly behindBy?: number;
   /** Absent from a host that does not report whether it is armed to merge this on its own. */
   readonly autoMergeEnabled?: boolean;
+  /** The strategy stored with an armed auto-merge, where the host reports it. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
+  /** Workflow runs on this head commit that still need a maintainer's approval. */
+  readonly workflowApprovalsRequired?: number;
 }
 
 /** The conversation-shaped half of a detail, loaded after the core can already render. */
@@ -219,12 +276,28 @@ export interface ProviderRepositoryRef {
  * failing at call time.
  */
 export interface PullRequestProviderApi {
+  readonly withVerifiedCredential?: <A, E, R>(
+    input: { readonly cwd: string; readonly host: string },
+    use: (identity: {
+      readonly accountId: string;
+      readonly viewer: string;
+      readonly credentialFingerprint: string;
+    }) => Effect.Effect<A, E, R>,
+  ) => Effect.Effect<A, E | PullRequestProviderError, R>;
+  readonly getRoutingIdentity?: (input: {
+    readonly cwd: string;
+    readonly host: string;
+  }) => Effect.Effect<
+    { readonly accountId: string; readonly viewer: string },
+    PullRequestProviderError
+  >;
   readonly kind: SourceControlProviderKind;
   readonly capabilities: PullRequestCapabilities;
 
   /** The signed-in account, which is what involvement filtering compares against. */
   readonly getViewer: (input: {
     readonly cwd: string;
+    readonly host?: string;
   }) => Effect.Effect<string, PullRequestProviderError>;
 
   readonly listChangeRequests: (
@@ -300,6 +373,22 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & { readonly number: number },
   ) => Effect.Effect<ProviderChangeRequestDetail, PullRequestProviderError>;
 
+  /**
+   * The cheap live fields used by linked threads. Optional because a provider without a narrow
+   * endpoint can fall back to its full detail read at the service boundary.
+   */
+  readonly getChangeRequestSummary?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestSummary, PullRequestProviderError>;
+
+  /**
+   * The host-native stack a change request belongs to, or null when it is not stacked. Optional
+   * because most hosts have no such object; the service derives chains from base branches there.
+   */
+  readonly getChangeRequestStack?: (
+    input: ProviderRepositoryRef & { readonly includeDetails?: boolean; readonly number: number },
+  ) => Effect.Effect<ProviderChangeRequestStack | null, PullRequestProviderError>;
+
   /** Comments, line threads, and commits, kept off the critical path for the core detail. */
   readonly getChangeRequestActivity: (
     input: ProviderRepositoryRef & { readonly number: number },
@@ -324,7 +413,11 @@ export interface PullRequestProviderApi {
    * is no request at all.
    */
   readonly getViewerPermissions: (
-    input: ProviderRepositoryRef & { readonly number: number },
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      /** Skip branch comparison when checking permission for an unrelated operation. */
+      readonly includeUpdateBranch?: boolean;
+    },
   ) => Effect.Effect<PullRequestViewerPermissions, PullRequestProviderError>;
 
   /**
@@ -359,6 +452,8 @@ export interface PullRequestProviderApi {
     input: ProviderRepositoryRef & {
       readonly number: number;
       readonly action: PullRequestAction;
+      readonly stackNumber?: number;
+      readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       /** Meaningful for `merge` and `enable-auto-merge`; absent takes the host's own default. */
       readonly mergeMethod?: PullRequestMergeMethod;
       /** Only meaningful for `update-branch`; absent takes the host's own default. */
@@ -442,6 +537,23 @@ export interface PullRequestProviderApi {
         readonly kind: PullRequestReviewerKind;
       }>;
       readonly requested: boolean;
+    },
+  ) => Effect.Effect<void, PullRequestProviderError>;
+
+  /**
+   * The repository's labels, with the ones already on the change request marked. Present with
+   * `setLabels` only where `capabilities.labels` is true; the service refuses both without it.
+   */
+  readonly listLabelCandidates?: (
+    input: ProviderRepositoryRef & { readonly number: number },
+  ) => Effect.Effect<PullRequestLabelCandidateList, PullRequestProviderError>;
+
+  /** Puts labels on the change request, or takes them off. One call for both directions. */
+  readonly setLabels?: (
+    input: ProviderRepositoryRef & {
+      readonly number: number;
+      readonly labels: ReadonlyArray<string>;
+      readonly applied: boolean;
     },
   ) => Effect.Effect<void, PullRequestProviderError>;
 

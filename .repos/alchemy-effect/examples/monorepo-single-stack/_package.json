@@ -24,11 +24,11 @@
   "workspaces": {
     "packages": ["frontend", "backend"],
     "catalog": {
-      "@effect/platform-bun": "4.0.0-beta.60",
-      "@effect/platform-node": "4.0.0-beta.60",
+      "@effect/platform-bun": "4.0.0-rc.112",
+      "@effect/platform-node": "4.0.0-rc.112",
       "@types/bun": "latest",
       "alchemy": "file:../packages/alchemy",
-      "effect": "4.0.0-beta.60",
+      "effect": "4.0.0-rc.112",
       "typescript": "^6.0.3",
       "vite": "^8.0.7"
     }

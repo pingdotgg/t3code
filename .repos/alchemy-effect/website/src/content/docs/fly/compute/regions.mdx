@@ -1,0 +1,179 @@
+---
+title: Regions
+description: Where Fly Machines, Volumes, Postgres, and Redis live. Alchemy defaults to iad.
+---
+
+A region is a Fly.io datacenter. [Machines](/fly/compute/machines),
+[Volumes](/fly/data/volumes), [Postgres](/fly/data/postgres)
+clusters, and a [Redis](/fly/data/redis) primary live in one. An
+[App](/fly/compute/apps) is global. It is not pinned to a region.
+
+Alchemy defaults to `iad` (Ashburn, Virginia). Pass `region` to put
+a [Service](/fly/compute/services), Machine, or Postgres cluster
+somewhere else.
+
+## Pin a Service
+
+```typescript
+export default class Api extends Fly.Service<Api>()(
+  "Api",
+  { app: Site, main: import.meta.url, region: "lhr", port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+`count` extra Machines stay in that same region.
+
+:::caution[Changing `region` replaces the Service]
+The replica set is created in the new region. The old Machines are
+deleted. A Volume does not move with them.
+:::
+
+## Pin a Machine
+
+```typescript
+const web = yield* Fly.Machine("Web", {
+  app: Site,
+  region: "syd",
+  image: "nginx:alpine",
+});
+```
+
+Each Machine resource is one VM in one region. To run in two
+regions, declare two Machines.
+
+:::caution[Changing `region` replaces the Machine]
+The Machine is created in the new region. The old one is deleted.
+:::
+
+## Volumes stay in the region
+
+A Volume is created in the parent Service or Machine's region. It
+cannot move and cannot attach to a Machine in another region.
+
+Restore into a new region from a
+[`VolumeSnapshot`](/providers/fly/volumesnapshot) with `snapshotId`
+on the mount.
+
+## Several regions, one App
+
+Put two Services on the same App with different `region` values.
+Each Service is its own file. Fly's Anycast proxy sends a request
+to a nearby Machine that published the service. They share
+`{app}.fly.dev`.
+
+```typescript
+// src/api-iad.ts
+export default class ApiIad extends Fly.Service<ApiIad>()(
+  "ApiIad",
+  { app: Site, main: import.meta.url, region: "iad", port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Same program, London:
+
+```typescript
+// src/api-lhr.ts
+export default class ApiLhr extends Fly.Service<ApiLhr>()(
+  "ApiLhr",
+  { app: Site, main: import.meta.url, region: "lhr", port: 3000 },
+  Effect.gen(function* () {
+    return {
+      fetch: Effect.succeed(HttpServerResponse.text("hello")),
+    };
+  }),
+) {}
+```
+
+Yield both in the Stack.
+
+## Which region is this?
+
+Fly sets `FLY_REGION` on the Machine. Read it in a Service with
+`Config`.
+
+```typescript
+import * as Config from "effect/Config";
+
+const region = yield* Config.string("FLY_REGION");
+```
+
+## Region codes
+
+Codes are three letters. This list is what Fly published as of
+August 2026. Run `fly platform regions` or see
+[Fly's regions](https://fly.io/docs/reference/regions/) for the
+live set.
+
+| Code | Location |
+| --- | --- |
+| `ams` | Amsterdam, Netherlands |
+| `arn` | Stockholm, Sweden |
+| `bom` | Mumbai, India |
+| `cdg` | Paris, France |
+| `dfw` | Dallas, Texas (US) |
+| `ewr` | Secaucus, NJ (US) |
+| `fra` | Frankfurt, Germany |
+| `gru` | São Paulo, Brazil |
+| `iad` | Ashburn, Virginia (US) |
+| `jnb` | Johannesburg, South Africa |
+| `lax` | Los Angeles, California (US) |
+| `lhr` | London, United Kingdom |
+| `nrt` | Tokyo, Japan |
+| `ord` | Chicago, Illinois (US) |
+| `sin` | Singapore |
+| `sjc` | San Jose, California (US) |
+| `syd` | Sydney, Australia |
+| `yyz` | Toronto, Canada |
+
+A dedicated [`IpAssignment`](/fly/networking) can take `region`
+too. Shared Anycast (`shared_v4`) ignores it.
+
+## Postgres is regional
+
+The cluster lives in one region. Pass `region` on
+[`Fly.Postgres`](/fly/data/postgres), not on the App.
+
+```typescript
+const db = yield* Fly.Postgres("Db", {
+  region: "iad",
+});
+```
+
+:::caution[Changing `region` replaces the cluster]
+A new cluster is created in the new region. The old cluster is
+deleted. Data is not copied.
+:::
+
+## Redis primary
+
+[`Fly.Redis`](/fly/data/redis) takes `primaryRegion`. Default is
+`iad`. Read replicas are extra regions on `readRegions`.
+
+```typescript
+const cache = yield* Fly.Redis("Cache", {
+  primaryRegion: "iad",
+  readRegions: ["sjc"],
+});
+```
+
+:::caution[Changing `primaryRegion` replaces Redis]
+The primary region is immutable. The old database is deleted first.
+:::
+
+## Where next
+
+[Services](/fly/compute/services) pin `region` on the class.
+[Machines](/fly/compute/machines) pin it on the resource.
+[Volumes](/fly/data/volumes) follow the parent.
+[Postgres](/fly/data/postgres) is a billed cluster in one region.
+[Redis](/fly/data/redis) pins `primaryRegion`.

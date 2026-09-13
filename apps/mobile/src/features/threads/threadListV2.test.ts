@@ -1,3 +1,12 @@
+import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  createPendingThreadOrder,
+  createThreadMovePlanner,
+  threadOrderAfterMove,
+  threadDropLifecycle,
+  reconcilePendingThreadOrder,
+  type PendingThreadOrder,
+} from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
@@ -16,7 +25,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
-  resolveThreadListV2ChangeRequestState,
+  getThreadListV2OrderedSection,
   resolveThreadListV2Enabled,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SnoozeGateExpiryMs,
@@ -38,6 +47,7 @@ function makeThread(
     interactionMode: "default",
     branch: null,
     worktreePath: null,
+    pullRequests: [],
     latestTurn: null,
     createdAt: "2026-06-01T00:00:00.000Z",
     updatedAt: "2026-06-01T00:00:00.000Z",
@@ -60,42 +70,6 @@ const linkedPullRequest = {
   number: 42,
   url: "https://github.com/pingdotgg/t3code/pull/42",
 };
-
-describe("resolveThreadListV2ChangeRequestState", () => {
-  it("preserves the previous state while a linked pull request reloads", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest,
-        state: null,
-        updatedAt: null,
-      }),
-    ).toBeUndefined();
-  });
-
-  it("clears the previous state after a pull request is unlinked", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest: null,
-        state: null,
-        updatedAt: null,
-      }),
-    ).toBeNull();
-  });
-
-  it("reports a loaded linked pull request", () => {
-    expect(
-      resolveThreadListV2ChangeRequestState({
-        linkedPullRequest,
-        state: "merged",
-        updatedAt: "2026-06-02T00:00:00.000Z",
-      }),
-    ).toEqual({
-      state: "merged",
-      updatedAt: "2026-06-02T00:00:00.000Z",
-      linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
-    });
-  });
-});
 
 describe("resolveThreadListV2SnoozeMenuSelection", () => {
   it("accepts a displayed evening preset while its wake time is still future", () => {
@@ -192,6 +166,48 @@ describe("resolveThreadListV2Status", () => {
     expect(resolveThreadListV2Status(makeThread({ id: ThreadId.make("t"), title: "t" }))).toBe(
       "ready",
     );
+  });
+});
+
+describe("queued messages keep a settled thread active", () => {
+  const threads = [
+    makeThread({ id: ThreadId.make("active"), title: "Active" }),
+    makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
+    makeThread({
+      id: ThreadId.make("settled-queued"),
+      title: "Settled with outbox",
+      settledOverride: "settled",
+    }),
+  ];
+  const queuedThreadKeys = new Set([`${environmentId}:settled-queued`]);
+
+  it("lists the thread in the active block instead of the settled shelf", () => {
+    const layout = buildThreadListV2Items({
+      threads,
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+      queuedThreadKeys,
+    });
+    expect(layout.items.map((item) => [item.thread.id, item.variant] as const)).toEqual([
+      ["active", "card"],
+      ["settled-queued", "card"],
+      ["settled", "slim"],
+    ]);
+    expect(layout.settledCount).toBe(1);
+  });
+
+  it("includes it in the reorderable active section", () => {
+    expect(
+      getThreadListV2OrderedSection({ threads, section: "active", now: NOW, queuedThreadKeys }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["active", "settled-queued"]);
+    expect(
+      getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["active"]);
   });
 });
 
@@ -295,6 +311,15 @@ describe("resolveThreadListV2SnoozeGateExpiryMs", () => {
 });
 
 describe("sortThreadsForListV2", () => {
+  it("honors a saved active order and leaves new threads above it", () => {
+    const sorted = sortThreadsForListV2([
+      { id: "newer-arranged", createdAt: "2026-06-01T12:00:00.000Z", activeOrderKey: "t" },
+      { id: "older-arranged", createdAt: "2026-06-01T08:00:00.000Z", activeOrderKey: "f" },
+      { id: "new", createdAt: "2026-06-01T13:00:00.000Z" },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["new", "older-arranged", "newer-arranged"]);
+  });
+
   it("orders by creation time, newest first, ignoring activity", () => {
     const sorted = sortThreadsForListV2([
       { id: "oldest", createdAt: "2026-06-01T08:00:00.000Z" },
@@ -303,76 +328,88 @@ describe("sortThreadsForListV2", () => {
     ]);
     expect(sorted.map((thread) => thread.id)).toEqual(["newest", "middle", "oldest"]);
   });
+
+  it("surfaces an un-settled thread at the top via its re-entry stamp", () => {
+    const sorted = sortThreadsForListV2([
+      {
+        id: "old-unsettled",
+        createdAt: "2026-06-01T08:00:00.000Z",
+        unsettledAt: "2026-06-01T13:00:00.000Z",
+      },
+      { id: "newest", createdAt: "2026-06-01T12:00:00.000Z" },
+      { id: "middle", createdAt: "2026-06-01T10:00:00.000Z" },
+    ]);
+    expect(sorted.map((thread) => thread.id)).toEqual(["old-unsettled", "newest", "middle"]);
+  });
+});
+
+describe("getThreadListV2OrderedSection", () => {
+  it("uses each saved order and excludes settled, snoozed, and archived rows", () => {
+    const threads = [
+      makeThread({ id: ThreadId.make("active-later"), title: "Later", activeOrderKey: "t" }),
+      makeThread({ id: ThreadId.make("active-first"), title: "First", activeOrderKey: "f" }),
+      makeThread({ id: ThreadId.make("active-new"), title: "New" }),
+      makeThread({
+        id: ThreadId.make("pinned-later"),
+        title: "Pinned later",
+        pinnedAt: NOW,
+        pinOrderKey: "t",
+        activeOrderKey: "f",
+      }),
+      makeThread({
+        id: ThreadId.make("pinned-first"),
+        title: "Pinned first",
+        pinnedAt: NOW,
+        pinOrderKey: "f",
+        activeOrderKey: "t",
+      }),
+      makeThread({ id: ThreadId.make("settled"), title: "Settled", settledOverride: "settled" }),
+      makeThread({ id: ThreadId.make("archived"), title: "Archived", archivedAt: NOW }),
+      makeThread({
+        id: ThreadId.make("snoozed"),
+        title: "Snoozed",
+        snoozedUntil: "2026-06-03T10:00:00.000Z",
+        snoozedAt: NOW,
+      }),
+      makeThread({
+        id: ThreadId.make("pinned-snoozed"),
+        title: "Pinned snoozed",
+        pinnedAt: NOW,
+        snoozedUntil: "2026-06-03T10:00:00.000Z",
+        snoozedAt: NOW,
+      }),
+    ];
+    expect(
+      getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["active-new", "active-first", "active-later"]);
+    expect(
+      getThreadListV2OrderedSection({ threads, section: "pinned", now: NOW }).map(
+        (thread) => thread.id,
+      ),
+    ).toEqual(["pinned-first", "pinned-later"]);
+  });
 });
 
 describe("buildThreadListV2Items", () => {
-  it("ignores the previous pull request state after a different pull request is linked", () => {
-    const thread = makeThread({
-      id: ThreadId.make("linked"),
-      title: "Linked pull request",
-      linkedPullRequest,
-    });
-    const layout = buildThreadListV2Items({
-      threads: [thread],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([
-        [
-          `${environmentId}:${thread.id}`,
-          {
-            state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",41]',
-          },
-        ],
-      ]),
-      now: NOW,
-    });
-
-    expect(layout.settledCount).toBe(0);
-    expect(layout.items[0]?.variant).toBe("card");
-  });
-
-  it("settles a thread only when the cached pull request identity matches", () => {
+  it("places a persisted settled thread in the settled shelf", () => {
     const thread = makeThread({
       id: ThreadId.make("linked-merged"),
       title: "Linked merged pull request",
       linkedPullRequest,
+      settledOverride: "settled",
+      settledAt: NOW,
     });
     const layout = buildThreadListV2Items({
       threads: [thread],
       environmentId: null,
       searchQuery: "",
-      changeRequestByKey: new Map([
-        [
-          `${environmentId}:${thread.id}`,
-          {
-            state: "merged" as const,
-            linkedPullRequestKey: '["project-1","pingdotgg/t3code",42]',
-          },
-        ],
-      ]),
       now: NOW,
     });
 
     expect(layout.settledCount).toBe(1);
     expect(layout.items[0]?.variant).toBe("slim");
-  });
-
-  it("keeps a merged thread active when auto-settle on merge is off", () => {
-    const merged = makeThread({ id: ThreadId.make("merged"), title: "Merged" });
-    const layout = buildThreadListV2Items({
-      threads: [merged],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([
-        [`${environmentId}:${merged.id}`, { state: "merged" as const }],
-      ]),
-      autoSettleOnMerge: false,
-      now: NOW,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["merged"]);
-    expect(layout.settledCount).toBe(0);
   });
 
   it("hides snoozed threads and counts them — visibility parity with web", () => {
@@ -426,73 +463,21 @@ describe("buildThreadListV2Items", () => {
     expect(layout.settledCount).toBe(1);
   });
 
-  it("moves pinned threads to the settled shelf when their pull request merges", () => {
-    const merged = makeThread({
-      id: ThreadId.make("pinned-merged"),
-      title: "Pinned merged pull request",
+  it("keeps active pinned threads in the pinned block", () => {
+    const pinned = makeThread({
+      id: ThreadId.make("pinned"),
+      title: "Pinned thread",
       pinnedAt: "2026-06-01T12:00:00.000Z",
     });
     const layout = buildThreadListV2Items({
-      threads: [makeThread({ id: ThreadId.make("active"), title: "Active" }), merged],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([[`${environmentId}:${merged.id}`, { state: "merged" }]]),
-      now: NOW,
-    });
-
-    expect(layout.items.map((item) => item.thread.id)).toEqual(["active", "pinned-merged"]);
-    expect(layout.items.map((item) => item.variant)).toEqual(["card", "slim"]);
-    expect(layout.items[1]?.thread.pinnedAt).toBe("2026-06-01T12:00:00.000Z");
-    expect(layout.settledCount).toBe(1);
-  });
-
-  it("moves inactive pinned threads to the settled shelf", () => {
-    const inactive = makeThread({
-      id: ThreadId.make("pinned-inactive"),
-      title: "Pinned inactive thread",
-      createdAt: "2026-05-20T00:00:00.000Z",
-      pinnedAt: "2026-05-21T00:00:00.000Z",
-      latestTurn: {
-        turnId: TurnId.make("turn-inactive"),
-        state: "completed",
-        requestedAt: "2026-05-21T00:00:00.000Z",
-        startedAt: "2026-05-21T00:00:01.000Z",
-        completedAt: "2026-05-21T00:00:02.000Z",
-        assistantMessageId: null,
-      },
-    });
-    const layout = buildThreadListV2Items({
-      threads: [inactive],
+      threads: [pinned],
       environmentId: null,
       searchQuery: "",
       now: NOW,
     });
 
     expect(layout.items[0]).toMatchObject({
-      thread: { id: "pinned-inactive" },
-      variant: "slim",
-      pinned: false,
-    });
-    expect(layout.settledCount).toBe(1);
-  });
-
-  it("keeps pinned merged threads pinned when auto-settle on merge is off", () => {
-    const merged = makeThread({
-      id: ThreadId.make("pinned-merged"),
-      title: "Pinned merged pull request",
-      pinnedAt: "2026-06-01T12:00:00.000Z",
-    });
-    const layout = buildThreadListV2Items({
-      threads: [merged],
-      environmentId: null,
-      searchQuery: "",
-      changeRequestByKey: new Map([[`${environmentId}:${merged.id}`, { state: "merged" }]]),
-      autoSettleOnMerge: false,
-      now: NOW,
-    });
-
-    expect(layout.items[0]).toMatchObject({
-      thread: { id: "pinned-merged" },
+      thread: { id: "pinned" },
       variant: "card",
       pinned: true,
     });
@@ -547,9 +532,7 @@ describe("buildThreadListV2Items", () => {
       ],
       environmentId: null,
       searchQuery: "",
-      // Minute-floored partition clock vs precise snooze clock.
-      now: "2026-06-02T00:01:00.000Z",
-      snoozeNow: "2026-06-02T00:01:07.500Z",
+      now: "2026-06-02T00:01:07.500Z",
     });
 
     expect(layout.items.map((item) => item.thread.id)).toEqual(["just-woke"]);
@@ -769,6 +752,32 @@ describe("buildThreadListV2Items", () => {
     expect(items.map((item) => item.thread.id)).toEqual(["newer-created", "older-created"]);
   });
 
+  it("sorts settled threads by their persisted settlement timestamp", () => {
+    const { items } = buildThreadListV2Items({
+      threads: [
+        makeThread({
+          id: ThreadId.make("settled-newer"),
+          title: "Settled newer",
+          settledOverride: "settled",
+          settledAt: "2026-06-01T12:00:00.000Z",
+          latestUserMessageAt: "2026-06-01T08:00:00.000Z",
+        }),
+        makeThread({
+          id: ThreadId.make("settled-older"),
+          title: "Settled older",
+          settledOverride: "settled",
+          settledAt: "2026-06-01T10:00:00.000Z",
+          latestUserMessageAt: "2026-06-01T09:00:00.000Z",
+        }),
+      ],
+      environmentId: null,
+      searchQuery: "",
+      now: NOW,
+    });
+
+    expect(items.map((item) => item.thread.id)).toEqual(["settled-newer", "settled-older"]);
+  });
+
   it("keeps settled threads in the tail and filters by search query", () => {
     const { items } = buildThreadListV2Items({
       threads: [
@@ -866,7 +875,7 @@ describe("buildThreadListV2Items settled paging", () => {
           id: ThreadId.make(`settled-${index}`),
           title: `Settled ${index}`,
           settledOverride: "settled",
-          settledAt: NOW,
+          settledAt: `2026-06-01T0${index}:10:00.000Z`,
           latestUserMessageAt: `2026-06-01T0${index}:00:00.000Z`,
           // A turn adopted the message (same requestedAt): without it the
           // thread reads as a queued turn start, which never settles.
@@ -902,7 +911,22 @@ describe("buildThreadListV2Items settled paging", () => {
 });
 
 function makePendingTask(id: string): PendingNewTask {
+  const creation = {
+    projectId: ProjectId.make("project-1"),
+    workspaceMode: "worktree" as const,
+    branch: null,
+    worktreePath: null,
+  };
   return {
+    kind: "pending",
+    key: `pending-task:${id}`,
+    environmentId,
+    projectId: creation.projectId,
+    projectTitle: undefined,
+    projectCwd: undefined,
+    branch: null,
+    title: id,
+    createdAt: NOW,
     message: {
       environmentId,
       threadId: ThreadId.make(`thread-${id}`),
@@ -911,20 +935,9 @@ function makePendingTask(id: string): PendingNewTask {
       text: id,
       attachments: [],
       createdAt: NOW,
-      creation: {
-        projectId: ProjectId.make("project-1"),
-        workspaceMode: "worktree",
-        branch: null,
-        worktreePath: null,
-      },
+      creation,
     },
-    creation: {
-      projectId: ProjectId.make("project-1"),
-      workspaceMode: "worktree",
-      branch: null,
-      worktreePath: null,
-    },
-    title: id,
+    creation,
   };
 }
 
@@ -1037,5 +1050,431 @@ describe("buildThreadListV2ListItems", () => {
       "v2-settled-shelf",
       "v2-thread",
     ]);
+  });
+});
+
+describe("pending mobile thread moves", () => {
+  function fixture(section: "active" | "pinned" = "active") {
+    const rows = ["a", "b", "c"].map((id, index) =>
+      makeThread({
+        id: ThreadId.make(id),
+        title: id === "a" ? "hidden" : "match",
+        createdAt: `2026-06-01T0${3 - index}:00:00.000Z`,
+        pinnedAt: section === "pinned" ? `2026-06-01T0${3 - index}:00:00.000Z` : null,
+      }),
+    );
+    const ordered = getThreadListV2OrderedSection({ threads: rows, section, now: NOW });
+    const orderedIds = ordered.map((row) => `${row.environmentId}:${row.id}`);
+    const movedId = orderedIds[2]!;
+    const assignments = planPinnedMove({
+      orderedIds,
+      keysById: new Map(orderedIds.map((id) => [id, null])),
+      movedId,
+      direction: "up",
+    })!;
+    const pending = createPendingThreadOrder({
+      section,
+      ordered,
+      movedId,
+      direction: "up",
+      assignments,
+    });
+    const update = (current: EnvironmentThreadShell[], assignment: (typeof assignments)[number]) =>
+      current.map((row) =>
+        `${row.environmentId}:${row.id}` === assignment.id
+          ? {
+              ...row,
+              [section === "pinned" ? "pinOrderKey" : "activeOrderKey"]: assignment.orderKey,
+            }
+          : row,
+      );
+    return { rows, assignments, pending, update };
+  }
+
+  function layout(
+    rows: EnvironmentThreadShell[],
+    pendingOrder: PendingThreadOrder | null,
+    searchQuery = "",
+  ) {
+    return buildThreadListV2Items({
+      threads: rows,
+      pendingOrder,
+      environmentId: null,
+      searchQuery,
+      now: NOW,
+    }).items.map((item) => item.thread.id);
+  }
+
+  it.each(["active", "pinned"] as const)(
+    "holds %s order through every intermediate key upsert",
+    (section) => {
+      const { rows, assignments, pending, update } = fixture(section);
+      let current = rows;
+      let hold: PendingThreadOrder | null = pending;
+      const desired = pending.orderedIds.map((id) => id.split(":")[1]);
+      expect(layout(current, hold)).toEqual(desired);
+      for (const assignment of assignments) {
+        current = update(current, assignment);
+        hold = reconcilePendingThreadOrder(
+          hold!,
+          getThreadListV2OrderedSection({ threads: current, section, now: NOW }),
+        );
+        expect(hold).not.toBeNull();
+        expect(layout(current, hold)).toEqual(desired);
+      }
+      expect(reconcilePendingThreadOrder({ ...hold!, commandsComplete: true }, current)).toBeNull();
+      expect(layout(current, null)).toEqual(desired);
+    },
+  );
+
+  it("keeps the action guard pending when receipts precede canonical shells", () => {
+    const { rows, assignments, pending, update } = fixture();
+    let hold: PendingThreadOrder | null = { ...pending, commandsComplete: true };
+    let current = rows;
+    expect(reconcilePendingThreadOrder(hold, current)).toBe(hold);
+    for (const [index, assignment] of assignments.entries()) {
+      current = update(current, assignment);
+      hold = reconcilePendingThreadOrder(hold!, current);
+      expect(hold === null).toBe(index === assignments.length - 1);
+      expect(layout(current, hold)).toEqual(["a", "c", "b"]);
+    }
+  });
+
+  it("keeps search results in the full pending section order", () => {
+    const { rows, assignments, pending, update } = fixture();
+    const current = update(update(rows, assignments[0]!), assignments[1]!);
+    expect(layout(current, pending, "match")).toEqual(["c", "b"]);
+  });
+
+  it("releases for real section membership and foreign key changes", () => {
+    const { rows, pending } = fixture();
+    expect(reconcilePendingThreadOrder(pending, rows.slice(1))).toBeNull();
+    const newRow = makeThread({ id: ThreadId.make("new"), title: "new" });
+    expect(reconcilePendingThreadOrder(pending, [...rows, newRow])).toBeNull();
+    expect(
+      reconcilePendingThreadOrder(
+        pending,
+        rows.map((row, index) => (index === 0 ? { ...row, activeOrderKey: "zz" } : row)),
+      ),
+    ).toBeNull();
+    const settled = rows.map((row, index) =>
+      index === 0 ? { ...row, settledOverride: "settled" as const } : row,
+    );
+    expect(layout(settled, pending)).toEqual(layout(settled, null));
+  });
+
+  it("does not hide a concurrent return to a previously confirmed key", () => {
+    const { rows, assignments, pending, update } = fixture();
+    const confirmed = reconcilePendingThreadOrder(pending, update(rows, assignments[0]!))!;
+    expect(reconcilePendingThreadOrder(confirmed, rows)).toBeNull();
+  });
+
+  it("preserves the hold for activity but releases for a reopened sort anchor", () => {
+    const { rows, pending } = fixture();
+    expect(
+      reconcilePendingThreadOrder(
+        pending,
+        rows.map((row) => ({ ...row, updatedAt: NOW })),
+      ),
+    ).toBe(pending);
+    expect(
+      reconcilePendingThreadOrder(
+        pending,
+        rows.map((row, index) => (index === 0 ? { ...row, unsettledAt: NOW } : row)),
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("mobile move availability", () => {
+  const oldEnvironment = EnvironmentId.make("older-server");
+  function rows(section: "active" | "pinned", keys: readonly (string | null)[]) {
+    return keys.map((key, index) =>
+      makeThread({
+        id: ThreadId.make(`move-${index}`),
+        title: `Move ${index}`,
+        environmentId: index === 1 ? oldEnvironment : environmentId,
+        activeOrderKey: section === "active" ? key : null,
+        pinOrderKey: section === "pinned" ? key : null,
+        pinnedAt: section === "pinned" ? NOW : null,
+      }),
+    );
+  }
+
+  it.each(["active", "pinned"] as const)(
+    "keeps unsupported keyed %s neighbors as usable anchors",
+    (section) => {
+      const ordered = rows(section, ["bb", "dd", "ff"]);
+      const plan = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId]),
+      });
+      const assignments = plan(`${environmentId}:move-0`, "down");
+      expect(assignments).toHaveLength(1);
+      expect(assignments![0]!.id).toBe(`${environmentId}:move-0`);
+      expect(assignments![0]!.orderKey > "dd").toBe(true);
+      expect(assignments![0]!.orderKey < "ff").toBe(true);
+      expect(plan(`${oldEnvironment}:move-1`, "up")).toBeNull();
+      expect(plan(`${environmentId}:move-0`, "up")).toBeNull();
+    },
+  );
+
+  it.each(["active", "pinned"] as const)(
+    "disables %s moves requiring unsupported keyless materialization",
+    (section) => {
+      const ordered = rows(section, [null, null, null]);
+      const plan = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId]),
+      });
+      expect(plan(`${environmentId}:move-0`, "down")).toBeNull();
+      expect(plan(`${environmentId}:move-2`, "up")).toBeNull();
+      const supported = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId, oldEnvironment]),
+      });
+      expect(supported(`${environmentId}:move-0`, "down")).toHaveLength(3);
+    },
+  );
+
+  it.each(["active", "pinned"] as const)(
+    "reserves snoozed %s keys when moving visible rows",
+    (section) => {
+      const ordered = rows(section, ["bb", "dd", "ff"]);
+      const input = { ordered, section, reorderableEnvironmentIds: new Set([environmentId]) };
+      const collision = createThreadMovePlanner(input)(`${environmentId}:move-0`, "down")![0]!
+        .orderKey;
+      const hidden = {
+        ...ordered[0]!,
+        id: ThreadId.make("snoozed"),
+        snoozedAt: NOW,
+        snoozedUntil: "2099-01-01T00:00:00.000Z",
+        pinOrderKey: section === "pinned" ? collision : null,
+        activeOrderKey: section === "active" ? collision : null,
+      };
+      const assignments = createThreadMovePlanner({ ...input, allThreads: [...ordered, hidden] })(
+        `${environmentId}:move-0`,
+        "down",
+      );
+      expect(assignments).toHaveLength(1);
+      expect(assignments![0]!.orderKey).not.toBe(collision);
+      expect(assignments![0]!.orderKey > "dd" && assignments![0]!.orderKey < "ff").toBe(true);
+    },
+  );
+
+  it("allows an independent keyed move despite an unsupported keyless row elsewhere", () => {
+    const ordered = rows("active", [null, null, "bb", "dd", "ff"]);
+    const plan = createThreadMovePlanner({
+      ordered,
+      section: "active",
+      reorderableEnvironmentIds: new Set([environmentId]),
+    });
+    const assignments = plan(`${environmentId}:move-4`, "up");
+    expect(assignments).toHaveLength(1);
+    expect(assignments![0]!.id).toBe(`${environmentId}:move-4`);
+    expect(assignments![0]!.orderKey > "bb").toBe(true);
+    expect(assignments![0]!.orderKey < "dd").toBe(true);
+  });
+});
+
+describe("thread drag destinations", () => {
+  it("moves across multiple rows while keeping hidden anchors in place", () => {
+    expect(
+      threadOrderAfterMove(["a", "hidden", "b", "c"], "c", {
+        targetId: "a",
+        placement: "before",
+      }),
+    ).toEqual(["c", "a", "hidden", "b"]);
+    expect(
+      threadOrderAfterMove(["a", "hidden", "b", "c"], "a", {
+        targetId: "b",
+        placement: "after",
+      }),
+    ).toEqual(["hidden", "b", "a", "c"]);
+  });
+
+  it("rejects missing, self, and unchanged destinations", () => {
+    for (const targetId of ["missing", "a", "b"]) {
+      expect(
+        threadOrderAfterMove(["a", "b", "c"], "a", {
+          targetId,
+          placement: "before",
+        }),
+      ).toBeNull();
+    }
+    expect(threadOrderAfterMove(["a", "b"], "missing", "down")).toBeNull();
+  });
+
+  it.each(["active", "pinned"] as const)(
+    "persists a dropped %s row and holds its order until confirmed",
+    (section) => {
+      const ordered = ["a", "b", "c", "d"].map((id) =>
+        makeThread({
+          id: ThreadId.make(id),
+          title: id,
+          pinnedAt: section === "pinned" ? NOW : null,
+        }),
+      );
+      const ids = ordered.map((row) => `${row.environmentId}:${row.id}`);
+      const direction = { targetId: ids[0]!, placement: "before" as const };
+      const assignments = createThreadMovePlanner({
+        ordered,
+        section,
+        reorderableEnvironmentIds: new Set([environmentId]),
+      })(ids[3]!, direction)!;
+      const pending = createPendingThreadOrder({
+        section,
+        ordered,
+        movedId: ids[3]!,
+        direction,
+        assignments,
+      });
+      expect(pending.orderedIds).toEqual([ids[3], ids[0], ids[1], ids[2]]);
+      const confirmed = ordered.map((row) => ({
+        ...row,
+        [section === "pinned" ? "pinOrderKey" : "activeOrderKey"]: assignments.find(
+          (a) => a.id === `${row.environmentId}:${row.id}`,
+        )!.orderKey,
+      }));
+      expect(
+        getThreadListV2OrderedSection({ threads: confirmed, section, now: NOW }).map(
+          (row) => `${row.environmentId}:${row.id}`,
+        ),
+      ).toEqual(pending.orderedIds);
+      expect(
+        reconcilePendingThreadOrder({ ...pending, commandsComplete: true }, confirmed),
+      ).toBeNull();
+    },
+  );
+
+  it("refuses a drop that would need to rewrite an old server's keyless row", () => {
+    const old = EnvironmentId.make("old-server");
+    const ordered = [environmentId, old, environmentId].map((env, index) =>
+      makeThread({
+        id: ThreadId.make(String(index)),
+        title: String(index),
+        environmentId: env,
+      }),
+    );
+    expect(
+      createThreadMovePlanner({
+        ordered,
+        section: "active",
+        reorderableEnvironmentIds: new Set([environmentId]),
+      })(`${environmentId}:2`, { targetId: `${environmentId}:0`, placement: "before" }),
+    ).toBeNull();
+  });
+});
+
+it("allows a long drop past an old server even when both adjacent moves fail", () => {
+  const old = EnvironmentId.make("old-server");
+  const ordered = [
+    makeThread({ id: ThreadId.make("a"), title: "a" }),
+    makeThread({ id: ThreadId.make("b"), title: "b", environmentId: old }),
+    makeThread({ id: ThreadId.make("c"), title: "c", activeOrderKey: "h" }),
+    makeThread({ id: ThreadId.make("d"), title: "d", activeOrderKey: "p" }),
+  ];
+  const planner = createThreadMovePlanner({
+    ordered,
+    section: "active",
+    reorderableEnvironmentIds: new Set([environmentId]),
+  });
+  const movedId = `${environmentId}:a`;
+  expect(planner(movedId, "up")).toBeNull();
+  expect(planner(movedId, "down")).toBeNull();
+  const assignments = planner(movedId, { targetId: `${environmentId}:d`, placement: "after" });
+  expect(assignments).toHaveLength(1);
+  expect(assignments![0]!.id).toBe(movedId);
+  expect(assignments![0]!.orderKey > "p").toBe(true);
+});
+
+describe("cross-section thread drops", () => {
+  it.each(["pinned", "active"] as const)("inserts into an empty %s section", (section) => {
+    const thread = makeThread({ id: ThreadId.make("source"), title: "source" });
+    const id = `${thread.environmentId}:${thread.id}`;
+    const destination = { section, targetId: null, placement: "before" as const };
+    expect(threadOrderAfterMove([], id, destination)).toEqual([id]);
+    const plan = createThreadMovePlanner({
+      ordered: [],
+      allThreads: [thread],
+      section,
+      reorderableEnvironmentIds: new Set([environmentId]),
+    })(id, destination);
+    expect(plan).toHaveLength(1);
+    expect(plan![0]!.id).toBe(id);
+  });
+  it("places an incoming row between existing anchors without rewriting them", () => {
+    const a = makeThread({ id: ThreadId.make("a"), title: "a", pinOrderKey: "h" });
+    const b = makeThread({ id: ThreadId.make("b"), title: "b", pinOrderKey: "z" });
+    const source = makeThread({ id: ThreadId.make("source"), title: "source" });
+    const id = `${environmentId}:source`;
+    const destination = {
+      section: "pinned" as const,
+      targetId: `${environmentId}:b`,
+      placement: "before" as const,
+    };
+    const plan = createThreadMovePlanner({
+      ordered: [a, b],
+      allThreads: [a, b, source],
+      section: "pinned",
+      reorderableEnvironmentIds: new Set([environmentId]),
+    })(id, destination);
+    expect(plan).toHaveLength(1);
+    expect(plan![0]!.orderKey > "h" && plan![0]!.orderKey < "z").toBe(true);
+    expect(
+      threadOrderAfterMove([`${environmentId}:a`, `${environmentId}:b`], id, destination),
+    ).toEqual([`${environmentId}:a`, id, `${environmentId}:b`]);
+  });
+  it("rejects removed targets and unsupported incoming sources", () => {
+    expect(
+      threadOrderAfterMove(["a"], "source", {
+        section: "active",
+        targetId: "gone",
+        placement: "before",
+      }),
+    ).toBeNull();
+    const source = makeThread({ id: ThreadId.make("source"), title: "source" });
+    expect(
+      createThreadMovePlanner({
+        ordered: [],
+        allThreads: [source],
+        section: "active",
+        reorderableEnvironmentIds: new Set(),
+      })(`${environmentId}:source`, { section: "active", targetId: null, placement: "before" }),
+    ).toBeNull();
+  });
+  it("clears pinning, settlement and snooze when returning a parked thread to Active", () => {
+    const thread = makeThread({
+      id: ThreadId.make("parked"),
+      title: "parked",
+      pinnedAt: NOW,
+      settledOverride: "settled",
+      snoozedAt: NOW,
+      snoozedUntil: "2099-01-01T00:00:00.000Z",
+    });
+    expect(threadDropLifecycle(thread, "active", NOW)).toEqual({
+      pin: false,
+      unpin: true,
+      unsettle: true,
+      unsnooze: true,
+    });
+    expect(threadDropLifecycle(thread, "pinned", NOW)).toEqual({
+      pin: true,
+      unpin: false,
+      unsettle: false,
+      unsnooze: false,
+    });
+  });
+  it("does not send lifecycle commands for an ordinary Active reorder", () => {
+    expect(
+      threadDropLifecycle(
+        makeThread({ id: ThreadId.make("active"), title: "active" }),
+        "active",
+        NOW,
+      ),
+    ).toEqual({ pin: false, unpin: false, unsettle: false, unsnooze: false });
   });
 });

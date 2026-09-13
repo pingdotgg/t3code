@@ -159,25 +159,22 @@ export type Zone = Resource<
  * delete the zone in Cloudflare. Opt in to actual deletion by wrapping the
  * resource (or the whole stack) in {@link destroy}() from
  * `alchemy/RemovalPolicy`.
- * @resource
- * @product Zones
- * @category Domains & DNS
- * @section Creating a Zone
- * @example Create a new zone
+ * ### Creating a Zone
+ * **Example:** Create a new zone
  * ```typescript
  * const zone = yield* Cloudflare.Zone.Zone("MyZone", {
  *   name: "example.com",
  * });
  * ```
  *
- * @example Allow destruction
+ * **Example:** Allow destruction
  * ```typescript
  * import { destroy } from "alchemy/RemovalPolicy";
  * yield* Cloudflare.Zone.Zone("MyZone", { name: "example.com" }).pipe(destroy());
  * ```
  *
- * @section Adopting an existing Zone
- * @example Take over a zone that already exists in Cloudflare
+ * ### Adopting an existing Zone
+ * **Example:** Take over a zone that already exists in Cloudflare
  * ```typescript
  * import { adopt } from "alchemy/AdoptPolicy";
  * // A zone carries no ownership markers, so the engine refuses to take over a
@@ -187,6 +184,10 @@ export type Zone = Resource<
  * }).pipe(adopt(true));
  * // zone.zoneId, zone.nameServers, zone.accountId, ...
  * ```
+ *
+ * @resource
+ * @product Zones
+ * @category Domains & DNS
  */
 export const Zone = Resource<Zone>("Cloudflare.Zone.Zone", {
   defaultRemovalPolicy: "retain",

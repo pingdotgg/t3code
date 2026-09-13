@@ -1,23 +1,26 @@
 import { memo, useId } from "react";
-import { Pressable, View } from "react-native";
+import { Platform, Pressable, View } from "react-native";
 import Svg, { Circle, Defs, RadialGradient, Stop } from "react-native-svg";
+import { ScopedTheme, ScopedVariables } from "uniwind";
 
 import { mixThemePreviewBase, THEME_PREVIEW_RENDER_SPECS } from "@t3tools/shared/themePreview";
 
 import { SymbolView } from "../../../../components/AppSymbol";
 import { AppText as Text } from "../../../../components/AppText";
 import {
-  getMobileThemeVariables,
   getMobileThemePreviewColors,
   MOBILE_THEME_OPTIONS,
   type MobileThemeAppearance,
   type MobileThemeId,
   type MobileThemeIds,
   type MobileThemeMode,
-  type MobileThemeVariables,
 } from "../../../../lib/mobileTheme";
-import { useThemeColor } from "../../../../lib/useThemeColor";
+import { getMobileUniwindThemeName } from "../../../../lib/mobileThemeRuntime";
+import { cn } from "../../../../lib/cn";
 import { useAppearancePreferences } from "../AppearancePreferencesProvider";
+
+import { SettingsSection } from "../../components/SettingsSection";
+import { SettingsSwitchRow } from "../../components/SettingsSwitchRow";
 
 const APPEARANCE_MODES: ReadonlyArray<{
   readonly id: MobileThemeMode;
@@ -28,6 +31,8 @@ const APPEARANCE_MODES: ReadonlyArray<{
   { id: "dark", label: "Dark" },
 ];
 
+const previewPercentage = (value: number) => `${value * 100}%`;
+
 const PreviewOrb = memo(function PreviewOrb(props: {
   readonly appearance: MobileThemeAppearance;
   readonly compact?: boolean;
@@ -36,7 +41,12 @@ const PreviewOrb = memo(function PreviewOrb(props: {
   const idPrefix = useId().replaceAll(":", "");
   const accentGradientId = `${idPrefix}-accent-glow`;
   const actionGradientId = `${idPrefix}-action-glow`;
-  const colors = getMobileThemePreviewColors(props.themeId, props.appearance);
+  const { systemColorPalettes } = useAppearancePreferences();
+  const palette = systemColorPalettes?.[props.appearance];
+  const colors =
+    props.themeId === "material-you" && palette
+      ? { canvas: palette.surface, accent: palette.primary, messageAction: palette.tertiary }
+      : getMobileThemePreviewColors(props.themeId, props.appearance);
   const spec = THEME_PREVIEW_RENDER_SPECS[props.appearance];
   const accentRadius = Math.hypot(
     Math.max(spec.accent.center[0], 1 - spec.accent.center[0]),
@@ -46,9 +56,6 @@ const PreviewOrb = memo(function PreviewOrb(props: {
     Math.max(spec.action.center[0], 1 - spec.action.center[0]),
     Math.max(spec.action.center[1], 1 - spec.action.center[1]),
   );
-  const position = (value: number) => `${value * 100}%`;
-  const radius = (value: number) => `${value * 100}%`;
-
   return (
     <View
       className={`${props.compact ? "size-14" : "size-16"} overflow-hidden rounded-full border`}
@@ -60,33 +67,33 @@ const PreviewOrb = memo(function PreviewOrb(props: {
       <Svg accessibilityElementsHidden height="100%" viewBox="0 0 64 64" width="100%">
         <Defs>
           <RadialGradient
-            cx={position(spec.accent.center[0])}
-            cy={position(spec.accent.center[1])}
-            fx={position(spec.accent.center[0])}
-            fy={position(spec.accent.center[1])}
+            cx={previewPercentage(spec.accent.center[0])}
+            cy={previewPercentage(spec.accent.center[1])}
+            fx={previewPercentage(spec.accent.center[0])}
+            fy={previewPercentage(spec.accent.center[1])}
             id={accentGradientId}
-            r={radius(accentRadius)}
+            r={previewPercentage(accentRadius)}
           >
             <Stop offset="0%" stopColor={colors.accent} stopOpacity={1} />
             <Stop
-              offset={position(spec.accent.middleOffset)}
+              offset={previewPercentage(spec.accent.middleOffset)}
               stopColor={colors.accent}
               stopOpacity={spec.accent.middleOpacity}
             />
             <Stop
-              offset={position(spec.accent.endOffset)}
+              offset={previewPercentage(spec.accent.endOffset)}
               stopColor={colors.accent}
               stopOpacity={0}
             />
             <Stop offset="100%" stopColor={colors.accent} stopOpacity={0} />
           </RadialGradient>
           <RadialGradient
-            cx={position(spec.action.center[0])}
-            cy={position(spec.action.center[1])}
-            fx={position(spec.action.center[0])}
-            fy={position(spec.action.center[1])}
+            cx={previewPercentage(spec.action.center[0])}
+            cy={previewPercentage(spec.action.center[1])}
+            fx={previewPercentage(spec.action.center[0])}
+            fy={previewPercentage(spec.action.center[1])}
             id={actionGradientId}
-            r={radius(actionRadius)}
+            r={previewPercentage(actionRadius)}
           >
             <Stop
               offset="0%"
@@ -94,7 +101,7 @@ const PreviewOrb = memo(function PreviewOrb(props: {
               stopOpacity={spec.action.startOpacity}
             />
             <Stop
-              offset={position(spec.action.endOffset)}
+              offset={previewPercentage(spec.action.endOffset)}
               stopColor={colors.messageAction}
               stopOpacity={0}
             />
@@ -118,32 +125,26 @@ function ThemeCard(props: {
   readonly onSelect: (appearance: MobileThemeAppearance) => void;
   readonly themeId: MobileThemeId;
 }) {
-  const badgeBackground = useThemeColor("--color-card");
-  const badgeIcon = useThemeColor("--color-icon");
-
   const choice = (appearance: MobileThemeAppearance, selected: boolean) => (
     <Pressable
+      accessibilityHint={`Sets the ${appearance} appearance only`}
       accessibilityLabel={`${props.label} ${appearance} theme`}
-      accessibilityRole="radio"
-      accessibilityState={{ checked: selected, disabled: props.disabled }}
-      className={
-        selected
-          ? "size-[66px] items-center justify-center rounded-full border-[3px] border-primary"
-          : "size-[66px] items-center justify-center rounded-full border-[3px] border-transparent"
-      }
+      accessibilityRole="button"
+      accessibilityState={{ disabled: props.disabled, selected }}
+      className={cn(
+        "size-[66px] items-center justify-center rounded-full border-[3px] active:scale-[0.94]",
+        selected ? "border-primary" : "border-transparent",
+      )}
       disabled={props.disabled}
       onPress={() => props.onSelect(appearance)}
     >
       <PreviewOrb appearance={appearance} compact themeId={props.themeId} />
       {selected ? (
-        <View
-          className="absolute -bottom-0.5 -right-0.5 size-5 items-center justify-center rounded-full border border-border"
-          style={{ backgroundColor: badgeBackground }}
-        >
+        <View className="absolute -bottom-0.5 -right-0.5 size-5 items-center justify-center rounded-full border border-border bg-card">
           <SymbolView
             name={appearance === "light" ? "sun.max" : "moon"}
             size={12}
-            tintColor={badgeIcon}
+            tintColorClassName="accent-icon"
             type="monochrome"
             weight="medium"
           />
@@ -158,7 +159,10 @@ function ThemeCard(props: {
         accessibilityHint="Sets both light and dark appearances"
         accessibilityLabel={`${props.label} theme`}
         accessibilityRole="button"
-        accessibilityState={{ disabled: props.disabled }}
+        accessibilityState={{
+          disabled: props.disabled,
+          selected: props.lightSelected && props.darkSelected,
+        }}
         className="absolute inset-0 rounded-[24px] active:bg-subtle"
         disabled={props.disabled}
         onPress={props.onSelectBoth}
@@ -167,34 +171,26 @@ function ThemeCard(props: {
         {choice("light", props.lightSelected)}
         {choice("dark", props.darkSelected)}
       </View>
-      <View className="min-h-8 flex-row items-center" pointerEvents="none">
-        <Text className="min-w-0 flex-1 text-lg font-t3-medium" numberOfLines={1}>
-          {props.label}
-        </Text>
-      </View>
+      <Text
+        className="min-w-0 flex-1 px-1 text-lg font-t3-medium"
+        numberOfLines={1}
+        pointerEvents="none"
+      >
+        {props.label}
+      </Text>
     </View>
   );
 }
 
-function PreviewPane(props: { readonly colors: MobileThemeVariables; readonly compact?: boolean }) {
+function PreviewPane(props: { readonly compact?: boolean }) {
   return (
-    <View
-      className="flex-1 overflow-hidden"
-      style={{ backgroundColor: props.colors["--color-screen"] }}
-    >
+    <View className="flex-1 overflow-hidden bg-screen">
       <View
-        className={props.compact ? "h-[18px] gap-0.5 px-1" : "h-[18px] gap-1 px-1.5"}
-        style={{ backgroundColor: props.colors["--color-card"] }}
+        className={cn("bg-card", props.compact ? "h-[18px] gap-0.5 px-1" : "h-[18px] gap-1 px-1.5")}
       >
         <View className="mt-2 flex-row items-center gap-1">
-          <View
-            className="size-1.5 rounded-full"
-            style={{ backgroundColor: props.colors["--color-primary"] }}
-          />
-          <View
-            className="h-1 flex-1 rounded-full"
-            style={{ backgroundColor: props.colors["--color-foreground-muted"] }}
-          />
+          <View className="size-1.5 rounded-full bg-primary" />
+          <View className="h-1 flex-1 rounded-full bg-foreground-muted" />
         </View>
       </View>
       <View
@@ -203,24 +199,12 @@ function PreviewPane(props: { readonly colors: MobileThemeVariables; readonly co
         }
       >
         <View className="gap-1">
-          <View
-            className="h-1.5 w-[72%] rounded-full"
-            style={{ backgroundColor: props.colors["--color-subtle-strong"] }}
-          />
-          <View
-            className="h-1.5 w-[46%] rounded-full"
-            style={{ backgroundColor: props.colors["--color-subtle-strong"] }}
-          />
+          <View className="h-1.5 w-[72%] rounded-full bg-subtle-strong" />
+          <View className="h-1.5 w-[46%] rounded-full bg-subtle-strong" />
         </View>
         <View className="items-end gap-1 pb-2">
-          <View
-            className="h-3 w-[78%] rounded-full"
-            style={{ backgroundColor: props.colors["--color-user-bubble"] }}
-          />
-          <View
-            className="h-1 w-[38%] rounded-full"
-            style={{ backgroundColor: props.colors["--color-foreground-muted"] }}
-          />
+          <View className="h-3 w-[78%] rounded-full bg-user-bubble" />
+          <View className="h-1 w-[38%] rounded-full bg-foreground-muted" />
         </View>
       </View>
     </View>
@@ -228,50 +212,38 @@ function PreviewPane(props: { readonly colors: MobileThemeVariables; readonly co
 }
 
 function ModePreview(props: { readonly mode: MobileThemeMode; readonly themeIds: MobileThemeIds }) {
-  const light = getMobileThemeVariables(props.themeIds.light, "light");
-  const dark = getMobileThemeVariables(props.themeIds.dark, "dark");
-  const currentBorder = useThemeColor("--color-border");
-  const currentFrame = useThemeColor("--color-drawer");
-  const currentIndicator = useThemeColor("--color-foreground-muted");
-  const frameColor =
-    props.mode === "light"
-      ? light["--color-border"]
-      : props.mode === "dark"
-        ? dark["--color-border"]
-        : currentBorder;
-  const frameBackground =
-    props.mode === "light"
-      ? light["--color-drawer"]
-      : props.mode === "dark"
-        ? dark["--color-drawer"]
-        : currentFrame;
-  const indicatorColor =
-    props.mode === "light"
-      ? light["--color-foreground-muted"]
-      : props.mode === "dark"
-        ? dark["--color-foreground-muted"]
-        : currentIndicator;
+  const { themeVariablesByAppearance } = useAppearancePreferences();
+  if (props.mode === "system") {
+    return (
+      <View className="h-24 w-14 self-center rounded-[16px] border-[1.5px] border-border bg-drawer p-[3px]">
+        <View className="flex-1 flex-row overflow-hidden rounded-[11px]">
+          <ScopedTheme theme={getMobileUniwindThemeName(props.themeIds.light, "light")}>
+            <ScopedVariables variables={themeVariablesByAppearance.light}>
+              <PreviewPane compact />
+            </ScopedVariables>
+          </ScopedTheme>
+          <ScopedTheme theme={getMobileUniwindThemeName(props.themeIds.dark, "dark")}>
+            <ScopedVariables variables={themeVariablesByAppearance.dark}>
+              <PreviewPane compact />
+            </ScopedVariables>
+          </ScopedTheme>
+        </View>
+        <View className="absolute bottom-[6px] left-1/2 h-1 w-4 -translate-x-1/2 rounded-full bg-foreground-muted" />
+      </View>
+    );
+  }
 
   return (
-    <View
-      className="h-24 w-14 self-center rounded-[16px] p-[3px]"
-      style={{ backgroundColor: frameBackground, borderColor: frameColor, borderWidth: 1.5 }}
-    >
-      <View className="flex-1 flex-row overflow-hidden rounded-[11px]">
-        {props.mode === "system" ? (
-          <>
-            <PreviewPane colors={light} compact />
-            <PreviewPane colors={dark} compact />
-          </>
-        ) : (
-          <PreviewPane colors={props.mode === "light" ? light : dark} />
-        )}
+    <ScopedTheme theme={getMobileUniwindThemeName(props.themeIds[props.mode], props.mode)}>
+      <View className="h-24 w-14 self-center rounded-[16px] border-[1.5px] border-border bg-drawer p-[3px]">
+        <View className="flex-1 flex-row overflow-hidden rounded-[11px]">
+          <ScopedVariables variables={themeVariablesByAppearance[props.mode]}>
+            <PreviewPane />
+          </ScopedVariables>
+        </View>
+        <View className="absolute bottom-[6px] left-1/2 h-1 w-4 -translate-x-1/2 rounded-full bg-foreground-muted" />
       </View>
-      <View
-        className="absolute bottom-[6px] left-1/2 h-1 w-4 -translate-x-1/2 rounded-full"
-        style={{ backgroundColor: indicatorColor }}
-      />
-    </View>
+    </ScopedTheme>
   );
 }
 
@@ -288,11 +260,10 @@ function ModeCard(props: {
       accessibilityLabel={`${props.label} appearance`}
       accessibilityRole="radio"
       accessibilityState={{ checked: props.selected, disabled: props.disabled }}
-      className={
-        props.selected
-          ? "min-w-0 flex-1 gap-2 rounded-[24px] border-2 border-primary bg-subtle p-2"
-          : "min-w-0 flex-1 gap-2 rounded-[24px] border border-border bg-card p-2"
-      }
+      className={cn(
+        "min-w-0 flex-1 gap-2 rounded-[24px] p-2 active:scale-[0.97]",
+        props.selected ? "border-2 border-primary bg-subtle" : "border border-border bg-card",
+      )}
       disabled={props.disabled}
       onPress={props.onPress}
     >
@@ -322,10 +293,25 @@ export function ThemeAppearanceSection() {
     setThemeMode,
     themeIds,
     themeMode,
+    materialYouStyleLayoutEnabled,
+    setMaterialYouStyleLayoutEnabled,
+    systemColorsAvailable,
   } = useAppearancePreferences();
 
   return (
     <View className="gap-6">
+      {Platform.OS === "android" ? (
+        <SettingsSection card title="Android">
+          <SettingsSwitchRow
+            disabled={!isReady}
+            icon="square.grid.2x2"
+            label="Material You Layout"
+            onValueChange={setMaterialYouStyleLayoutEnabled}
+            subtitle="Use Material You surfaces, shapes, and component styling."
+            value={materialYouStyleLayoutEnabled}
+          />
+        </SettingsSection>
+      ) : null}
       <View className="gap-2">
         <SectionLabel>Color scheme</SectionLabel>
         <View accessibilityRole="radiogroup" className="flex-row gap-2">
@@ -346,7 +332,9 @@ export function ThemeAppearanceSection() {
       <View className="gap-3">
         <SectionLabel>Themes</SectionLabel>
         <View className="flex-row flex-wrap gap-3">
-          {MOBILE_THEME_OPTIONS.map((theme) => (
+          {MOBILE_THEME_OPTIONS.filter(
+            (theme) => theme.id !== "material-you" || systemColorsAvailable,
+          ).map((theme) => (
             <ThemeCard
               disabled={!isReady}
               key={theme.id}

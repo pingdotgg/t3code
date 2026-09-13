@@ -19,9 +19,8 @@ export interface CalculateRouteMatrixRequest extends Omit<
  * `geo:CalculateRouteMatrix`), scoped to one {@link RouteCalculator}. Provide the implementation with
  * `Effect.provide(AWS.Location.CalculateRouteMatrixHttp)`.
  *
- * @binding
- * @section Calculating Routes
- * @example Calculate a Route Matrix
+ * ### Calculating Routes
+ * **Example:** Calculate a Route Matrix
  * ```typescript
  * const calculateMatrix = yield* Location.CalculateRouteMatrix(calculator);
  *
@@ -31,6 +30,8 @@ export interface CalculateRouteMatrixRequest extends Omit<
  * });
  * // matrix.RouteMatrix[departure][destination].Distance
  * ```
+ *
+ * @binding
  */
 export interface CalculateRouteMatrix extends Binding.Service<
   CalculateRouteMatrix,

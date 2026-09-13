@@ -5,7 +5,6 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { AppText as Text } from "./AppText";
 import { cn } from "../lib/cn";
-import { useThemeColor } from "../lib/useThemeColor";
 
 export interface AndroidHeaderAction {
   readonly accessibilityLabel: string;
@@ -20,9 +19,6 @@ export function AndroidHeaderIconButton(props: {
   readonly onPress?: () => void;
   readonly disabled?: boolean;
 }) {
-  const foregroundColor = useThemeColor("--color-foreground");
-  const disabledColor = useThemeColor("--color-icon-subtle");
-
   return (
     <Pressable
       accessibilityLabel={props.accessibilityLabel}
@@ -38,7 +34,7 @@ export function AndroidHeaderIconButton(props: {
       <SymbolView
         name={props.icon}
         size={20}
-        tintColor={props.disabled ? disabledColor : foregroundColor}
+        tintColorClassName={props.disabled ? "accent-icon-subtle" : "accent-foreground"}
         type="monochrome"
       />
     </Pressable>
@@ -52,15 +48,16 @@ export function AndroidScreenHeader(props: {
   readonly trailing?: ReactNode;
   readonly onBack?: () => void;
   readonly embedded?: boolean;
+  readonly hideBottomBorder?: boolean;
 }) {
   const insets = useSafeAreaInsets();
-  const foregroundColor = useThemeColor("--color-foreground");
 
   return (
     <View
       className="border-b border-header-border bg-header px-3 pb-2.5"
       style={{
         paddingTop: props.embedded ? 8 : Math.max(insets.top, 12),
+        borderBottomWidth: props.hideBottomBorder ? 0 : undefined,
       }}
     >
       <View className="min-h-12 flex-row items-center gap-2">
@@ -75,7 +72,7 @@ export function AndroidScreenHeader(props: {
             <SymbolView
               name="chevron.left"
               size={24}
-              tintColor={foregroundColor}
+              tintColorClassName={"accent-foreground"}
               type="monochrome"
             />
           </Pressable>

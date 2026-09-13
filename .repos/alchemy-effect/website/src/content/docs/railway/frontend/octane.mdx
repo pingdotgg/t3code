@@ -1,0 +1,204 @@
+---
+title: Octane
+description: Deploy an OctaneJS app to Railway with Railway.Website.Octane — SSR plus client assets on one Service, and Octane's own Vite dev server under alchemy dev.
+sidebar:
+  order: 14
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Railway.Website.Octane` deploys an [OctaneJS](https://octanejs.dev)
+fullstack app to Railway. Octane wraps Vite, so the resource is
+deliberately thin: it runs your project's own `vite build` — Octane's
+plugin builds the client bundle and the self-contained SSR server
+bundle, and the Node deploy target's finishing pass wraps its fetch
+handler as a Node HTTP program. The server plus client assets run on
+one `Railway.Service` from a container image. The live URL is the generated
+`https://{name}.up.railway.app`. No Dockerfile, no build command to
+run.
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads the package's
+`/octane` and `/octane/node` exports from your project at deploy
+time. It is only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Octane
+
+Your `octane.config.ts` picks the deploy target, exactly as in
+Octane's own deployment story — select the Node marker adapter, not
+`aws()` or `cloudflare()`:
+
+```typescript
+// octane.config.ts
+import { node } from "@alchemy.run/frontend-frameworks/octane/node-adapter";
+import { defineConfig, RenderRoute } from "@octanejs/vite-plugin";
+
+export default defineConfig({
+  adapter: node(),
+  router: {
+    routes: [new RenderRoute({ path: "/", entry: ["App", "/src/App.tsx"] })],
+  },
+});
+```
+
+A missing or foreign adapter fails the deploy with an actionable
+error.
+
+Vite plugins like Tailwind go in `vite.config.ts` next to it,
+alongside the Octane plugin:
+
+```typescript
+// vite.config.ts
+import { octane } from "@octanejs/vite-plugin";
+import tailwindcss from "@tailwindcss/vite";
+import { defineConfig } from "vite";
+
+export default defineConfig({
+  plugins: [octane(), tailwindcss()],
+});
+```
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Railway from "alchemy/Railway";
+
+export const Website = Railway.Website.Octane("Website");
+```
+
+Omit `project` and Alchemy creates a `Railway.Project` under the
+site's namespace. Pass an existing Project to put the site in it:
+
+```typescript
+export const Site = Railway.Project("Site");
+
+export const Website = Railway.Website.Octane("Website", {
+  project: Site,
+});
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyOctaneSite",
+  {
+    providers: Railway.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+On deploy, `url` is the Service's `https://{name}.up.railway.app`.
+The resolved site also exposes `service` and `project` (both
+`undefined` under `alchemy dev`).
+
+## Add environment variables
+
+Process environment is configured under `env` — plain strings, or
+`Redacted` values. They are copied onto `process.env` before the
+build and onto the Service at deploy time:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Railway.Website.Octane("Website", {
++  env: {
++    GREETING: "Hello from alchemy",
++    API_BASE: "https://api.example.com",
++  },
+});
+```
+
+The same values are injected into the dev server's process
+environment under `alchemy dev`, so server code reads them in both
+modes.
+
+## Read the environment in server code
+
+Octane's server runs in Node on the Service, so middleware and
+`ServerRoute` handlers read the environment from `process.env`:
+
+```typescript
+// octane.config.ts
+new ServerRoute({
+  path: "/api/greeting",
+  methods: ["GET"],
+  handler: async () => {
+    return Response.json({ greeting: process.env.GREETING ?? "hello" });
+  },
+});
+```
+
+## Asset routing
+
+Octane's intended setup is asset-first with SSR on miss: exact files
+in `dist/client` are served by the Node process without invoking the
+Octane handler, and every miss streams from Octane SSR. That is the
+default — there is nothing to configure. The Service healthcheck is
+`GET /health` on port 3000.
+
+## Local dev
+
+```sh
+bun alchemy dev
+```
+
+`alchemy dev` runs Octane's own Vite dev server — the plugin's
+in-process SSR middleware serves rendering, server routes, and RPC
+with full HMR. `site.url` is the local address and no Railway
+resources are created (`service` and `project` are `undefined`;
+ Wrap the site in `Alchemy.remote()` to deploy
+the real infrastructure even during dev.
+
+## Custom domain
+
+```typescript
+const site = yield* Railway.Website.Octane("Web", {
+  domain: "app.example.com",
+});
+```
+
+Alchemy attaches a `Railway.CustomDomain` (`targetPort` 3000) and
+`url` becomes `https://{domain}`. Point DNS at Railway's
+verification records — see
+[custom domains](/railway/networking).
+
+## Where next
+
+- [`Railway.Website.Octane` reference](/providers/railway/website/octane)
+- [Projects](/railway/compute/projects) and
+  [Services](/railway/compute/services)
+- [Custom domains](/railway/networking)

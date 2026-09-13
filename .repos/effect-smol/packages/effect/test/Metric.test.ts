@@ -6,6 +6,19 @@ import { TestClock } from "effect/testing"
 const attributes = { x: "a", y: "b" }
 
 describe("Metric", () => {
+  it.effect("keeps distinct attribute sets in separate series", () =>
+    Effect.gen(function*() {
+      const id = nextId()
+      const first = Metric.counter(id, { attributes: { a: "b,c=d" } })
+      const second = Metric.counter(id, { attributes: { a: "b", c: "d" } })
+
+      yield* Metric.update(first, 1)
+      yield* Metric.update(second, 10)
+
+      assert.strictEqual((yield* Metric.value(first)).count, 1)
+      assert.strictEqual((yield* Metric.value(second)).count, 10)
+    }))
+
   it.effect("should be referentially transparent", () =>
     Effect.gen(function*() {
       const id = nextId()
@@ -366,6 +379,13 @@ describe("Metric", () => {
       )
     }))
 
+  it("creates evenly spaced linear boundaries", () => {
+    assert.deepStrictEqual(
+      Metric.linearBoundaries({ start: 10, width: 20, count: 5 }),
+      [10, 30, 50, 70, Number.POSITIVE_INFINITY]
+    )
+  })
+
   describe("Histogram", () => {
     it.effect("reports the maximum for negative-only observations", () =>
       Effect.gen(function*() {
@@ -683,6 +703,23 @@ describe("Metric", () => {
         assert.strictEqual(result.min, Duration.toMillis(Duration.hours(1)))
         assert.strictEqual(result.max, Duration.toMillis(Duration.hours(1)))
         assert.strictEqual(result.sum, Duration.toMillis(Duration.hours(1)))
+      }))
+
+    it.effect("uses monotonic time when wall time moves backward", () =>
+      Effect.gen(function*() {
+        const id = nextId()
+        const timer = Metric.timer(id)
+        yield* TestClock.setTime(1_000)
+        yield* Effect.gen(function*() {
+          yield* TestClock.adjust("100 millis")
+          yield* TestClock.setTime(0)
+        }).pipe(Effect.trackDuration(timer))
+
+        const result = yield* Metric.value(timer)
+        assert.strictEqual(result.count, 1)
+        assert.strictEqual(result.min, 100)
+        assert.strictEqual(result.max, 100)
+        assert.strictEqual(result.sum, 100)
       }))
   })
 

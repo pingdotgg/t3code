@@ -39,4 +39,16 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.attachmentUploads,
     ).toBe(true);
   });
+
+  it("preserves the server's generic attachment upload limit", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: {
+          ...descriptor.capabilities,
+          fileAttachments: { maxUploadBytes: 50 * 1024 * 1024 },
+        },
+      }).capabilities.fileAttachments,
+    ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
+  });
 });
