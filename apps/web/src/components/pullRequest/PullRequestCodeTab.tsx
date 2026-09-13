@@ -961,7 +961,14 @@ function PullRequestCodeTab({
     review.verdicts.length === 0 ? null : (
       <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10">
         {reviewOpen ? (
-          <div className="surface-glass pointer-events-auto absolute inset-x-3 bottom-3 rounded-xl border border-border/60 shadow-lg">
+          <div
+            className={cn(
+              "surface-glass pointer-events-auto absolute inset-x-3 rounded-xl border border-border/60 shadow-lg",
+              detail.capabilities.comment && detail.viewerPermissions.comment
+                ? "bottom-16"
+                : "bottom-3",
+            )}
+          >
             <Button
               type="button"
               size="icon-sm"
@@ -984,10 +991,13 @@ function PullRequestCodeTab({
             />
           </div>
         ) : (
-          // Bottom-right, clear of the vertical scrollbar the diff view keeps to its own right
-          // edge.
           <Button
-            className="pointer-events-auto absolute right-4 bottom-3 rounded-full shadow-lg"
+            className={cn(
+              "pointer-events-auto absolute bottom-3 rounded-full shadow-lg",
+              detail.capabilities.comment && detail.viewerPermissions.comment
+                ? "right-16"
+                : "right-4",
+            )}
             onClick={() => setReviewOpen(true)}
             size="compact"
             variant="glass"
