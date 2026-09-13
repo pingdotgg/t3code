@@ -10,6 +10,7 @@ vi.mock("@expo/ui/swift-ui", () => ({
 }));
 
 vi.mock("@expo/ui/swift-ui/modifiers", () => ({
+  activityBackgroundTint: (value: unknown) => value,
   font: (value: unknown) => value,
   foregroundStyle: (value: unknown) => value,
   frame: (value: unknown) => value,
