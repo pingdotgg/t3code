@@ -214,7 +214,7 @@ export const makeCodexTextGeneration = Effect.fn("makeCodexTextGeneration")(func
           ...imagePaths.flatMap((imagePath) => ["--image", imagePath]),
           "-",
         ],
-        { env: resolvedEnvironment },
+        { env: resolvedEnvironment, cwd },
       );
       const command = ChildProcess.make(spawnCommand.command, spawnCommand.args, {
         env: {

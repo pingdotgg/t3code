@@ -19,6 +19,7 @@ type ChildProcessCommand = {
   readonly args: ReadonlyArray<string>;
   readonly options: {
     readonly shell?: boolean | string;
+    readonly cwd?: string;
   };
 };
 
@@ -161,6 +162,29 @@ describe("runProcess", () => {
       }),
     );
   });
+
+  it.effect.each([
+    { cwd: "C:\\project", spawnCwd: undefined, expected: "C:\\project" },
+    { cwd: "C:\\logical", spawnCwd: "C:\\actual", expected: "C:\\actual" },
+  ])(
+    "resolves Windows tools in the execution directory $expected",
+    ({ cwd, spawnCwd, expected }) => {
+      const spawner = makeSpawner((command) =>
+        Effect.sync(() => {
+          expect(command.command).toBe(`${expected}\\tool.exe`);
+          expect(command.options.cwd).toBe(expected);
+          return makeHandle({ stdout: "project tool" });
+        }),
+      );
+      return runWith(spawner)({ command: "tool", args: [], cwd, spawnCwd }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(SpawnExecutableResolution, (_command, _platform, _env, directory) =>
+          directory === expected ? `${directory}\\tool.exe` : undefined,
+        ),
+        Effect.map((result) => expect(result.stdout).toBe("project tool")),
+      );
+    },
+  );
 
   it.effect("preserves resolved spawn context and cause", () =>
     Effect.gen(function* () {

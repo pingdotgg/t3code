@@ -278,7 +278,9 @@ const publishCmd = Command.make(
             yield* Effect.log("[cli] Applied package metadata and publish icon overrides");
 
             const args = createVpPmPublishArgs(config);
-            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args]);
+            const spawnCommand = yield* resolveSpawnCommand("vp", ["pm", ...args], {
+              cwd: repoRoot,
+            });
 
             yield* Effect.log(`[cli] Running: vp pm ${args.join(" ")}`);
             yield* runCommand(

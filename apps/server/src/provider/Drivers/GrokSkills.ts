@@ -104,6 +104,7 @@ export const discoverGrokSkills = Effect.fn("discoverGrokSkills")(function* (
   const command = grokSettings.binaryPath || "grok";
   const inspectResult = yield* Effect.gen(function* () {
     const spawnCommand = yield* resolveSpawnCommand(command, ["inspect", "--json"], {
+      cwd,
       env: environment,
     });
     return yield* spawnAndCollect(
