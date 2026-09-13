@@ -3,6 +3,16 @@ import { describe, expect, it } from "vite-plus/test";
 import { parseActiveThreadPath } from "./hardwareKeyboardCommands";
 
 describe("parseActiveThreadPath", () => {
+  it("does not invent a thread for empty task tools", () => {
+    expect(parseActiveThreadPath("/threads/environment-1/files?taskId=task-1")).toBeNull();
+    expect(
+      parseActiveThreadPath("/threads/environment-1/files/README.md?taskId=task-1"),
+    ).toBeNull();
+    expect(parseActiveThreadPath("/threads/environment-1/terminal?taskId=task-1")).toBeNull();
+    expect(parseActiveThreadPath("/threads/environment-1/thread-1/terminal?taskId=task-1")).toEqual(
+      { environmentId: "environment-1", threadId: "thread-1" },
+    );
+  });
   it("extracts the active thread from thread subroutes", () => {
     expect(parseActiveThreadPath("/threads/environment-1/thread-1/files/src/index.ts")).toEqual({
       environmentId: "environment-1",

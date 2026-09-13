@@ -1,3 +1,5 @@
+import { useTasks } from "../../state/tasks";
+import { TaskArrangementSheet } from "./TaskArrangementSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
@@ -147,6 +149,7 @@ function DragHandle(props: {
 }
 
 export function ThreadArrangementSheet(props: { onClose: () => void }) {
+  const tasks = useTasks();
   const insets = useSafeAreaInsets();
   const threads = useAtomValue(environmentThreadShells.threadShellsAtom);
   const configs = useAtomValue(environmentServerConfigsAtom);
@@ -360,6 +363,14 @@ export function ThreadArrangementSheet(props: { onClose: () => void }) {
     ? targetRow.offset +
       (!targetRow.thread || destination?.placement === "after" ? targetRow.height : 0)
     : sourceRow?.offset;
+  if (
+    tasks.some(
+      (task) =>
+        task.archivedAt === null &&
+        configs.get(task.environmentId)?.environment.capabilities.tasks === true,
+    )
+  )
+    return <TaskArrangementSheet onClose={props.onClose} />;
   return (
     <Modal
       visible

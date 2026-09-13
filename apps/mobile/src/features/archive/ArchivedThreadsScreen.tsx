@@ -40,6 +40,8 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
+import { TaskActionsMenu } from "../tasks/TaskActionsMenu";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -47,6 +49,7 @@ export interface ArchivedThreadsHeaderEnvironment {
 }
 
 type ArchivedThreadListItem =
+  | { readonly kind: "task"; readonly key: string; readonly task: EnvironmentTask }
   | {
       readonly kind: "project";
       readonly key: string;
@@ -171,11 +174,11 @@ function ArchivedThreadsHeader(props: {
                 type="monochrome"
               />
               <TextInput
-                accessibilityLabel="Search archived threads"
+                accessibilityLabel="Search archive"
                 autoCapitalize="none"
                 onChangeText={props.onSearchQueryChange}
                 value={props.searchQuery}
-                placeholder="Search archived threads"
+                placeholder="Search archive"
                 placeholderTextColorClassName="accent-placeholder"
                 className="flex-1 py-2 text-base font-sans text-foreground"
               />
@@ -293,7 +296,7 @@ function ArchivedThreadsHeader(props: {
                 autoCapitalize: "none",
                 hideNavigationBar: false,
                 obscureBackground: false,
-                placeholder: "Search archived threads",
+                placeholder: "Search archive",
                 onChangeText: (event) => {
                   props.onSearchQueryChange(event.nativeEvent.text);
                 },
@@ -510,6 +513,7 @@ function ArchiveError(props: { readonly message: string; readonly onRetry: () =>
 }
 
 export function ArchivedThreadsScreen(props: {
+  readonly tasks?: ReadonlyArray<EnvironmentTask>;
   readonly environments: ReadonlyArray<ArchivedThreadsHeaderEnvironment>;
   readonly error: string | null;
   readonly groups: ReadonlyArray<ArchivedThreadGroup>;
@@ -525,6 +529,7 @@ export function ArchivedThreadsScreen(props: {
   readonly onUnarchiveThread: (thread: EnvironmentThreadShell) => void;
 }) {
   const { onDeleteThread, onUnarchiveThread } = props;
+  const navigation = useNavigation();
   const openSwipeableRef = useRef<SwipeableMethods | null>(null);
   const archiveScrollGesture = useMemo(() => Gesture.Native(), []);
   const environmentLabelsById = useMemo(
@@ -536,7 +541,11 @@ export function ArchivedThreadsScreen(props: {
   );
   const serverConfigs = useServerConfigs();
   const listItems = useMemo<ReadonlyArray<ArchivedThreadListItem>>(() => {
-    const items: ArchivedThreadListItem[] = [];
+    const items: ArchivedThreadListItem[] = (props.tasks ?? []).map((task) => ({
+      kind: "task",
+      key: `task:${task.environmentId}:${task.id}`,
+      task,
+    }));
     for (const group of props.groups) {
       const environmentLabel = environmentLabelsById.get(group.project.environmentId) ?? null;
       items.push({
@@ -561,7 +570,7 @@ export function ArchivedThreadsScreen(props: {
       });
     }
     return items;
-  }, [environmentLabelsById, props.groups, serverConfigs]);
+  }, [environmentLabelsById, props.groups, props.tasks, serverConfigs]);
   const handleSwipeableWillOpen = useCallback((methods: SwipeableMethods) => {
     if (openSwipeableRef.current && openSwipeableRef.current !== methods) {
       openSwipeableRef.current.close();
@@ -577,6 +586,27 @@ export function ArchivedThreadsScreen(props: {
   const isFiltered = props.searchQuery.trim().length > 0 || props.selectedEnvironmentId !== null;
   const renderListItem = useCallback(
     ({ item }: { item: ArchivedThreadListItem }) => {
+      if (item.kind === "task")
+        return (
+          <View className="flex-row items-center gap-3 rounded-xl bg-card px-4 py-3">
+            <Pressable
+              accessibilityRole="button"
+              className="flex-1"
+              onPress={() =>
+                navigation.navigate("Task", {
+                  environmentId: item.task.environmentId,
+                  taskId: item.task.id,
+                })
+              }
+            >
+              <Text className="font-t3-bold text-foreground">{item.task.name}</Text>
+              <Text className="text-xs text-foreground-muted">
+                Archived task · {relativeTime(item.task.archivedAt ?? item.task.updatedAt)}
+              </Text>
+            </Pressable>
+            <TaskActionsMenu task={item.task} />
+          </View>
+        );
       if (item.kind === "project") {
         return (
           <View className="pt-4">
@@ -609,6 +639,7 @@ export function ArchivedThreadsScreen(props: {
       handleSwipeableWillOpen,
       onDeleteThread,
       onUnarchiveThread,
+      navigation,
     ],
   );
   const listEmptyComponent = useMemo(() => {
@@ -626,9 +657,9 @@ export function ArchivedThreadsScreen(props: {
         detail={
           isFiltered
             ? "Try another search or environment."
-            : "Threads you archive will appear here."
+            : "Tasks and threads you archive will appear here."
         }
-        title={isFiltered ? "No matching threads" : "No archived threads"}
+        title={isFiltered ? "No matching archived work" : "No archived tasks or threads"}
       />
     );
   }, [isFiltered, isInitialLoad]);

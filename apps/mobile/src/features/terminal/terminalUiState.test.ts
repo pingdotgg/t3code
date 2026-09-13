@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, TaskId, ThreadId } from "@t3tools/contracts";
+import { taskWorkbenchRef } from "@t3tools/client-runtime/state/task-workbench";
 
 import {
   cacheTerminalGridSize,
@@ -10,6 +11,20 @@ import {
 describe("terminalUiState", () => {
   beforeEach(() => {
     resetTerminalUiStateCaches();
+  });
+
+  it("uses the shared task owner and isolates the same task ID on another environment", () => {
+    const owner = taskWorkbenchRef({
+      environmentId: EnvironmentId.make("one"),
+      taskId: TaskId.make("shared"),
+    });
+    const target = { ...owner, terminalId: "default" };
+    cacheTerminalGridSize(target, { cols: 100, rows: 30 });
+    expect(getCachedTerminalGridSize(target)).toEqual({ cols: 100, rows: 30 });
+    expect(
+      getCachedTerminalGridSize({ ...target, environmentId: EnvironmentId.make("two") }),
+    ).toBeNull();
+    expect(getCachedTerminalGridSize({ ...target, threadId: ThreadId.make("member") })).toBeNull();
   });
 
   it("stores terminal grid sizes per terminal target", () => {

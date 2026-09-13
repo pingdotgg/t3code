@@ -29,6 +29,8 @@ export interface Preferences {
   readonly codeWordBreak?: boolean;
   readonly connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
   readonly collapsedProjectGroups?: readonly string[];
+  readonly collapsedTaskKeys?: readonly string[];
+  readonly expandedTaskShelfKeys?: readonly string[];
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -99,6 +101,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     codeWordBreak?: boolean;
     connectOnboardingOptOutAccounts?: ReadonlyArray<string>;
     collapsedProjectGroups?: readonly string[];
+    collapsedTaskKeys?: readonly string[];
+    expandedTaskShelfKeys?: readonly string[];
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
@@ -153,6 +157,10 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     preferences.connectOnboardingOptOutAccounts = parsed.connectOnboardingOptOutAccounts.filter(
       (account): account is string => typeof account === "string",
     );
+  }
+  for (const key of ["collapsedTaskKeys", "expandedTaskShelfKeys"] as const) {
+    if (Array.isArray(parsed[key]))
+      preferences[key] = parsed[key].filter((value): value is string => typeof value === "string");
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(

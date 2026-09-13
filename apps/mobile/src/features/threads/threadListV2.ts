@@ -1,3 +1,4 @@
+import type { MobileTaskListItem } from "./taskList";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import {
   effectiveSnoozed,
@@ -210,6 +211,7 @@ export function getThreadListV2OrderedSection(input: {
 }
 
 export interface ThreadListV2Item {
+  readonly taskMember?: boolean;
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   /** Snoozed-shelf row: shows the wake countdown and offers Wake. */
@@ -269,6 +271,7 @@ export interface ThreadListV2SettledShelfListItem {
 }
 
 export type ThreadListV2ListItem =
+  | MobileTaskListItem
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2SnoozedShelfListItem

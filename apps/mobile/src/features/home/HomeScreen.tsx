@@ -1,3 +1,8 @@
+import { readMobileTaskMove } from "../threads/use-mobile-task-order";
+import { groupThreadsByTask, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { TaskListRow, TaskCreateListButton } from "../threads/TaskListRow";
+import { useMobileTaskList } from "../threads/use-mobile-task-list";
+import { buildMobileTaskListItems } from "../threads/taskList";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import { createThreadMovePlanner } from "../threads/threadOrder";
 import {
@@ -495,8 +500,7 @@ export function HomeScreen(props: HomeScreenProps) {
           ),
     [v2ScopedProjectGroup],
   );
-  // Thread List v2 (beta): one flat list in creation order, no grouping.
-  // Settled threads collapse into a recency tail below the card block.
+  // The outer list partitions ungrouped threads; task groups add their own member shelves.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
@@ -679,6 +683,7 @@ export function HomeScreen(props: HomeScreenProps) {
     nowMinute,
     snoozeWakeTick,
   ]);
+  const mobileTaskList = useMobileTaskList();
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -694,7 +699,14 @@ export function HomeScreen(props: HomeScreenProps) {
     // "hidden from lists" meaning.
     return buildThreadListV2Items({
       pendingOrder,
-      threads: props.threads.filter((thread) => thread.archivedAt === null),
+      threads:
+        v2ScopedProjectGroup !== null
+          ? props.threads.filter((thread) => thread.archivedAt === null)
+          : groupThreadsByTask({
+              tasks: mobileTaskList.tasks,
+              threads: props.threads,
+              taskCapableEnvironmentIds: mobileTaskList.capableIds,
+            }).ungrouped,
       environmentId: props.selectedEnvironmentId,
       projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
       searchQuery: props.searchQuery,
@@ -709,6 +721,7 @@ export function HomeScreen(props: HomeScreenProps) {
       selectedThreadKey: null,
     });
   }, [
+    mobileTaskList,
     pendingOrder,
     queuedThreadKeys,
     nowMinute,
@@ -727,7 +740,17 @@ export function HomeScreen(props: HomeScreenProps) {
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
-  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  const nextSnoozeWakeAt = useMemo(() => {
+    const now = Date.now();
+    return (
+      [
+        threadListV2Layout.nextSnoozeWakeAt,
+        ...mobileTaskList.tasks.map((task) => task.snoozedUntil),
+      ]
+        .filter((value): value is string => value != null && Date.parse(value) > now)
+        .sort()[0] ?? null
+    );
+  }, [threadListV2Layout.nextSnoozeWakeAt, mobileTaskList.tasks, snoozeWakeTick, nowMinute]);
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
     const wakeAtMs = Date.parse(nextSnoozeWakeAt);
@@ -761,22 +784,56 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const threadListV2Items = useMemo(
     () =>
-      buildThreadListV2ListItems({
-        items: threadListV2Layout.items,
-        pendingTasks: v2PendingTasks,
-        snoozedCount: threadListV2Layout.snoozedCount,
-        snoozedShelfExpanded,
-        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-        settledCount: threadListV2Layout.settledCount,
-        settledShelfExpanded,
-        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-        snoozeLabelNow: `${nowMinute}:00.000Z`,
+      buildMobileTaskListItems({
+        ...mobileTaskList,
+        ungroupedLayout: true,
+        threads: props.threads,
+        pendingTasks: props.pendingTasks,
+        environmentId: props.selectedEnvironmentId,
+        projectScoped: v2ScopedProjectGroup !== null,
+        searchQuery: props.searchQuery,
+        matchedThreadKeys,
+        queuedThreadKeys,
+        now: new Date().toISOString(),
+        items: buildThreadListV2ListItems({
+          items: threadListV2Layout.items,
+          pendingTasks: v2PendingTasks,
+          snoozedCount: threadListV2Layout.snoozedCount,
+          snoozedShelfExpanded,
+          snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+          settledCount: threadListV2Layout.settledCount,
+          settledShelfExpanded,
+          settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
+          snoozeLabelNow: `${nowMinute}:00.000Z`,
+        }),
       }),
-    [settledShelfExpanded, snoozedShelfExpanded, threadListV2Layout, v2PendingTasks],
+    [
+      snoozeWakeTick,
+      mobileTaskList,
+      props.threads,
+      props.pendingTasks,
+      props.selectedEnvironmentId,
+      props.searchQuery,
+      v2ScopedProjectGroup,
+      matchedThreadKeys,
+      queuedThreadKeys,
+      nowMinute,
+      settledShelfExpanded,
+      snoozedShelfExpanded,
+      threadListV2Layout,
+      v2PendingTasks,
+    ],
   );
 
   const renderV2Item = useCallback(
     ({ item, index }: { readonly item: ThreadListV2ListItem; readonly index: number }) => {
+      if (
+        item.type === "task-card" ||
+        item.type === "task-slim" ||
+        item.type === "task-new-thread" ||
+        item.type === "task-subshelf-header"
+      )
+        return <TaskListRow item={item} />;
       const nextItem = threadListV2Items[index + 1];
       const showTrailingDivider =
         nextItem?.type === "v2-thread" ||
@@ -826,13 +883,13 @@ export function HomeScreen(props: HomeScreenProps) {
         );
       }
       const thread = item.item.thread;
-      const movePlanner = item.item.pinned ? threadMovePlanners.pinned : threadMovePlanners.active;
       const movedId = `${thread.environmentId}:${thread.id}`;
       return (
         <ThreadListV2Row
           onNewThreadOnBranch={props.onNewThreadOnBranch}
           thread={thread}
           variant={item.item.variant}
+          taskMember={item.item.taskMember}
           hasQueuedMessages={queuedThreadKeys.has(movedId)}
           snoozed={item.item.snoozed}
           pinned={item.item.pinned}
@@ -873,8 +930,12 @@ export function HomeScreen(props: HomeScreenProps) {
               ? pinReorderEnvironmentIds.has(thread.environmentId)
               : activeReorderEnvironmentIds.has(thread.environmentId)
           }
-          canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
-          canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
+          canMoveUp={
+            pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "up") !== null
+          }
+          canMoveDown={
+            pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "down") !== null
+          }
           onSnoozeThread={handleSnoozeThread}
           onUnsnoozeThread={handleUnsnoozeThread}
           onUnsettleThread={handleUnsettleThread}
@@ -1119,7 +1180,12 @@ export function HomeScreen(props: HomeScreenProps) {
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
-  const v2ListHeader = listHeader;
+  const v2ListHeader = (
+    <>
+      {listHeader}
+      <TaskCreateListButton />
+    </>
+  );
 
   const listEmpty = !hasResults ? (
     hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
@@ -1229,9 +1295,15 @@ export function HomeScreen(props: HomeScreenProps) {
             keyExtractor={keyExtractor}
             itemsAreEqual={homeListItemsAreEqual}
             drawDistance={500}
+            getItemType={(item) => item.type}
             estimatedItemSize={ESTIMATED_THREAD_ROW_HEIGHT}
             extraData={extraData}
-            ListHeaderComponent={listHeader}
+            ListHeaderComponent={
+              <>
+                {listHeader}
+                <TaskCreateListButton />
+              </>
+            }
             ListEmptyComponent={listEmpty}
             style={{ flex: 1 }}
             automaticallyAdjustsScrollIndicatorInsets={NATIVE_LIQUID_GLASS_SUPPORTED}

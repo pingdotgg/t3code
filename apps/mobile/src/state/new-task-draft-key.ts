@@ -37,3 +37,7 @@ export function parseLegacyNewTaskDraftKey(
   }
   return { environmentId: scope.slice(0, separator), projectId: scope.slice(separator + 1) };
 }
+
+export function pendingTaskDraftKey(messageId: string): string {
+  return `pending-task:${messageId}`;
+}

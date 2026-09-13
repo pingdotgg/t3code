@@ -39,7 +39,10 @@ import {
   type WorkspaceAuxiliaryPaneRole,
   type WorkspacePaneLayout,
 } from "../../lib/layout";
-import { resolveThreadSelectionNavigationAction } from "../../lib/adaptive-navigation";
+import {
+  parseActiveTaskPath,
+  resolveThreadSelectionNavigationAction,
+} from "../../lib/adaptive-navigation";
 import { scopedThreadKey } from "../../lib/scopedEntities";
 import { mobilePreferencesAtom } from "../../state/preferences";
 import {
@@ -298,6 +301,8 @@ function AdaptiveWorkspaceLayoutContent(
     ],
   );
   const activeThread = parseActiveThreadPath(pathname);
+  const activeTask = parseActiveTaskPath(pathname);
+  const selectedTaskKey = activeTask ? `${activeTask.environmentId}:${activeTask.taskId}` : null;
   const environmentId = activeThread?.environmentId ?? null;
   const threadId = activeThread?.threadId ?? null;
   const selectedThreadKey = useMemo(() => {
@@ -380,6 +385,12 @@ function AdaptiveWorkspaceLayoutContent(
   }, []);
   const handleOpenFilesCommand = useCallback(() => {
     const activeThread = parseActiveThreadPath(pathname);
+    const activeTask = parseActiveTaskPath(pathname);
+    if (layout.usesSplitView && fileInspector.supported && activeTask) {
+      showAuxiliaryPane("inspector");
+      if (!/\/files(?:\/|$)/.test(pathname)) navigation.navigate("ThreadFiles", activeTask);
+      return true;
+    }
     if (!layout.usesSplitView || !fileInspector.supported || activeThread === null) {
       return false;
     }
@@ -567,6 +578,7 @@ function AdaptiveWorkspaceLayoutContent(
                     visible={panes.primarySidebarVisible}
                     onRequestVisibility={revealPrimarySidebar}
                     selectedThreadKey={selectedThreadKey}
+                    selectedTaskKey={selectedTaskKey}
                     onOpenSettings={handleOpenSettings}
                     onOpenEnvironmentSettings={handleOpenEnvironmentSettings}
                     onNewThreadInProject={handleNewThreadInProject}

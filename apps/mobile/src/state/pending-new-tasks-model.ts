@@ -1,4 +1,4 @@
-import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, TaskId } from "@t3tools/contracts";
 
 import { deriveThreadTitleFromPrompt } from "../lib/projectThreadStartTurn";
 import type { QueuedThreadCreation, QueuedThreadMessage } from "./thread-outbox-model";
@@ -19,6 +19,7 @@ export interface PendingQueuedTask {
   readonly key: string;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly taskId: TaskId | null;
   readonly projectTitle: string | undefined;
   readonly projectCwd: string | undefined;
   readonly branch: string | null;
@@ -33,6 +34,7 @@ export interface PendingDraftTask {
   readonly key: string;
   readonly environmentId: EnvironmentId;
   readonly projectId: ProjectId;
+  readonly taskId: TaskId | null;
   readonly projectTitle: undefined;
   readonly projectCwd: undefined;
   readonly branch: string | null;
@@ -72,6 +74,7 @@ export function buildPendingNewTasks(input: {
       key: `pending-task:${message.messageId}`,
       environmentId: message.environmentId,
       projectId: message.creation.projectId,
+      taskId: message.creation.taskId ?? null,
       projectTitle: message.creation.projectTitle,
       projectCwd: message.creation.projectCwd,
       branch: message.creation.branch,
@@ -90,6 +93,7 @@ export function buildPendingNewTasks(input: {
       key: `draft-task:${draftKey}`,
       environmentId: draft.project.environmentId,
       projectId: draft.project.projectId,
+      taskId: draft.taskId ?? null,
       projectTitle: undefined,
       projectCwd: undefined,
       branch: draft.workspaceSelection?.branch ?? null,

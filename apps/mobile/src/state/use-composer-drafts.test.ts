@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  TaskId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -183,6 +184,7 @@ import {
   restoreComposerDraftSnapshotState,
   restoreCloudComposerDrafts,
   retargetNewTaskDraft,
+  updateComposerDraftSettings,
   setComposerDraftText,
   insertComposerDraftContext,
   insertComposerDraftText,
@@ -1865,6 +1867,33 @@ describe("mobile composer drafts", () => {
     clearComposerDraftContent(first, { clearModelSelection: true, clearWorkspaceSelection: true });
     expect(appAtomRegistry.get(composerDraftsAtom)[first]).toBeUndefined();
     expect(getComposerDraftSnapshot(second).text).toBe("second idea");
+  });
+
+  it("persists task membership and permits project changes only within its environment", async () => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const projectId = ProjectId.make("project-1");
+    const taskId = TaskId.make("parent-task");
+    const key = createNewTaskDraft({ environmentId, projectId });
+    setComposerDraftText(key, "member draft");
+    updateComposerDraftSettings(key, { taskId });
+    await flushComposerDrafts();
+    expect(
+      decodePersistedComposerState(JSON.parse(composerDraftFileMocks.getDocument())).drafts[key]
+        ?.taskId,
+    ).toBe(taskId);
+    retargetNewTaskDraft(key, { environmentId: EnvironmentId.make("other"), projectId });
+    expect(getComposerDraftSnapshot(key).project?.environmentId).toBe(environmentId);
+    retargetNewTaskDraft(key, { environmentId, projectId: ProjectId.make("foreign-project") });
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      taskId,
+      project: { projectId: "foreign-project" },
+    });
+    updateComposerDraftSettings(key, { taskId: null });
+    retargetNewTaskDraft(key, { environmentId: EnvironmentId.make("other"), projectId });
+    expect(getComposerDraftSnapshot(key)).toMatchObject({
+      taskId: null,
+      project: { environmentId: "other" },
+    });
   });
 
   it("retargets a new-task draft to another project without losing its text", () => {

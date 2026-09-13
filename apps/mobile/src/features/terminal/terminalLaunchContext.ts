@@ -65,20 +65,19 @@ export function resolveTerminalOpenLocation(input: {
   readonly cwd: string;
   readonly worktreePath: string | null;
 } {
+  // Existing PTYs retain their launch location, including an explicitly null
+  // worktree, when the task's primary project or member selection changes.
+  const existingLocation = input.terminalLocation ?? input.activeSessionLocation;
+  if (existingLocation !== null) {
+    return { cwd: existingLocation.cwd, worktreePath: existingLocation.worktreePath };
+  }
   const preferredThreadWorktreePath = resolvePreferredThreadWorktreePath({
     threadShellWorktreePath: input.threadShellWorktreePath,
     threadDetailWorktreePath: input.threadDetailWorktreePath,
   });
 
   return {
-    cwd:
-      input.terminalLocation?.cwd ??
-      input.activeSessionLocation?.cwd ??
-      preferredThreadWorktreePath ??
-      input.workspaceRoot,
-    worktreePath:
-      input.terminalLocation?.worktreePath ??
-      input.activeSessionLocation?.worktreePath ??
-      preferredThreadWorktreePath,
+    cwd: preferredThreadWorktreePath ?? input.workspaceRoot,
+    worktreePath: preferredThreadWorktreePath,
   };
 }

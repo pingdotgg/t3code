@@ -1,3 +1,4 @@
+import { useThreadTaskMenu } from "./use-thread-task-menu";
 import { useRecyclingState } from "@legendapp/list/react-native";
 import type {
   EnvironmentProject,
@@ -532,6 +533,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         }
       : status;
 
+  const taskMenu = useThreadTaskMenu(thread);
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleArchive = useCallback(() => onArchiveThread(thread), [onArchiveThread, thread]);
   const handleRegenerateTitle = useCallback(
@@ -540,6 +542,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const menuActions = useMemo<MenuAction[]>(
     () => [
+      ...taskMenu.actions,
       ...(thread.branch
         ? [
             {
@@ -557,7 +560,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
       }),
       THREAD_ROW_MENU_ACTIONS[1]!,
     ],
-    [props.titleRegenerationSupported, thread.branch, thread.titleRegeneration],
+    [taskMenu.actions, props.titleRegenerationSupported, thread.branch, thread.titleRegeneration],
   );
   const primaryAction = useMemo(
     () => ({
@@ -570,12 +573,20 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      taskMenu.handle(nativeEvent.event);
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "archive") handleArchive();
       if (nativeEvent.event === "regenerate-title") handleRegenerateTitle();
       if (nativeEvent.event === "delete") handleDelete();
     },
-    [handleArchive, handleDelete, handleRegenerateTitle, onNewThreadOnBranch, thread],
+    [
+      taskMenu.handle,
+      handleArchive,
+      handleDelete,
+      handleRegenerateTitle,
+      onNewThreadOnBranch,
+      thread,
+    ],
   );
 
   const statusPill = effectiveStatus ? (

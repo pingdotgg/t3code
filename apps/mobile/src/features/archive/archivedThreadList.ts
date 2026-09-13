@@ -6,6 +6,7 @@ import {
   type EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 
@@ -17,6 +18,39 @@ export interface ArchivedThreadGroup {
   readonly key: string;
   readonly project: EnvironmentProject;
   readonly threads: ReadonlyArray<EnvironmentThreadShell>;
+}
+
+export function buildArchivedTaskEntries(input: {
+  readonly snapshots: ReadonlyArray<ArchivedSnapshotEntry>;
+  readonly environmentId: EnvironmentId | null;
+  readonly searchQuery: string;
+  readonly sortOrder: ArchivedThreadSortOrder;
+}): EnvironmentTask[] {
+  const query = input.searchQuery.trim().toLocaleLowerCase();
+  return input.snapshots
+    .flatMap((entry) => {
+      if (input.environmentId !== null && entry.environmentId !== input.environmentId) return [];
+      return (entry.snapshot.tasks ?? [])
+        .filter(
+          (task) =>
+            task.archivedAt !== null &&
+            (!query ||
+              task.name.toLocaleLowerCase().includes(query) ||
+              task.description?.toLocaleLowerCase().includes(query)),
+        )
+        .map((task) => ({ ...task, environmentId: entry.environmentId }));
+    })
+    .sort((left, right) => {
+      const delta =
+        Date.parse(left.archivedAt ?? left.updatedAt) -
+        Date.parse(right.archivedAt ?? right.updatedAt);
+      return (
+        (input.sortOrder === "newest" ? -delta : delta) ||
+        left.name.localeCompare(right.name) ||
+        left.environmentId.localeCompare(right.environmentId) ||
+        left.id.localeCompare(right.id)
+      );
+    });
 }
 
 function archiveTimestamp(thread: EnvironmentThreadShell): number {

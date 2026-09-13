@@ -27,6 +27,8 @@ import { HardwareKeyboardCommandProvider } from "./features/keyboard/HardwareKey
 import { ReviewCommentComposerSheet } from "./features/review/ReviewCommentComposerSheet";
 import { ReviewSheet } from "./features/review/ReviewSheet";
 import { ThreadTerminalRouteScreen } from "./features/terminal/ThreadTerminalRouteScreen";
+import { TaskRouteScreen } from "./features/tasks/TaskRouteScreen";
+import { TaskCreateRouteScreen } from "./features/tasks/TaskCreateRouteScreen";
 import { GitBranchesSheet } from "./features/threads/git/GitBranchesSheet";
 import { GitCommitSheet } from "./features/threads/git/GitCommitSheet";
 import { GitConfirmSheet } from "./features/threads/git/GitConfirmSheet";
@@ -174,7 +176,7 @@ const SettingsContentStack = createNativeStackNavigator({
       screen: ArchivedThreadsRouteScreen,
       linking: "archive",
       options: {
-        title: "Archived Threads",
+        title: "Archive",
       },
     }),
     SettingsAppearance: createNativeStackScreen({
@@ -358,6 +360,7 @@ const NewTaskSheetStack = createNativeStackNavigator({
 // influence the adaptive workspace layout: opening Settings over Home should
 // not flip the sidebar in or change the active thread.
 const WORKSPACE_OVERLAY_ROUTES = new Set([
+  "TaskCreate",
   "ConnectOnboarding",
   "Connections",
   "ConnectionsNew",
@@ -498,6 +501,16 @@ export const RootStack = createNativeStackNavigator({
         ...getCompactBrandHeaderOptions(),
       },
     }),
+    Task: createNativeStackScreen({
+      screen: TaskRouteScreen,
+      linking: "tasks/:environmentId/:taskId",
+      options: { ...GLASS_HEADER_OPTIONS, title: "Task" },
+    }),
+    TaskCreate: createNativeStackScreen({
+      screen: TaskCreateRouteScreen,
+      linking: "tasks/new",
+      options: { ...GLASS_HEADER_OPTIONS, title: "Create task" },
+    }),
     Thread: createNativeStackScreen({
       screen: ThreadRouteScreen,
       linking: THREAD_LINKING_PREFIX,
@@ -505,7 +518,7 @@ export const RootStack = createNativeStackNavigator({
     }),
     ThreadTerminal: createNativeStackScreen({
       screen: ThreadTerminalRouteScreen,
-      linking: `${THREAD_LINKING_PREFIX}/terminal`,
+      linking: "threads/:environmentId/:threadId?/terminal",
       options: SOLID_HEADER_OPTIONS,
     }),
     ThreadReview: createNativeStackScreen({
@@ -528,7 +541,7 @@ export const RootStack = createNativeStackNavigator({
     }),
     ThreadFiles: createNativeStackScreen({
       screen: ThreadFilesTreeScreen,
-      linking: `${THREAD_LINKING_PREFIX}/files`,
+      linking: "threads/:environmentId/:threadId?/files",
       options: {
         ...GLASS_HEADER_OPTIONS,
         title: "Files",
@@ -536,7 +549,7 @@ export const RootStack = createNativeStackNavigator({
     }),
     ThreadFile: createNativeStackScreen({
       screen: ThreadFileScreen,
-      linking: `${THREAD_LINKING_PREFIX}/files/:path*`,
+      linking: "threads/:environmentId/:threadId?/files/:path*",
       options: SOLID_HEADER_OPTIONS,
     }),
     ThreadAttachment: createNativeStackScreen({

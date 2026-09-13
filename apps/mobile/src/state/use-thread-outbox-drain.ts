@@ -29,6 +29,7 @@ import {
 } from "./acknowledged-thread-messages";
 import { appAtomRegistry } from "./atom-registry";
 import { restoredNewTaskDraftKey } from "./new-task-draft-key";
+import { useTasks } from "./tasks";
 import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   clearPendingThreadCreationOutcome,
@@ -45,6 +46,7 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   isQueuedThreadCreationSendable,
+  queuedCreationTaskBlockReason,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
@@ -497,6 +499,7 @@ function stampRecoveryDraftProject(queuedMessage: QueuedThreadMessage, draftKey:
     return;
   }
   updateComposerDraftSettings(draftKey, {
+    taskId: queuedMessage.creation.taskId ?? null,
     project: {
       environmentId: queuedMessage.environmentId,
       projectId: queuedMessage.creation.projectId,
@@ -560,6 +563,7 @@ export function useThreadOutboxDrain(): void {
   const threads = useThreadShells();
   const creationOutcomes = useAtomValue(pendingThreadCreationOutcomesAtom);
   const projects = useProjects();
+  const tasks = useTasks();
   const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   const [retryTick, setRetryTick] = useState(0);
@@ -931,6 +935,7 @@ export function useThreadOutboxDrain(): void {
         environmentId: queuedMessage.environmentId,
         input: buildProjectThreadStartTurnInput({
           projectId: creation.projectId,
+          ...(creation.taskId != null ? { taskId: creation.taskId } : {}),
           projectCwd,
           threadId: queuedMessage.threadId,
           commandId: queuedMessage.commandId,
@@ -962,6 +967,15 @@ export function useThreadOutboxDrain(): void {
         return false;
       }
       if (failure?.action === "restore") {
+        if (creation.taskId != null && /task/i.test(failure.message)) {
+          recordPendingThreadCreationOutcome({
+            kind: "failed",
+            message: persistedMessage,
+            reason: failure.message,
+            retainedInOutbox: true,
+          });
+          return false;
+        }
         return restoreQueuedMessage(persistedMessage, failure.message);
       }
       // Recorded before the queue entry goes so the thread screen never sees a
@@ -1117,6 +1131,32 @@ export function useThreadOutboxDrain(): void {
         scheduleQueuedMessageRetry(nextQueuedMessage.messageId);
         continue;
       }
+      if (dispatchStep.step === "send" && creation !== undefined) {
+        const reason = queuedCreationTaskBlockReason(
+          nextQueuedMessage,
+          tasks,
+          serverConfig?.environment.capabilities.tasks === true,
+        );
+        if (reason) {
+          const previous = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey];
+          if (
+            previous?.kind !== "failed" ||
+            previous.message !== nextQueuedMessage ||
+            previous.reason !== reason
+          ) {
+            recordPendingThreadCreationOutcome({
+              kind: "failed",
+              message: nextQueuedMessage,
+              reason,
+              retainedInOutbox: true,
+            });
+          }
+          continue;
+        }
+        const previous = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey];
+        if (previous?.kind === "failed" && previous.retainedInOutbox)
+          clearPendingThreadCreationOutcome(threadKey);
+      }
       if (dispatchStep.step === "restore") {
         const attachmentError = dispatchStep.reason;
         beginDispatchingQueuedMessage(nextQueuedMessage.messageId);
@@ -1220,7 +1260,10 @@ export function useThreadOutboxDrain(): void {
           : creation !== undefined
             ? creationProjectCwd !== null
               ? sendQueuedCreation(nextQueuedMessage, creation, creationProjectCwd)
-              : removeQueuedMessage("[thread-outbox] dropped pending task for a missing project")
+              : restoreQueuedMessage(
+                  nextQueuedMessage,
+                  "The selected project is unavailable. Choose another project before sending.",
+                )
             : thread !== undefined
               ? sendQueuedMessage(nextQueuedMessage, thread)
               : Promise.resolve(false);
@@ -1250,6 +1293,7 @@ export function useThreadOutboxDrain(): void {
     dispatchingQueuedMessageId,
     editingQueuedMessageIds,
     projects,
+    tasks,
     queuedMessagesByThreadKey,
     retryTick,
     restoreQueuedMessage,

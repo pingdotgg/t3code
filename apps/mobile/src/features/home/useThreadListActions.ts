@@ -1,3 +1,6 @@
+import { useMobileTaskOrder } from "../threads/use-mobile-task-order";
+import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { environmentTasks } from "../../state/tasks";
 import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
@@ -242,6 +245,7 @@ export function useThreadListActions(): {
   ) => Promise<boolean>;
   readonly regenerateThreadTitle: (thread: EnvironmentThreadShell) => Promise<boolean>;
 } {
+  const mixedOrder = useMobileTaskOrder();
   const executeAction = useThreadActionExecutor();
   const snoozeMutation = useAtomCommand(threadEnvironment.snooze, { reportFailure: false });
   const unsnoozeMutation = useAtomCommand(threadEnvironment.unsnooze, { reportFailure: false });
@@ -367,6 +371,7 @@ export function useThreadListActions(): {
   );
   const pinThread = useCallback(
     async (thread: EnvironmentThreadShell) => {
+      if (thread.taskId != null) return false;
       if (!environmentSupportsPinning(thread.environmentId)) {
         Alert.alert(
           "Could not pin thread",
@@ -484,6 +489,15 @@ export function useThreadListActions(): {
   });
   const moveThread = useCallback(
     async (thread: EnvironmentThreadShell, direction: ThreadMoveDestination) => {
+      if (thread.taskId != null || appAtomRegistry.get(environmentTasks.tasksAtom).length > 0) {
+        if (
+          typeof direction === "string" ||
+          direction.section === undefined ||
+          direction.section === (thread.pinnedAt != null ? "pinned" : "active")
+        )
+          return mixedOrder.move(threadOrderRow(thread), direction);
+        if (thread.taskId != null && direction.section === "pinned") return false;
+      }
       if (getPendingThreadOrder() !== null || appAtomRegistry.get(threadDropBusyAtom)) return false;
       const shells = appAtomRegistry.get(environmentThreadShells.threadShellsAtom);
       const current = shells.find(
@@ -631,6 +645,7 @@ export function useThreadListActions(): {
       }
     },
     [
+      mixedOrder.move,
       settleThread,
       reorderActiveMutation,
       reorderPinnedMutation,

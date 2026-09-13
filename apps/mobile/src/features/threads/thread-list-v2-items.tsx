@@ -1,3 +1,4 @@
+import { useThreadTaskMenu } from "./use-thread-task-menu";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
@@ -338,6 +339,7 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
 });
 
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
+  readonly taskMember?: boolean;
   readonly thread: EnvironmentThreadShell;
   readonly variant: "card" | "slim";
   /** A message for this thread is waiting in the outbox. */
@@ -465,6 +467,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const timeLabel =
     settledTimestamp !== null ? relativeTime(settledTimestamp) : threadTimeLabel(thread);
 
+  const taskMenu = useThreadTaskMenu(thread);
   const handleDelete = useCallback(() => onDeleteThread(thread), [onDeleteThread, thread]);
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
@@ -538,7 +541,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             } satisfies MenuAction,
           ]
         : []),
-      ...(props.pinningSupported
+      ...(props.pinningSupported && thread.taskId == null
         ? [
             thread.pinnedAt != null
               ? { id: "unpin", title: "Unpin", image: "pin.slash" }
@@ -551,7 +554,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       props.canMoveUp,
       props.reorderSupported,
       props.pinningSupported,
+      thread,
       thread.pinnedAt,
+      thread.taskId,
       variant,
     ],
   );
@@ -613,6 +618,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      taskMenu.handle(nativeEvent.event);
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -637,6 +643,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       }
     },
     [
+      taskMenu.handle,
       onNewThreadOnBranch,
       thread,
       handleArchive,
@@ -1055,7 +1062,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     );
 
   return (
-    <>
+    <View style={props.taskMember ? { marginLeft: 28 } : undefined}>
       <ThreadSwipeable
         threadKey={`${thread.environmentId}:${thread.id}`}
         backgroundColor={sidebarPane ? drawerColor : screenColor}
@@ -1067,7 +1074,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         // Full swipe commits the advertised lifecycle action (Settle /
         // Un-settle), never the secondary snooze action.
         fullSwipeAction="primary"
-        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        fullSwipeWidth={(props.fullSwipeWidth ?? windowWidth - 32) - (props.taskMember ? 28 : 0)}
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}
         onSwipeableWillOpen={props.onSwipeableWillOpen}
@@ -1080,6 +1087,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         {(close) => (
           <ControlPillMenu
             actions={[
+              ...taskMenu.actions,
               ...(thread.branch
                 ? [
                     {
@@ -1109,6 +1117,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           </ControlPillMenu>
         )}
       </ThreadSwipeable>
-    </>
+    </View>
   );
 });

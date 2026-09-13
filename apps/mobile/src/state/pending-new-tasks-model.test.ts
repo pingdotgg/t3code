@@ -1,5 +1,12 @@
 import { describe, expect, it } from "@effect/vitest";
-import { CommandId, EnvironmentId, MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import {
+  CommandId,
+  EnvironmentId,
+  MessageId,
+  ProjectId,
+  TaskId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { ComposerDraft } from "./use-composer-drafts";
@@ -117,4 +124,21 @@ describe("buildPendingNewTasks", () => {
 
     expect(tasks.map((task) => task.title)).toEqual(["queued new", "queued old"]);
   });
+});
+
+it("groups queued and draft members by their stored task and keeps legacy work ungrouped", () => {
+  const taskId = TaskId.make("task-1");
+  const message = queuedCreation("member", "2026-09-13T10:00:00.000Z");
+  const tasks = buildPendingNewTasks({
+    queuedMessages: [
+      { ...message, creation: { ...message.creation!, taskId } },
+      queuedCreation("legacy", message.createdAt),
+    ],
+    drafts: { "new-task:member": draft("draft member", message.createdAt, { taskId }) },
+  });
+  expect(tasks.map((task) => [task.kind, task.taskId])).toEqual([
+    ["draft", taskId],
+    ["pending", null],
+    ["pending", taskId],
+  ]);
 });

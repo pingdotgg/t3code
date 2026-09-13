@@ -736,6 +736,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   navigation.navigate("ThreadFile", {
                     environmentId: String(props.environmentId),
                     threadId: String(props.selectedThread.id),
+                    ...(props.projectCwd ? { cwd: props.projectCwd } : {}),
                     path: fileRoutePathSegments(path),
                   });
                 }}

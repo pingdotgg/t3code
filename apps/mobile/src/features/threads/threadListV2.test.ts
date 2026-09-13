@@ -1,3 +1,7 @@
+import { buildMobileTaskListItems } from "./taskList";
+import { planMobileTaskMove } from "./taskOrder";
+import { taskOrderRow, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
 import { planPinnedMove } from "@t3tools/client-runtime/state/thread-sort";
 import {
   createPendingThreadOrder,
@@ -17,6 +21,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TaskId,
   TurnId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -919,6 +924,7 @@ function makePendingTask(id: string): PendingNewTask {
   };
   return {
     kind: "pending",
+    taskId: null,
     key: `pending-task:${id}`,
     environmentId,
     projectId: creation.projectId,
@@ -1476,5 +1482,203 @@ describe("cross-section thread drops", () => {
         NOW,
       ),
     ).toEqual({ pin: false, unpin: false, unsettle: false, unsnooze: false });
+  });
+});
+
+function makeContainer(overrides: Partial<EnvironmentTask> = {}): EnvironmentTask {
+  return {
+    environmentId,
+    id: TaskId.make("task-1"),
+    name: "Task One",
+    description: null,
+    primaryProjectId: ProjectId.make("project-1"),
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    unsettledAt: null,
+    snoozedUntil: null,
+    snoozedAt: null,
+    pinnedAt: null,
+    pinOrderKey: null,
+    activeOrderKey: null,
+    createdAt: NOW,
+    updatedAt: NOW,
+    ...overrides,
+  };
+}
+function taskListFixture(overrides: Partial<Parameters<typeof buildMobileTaskListItems>[0]> = {}) {
+  const task = makeContainer();
+  const threads = [
+    makeThread({ id: ThreadId.make("member"), title: "Member", taskId: task.id }),
+    makeThread({ id: ThreadId.make("loose"), title: "Loose" }),
+  ];
+  const layout = buildThreadListV2Items({
+    threads,
+    environmentId: null,
+    searchQuery: "",
+    now: NOW,
+  });
+  return {
+    tasks: [task],
+    threads,
+    items: buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] }),
+    pendingTasks: [],
+    capableIds: new Set([environmentId]),
+    collapsedTaskKeys: new Set<string>(),
+    expandedTaskShelfKeys: new Set<string>(),
+    environmentId: null,
+    projectScoped: false,
+    searchQuery: "",
+    queuedThreadKeys: new Set<string>(),
+    now: NOW,
+    ...overrides,
+  };
+}
+
+describe("native task groups", () => {
+  it("keeps collapsed members inside a task and selected or searched members reachable", () => {
+    const base = taskListFixture({ collapsedTaskKeys: new Set([`${environmentId}:task-1`]) });
+    const collapsed = buildMobileTaskListItems(base);
+    expect(collapsed.map((item) => item.key)).not.toContain(`v2-thread:${environmentId}:member`);
+    expect(collapsed.some((item) => item.type === "task-card")).toBe(true);
+    for (const extra of [
+      { selectedThreadKey: `${environmentId}:member` },
+      { searchQuery: "Member" },
+    ]) {
+      expect(buildMobileTaskListItems({ ...base, ...extra }).map((item) => item.key)).toContain(
+        `v2-thread:${environmentId}:member`,
+      );
+    }
+  });
+  it("retains flat rows for project scopes, unsupported servers and unresolved parents", () => {
+    for (const overrides of [
+      { projectScoped: true },
+      { capableIds: new Set<EnvironmentId>() },
+      { tasks: [] },
+    ]) {
+      const rows = buildMobileTaskListItems(taskListFixture(overrides));
+      expect(rows.some((item) => item.type === "task-card")).toBe(false);
+      expect(rows.map((item) => item.key)).toContain(`v2-thread:${environmentId}:member`);
+    }
+  });
+  it("keeps queued creation within a parked task and exposes a separate settled shelf", () => {
+    const task = makeContainer({ settledOverride: "settled" });
+    const pending = { ...makePendingTask("queued"), taskId: task.id };
+    const threads = [
+      makeThread({
+        id: ThreadId.make("settled-member"),
+        title: "Settled member",
+        taskId: task.id,
+        settledOverride: "settled",
+        settledAt: NOW,
+      }),
+    ];
+    const rows = buildMobileTaskListItems(
+      taskListFixture({
+        tasks: [task],
+        threads,
+        pendingTasks: [pending],
+        items: [],
+        collapsedTaskKeys: new Set([`${environmentId}:${task.id}`]),
+      }),
+    );
+    expect(rows.map((item) => item.type)).toEqual([
+      "task-card",
+      "v2-pending",
+      "task-new-thread",
+      "task-subshelf-header",
+    ]);
+    expect(rows.filter((item) => item.type === "v2-pending")).toHaveLength(1);
+  });
+  it("defaults parked tasks to slim collapsed rows and wakes at the exact clock boundary", () => {
+    const task = makeContainer({ snoozedUntil: "2026-06-12T09:30:20.000Z" });
+    const base = taskListFixture({ tasks: [task], now: "2026-06-12T09:30:19.000Z" });
+    const parked = buildMobileTaskListItems(base).find((item) => item.type === "task-slim");
+    expect(parked?.type === "task-slim" && parked.expanded).toBe(false);
+    const awakened = buildMobileTaskListItems({ ...base, now: "2026-06-12T09:30:20.000Z" });
+    expect(awakened.some((item) => item.type === "task-card")).toBe(true);
+  });
+  it("isolates identical task IDs across environments", () => {
+    const otherId = EnvironmentId.make("other");
+    const base = taskListFixture();
+    const foreign = makeContainer({ environmentId: otherId });
+    const rows = buildMobileTaskListItems({
+      ...base,
+      tasks: [...base.tasks, foreign],
+      capableIds: new Set([environmentId, otherId]),
+      environmentId: otherId,
+    });
+    expect(rows.filter((item) => item.type === "task-card").map((item) => item.key)).toEqual([
+      `task:${otherId}:task-1`,
+    ]);
+  });
+});
+
+describe("native task arrangement", () => {
+  it("plans mixed task/thread keys while reserving hidden parked keys", () => {
+    const task = makeContainer({ createdAt: "2026-06-02T00:00:00.000Z", activeOrderKey: "a1" });
+    const thread = makeThread({ id: ThreadId.make("loose"), title: "Loose", activeOrderKey: "a0" });
+    const hidden = makeContainer({
+      id: TaskId.make("hidden"),
+      activeOrderKey: "a2",
+      settledOverride: "settled",
+    });
+    const plan = planMobileTaskMove({
+      tasks: [task, hidden],
+      threads: [thread],
+      moved: taskOrderRow(task),
+      destination: "up",
+      capableIds: new Set([environmentId]),
+      writableTaskIds: new Set([environmentId]),
+      writableThreadIds: new Set([environmentId]),
+      now: NOW,
+      queued: new Set(),
+    });
+    expect(
+      plan?.assignments.some((item) => item.kind === "task" && item.ref.taskId === task.id),
+    ).toBe(true);
+    expect(plan?.assignments.every((item) => item.orderKey !== "a2")).toBe(true);
+  });
+  it("limits member moves to siblings and rejects pinning a member", () => {
+    const task = makeContainer();
+    const first = makeThread({
+      id: ThreadId.make("first"),
+      title: "First",
+      taskId: task.id,
+      activeOrderKey: "a0",
+    });
+    const second = makeThread({
+      id: ThreadId.make("second"),
+      title: "Second",
+      taskId: task.id,
+      activeOrderKey: "a1",
+    });
+    const loose = makeThread({ id: ThreadId.make("loose"), title: "Loose" });
+    const input = {
+      tasks: [task],
+      threads: [first, second, loose],
+      moved: threadOrderRow(second),
+      capableIds: new Set([environmentId]),
+      writableTaskIds: new Set([environmentId]),
+      writableThreadIds: new Set([environmentId]),
+      now: NOW,
+      queued: new Set<string>(),
+    };
+    const plan = planMobileTaskMove({ ...input, destination: "up" });
+    expect(
+      plan?.assignments.every((item) => item.kind === "thread" && item.ref.threadId !== loose.id),
+    ).toBe(true);
+    expect(
+      planMobileTaskMove({
+        ...input,
+        destination: { section: "pinned", targetId: null, placement: "before" },
+      }),
+    ).toBeNull();
+    expect(
+      planMobileTaskMove({
+        ...input,
+        destination: { targetId: threadOrderRow(loose).id, placement: "before" },
+      }),
+    ).toBeNull();
   });
 });

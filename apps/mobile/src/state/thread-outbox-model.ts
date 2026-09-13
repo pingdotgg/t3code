@@ -14,6 +14,7 @@ import {
   ProjectId,
   ProviderInteractionMode,
   RuntimeMode,
+  TaskId,
   ThreadId,
   type ModelSelection as ModelSelectionType,
   type ProjectId as ProjectIdType,
@@ -34,6 +35,7 @@ const THREAD_OUTBOX_MAX_RETRY_DELAY_MS = 16_000;
 
 const QueuedThreadCreationSchema = Schema.Struct({
   projectId: ProjectId,
+  taskId: Schema.optional(Schema.NullOr(TaskId)),
   // Snapshot of the project's display metadata so a pending task stays
   // presentable in the thread list even when the project shell is not loaded.
   projectTitle: Schema.optional(Schema.String),
@@ -67,6 +69,7 @@ const encodeStoredQueuedThreadMessage = Schema.encodeUnknownSync(QueuedThreadMes
 
 export interface QueuedThreadCreation {
   readonly projectId: ProjectIdType;
+  readonly taskId?: TaskId | null;
   readonly projectTitle?: string;
   readonly projectCwd?: string;
   readonly workspaceMode: "local" | "worktree";
@@ -298,4 +301,23 @@ export function resolveThreadOutboxFailureAction(input: {
     return "retry";
   }
   return "restore";
+}
+
+/** Missing or archived parents keep their queued payload until explicitly edited. */
+export function queuedCreationTaskBlockReason(
+  message: QueuedThreadMessage,
+  tasks: ReadonlyArray<{
+    readonly environmentId: EnvironmentId;
+    readonly id: TaskId;
+    readonly archivedAt: string | null;
+  }>,
+  tasksSupported: boolean,
+): string | null {
+  const taskId = message.creation?.taskId;
+  if (taskId == null) return null;
+  const task = tasks.find(
+    (candidate) => candidate.environmentId === message.environmentId && candidate.id === taskId,
+  );
+  if (tasksSupported && task && task.archivedAt === null) return null;
+  return "The selected task is unavailable or archived. Edit this queued thread to choose another task or remove its task before sending.";
 }

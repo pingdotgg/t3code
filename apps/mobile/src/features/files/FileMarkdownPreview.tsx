@@ -229,21 +229,21 @@ export function FileMarkdownPreview(props: {
         props.captured ||
         media === null ||
         media.kind !== "image" ||
-        media.access === "unavailable"
+        media.reference?.kind !== "file"
       ) {
         return <ThreadMarkdownImageUnavailable alt={image.alt} />;
       }
       return (
         <ThreadMarkdownImage
           environmentId={props.environmentId}
-          resource={media.resource}
+          resource={{ _tag: "draft-workspace-file", cwd: props.cwd, path: media.reference.path }}
           alt={image.alt}
           srcFragment={media.srcFragment}
           onPressPreview={() => undefined}
         />
       );
     },
-    [markdownDirectory, props.environmentId, props.threadId, props.captured],
+    [markdownDirectory, props.cwd, props.environmentId, props.threadId, props.captured],
   );
   const styles = useMarkdownPreviewStyles(renderImage);
   const onLinkPress = useCallback((href: string) => {

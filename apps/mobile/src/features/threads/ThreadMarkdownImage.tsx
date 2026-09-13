@@ -178,7 +178,10 @@ function ThreadMarkdownImageRequest(props: {
 /** Environment-hosted image that loads through a signed asset URL. */
 export function ThreadMarkdownImage(props: {
   readonly environmentId: EnvironmentId;
-  readonly resource: Extract<AssetResource, { readonly _tag: "attachment" | "media-file" }>;
+  readonly resource: Extract<
+    AssetResource,
+    { readonly _tag: "attachment" | "media-file" | "draft-workspace-file" }
+  >;
   readonly alt: string | null;
   readonly srcFragment?: string;
   readonly actionsSource?: MediaActionsSource;

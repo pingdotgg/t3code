@@ -1,3 +1,4 @@
+import { pendingTaskDraftKey } from "../../state/new-task-draft-key";
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type {
@@ -8,6 +9,7 @@ import type {
   ProviderOptionSelection,
   RuntimeMode,
   ServerProvider,
+  TaskId,
 } from "@t3tools/contracts";
 import {
   CommandId,
@@ -106,10 +108,6 @@ type WorkspaceMode = "local" | "worktree";
 
 const BRANCH_SEARCH_DEBOUNCE_MS = 150;
 
-function pendingTaskDraftKey(messageId: string): string {
-  return `pending-task:${messageId}`;
-}
-
 // The message id owned by the currently active editing session, tracked
 // across provider instances. An in-flight flush from a dismissed session
 // consults it so it never drops the draft or releases the drain lock out from
@@ -140,6 +138,8 @@ export function branchBadgeLabel(input: {
 }
 
 type NewTaskFlowContextValue = {
+  readonly taskId: TaskId | null;
+  readonly setTaskId: (taskId: TaskId | null) => void;
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
   readonly selectedProjectKey: string | null;
@@ -417,6 +417,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     );
   }, [activeDraftKey, editingPendingTask, selectedProject]);
   const selectedProjectDraft = useComposerDraft(selectedProjectDraftKey);
+  const taskId =
+    selectedProjectDraft.taskId !== undefined
+      ? selectedProjectDraft.taskId
+      : (editingPendingTask?.creation?.taskId ?? null);
+  const setTaskId = useCallback(
+    (nextTaskId: TaskId | null) => {
+      if (selectedProjectDraftKey)
+        updateComposerDraftSettings(selectedProjectDraftKey, { taskId: nextTaskId });
+    },
+    [selectedProjectDraftKey],
+  );
   const prompt = selectedProjectDraft.text;
   const attachments = selectedProjectDraft.attachments;
   // Default mode until the user picks one explicitly — same resolution web
@@ -705,11 +716,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const setProject = useCallback(
     (project: EnvironmentProject) => {
+      if (taskId !== null && project.environmentId !== selectedProject?.environmentId) return;
       carryDraftContentTo(project);
       setSelectedEnvironmentId(project.environmentId);
       setSelectedProjectKey(scopedProjectKey(project.environmentId, project.id));
     },
-    [carryDraftContentTo],
+    [carryDraftContentTo, taskId, selectedProject?.environmentId],
   );
 
   const openDraft = useCallback(
@@ -739,6 +751,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
+      if (taskId !== null && environmentId !== selectedProject?.environmentId) return;
       const match = resolveEnvironmentProjectMatch(
         projects.filter((project) => project.environmentId === environmentId),
         selectedProject,
@@ -749,7 +762,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setSelectedEnvironmentId(environmentId);
       setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
     },
-    [projects, selectedProject, carryDraftContentTo],
+    [projects, selectedProject, carryDraftContentTo, taskId],
   );
 
   const setWorkspaceMode = useCallback(
@@ -928,6 +941,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setComposerDraftContext(draftKey, message.context);
       replaceComposerDraftAttachments(draftKey, message.attachments);
       updateComposerDraftSettings(draftKey, {
+        taskId: message.creation.taskId ?? null,
         modelSelection: message.modelSelection,
         runtimeMode: message.runtimeMode,
         interactionMode: message.interactionMode,
@@ -1006,6 +1020,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         }),
         creation: {
           projectId: selectedProject.id,
+          taskId:
+            draft.taskId !== undefined
+              ? draft.taskId
+              : (editingPendingTask?.creation?.taskId ?? null),
           ...(projectTitle !== undefined ? { projectTitle } : {}),
           ...(projectCwd !== undefined ? { projectCwd } : {}),
           workspaceMode: mode,
@@ -1148,6 +1166,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
 
   const value = useMemo<NewTaskFlowContextValue>(
     () => ({
+      taskId,
+      setTaskId,
       projectScopes,
       selectedEnvironmentId,
       selectedProjectKey,
@@ -1207,6 +1227,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       setExpandedProvider,
     }),
     [
+      taskId,
+      setTaskId,
       attachments,
       availableBranches,
       beginEditingPendingTask,

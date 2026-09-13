@@ -11,6 +11,7 @@ import {
   OrchestrationDispatchCommandError,
   ProjectId,
   ProviderInstanceId,
+  TaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { AtomRegistry } from "effect/unstable/reactivity";
@@ -80,6 +81,7 @@ import {
   encodeQueuedThreadMessage,
   groupQueuedThreadMessages,
   isQueuedThreadCreationSendable,
+  queuedCreationTaskBlockReason,
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
@@ -1507,5 +1509,53 @@ describe("thread outbox", () => {
         interrupted: false,
       }),
     ).toBe("restore");
+  });
+});
+
+describe("queued task membership", () => {
+  it("preserves parent and project through storage and requires explicit recovery", () => {
+    const taskId = TaskId.make("task-1");
+    const original: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "task-member", createdAt: "2026-09-13T10:00:00.000Z" }),
+      creation: {
+        projectId: ProjectId.make("foreign-project"),
+        taskId,
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    const restored = decodeQueuedThreadMessage(
+      JSON.parse(JSON.stringify(encodeQueuedThreadMessage(original))),
+    );
+    expect(restored).toEqual(original);
+    const parent = { environmentId: original.environmentId, id: taskId, archivedAt: null };
+    expect(queuedCreationTaskBlockReason(restored, [parent], true)).toBeNull();
+    expect(
+      queuedCreationTaskBlockReason(
+        restored,
+        [{ ...parent, environmentId: EnvironmentId.make("other") }],
+        true,
+      ),
+    ).toContain("Edit this queued thread");
+    expect(
+      queuedCreationTaskBlockReason(
+        restored,
+        [{ ...parent, archivedAt: original.createdAt }],
+        true,
+      ),
+    ).not.toBeNull();
+    expect(queuedCreationTaskBlockReason(restored, [], true)).not.toBeNull();
+    expect(queuedCreationTaskBlockReason(restored, [parent], false)).not.toBeNull();
+    expect(restored.creation).toEqual(original.creation);
+    const recovered = decodeQueuedThreadMessage(
+      encodeQueuedThreadMessage({ ...restored, creation: { ...restored.creation!, taskId: null } }),
+    );
+    expect(queuedCreationTaskBlockReason(recovered, [], true)).toBeNull();
+    expect(recovered.creation?.projectId).toBe(original.creation?.projectId);
+    const legacy = { ...original, creation: { ...original.creation!, taskId: undefined } };
+    expect(
+      decodeQueuedThreadMessage(encodeQueuedThreadMessage(legacy)).creation?.taskId ?? null,
+    ).toBeNull();
   });
 });

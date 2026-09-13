@@ -1,9 +1,9 @@
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import type { OrchestrationProjectShell, OrchestrationThreadShell } from "@t3tools/contracts";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ProviderInstanceId, TaskId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildArchivedThreadGroups } from "./archivedThreadList";
+import { buildArchivedTaskEntries, buildArchivedThreadGroups } from "./archivedThreadList";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -143,5 +143,48 @@ describe("buildArchivedThreadGroups", () => {
     });
 
     expect(result).toEqual([]);
+  });
+});
+
+describe("archived tasks", () => {
+  it("keeps scoped duplicates, filters metadata and tolerates old archives", () => {
+    const task = {
+      id: TaskId.make("shared"),
+      name: "Release",
+      description: "Shipping work",
+      primaryProjectId: ProjectId.make("project"),
+      archivedAt: "2026-06-03T00:00:00.000Z",
+      settledOverride: null,
+      settledAt: null,
+      unsettledAt: null,
+      snoozedUntil: null,
+      snoozedAt: null,
+      pinnedAt: null,
+      pinOrderKey: null,
+      activeOrderKey: null,
+      createdAt: "2026-06-01T00:00:00.000Z",
+      updatedAt: "2026-06-03T00:00:00.000Z",
+    };
+    const first = makeSnapshot([], []);
+    const second = makeSnapshot([], [], EnvironmentId.make("environment-2"));
+    const snapshots = [
+      { ...first, snapshot: { ...first.snapshot, tasks: [task] } },
+      { ...second, snapshot: { ...second.snapshot, tasks: [task] } },
+      makeSnapshot([], [], EnvironmentId.make("old-server")),
+    ];
+    const input = {
+      snapshots,
+      environmentId: null,
+      searchQuery: "Shipping",
+      sortOrder: "newest" as const,
+    };
+    expect(buildArchivedTaskEntries(input).map((entry) => entry.environmentId)).toEqual([
+      environmentId,
+      second.environmentId,
+    ]);
+    expect(
+      buildArchivedTaskEntries({ ...input, environmentId: second.environmentId }),
+    ).toHaveLength(1);
+    expect(buildArchivedTaskEntries({ ...input, searchQuery: "missing" })).toEqual([]);
   });
 });

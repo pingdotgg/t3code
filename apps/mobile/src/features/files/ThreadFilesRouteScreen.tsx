@@ -10,6 +10,7 @@ import {
   type ProjectListEntriesResult,
   type ProjectReadFileResult,
   ThreadId,
+  TaskId,
 } from "@t3tools/contracts";
 import { videoMimeType } from "@t3tools/shared/video";
 import {
@@ -35,7 +36,8 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import type { MediaVideoPreviewSource } from "../../lib/videoPreviewSource";
 import { useMediaActions, type MediaActionsSource } from "../../lib/mediaActions";
 import { useThreadSelection } from "../../state/use-thread-selection";
-import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
+import { useSelectedThreadDetail } from "../../state/use-thread-detail";
+import { useTaskWorkbench } from "../../state/use-task-workbench";
 import { useEnvironmentQuery } from "../../state/query";
 import { projectEnvironment } from "../../state/projects";
 import type { AssetUrlFailureReason } from "../../state/asset-url-state";
@@ -239,16 +241,18 @@ function FileContent(props: {
 
 type ThreadFilesRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
-  readonly threadId: string;
+  readonly threadId?: string;
+  readonly taskId?: string;
 }>;
 
 type ThreadFileRouteScreenProps = StaticScreenProps<{
   readonly environmentId: string;
-  /** Absent for a project draft, which has no thread yet. */
+  /** Absent for an empty task or project draft. */
   readonly threadId?: string;
+  readonly taskId?: string;
   readonly path: string[];
   readonly line?: string;
-  /** Supplied when there is no thread to resolve the workspace from. */
+  /** Explicit source checkout for review links, or a draft workspace root. */
   readonly cwd?: string;
   readonly projectName?: string;
 }>;
@@ -256,32 +260,35 @@ type ThreadFileRouteScreenProps = StaticScreenProps<{
 function useThreadFilesWorkspace(params: {
   readonly environmentId?: string | string[];
   readonly threadId?: string | string[];
+  readonly taskId?: string | string[];
   readonly cwd?: string | string[];
   readonly projectName?: string | string[];
 }) {
   const routeEnvironmentId = firstRouteParam(params.environmentId);
   const routeThreadId = firstRouteParam(params.threadId);
-  // A project draft has no thread to resolve a workspace from, so it names one itself.
+  const routeTaskId = firstRouteParam(params.taskId);
   const routeCwd = firstRouteParam(params.cwd);
   const routeProjectName = firstRouteParam(params.projectName);
-  const { selectedThread, selectedThreadProject } = useThreadSelection();
-  const { selectedThreadCwd } = useSelectedThreadWorktree();
-  const environmentId =
-    routeEnvironmentId !== null
-      ? EnvironmentId.make(routeEnvironmentId)
-      : (selectedThread?.environmentId ?? null);
+  const { selectedThread } = useThreadSelection();
+  const selectedThreadDetail = useSelectedThreadDetail();
+  const workbench = useTaskWorkbench({
+    environmentId: routeEnvironmentId ?? undefined,
+    threadId: routeThreadId ?? undefined,
+    taskId: routeTaskId ?? undefined,
+    threadDetailWorktreePath: selectedThreadDetail?.worktreePath,
+  });
+  const environmentId = routeEnvironmentId !== null ? EnvironmentId.make(routeEnvironmentId) : null;
   const threadId = routeThreadId !== null ? ThreadId.make(routeThreadId) : null;
-  const project = selectedThreadProject as {
-    readonly title?: string;
-    readonly workspaceRoot?: string;
-  } | null;
-
+  const taskId = workbench.task?.id ?? (routeTaskId ? TaskId.make(routeTaskId) : null);
   return {
-    cwd: routeCwd ?? selectedThreadCwd ?? project?.workspaceRoot ?? null,
+    cwd: routeCwd ?? workbench.worktreePath ?? workbench.workspaceRoot,
     environmentId,
-    projectName: routeProjectName ?? project?.title ?? "Files",
+    projectName: routeProjectName ?? workbench.project?.title ?? "Files",
     selectedThread,
     threadId,
+    taskId,
+    explicitCwd: routeCwd,
+    isLoading: workbench.isLoading,
   };
 }
 
@@ -337,12 +344,19 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   const theme = useUniwindTheme();
   const screenColor = theme["--color-screen"];
   const sheetSurfaceColor = theme["--color-sheet-solid"];
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const {
+    cwd,
+    environmentId,
+    projectName,
+    selectedThread,
+    threadId,
+    taskId,
+    explicitCwd,
+    isLoading,
+  } = useThreadFilesWorkspace(props.route.params);
   const revealedInspectorRef = useRef(false);
   const entriesQuery = useEnvironmentQuery(
-    environmentId !== null && cwd !== null && !fileInspector.supported
+    environmentId !== null && cwd !== null && (!fileInspector.supported || threadId === null)
       ? projectEnvironment.listEntries({
           environmentId,
           input: { cwd },
@@ -355,24 +369,26 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       navigation.goBack();
       return;
     }
-    if (environmentId !== null && threadId !== null) {
+    if (environmentId !== null && (threadId !== null || taskId !== null)) {
       navigation.dispatch(
-        StackActions.replace("Thread", {
+        StackActions.replace(threadId !== null ? "Thread" : "Task", {
           environmentId: String(environmentId),
-          threadId: String(threadId),
+          ...(threadId !== null ? { threadId: String(threadId) } : { taskId: String(taskId) }),
         }),
       );
     }
-  }, [environmentId, navigation, threadId]);
+  }, [environmentId, navigation, threadId, taskId]);
 
   const handleSelectFile = useCallback(
     (path: string) => {
-      if (environmentId === null || threadId === null) {
+      if (environmentId === null || (threadId === null && taskId === null)) {
         return;
       }
       const params = {
         environmentId: String(environmentId),
-        threadId: String(threadId),
+        ...(threadId !== null ? { threadId: String(threadId) } : {}),
+        ...(taskId !== null ? { taskId: String(taskId) } : {}),
+        ...(explicitCwd !== null ? { cwd: explicitCwd } : {}),
         path: path.split("/").filter((segment) => segment.length > 0),
       };
       const navigationAction = resolveFileSelectionNavigationAction({
@@ -384,7 +400,7 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
       }
       navigation.navigate("ThreadFile", params);
     },
-    [environmentId, fileInspector.supported, navigation, threadId],
+    [environmentId, fileInspector.supported, navigation, threadId, taskId, explicitCwd],
   );
   const renderInspector = useCallback(
     (headerInset: number) =>
@@ -415,19 +431,24 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
     [cwd, environmentId, highlightTheme],
   );
   useEffect(() => {
-    if (fileInspector.supported && cwd !== null && !revealedInspectorRef.current) {
+    if (
+      fileInspector.supported &&
+      threadId !== null &&
+      cwd !== null &&
+      !revealedInspectorRef.current
+    ) {
       revealedInspectorRef.current = true;
       showAuxiliaryPane("inspector");
     }
-  }, [cwd, fileInspector.supported, showAuxiliaryPane]);
+  }, [cwd, fileInspector.supported, showAuxiliaryPane, threadId]);
 
-  if (selectedThread === null || environmentId === null || threadId === null) {
-    if (fileInspector.supported) {
+  if (environmentId === null || (threadId !== null && selectedThread === null)) {
+    if (fileInspector.supported && threadId !== null) {
       return (
         <ThreadRouteScreen
           onReturnToThread={handleReturnToThread}
           renderInspector={renderInspector}
-          route={props.route}
+          route={{ ...props.route, params: { ...props.route.params, threadId: String(threadId) } }}
         />
       );
     }
@@ -435,15 +456,16 @@ export function ThreadFilesTreeScreen(props: ThreadFilesRouteScreenProps) {
   }
 
   if (cwd === null) {
+    if (isLoading) return <LoadingScreen message="Opening files..." />;
     return <FilesUnavailable />;
   }
 
-  if (fileInspector.supported) {
+  if (fileInspector.supported && threadId !== null) {
     return (
       <ThreadRouteScreen
         onReturnToThread={handleReturnToThread}
         renderInspector={renderInspector}
-        route={props.route}
+        route={{ ...props.route, params: { ...props.route.params, threadId: String(threadId) } }}
       />
     );
   }
@@ -589,9 +611,16 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   const params = props.route.params;
   const relativePath = normalizeRoutePath(params.path);
   const targetLine = normalizeRouteLine(firstRouteParam(params.line));
-  const { cwd, environmentId, projectName, selectedThread, threadId } = useThreadFilesWorkspace(
-    props.route.params,
-  );
+  const {
+    cwd,
+    environmentId,
+    projectName,
+    selectedThread,
+    threadId,
+    taskId,
+    explicitCwd,
+    isLoading,
+  } = useThreadFilesWorkspace(props.route.params);
   const [modeOverride, setModeOverride] = useState<{
     readonly path: string;
     readonly mode: FileViewMode;
@@ -625,8 +654,8 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     environmentId,
     relativePath: assetPreviewPath,
     threadId,
-    // A project draft names its workspace root explicitly: there is no thread to resolve one.
-    draftCwd: threadId === null ? cwd : null,
+    // Tool and review roots must not be replaced by the member's current checkout.
+    draftCwd: threadId === null || taskId !== null || explicitCwd !== null ? cwd : null,
   });
   const assetPreviewUri = assetPreview._tag === "Success" ? assetPreview.url : null;
   const mediaSource = useMemo<MediaActionsSource | undefined>(
@@ -696,7 +725,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       const segments = path.split("/").filter(Boolean);
       // A draft has no thread. `ThreadFile` would stringify null and then wait forever for a
       // thread to resolve, so a draft stays on its own route and carries its workspace along.
-      if (threadId === null) {
+      if (threadId === null && taskId === null) {
         navigation.dispatch(
           StackActions.push("NewTaskFile", {
             environmentId: String(environmentId),
@@ -709,11 +738,13 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
       }
       navigation.navigate("ThreadFile", {
         environmentId: String(environmentId),
-        threadId: String(threadId),
+        ...(threadId !== null ? { threadId: String(threadId) } : {}),
+        ...(taskId !== null ? { taskId: String(taskId) } : {}),
+        ...(explicitCwd !== null ? { cwd: explicitCwd } : {}),
         path: segments,
       });
     },
-    [cwd, environmentId, navigation, projectName, threadId],
+    [cwd, environmentId, navigation, projectName, threadId, taskId, explicitCwd],
   );
   const renderInspector = useCallback(
     (headerInset: number) =>
@@ -879,15 +910,15 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
     [fileMenuActions],
   );
   const handleReturnToThread = useCallback(() => {
-    if (environmentId !== null && threadId !== null) {
+    if (environmentId !== null && (threadId !== null || taskId !== null)) {
       navigation.dispatch(
-        StackActions.replace("Thread", {
+        StackActions.replace(threadId !== null ? "Thread" : "Task", {
           environmentId: String(environmentId),
-          threadId: String(threadId),
+          ...(threadId !== null ? { threadId: String(threadId) } : { taskId: String(taskId) }),
         }),
       );
     }
-  }, [environmentId, navigation, threadId]);
+  }, [environmentId, navigation, threadId, taskId]);
   const handleBack = useCallback(() => {
     if (navigation.canGoBack()) {
       navigation.goBack();
@@ -904,6 +935,7 @@ export function ThreadFileScreen(props: ThreadFileRouteScreenProps) {
   }
 
   if (cwd === null) {
+    if (isLoading) return <LoadingScreen message="Opening file..." />;
     return <FilesUnavailable />;
   }
 

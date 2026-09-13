@@ -18,7 +18,12 @@ import type { QueuedThreadMessage } from "./thread-outbox-model";
  */
 export type PendingThreadCreationOutcome =
   | { readonly kind: "delivered"; readonly message: QueuedThreadMessage }
-  | { readonly kind: "failed"; readonly message: QueuedThreadMessage; readonly reason: string };
+  | {
+      readonly kind: "failed";
+      readonly message: QueuedThreadMessage;
+      readonly reason: string;
+      readonly retainedInOutbox?: boolean;
+    };
 
 export type PendingThreadCreation = {
   readonly message: QueuedThreadMessage;
@@ -140,6 +145,7 @@ export function pendingThreadCreationShell(
     environmentId: message.environmentId,
     id: message.threadId,
     projectId: creation.projectId,
+    taskId: creation.taskId ?? null,
     title: deriveThreadTitleFromPrompt(message.text),
     modelSelection: message.modelSelection,
     runtimeMode: message.runtimeMode ?? DEFAULT_RUNTIME_MODE,

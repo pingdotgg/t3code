@@ -11,6 +11,8 @@ import {
   ProjectId as ProjectIdSchema,
   ProviderInteractionMode as ProviderInteractionModeSchema,
   RuntimeMode as RuntimeModeSchema,
+  TaskId as TaskIdSchema,
+  type TaskId,
   type EnvironmentId,
   type ModelSelection,
   type ProjectId,
@@ -319,6 +321,7 @@ export class ComposerDraftPersistenceError extends Schema.TaggedError<ComposerDr
 }
 
 export interface ComposerDraft {
+  readonly taskId?: TaskId | null;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
@@ -357,7 +360,7 @@ export interface ComposerDraftWorkspaceSelection {
 
 export type ComposerDraftSettingsUpdate = Pick<
   ComposerDraft,
-  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "project"
+  "modelSelection" | "runtimeMode" | "interactionMode" | "workspaceSelection" | "project" | "taskId"
 >;
 
 const ComposerDraftWorkspaceSelectionSchema = Schema.Struct({
@@ -381,6 +384,7 @@ const PersistedComposerContextSchema = Schema.Struct({
 });
 
 const ComposerDraftSchema = Schema.Struct({
+  taskId: Schema.optional(Schema.NullOr(TaskIdSchema)),
   text: Schema.String,
   context: Schema.optional(PersistedComposerContextSchema),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -1487,6 +1491,7 @@ export function clearComposerDraftContentState(
     modelSelection,
     workspaceSelection,
     project: _project,
+    taskId: _taskId,
     ...retained
   } = existing;
   const draft = {
@@ -1845,6 +1850,9 @@ export function retargetNewTaskDraft(
   updateComposerDrafts((current) => {
     const existing = current[draftKey];
     const stamp = existing?.project;
+    if (existing?.taskId != null && stamp && stamp.environmentId !== project.environmentId) {
+      return current;
+    }
     if (
       stamp !== undefined &&
       stamp.environmentId === project.environmentId &&

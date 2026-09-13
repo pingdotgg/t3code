@@ -1,3 +1,4 @@
+import { useTasks } from "../../state/tasks";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import {
@@ -30,7 +31,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
-  type EnvironmentId,
+  TaskId,
 } from "@t3tools/contracts";
 
 import {
@@ -163,6 +164,7 @@ export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
     readonly projectId?: string;
+    readonly taskId?: string;
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
   };
@@ -175,6 +177,8 @@ export function NewTaskDraftScreen(props: {
 }) {
   const projects = useProjects();
   const flow = useNewTaskFlow();
+  const tasks = useTasks();
+  const [taskPickerOpen, setTaskPickerOpen] = useState(false);
   const navigation = useNavigation();
   const {
     consumeShare,
@@ -576,15 +580,15 @@ export function NewTaskDraftScreen(props: {
         if (appliedInitialProjectKeyRef.current === directProjectKey) {
           return;
         }
+        if (
+          selectedProject?.environmentId !== directProject.environmentId ||
+          selectedProject.id !== directProject.id
+        ) {
+          setProject(directProject);
+          return;
+        }
+        if (!flow.draftKey) return;
         if (props.initialProjectRef?.branch) {
-          if (
-            selectedProject?.environmentId !== directProject.environmentId ||
-            selectedProject.id !== directProject.id
-          ) {
-            setProject(directProject);
-            return;
-          }
-          if (!flow.draftKey) return;
           // The route completes checkout before mounting this composer. Local
           // mode reuses an existing worktree; worktree mode would create another.
           updateComposerDraftSettings(flow.draftKey, {
@@ -596,14 +600,10 @@ export function NewTaskDraftScreen(props: {
             },
           });
         }
+        flow.setTaskId(
+          props.initialProjectRef?.taskId ? TaskId.make(props.initialProjectRef.taskId) : null,
+        );
         appliedInitialProjectKeyRef.current = directProjectKey;
-        if (
-          selectedProject?.environmentId === directProject.environmentId &&
-          selectedProject.id === directProject.id
-        ) {
-          return;
-        }
-        setProject(directProject);
         return;
       }
 
@@ -630,6 +630,7 @@ export function NewTaskDraftScreen(props: {
     projectScopes,
     projects,
     flow.draftKey,
+    flow.setTaskId,
     props.initialProjectRef,
     props.incomingShareId,
     props.pendingTaskId,
@@ -1393,10 +1394,68 @@ export function NewTaskDraftScreen(props: {
         </View>
       </View>
 
+      {flow.taskId !== null ? (
+        <View className="w-full gap-2">
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel="Change task membership"
+            accessibilityState={{ expanded: taskPickerOpen }}
+            disabled={isComposerInteractionLocked}
+            onPress={() => setTaskPickerOpen((open) => !open)}
+            className="items-center px-3 py-2"
+          >
+            <Text className="text-foreground-muted">
+              Task:{" "}
+              {tasks.find(
+                (task) =>
+                  task.environmentId === selectedProject.environmentId && task.id === flow.taskId,
+              )?.name ?? "Unavailable task"}{" "}
+              · Change
+            </Text>
+          </Pressable>
+          {taskPickerOpen ? (
+            <View className="gap-1">
+              {tasks
+                .filter(
+                  (task) =>
+                    task.environmentId === selectedProject.environmentId &&
+                    task.archivedAt === null &&
+                    task.id !== flow.taskId,
+                )
+                .map((task) => (
+                  <Pressable
+                    key={task.id}
+                    accessibilityRole="button"
+                    disabled={isComposerInteractionLocked}
+                    className="px-3 py-2"
+                    onPress={() => {
+                      flow.setTaskId(task.id);
+                      setTaskPickerOpen(false);
+                    }}
+                  >
+                    <Text className="text-foreground">{task.name}</Text>
+                  </Pressable>
+                ))}
+              <Pressable
+                accessibilityRole="button"
+                disabled={isComposerInteractionLocked}
+                className="px-3 py-2"
+                onPress={() => {
+                  flow.setTaskId(null);
+                  setTaskPickerOpen(false);
+                }}
+              >
+                <Text className="text-foreground">Remove from task</Text>
+              </Pressable>
+            </View>
+          ) : null}
+        </View>
+      ) : null}
+
       <ComposerInlineControl
         accessibilityLabel={`Environment: ${selectedEnvironmentLabel}`}
         chevronDirection="right"
-        disabled={isComposerInteractionLocked || voiceInput.isBusy}
+        disabled={isComposerInteractionLocked || voiceInput.isBusy || flow.taskId !== null}
         iconNode={
           <EnvironmentMachineSymbol
             kind={resolveEnvironmentMachineKind(selectedEnvironmentServerConfig)}

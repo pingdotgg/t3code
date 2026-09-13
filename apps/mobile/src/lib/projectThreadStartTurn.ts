@@ -5,6 +5,7 @@ import {
   type ModelSelection,
   type OrchestrationMessageContext,
   type ProjectId,
+  type TaskId,
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@t3tools/contracts";
@@ -24,6 +25,7 @@ export function deriveThreadTitleFromPrompt(value: string): string {
 
 export interface ProjectThreadStartTurnSpec {
   readonly projectId: ProjectId;
+  readonly taskId?: TaskId | null;
   readonly projectCwd: string;
   readonly threadId: string;
   readonly commandId: string;
@@ -69,6 +71,7 @@ export function buildProjectThreadStartTurnInput(spec: ProjectThreadStartTurnSpe
     bootstrap: {
       createThread: {
         projectId: spec.projectId,
+        ...(spec.taskId != null ? { taskId: spec.taskId } : {}),
         title,
         modelSelection: spec.modelSelection,
         runtimeMode: spec.runtimeMode,

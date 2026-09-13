@@ -1,3 +1,7 @@
+import { useTaskWorkbench } from "../../state/use-task-workbench";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
+import { AppText as Text } from "../../components/AppText";
+import { Pressable } from "react-native";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -27,7 +31,10 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
-import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
+import {
+  recoverFailedThreadDraft,
+  recoverRetainedQueuedThreadDraft,
+} from "../../state/recover-failed-thread-draft";
 import { useEnvironmentQuery } from "../../state/query";
 import { dismissGitActionResult, useGitActionProgress } from "../../state/use-vcs-action-state";
 import { vcsEnvironment } from "../../state/vcs";
@@ -56,10 +63,7 @@ import {
   nextOpenTerminalId,
   resolveProjectScriptTerminalId,
 } from "../terminal/terminalMenu";
-import {
-  resolvePreferredThreadWorktreePath,
-  stagePendingTerminalLaunch,
-} from "../terminal/terminalLaunchContext";
+import { stagePendingTerminalLaunch } from "../terminal/terminalLaunchContext";
 import { terminalDebugLog } from "../terminal/terminalDebugLog";
 import { ThreadDetailScreen, type ThreadDetailScreenProps } from "./ThreadDetailScreen";
 import {
@@ -214,6 +218,12 @@ function ThreadRouteContent(
   } = useThreadSelection();
   const selectedThreadDetailState = props.selectedThreadDetailState;
   const selectedThreadDetail = Option.getOrNull(selectedThreadDetailState.data);
+  const workbench = useTaskWorkbench({
+    environmentId: selectedThread?.environmentId,
+    threadId: selectedThread?.id,
+    threadDetailWorktreePath: selectedThreadDetail?.worktreePath,
+  });
+  const workbenchCwd = workbench.worktreePath ?? workbench.workspaceRoot;
   // "Load earlier turns" header state for windowed (paginated) thread loads.
   const loadEarlierTurns = useMemo(() => {
     if (selectedThread === null || !threadHasOlderTurns(selectedThreadDetailState)) {
@@ -319,7 +329,7 @@ function ThreadRouteContent(
   /* ─── Native header theming ──────────────────────────────────────── */
   const usesNativeHeaderGlass = NATIVE_LIQUID_GLASS_SUPPORTED;
   const headerSubtitle = [
-    selectedThreadProject?.title ?? null,
+    workbench.task?.name ?? null,
     selectedEnvironmentConnection?.environmentLabel ?? null,
   ]
     .filter(Boolean)
@@ -335,17 +345,16 @@ function ThreadRouteContent(
   );
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: selectedThread?.environmentId ?? null,
-    threadId: selectedThread?.id ?? null,
+    threadId: workbench.ownerRef?.threadId ?? null,
   });
   const terminalMenuSessions = useMemo(
     () =>
       buildTerminalMenuSessions({
         knownSessions: knownTerminalSessions,
-        workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+        workspaceRoot: workbench.workspaceRoot,
       }),
-    [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
+    [knownTerminalSessions, workbench.workspaceRoot],
   );
-  const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
     if (!environmentId) {
       return;
@@ -455,12 +464,12 @@ function ThreadRouteContent(
   );
   const FilesInspector = useCallback(
     () =>
-      selectedThread !== null && selectedThreadCwd !== null ? (
+      selectedThread !== null && workbenchCwd !== null ? (
         <ThreadFileNavigatorPane
-          cwd={selectedThreadCwd}
+          cwd={workbenchCwd}
           environmentId={selectedThread.environmentId}
           headerInset={inspectorHeaderInset}
-          projectName={selectedThreadProject?.title ?? "Files"}
+          projectName={workbench.project?.title ?? "Files"}
           selectedPath={null}
           onSelectFile={handleSelectInspectorFile}
         />
@@ -469,8 +478,8 @@ function ThreadRouteContent(
       handleSelectInspectorFile,
       inspectorHeaderInset,
       selectedThread,
-      selectedThreadCwd,
-      selectedThreadProject?.title,
+      workbench.project?.title,
+      workbenchCwd,
     ],
   );
   const RouteInspector = useCallback(
@@ -522,10 +531,10 @@ function ThreadRouteContent(
       terminalDebugLog("terminal-menu:open-existing", {
         terminalId: nextTerminalId ?? null,
         hasThread: Boolean(selectedThread),
-        hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
+        hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
       });
 
-      if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (!selectedThread || !workbench.workspaceRoot) {
         return;
       }
 
@@ -535,17 +544,17 @@ function ThreadRouteContent(
         ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
       });
     },
-    [navigation, selectedThread, selectedThreadProject?.workspaceRoot],
+    [navigation, selectedThread, workbench.workspaceRoot],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
     terminalDebugLog("terminal-menu:open-new", {
       hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
+      hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
-    if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (!selectedThread || !workbench.workspaceRoot) {
       return;
     }
 
@@ -557,7 +566,7 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       terminalId: nextId,
     });
-  }, [navigation, selectedThread, selectedThreadProject?.workspaceRoot, terminalMenuSessions]);
+  }, [navigation, selectedThread, workbench.workspaceRoot, terminalMenuSessions]);
 
   const handleRunProjectScript = useCallback(
     async (script: ProjectScript) => {
@@ -565,10 +574,10 @@ function ThreadRouteContent(
         scriptId: script.id,
         command: script.command,
         hasThread: Boolean(selectedThread),
-        hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
+        hasWorkspaceRoot: Boolean(workbench.workspaceRoot),
       });
 
-      if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (!selectedThread || !workbench.workspaceRoot) {
         terminalDebugLog("project-script:abort", {
           scriptId: script.id,
           reason: "no-thread-or-workspace",
@@ -582,22 +591,19 @@ function ThreadRouteContent(
           (session) => session.status === "running" || session.status === "starting",
         ),
       });
-      const preferredWorktreePath = resolvePreferredThreadWorktreePath({
-        threadShellWorktreePath: selectedThread.worktreePath ?? null,
-        threadDetailWorktreePath: selectedThreadDetailWorktreePath,
-      });
+      const preferredWorktreePath = workbench.worktreePath;
       const cwd = projectScriptCwd({
-        project: { cwd: selectedThreadProject.workspaceRoot },
+        project: { cwd: workbench.workspaceRoot },
         worktreePath: preferredWorktreePath,
       });
       const env = projectScriptRuntimeEnv({
-        project: { cwd: selectedThreadProject.workspaceRoot },
+        project: { cwd: workbench.workspaceRoot },
         worktreePath: preferredWorktreePath,
       });
       stagePendingTerminalLaunch({
         target: {
           environmentId: selectedThread.environmentId,
-          threadId: selectedThread.id,
+          threadId: workbench.ownerRef!.threadId,
           terminalId: targetTerminalId,
         },
         launch: {
@@ -620,13 +626,7 @@ function ThreadRouteContent(
         terminalId: targetTerminalId,
       });
     },
-    [
-      navigation,
-      selectedThread,
-      selectedThreadDetailWorktreePath,
-      selectedThreadProject,
-      terminalMenuSessions,
-    ],
+    [navigation, selectedThread, workbench, terminalMenuSessions],
   );
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
@@ -644,12 +644,12 @@ function ThreadRouteContent(
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
-    canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject
+    canOpenTerminal: Boolean(workbench.workspaceRoot),
+    canOpenFiles: Boolean(workbench.workspaceRoot),
+    projectScripts: workbench.project
       ? resolveProjectScripts(
           routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-          selectedThreadProject,
+          workbench.project,
         )
       : [],
     terminalSessions: terminalMenuSessions,
@@ -757,6 +757,32 @@ function ThreadRouteContent(
     if (!creation?.creation || routeThreadIdentity === null) {
       return;
     }
+    if (
+      selectedThreadCreation?.outcome?.kind === "failed" &&
+      selectedThreadCreation.outcome.retainedInOutbox
+    ) {
+      try {
+        await recoverRetainedQueuedThreadDraft(creation, (current) => {
+          navigation.dispatch(
+            StackActions.replace("NewTaskSheet", {
+              screen: "NewTaskDraft",
+              params: {
+                pendingTaskId: String(current.messageId),
+                environmentId: String(current.environmentId),
+                projectId: String(current.creation!.projectId),
+              },
+            }),
+          );
+        });
+      } catch (error) {
+        Alert.alert(
+          "Could not restore draft",
+          error instanceof Error ? error.message : String(error),
+        );
+        return;
+      }
+      return;
+    }
     // The drain restored the prompt and attachments into the recovery draft
     // the rejected creation owns. Open that draft by id: without it the sheet
     // mints a fresh empty one and the restored content is unreachable.
@@ -839,6 +865,22 @@ function ThreadRouteContent(
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />
+      {workbench.task ? (
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => {
+            if (workbench.task)
+              navigation.navigate("Task", {
+                environmentId: workbench.task.environmentId,
+                taskId: workbench.task.id,
+              });
+          }}
+          className="min-h-11 flex-row items-center gap-2 bg-card px-4"
+        >
+          <Text className="text-sm text-primary">{workbench.task.name}</Text>
+          <Text className="text-xs text-foreground-muted">Open task</Text>
+        </Pressable>
+      ) : null}
 
       <GitActionProgressOverlay progress={gitActionProgress} onDismiss={dismissGitActionResult} />
 
@@ -919,7 +961,35 @@ function ThreadRouteContent(
           // Android draws its own in-flow header (AndroidScreenHeader below);
           // the native stack header stays iOS-only.
           headerShown: Platform.OS !== "android",
-          headerTitle: selectedThread.title,
+          headerTitle: () => (
+            <Pressable
+              accessibilityRole={workbench.task ? "button" : undefined}
+              accessibilityLabel={
+                workbench.task ? `Open task ${workbench.task.name}` : selectedThread.title
+              }
+              onPress={() => {
+                if (workbench.task)
+                  navigation.navigate("Task", {
+                    environmentId: workbench.task.environmentId,
+                    taskId: workbench.task.id,
+                  });
+              }}
+              className="flex-row items-center gap-2"
+            >
+              {selectedThreadProject ? (
+                <ProjectFavicon
+                  environmentId={selectedThreadProject.environmentId}
+                  faviconPath={selectedThreadProject.faviconPath}
+                  projectTitle={selectedThreadProject.title}
+                  workspaceRoot={selectedThreadProject.workspaceRoot}
+                  size={18}
+                />
+              ) : null}
+              <Text numberOfLines={1} className="shrink font-t3-bold text-foreground">
+                {selectedThread.title}
+              </Text>
+            </Pressable>
+          ),
           headerTitleStyle: usesNativeHeaderGlass
             ? {
                 fontSize: 17,
@@ -957,6 +1027,17 @@ function ThreadRouteContent(
       {Platform.OS === "android" ? (
         <AndroidScreenHeader
           title={selectedThread.title}
+          titleIcon={
+            selectedThreadProject ? (
+              <ProjectFavicon
+                environmentId={selectedThreadProject.environmentId}
+                faviconPath={selectedThreadProject.faviconPath}
+                projectTitle={selectedThreadProject.title}
+                workspaceRoot={selectedThreadProject.workspaceRoot}
+                size={18}
+              />
+            ) : undefined
+          }
           subtitle={headerSubtitle}
           onBack={
             layout.usesSplitView

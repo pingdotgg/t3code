@@ -2,6 +2,33 @@ export type AdaptiveNavigationAction = "push" | "replace" | "set-params";
 
 const BASE_THREAD_ROUTE_PATTERN = /^\/threads\/[^/]+\/[^/]+\/?$/;
 
+/** Task tool links keep optional task context in the existing tool route query. */
+export function parseActiveTaskPath(
+  pathname: string,
+): { environmentId: string; taskId: string } | null {
+  try {
+    const match = /^\/tasks\/([^/]+)\/([^/?]+)(?:\/|\?|$)/.exec(pathname);
+    if (match)
+      return {
+        environmentId: decodeURIComponent(match[1]!),
+        taskId: decodeURIComponent(match[2]!),
+      };
+    const tool = /^\/threads\/([^/]+)\/.*(?:files|terminal)(?:\/|\?|$)/.exec(pathname);
+    const taskId = new URLSearchParams(pathname.split("?")[1] ?? "").get("taskId");
+    return tool && taskId ? { environmentId: decodeURIComponent(tool[1]!), taskId } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function resolveTaskSelectionNavigationAction(input: {
+  readonly usesSplitView: boolean;
+  readonly pathname: string;
+}): AdaptiveNavigationAction {
+  if (!input.usesSplitView || input.pathname === "/") return "push";
+  return /^\/tasks\/[^/]+\/[^/?]+\/?$/.test(input.pathname) ? "set-params" : "replace";
+}
+
 export function isBaseThreadRoute(pathname: string): boolean {
   return BASE_THREAD_ROUTE_PATTERN.test(pathname);
 }

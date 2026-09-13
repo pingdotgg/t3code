@@ -10,7 +10,12 @@ import {
   ArchivedThreadsScreen,
   type ArchivedThreadsHeaderEnvironment,
 } from "./ArchivedThreadsScreen";
-import { buildArchivedThreadGroups, type ArchivedThreadSortOrder } from "./archivedThreadList";
+import {
+  buildArchivedTaskEntries,
+  buildArchivedThreadGroups,
+  type ArchivedThreadSortOrder,
+} from "./archivedThreadList";
+import { useTaskActions } from "../tasks/useTaskActions";
 import {
   refreshArchivedThreadsForEnvironment,
   useArchivedThreadSnapshots,
@@ -46,6 +51,21 @@ export function ArchivedThreadsRouteScreen() {
     [environments],
   );
   const { error, isLoading, refresh, snapshots } = useArchivedThreadSnapshots(environmentIds);
+  const taskActions = useTaskActions();
+  const archivedTasks = useMemo(
+    () => buildArchivedTaskEntries({ snapshots, environmentId: null, searchQuery: "", sortOrder }),
+    [snapshots, sortOrder],
+  );
+  const visibleTasks = useMemo(
+    () =>
+      buildArchivedTaskEntries({
+        snapshots,
+        environmentId: selectedEnvironmentId,
+        searchQuery,
+        sortOrder,
+      }),
+    [snapshots, selectedEnvironmentId, searchQuery, sortOrder],
+  );
   const groups = useMemo(
     () =>
       buildArchivedThreadGroups({
@@ -77,13 +97,20 @@ export function ArchivedThreadsRouteScreen() {
       environments={environments}
       error={error}
       groups={groups}
+      tasks={visibleTasks}
       isLoading={isLoading}
       onDeleteThread={confirmDeleteThread}
       onEnvironmentChange={setSelectedEnvironmentId}
       onRefresh={refresh}
       onSearchQueryChange={setSearchQuery}
       onSortOrderChange={setSortOrder}
-      onUnarchiveThread={unarchiveThread}
+      onUnarchiveThread={(thread) => {
+        const parent = archivedTasks.find(
+          (task) => task.environmentId === thread.environmentId && task.id === thread.taskId,
+        );
+        if (parent) void taskActions.execute("unarchive", parent);
+        else unarchiveThread(thread);
+      }}
       searchQuery={searchQuery}
       selectedEnvironmentId={selectedEnvironmentId}
       sortOrder={sortOrder}

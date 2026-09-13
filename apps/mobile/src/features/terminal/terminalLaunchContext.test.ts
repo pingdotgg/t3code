@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, TaskId, ThreadId } from "@t3tools/contracts";
+import { taskWorkbenchRef } from "@t3tools/client-runtime/state/task-workbench";
 
 import {
   resolvePreferredThreadWorktreePath,
@@ -29,6 +30,26 @@ describe("resolvePreferredThreadWorktreePath", () => {
 });
 
 describe("resolveTerminalOpenLocation", () => {
+  it("keeps an existing task PTY at its old root after a primary project edit", () => {
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: { cwd: "/old-primary", worktreePath: null },
+        activeSessionLocation: null,
+        workspaceRoot: "/new-primary",
+        threadShellWorktreePath: "/member-worktree",
+        threadDetailWorktreePath: "/member-detail",
+      }),
+    ).toEqual({ cwd: "/old-primary", worktreePath: null });
+    expect(
+      resolveTerminalOpenLocation({
+        terminalLocation: null,
+        activeSessionLocation: null,
+        workspaceRoot: "/new-primary",
+        threadShellWorktreePath: null,
+        threadDetailWorktreePath: null,
+      }),
+    ).toEqual({ cwd: "/new-primary", worktreePath: null });
+  });
   it("uses the thread detail worktree path before the workspace root for a fresh mobile open", () => {
     expect(
       resolveTerminalOpenLocation({
@@ -64,6 +85,19 @@ describe("resolveTerminalOpenLocation", () => {
 });
 
 describe("pending terminal launches", () => {
+  it("consumes a sibling launch through the task owner without crossing environments", () => {
+    const owner = taskWorkbenchRef({
+      environmentId: EnvironmentId.make("one"),
+      taskId: TaskId.make("shared"),
+    });
+    const target = { ...owner, terminalId: "task-launch" };
+    stagePendingTerminalLaunch({ target, launch: { cwd: "/primary", worktreePath: null } });
+    expect(
+      takePendingTerminalLaunch({ ...target, environmentId: EnvironmentId.make("two") }),
+    ).toBeNull();
+    expect(takePendingTerminalLaunch({ ...target, threadId: ThreadId.make("member") })).toBeNull();
+    expect(takePendingTerminalLaunch(target)?.cwd).toBe("/primary");
+  });
   it("stages and consumes launch details for a specific terminal target", () => {
     const target = {
       environmentId: EnvironmentId.make("env-1"),

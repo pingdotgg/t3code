@@ -5,6 +5,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  TaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
@@ -260,4 +261,12 @@ describe("pendingThreadCreationMessage", () => {
   it("omits the queued attachments rather than passing local draft ids to the feed", () => {
     expect(pendingThreadCreationMessage(creation)).not.toHaveProperty("attachments");
   });
+});
+
+it("presents pending task membership without changing its project", () => {
+  const taskId = TaskId.make("task-1");
+  expect(
+    pendingThreadCreationShell({ ...creation, creation: { ...creation.creation!, taskId } }),
+  ).toMatchObject({ taskId, projectId: creation.creation!.projectId });
+  expect(pendingThreadCreationShell(creation)?.taskId).toBeNull();
 });

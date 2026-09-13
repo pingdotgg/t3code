@@ -3,6 +3,7 @@ import {
   MessageId,
   ProjectId,
   ProviderInstanceId,
+  TaskId,
   ThreadId,
 } from "@t3tools/contracts";
 import { serializeAssistantCitation } from "@t3tools/shared/assistantCitations";
@@ -43,6 +44,7 @@ describe("project thread title", () => {
       suffix: "",
     });
     const input = buildProjectThreadStartTurnInput({
+      taskId: TaskId.make("task-parent"),
       projectId: ProjectId.make("project"),
       projectCwd: "/workspace",
       threadId: "new-thread",
@@ -60,6 +62,7 @@ describe("project thread title", () => {
       startFromOrigin: false,
       worktreeBranchName: "unused",
     });
+    expect(input.bootstrap.createThread.taskId).toBe("task-parent");
 
     expect(input.titleSeed).toBe(title);
     expect(input.bootstrap.createThread.title).toBe(input.titleSeed);

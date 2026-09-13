@@ -2046,6 +2046,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
           navigation.navigate("ThreadFile", {
             environmentId: String(props.environmentId),
             threadId: String(props.threadId),
+            ...(props.workspaceRoot ? { cwd: props.workspaceRoot } : {}),
             path: fileRoutePathSegments(relativePath),
             ...(presentation.line ? { line: String(presentation.line) } : {}),
           });
@@ -2091,6 +2092,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         navigation.navigate("ThreadFile", {
           environmentId: String(props.environmentId),
           threadId: String(props.threadId),
+          ...(props.workspaceRoot ? { cwd: props.workspaceRoot } : {}),
           path: fileRoutePathSegments(presentation.path),
           ...(presentation.line ? { line: String(presentation.line) } : {}),
         });

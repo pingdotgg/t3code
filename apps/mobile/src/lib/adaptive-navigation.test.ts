@@ -4,7 +4,54 @@ import {
   isBaseThreadRoute,
   resolveFileSelectionNavigationAction,
   resolveThreadSelectionNavigationAction,
+  parseActiveTaskPath,
+  resolveTaskSelectionNavigationAction,
 } from "./adaptive-navigation";
+
+describe("task navigation", () => {
+  it("preserves scoped task selection through task-only and legacy tool routes", () => {
+    expect(parseActiveTaskPath("/tasks/environment/task")).toEqual({
+      environmentId: "environment",
+      taskId: "task",
+    });
+    expect(parseActiveTaskPath("/threads/environment/files?taskId=task")).toEqual({
+      environmentId: "environment",
+      taskId: "task",
+    });
+    expect(parseActiveTaskPath("/threads/environment/thread/terminal?taskId=task")).toEqual({
+      environmentId: "environment",
+      taskId: "task",
+    });
+    expect(parseActiveTaskPath("/threads/environment/thread/files")).toBeNull();
+    expect(parseActiveTaskPath("/tasks/%E0%A4%A/task")).toBeNull();
+  });
+  it("replaces a tablet task when selecting a thread and keeps compact back navigation", () => {
+    expect(
+      resolveThreadSelectionNavigationAction({
+        usesSplitView: true,
+        pathname: "/tasks/environment/task",
+      }),
+    ).toBe("replace");
+    expect(
+      resolveTaskSelectionNavigationAction({
+        usesSplitView: true,
+        pathname: "/threads/environment/thread",
+      }),
+    ).toBe("replace");
+    expect(
+      resolveTaskSelectionNavigationAction({
+        usesSplitView: true,
+        pathname: "/tasks/environment/task",
+      }),
+    ).toBe("set-params");
+    expect(
+      resolveTaskSelectionNavigationAction({
+        usesSplitView: false,
+        pathname: "/tasks/environment/task",
+      }),
+    ).toBe("push");
+  });
+});
 
 describe("isBaseThreadRoute", () => {
   it("recognizes only the thread detail route", () => {

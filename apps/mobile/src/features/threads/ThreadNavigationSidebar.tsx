@@ -1,3 +1,8 @@
+import { readMobileTaskMove } from "./use-mobile-task-order";
+import { groupThreadsByTask, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { TaskListRow, TaskCreateListButton } from "./TaskListRow";
+import { useMobileTaskList } from "./use-mobile-task-list";
+import { buildMobileTaskListItems } from "./taskList";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { createThreadMovePlanner } from "./threadOrder";
 import type {
@@ -102,6 +107,7 @@ const SIDEBAR_STICKY_HEADER_HEIGHT = 106;
 interface ThreadNavigationSidebarProps {
   readonly width: number;
   readonly visible: boolean;
+  readonly selectedTaskKey?: string | null;
   readonly selectedThreadKey: string | null;
   readonly onOpenSettings: () => void;
   readonly onOpenEnvironmentSettings: () => void;
@@ -515,6 +521,7 @@ function ThreadNavigationSidebarPane(
     nowMinute,
     snoozeWakeTick,
   ]);
+  const mobileTaskList = useMobileTaskList();
   const threadListV2Layout = useMemo(() => {
     if (!threadListV2Enabled)
       return {
@@ -528,7 +535,14 @@ function ThreadNavigationSidebarPane(
       };
     return buildThreadListV2Items({
       pendingOrder,
-      threads: threads.filter((thread) => thread.archivedAt === null),
+      threads:
+        selectedProjectScope !== null
+          ? threads.filter((thread) => thread.archivedAt === null)
+          : groupThreadsByTask({
+              tasks: mobileTaskList.tasks,
+              threads,
+              taskCapableEnvironmentIds: mobileTaskList.capableIds,
+            }).ungrouped,
       environmentId: options.selectedEnvironmentId,
       projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
       searchQuery: props.searchQuery,
@@ -543,6 +557,7 @@ function ThreadNavigationSidebarPane(
       selectedThreadKey: props.selectedThreadKey ?? null,
     });
   }, [
+    mobileTaskList,
     pendingOrder,
     queuedThreadKeys,
     nowMinute,
@@ -562,7 +577,17 @@ function ThreadNavigationSidebarPane(
   ]);
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
-  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
+  const nextSnoozeWakeAt = useMemo(() => {
+    const now = Date.now();
+    return (
+      [
+        threadListV2Layout.nextSnoozeWakeAt,
+        ...mobileTaskList.tasks.map((task) => task.snoozedUntil),
+      ]
+        .filter((value): value is string => value != null && Date.parse(value) > now)
+        .sort()[0] ?? null
+    );
+  }, [threadListV2Layout.nextSnoozeWakeAt, mobileTaskList.tasks, snoozeWakeTick, nowMinute]);
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
     const wakeAtMs = Date.parse(nextSnoozeWakeAt);
@@ -593,16 +618,30 @@ function ThreadNavigationSidebarPane(
         (v2SearchQuery.length === 0 ||
           pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
     );
-    const items: SidebarListItem[] = buildThreadListV2ListItems({
-      items: threadListV2Layout.items,
-      pendingTasks: v2PendingTasks,
-      snoozedCount: threadListV2Layout.snoozedCount,
-      snoozedShelfExpanded,
-      snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-      settledCount: threadListV2Layout.settledCount,
-      settledShelfExpanded,
-      settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-      snoozeLabelNow: `${nowMinute}:00.000Z`,
+    const items: SidebarListItem[] = buildMobileTaskListItems({
+      ...mobileTaskList,
+      ungroupedLayout: true,
+      threads,
+      pendingTasks,
+      environmentId: options.selectedEnvironmentId,
+      projectScoped: selectedProjectScope !== null,
+      searchQuery: props.searchQuery,
+      selectedThreadKey: props.selectedThreadKey,
+      selectedTaskKey: props.selectedTaskKey,
+      matchedThreadKeys,
+      queuedThreadKeys,
+      now: new Date().toISOString(),
+      items: buildThreadListV2ListItems({
+        items: threadListV2Layout.items,
+        pendingTasks: v2PendingTasks,
+        snoozedCount: threadListV2Layout.snoozedCount,
+        snoozedShelfExpanded,
+        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
+        settledCount: threadListV2Layout.settledCount,
+        settledShelfExpanded,
+        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
+        snoozeLabelNow: `${nowMinute}:00.000Z`,
+      }),
     });
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
@@ -613,6 +652,14 @@ function ThreadNavigationSidebarPane(
     }
     return items;
   }, [
+    snoozeWakeTick,
+    mobileTaskList,
+    threads,
+    selectedProjectScope,
+    props.selectedThreadKey,
+    props.selectedTaskKey,
+    matchedThreadKeys,
+    queuedThreadKeys,
     listLayout.items,
     nowMinute,
     options.selectedEnvironmentId,
@@ -808,6 +855,7 @@ function ThreadNavigationSidebarPane(
           previous.key === item.key &&
           previous.item.thread === item.item.thread &&
           previous.item.variant === item.item.variant &&
+          previous.item.taskMember === item.item.taskMember &&
           previous.item.snoozed === item.item.snoozed &&
           previous.item.pinned === item.item.pinned &&
           previous.snoozeWakeLabelText === item.snoozeWakeLabelText
@@ -829,6 +877,14 @@ function ThreadNavigationSidebarPane(
         return previous.count === item.count && previous.expanded === item.expanded;
       }
       if (
+        previous.type === "task-card" ||
+        previous.type === "task-slim" ||
+        previous.type === "task-new-thread" ||
+        previous.type === "task-subshelf-header" ||
+        item.type === "task-card" ||
+        item.type === "task-slim" ||
+        item.type === "task-new-thread" ||
+        item.type === "task-subshelf-header" ||
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
         previous.type === "v2-pending" ||
@@ -866,6 +922,11 @@ function ThreadNavigationSidebarPane(
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
+        case "task-card":
+        case "task-slim":
+        case "task-new-thread":
+        case "task-subshelf-header":
+          return <TaskListRow item={item} />;
         case "v2-pending": {
           const pendingScopeKey = scopedProjectKey(
             item.pendingTask.environmentId,
@@ -891,16 +952,13 @@ function ThreadNavigationSidebarPane(
         }
         case "v2-thread": {
           const thread = item.item.thread;
-          const movePlanner = item.item.pinned
-            ? threadMovePlanners.pinned
-            : threadMovePlanners.active;
-          const movedId = `${thread.environmentId}:${thread.id}`;
           const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
           return (
             <ThreadListV2Row
               onNewThreadOnBranch={props.onNewThreadOnBranch}
               thread={thread}
               variant={item.item.variant}
+              taskMember={item.item.taskMember}
               hasQueuedMessages={queuedThreadKeys.has(`${thread.environmentId}:${thread.id}`)}
               snoozed={item.item.snoozed}
               pinned={item.item.pinned}
@@ -941,8 +999,12 @@ function ThreadNavigationSidebarPane(
                   ? pinReorderEnvironmentIds.has(thread.environmentId)
                   : activeReorderEnvironmentIds.has(thread.environmentId)
               }
-              canMoveUp={pendingOrder === null && movePlanner(movedId, "up") !== null}
-              canMoveDown={pendingOrder === null && movePlanner(movedId, "down") !== null}
+              canMoveUp={
+                pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "up") !== null
+              }
+              canMoveDown={
+                pendingOrder === null && readMobileTaskMove(threadOrderRow(thread), "down") !== null
+              }
               onSnoozeThread={snoozeThread}
               onUnsnoozeThread={unsnoozeThread}
               onUnsettleThread={unsettleThread}
@@ -1214,6 +1276,7 @@ function ThreadNavigationSidebarPane(
               <LegendList
                 data={listItems}
                 drawDistance={500}
+                ListHeaderComponent={TaskCreateListButton}
                 estimatedItemSize={64}
                 extraData={listExtraData}
                 getItemType={(item) => item.type}
@@ -1274,6 +1337,7 @@ function ThreadNavigationSidebarPane(
             <LegendList
               data={listItems}
               drawDistance={500}
+              ListHeaderComponent={TaskCreateListButton}
               estimatedItemSize={64}
               extraData={listExtraData}
               getItemType={(item) => item.type}

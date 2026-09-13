@@ -5,6 +5,7 @@ import {
   EnvironmentId,
   MessageId,
   ProjectId,
+  TaskId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
@@ -78,6 +79,8 @@ vi.mock("../lib/attachmentUpload", () => ({
   prepareTurnAttachments: harness.prepareTurnAttachments,
 }));
 
+vi.mock("./tasks", () => ({ useTasks: () => [] }));
+
 vi.mock("./entities", () => ({
   useProjects: () => [],
   useServerConfigs: () => new Map(),
@@ -99,8 +102,21 @@ vi.mock("./use-atom-command", () => ({
 
 vi.mock("./use-thread-outbox", async () => {
   const { Atom } = await import("effect/unstable/reactivity");
+  const { appAtomRegistry } = await import("./atom-registry");
+  const editingQueuedMessageIdsAtom = Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive);
   return {
-    editingQueuedMessageIdsAtom: Atom.make<Record<string, boolean>>({}).pipe(Atom.keepAlive),
+    editingQueuedMessageIdsAtom,
+    dispatchingQueuedMessageIdAtom: Atom.make<string | null>(null).pipe(Atom.keepAlive),
+    holdEditingQueuedMessage: (messageId: string) =>
+      appAtomRegistry.set(editingQueuedMessageIdsAtom, {
+        ...appAtomRegistry.get(editingQueuedMessageIdsAtom),
+        [messageId]: true,
+      }),
+    releaseEditingQueuedMessage: (messageId: string) => {
+      const next = { ...appAtomRegistry.get(editingQueuedMessageIdsAtom) };
+      delete next[messageId];
+      appAtomRegistry.set(editingQueuedMessageIdsAtom, next);
+    },
     useThreadOutboxMessages: () => ({}),
     useThreadOutboxShellStatuses: () => new Map(),
   };
@@ -140,8 +156,11 @@ import {
 } from "./pending-thread-creation";
 import type { QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
-import { recoverFailedThreadDraft } from "./recover-failed-thread-draft";
-import { editingQueuedMessageIdsAtom } from "./use-thread-outbox";
+import {
+  recoverFailedThreadDraft,
+  recoverRetainedQueuedThreadDraft,
+} from "./recover-failed-thread-draft";
+import { editingQueuedMessageIdsAtom, dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
   prepareQueuedMessageAttachments,
@@ -666,12 +685,95 @@ describe("thread outbox recovery rollback", () => {
     );
   });
 
+  it("reserves queued recovery before persistence and transfers the hold to the editor", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "task-reserved", text: "Original prompt" }),
+      creation: {
+        projectId: ProjectId.make("project"),
+        taskId: TaskId.make("parent"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    await harness.manager.enqueue(message);
+    const openEditor = vi.fn();
+    const recovering = recoverRetainedQueuedThreadDraft(message, openEditor);
+    expect(appAtomRegistry.get(editingQueuedMessageIdsAtom)[message.messageId]).toBe(true);
+    await expect(
+      completeQueuedMessageDelivery(message, harness.manager.revisionOf(message.messageId)),
+    ).resolves.toBe("edited");
+    await recovering;
+    expect(openEditor).toHaveBeenCalledWith(message);
+    expect(appAtomRegistry.get(editingQueuedMessageIdsAtom)[message.messageId]).toBe(true);
+    expect(remainingMessages()).toEqual([message]);
+  });
+
+  it("releases a failed recovery reservation and refuses in-flight or missing messages", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "task-reserve-failed", text: "Original prompt" }),
+      creation: {
+        projectId: ProjectId.make("project"),
+        taskId: TaskId.make("parent"),
+        workspaceMode: "local",
+        branch: null,
+        worktreePath: null,
+      },
+    };
+    const openEditor = vi.fn();
+    await expect(recoverRetainedQueuedThreadDraft(message, openEditor)).rejects.toThrow(
+      "no longer queued",
+    );
+    await harness.manager.enqueue(message);
+    appAtomRegistry.set(dispatchingQueuedMessageIdAtom, message.messageId);
+    await expect(recoverRetainedQueuedThreadDraft(message, openEditor)).rejects.toThrow(
+      "being delivered",
+    );
+    appAtomRegistry.set(dispatchingQueuedMessageIdAtom, null);
+    harness.draftFile.setWriteError(new Error("disk full"));
+    await expect(recoverRetainedQueuedThreadDraft(message, openEditor)).rejects.toThrow(
+      "Composer draft persistence",
+    );
+    expect(appAtomRegistry.get(editingQueuedMessageIdsAtom)[message.messageId]).toBeUndefined();
+    expect(openEditor).not.toHaveBeenCalled();
+    expect(remainingMessages()).toEqual([message]);
+  });
+
+  it("keeps a blocked task creation queued while recovering its prompt and setup edits for the pending editor", async () => {
+    const message: QueuedThreadMessage = {
+      ...queuedMessage({ messageId: "task-blocked", text: "Original prompt" }),
+      creation: {
+        projectId: ProjectId.make("original-project"),
+        taskId: TaskId.make("parent"),
+        workspaceMode: "local",
+        branch: "main",
+        worktreePath: null,
+      },
+    };
+    await harness.manager.enqueue(message);
+    const sourceKey = `${message.environmentId}:${message.threadId}`;
+    appAtomRegistry.set(composerDrafts.composerDraftsAtom, {
+      [sourceKey]: { text: "Follow-up", attachments: [] },
+    });
+    await recoverFailedThreadDraft(message, { retainedInOutbox: true });
+    expect(remainingMessages()).toEqual([message]);
+    expect(
+      composerDrafts.getComposerDraftSnapshot(`pending-task:${message.messageId}`),
+    ).toMatchObject({
+      text: "Original prompt\n\nFollow-up",
+      taskId: message.creation!.taskId,
+      workspaceSelection: { branch: "main" },
+    });
+    expect(composerDrafts.getComposerDraftSnapshot(sourceKey).text).toBe("");
+  });
+
   it("restores a rejected new task as its own draft for the project", async () => {
     const message: QueuedThreadMessage = {
       ...queuedMessage({ messageId: "message-creation-restore", text: "new task text" }),
       modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
       creation: {
         projectId: ProjectId.make("project-1"),
+        taskId: TaskId.make("parent-task"),
         workspaceMode: "local",
         branch: null,
         worktreePath: null,
@@ -689,6 +791,7 @@ describe("thread outbox recovery rollback", () => {
       composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),
     ).toMatchObject({
       text: message.text,
+      taskId: message.creation!.taskId,
       attachments: message.attachments,
       modelSelection: message.modelSelection,
       project: {
