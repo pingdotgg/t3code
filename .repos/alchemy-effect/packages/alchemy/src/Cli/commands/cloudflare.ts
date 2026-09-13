@@ -142,7 +142,7 @@ const teardownCommand = Command.make(
     }),
   ),
 ).pipe(
-  Command.withHidden,
+  Command.unlisted,
   Command.withDescription("Tear down the cloudflare state store"),
 );
 
@@ -153,7 +153,7 @@ const teardownCommand = Command.make(
 type CreateTokenPolicy = {
   effect: "allow";
   permissionGroups: { id: string }[];
-  resources: Record<string, unknown>;
+  resources: Record<string, string>;
 };
 
 /**

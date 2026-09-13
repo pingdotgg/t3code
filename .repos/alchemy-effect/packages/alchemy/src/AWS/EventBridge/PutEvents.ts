@@ -17,9 +17,8 @@ export interface PutEventsRequest extends Omit<
  * a callable that automatically injects the bus name into every entry. Omit
  * the bus argument to publish to the account's default event bus. Provide the
  * `PutEventsHttp` layer on the Function to satisfy the binding.
- * @binding
- * @section Publishing Events
- * @example Publish an Event from a Handler
+ * ### Publishing Events
+ * **Example:** Publish an Event from a Handler
  * ```typescript
  * // init — bind the bus (provide AWS.EventBridge.PutEventsHttp on the Function)
  * const putEvents = yield* AWS.EventBridge.PutEvents(bus);
@@ -43,7 +42,7 @@ export interface PutEventsRequest extends Omit<
  * };
  * ```
  *
- * @example Publish to the Default Event Bus
+ * **Example:** Publish to the Default Event Bus
  * ```typescript
  * // omit the bus argument to target the account's default bus
  * const putEvents = yield* AWS.EventBridge.PutEvents();
@@ -58,6 +57,8 @@ export interface PutEventsRequest extends Omit<
  *   ],
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutEvents extends Binding.Service<
   PutEvents,

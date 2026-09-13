@@ -194,6 +194,295 @@ over their TCP port via `getTcpPort`. To build, tag, and push that
 image as part of the same Stack, see
 [Build & push images](/docker/build-and-push) in the Docker hub.
 
+When `image` already references Cloudflare's managed registry —
+for example a digest reference pushed by CI, like
+`registry.cloudflare.com/<accountId>/app@sha256:...` — alchemy
+deploys the reference as-is and skips the docker pull and push
+entirely.
+
+## Configure the container with `env`
+
+A container is a process, not a Worker: it has no bindings, so every
+piece of configuration reaches it as an environment variable. `env`
+takes a plain map and lands each entry on the deployment, where the
+program reads it from `process.env` — the same for a generated
+(`main`) image, a `context` build, and a pre-built `image`:
+
+```typescript
+export class Api extends Cloudflare.Container<Api>()("Api", {
+  context: `${import.meta.dirname}/api`,
+  ports: [{ name: "http", port: 8080 }],
+  env: {
+    PORT: "8080",
+    LOG_LEVEL: "info",
+  },
+}) {}
+```
+
+Values are strings. Wrap a secret in `Redacted` and it stays
+encrypted in alchemy's state and out of plan output, while the
+container still reads a plain string:
+
+```typescript
+env: {
+  SESSION_KEY: Redacted.make(process.env.SESSION_KEY!),
+}
+```
+
+## Read another resource's outputs
+
+A class body is module scope, so there is nowhere to `yield*` the
+bucket, queue, or database whose output you need — and a bare
+declaration is an Effect, not a resolved handle, so
+`Uploads.bucketName` is `undefined` until something yields it. Pass
+the props as an `Effect.gen` instead; inside it, sibling resources
+resolve like anywhere else:
+
+```typescript
+import * as Effect from "effect/Effect";
+
+export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
+export class Api extends Cloudflare.Container<Api>()(
+  "Api",
+  Effect.gen(function* () {
+    const uploads = yield* Uploads;
+    return {
+      context: `${import.meta.dirname}/api`,
+      env: { BUCKET_NAME: uploads.bucketName },
+    };
+  }),
+) {}
+```
+
+The reference is what orders the deploy: the bucket is created
+before the container application that reads its name.
+
+## Connect to a SQL database
+
+An **effectful** (`main`) container runs your Effect program, so it
+resolves a database capability the same way a Worker does — declare
+the connection once, then bind it:
+
+```typescript
+// src/Db.ts
+import * as Prisma from "alchemy/Prisma";
+import * as Effect from "effect/Effect";
+
+export const Connection = Effect.gen(function* () {
+  const project = yield* Prisma.Project("app", {
+    createDatabase: false,
+    region: "us-east-1",
+  });
+  const postgres = yield* Prisma.Postgres("db", {
+    project,
+    region: "us-east-1",
+  });
+  return yield* Prisma.Connection("api", { database: postgres });
+});
+```
+
+```typescript
+// src/Api.runtime.ts
+import * as Prisma from "alchemy/Prisma";
+import * as SQL from "alchemy/SQL/Postgres";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Api } from "./Api.ts";
+import { Connection } from "./Db.ts";
+
+export default Api.make(
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const db = yield* Prisma.Connect(Connection);
+    const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+
+    return Api.of({
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json(users);
+      }),
+    });
+  }).pipe(Effect.provide(Prisma.ConnectBinding)),
+);
+```
+
+You never name `DATABASE_URL`. The container has no bindings — it is
+a process, not a Worker — so `Prisma.Connect` writes the connection's
+outputs onto the deployment as environment variables and reads them
+back at runtime. The capability owns both ends.
+
+Start it with outbound networking, or the container never reaches the
+database at all:
+
+```typescript
+Effect.provide(Cloudflare.Containers.layer(Api, { enableInternet: true }))
+```
+
+## Connect an arbitrary image to a database
+
+An image you brought yourself knows nothing about alchemy, so there
+is no capability to bind — you name the variable and hand it the
+connection string. Give it the provider's **pooled** endpoint
+(Prisma's `databaseUrl` already prefers it; on Neon it is
+`branch.pooledConnectionUri`, on PlanetScale `role.connectionUrlPooled`),
+since nothing else is pooling those connections on the container's
+behalf:
+
+```typescript
+// src/Web.ts
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as Effect from "effect/Effect";
+import { Connection } from "./Db.ts";
+
+export class Web extends Cloudflare.Container<Web>()(
+  "Web",
+  Effect.gen(function* () {
+    const connection = yield* Connection;
+    return {
+      context: `${import.meta.dirname}/web`,
+      ports: [{ name: "http", port: 8080 }],
+      env: {
+        DATABASE_URL: connection.databaseUrl,
+        PORT: "8080",
+      },
+    };
+  }),
+) {}
+```
+
+Your image reads `DATABASE_URL` with whatever client it already
+uses — `pg`, Prisma, Rails, Django. Nothing about the container is
+alchemy-specific; only the value's provenance is.
+
+A Worker fronting the same database still binds Hyperdrive — see
+[Hyperdrive](/cloudflare/data/hyperdrive). The two coexist: point
+Hyperdrive at the *direct* origin (it pools for the Worker) and the
+container at the pooled one.
+
+Under `alchemy dev` the same wiring targets your local emulators. A
+local dev database hands out `localhost` URLs, but inside the Docker
+container `localhost` is the container itself — so the dev runtime
+rewrites loopback hosts in the container's env to
+`host.docker.localhost`. The alias deliberately keeps `localhost` in
+the hostname so clients that gate plain-HTTP on a local-looking host
+(Prisma's `prisma+postgres://` protocol, for one) keep working against
+the local dev server.
+
+On Docker Desktop that alias is Docker's `host-gateway`, which
+forwards to processes bound to `127.0.0.1` on your machine.
+
+On native Linux, `host-gateway` is the docker bridge IP
+(`172.17.0.1`). A TCP SYN to that address is host INPUT — UFW,
+firewalld, and nftables on CachyOS/Arch will drop it. Binding the
+same port on the bridge or on your LAN NIC does not skip INPUT.
+Alchemy does not go that way:
+
+1. `@prisma/dev` (and any host server you start) stay on `127.0.0.1`.
+2. A unix socket on the host forwards to that port.
+3. The workerd `<name>-proxy` sidecar bind-mounts the socket and maps
+   `host.docker.localhost` to `127.0.0.1` in the shared netns.
+4. A listener in that netns accepts `127.0.0.1:<port>` and forwards
+   through the socket.
+
+The container talks to itself. The socket crosses the boundary. UFW
+never sees a SYN to `172.17.0.1`.
+
+If the unix-socket path cannot attach (missing `nsenter`, EPERM),
+Alchemy logs this UFW hole — do not set `DEFAULT_INPUT_POLICY=ACCEPT`:
+
+```
+sudo ufw allow from 172.16.0.0/12 to any port <prisma-or-dev-ports> proto tcp
+```
+
+Neon and PlanetScale have no local emulator: even under `alchemy
+dev` the URL is a cloud host (`*.neon.tech`, `*.psdb.cloud`) and the
+rewrite is a no-op. The container still needs
+`enableInternet: true` to reach them.
+
+## Which capabilities reach a container
+
+The split follows the transport. A capability whose config travels as
+environment variables works in a container: `Prisma.Connect`, and the
+token-scoped HTTP clients for
+[R2](/cloudflare/data/r2), [KV](/cloudflare/data/kv), and
+[Queues](/cloudflare/messaging/queues) —
+`Cloudflare.R2.ReadWriteBucketHttp` and friends, which mint a scoped
+API token instead of using a native binding.
+
+A capability that *is* a workerd binding cannot:
+`Cloudflare.Hyperdrive.Connect`, `Cloudflare.D1.QueryDatabase`, and
+every `*Binding` layer resolve against the Workers runtime, which no
+container process has. Use the `*Http` layer where one exists, and
+environment variables otherwise.
+
+## Bind on an async Worker
+
+An async Worker can host a container-backed Durable Object class
+that ships as plain JavaScript — `@cloudflare/sandbox`'s `Sandbox`,
+or your own class extending `@cloudflare/containers`' `Container`.
+The class lives in the worker script:
+
+```typescript
+// src/worker.ts
+import { Container } from "@cloudflare/containers";
+
+export class Sandbox extends Container {
+  defaultPort = 8080;
+}
+```
+
+`Sandbox` is the Durable Object class Cloudflare instantiates for
+each container instance; `Container` (from `@cloudflare/containers`)
+handles the lifecycle and forwards `fetch` to the port inside it.
+
+Declare it in the stack by binding a `Cloudflare.Container` in the
+Worker's `env` — the Container is the Durable Object binding and its
+ContainerApplication together. Alchemy emits the
+`durable_object_namespace` binding, marks the class as
+container-backed in the script metadata, provisions the application,
+and attaches it to the class's namespace:
+
+```typescript
+// alchemy.run.ts
+import type { Sandbox } from "./src/worker.ts";
+
+export const Worker = Cloudflare.Worker("Worker", {
+  main: "./src/worker.ts",
+  env: {
+    Sandbox: Cloudflare.Container<Sandbox>("Sandbox", {
+      image: "docker.io/cloudflare/sandbox:0.1.3",
+    }),
+  },
+});
+```
+
+The Durable Object class name defaults to the binding name (the
+`env` key). Set `className` when the exported class is named
+differently. The type parameter (`Container<Sandbox>`) is the class
+from `worker.ts` above — it types `env.Sandbox` as
+`DurableObjectNamespace<Sandbox>` through
+[`InferEnv`](/cloudflare/compute/workers#typed-env-for-async-workers),
+so the handler reaches the container with full types:
+
+```typescript
+// src/worker.ts
+import { getContainer } from "@cloudflare/containers";
+import type * as Cloudflare from "alchemy/Cloudflare";
+import type { Worker } from "../alchemy.run.ts";
+
+export default {
+  async fetch(request: Request, env: Cloudflare.InferEnv<typeof Worker>) {
+    return getContainer(env.Sandbox, "default").fetch(request);
+  },
+};
+```
+
+Only image-backed containers (`image`, or `context`/`dockerfile`)
+can be bound this way. An effectful (`main`) container's runtime is
+provided by its `.make()` Layer, which needs an Effect-native
+Durable Object host.
+
 ## ContainerApplication
 
 Under the hood every container is backed by a
@@ -203,6 +492,35 @@ type, instance counts, and observability settings. You typically
 extend `Cloudflare.Container` rather than using it directly, but
 the same props shape (`instanceType`, `observability`, `runtime`,
 …) flows through `.make()`.
+
+## Rollouts
+
+When a deploy changes the image or configuration, running instances
+are replaced with the new version. By default the replacement is
+immediate — every instance at once. Set `rollout` to replace them in
+steps instead, so the application stays available through the update:
+
+```typescript
+export class Api extends Cloudflare.Container<Api>()("Api", {
+  main: import.meta.url,
+  instances: 4,
+  maxInstances: 4,
+  rollout: { strategy: "rolling", stepPercentage: 25 },
+}) {}
+```
+
+A `rolling` strategy replaces `stepPercentage` of the instances per
+step and advances automatically as the new instances come up. Each
+replaced instance receives `SIGTERM` and has 15 minutes to shut down
+cleanly before `SIGKILL`.
+
+Rollouts replace instances; they do not split requests between two
+image versions. The Worker and Durable Object fronting the container
+cut over immediately while instances roll, so keep the
+Worker-to-container protocol compatible across both image versions
+until the rollout completes. Request-level traffic splitting exists
+one layer up, on the Worker — see
+[Gradual deployments](/cloudflare/compute/gradual-deployments).
 
 ## Where next
 

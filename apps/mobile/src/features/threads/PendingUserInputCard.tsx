@@ -1,3 +1,4 @@
+import { QuestionAttachments } from "./QuestionAttachments";
 import type { ApprovalRequestId, UserInputQuestion } from "@t3tools/contracts";
 import { useCallback, useRef } from "react";
 import { Platform, Pressable, ScrollView, View, type LayoutChangeEvent } from "react-native";
@@ -15,7 +16,7 @@ import Animated, {
 import { USER_INPUT_TOGGLE_DURATION_MS } from "./pendingUserInputLayout";
 
 import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { AppText as Text } from "../../components/AppText";
 import { ControlPill } from "../../components/ControlPill";
 import { cn } from "../../lib/cn";
 import {
@@ -66,6 +67,8 @@ export interface PendingUserInputCardProps {
     customAnswer: string,
   ) => void;
   readonly onSubmit: () => Promise<unknown>;
+  /** Closes an async question without a reply. Hidden for native callback questions. */
+  readonly onDismiss: () => Promise<unknown>;
 }
 
 /**
@@ -303,18 +306,17 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
                   );
                 })}
               </View>
-              {question.allowCustomAnswer !== false ? (
-                <TextInput
-                  value={draft?.customAnswer ?? ""}
-                  onChangeText={(value) =>
-                    props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
-                  }
-                  onFocus={() => props.onInputFocusChange?.(true)}
-                  onBlur={() => props.onInputFocusChange?.(false)}
-                  placeholder="Or type a custom answer"
-                  className="min-h-[54px] rounded-2xl border border-input-border bg-input px-3.5 py-3 font-sans text-base text-foreground"
-                />
-              ) : null}
+              <QuestionAttachments
+                requestId={props.pendingUserInput.requestId}
+                question={question}
+                questions={props.pendingUserInput.questions}
+                disabled={props.respondingUserInputId === props.pendingUserInput.requestId}
+                value={draft?.customAnswer ?? ""}
+                onChangeText={(value) =>
+                  props.onChangeCustomAnswer(props.pendingUserInput.requestId, question.id, value)
+                }
+                onInputFocusChange={props.onInputFocusChange}
+              />
             </View>
           );
         })}
@@ -338,6 +340,18 @@ export function PendingUserInputCard(props: PendingUserInputCardProps) {
           Submit answers
         </Text>
       </Pressable>
+      {props.pendingUserInput.dismissible ? (
+        <Pressable
+          accessibilityRole="button"
+          className="items-center justify-center rounded-2xl px-4 py-2.5 active:opacity-70"
+          disabled={props.respondingUserInputId === props.pendingUserInput.requestId}
+          onPress={() => void props.onDismiss()}
+        >
+          <Text className="font-t3-bold text-sm text-foreground-muted">
+            Dismiss without answering
+          </Text>
+        </Pressable>
+      ) : null}
     </Animated.View>
   ) : null;
   return (

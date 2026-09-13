@@ -119,7 +119,7 @@ export interface Any {
  * A type-level carrier for RPC middleware metadata, including provided
  * services, required services, error schema, and client error type.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export interface AnyId {
@@ -135,7 +135,7 @@ export interface AnyId {
  * The `Context.Service` class shape created for an RPC middleware, including
  * its error schema, service metadata, and client-side requirement marker.
  *
- * @category models
+ * @category services
  * @since 4.0.0
  */
 export interface ServiceClass<
@@ -164,7 +164,7 @@ export interface ServiceClass<
 /**
  * Extracts the services provided by an RPC middleware.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Provides<A> = A extends { readonly [TypeId]: { readonly provides: infer P } } ? P : never
@@ -172,7 +172,7 @@ export type Provides<A> = A extends { readonly [TypeId]: { readonly provides: in
 /**
  * Extracts the services required by an RPC middleware.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Requires<A> = A extends { readonly [TypeId]: { readonly requires: infer R } } ? R : never
@@ -181,7 +181,7 @@ export type Requires<A> = A extends { readonly [TypeId]: { readonly requires: in
  * Applies a middleware's service transformation to an RPC environment by
  * removing services the middleware provides and adding services it requires.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ApplyServices<A, R> = Exclude<R, Provides<A>> | Requires<A>
@@ -189,7 +189,7 @@ export type ApplyServices<A, R> = Exclude<R, Provides<A>> | Requires<A>
 /**
  * Extracts the error schema associated with an RPC middleware.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ErrorSchema<A> = A extends { readonly [TypeId]: { readonly error: infer E } }
@@ -199,7 +199,7 @@ export type ErrorSchema<A> = A extends { readonly [TypeId]: { readonly error: in
 /**
  * Extracts the decoded error type produced by an RPC middleware.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type Error<A> = ErrorSchema<A>["Type"]
@@ -207,7 +207,7 @@ export type Error<A> = ErrorSchema<A>["Type"]
 /**
  * Extracts the encoding services required by a middleware's error schema.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ErrorServicesEncode<A> = ErrorSchema<A>["EncodingServices"]
@@ -215,7 +215,7 @@ export type ErrorServicesEncode<A> = ErrorSchema<A>["EncodingServices"]
 /**
  * Extracts the decoding services required by a middleware's error schema.
  *
- * @category models
+ * @category utility types
  * @since 4.0.0
  */
 export type ErrorServicesDecode<A> = ErrorSchema<A>["DecodingServices"]
@@ -318,7 +318,7 @@ export const Service = <
  * capturing the layer's environment and merging it into each middleware
  * invocation.
  *
- * @category client
+ * @category layers
  * @since 4.0.0
  */
 export const layerClient = <Id extends AnyId, S, R, EX = never, RX = never>(

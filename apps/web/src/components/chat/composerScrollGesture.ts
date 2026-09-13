@@ -4,6 +4,25 @@ export type ComposerScrollGestureState = {
   lastEventAt: number;
 };
 
+export function shouldCollapseComposerForScrollKey(input: {
+  key: string;
+  scrollTop: number;
+  scrollHeight: number;
+  clientHeight: number;
+  isAtLogicalEnd: boolean;
+}): boolean {
+  switch (input.key) {
+    case "PageUp":
+    case "Home":
+      return input.scrollTop > 1;
+    case "PageDown":
+    case "End":
+      return !input.isAtLogicalEnd && input.scrollTop < input.scrollHeight - input.clientHeight - 1;
+    default:
+      return false;
+  }
+}
+
 export function createComposerScrollGestureState(): ComposerScrollGestureState {
   return {
     accumulatedDeltaPx: 0,

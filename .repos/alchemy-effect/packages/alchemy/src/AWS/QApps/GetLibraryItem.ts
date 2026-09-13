@@ -16,9 +16,8 @@ export interface GetLibraryItemRequest extends Omit<
  *
  * Retrieves a library item — its published app version, categories, status, and rating counts. Provide the implementation with
  * `Effect.provide(AWS.QApps.GetLibraryItemHttp)`.
- * @binding
- * @section Library Items
- * @example Read a Library Item
+ * ### Library Items
+ * **Example:** Read a Library Item
  * ```typescript
  * // init — bind the operation to the Q App
  * const getLibraryItem = yield* AWS.QApps.GetLibraryItem(app);
@@ -27,6 +26,8 @@ export interface GetLibraryItemRequest extends Omit<
  * const item = yield* getLibraryItem({ libraryItemId });
  * console.log(item.ratingCount);
  * ```
+ *
+ * @binding
  */
 export interface GetLibraryItem extends Binding.Service<
   GetLibraryItem,

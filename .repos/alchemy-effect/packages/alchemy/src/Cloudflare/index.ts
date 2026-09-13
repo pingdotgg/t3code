@@ -111,6 +111,6 @@ export * from "./Workers/index.ts";
 export * from "./Workflows/index.ts";
 
 // runtime bridge factories — the generated Worker entry imports these from
-// "alchemy/Cloudflare" (see Workers/WorkerBundle.ts), so they must stay top-level.
+// "alchemy/Cloudflare" (see Workers/Sources/Rolldown.ts), so they must stay top-level.
 export { makeDurableObjectBridge, makeWorkerBridge } from "./Workers/index.ts";
 export { makeWorkflowBridge } from "./Workflows/index.ts";

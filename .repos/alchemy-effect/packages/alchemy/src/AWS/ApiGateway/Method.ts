@@ -135,14 +135,13 @@ export interface MethodType extends Resource<
  * REST API resource path. Most methods also carry an `integration` — the
  * downstream target that actually handles the request (a Lambda function,
  * an HTTP endpoint, a mock response, etc.).
- * @resource
- * @section Binding to a RestApi
+ * ### Binding to a RestApi
  * Pass the `RestApi` value on `restApi`. This threads the API id through
  * and registers the method as a `RestApiBinding` on the API, so that any
  * `Deployment` of the same API is automatically ordered after this method
  * completes. You do not need to manage `Deployment.triggers` yourself.
  *
- * @example GET on the API root with a mock integration
+ * **Example:** GET on the API root with a mock integration
  * ```typescript
  * yield* ApiGateway.Method("GetRoot", {
  *   restApi: api,
@@ -152,13 +151,13 @@ export interface MethodType extends Resource<
  * });
  * ```
  *
- * @section Lambda proxy integration
+ * ### Lambda proxy integration
  * For Lambda-backed APIs, the integration `uri` follows the
  * `arn:aws:apigateway:<region>:lambda:path/2015-03-31/functions/<function-arn>/invocations`
  * shape. Use `Output.map` to resolve the function ARN before building the
  * URI, since the function's ARN is only known at deploy time.
  *
- * @example ANY method with Lambda AWS_PROXY integration
+ * **Example:** ANY method with Lambda AWS_PROXY integration
  * ```typescript
  * import * as Output from "alchemy/Output";
  *
@@ -180,12 +179,12 @@ export interface MethodType extends Resource<
  * });
  * ```
  *
- * @section Methods on sub-paths
+ * ### Methods on sub-paths
  * Attach a method to a nested path by creating an `ApiGateway.Resource` and
  * passing its `resourceId` explicitly. `restApi` is still required so the
  * method binds for deployment ordering.
  *
- * @example Method on `/items`
+ * **Example:** Method on `/items`
  * ```typescript
  * const items = yield* ApiGateway.Resource("Items", {
  *   restApi: api,
@@ -201,6 +200,8 @@ export interface MethodType extends Resource<
  *   integration: { type: "MOCK" },
  * });
  * ```
+ *
+ * @resource
  */
 export const MethodResource = Resource<MethodType>("AWS.ApiGateway.Method");
 

@@ -45,9 +45,8 @@ export const isSecretRotationEvent = (
  *
  * At runtime it narrows incoming invocations to rotation events for the
  * bound secret and forwards them to the supplied handler.
- * @binding
- * @section Rotating Secrets
- * @example Handle Rotation Steps
+ * ### Rotating Secrets
+ * **Example:** Handle Rotation Steps
  * ```typescript
  * yield* SecretsManager.onSecretRotation(
  *   secret,
@@ -55,6 +54,8 @@ export const isSecretRotationEvent = (
  *   (event) => rotate(event).pipe(Effect.orDie),
  * );
  * ```
+ *
+ * @binding
  */
 export const SecretRotationEventSource = Layer.effect(
   SecretsManagerRotationEventSource,

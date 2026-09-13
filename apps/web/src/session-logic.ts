@@ -1,26 +1,33 @@
+import {
+  requestKindFromRequestType,
+  type PendingApproval,
+} from "@t3tools/client-runtime/pending-requests";
+import { UserInputAttachmentAnswerPayload } from "@t3tools/contracts";
+import { foldUserInputActivities } from "@t3tools/client-runtime/work-log/user-input";
 import * as Option from "effect/Option";
-import * as Arr from "effect/Array";
 import * as Schema from "effect/Schema";
+import * as Arr from "effect/Array";
 import { shallow } from "zustand/vanilla/shallow";
 import { compareCreatedOrder } from "@t3tools/shared/chronology";
 import { isBackgroundTaskActivity } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
+  extractWorkLogToolLifecycleStatus,
   isWorktreeSetupActivity,
+  workEntryIndicatesToolFailure,
+  workEntryIndicatesToolSuccess,
+  workLogEntryIsToolLike,
+  type WorkLogToolLifecycleStatus,
 } from "@t3tools/client-runtime/work-log/presentation";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import {
-  ApprovalRequestId,
   isToolLifecycleItemType,
   type AssetResource,
   type OrchestrationLatestTurn,
   type OrchestrationThreadActivity,
   type OrchestrationProposedPlanId,
-  ProviderApprovalOption,
-  ProviderRequestKind,
   type ToolLifecycleItemType,
-  type UserInputQuestion,
   type ThreadId,
   type TurnId,
 } from "@t3tools/contracts";
@@ -36,16 +43,19 @@ import {
   type TurnDiffSummary,
 } from "./types";
 
+export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/pending-requests";
+
 export { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
-export type WorkLogToolLifecycleStatus =
-  | "inProgress"
-  | "completed"
-  | "failed"
-  | "declined"
-  | "stopped";
+export {
+  workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolSuccess,
+  workLogEntryIsToolLike,
+  type WorkLogToolLifecycleStatus,
+} from "@t3tools/client-runtime/work-log/presentation";
 
 export interface WorkLogEntry {
+  questionAnswer?: UserInputAttachmentAnswerPayload;
   id: string;
   createdAt: string;
   createdSequence?: number;
@@ -75,10 +85,9 @@ export interface WorkLogEntry {
   /** Agent role (subagent_type) for labeled timeline rows. */
   agentRole?: string;
   /**
-   * Present on agent-spawn CTA rows: one per workflow run or per-turn batch
-   * of direct spawns. The row renders as a call-to-action ("Kicked off N
-   * subagents") whose live status is derived from the agent panel model at
-   * render time; clicking opens the Agents panel.
+   * Present on agent-spawn rows: one per workflow run or per-turn batch of
+   * direct spawns. The row ("Kicked off N subagents") derives its live
+   * status and member list from the agent panel model at render time.
    */
   agentSpawn?: {
     /** Workflow coordinator taskId, or null for a direct-spawn batch. */
@@ -102,24 +111,6 @@ const derivedWorkLogEntryByActivity = new WeakMap<
   OrchestrationThreadActivity,
   DerivedWorkLogEntry
 >();
-
-export interface PendingApproval {
-  requestId: ApprovalRequestId;
-  requestKind: ProviderRequestKind;
-  createdAt: string;
-  detail?: string;
-  appName?: string;
-  options?: ReadonlyArray<ProviderApprovalOption>;
-}
-
-const isProviderRequestKind = Schema.is(ProviderRequestKind);
-const isProviderApprovalOption = Schema.is(ProviderApprovalOption);
-
-export interface PendingUserInput {
-  requestId: ApprovalRequestId;
-  createdAt: string;
-  questions: ReadonlyArray<UserInputQuestion>;
-}
 
 export interface ActivePlanState {
   createdAt: string;
@@ -172,103 +163,6 @@ export interface TimelineEntriesProjection {
   readonly entries: TimelineEntry[];
 }
 
-export function workLogEntryIsToolLike(entry: WorkLogEntry): boolean {
-  if (entry.tone === "tool" || entry.tone === "thinking" || entry.tone === "error") {
-    return true;
-  }
-  if (entry.command !== undefined && entry.command.trim().length > 0) {
-    return true;
-  }
-  if (entry.requestKind !== undefined) {
-    return true;
-  }
-  return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
-}
-
-/** Heuristic: providers often emit successful lifecycle status while error text lives in `detail` / `command`. */
-function toolDetailTextLooksLikeFailure(text: string): boolean {
-  const t = text.toLowerCase();
-  if (t.includes("file not found")) {
-    return true;
-  }
-  if (t.includes("no files found")) {
-    return true;
-  }
-  if (
-    t.includes("enoent") ||
-    t.includes("no such file or directory") ||
-    t.includes("no such file")
-  ) {
-    return true;
-  }
-  if (t.includes("cannot find path") && t.includes("because it does not exist")) {
-    return true;
-  }
-  if (t.includes("commandnotfoundexception")) {
-    return true;
-  }
-  if (t.includes("is not recognized as the name of a cmdlet")) {
-    return true;
-  }
-  if (t.includes("is not recognized") && t.includes("the term '")) {
-    return true;
-  }
-  if (t.includes("a parameter cannot be found that matches parameter name")) {
-    return true;
-  }
-  if (t.includes("command not found")) {
-    return true;
-  }
-  if (/<exited with exit code\s+[1-9]\d*\s*>/i.test(text)) {
-    return true;
-  }
-  if (/exit(?:ed)? with exit code\s+[1-9]\d*/i.test(text)) {
-    return true;
-  }
-  if (/exit code\s*[:\s]\s*[1-9]\d*\b/i.test(text)) {
-    return true;
-  }
-  return false;
-}
-
-function workEntryIndicatesToolFailureFromOutput(
-  entry: WorkLogEntry,
-  includeCommand: boolean,
-): boolean {
-  if (entry.tone === "error") {
-    return true;
-  }
-  const ls = entry.toolLifecycleStatus;
-  if (ls === "failed" || ls === "declined") {
-    return true;
-  }
-  if (!workLogEntryIsToolLike(entry)) {
-    return false;
-  }
-  const parts: string[] = [];
-  if (entry.detail) {
-    parts.push(entry.detail);
-  }
-  if (includeCommand && entry.command) {
-    parts.push(entry.command);
-  }
-  const blob = parts.join("\n");
-  if (blob.length === 0) {
-    return false;
-  }
-  return toolDetailTextLooksLikeFailure(blob);
-}
-
-/** True when a tool failed, including providers that put error output in `command`. */
-export function workEntryIndicatesToolFailure(entry: WorkLogEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, true);
-}
-
-/** True when the rendered result indicates failure. The command itself is user intent, not output. */
-export function workEntryDisplayIndicatesToolFailure(entry: WorkLogEntry): boolean {
-  return workEntryIndicatesToolFailureFromOutput(entry, false);
-}
-
 /** Severe failures keep the red treatment ordinary tool failures lost: runtime
  *  errors and orchestration `*.failed` activities (provider.turn.start.failed,
  *  checkpoint.capture.failed, ...) mean the turn or a core side effect broke,
@@ -278,30 +172,6 @@ export function workEntrySignalsSevereFailure(entry: WorkLogEntry): boolean {
     entry.sourceActivityKind === "runtime.error" ||
     entry.sourceActivityKind?.endsWith(".failed") === true
   );
-}
-
-/** Tool/command row completed without failure (blue check affordance). */
-export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
-  if (!workLogEntryIsToolLike(entry)) {
-    return false;
-  }
-  if (workEntryIndicatesToolFailure(entry)) {
-    return false;
-  }
-  if (entry.tone === "thinking") {
-    return false;
-  }
-  const ls = entry.toolLifecycleStatus;
-  if (ls === "failed" || ls === "declined") {
-    return false;
-  }
-  if (ls === "inProgress") {
-    return false;
-  }
-  if (ls === "stopped") {
-    return false;
-  }
-  return true;
 }
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
@@ -355,208 +225,6 @@ export function deriveActiveWorkStartedAt(
     return latestTurn?.startedAt ?? sendStartedAt;
   }
   return sendStartedAt;
-}
-
-function requestKindFromRequestType(requestType: unknown): PendingApproval["requestKind"] | null {
-  switch (requestType) {
-    case "command_execution_approval":
-    case "exec_command_approval":
-    case "dynamic_tool_call":
-      return "command";
-    case "file_read_approval":
-      return "file-read";
-    case "file_change_approval":
-    case "apply_patch_approval":
-      return "file-change";
-    case "mcp_elicitation_approval":
-      return "mcp-elicitation";
-    default:
-      return null;
-  }
-}
-
-function isStalePendingRequestFailureDetail(detail: string | undefined): boolean {
-  const normalized = detail?.toLowerCase();
-  if (!normalized) {
-    return false;
-  }
-  return (
-    normalized.includes("stale pending approval request") ||
-    normalized.includes("stale pending user-input request") ||
-    normalized.includes("unknown pending approval request") ||
-    normalized.includes("unknown pending permission request") ||
-    normalized.includes("unknown pending user-input request") ||
-    normalized.includes("unknown pending user input request") ||
-    normalized.includes("unknown pending codex user input request")
-  );
-}
-
-export function derivePendingApprovals(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): PendingApproval[] {
-  const openByRequestId = new Map<ApprovalRequestId, PendingApproval>();
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-
-  for (const activity of ordered) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId =
-      payload && typeof payload.requestId === "string"
-        ? ApprovalRequestId.make(payload.requestId)
-        : null;
-    const requestKind =
-      payload && isProviderRequestKind(payload.requestKind)
-        ? payload.requestKind
-        : payload
-          ? requestKindFromRequestType(payload.requestType)
-          : null;
-    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
-    const appName = payload && typeof payload.appName === "string" ? payload.appName : undefined;
-    const options = Array.isArray(payload?.options)
-      ? payload.options.filter(isProviderApprovalOption)
-      : undefined;
-
-    if (
-      activity.kind === "approval.requested" &&
-      requestId &&
-      payload?.requestType !== "tool_user_input" &&
-      payload?.requestType !== "auth_tokens_refresh"
-    ) {
-      openByRequestId.set(requestId, {
-        requestId,
-        // Older OpenCode requests can have no recognized approval kind.
-        requestKind: requestKind ?? "command",
-        createdAt: activity.createdAt,
-        ...(detail ? { detail } : {}),
-        ...(appName ? { appName } : {}),
-        ...(options && options.length > 0 ? { options } : {}),
-      });
-      continue;
-    }
-
-    if (activity.kind === "approval.resolved" && requestId) {
-      openByRequestId.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.approval.respond.failed" &&
-      requestId &&
-      isStalePendingRequestFailureDetail(detail)
-    ) {
-      openByRequestId.delete(requestId);
-      continue;
-    }
-  }
-
-  return [...openByRequestId.values()].toSorted((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
-  );
-}
-
-function parseUserInputQuestions(
-  payload: Record<string, unknown> | null,
-): ReadonlyArray<UserInputQuestion> | null {
-  const questions = payload?.questions;
-  if (!Array.isArray(questions)) {
-    return null;
-  }
-  const parsed = questions
-    .map<UserInputQuestion | null>((entry) => {
-      if (!entry || typeof entry !== "object") return null;
-      const question = entry as Record<string, unknown>;
-      if (
-        typeof question.id !== "string" ||
-        typeof question.header !== "string" ||
-        typeof question.question !== "string" ||
-        !Array.isArray(question.options)
-      ) {
-        return null;
-      }
-      const options = question.options
-        .map<UserInputQuestion["options"][number] | null>((option) => {
-          if (!option || typeof option !== "object") return null;
-          const optionRecord = option as Record<string, unknown>;
-          if (
-            typeof optionRecord.label !== "string" ||
-            typeof optionRecord.description !== "string"
-          ) {
-            return null;
-          }
-          return {
-            label: optionRecord.label,
-            description: optionRecord.description,
-            ...(typeof optionRecord.value === "string" ? { value: optionRecord.value } : {}),
-          };
-        })
-        .filter((option): option is UserInputQuestion["options"][number] => option !== null);
-      if (options.length === 0 && question.allowCustomAnswer === false) {
-        return null;
-      }
-      return {
-        id: question.id,
-        header: question.header,
-        question: question.question,
-        options,
-        multiSelect: question.multiSelect === true,
-        ...(typeof question.allowCustomAnswer === "boolean"
-          ? { allowCustomAnswer: question.allowCustomAnswer }
-          : {}),
-      };
-    })
-    .filter((question): question is UserInputQuestion => question !== null);
-  return parsed.length > 0 ? parsed : null;
-}
-
-export function derivePendingUserInputs(
-  activities: ReadonlyArray<OrchestrationThreadActivity>,
-): PendingUserInput[] {
-  const openByRequestId = new Map<ApprovalRequestId, PendingUserInput>();
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-
-  for (const activity of ordered) {
-    const payload =
-      activity.payload && typeof activity.payload === "object"
-        ? (activity.payload as Record<string, unknown>)
-        : null;
-    const requestId =
-      payload && typeof payload.requestId === "string"
-        ? ApprovalRequestId.make(payload.requestId)
-        : null;
-    const detail = payload && typeof payload.detail === "string" ? payload.detail : undefined;
-
-    if (activity.kind === "user-input.requested" && requestId) {
-      const questions = parseUserInputQuestions(payload);
-      if (!questions) {
-        continue;
-      }
-      openByRequestId.set(requestId, {
-        requestId,
-        createdAt: activity.createdAt,
-        questions,
-      });
-      continue;
-    }
-
-    if (activity.kind === "user-input.resolved" && requestId) {
-      openByRequestId.delete(requestId);
-      continue;
-    }
-
-    if (
-      activity.kind === "provider.user-input.respond.failed" &&
-      requestId &&
-      isStalePendingRequestFailureDetail(detail)
-    ) {
-      openByRequestId.delete(requestId);
-    }
-  }
-
-  return [...openByRequestId.values()].toSorted((left, right) =>
-    left.createdAt.localeCompare(right.createdAt),
-  );
 }
 
 function planStateFromActivity(activity: OrchestrationThreadActivity): ActivePlanState | null {
@@ -662,8 +330,9 @@ export function deriveActivePlanState(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
   latestTurnId: TurnId | undefined,
 ): ActivePlanState | null {
-  const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const allPlanActivities = ordered.filter((activity) => activity.kind === "turn.plan.updated");
+  const allPlanActivities = activities
+    .filter((activity) => activity.kind === "turn.plan.updated")
+    .sort(compareActivitiesByOrder);
   // Prefer plan from the current turn; fall back to the most recent plan from any turn
   // so that TodoWrite tasks persist across follow-up messages.
   const latest = Option.firstSomeOf([
@@ -729,7 +398,8 @@ export function hasActionableProposedPlan(
  * - tool rows attributed to an owning agent (payload.agentId) are re-homed;
  * - task.progress ticks collapse into one row per taskId;
  * - task.updated is fold input only (status patches are not narrative).
- * Unattributed rows always stay: over-hiding loses the only terminal signal.
+ * Unattributed rows stay unless a linked agent row replaces their launch;
+ * failed launches stay so the only terminal signal cannot disappear.
  */
 /** Agent (non-background) task.started rows seed spawn CTA batches. */
 function isAgentTaskStartedActivity(activity: OrchestrationThreadActivity): boolean {
@@ -758,7 +428,7 @@ function isAgentInternalActivity(activity: OrchestrationThreadActivity): boolean
     activity.kind === "task.completed";
   // Task rows classify by the server stamp: a subagent's own background
   // shell (agentId + "background") is agent-internal, but a nested AGENT
-  // (agentId + "agent") stays visible so its rows can anchor a spawn CTA
+  // (agentId + "agent") stays visible so its rows can anchor a spawn row
   // (review finding: hiding on agentId alone removed nested agents and
   // their anchors). Bypassed agent lifecycle rows also pass — collapse
   // folds every such row into its batch's single CTA row, which is how
@@ -786,8 +456,22 @@ export function deriveWorkLogEntries(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): WorkLogEntry[] {
   const ordered = [...activities].toSorted(compareActivitiesByOrder);
-  const entries: DerivedWorkLogEntry[] = [];
+  // A launch tool and its task lifecycle describe the same run. Only hide
+  // launch rows once their tool-use id has an agent row to replace them.
+  const agentLaunchToolIds = new Set<string>();
   for (const activity of ordered) {
+    if (
+      (activity.kind === "task.started" ||
+        activity.kind === "task.progress" ||
+        activity.kind === "task.completed") &&
+      isAgentTaskStartedActivity(activity)
+    ) {
+      const toolUseId = asTrimmedString(asRecord(activity.payload)?.toolUseId);
+      if (toolUseId) agentLaunchToolIds.add(toolUseId);
+    }
+  }
+  const entries: DerivedWorkLogEntry[] = [];
+  for (const activity of foldUserInputActivities(ordered)) {
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
@@ -803,7 +487,28 @@ export function deriveWorkLogEntries(
     if (isNoContentRuntimeWarning(activity)) continue;
     if (isPlanBoundaryToolActivity(activity)) continue;
     if (isAgentInternalActivity(activity)) continue;
-    entries.push(toDerivedWorkLogEntry(activity));
+    const entry = toDerivedWorkLogEntry(activity);
+    // Native agent launches get their visible row from task.started. Defer
+    // their active tool row so another launch cannot duplicate the batch.
+    if (
+      activity.kind === "tool.updated" &&
+      entry.itemType === "collab_agent_tool_call" &&
+      entry.toolLifecycleStatus === "inProgress" &&
+      entry.tone !== "error"
+    ) {
+      const toolName = asRecord(asRecord(activity.payload)?.data)?.toolName;
+      if (toolName === "Agent" || toolName === "Task") continue;
+    }
+    if (
+      (activity.kind === "tool.updated" || activity.kind === "tool.completed") &&
+      entry.toolCallId &&
+      agentLaunchToolIds.has(entry.toolCallId) &&
+      entry.tone !== "error" &&
+      entry.toolLifecycleStatus !== "failed"
+    ) {
+      continue;
+    }
+    entries.push(entry);
   }
   return collapseDerivedWorkLogEntries(entries);
 }
@@ -831,24 +536,7 @@ function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): bool
   return typeof payload?.detail === "string" && payload.detail.startsWith("ExitPlanMode:");
 }
 
-function extractWorkLogToolLifecycleStatus(
-  payload: Record<string, unknown> | null,
-): WorkLogToolLifecycleStatus | undefined {
-  if (!payload) {
-    return undefined;
-  }
-  const s = payload.status;
-  if (
-    s === "inProgress" ||
-    s === "completed" ||
-    s === "failed" ||
-    s === "declined" ||
-    s === "stopped"
-  ) {
-    return s;
-  }
-  return undefined;
-}
+const decodeQuestionAttachmentAnswer = Schema.decodeUnknownOption(UserInputAttachmentAnswerPayload);
 
 function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWorkLogEntry {
   const cachedEntry = derivedWorkLogEntryByActivity.get(activity);
@@ -904,6 +592,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
           : activity.tone,
     sourceActivityKind: activity.kind,
   };
+  if (activity.kind === "user-input.answer-submitted") {
+    const answer = decodeQuestionAttachmentAnswer(payload);
+    if (Option.isSome(answer)) entry.questionAnswer = answer.value;
+  }
   const itemType = extractWorkLogItemType(payload);
   const requestKind = extractWorkLogRequestKind(payload);
   const viewedImagePath = asTrimmedString(asRecord(payload?.data)?.imagePath);
@@ -1031,7 +723,7 @@ function collapseDerivedWorkLogEntries(
   const collapsed: DerivedWorkLogEntry[] = [];
   // Subagent rows collapse by spawn group, not adjacency: a workflow run (or
   // a turn's batch of direct spawns) is ONE narrative event in the chat — a
-  // CTA row that opens the Agents panel — no matter how many agents it
+  // spawn row in the timeline — no matter how many agents it
   // contains or how their progress rows interleave (quiet-timeline
   // guarantee).
   const spawnRowIndex = new Map<string, number>();
@@ -1996,14 +1688,25 @@ export function deriveTimelineEntriesWithState(
     const entries = replaceStreamingTimelineMessages(messages, previous);
     if (entries !== null) return { messages, proposedPlans, workEntries, entries };
   }
+  const foldedAnswerMessageIds = new Set(
+    workEntries.flatMap((entry) =>
+      entry.questionAnswer ? [`async-answer:${entry.questionAnswer.requestId}`] : [],
+    ),
+  );
+  const showMessage = (message: ChatMessage) =>
+    message.role !== "user" || !foldedAnswerMessageIds.has(message.id);
   const canAppend =
     previous !== null &&
+    !previous.entries.some((entry) => entry.kind === "message" && !showMessage(entry.message)) &&
     hasExactArrayPrefix(previous.messages, messages) &&
     hasExactArrayPrefix(previous.proposedPlans, proposedPlans) &&
     hasExactArrayPrefix(previous.workEntries, workEntries);
 
   if (canAppend) {
-    const messageRows = messages.slice(previous.messages.length).map(timelineEntryFromMessage);
+    const messageRows = messages
+      .slice(previous.messages.length)
+      .filter(showMessage)
+      .map(timelineEntryFromMessage);
     const proposedPlanRows = proposedPlans
       .slice(previous.proposedPlans.length)
       .map(timelineEntryFromProposedPlan);
@@ -2019,7 +1722,7 @@ export function deriveTimelineEntriesWithState(
     };
   }
 
-  const messageRows = messages.map(timelineEntryFromMessage);
+  const messageRows = messages.filter(showMessage).map(timelineEntryFromMessage);
   const proposedPlanRows = proposedPlans.map(timelineEntryFromProposedPlan);
   const workRows = workEntries.map(timelineEntryFromWork);
   return {

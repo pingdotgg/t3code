@@ -11,9 +11,8 @@ import * as Binding from "../../Binding.ts";
  * their identifiers are unknown at deploy time). Provide the
  * implementation with `Effect.provide(AWS.Rekognition.GetMediaAnalysisJobHttp)`.
  *
- * @binding
- * @section Media Analysis Jobs
- * @example Poll a Media Analysis Job
+ * ### Media Analysis Jobs
+ * **Example:** Poll a Media Analysis Job
  * ```typescript
  * // init
  * const getMediaAnalysisJob = yield* AWS.Rekognition.GetMediaAnalysisJob();
@@ -22,6 +21,8 @@ import * as Binding from "../../Binding.ts";
  * const job = yield* getMediaAnalysisJob({ JobId: jobId });
  * // job.Status, job.Results?.S3Object
  * ```
+ *
+ * @binding
  */
 export interface GetMediaAnalysisJob extends Binding.Service<
   GetMediaAnalysisJob,

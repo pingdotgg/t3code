@@ -1,0 +1,228 @@
+---
+title: Vite
+description: "Deploy a Vite SPA to Hetzner with Hetzner.Website.Vite — static assets as a systemd unit on a Server, http://{ipv4}:3000, and Vite's own dev server under alchemy dev."
+sidebar:
+  order: 2
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const devDeps = "@alchemy.run/frontend-frameworks";
+
+`Hetzner.Website.Vite` deploys a [Vite](https://vite.dev) project to
+a Hetzner Cloud Server. It runs `vite build` and serves the output
+from a systemd [`Service`](/hetzner/compute/services) on port 3000.
+Omit `server` and Alchemy creates a `cpx12` / `ubuntu-24.04`
+[`Server`](/hetzner/compute/servers) in `fsn1`. Live `url` is
+`http://{ipv4}:3000`. Your `vite.config.*` loads natively — plugins
+included. There is no TLS on the Service and no framework server
+module.
+
+React, Vue, and Solid client SPAs belong here, as do multi-page apps
+that emit one HTML file per route. SSR frameworks that wrap Vite
+deploy through their own composites —
+[`Astro`](/hetzner/frontend/astro),
+[`Nextjs`](/hetzner/frontend/nextjs),
+[`Nuxt`](/hetzner/frontend/nuxt),
+[`ReactRouter`](/hetzner/frontend/react-router),
+[`SolidStart`](/hetzner/frontend/solidstart),
+[`SvelteKit`](/hetzner/frontend/sveltekit),
+[`TanStackStart`](/hetzner/frontend/tanstack-start),
+[`Waku`](/hetzner/frontend/waku),
+[`Octane`](/hetzner/frontend/octane).
+
+## Install
+
+The build integration is not bundled with alchemy. Install
+`@alchemy.run/frontend-frameworks`; the resource loads its `/vite`
+and `/vite/node` exports from your project at deploy time. It is
+only used at build time, so a dev dependency is enough:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add -d ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add -D ${devDeps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Configure Vite
+
+Your `vite.config.*` file loads natively — React, Vue, or Solid
+plugins, Tailwind, and any other non-serializable options work
+exactly as they do outside Alchemy. Alchemy merges a programmatic
+config *over* it via the `vite` prop — see
+[Vite configuration](#vite-configuration) below.
+
+```typescript
+// vite.config.ts
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+});
+```
+
+Do not set a Vite SSR adapter. This composite never creates a
+framework server module — it only ships the client build.
+
+## Declare the Website
+
+Declare the site as a module-level const (rather than inline in the
+Stack):
+
+```typescript
+// alchemy.run.ts
+import * as Hetzner from "alchemy/Hetzner";
+
+export const Website = Hetzner.Website.Vite("Website");
+```
+
+Pass `server` to run the unit on a Server you already have —
+several Services can share one machine; this site always listens on
+port 3000:
+
+```typescript
+export const Box = Hetzner.Server("Box", {
+  serverType: "cpx12",
+  image: "ubuntu-24.04",
+  location: "fsn1",
+});
+
+export const Website = Hetzner.Website.Vite("Website", { server: Box });
+```
+
+## Add it to the Stack
+
+Yield the site from your Stack and return its URL:
+
+```typescript
+// alchemy.run.ts
+import * as Alchemy from "alchemy";
+import * as Effect from "effect/Effect";
+
+export default Alchemy.Stack(
+  "MyViteSite",
+  {
+    providers: Hetzner.providers(),
+    state: Alchemy.localState(),
+  },
+  Effect.gen(function* () {
+    const site = yield* Website;
+    return { url: site.url };
+  }),
+);
+```
+
+On deploy, `url` is `http://{ipv4}:3000`. `server` and `service` are
+the backing resources; they are `undefined` under `alchemy dev`.
+
+See
+[examples/hetzner-website-vite](https://github.com/alchemy-run/alchemy/tree/main/examples/hetzner-website-vite)
+for the checked-in example (API unit and static site on one
+`cpx12`).
+
+## Add environment variables
+
+`env` is process environment — set on `process.env` before
+`vite build` / `alchemy dev`, and on the systemd unit at deploy. It
+is not Worker bindings:
+
+```diff lang="typescript"
+// alchemy.run.ts
+export const Website = Hetzner.Website.Vite("Website", {
++  env: {
++    VITE_GREETING: "Hello from Alchemy!",
++  },
+});
+```
+
+Vite inlines `VITE_*` into the client bundle at build time. Other
+keys reach the hosted Node process but not the browser.
+
+## Read the environment
+
+Client code reads inlined values from `import.meta.env`:
+
+```typescript
+// src/main.ts
+const greeting = import.meta.env.VITE_GREETING ?? "hello";
+```
+
+## Single-page vs multi-page
+
+Plain Vite apps are typically SPAs, so `assets.notFoundHandling`
+defaults to `"single-page-application"`: unmatched paths get
+`index.html` with status 200 so client-side routes deep-link. Use
+`"404-page"` for multi-page sites that ship a `404.html`:
+
+```typescript
+export const Website = Hetzner.Website.Vite("Docs", {
+  assets: { notFoundHandling: "404-page" },
+});
+```
+
+## Vite configuration
+
+`rootDir` is the project root (the directory containing
+`package.json`). Default `"."`.
+
+`vite.outDir` and `vite.base` are serializable overrides merged
+*over* the config file:
+
+```typescript
+export const Website = Hetzner.Website.Vite("Website", {
+  rootDir: "./app",
+  vite: { outDir: "build", base: "/docs/" },
+});
+```
+
+`outDir` is relative to `rootDir` and defaults to the file's
+`build.outDir` (Vite's default: `"dist"`). `base` is Vite's public
+base path.
+
+## Local development
+
+`alchemy dev` runs Vite's own dev server (native HMR) instead of
+deploying; `site.url` is the local address and no Server or Service
+is created. Wrap the site in `Alchemy.remote()` to deploy the real
+infrastructure even during dev.
+
+## Custom domain
+
+`domain` is a hostname string. It requires `zone` — an existing
+[`Hetzner.Zone`](/hetzner/networking/dns). Alchemy creates an A
+[`RecordSet`](/hetzner/networking/dns) pointing at the Server's
+public IPv4. `url` becomes `http://{domain}:3000`. Passing `domain`
+without `zone` fails. The Service does not terminate TLS:
+
+```typescript
+export const Dns = Hetzner.Zone("dns", { name: "example.com" });
+
+export const Website = Hetzner.Website.Vite("Website", {
+  domain: "app.example.com",
+  zone: Dns,
+});
+```
+
+## Where next
+
+- [`Hetzner.Website.Vite` API](/providers/hetzner/website/vite)
+- [Astro](/hetzner/frontend/astro),
+  [Next.js](/hetzner/frontend/nextjs),
+  [Nuxt](/hetzner/frontend/nuxt),
+  [SvelteKit](/hetzner/frontend/sveltekit),
+  [Waku](/hetzner/frontend/waku),
+  [Octane](/hetzner/frontend/octane) — SSR frameworks
+- [Servers](/hetzner/compute/servers),
+  [Services](/hetzner/compute/services),
+  [DNS](/hetzner/networking/dns)

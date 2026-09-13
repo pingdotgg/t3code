@@ -38,7 +38,7 @@ export interface ProjectSetupScriptRunnerInput {
   readonly preferredTerminalId?: string;
 }
 
-export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<ProjectSetupScriptOperationError>()(
+export class ProjectSetupScriptOperationError extends Schema.TaggedError<ProjectSetupScriptOperationError>()(
   "ProjectSetupScriptOperationError",
   {
     threadId: Schema.String,
@@ -54,7 +54,7 @@ export class ProjectSetupScriptOperationError extends Schema.TaggedErrorClass<Pr
   }
 }
 
-export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedErrorClass<ProjectSetupScriptProjectNotFoundError>()(
+export class ProjectSetupScriptProjectNotFoundError extends Schema.TaggedError<ProjectSetupScriptProjectNotFoundError>()(
   "ProjectSetupScriptProjectNotFoundError",
   {
     threadId: Schema.String,
@@ -83,6 +83,7 @@ export class ProjectSetupScriptRunner extends Context.Service<
   }
 >()("t3/project/ProjectSetupScriptRunner") {}
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
   const terminalManager = yield* TerminalManager.TerminalManager;

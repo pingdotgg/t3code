@@ -124,11 +124,8 @@ export type Configuration = Resource<
  * automatically — Cloudflare rejects PUTs whose last rule has a hostname,
  * and forgetting it is a common foot-gun. Override the auto-appended
  * service via {@link ConfigurationProps.catchAllService}.
- * @resource
- * @product Tunnels
- * @category Cloudflare One (Zero Trust)
- * @section Routing a private hostname through a tunnel
- * @example Map an internal admin UI through a Cloudflare Tunnel to a K8s Service
+ * ### Routing a private hostname through a tunnel
+ * **Example:** Map an internal admin UI through a Cloudflare Tunnel to a K8s Service
  * ```typescript
  * yield* Cloudflare.Tunnel.Configuration("AdminIngress", {
  *   tunnelId: tunnel.tunnelId,
@@ -141,8 +138,8 @@ export type Configuration = Resource<
  * });
  * ```
  *
- * @section Multiple hostnames + custom catch-all
- * @example Two services on one tunnel, returning 503 for unknown hosts
+ * ### Multiple hostnames + custom catch-all
+ * **Example:** Two services on one tunnel, returning 503 for unknown hosts
  * ```typescript
  * yield* Cloudflare.Tunnel.Configuration("Ingress", {
  *   tunnelId: tunnel.tunnelId,
@@ -153,6 +150,10 @@ export type Configuration = Resource<
  *   catchAllService: "http_status:503",
  * });
  * ```
+ *
+ * @resource
+ * @product Tunnels
+ * @category Cloudflare One (Zero Trust)
  */
 export const Configuration = Resource<Configuration>(
   "Cloudflare.Tunnel.Configuration",

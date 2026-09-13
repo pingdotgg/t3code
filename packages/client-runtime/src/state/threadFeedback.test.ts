@@ -4,7 +4,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 
 import {
-  codexFeedbackMessage,
+  codexFeedbackNotice,
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -38,10 +38,9 @@ describe("submitCodexFeedback", () => {
     id: MessageId.make("feedback-message-1"),
     command: "/feedback The agent stopped early.",
     createdAt: "2026-08-23T00:00:00.000Z",
-    createdSequence: 42,
   } as const;
 
-  it("shows the command and clears the draft before the upload finishes", async () => {
+  it("reports upload progress and clears the draft before the upload finishes", async () => {
     let draft: string = submission.command;
     let finishUpload:
       | ((result: ReturnType<typeof AsyncResult.success<{ feedbackId: string }>>) => void)
@@ -67,15 +66,10 @@ describe("submitCodexFeedback", () => {
 
     expect(draft).toBe("");
     expect(states).toEqual([{ ...submission, status: "uploading" }]);
-    expect(codexFeedbackMessage(states[0]!)).toMatchObject({
-      id: submission.id,
-      role: "user",
-      text: submission.command,
-      createdSequence: submission.createdSequence,
+    expect(codexFeedbackNotice(states[0]!)).toEqual({
+      title: "Sending feedback to OpenAI...",
+      description: undefined,
     });
-    expect(codexFeedbackMessage(states[0]!, "assistant").text).toBe(
-      "Sending feedback to OpenAI...",
-    );
 
     draft = "Keep this newer message.";
     finishUpload?.(AsyncResult.success({ feedbackId: "codex-thread-1" }));
@@ -87,7 +81,7 @@ describe("submitCodexFeedback", () => {
       status: "sent",
       feedbackId: "codex-thread-1",
     });
-    expect(codexFeedbackMessage(states.at(-1)!, "assistant").text).toContain("codex-thread-1");
+    expect(codexFeedbackNotice(states.at(-1)!)?.description).toContain("codex-thread-1");
   });
 
   it("records a failed upload without losing its user-facing error", async () => {
@@ -107,6 +101,7 @@ describe("submitCodexFeedback", () => {
       status: "failed",
       errorMessage: "Upload rejected.",
     });
+    expect(codexFeedbackNotice(states.at(-1)!)?.description).toBe("Upload rejected.");
   });
 
   it("marks interruptions without reporting them as upload failures", async () => {
@@ -121,6 +116,7 @@ describe("submitCodexFeedback", () => {
     });
 
     expect(states.at(-1)).toEqual({ ...submission, status: "interrupted" });
+    expect(codexFeedbackNotice(states.at(-1)!)).toBeNull();
   });
 
   it("lets another feedback submission finish while the first remains in flight", async () => {

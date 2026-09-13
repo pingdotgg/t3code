@@ -152,11 +152,8 @@ export type Monitor = Resource<
  *
  * Requires the Load Balancing subscription on the account. The allowed
  * `interval` range is plan-dependent.
- * @resource
- * @product Load Balancers
- * @category Performance & Reliability
- * @section Creating a Monitor
- * @example HTTPS health check
+ * ### Creating a Monitor
+ * **Example:** HTTPS health check
  * ```typescript
  * const monitor = yield* Cloudflare.LoadBalancer.Monitor("ApiMonitor", {
  *   type: "https",
@@ -165,7 +162,7 @@ export type Monitor = Resource<
  * });
  * ```
  *
- * @example TCP port check
+ * **Example:** TCP port check
  * ```typescript
  * const tcp = yield* Cloudflare.LoadBalancer.Monitor("DbMonitor", {
  *   type: "tcp",
@@ -173,8 +170,8 @@ export type Monitor = Resource<
  * });
  * ```
  *
- * @section Using with a Pool
- * @example Attach the monitor to a pool
+ * ### Using with a Pool
+ * **Example:** Attach the monitor to a pool
  * ```typescript
  * const pool = yield* Cloudflare.LoadBalancer.Pool("ApiPool", {
  *   origins: [{ name: "origin-1", address: "203.0.113.10" }],
@@ -183,6 +180,10 @@ export type Monitor = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/load-balancing/monitors/
+ *
+ * @resource
+ * @product Load Balancers
+ * @category Performance & Reliability
  */
 export const Monitor = Resource<Monitor>(TypeId);
 

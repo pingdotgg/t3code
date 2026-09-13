@@ -7,7 +7,7 @@ sidebar:
 
 Every Worker gets a `workers.dev` URL by default, but production apps
 live on their own domain. This guide covers the pieces involved: the
-Zone that holds your domain, the `domain` prop that attaches a hostname
+Zone that holds your domain, the `domain` prop that attaches hostnames
 to a Worker, Routes for pattern-based dispatch, plain DNS records, and
 the account's `workers.dev` subdomain.
 
@@ -74,29 +74,43 @@ still retains on destroy unless you add `destroy()`.
 
 ## Attach a custom domain to a Worker
 
-The simplest way to serve a Worker on your domain is the `domain` prop.
-Cloudflare provisions the DNS record and certificate for you; the zone
-is inferred from the hostname, so it must already exist in the account:
+Pass `domain` — Cloudflare provisions the DNS record and certificate;
+the zone is inferred from the hostname and must already exist in the
+account:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
   domain: "api.example.com",
 });
+// worker.url === "https://api.example.com"
 ```
 
-`domain` also accepts an array. Custom domains come first in
-`worker.domains` (in the order you provided them), followed by the
-`workers.dev` URL when the subdomain is enabled — and `worker.url` is
-`domains[0]`, so the custom domain wins:
+`aliases` also serve the Worker; `redirects` answer with a 301 (path
+and query preserved) to the canonical name, before the Worker runs —
+ideal for domain migrations:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
-  domain: ["api.example.com", "api-v2.example.com"],
+  domain: {
+    name: "api.example.com",
+    aliases: ["api-v2.example.com"],
+    redirects: ["api.old-example.com"], // 301 → https://api.example.com
+  },
+  workersDev: false,
 });
-// worker.url === "https://api.example.com"
+// worker.url    === "https://api.example.com"
+// worker.urls   === ["https://api.example.com", "https://api-v2.example.com"]
+// worker.domain === { name: "api.example.com",
+//                     aliases: ["api-v2.example.com"],
+//                     redirects: ["api.old-example.com"] }
 ```
+
+The canonical domain leads `worker.urls` (ahead of `workers.dev`), and
+redirect hostnames never appear there — they serve no content. Their
+redirect rules live in the zone's `http_request_dynamic_redirect`
+phase, which runs before Workers.
 
 ## Route a hostname pattern to a Worker
 
@@ -202,15 +216,29 @@ yield* Cloudflare.Workers.WorkerRoute("AssetsBypass", {
 
 ## Control the workers.dev subdomain
 
-Per Worker, the `url` prop toggles the `workers.dev` URL (it defaults
-to `true`). Once a custom domain serves production traffic, you may
-want to switch the dev URL off:
+Per Worker, the `workersDev` prop toggles the `workers.dev` URLs (it
+defaults to `true`). Once a custom domain serves production traffic,
+you may want to switch them off — the custom domain then becomes
+`worker.url`:
 
 ```typescript
 const worker = yield* Cloudflare.Worker("Api", {
   main: "./src/api.ts",
   domain: "api.example.com",
-  url: false,
+  workersDev: false,
+});
+// worker.url === "https://api.example.com"
+```
+
+The object form controls the stable URL and per-version preview URLs
+independently. With the stable URL off and previews on, each deploy's
+preview URL (`https://<version-prefix>-<name>.<subdomain>.workers.dev`)
+becomes `worker.url`:
+
+```typescript
+const worker = yield* Cloudflare.Worker("Api", {
+  main: "./src/api.ts",
+  workersDev: { enabled: false, previewsEnabled: true },
 });
 ```
 

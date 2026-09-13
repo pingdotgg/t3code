@@ -1,6 +1,6 @@
 import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Cloudflare from "@/Cloudflare/index.ts";
-import { readPrebuiltWorkerBundle } from "@/Cloudflare/Workers/WorkerBundle";
+import { readPrebuiltWorkerBundle } from "@/Cloudflare/Workers/Sources/Prebuilt";
 import * as Test from "@/Test/Alchemy";
 import { describe, expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
@@ -43,7 +43,7 @@ describe.concurrent("Cloudflare.Worker with bundle: false", () => {
             return yield* Cloudflare.Worker("PrebuiltWorker", {
               main,
               bundle: false,
-              subdomain: { enabled: true },
+              workersDev: true,
               compatibility: {
                 date: "2024-01-01",
               },
@@ -71,7 +71,7 @@ describe.concurrent("Cloudflare.Worker with bundle: false", () => {
             return yield* Cloudflare.Worker("PrebuiltWorker", {
               main,
               bundle: false,
-              subdomain: { enabled: true },
+              workersDev: true,
               compatibility: {
                 date: "2024-01-01",
               },

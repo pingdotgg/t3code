@@ -10,9 +10,8 @@ import * as Binding from "../../Binding.ts";
  * enough. Experiments are created dynamically, so this is an account-level
  * binding addressed by experiment id. Provide the implementation with
  * `Effect.provide(AWS.FIS.StopExperimentHttp)`.
- * @binding
- * @section Running Experiments
- * @example Abort a Running Experiment
+ * ### Running Experiments
+ * **Example:** Abort a Running Experiment
  * ```typescript
  * // init — account-level binding, no resource argument
  * const stopExperiment = yield* AWS.FIS.StopExperiment();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  * const { experiment } = yield* stopExperiment({ id: experimentId });
  * console.log(experiment?.state?.status); // "stopping"
  * ```
+ *
+ * @binding
  */
 export interface StopExperiment extends Binding.Service<
   StopExperiment,

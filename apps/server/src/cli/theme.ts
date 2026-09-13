@@ -55,7 +55,7 @@ const decodeThemeFileJsonExit = Schema.decodeUnknownExit(
 );
 const isEnvironmentThemeId = Schema.is(EnvironmentThemeId);
 
-export class ThemeSettingsUnreadableError extends Schema.TaggedErrorClass<ThemeSettingsUnreadableError>()(
+export class ThemeSettingsUnreadableError extends Schema.TaggedError<ThemeSettingsUnreadableError>()(
   "ThemeSettingsUnreadableError",
   { settingsPath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -64,7 +64,7 @@ export class ThemeSettingsUnreadableError extends Schema.TaggedErrorClass<ThemeS
   }
 }
 
-export class ThemeSettingsMalformedError extends Schema.TaggedErrorClass<ThemeSettingsMalformedError>()(
+export class ThemeSettingsMalformedError extends Schema.TaggedError<ThemeSettingsMalformedError>()(
   "ThemeSettingsMalformedError",
   { settingsPath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -73,7 +73,7 @@ export class ThemeSettingsMalformedError extends Schema.TaggedErrorClass<ThemeSe
   }
 }
 
-export class ThemeSettingsBusyError extends Schema.TaggedErrorClass<ThemeSettingsBusyError>()(
+export class ThemeSettingsBusyError extends Schema.TaggedError<ThemeSettingsBusyError>()(
   "ThemeSettingsBusyError",
   { settingsPath: Schema.String, attempts: Schema.Number },
 ) {
@@ -82,7 +82,7 @@ export class ThemeSettingsBusyError extends Schema.TaggedErrorClass<ThemeSetting
   }
 }
 
-export class ThemeSettingsWriteError extends Schema.TaggedErrorClass<ThemeSettingsWriteError>()(
+export class ThemeSettingsWriteError extends Schema.TaggedError<ThemeSettingsWriteError>()(
   "ThemeSettingsWriteError",
   { settingsPath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -91,7 +91,7 @@ export class ThemeSettingsWriteError extends Schema.TaggedErrorClass<ThemeSettin
   }
 }
 
-export class ThemeFileUnreadableError extends Schema.TaggedErrorClass<ThemeFileUnreadableError>()(
+export class ThemeFileUnreadableError extends Schema.TaggedError<ThemeFileUnreadableError>()(
   "ThemeFileUnreadableError",
   // Optional: a path that never existed has no underlying failure to carry,
   // and a manufactured string there would only look like a real one.
@@ -102,7 +102,7 @@ export class ThemeFileUnreadableError extends Schema.TaggedErrorClass<ThemeFileU
   }
 }
 
-export class ThemeFileInvalidError extends Schema.TaggedErrorClass<ThemeFileInvalidError>()(
+export class ThemeFileInvalidError extends Schema.TaggedError<ThemeFileInvalidError>()(
   "ThemeFileInvalidError",
   { filePath: Schema.String, cause: Schema.Defect() },
 ) {
@@ -111,7 +111,7 @@ export class ThemeFileInvalidError extends Schema.TaggedErrorClass<ThemeFileInva
   }
 }
 
-export class ThemeFileTooLargeError extends Schema.TaggedErrorClass<ThemeFileTooLargeError>()(
+export class ThemeFileTooLargeError extends Schema.TaggedError<ThemeFileTooLargeError>()(
   "ThemeFileTooLargeError",
   { filePath: Schema.String, limit: Schema.Number },
 ) {
@@ -120,7 +120,7 @@ export class ThemeFileTooLargeError extends Schema.TaggedErrorClass<ThemeFileToo
   }
 }
 
-export class ThemeFileColorlessError extends Schema.TaggedErrorClass<ThemeFileColorlessError>()(
+export class ThemeFileColorlessError extends Schema.TaggedError<ThemeFileColorlessError>()(
   "ThemeFileColorlessError",
   { filePath: Schema.String },
 ) {
@@ -129,7 +129,7 @@ export class ThemeFileColorlessError extends Schema.TaggedErrorClass<ThemeFileCo
   }
 }
 
-export class ThemePublishError extends Schema.TaggedErrorClass<ThemePublishError>()(
+export class ThemePublishError extends Schema.TaggedError<ThemePublishError>()(
   "ThemePublishError",
   { themesDir: Schema.String, cause: Schema.Defect() },
 ) {
@@ -141,7 +141,7 @@ export class ThemePublishError extends Schema.TaggedErrorClass<ThemePublishError
 const INVALID_THEME_ID_REASON =
   "is not a valid theme id (lowercase letters, digits, and hyphens; not an appearance keyword)";
 
-export class ThemeIdUnknownError extends Schema.TaggedErrorClass<ThemeIdUnknownError>()(
+export class ThemeIdUnknownError extends Schema.TaggedError<ThemeIdUnknownError>()(
   "ThemeIdUnknownError",
   { themeId: Schema.String, known: Schema.Array(Schema.String) },
 ) {
@@ -150,7 +150,7 @@ export class ThemeIdUnknownError extends Schema.TaggedErrorClass<ThemeIdUnknownE
   }
 }
 
-export class ThemeIdInvalidError extends Schema.TaggedErrorClass<ThemeIdInvalidError>()(
+export class ThemeIdInvalidError extends Schema.TaggedError<ThemeIdInvalidError>()(
   "ThemeIdInvalidError",
   { themeId: Schema.String },
 ) {
@@ -160,7 +160,7 @@ export class ThemeIdInvalidError extends Schema.TaggedErrorClass<ThemeIdInvalidE
 }
 
 /** A filename that cannot be a theme id, where --id is the way out. */
-export class ThemeFileIdInvalidError extends Schema.TaggedErrorClass<ThemeFileIdInvalidError>()(
+export class ThemeFileIdInvalidError extends Schema.TaggedError<ThemeFileIdInvalidError>()(
   "ThemeFileIdInvalidError",
   { themeId: Schema.String, filePath: Schema.String },
 ) {
@@ -169,7 +169,7 @@ export class ThemeFileIdInvalidError extends Schema.TaggedErrorClass<ThemeFileId
   }
 }
 
-export class ThemeTargetMissingError extends Schema.TaggedErrorClass<ThemeTargetMissingError>()(
+export class ThemeTargetMissingError extends Schema.TaggedError<ThemeTargetMissingError>()(
   "ThemeTargetMissingError",
   {},
 ) {

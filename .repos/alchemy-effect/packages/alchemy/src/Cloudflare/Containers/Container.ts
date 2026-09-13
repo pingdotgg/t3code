@@ -96,6 +96,42 @@ export type {
   RemoteContainerProps,
 };
 
+/**
+ * Props for an image-backed container declaration — either the plain props
+ * object, or an Effect that produces it.
+ *
+ * The Effect form is how a container reaches another resource's outputs. A
+ * class body is module scope, so there is nowhere to `yield*` a database,
+ * queue, or bucket; wrapping the props in `Effect.gen` moves the declaration
+ * into an Effect where sibling resources resolve normally and their
+ * attributes can be threaded into `env`:
+ *
+ * ```typescript
+ * export class Api extends Cloudflare.Container<Api>()(
+ *   "Api",
+ *   Effect.gen(function* () {
+ *     const { connection } = yield* Db;
+ *     return {
+ *       context: `${import.meta.dirname}/api`,
+ *       env: { DATABASE_URL: connection.databaseUrl },
+ *     };
+ *   }),
+ * ) {}
+ * ```
+ *
+ * A plain props object cannot do this: a module-scope resource declaration
+ * is an Effect, not a resolved handle, so `Db.connectionString` is
+ * `undefined` until something yields it.
+ */
+export type ImageContainerProps<Req = never> =
+  | InputProps<ExternalContainerProps>
+  | InputProps<RemoteContainerProps>
+  | Effect.Effect<
+      InputProps<ExternalContainerProps> | InputProps<RemoteContainerProps>,
+      Config.ConfigError,
+      Req
+    >;
+
 export type Container<Id extends string = string> = Named<Id> & {
   get running(): Effect.Effect<boolean, never, RuntimeContext>;
   start(
@@ -134,10 +170,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * See the [Platform concept](/infrastructure-as-effects/functions-and-servers)
  * page for how this fits into the async / effect / layer
  * progression.
- * @resource
- * @product Containers
- * @category Workers & Compute
- * @section Container Layer
+ * ### Container Layer
  * Define the class and `.make()` in separate files. The class
  * declares the container's identity, configuration, and typed
  * shape. `.make()` provides the runtime implementation as a
@@ -145,7 +178,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * shape — it ensures your implementation matches the methods
  * declared on the class.
  *
- * @example Container class
+ * **Example:** Container class
  * ```typescript
  * // src/Sandbox.ts — the tag carries only the name + typed shape;
  * // configuration lives on `.make()`.
@@ -161,7 +194,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * >()("Sandbox") {}
  * ```
  *
- * @example Container .make()
+ * **Example:** Container .make()
  * ```typescript
  * // src/Sandbox.runtime.ts — props are the first argument to `.make()`
  * export default Sandbox.make(
@@ -189,7 +222,67 @@ export type Container<Id extends string = string> = Named<Id> & {
  * );
  * ```
  *
- * @section Image Sources
+ * ### Async Workers
+ * An async Worker can host a container-backed Durable Object class that
+ * ships as plain JavaScript — `@cloudflare/sandbox`'s `Sandbox`, or your
+ * own class extending `@cloudflare/containers`' `Container`. The class
+ * lives in the worker script; `Container` (the npm one) handles the
+ * lifecycle and forwards `fetch` to the port inside the container.
+ *
+ * **Example:** The worker script exports the container-backed class
+ * ```typescript
+ * // src/worker.ts
+ * import { Container } from "@cloudflare/containers";
+ *
+ * export class Sandbox extends Container {
+ *   defaultPort = 8080;
+ * }
+ * ```
+ *
+ * Declare it in the stack by binding a `Cloudflare.Container` in the
+ * Worker's `env` — the Container **is** the Durable Object binding and its
+ * ContainerApplication together. Alchemy emits the
+ * `durable_object_namespace` binding, marks the class as container-backed
+ * in the script metadata, provisions the ContainerApplication, and attaches
+ * it to the class's namespace. The Durable Object class name defaults to
+ * the binding name (the `env` key); set `className` when the exported class
+ * is named differently.
+ *
+ * **Example:** Binding the container-backed class in the stack
+ * ```typescript
+ * // alchemy.run.ts
+ * import type { Sandbox } from "./src/worker.ts";
+ *
+ * export const Worker = Cloudflare.Worker("Worker", {
+ *   main: "./src/worker.ts",
+ *   env: {
+ *     Sandbox: Cloudflare.Container<Sandbox>("Sandbox", {
+ *       image: "docker.io/cloudflare/sandbox:0.1.3",
+ *     }),
+ *   },
+ * });
+ * ```
+ *
+ * The type parameter (`Container<Sandbox>`) is the class from `worker.ts` —
+ * it types `env.Sandbox` as `DurableObjectNamespace<Sandbox>` via
+ * `Cloudflare.InferEnv`, so the handler reaches the container with full
+ * types.
+ *
+ * **Example:** Reaching the container from the async handler
+ * ```typescript
+ * // src/worker.ts
+ * import { getContainer } from "@cloudflare/containers";
+ * import type * as Cloudflare from "alchemy/Cloudflare";
+ * import type { Worker } from "../alchemy.run.ts";
+ *
+ * export default {
+ *   async fetch(request: Request, env: Cloudflare.InferEnv<typeof Worker>) {
+ *     return getContainer(env.Sandbox, "default").fetch(request);
+ *   },
+ * };
+ * ```
+ *
+ * ### Image Sources
  * A container's image comes from one of three sources, picked by which
  * prop you set:
  *
@@ -203,7 +296,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * you declare the class with its props inline and register it purely
  * via `Cloudflare.Containers.layer` from the hosting Durable Object.
  *
- * @example Effect-native image (`main`)
+ * **Example:** Effect-native image (`main`)
  * ```typescript
  * // Alchemy bundles this file's Effect program and bakes it into a
  * // generated image as the entrypoint.
@@ -223,7 +316,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * );
  * ```
  *
- * @example Build your own Dockerfile (`context` / `dockerfile`)
+ * **Example:** Build your own Dockerfile (`context` / `dockerfile`)
  * ```typescript
  * // Alchemy builds the Dockerfile against the context directory — no
  * // Effect bundling, no `.make()`. `dockerfile` defaults to
@@ -233,7 +326,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * }) {}
  * ```
  *
- * @example Remote image (`image`)
+ * **Example:** Remote image (`image`)
  * ```typescript
  * // Alchemy pulls the public image and re-pushes it to Cloudflare's
  * // registry — no build, no bundling, no `.make()`.
@@ -242,7 +335,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * }) {}
  * ```
  *
- * @example Reaching an arbitrary image's port from a Durable Object
+ * **Example:** Reaching an arbitrary image's port from a Durable Object
  * ```typescript
  * // `external` and `remote` images expose no RPC methods, so the DO
  * // talks to them purely over their TCP port via `getTcpPort`.
@@ -264,7 +357,46 @@ export type Container<Id extends string = string> = Named<Id> & {
  * ) {}
  * ```
  *
- * @section Configuration
+ * ### Bundling & Tree-shaking
+ * `main` is bundled with rolldown at deploy time. Top-level calls in the
+ * `effect`, `@effect/*`, `alchemy`, `@alchemy.run/*`, and
+ * `@distilled.cloud/*` packages receive `#__PURE__` annotations by
+ * default, so anything the container program doesn't use from those packages is
+ * tree-shaken out of the bundle. Any other package — including your own
+ * app — is left untouched unless you list it explicitly.
+ *
+ * **Example:** Treat additional packages as pure
+ * Pass package names (or picomatch globs) via `build.pure.packages` to
+ * annotate them in addition to the defaults.
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: {
+ *     pure: { packages: ["my-lib", "@my-scope/*"] },
+ *   },
+ * }
+ * ```
+ *
+ * Listing a package annotates calls whose result is bound (variable
+ * initializers, exports) — safe anywhere. If a listed package also
+ * declares `"sideEffects": false` (or `[]`) in its `package.json`, that
+ * combination opts it into full annotation: top-level calls whose result
+ * is discarded (e.g. `router.on("/path", handler)` registrations) are
+ * also marked pure and deleted under minification when unused. Only list
+ * a `sideEffects: false` package if its modules really are free of
+ * meaningful top-level side effects. The `effect`, `alchemy`, and
+ * `@distilled.cloud` defaults declare exactly that, on purpose — their
+ * modules are designed to be fully tree-shakeable.
+ *
+ * **Example:** Disable pure annotations
+ * ```typescript
+ * {
+ *   main: import.meta.url,
+ *   build: { pure: false },
+ * }
+ * ```
+ *
+ * ### Configuration
  * The props object — the first argument to `.make()` — accepts `main`
  * (entrypoint file), `instanceType` (compute size), `runtime`
  * (`"bun"` or `"node"`), and `observability` settings. Use
@@ -272,7 +404,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * `instanceType` in prod while keeping the cheap `dev` instance for
  * preview environments.
  *
- * @example Stage-dependent configuration
+ * **Example:** Stage-dependent configuration
  * ```typescript
  * export const SandboxLive = Sandbox.make(
  *   Stack.useSync((stack) => ({
@@ -286,13 +418,107 @@ export type Container<Id extends string = string> = Named<Id> & {
  * );
  * ```
  *
- * @section Stack-level wiring
+ * ### Environment Variables
+ * A container is a process, not a Worker: it has no bindings, so every
+ * piece of configuration reaches it through `env`. Each entry lands on
+ * the deployment and shows up in `process.env` inside the image —
+ * generated (`main`), built (`context`), or pre-built (`image`) alike.
+ * Wrap a secret in `Redacted` to keep it encrypted in state and out of
+ * plan output; the container still reads a plain string.
+ *
+ * **Example:** Plain and secret env values
+ * ```typescript
+ * export class Api extends Cloudflare.Container<Api>()("Api", {
+ *   context: `${import.meta.dirname}/api`,
+ *   ports: [{ name: "http", port: 8080 }],
+ *   env: {
+ *     PORT: "8080",
+ *     SESSION_KEY: Redacted.make(process.env.SESSION_KEY!),
+ *   },
+ * }) {}
+ * ```
+ *
+ * ### Props from Other Resources
+ * A class body is module scope, so there is nowhere to `yield*` the
+ * database, queue, or bucket whose output you need — and a bare
+ * declaration is an Effect, not a resolved handle, so
+ * `Uploads.bucketName` reads as `undefined`. Pass the props as an
+ * `Effect.gen` instead: inside it sibling resources resolve normally,
+ * and the reference orders the deploy.
+ *
+ * **Example:** Threading a sibling resource's output into `env`
+ * ```typescript
+ * export const Uploads = Cloudflare.R2.Bucket("Uploads");
+ *
+ * export class Api extends Cloudflare.Container<Api>()(
+ *   "Api",
+ *   Effect.gen(function* () {
+ *     const uploads = yield* Uploads;
+ *     return {
+ *       context: `${import.meta.dirname}/api`,
+ *       env: { BUCKET_NAME: uploads.bucketName },
+ *     };
+ *   }),
+ * ) {}
+ * ```
+ *
+ * ### Database Connections
+ * An effectful (`main`) container runs your Effect program, so it
+ * resolves a database capability the same way a Worker does — you never
+ * name `DATABASE_URL`. The container has no bindings (it is a process,
+ * not a Worker), so `Prisma.Connect` writes the connection's outputs
+ * onto the deployment as environment variables and reads them back at
+ * runtime; the capability owns both ends.
+ *
+ * **Example:** Binding a Prisma connection inside the container runtime
+ * ```typescript
+ * export default Api.make(
+ *   { main: import.meta.url },
+ *   Effect.gen(function* () {
+ *     const db = yield* Prisma.Connect(Connection);
+ *     const sql = yield* SQL.Postgres({ url: db.databaseUrl });
+ *
+ *     return Api.of({
+ *       fetch: Effect.gen(function* () {
+ *         const users = yield* sql`SELECT * FROM users`;
+ *         return yield* HttpServerResponse.json(users);
+ *       }),
+ *     });
+ *   }).pipe(Effect.provide(Prisma.ConnectBinding)),
+ * );
+ * ```
+ *
+ * An image you brought yourself knows nothing about alchemy, so there is
+ * no capability to bind — name the variable and hand it the provider's
+ * **pooled** connection string.
+ *
+ * **Example:** Passing a pooled database URL to an arbitrary image
+ * ```typescript
+ * export class Web extends Cloudflare.Container<Web>()(
+ *   "Web",
+ *   Effect.gen(function* () {
+ *     const connection = yield* Connection;
+ *     return {
+ *       context: `${import.meta.dirname}/web`,
+ *       env: { DATABASE_URL: connection.databaseUrl },
+ *     };
+ *   }),
+ * ) {}
+ * ```
+ *
+ * Either way, start it with
+ * `Cloudflare.Containers.layer(Api, { enableInternet: true })` — without
+ * outbound networking the container never reaches the database.
+ * `Cloudflare.Hyperdrive.Connect` is the one that cannot work here: it
+ * *is* a workerd binding, so no container process can resolve it.
+ *
+ * ### Stack-level wiring
  * The `.make()` `export default` is the side-effect that registers
  * the container's runtime. It must be reachable from your
  * `alchemy.run.ts` so the bundler emits the runtime entrypoint.
  * Provide it on the Stack's generator with `Effect.provide`.
  *
- * @example Wiring SandboxLive into the Stack
+ * **Example:** Wiring SandboxLive into the Stack
  * ```typescript
  * // alchemy.run.ts
  * import SandboxLive from "./src/Sandbox.runtime.ts";
@@ -307,7 +533,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * );
  * ```
  *
- * @section Calling from a Durable Object
+ * ### Calling from a Durable Object
  * `yield* Sandbox` resolves a **running** container instance — every
  * method declared on the container's shape **plus** a `getTcpPort`
  * helper. Provide `Cloudflare.Containers.layer(Sandbox, …)` on the
@@ -316,7 +542,7 @@ export type Container<Id extends string = string> = Named<Id> & {
  * only the class is imported, the runtime implementation in
  * `Sandbox.runtime.ts` is tree-shaken out of the DO's bundle.
  *
- * @example Running a container from a DO
+ * **Example:** Running a container from a DO
  * ```typescript
  * export default class Agent extends Cloudflare.DurableObject<Agent>()(
  *   "Agents",
@@ -336,12 +562,12 @@ export type Container<Id extends string = string> = Named<Id> & {
  * ) {}
  * ```
  *
- * @section HTTP Requests to Container Ports
+ * ### HTTP Requests to Container Ports
  * Use `getTcpPort` on the running container instance to get a `fetch`
  * handle for a specific port. This lets you make HTTP requests to
  * servers running inside the container process.
  *
- * @example Fetching from a container port
+ * **Example:** Fetching from a container port
  * ```typescript
  * export default class Agent extends Cloudflare.DurableObject<Agent>()(
  *   "Agents",
@@ -368,24 +594,21 @@ export type Container<Id extends string = string> = Named<Id> & {
  *   ),
  * ) {}
  * ```
+ *
+ * @resource
+ * @product Containers
+ * @category Workers & Compute
  */
 export const Container: ResourceClassLike<ContainerApplication> & {
-  <const Id extends string>(
+  <DOShape = unknown, const Id extends string = string, PropsReq = never>(
     id: Id,
-    props:
-      | InputProps<ExternalContainerProps>
-      | InputProps<RemoteContainerProps>,
-  ): Container.Decl<Container<Id>, {}, Id>;
+    props: ImageContainerProps<PropsReq>,
+  ): Container.Decl<Container<Id>, {}, Id, PropsReq, DOShape>;
   <Self>(): {
-    <
-      const Id extends string,
-      Props extends
-        | InputProps<ExternalContainerProps>
-        | InputProps<RemoteContainerProps>,
-    >(
+    <const Id extends string, PropsReq = never>(
       id: Id,
-      props: Props,
-    ): Container.Decl<Self, {}, Id>;
+      props: ImageContainerProps<PropsReq>,
+    ): Container.Decl<Self, {}, Id, PropsReq>;
   };
   <Self, Shape>(): {
     <const Id extends string>(
@@ -404,6 +627,11 @@ export const Container: ResourceClassLike<ContainerApplication> & {
           // registers the DO + Worker bindings and produces the runtime
           // handle) is stashed so `startContainer` can run it from inside that
           // layer — see ContainerPlatform.bind / StartContainer.ts.
+          // NOTE: no `~alchemy/Container/ClassName` marker here — an
+          // effectful (`main`) container is not bindable on an async
+          // Worker's `env` (its application is created by the `.make()`
+          // Layer inside an Effect-native Durable Object host), so it must
+          // not be picked up by bindWorkerAsyncBindings' container branch.
           return Object.assign(effectClass(ContainerTag(id)), {
             "~alchemy/Id": id,
             "~alchemy/Container/Binding": ContainerPlatform.bind(tag),
@@ -422,6 +650,17 @@ export const Container: ResourceClassLike<ContainerApplication> & {
       return Object.assign(effectClass(ContainerTag(id)), {
         "~alchemy/Id": id,
         "~alchemy/Container/Binding": ContainerPlatform.bind(resource),
+        // The Durable Object class name this container backs when bound on
+        // an async Worker's `env` (see bindWorkerAsyncBindings). Defaults to
+        // the binding name at bind time when no explicit `className` is set.
+        // Effect-valued props cannot be read synchronously here, so carry
+        // the unresolved lookup and let `bindContainerClass` await it.
+        "~alchemy/Container/ClassName": Effect.isEffect(props)
+          ? Effect.map(
+              props as Effect.Effect<{ className?: string } | undefined>,
+              (resolved) => resolved?.className,
+            )
+          : (props as { className?: string })?.className,
         // yield* MyContainer.Application to get the ContainerApplication Resource Outputs
         Application: resource,
         of: (shape: any) => shape,
@@ -439,9 +678,31 @@ export declare namespace Container {
     Shape = any,
     Id extends string = string,
     Req = never,
+    DOShape = unknown,
   >
     extends Effect.Effect<Self, never, Providers | Req>, Rpc<Shape>, Named<Id> {
     new (): Container<Id> & Shape;
+    /**
+     * @internal phantom — the Durable Object class type backing this
+     * container when it is bound on an async Worker's `env`. Drives
+     * `InferEnv` (`env.NAME` becomes `DurableObjectNamespace<DOShape>`).
+     */
+    readonly "~alchemy/Container/Shape": DOShape;
+    /**
+     * @internal — the explicit `className` from props (`undefined` defaults
+     * to the binding name at bind time). Doubles as the runtime marker that
+     * identifies an async-bindable Container declaration in a Worker's `env`
+     * (see `bindWorkerAsyncBindings`).
+     */
+    readonly "~alchemy/Container/ClassName":
+      | string
+      | undefined
+      | Effect.Effect<string | undefined>;
+    /**
+     * The underlying {@link ContainerApplication} resource declaration —
+     * `yield*` it to get the application's Output attributes.
+     */
+    Application: Effect.Effect<ContainerApplication<Self>, never, Providers>;
     make: <InitReq = never, WorkerReq = never, PropsReq = never>(
       props:
         | InputProps<EffectfulContainerProps>
@@ -459,7 +720,7 @@ export declare namespace Container {
     of(shape: Shape & WorkerShape): Shape;
   }
   export namespace Decl {
-    export type Any = Decl<any, any, string, any>;
+    export type Any = Decl<any, any, string, any, any>;
   }
 
   export interface Application<Self> {

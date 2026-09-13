@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — Organizations is a management-account-scoped
  * global service, so the binding takes no resource argument. Provide the
  * implementation with `Effect.provide(AWS.Organizations.ListCreateAccountStatusHttp)`.
- * @binding
- * @section Account Vending
- * @example List In-Flight Account Creations
+ * ### Account Vending
+ * **Example:** List In-Flight Account Creations
  * ```typescript
  * // init — account-level binding, no resource argument
  * const listCreateAccountStatus = yield* AWS.Organizations.ListCreateAccountStatus();
@@ -21,6 +20,8 @@ import * as Binding from "../../Binding.ts";
  *   States: ["IN_PROGRESS"],
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListCreateAccountStatus extends Binding.Service<
   ListCreateAccountStatus,

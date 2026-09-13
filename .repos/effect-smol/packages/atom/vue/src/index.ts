@@ -12,25 +12,25 @@ import { computed, type ComputedRef, inject, type InjectionKey, type Ref, shallo
 
 /**
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
 export * as AtomRegistry from "effect/unstable/reactivity/AtomRegistry"
 
 /**
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
 export * as AsyncResult from "effect/unstable/reactivity/AsyncResult"
 
 /**
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
 export * as Atom from "effect/unstable/reactivity/Atom"
 
 /**
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
 export * as AtomRef from "effect/unstable/reactivity/AtomRef"
 
@@ -42,25 +42,25 @@ export * as AtomHttpApi from "effect/unstable/reactivity/AtomHttpApi"
 
 /**
  * @since 4.0.0
- * @category modules
+ * @category re-exports
  */
 export * as AtomRpc from "effect/unstable/reactivity/AtomRpc"
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category symbols
  */
 export const registryKey = Symbol.for("@effect/atom-vue/registryKey") as InjectionKey<AtomRegistry.AtomRegistry>
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category constants
  */
 export const defaultRegistry: AtomRegistry.AtomRegistry = AtomRegistry.make()
 
 /**
  * @since 4.0.0
- * @category registry
+ * @category accessors
  */
 export const injectRegistry = (): AtomRegistry.AtomRegistry => {
   return inject(registryKey, defaultRegistry)

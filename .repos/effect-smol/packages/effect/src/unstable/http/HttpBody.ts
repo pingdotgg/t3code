@@ -30,7 +30,7 @@ const TypeId = "~effect/http/HttpBody"
 /**
  * Returns `true` if the provided value is an `HttpBody`.
  *
- * @category refinements
+ * @category guards
  * @since 4.0.0
  */
 export const isHttpBody = (u: unknown): u is HttpBody => Predicate.hasProperty(u, TypeId)
@@ -484,12 +484,26 @@ export const stream = (
   contentLength?: number
 ): Stream => new Stream(body, contentType ?? "application/octet-stream", contentLength)
 
+const fileContentLength = (
+  size: FileSystem.SizeInput,
+  options?: {
+    readonly bytesToRead?: FileSystem.SizeInput | undefined
+    readonly offset?: FileSystem.SizeInput | undefined
+  }
+): number => {
+  const available = Math.max(0, Number(size) - Number(options?.offset ?? 0))
+  return options?.bytesToRead === undefined
+    ? available
+    : Math.min(available, Math.max(0, Number(options.bytesToRead)))
+}
+
 /**
  * Creates a streaming HTTP body for a file path.
  *
  * **Details**
  *
- * The effect requires `FileSystem`, stats the file to set the content length, and can fail with `PlatformError`.
+ * The effect requires `FileSystem`, stats the file to set the selected content length, and can fail with
+ * `PlatformError`.
  *
  * @category constructors
  * @since 4.0.0
@@ -510,7 +524,7 @@ export const file = (
         stream(
           fs.stream(path, options),
           options?.contentType,
-          Number(info.size)
+          fileContentLength(info.size, options)
         ))
   )
 
@@ -519,7 +533,8 @@ export const file = (
  *
  * **Details**
  *
- * The effect requires `FileSystem`, uses the provided file size as the content length, and can fail with `PlatformError`.
+ * The effect requires `FileSystem`, uses the provided file size to determine the selected content length, and can
+ * fail with `PlatformError`.
  *
  * @category constructors
  * @since 4.0.0
@@ -540,6 +555,6 @@ export const fileFromInfo = (
       stream(
         fs.stream(path, options),
         options?.contentType,
-        Number(info.size)
+        fileContentLength(info.size, options)
       )
   )

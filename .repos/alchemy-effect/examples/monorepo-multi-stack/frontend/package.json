@@ -9,16 +9,16 @@
     "directory": "examples/monorepo-multi-stack/frontend"
   },
   "dependencies": {
-    "@effect/platform-bun": "catalog:",
-    "@effect/platform-node": "catalog:",
+    "@effect/platform-bun": "catalog:effect",
+    "@effect/platform-node": "catalog:effect",
     "@types/react-dom": "^19.2.3",
     "@types/react": "^19.2.14",
     "alchemy": "workspace:*",
     "@monorepo-multi-stack/backend": "workspace:*",
-    "effect": "catalog:",
+    "effect": "catalog:effect",
     "react-dom": "^19.2.6",
     "react": "^19.2.6",
-    "vite": "catalog:"
+    "vite": "catalog:build"
   },
   "scripts": {
     "deploy": "alchemy deploy",

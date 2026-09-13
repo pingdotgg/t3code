@@ -41,9 +41,8 @@ export interface OrganizationResourcePolicy extends Resource<
  *
  * There is at most one per organization; Alchemy adopts and reconciles the
  * existing policy if one is already in place.
- * @resource
- * @section Setting the Resource Policy
- * @example Allow a Member Account to Describe the Organization
+ * ### Setting the Resource Policy
+ * **Example:** Allow a Member Account to Describe the Organization
  * ```typescript
  * const security = yield* Account("Security", {
  *   name: "security",
@@ -68,6 +67,8 @@ export interface OrganizationResourcePolicy extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const OrganizationResourcePolicy = Resource<OrganizationResourcePolicy>(
   "AWS.Organizations.OrganizationResourcePolicy",

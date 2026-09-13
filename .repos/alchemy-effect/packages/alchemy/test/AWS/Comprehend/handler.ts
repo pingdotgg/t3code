@@ -34,7 +34,7 @@ export class ComprehendTestFunction extends Lambda.Function<Lambda.Function>()(
 export default ComprehendTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     // The sentiment job lifecycle route retries StartSentimentDetectionJob
     // through fresh-role IAM propagation (bounded ~40s).
     timeout: Duration.seconds(120),

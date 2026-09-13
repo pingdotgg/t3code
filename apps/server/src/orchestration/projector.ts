@@ -1,8 +1,12 @@
 import type {
   OrchestrationEvent,
+  OrchestrationProject,
   OrchestrationReadModel,
   ThreadId,
   TurnId,
+  ThreadLinkedPullRequest,
+  ThreadPullRequestKey,
+  ThreadPullRequestLink,
 } from "@t3tools/contracts";
 import {
   isImportedAgentSessionMessageId,
@@ -12,6 +16,11 @@ import {
   OrchestrationThread,
 } from "@t3tools/contracts";
 import { compareCreatedOrder } from "@t3tools/shared/chronology";
+import {
+  legacyLinkedPullRequestOf,
+  legacyThreadPullRequestKey,
+  threadPullRequestKeysEqual,
+} from "@t3tools/shared/threadPullRequests";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
@@ -33,6 +42,9 @@ import {
   ThreadSettledPayload,
   ThreadPinnedPayload,
   ThreadPinReorderedPayload,
+  ThreadPullRequestLinkedPayload,
+  ThreadPullRequestSyncedPayload,
+  ThreadPullRequestUnlinkedPayload,
   ThreadSnoozedPayload,
   ThreadUnpinnedPayload,
   ThreadUnarchivedPayload,
@@ -112,6 +124,77 @@ function updateThread(
   patch: ThreadPatch,
 ): OrchestrationThread[] {
   return threads.map((thread) => (thread.id === threadId ? { ...thread, ...patch } : thread));
+}
+
+/** Patch that swaps a thread's links and re-derives the legacy single-PR field from them. */
+function pullRequestsPatch(
+  thread: Pick<OrchestrationThread, "projectId">,
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>,
+  projects: OrchestrationReadModel["projects"],
+): Pick<OrchestrationThread, "pullRequests" | "linkedPullRequest"> {
+  return {
+    pullRequests,
+    linkedPullRequest: legacyLinkedPullRequestOf(
+      pullRequests,
+      thread.projectId,
+      projects.find((project) => project.id === thread.projectId)?.repositoryIdentity,
+    ),
+  };
+}
+
+function upsertPullRequestLink(
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>,
+  link: ThreadPullRequestLink,
+): ReadonlyArray<ThreadPullRequestLink> {
+  const index = pullRequests.findIndex((entry) => threadPullRequestKeysEqual(entry, link));
+  return index === -1
+    ? [...pullRequests, link]
+    : pullRequests.map((entry, entryIndex) => (entryIndex === index ? link : entry));
+}
+
+function removePullRequestLink(
+  pullRequests: ReadonlyArray<ThreadPullRequestLink>,
+  key: ThreadPullRequestKey,
+): ReadonlyArray<ThreadPullRequestLink> {
+  return pullRequests.filter((entry) => !threadPullRequestKeysEqual(entry, key));
+}
+
+/**
+ * Host for a legacy `linkedPullRequest` being replayed into the link array.
+ * Legacy links never carried one; the project's canonical key
+ * (`<host>/<owner>/<name>`) is the best witness, then the link URL.
+ */
+function legacyPullRequestHost(
+  project: OrchestrationProject | undefined,
+  linked: ThreadLinkedPullRequest,
+): string {
+  const canonicalHost = project?.repositoryIdentity?.canonicalKey.split("/")[0];
+  if (canonicalHost) return canonicalHost.toLowerCase();
+  try {
+    return new URL(linked.url).hostname.toLowerCase();
+  } catch {
+    return "unknown";
+  }
+}
+
+function legacyLinkToPullRequests(
+  thread: Pick<OrchestrationThread, "pullRequests">,
+  project: OrchestrationProject | undefined,
+  linked: ThreadLinkedPullRequest | null,
+  linkedAt: string,
+): ReadonlyArray<ThreadPullRequestLink> {
+  // The legacy field held one user-chosen link, so null clears exactly the
+  // manual ones and leaves created/agent/stack links alone.
+  const withoutManual = thread.pullRequests.filter((entry) => entry.source !== "manual");
+  if (linked === null) return withoutManual;
+  return upsertPullRequestLink(withoutManual, {
+    ...legacyThreadPullRequestKey(linked, legacyPullRequestHost(project, linked)),
+    url: linked.url,
+    source: "manual",
+    linkedAt,
+    snapshot: null,
+    stack: null,
+  });
 }
 
 function decodeForEvent<A>(
@@ -344,6 +427,8 @@ export function projectEvent(
             interactionMode: payload.interactionMode,
             branch: payload.branch,
             worktreePath: payload.worktreePath,
+            pullRequests: [],
+            branchPullRequest: null,
             latestTurn: null,
             createdAt: payload.createdAt,
             updatedAt: payload.updatedAt,
@@ -351,6 +436,7 @@ export function projectEvent(
             settledOverride: null,
             settledAt: null,
             unsettledAt: null,
+            activeOrderKey: null,
             snoozedUntil: null,
             snoozedAt: null,
             deletedAt: null,
@@ -413,6 +499,7 @@ export function projectEvent(
             settledOverride: "settled",
             settledAt: payload.settledAt,
             unsettledAt: null,
+            activeOrderKey: null,
             updatedAt: payload.updatedAt,
           }),
         })),
@@ -503,24 +590,129 @@ export function projectEvent(
 
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
-        Effect.map((payload) => ({
-          ...nextBase,
-          threads: updateThread(nextBase.threads, payload.threadId, {
-            ...(payload.title !== undefined ? { title: payload.title } : {}),
-            ...(payload.titleRegeneration !== undefined
-              ? { titleRegeneration: payload.titleRegeneration }
-              : {}),
-            ...(payload.modelSelection !== undefined
-              ? { modelSelection: payload.modelSelection }
-              : {}),
-            ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
-            ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
-            ...(payload.linkedPullRequest !== undefined
-              ? { linkedPullRequest: payload.linkedPullRequest }
-              : {}),
-            updatedAt: payload.updatedAt,
-          }),
-        })),
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          // Legacy single-link events replay into the link array so the
+          // derived linkedPullRequest and pullRequests never disagree.
+          const legacyLinkPatch =
+            thread !== undefined && payload.linkedPullRequest !== undefined
+              ? pullRequestsPatch(
+                  thread,
+                  legacyLinkToPullRequests(
+                    thread,
+                    nextBase.projects.find((project) => project.id === thread.projectId),
+                    payload.linkedPullRequest,
+                    payload.updatedAt,
+                  ),
+                  nextBase.projects,
+                )
+              : {};
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...(payload.title !== undefined ? { title: payload.title } : {}),
+              ...(payload.titleRegeneration !== undefined
+                ? { titleRegeneration: payload.titleRegeneration }
+                : {}),
+              ...(payload.modelSelection !== undefined
+                ? { modelSelection: payload.modelSelection }
+                : {}),
+              ...(payload.branch !== undefined ? { branch: payload.branch } : {}),
+              ...(payload.worktreePath !== undefined ? { worktreePath: payload.worktreePath } : {}),
+              ...(payload.activeOrderKey !== undefined
+                ? { activeOrderKey: payload.activeOrderKey }
+                : {}),
+              ...(payload.branchPullRequest !== undefined
+                ? { branchPullRequest: payload.branchPullRequest }
+                : {}),
+              ...legacyLinkPatch,
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.pull-request-linked":
+      return decodeForEvent(
+        ThreadPullRequestLinkedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...pullRequestsPatch(
+                thread,
+                upsertPullRequestLink(thread.pullRequests, payload.link),
+                nextBase.projects,
+              ),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.pull-request-unlinked":
+      return decodeForEvent(
+        ThreadPullRequestUnlinkedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) {
+            return nextBase;
+          }
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...pullRequestsPatch(
+                thread,
+                removePullRequestLink(thread.pullRequests, payload),
+                nextBase.projects,
+              ),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
+      );
+
+    case "thread.pull-request-synced":
+      return decodeForEvent(
+        ThreadPullRequestSyncedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          // A sync for a link the user removed in the meantime is stale; drop it.
+          if (
+            !thread ||
+            !thread.pullRequests.some((link) => threadPullRequestKeysEqual(link, payload))
+          ) {
+            return nextBase;
+          }
+          const pullRequests = thread.pullRequests.map((link) =>
+            threadPullRequestKeysEqual(link, payload)
+              ? { ...link, snapshot: payload.snapshot, stack: payload.stack }
+              : link,
+          );
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              ...pullRequestsPatch(thread, pullRequests, nextBase.projects),
+              updatedAt: payload.updatedAt,
+            }),
+          };
+        }),
       );
 
     case "thread.runtime-mode-set":
@@ -572,6 +764,7 @@ export function projectEvent(
             role: payload.role,
             text: payload.text,
             ...(payload.attachments !== undefined ? { attachments: payload.attachments } : {}),
+            ...(payload.context !== undefined ? { context: payload.context } : {}),
             turnId: payload.turnId,
             streaming: payload.streaming,
             createdAt: payload.createdAt,
@@ -598,6 +791,7 @@ export function projectEvent(
                     ...(message.attachments !== undefined
                       ? { attachments: message.attachments }
                       : {}),
+                    ...(message.context !== undefined ? { context: message.context } : {}),
                   }
                 : entry,
             )

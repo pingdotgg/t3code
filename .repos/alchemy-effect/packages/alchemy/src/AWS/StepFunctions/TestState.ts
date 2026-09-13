@@ -12,9 +12,8 @@ export interface TestStateRequest extends sfn.TestStateInput {}
  * Service-scoped (no resource argument). States that call other services
  * (e.g. `lambda:invoke`) need a `roleArn` the caller can `iam:PassRole` —
  * intrinsic states (Pass/Choice/Succeed/Fail) run without one.
- * @binding
- * @section Testing States
- * @example Test a Pass state's output processing
+ * ### Testing States
+ * **Example:** Test a Pass state's output processing
  * ```typescript
  * const testState = yield* StepFunctions.TestState();
  *
@@ -29,6 +28,8 @@ export interface TestStateRequest extends sfn.TestStateInput {}
  * });
  * // result.status === "SUCCEEDED", result.output === "42"
  * ```
+ *
+ * @binding
  */
 export interface TestState extends Binding.Service<
   TestState,

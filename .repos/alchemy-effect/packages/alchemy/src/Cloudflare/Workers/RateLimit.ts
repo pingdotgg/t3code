@@ -56,11 +56,8 @@ export type RateLimitProps = {
  * `yield*` it inside an Effect-native Worker to attach the binding and obtain
  * the {@link RateLimitClient}.
  *
- * @binding
- * @product Rate Limiting
- * @category Application Security
- * @section Declaring on a Worker's env
- * @example Async (non-Effect) Worker
+ * ### Declaring on a Worker's env
+ * **Example:** Async (non-Effect) Worker
  * ```typescript
  * export const Worker = Cloudflare.Worker("Worker", {
  *   main: "./src/worker.ts",
@@ -84,8 +81,8 @@ export type RateLimitProps = {
  * };
  * ```
  *
- * @section Binding inside an Effect-native Worker
- * @example yield* RateLimit does the binding
+ * ### Binding inside an Effect-native Worker
+ * **Example:** yield* RateLimit does the binding
  * ```typescript
  * Cloudflare.Worker("Worker", { main: "./src/worker.ts" },
  *   Effect.gen(function* () {
@@ -106,6 +103,10 @@ export type RateLimitProps = {
  * ```
  *
  * @see https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/
+ *
+ * @binding
+ * @product Rate Limiting
+ * @category Application Security
  */
 export interface RateLimit extends Binding.Service<
   RateLimit,

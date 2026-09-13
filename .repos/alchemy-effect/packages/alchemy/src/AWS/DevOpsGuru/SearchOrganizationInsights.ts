@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * service requires both `FromTime` and `ToTime` on the range.
  * Provide the implementation with
  * `Effect.provide(AWS.DevOpsGuru.SearchOrganizationInsightsHttp)`.
- * @binding
- * @section Organization Visibility
- * @example Search Insights Across Accounts
+ * ### Organization Visibility
+ * **Example:** Search Insights Across Accounts
  * ```typescript
  * // init — account-level binding, no resource argument
  * const searchOrganizationInsights = yield* AWS.DevOpsGuru.SearchOrganizationInsights();
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  * });
  * yield* Effect.log(`found: ${ReactiveInsights?.length}`);
  * ```
+ *
+ * @binding
  */
 export interface SearchOrganizationInsights extends Binding.Service<
   SearchOrganizationInsights,

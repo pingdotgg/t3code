@@ -1,5 +1,11 @@
 import * as Schema from "effect/Schema";
-import { type PointerEvent as ReactPointerEvent, useCallback, useRef, useState } from "react";
+import {
+  type PointerEvent as ReactPointerEvent,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from "react";
 
 import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
 
@@ -24,6 +30,7 @@ export interface ResizableWidthHandlers {
   readonly onPointerMove: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
 }
 
 /**
@@ -75,6 +82,8 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   const releasePointer = useCallback((pointerId: number) => {
     const state = dragStateRef.current;
     if (!state) return;
+    // Clear first because releasing capture can trigger another cleanup.
+    dragStateRef.current = null;
     if (state.rafId !== null) {
       cancelAnimationFrame(state.rafId);
     }
@@ -87,12 +96,27 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     }
     document.body.style.removeProperty("cursor");
     document.body.style.removeProperty("user-select");
-    dragStateRef.current = null;
   }, []);
+
+  const cancelDrag = useCallback(() => {
+    const state = dragStateRef.current;
+    if (!state) return;
+    releasePointer(state.pointerId);
+    setWidth(state.startWidth);
+  }, [releasePointer]);
+
+  useEffect(() => {
+    window.addEventListener("blur", cancelDrag);
+    return () => {
+      window.removeEventListener("blur", cancelDrag);
+      const state = dragStateRef.current;
+      if (state) releasePointer(state.pointerId);
+    };
+  }, [cancelDrag, releasePointer]);
 
   const onPointerDown = useCallback(
     (event: ReactPointerEvent<HTMLElement>) => {
-      if (event.button !== 0) return;
+      if (event.button !== 0 || dragStateRef.current) return;
       event.preventDefault();
       event.stopPropagation();
       const target = event.currentTarget;
@@ -155,14 +179,19 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       const state = dragStateRef.current;
       if (!state || state.pointerId !== event.pointerId) return;
       // Don't persist a cancelled drag; revert to the start width.
-      releasePointer(event.pointerId);
-      setWidth(state.startWidth);
+      cancelDrag();
     },
-    [releasePointer],
+    [cancelDrag],
   );
 
   return {
     width: clampedWidth,
-    handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel },
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel,
+      onLostPointerCapture: onPointerCancel,
+    },
   };
 }

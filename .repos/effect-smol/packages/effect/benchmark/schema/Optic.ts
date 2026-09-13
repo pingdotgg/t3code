@@ -1,19 +1,24 @@
 import { Optic, Schema } from "effect"
 import { Bench } from "tinybench"
 
-/*
-┌─────────┬──────────────────┬──────────────────┬──────────────────┬────────────────────────┬────────────────────────┬──────────┐
-│ (index) │ Task name        │ Latency avg (ns) │ Latency med (ns) │ Throughput avg (ops/s) │ Throughput med (ops/s) │ Samples  │
-├─────────┼──────────────────┼──────────────────┼──────────────────┼────────────────────────┼────────────────────────┼──────────┤
-│ 0       │ 'iso get'        │ '907.53 ± 1.06%' │ '834.00 ± 1.00'  │ '1159005 ± 0.02%'      │ '1199041 ± 1439'       │ 1101891  │
-│ 1       │ 'optic get'      │ '32.79 ± 0.20%'  │ '42.00 ± 1.00'   │ '25353263 ± 0.00%'     │ '23809524 ± 580720'    │ 30500447 │
-│ 2       │ 'direct get'     │ '23.12 ± 0.48%'  │ '41.00 ± 1.00'   │ '32734753 ± 0.01%'     │ '24390244 ± 580720'    │ 43255789 │
-│ 3       │ 'iso replace'    │ '2693.0 ± 2.87%' │ '2459.0 ± 41.00' │ '396398 ± 0.03%'       │ '406669 ± 6669'        │ 371349   │
-│ 4       │ 'direct replace' │ '848.59 ± 0.45%' │ '792.00 ± 1.00'  │ '1244301 ± 0.02%'      │ '1262626 ± 1596'       │ 1178430  │
-└─────────┴──────────────────┴──────────────────┴──────────────────┴────────────────────────┴────────────────────────┴──────────┘
-*/
+// Batching bounds sample storage and keeps sub-microsecond timings above timer resolution.
+const batchSize = 1_000
+const bench = new Bench({
+  iterations: 1_000,
+  time: 0,
+  warmupIterations: 100,
+  warmupTime: 0,
+  timestampProvider: "hrtimeNow"
+})
+let sink: unknown
 
-const bench = new Bench()
+const batch = <A>(run: () => A) => () => {
+  let value = run()
+  for (let index = 1; index < batchSize; index++) {
+    value = run()
+  }
+  sink = value
+}
 
 // Define a class with nested properties
 class User extends Schema.Class<User>("User")({
@@ -47,33 +52,53 @@ const iso = Schema.toIso(User).key("profile").key("address").key("street")
 const optic = Optic.id<typeof User["Type"]>().key("profile").key("address").key("street")
 
 bench
-  .add("iso get", function() {
-    iso.get(user)
-  })
-  .add("optic get", function() {
-    optic.get(user)
-  })
-  .add("direct get", function() {
-    // oxlint-disable-next-line no-unused-expressions
-    user.profile.address.street
-  })
-  .add("iso replace", function() {
-    iso.replace("Updated", user)
-  })
-  .add("direct replace", function() {
-    // oxlint-disable-next-line no-new
-    new User({
-      ...user,
-      profile: {
-        ...user.profile,
-        address: {
-          ...user.profile.address,
-          street: "Updated"
+  .add("iso get", batch(() => iso.get(user)))
+  .add("optic get", batch(() => optic.get(user)))
+  .add("direct get", batch(() => user.profile.address.street))
+  .add("iso replace", batch(() => iso.replace("Updated", user)))
+  .add(
+    "direct replace",
+    batch(() =>
+      new User({
+        ...user,
+        profile: {
+          ...user.profile,
+          address: {
+            ...user.profile.address,
+            street: "Updated"
+          }
         }
-      }
-    })
-  })
+      })
+    )
+  )
 
 await bench.run()
 
-console.table(bench.table())
+if (sink === undefined) {
+  throw new Error("Benchmark did not run")
+}
+
+console.table(bench.table((task) => {
+  const result = task.result
+  if (result?.state === "errored") {
+    return {
+      "Task name": task.name,
+      Error: result.error.message
+    }
+  }
+  if (result?.state !== "completed") {
+    return {
+      "Task name": task.name,
+      State: result?.state ?? "missing result"
+    }
+  }
+  const latencyToNs = (value: number) => value * 1_000_000 / batchSize
+  return {
+    "Task name": task.name,
+    "Latency avg (ns/op)": latencyToNs(result.latency.mean).toFixed(2),
+    "Latency med (ns/op)": latencyToNs(result.latency.p50).toFixed(2),
+    "Latency RME": `${result.latency.rme.toFixed(2)}%`,
+    "Throughput avg (ops/s)": Math.round(result.throughput.mean * batchSize),
+    Samples: result.latency.samplesCount
+  }
+}))
