@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   cliArchiveFileName,
   cliArchivePlatformKey,
+  cliArchiveTarCommand,
   cliReleaseDownloadBaseUrl,
   isArchiveDistributedVersion,
   parseChecksums,
@@ -13,11 +14,18 @@ describe("cliRelease", () => {
     expect(cliArchiveFileName("1.2.3-preview.20260911.4", "linux-x64")).toBe(
       "t3-1.2.3-preview.20260911.4-linux-x64.tar.gz",
     );
-    expect(cliArchiveFileName("1.2.3", "win32-arm64")).toBe("t3-1.2.3-win32-arm64.zip");
+    expect(cliArchiveFileName("1.2.3", "win32-x64")).toBe("t3-1.2.3-win32-x64.zip");
   });
 
   it("only maps platforms and architectures that have a release archive", () => {
     expect(cliArchivePlatformKey("darwin", "arm64")).toBe("darwin-arm64");
+    expect(cliArchivePlatformKey("linux", "x64")).toBe("linux-x64");
+    expect(cliArchivePlatformKey("win32", "x64")).toBe("win32-x64");
+    // Built but not published (macOS x64 segfaults under Rosetta when
+    // cross-injected; the arm64 Linux and Windows runners do not exist yet).
+    expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();
+    expect(cliArchivePlatformKey("linux", "arm64")).toBeUndefined();
+    expect(cliArchivePlatformKey("win32", "arm64")).toBeUndefined();
     expect(cliArchivePlatformKey("freebsd", "x64")).toBeUndefined();
     expect(cliArchivePlatformKey("linux", "ia32")).toBeUndefined();
   });
@@ -49,5 +57,13 @@ describe("cliRelease", () => {
     expect(isArchiveDistributedVersion("1.2.3-preview.20260911.4")).toBe(true);
     expect(isArchiveDistributedVersion("1.2.3-nightly.20260911.4")).toBe(false);
     expect(isArchiveDistributedVersion("1.2.3")).toBe(false);
+  });
+
+  it("extracts with the System32 bsdtar on Windows and plain tar elsewhere", () => {
+    expect(cliArchiveTarCommand("linux", {})).toBe("tar");
+    expect(cliArchiveTarCommand("win32", { SystemRoot: "D:\\Win" })).toBe(
+      "D:\\Win\\System32\\tar.exe",
+    );
+    expect(cliArchiveTarCommand("win32", {})).toBe("C:\\Windows\\System32\\tar.exe");
   });
 });
