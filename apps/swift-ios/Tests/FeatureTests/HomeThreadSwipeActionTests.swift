@@ -182,9 +182,7 @@ struct HomeThreadSwipeActionTests {
         )
     }
 
-    /// The leading edge only ever carries the reversible pin toggle, so nothing
-    /// destructive or lifecycle-changing can run from a right swipe. This
-    /// sweeps the same state space as the trailing-edge test.
+    /// Without snooze support, the leading edge remains the pin toggle.
     @Test
     func theLeadingSwipeNeverOffersSettlementOrDelete() {
         for isSettled in [false, true] {
@@ -218,6 +216,87 @@ struct HomeThreadSwipeActionTests {
                 }
             }
         }
+    }
+
+    @Test
+    func snoozeIsSecondAndPinningStillOwnsTheFullSwipe() {
+        for pinned in [false, true] {
+            var candidate = thread(id: "snooze", pinnedAt: pinned ? now : nil)
+            candidate.supportsSnooze = true
+            let actions = HomeThreadSwipeAction.leadingActions(
+                for: candidate, isArchived: false, at: now
+            )
+            #expect(actions == [pinned ? .unpin : .pin, .snooze])
+            #expect(HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+        }
+    }
+
+    @Test
+    func snoozeWithoutPinSupportRequiresAnExplicitTap() {
+        var candidate = thread(id: "snooze-only")
+        candidate.supportsPinning = false
+        candidate.supportsSnooze = true
+        let actions = HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        )
+        #expect(actions == [.snooze])
+        #expect(!HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+    }
+
+    @Test
+    func snoozeRequiresSupportAndDoesNotHideWorkAwaitingInput() {
+        for support in [nil, false, true] as [Bool?] {
+            for state in [FeatureThreadState.queued, .working, .monitoring,
+                          .waitingForApproval, .waitingForInput] {
+                var candidate = thread(id: "busy")
+                candidate.supportsSnooze = support
+                candidate.state = state
+                let actions = HomeThreadSwipeAction.leadingActions(
+                    for: candidate, isArchived: false, at: now
+                )
+                #expect(actions.contains(.snooze) ==
+                    (support == true && state != .waitingForApproval && state != .waitingForInput))
+                #expect(actions.first == .pin)
+                #expect(HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+            }
+        }
+    }
+
+    @Test
+    func pendingTurnAdoptionBlocksSnoozeUntilTheBoundaryPasses() {
+        for state in [FeatureThreadState.idle, .queued, .working] {
+            var candidate = thread(id: "pending-turn")
+            candidate.state = state
+            candidate.supportsSnooze = true
+            candidate.settlementFacts = .init(latestUserMessageAt: now.addingTimeInterval(-30))
+            #expect(HomeThreadSwipeAction.leadingActions(
+                for: candidate, isArchived: false, at: now
+            ) == [.pin])
+            #expect(HomeThreadSwipeAction.leadingActions(
+                for: candidate, isArchived: false, at: now.addingTimeInterval(91)
+            ) == [.pin, .snooze])
+        }
+    }
+
+    @Test
+    func wakeUsesEffectiveSnoozeStateAndKeepsPinningFirst() {
+        var candidate = thread(id: "snoozed", pinnedAt: now)
+        candidate.snoozedUntil = now.addingTimeInterval(3600)
+        candidate.supportsSnooze = false
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        ) == [.unpin, .wake])
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: true, at: now
+        ).isEmpty)
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now.addingTimeInterval(3600)
+        ) == [.unpin, .snooze])
+
+        candidate.state = .waitingForInput
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        ) == [.unpin])
     }
 
     /// Delete must never reach the edge slot, because the edge slot is what a
@@ -1253,6 +1332,7 @@ struct HomeThreadSwipeActionTests {
                 onSettle(thread, settled, completion)
                 if let settlementResult { completion(settlementResult) }
             },
+            onChooseSnooze: { _ in },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
             onArrange: {},
