@@ -1,10 +1,5 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type {
-  EnvironmentId,
-  PullRequestMergeMethod,
-  ScopedTaskRef,
-  TaskId,
-} from "@t3tools/contracts";
+import type { PullRequestMergeMethod, ScopedTaskRef } from "@t3tools/contracts";
 import { parseScopedTaskKey, scopedTaskKey } from "@t3tools/client-runtime/environment";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
@@ -407,15 +402,6 @@ export function setProjectExpanded(
   };
 }
 
-/** Saved choices apply to either presentation; active tasks initially expand. */
-export function resolveTaskExpanded(
-  preferences: Readonly<Record<string, boolean>>,
-  ref: ScopedTaskRef,
-  parked: boolean,
-): boolean {
-  return preferences[scopedTaskKey(ref)] ?? !parked;
-}
-
 export function setTaskExpanded(state: UiState, ref: ScopedTaskRef, expanded: boolean): UiState {
   const key = scopedTaskKey(ref);
   return state.taskExpandedByKey[key] === expanded
@@ -435,32 +421,6 @@ export function setTaskSettledExpanded(
         ...state,
         taskSettledExpandedByKey: { ...state.taskSettledExpandedByKey, [key]: expanded },
       };
-}
-
-/** Call only with the complete inventory (including archived tasks) of a live snapshot. */
-export function pruneTaskPreferences(
-  state: UiState,
-  environmentId: EnvironmentId,
-  taskIds: readonly TaskId[],
-  authoritative: boolean,
-): UiState {
-  if (!authoritative) return state;
-  const retained = new Set(taskIds);
-  const prune = (preferences: Record<string, boolean>) => {
-    const entries = Object.entries(preferences).filter(([key]) => {
-      const ref = parseScopedTaskKey(key);
-      return ref?.environmentId !== environmentId || retained.has(ref.taskId);
-    });
-    return entries.length === Object.keys(preferences).length
-      ? preferences
-      : Object.fromEntries(entries);
-  };
-  const taskExpandedByKey = prune(state.taskExpandedByKey);
-  const taskSettledExpandedByKey = prune(state.taskSettledExpandedByKey);
-  return taskExpandedByKey === state.taskExpandedByKey &&
-    taskSettledExpandedByKey === state.taskSettledExpandedByKey
-    ? state
-    : { ...state, taskExpandedByKey, taskSettledExpandedByKey };
 }
 
 export function reorderProjects(
@@ -510,11 +470,6 @@ export function reorderProjects(
 interface UiStateStore extends UiState {
   setTaskExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
   setTaskSettledExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
-  pruneTaskPreferences: (
-    environmentId: EnvironmentId,
-    taskIds: readonly TaskId[],
-    authoritative: boolean,
-  ) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -534,8 +489,6 @@ export const useUiStateStore = create<UiStateStore>((set) => ({
   setTaskExpanded: (ref, expanded) => set((state) => setTaskExpanded(state, ref, expanded)),
   setTaskSettledExpanded: (ref, expanded) =>
     set((state) => setTaskSettledExpanded(state, ref, expanded)),
-  pruneTaskPreferences: (environmentId, taskIds, authoritative) =>
-    set((state) => pruneTaskPreferences(state, environmentId, taskIds, authoritative)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

@@ -75,6 +75,7 @@ export function TaskSidebar(props: {
   toggleSnoozed: () => void;
   toggleSettled: () => void;
   showMoreSettled: () => void;
+  revealShelf: (shelf: "snoozed" | "settled", visibleCount: number) => void;
   canDrag: (item: TaskSidebarItem) => boolean;
   renderThread: (
     thread: EnvironmentThreadShell,
@@ -256,6 +257,8 @@ export function TaskSidebar(props: {
                         project={project}
                         section={item.section}
                         expanded={item.expanded}
+                        retainedShelfVisibleCount={item.retainedShelfVisibleCount}
+                        revealShelf={props.revealShelf}
                         liveCount={item.counts.live}
                         snoozedCount={item.counts.snoozed}
                         settledCount={item.counts.settled}

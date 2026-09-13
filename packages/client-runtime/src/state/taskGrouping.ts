@@ -205,6 +205,19 @@ export function taskHasLocalWork(input: {
   );
 }
 
+/** Pending local work promotes parked tasks while preserving their pin choice. */
+export function effectiveTaskShelf(input: {
+  readonly task: OrchestrationTaskShell;
+  readonly now: string;
+  readonly hasLocalWork: boolean;
+}) {
+  return input.hasLocalWork
+    ? input.task.pinnedAt !== null
+      ? "pinned"
+      : "active"
+    : taskShelf(input.task, input.now);
+}
+
 /** Local work changes presentation only; selection never changes the saved expansion choice. */
 export function resolveTaskPresentation(input: {
   readonly task: TaskGroupingTask;
@@ -214,11 +227,7 @@ export function resolveTaskPresentation(input: {
   readonly searching: boolean;
   readonly hasMatchingChildren: boolean;
 }) {
-  const shelf = input.hasLocalWork
-    ? input.task.pinnedAt
-      ? ("pinned" as const)
-      : ("active" as const)
-    : taskShelf(input.task, input.now);
+  const shelf = effectiveTaskShelf(input);
   return {
     shelf,
     expanded: input.searching ? input.hasMatchingChildren : !input.collapsed,

@@ -20,6 +20,7 @@ export function mobileTaskItemsAreEqual(
   if (previous.expanded !== next.expanded || previous.count !== next.count) return false;
   if (previous.type === "task-subshelf-header" || next.type === "task-subshelf-header") return true;
   return (
+    previous.retainedShelfVisibleCount === next.retainedShelfVisibleCount &&
     previous.selected === next.selected &&
     previous.status === next.status &&
     previous.snoozed === next.snoozed &&

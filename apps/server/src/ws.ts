@@ -1,3 +1,4 @@
+import { isTaskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import {
   sameUsageLimitCommandCoverage,
   withUsageLimitsCommands,
@@ -517,7 +518,7 @@ const makeWsRpcLayer = (
       );
       const fenceResourceAllocation = <E>(threadId: string, unavailable: E) =>
         Effect.gen(function* () {
-          const taskId = threadId.startsWith("task:") ? TaskId.make(threadId.slice(5)) : null;
+          const taskId = isTaskWorkbenchId(threadId) ? TaskId.make(threadId.slice(5)) : null;
           if (taskId !== null) {
             yield* drainCurrentLifecycle;
             const task = yield* projectionSnapshotQuery.getTaskShellById(taskId);

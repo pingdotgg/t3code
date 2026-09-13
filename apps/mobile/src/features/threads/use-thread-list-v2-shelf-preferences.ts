@@ -35,8 +35,23 @@ export function useThreadListV2ShelfPreferences() {
     savePreferences({ threadListSettledShelfExpanded: expanded });
   }, [loaded, savePreferences]);
 
+  const revealShelf = useCallback(
+    (shelf: "snoozed" | "settled") => {
+      if (!loaded) return;
+      if (shelf === "snoozed") {
+        snoozedShelfExpandedRef.current = true;
+        savePreferences({ threadListSnoozedShelfExpanded: true });
+      } else {
+        settledShelfExpandedRef.current = true;
+        savePreferences({ threadListSettledShelfExpanded: true });
+      }
+    },
+    [loaded, savePreferences],
+  );
+
   return {
     loaded,
+    revealShelf,
     settledShelfExpanded,
     snoozedShelfExpanded,
     toggleSettledShelf,

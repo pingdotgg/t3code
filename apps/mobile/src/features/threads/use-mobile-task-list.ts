@@ -14,7 +14,7 @@ export function useMobileTaskListActions() {
     value: { collapsedTaskKeys?: readonly string[]; expandedTaskShelfKeys?: readonly string[] };
   }>({ source: null, value: {} });
   return useCallback(
-    (key: string, shelf = false) => {
+    (key: string, shelf = false, present?: boolean) => {
       const preferences = appAtomRegistry.get(mobilePreferencesAtom);
       if (!AsyncResult.isSuccess(preferences)) return;
       if (latest.current.source !== preferences) {
@@ -22,8 +22,8 @@ export function useMobileTaskListActions() {
       }
       const field = shelf ? "expandedTaskShelfKeys" : "collapsedTaskKeys";
       const keys = new Set(latest.current.value[field] ?? preferences.value[field] ?? []);
-      if (keys.has(key)) keys.delete(key);
-      else keys.add(key);
+      if (present ?? !keys.has(key)) keys.add(key);
+      else keys.delete(key);
       const patch = { [field]: [...keys] };
       latest.current.value = { ...latest.current.value, ...patch };
       update(patch);

@@ -2839,6 +2839,16 @@ export default function Sidebar() {
     return routeThread === undefined ? EMPTY_THREADS : [routeThread];
   }, [routeThreadKey, snoozedShelfExpanded, snoozedThreads]);
 
+  const revealTaskShelf = useCallback(
+    (shelf: "snoozed" | "settled", visibleCount: number) => {
+      if (shelf === "snoozed") setSnoozedShelfExpanded(true);
+      else {
+        setSettledShelfExpanded(true);
+        setSettledVisibleCount((count) => Math.max(count, visibleCount));
+      }
+    },
+    [setSnoozedShelfExpanded, setSettledShelfExpanded],
+  );
   const groupedTaskSidebar =
     scopedProjectKeys === null &&
     tasks.some(
@@ -4871,6 +4881,7 @@ export default function Sidebar() {
                 toggleSnoozed={toggleSnoozedShelf}
                 toggleSettled={toggleSettledShelf}
                 showMoreSettled={showMoreSettled}
+                revealShelf={revealTaskShelf}
                 canDrag={(item) =>
                   item.kind === "task"
                     ? taskCapableEnvironmentIds.has(item.taskRef.environmentId)

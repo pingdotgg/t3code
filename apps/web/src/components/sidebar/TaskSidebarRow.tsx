@@ -16,6 +16,8 @@ export const TaskSidebarRow = memo(function TaskSidebarRow({
   liveCount,
   snoozedCount,
   settledCount,
+  retainedShelfVisibleCount,
+  revealShelf,
   ...presentation
 }: Pick<
   TaskRowProps,
@@ -26,6 +28,8 @@ export const TaskSidebarRow = memo(function TaskSidebarRow({
   liveCount: number;
   snoozedCount: number;
   settledCount: number;
+  retainedShelfVisibleCount: number | undefined;
+  revealShelf: (shelf: "snoozed" | "settled", visibleCount: number) => void;
 }) {
   const setExpanded = useUiStateStore((state) => state.setTaskExpanded);
   const rowProps = {
@@ -33,7 +37,15 @@ export const TaskSidebarRow = memo(function TaskSidebarRow({
     task,
     expanded,
     counts: { live: liveCount, snoozed: snoozedCount, settled: settledCount },
-    onToggle: () => setExpanded(scopeTaskRef(task.environmentId, task.id), !expanded),
+    onToggle: () => {
+      if (
+        retainedShelfVisibleCount !== undefined &&
+        (section === "snoozed" || section === "settled")
+      ) {
+        revealShelf(section, retainedShelfVisibleCount);
+      }
+      setExpanded(scopeTaskRef(task.environmentId, task.id), !expanded);
+    },
     primaryProjectName: project?.title ?? "Project",
     primaryProjectIcon: project ? (
       <ProjectFavicon project={project} className="size-3.5" />

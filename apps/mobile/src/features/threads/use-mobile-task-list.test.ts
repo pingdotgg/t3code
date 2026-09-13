@@ -36,6 +36,36 @@ describe("task expansion actions", () => {
       [{ expandedTaskShelfKeys: [] }],
     ]);
   });
+  it("explicitly expands retained parked tasks without inverting saved choices or losing other maps", () => {
+    const preferences = {
+      collapsedTaskKeys: ["local:active", "parked:remote:task", "parked:local:task"],
+      expandedTaskShelfKeys: ["remote:task", "local:task"],
+    };
+    state.preferences = AsyncResult.success(preferences);
+    const toggle = useMobileTaskListActions();
+    // Retention alone leaves the saved maps untouched.
+    expect(state.update).not.toHaveBeenCalled();
+    toggle("parked:local:task", false, true);
+    toggle("parked:local:task", false, true);
+    expect(state.update).toHaveBeenLastCalledWith({
+      collapsedTaskKeys: preferences.collapsedTaskKeys,
+    });
+    // A subsequent ordinary press still collapses, using the latest local choice.
+    toggle("parked:local:task");
+    expect(state.update).toHaveBeenLastCalledWith({
+      collapsedTaskKeys: ["local:active", "parked:remote:task"],
+    });
+    // Fresh persistence may have no saved expansion for this task. Explicit reveal adds it.
+    state.preferences = AsyncResult.success({
+      ...preferences,
+      collapsedTaskKeys: ["parked:remote:task"],
+    });
+    toggle("parked:local:task", false, true);
+    expect(state.update).toHaveBeenLastCalledWith({
+      collapsedTaskKeys: ["parked:remote:task", "parked:local:task"],
+    });
+    expect(preferences.expandedTaskShelfKeys).toEqual(["remote:task", "local:task"]);
+  });
   it("reads a newer preference snapshot when the next action runs", () => {
     const toggle = useMobileTaskListActions();
     toggle("task");

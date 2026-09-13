@@ -1,3 +1,4 @@
+import { isTaskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useMemo } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -69,7 +70,7 @@ export function readWorkbenchRef(ref: ScopedThreadRef): ScopedThreadRef | null {
 
 /** Explicit task resource refs must never be loaded as conversation shells. */
 export function canLaunchWorkbenchOwner(ownerRef: ScopedThreadRef) {
-  const page = ownerRef.threadId.startsWith("task:")
+  const page = isTaskWorkbenchId(ownerRef.threadId)
     ? { environmentId: ownerRef.environmentId, taskId: TaskId.make(ownerRef.threadId.slice(5)) }
     : null;
   const resolution = readWorkbench(ownerRef, page);

@@ -1,3 +1,4 @@
+import { isTaskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import { readWorkbenchOwner } from "~/state/taskWorkbench";
 import type { ScopedThreadRef } from "@t3tools/contracts";
 import {
@@ -62,7 +63,7 @@ export function useOpenLink(
         const result = await openUrlInPreview({ ownerRef: owner.ownerRef, url, openPreview });
         if (isAtomCommandInterrupted(result)) return;
         if (result._tag === "Success") {
-          if (!targetThreadRef.threadId.startsWith("task:"))
+          if (!isTaskWorkbenchId(targetThreadRef.threadId))
             recordVisitForThread(targetThreadRef, url);
           return;
         }

@@ -429,6 +429,7 @@ import {
   getStartedThreadModelChangeBlockReason,
   LAST_INVOKED_SCRIPT_BY_PROJECT_KEY,
   LastInvokedScriptByProjectSchema,
+  normalizeLastInvokedScripts,
   type LocalDispatchSnapshot,
   PullRequestDialogState,
   cloneComposerImageForRetry,
@@ -4047,11 +4048,10 @@ export default function ChatView(props: ChatViewProps) {
         currentWorkbenchKeyRef.current === scopedThreadKey(launch.ownerRef) &&
         workbenchLaunchKey(readWorkbench(routeThreadRef, taskPage)) === capturedKey;
       if (!isCurrent()) return;
-      setLastInvokedScriptByProjectId((current) =>
-        current[launch.projectKey] === launch.script.id
-          ? current
-          : { ...current, [launch.projectKey]: launch.script.id },
-      );
+      setLastInvokedScriptByProjectId((current) => ({
+        ...normalizeLastInvokedScripts(current),
+        [launch.projectKey]: launch.script.id,
+      }));
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const existingSummary = activeThreadKnownSessions.find(

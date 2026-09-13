@@ -373,3 +373,76 @@ describe("task card settlement eligibility", () => {
     expect(rows.find((row) => row.kind === "task")).toMatchObject({ settleBlocked: false });
   });
 });
+
+describe("retained task expansion", () => {
+  it.each(["settled", "snoozed"] as const)(
+    "reveals a selected %s task without inheriting its hidden expansion",
+    (shelf) => {
+      const candidate = task(
+        shelf === "settled"
+          ? { settledOverride: "settled" }
+          : { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      );
+      for (const threads of [[], [thread("selected"), thread("sibling")]]) {
+        const input = {
+          ...base,
+          tasks: [candidate],
+          threads,
+          expandedTaskKeys: new Set([taskKey]),
+          selectedTaskKey: taskKey,
+          selectedThreadKey: threads.length ? key("selected") : null,
+          settledVisibleCount: 0,
+        };
+        const retained = content(input);
+        const header = retained.find((item) => item.kind === "task")!;
+        expect(header).toMatchObject({
+          expanded: false,
+          retainedShelfVisibleCount: shelf === "settled" ? 1 : 0,
+        });
+        expect(retained.map((item) => item.key)).toEqual([
+          `task:${taskKey}`,
+          ...(threads.length ? [key("selected")] : []),
+        ]);
+        const revealed = content({
+          ...input,
+          snoozedExpanded: true,
+          settledExpanded: true,
+          settledVisibleCount: header.retainedShelfVisibleCount ?? 0,
+        });
+        expect(revealed[0]).toMatchObject({ expanded: true });
+        expect(revealed.map((item) => item.key)).toEqual([
+          `task:${taskKey}`,
+          ...threads.map((member) => key(member.id)),
+        ]);
+        const searched = content({
+          ...input,
+          search: "selected",
+          snoozedExpanded: true,
+          settledExpanded: true,
+          settledVisibleCount: 1,
+        });
+        expect(searched.map((item) => item.key)).not.toContain(key("sibling"));
+        expect(input.expandedTaskKeys).toEqual(new Set([taskKey]));
+      }
+    },
+  );
+  it("reveals enough settled pagination for the selected task", () => {
+    const older = task({ settledOverride: "settled", settledAt: "2026-01-01T00:00:00.000Z" });
+    const newer = task({ id: TaskId.make("newer"), settledOverride: "settled", settledAt: now });
+    const input = {
+      ...base,
+      tasks: [older, newer],
+      selectedTaskKey: taskKey,
+      expandedTaskKeys: new Set([taskKey]),
+      settledExpanded: true,
+      settledVisibleCount: 1,
+    };
+    const header = content(input).find((item) => item.kind === "task" && item.taskKey === taskKey);
+    expect(header).toMatchObject({ expanded: false, retainedShelfVisibleCount: 2 });
+    expect(
+      content({ ...input, settledVisibleCount: 2 }).find(
+        (item) => item.kind === "task" && item.taskKey === taskKey,
+      ),
+    ).toMatchObject({ expanded: true });
+  });
+});

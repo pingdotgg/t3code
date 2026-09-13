@@ -379,6 +379,8 @@ describe("mobile task item equality", () => {
     { expanded: false },
     { count: 2 },
     { selected: true },
+    { retainedShelfVisibleCount: 0 },
+    { retainedShelfVisibleCount: 25 },
     { snoozed: true },
     { status: "running" },
     { snoozeWakeLabelText: "Tomorrow" },

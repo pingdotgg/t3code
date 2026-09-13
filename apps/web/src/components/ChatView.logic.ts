@@ -18,7 +18,7 @@ import {
   type ThreadLinkedPullRequest,
   type TurnId,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedProjectKey, parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import {
   squashAtomCommandFailure,
@@ -63,6 +63,13 @@ export const MAX_HIDDEN_MOUNTED_PREVIEW_THREADS = 3;
 export const ENVIRONMENT_RECONNECT_WARNING_GRACE_MS = 2_000;
 
 export const LastInvokedScriptByProjectSchema = Schema.Record(Schema.String, Schema.String);
+
+/** Legacy project IDs cannot be safely assigned to an environment. */
+export function normalizeLastInvokedScripts(preferences: Readonly<Record<string, string>>) {
+  return Object.fromEntries(
+    Object.entries(preferences).filter(([key]) => parseScopedProjectKey(key) !== null),
+  );
+}
 
 export function agentControlledBrowserCloseConfirmation(
   surfaces: readonly RightPanelSurface[],

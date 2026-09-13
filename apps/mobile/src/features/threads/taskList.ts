@@ -9,7 +9,7 @@ import {
   groupThreadsByTask,
   partitionTaskMembers,
   rollupTaskStatus,
-  taskShelf,
+  effectiveTaskShelf,
   taskOrderRow,
   threadOrderRow,
   sortTaskRowsByOrderKey,
@@ -37,6 +37,8 @@ export type MobileTaskListItem =
       readonly key: string;
       readonly task: EnvironmentTask;
       readonly expanded: boolean;
+      /** A retained header has collapsed members; selection alone may keep one child visible. */
+      readonly retainedShelfVisibleCount?: number;
       readonly count: number;
       readonly selected?: boolean;
       readonly snoozed?: boolean;
@@ -152,11 +154,7 @@ export function buildMobileTaskListItems(
       !hasLocalWork
     )
       continue;
-    const effectiveShelf = hasLocalWork
-      ? task.pinnedAt
-        ? "pinned"
-        : "active"
-      : taskShelf(task, input.now);
+    const effectiveShelf = effectiveTaskShelf({ task, now: input.now, hasLocalWork });
     const { shelf, expanded } = resolveTaskPresentation({
       task,
       now: input.now,
@@ -306,6 +304,16 @@ export function buildMobileTaskListItems(
     (a, b) => settledTime(b).localeCompare(settledTime(a)) || a.id.localeCompare(b.id),
   );
   const items: ThreadListV2ListItem[] = [];
+  const appendBlock = (id: string, showFull: boolean, visibleCount: number) => {
+    const block = (showFull ? blocks : retainedBlocks).get(id) ?? [];
+    items.push(
+      ...block.map((item) =>
+        !showFull && (item.type === "task-card" || item.type === "task-slim")
+          ? { ...item, expanded: false, retainedShelfVisibleCount: visibleCount }
+          : item,
+      ),
+    );
+  };
   for (const shelf of ["pinned", "active"] as const)
     for (const row of orderedRows[shelf]) items.push(...blocks.get(row.id)!);
   items.push(
@@ -323,12 +331,10 @@ export function buildMobileTaskListItems(
       count: orderedRows.snoozed.length,
       expanded: searching || input.snoozedShelfExpanded === true,
     });
-    for (const row of orderedRows.snoozed)
-      items.push(
-        ...((searching || input.snoozedShelfExpanded === true ? blocks : retainedBlocks).get(
-          row.id,
-        ) ?? []),
-      );
+    for (const row of orderedRows.snoozed) {
+      const showFull = searching || input.snoozedShelfExpanded === true;
+      appendBlock(row.id, showFull, 0);
+    }
   }
   const settledLimit = searching ? Infinity : (input.settledLimit ?? Infinity);
   let pagedSettledCount = 0;
@@ -343,7 +349,7 @@ export function buildMobileTaskListItems(
       const withinPage = index < settledLimit;
       if (withinPage || retainedBlocks.has(row.id)) pagedSettledCount += 1;
       const showFull = searching || (input.settledShelfExpanded !== false && withinPage);
-      items.push(...((showFull ? blocks : retainedBlocks).get(row.id) ?? []));
+      appendBlock(row.id, showFull, index + 1);
     }
   }
   return {

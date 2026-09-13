@@ -2036,3 +2036,87 @@ describe("native task row context", () => {
     expect(woken.filter((row) => row.type === "task-slim")).toHaveLength(1);
   });
 });
+
+describe("retained native task expansion", () => {
+  it.each(["settled", "snoozed"] as const)(
+    "reveals a selected %s task and preserves the selected-child exception",
+    (shelf) => {
+      const task = makeContainer(
+        shelf === "settled"
+          ? { settledOverride: "settled" }
+          : { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      );
+      const taskKey = `${environmentId}:${task.id}`;
+      for (const threads of [
+        [],
+        [
+          makeThread({ id: ThreadId.make("selected"), title: "Selected", taskId: task.id }),
+          makeThread({ id: ThreadId.make("sibling"), title: "Sibling", taskId: task.id }),
+        ],
+      ]) {
+        const input = taskListFixture({
+          tasks: [task],
+          threads,
+          selectedTaskKey: taskKey,
+          selectedThreadKey: threads.length ? `${environmentId}:selected` : null,
+          collapsedTaskKeys: new Set([`parked:${taskKey}`]),
+          settledShelfExpanded: false,
+          snoozedShelfExpanded: false,
+          settledLimit: 0,
+        });
+        const retained = buildMobileTaskListItems(input).items;
+        const header = retained.find((item) => item.type === "task-slim")!;
+        expect(header).toMatchObject({
+          expanded: false,
+          retainedShelfVisibleCount: shelf === "settled" ? 1 : 0,
+        });
+        expect(
+          retained.filter((item) => item.type === "v2-thread").map((item) => item.item.thread.id),
+        ).toEqual(threads.length ? ["selected"] : []);
+        const revealed = buildMobileTaskListItems({
+          ...input,
+          settledShelfExpanded: true,
+          snoozedShelfExpanded: true,
+          settledLimit: header.retainedShelfVisibleCount ?? 0,
+        }).items;
+        expect(revealed.find((item) => item.type === "task-slim")).toMatchObject({
+          expanded: true,
+        });
+        expect(revealed.filter((item) => item.type === "v2-thread")).toHaveLength(threads.length);
+        const searched = buildMobileTaskListItems({
+          ...input,
+          searchQuery: "selected",
+          settledShelfExpanded: true,
+          snoozedShelfExpanded: true,
+          settledLimit: 1,
+        }).items;
+        expect(
+          searched.filter((item) => item.type === "v2-thread").map((item) => item.item.thread.id),
+        ).not.toContain("sibling");
+        expect(input.collapsedTaskKeys).toEqual(new Set([`parked:${taskKey}`]));
+      }
+    },
+  );
+  it("carries the selected task's position past the settled page", () => {
+    const task = makeContainer({
+      settledOverride: "settled",
+      settledAt: "2026-01-01T00:00:00.000Z",
+    });
+    const newer = makeContainer({
+      id: TaskId.make("newer"),
+      settledOverride: "settled",
+      settledAt: "2026-09-01T00:00:00.000Z",
+    });
+    const input = taskListFixture({
+      tasks: [task, newer],
+      selectedTaskKey: `${environmentId}:${task.id}`,
+      settledShelfExpanded: true,
+      settledLimit: 1,
+    });
+    expect(
+      buildMobileTaskListItems(input).items.find(
+        (item) => item.type === "task-slim" && item.task.id === task.id,
+      ),
+    ).toMatchObject({ expanded: false, retainedShelfVisibleCount: 2 });
+  });
+});

@@ -3,8 +3,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import {
   legacyProjectCwdPreferenceKey,
-  pruneTaskPreferences,
-  resolveTaskExpanded,
   setTaskExpanded,
   setTaskSettledExpanded,
   markThreadUnread,
@@ -395,20 +393,15 @@ describe("task expansion preferences", () => {
   const refA = { environmentId: envA, taskId };
   const refB = { environmentId: envB, taskId };
 
-  it("starts active tasks expanded and parked tasks collapsed without writing defaults", () => {
-    expect(resolveTaskExpanded({}, refA, false)).toBe(true);
-    expect(resolveTaskExpanded({}, refA, true)).toBe(false);
-  });
-
   it("keeps explicit expansion and settled shelf choices scoped across lifecycle changes", () => {
     const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), refA, false), refA, true);
-    expect(resolveTaskExpanded(state.taskExpandedByKey, refA, false)).toBe(false);
-    expect(resolveTaskExpanded(state.taskExpandedByKey, refB, false)).toBe(true);
+    expect(state.taskExpandedByKey["environment-a:task-1"]).toBe(false);
+    expect(state.taskExpandedByKey["environment-b:task-1"]).toBeUndefined();
     expect(state.taskSettledExpandedByKey).toEqual({ "environment-a:task-1": true });
     expect(setTaskExpanded(state, refA, false)).toBe(state);
     expect(setTaskSettledExpanded(state, refA, true)).toBe(state);
     const opened = setTaskExpanded(state, refA, true);
-    expect(resolveTaskExpanded(opened.taskExpandedByKey, refA, true)).toBe(true);
+    expect(opened.taskExpandedByKey["environment-a:task-1"]).toBe(true);
   });
 
   it("rehydrates only boolean preferences with valid scoped keys", () => {
@@ -435,21 +428,10 @@ describe("task expansion preferences", () => {
     ).toEqual({});
   });
 
-  it("preserves every preference while inventory is cached, disconnected or loading", () => {
+  it("preserves other environments and roundtrips saved choices without inventory pruning", () => {
     const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), refA, false), refB, true);
-    expect(pruneTaskPreferences(state, envA, [], false)).toBe(state);
-    expect(pruneTaskPreferences(state, envB, [], false)).toBe(state);
-  });
-
-  it("prunes only missing tasks in the authoritative environment", () => {
-    let state = setTaskExpanded(makeUiState(), refA, false);
-    state = setTaskExpanded(state, refB, true);
-    state = setTaskSettledExpanded(state, refA, true);
-    state = setTaskSettledExpanded(state, refB, false);
-    expect(pruneTaskPreferences(state, envA, [taskId], true)).toBe(state);
-    const pruned = pruneTaskPreferences(state, envA, [], true);
-    expect(pruned.taskExpandedByKey).toEqual({ "environment-b:task-1": true });
-    expect(pruned.taskSettledExpandedByKey).toEqual({ "environment-b:task-1": false });
-    expect(pruneTaskPreferences(pruned, envA, [], true)).toBe(pruned);
+    const restored = parsePersistedState(state);
+    expect(restored.taskExpandedByKey).toEqual(state.taskExpandedByKey);
+    expect(restored.taskSettledExpandedByKey).toEqual(state.taskSettledExpandedByKey);
   });
 });

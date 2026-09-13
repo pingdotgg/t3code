@@ -557,11 +557,19 @@ export function HomeScreen(props: HomeScreenProps) {
   );
   const {
     loaded: shelfPreferencesLoaded,
+    revealShelf,
     settledShelfExpanded,
     snoozedShelfExpanded,
     toggleSettledShelf,
     toggleSnoozedShelf,
   } = useThreadListV2ShelfPreferences();
+  const revealTaskShelf = useCallback(
+    (shelf: "snoozed" | "settled", visibleCount: number) => {
+      revealShelf(shelf);
+      if (shelf === "settled") setSettledVisibleCount((count) => Math.max(count, visibleCount));
+    },
+    [revealShelf],
+  );
   // The queued-start and snooze helpers need a clock while the list stays open.
   const [nowMinute, setNowMinute] = useState(() => new Date().toISOString().slice(0, 16));
   // Snooze wake times are second-precise; a counter bumped exactly at the
@@ -754,6 +762,7 @@ export function HomeScreen(props: HomeScreenProps) {
         return (
           <TaskListRow
             item={item}
+            revealShelf={revealTaskShelf}
             canMoveUp={
               pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "up")
             }
@@ -907,6 +916,7 @@ export function HomeScreen(props: HomeScreenProps) {
       threadListV2Items,
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
+      revealTaskShelf,
       toggleSettledShelf,
       toggleSnoozedShelf,
       v2ProjectTitleByProjectKey,

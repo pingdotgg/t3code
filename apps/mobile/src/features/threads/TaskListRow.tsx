@@ -21,10 +21,12 @@ export const TaskListRow = memo(
     item,
     canMoveUp,
     canMoveDown,
+    revealShelf,
   }: {
     item: MobileTaskListItem;
     canMoveUp: boolean;
     canMoveDown: boolean;
+    revealShelf: (shelf: "snoozed" | "settled", visibleCount: number) => void;
   }) {
     const navigateTask = useTaskNavigation(item.task);
     const order = useMobileTaskOrder();
@@ -62,11 +64,16 @@ export const TaskListRow = memo(
           accessibilityRole="button"
           accessibilityLabel={`${item.expanded ? "Collapse" : "Expand"} ${task.name}`}
           accessibilityState={{ expanded: item.expanded }}
-          onPress={() =>
+          onPress={() => {
+            if (item.retainedShelfVisibleCount !== undefined) {
+              revealShelf(item.snoozed ? "snoozed" : "settled", item.retainedShelfVisibleCount);
+            }
             toggle(
               item.type === "task-slim" ? `parked:${mobileTaskKey(task)}` : mobileTaskKey(task),
-            )
-          }
+              false,
+              item.retainedShelfVisibleCount !== undefined ? true : undefined,
+            );
+          }}
           className="min-h-11 min-w-11 items-center justify-center"
         >
           <SymbolView name={item.expanded ? "chevron.down" : "chevron.right"} size={14} />
@@ -133,6 +140,7 @@ export const TaskListRow = memo(
     );
   },
   (previous, next) =>
+    previous.revealShelf === next.revealShelf &&
     previous.canMoveUp === next.canMoveUp &&
     previous.canMoveDown === next.canMoveDown &&
     mobileTaskItemsAreEqual(previous.item, next.item),

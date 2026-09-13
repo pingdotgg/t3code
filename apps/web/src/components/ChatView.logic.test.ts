@@ -31,6 +31,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "../previewMiniPlayerStore";
 import {
+  normalizeLastInvokedScripts,
   MAX_HIDDEN_MOUNTED_PREVIEW_THREADS,
   MAX_HIDDEN_MOUNTED_TERMINAL_THREADS,
   agentControlledBrowserCloseConfirmation,
@@ -2486,5 +2487,22 @@ describe("task proactive panel observations", () => {
     });
     expect(moved.threadKey).toBe("first:other-owner");
     expect(moved.userActionRevision).toBe(9);
+  });
+});
+
+describe("script selection normalization", () => {
+  it("drops only legacy keys and keeps disconnected environments with duplicate project IDs", () => {
+    const preferences = {
+      project: "legacy",
+      "local:project": "run",
+      "disconnected:project": "build",
+      ":project": "invalid",
+      "local:": "invalid",
+    };
+    expect(normalizeLastInvokedScripts(preferences)).toEqual({
+      "local:project": "run",
+      "disconnected:project": "build",
+    });
+    expect(preferences.project).toBe("legacy");
   });
 });

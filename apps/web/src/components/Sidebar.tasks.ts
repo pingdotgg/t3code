@@ -21,7 +21,7 @@ import {
   rollupTaskStatus,
   sortTaskRowsByOrderKey,
   taskOrderRow,
-  taskShelf,
+  effectiveTaskShelf,
   taskSettleBlocker,
   taskMatchesSearch,
   taskHasLocalWork,
@@ -59,6 +59,8 @@ export type TaskSidebarItem =
       readonly taskRef: ScopedTaskRef;
       readonly section: SidebarSection;
       readonly expanded: boolean;
+      /** A retained header has collapsed members; selection alone may keep one child visible. */
+      readonly retainedShelfVisibleCount?: number;
       readonly counts: {
         readonly live: number;
         readonly snoozed: number;
@@ -238,11 +240,7 @@ export function buildTaskSidebarInventory(input: {
       !hasLocalWork
     )
       continue;
-    const effectiveShelf = hasLocalWork
-      ? task.pinnedAt
-        ? "pinned"
-        : "active"
-      : taskShelf(task, input.now);
+    const effectiveShelf = effectiveTaskShelf({ task, now: input.now, hasLocalWork });
     const { shelf: section, expanded } = resolveTaskPresentation({
       task,
       now: input.now,
@@ -384,19 +382,28 @@ export function buildTaskSidebarInventory(input: {
           (item.kind === "task" && item.taskKey === input.selectedTaskKey) ||
           (item.kind === "draft" && item.key === input.selectedDraftKey),
       ) === true;
-  const append = (rows: readonly TaskOrderRow[], retainedOnly = false) => {
-    for (const row of rows)
+  const append = (rows: readonly TaskOrderRow[], retainedOnly = false, visibleCount = 0) => {
+    for (const row of rows) {
+      const block = blocks.get(row.id)!;
+      if (!retainedOnly) {
+        items.push(...block);
+        continue;
+      }
       items.push(
-        ...blocks
-          .get(row.id)!
+        ...block
           .filter(
             (item) =>
-              !retainedOnly ||
               item.kind === "task" ||
               (item.kind === "thread" && item.key === input.selectedThreadKey) ||
               (item.kind === "draft" && item.key === input.selectedDraftKey),
+          )
+          .map((item) =>
+            item.kind === "task"
+              ? { ...item, expanded: false, retainedShelfVisibleCount: visibleCount }
+              : item,
           ),
       );
+    }
   };
   marker("pinned-header");
   append(visibleRows.pinned);
@@ -434,7 +441,7 @@ export function buildTaskSidebarInventory(input: {
       searching ||
       (input.settledExpanded === true && index < (input.settledVisibleCount ?? Infinity));
     if (!showFull && !selectedBlock(row)) continue;
-    append([row], !showFull);
+    append([row], !showFull, index + 1);
     visibleSettledCount += 1;
   }
   if (!visibleSettledCount) marker("settled-placeholder");

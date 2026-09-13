@@ -38,6 +38,7 @@ vi.mock("../../state/shell", async () => {
 
 import { environmentShell } from "../../state/shell";
 import { TaskSidebarRow } from "./TaskSidebarRow";
+import { buildTaskSidebarInventory } from "../Sidebar.tasks";
 
 const task: EnvironmentTask = {
   environmentId: EnvironmentId.make("local"),
@@ -72,6 +73,8 @@ const initial: ComponentProps<typeof TaskSidebarRow> = {
   project,
   section: "active",
   expanded: true,
+  retainedShelfVisibleCount: undefined,
+  revealShelf: () => undefined,
   liveCount: 2,
   snoozedCount: 0,
   settledCount: 1,
@@ -99,6 +102,7 @@ async function render(change: Partial<typeof initial> = {}) {
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   calls.render.mockClear();
+  calls.setExpanded.mockReset();
   props = initial;
   registry = AtomRegistry.make();
 });
@@ -126,6 +130,7 @@ describe("task content render boundary", () => {
       { selected: true },
       { settleBlocked: true },
       { expanded: false },
+      { retainedShelfVisibleCount: 25 },
       { task: { ...task, name: "Renamed" } },
       { project: { ...project, title: "Renamed project" } },
       { section: "snoozed" },
@@ -134,6 +139,75 @@ describe("task content render boundary", () => {
       await render(change);
       expect(calls.render).toHaveBeenCalledTimes(index + 2);
     }
+  });
+
+  it("reveals a retained empty task's shelf and page before its normal collapse action", async () => {
+    const selected = {
+      ...task,
+      settledOverride: "settled" as const,
+      settledAt: "2026-01-01T00:00:00.000Z",
+    };
+    const tasks = [
+      selected,
+      ...["middle", "newest"].map((id, index) => ({
+        ...selected,
+        id: TaskId.make(id),
+        settledAt: `2026-09-0${index + 1}T00:00:00.000Z`,
+      })),
+    ];
+    const taskKey = `${task.environmentId}:${task.id}`;
+    const expandedTaskKeys = new Set([taskKey]);
+    let settledExpanded = false;
+    let settledVisibleCount = 1;
+    const revealShelf = (_shelf: "snoozed" | "settled", count: number) => {
+      settledExpanded = true;
+      settledVisibleCount = Math.max(settledVisibleCount, count);
+    };
+    calls.setExpanded.mockImplementation((_ref: unknown, expanded: boolean) => {
+      if (expanded) expandedTaskKeys.add(taskKey);
+      else expandedTaskKeys.delete(taskKey);
+    });
+    const updateInventory = async () => {
+      const inventory = buildTaskSidebarInventory({
+        tasks,
+        threads: [],
+        now: task.updatedAt,
+        taskCapableEnvironmentIds: new Set([task.environmentId]),
+        selectedTaskKey: taskKey,
+        expandedTaskKeys,
+        settledExpanded,
+        settledVisibleCount,
+      });
+      const item = inventory.items.find(
+        (item) => item.kind === "task" && item.taskKey === taskKey,
+      )!;
+      if (item.kind !== "task") throw new Error("Expected selected task");
+      await render({
+        task: selected,
+        section: "settled",
+        expanded: item.expanded,
+        retainedShelfVisibleCount: item.retainedShelfVisibleCount,
+        revealShelf,
+        liveCount: 0,
+        settledCount: 0,
+      });
+      return inventory.items
+        .filter((item) => item.kind === "task")
+        .map((item) => item.taskRef.taskId);
+    };
+    // The selected task is retained even though its shelf is collapsed and it has no children.
+    expect(await updateInventory()).toEqual([task.id]);
+    expect(expandedTaskKeys.has(taskKey)).toBe(true);
+    const row = () =>
+      renderer.root.findByProps({ role: "button", "aria-expanded": props.expanded });
+    expect(row().props["aria-expanded"]).toBe(false);
+    await act(() => row().props.onClick());
+    expect(await updateInventory()).toEqual(["newest", "middle", task.id]);
+    expect(row().props["aria-expanded"]).toBe(true);
+    await act(() => row().props.onClick());
+    await updateInventory();
+    expect(row().props["aria-expanded"]).toBe(false);
+    expect(expandedTaskKeys.has(taskKey)).toBe(false);
   });
 
   it("updates settle availability on a status transition without new row props", async () => {

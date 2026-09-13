@@ -3,7 +3,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "../environment/scoped.ts";
 import {
   taskWorkbenchRef,
-  workbenchRefFor,
   workbenchTerminalAttachInput,
   resolveWorkbenchOwner,
   canLaunchWorkbench,
@@ -13,39 +12,6 @@ const environmentId = EnvironmentId.make("one");
 const task = { environmentId, id: TaskId.make("task") };
 const first = scopeThreadRef(environmentId, ThreadId.make("first"));
 const second = scopeThreadRef(environmentId, ThreadId.make("second"));
-
-describe("task workbench resource identity", () => {
-  it("shares sibling resources without changing their real refs", () => {
-    const owner = workbenchRefFor(first, { taskId: task.id }, task);
-    expect(owner).toEqual(workbenchRefFor(second, { taskId: task.id }, task));
-    expect(owner.threadId).toBe("task:task");
-    expect(first.threadId).toBe("first");
-    expect(workbenchRefFor(second, { taskId: null }, task)).toBe(second);
-  });
-
-  it("opens an empty task and isolates duplicate IDs on other environments", () => {
-    const empty = taskWorkbenchRef({ environmentId, taskId: task.id });
-    expect(empty).toEqual(workbenchRefFor(first, { taskId: task.id }, task));
-    expect(
-      taskWorkbenchRef({ environmentId: EnvironmentId.make("two"), taskId: task.id }),
-    ).not.toEqual(empty);
-    expect(
-      workbenchRefFor(
-        first,
-        { taskId: task.id },
-        { ...task, environmentId: EnvironmentId.make("two") },
-      ),
-    ).toBe(first);
-  });
-
-  it("keeps standalone resources when membership cannot be resolved", () => {
-    expect(workbenchRefFor(first, { taskId: task.id }, null)).toBe(first);
-    expect(workbenchRefFor(first, { taskId: TaskId.make("different") }, task)).toBe(first);
-    expect(
-      workbenchRefFor(first, { taskId: task.id, environmentId: EnvironmentId.make("two") }, task),
-    ).toBe(first);
-  });
-});
 
 import { ProjectId } from "@t3tools/contracts";
 import { resolveWorkbench, type WorkbenchInput } from "./taskWorkbench.ts";
@@ -79,6 +45,28 @@ describe("resolved workbench", () => {
         taskRef: { environmentId, taskId: task.id },
       }),
     ).toEqual(resolved);
+  });
+  it("isolates identical task and project IDs across environments and restores standalone ownership", () => {
+    const other = EnvironmentId.make("two");
+    const resolved = resolveWorkbench(input);
+    const remote = resolveWorkbench({
+      ...input,
+      threadRef: scopeThreadRef(other, first.threadId),
+      thread: { ...input.thread!, environmentId: other },
+      task: { ...input.task!, environmentId: other },
+      projects: [{ ...primary, environmentId: other }],
+    });
+    expect(remote).toMatchObject({
+      status: "ready",
+      ownerRef: { environmentId: other, threadId: "task:task" },
+    });
+    expect(remote).not.toEqual(resolved);
+    expect(
+      resolveWorkbench({ ...input, thread: { ...input.thread!, taskId: null } }),
+    ).toMatchObject({ status: "ready", ownerRef: first });
+    expect(
+      resolveWorkbench({ ...input, thread: { ...input.thread!, environmentId: other } }).status,
+    ).toBe("unavailable");
   });
   it("keeps old-server tools on the member checkout", () => {
     expect(resolveWorkbench({ ...input, tasksSupported: false, task: null })).toMatchObject({

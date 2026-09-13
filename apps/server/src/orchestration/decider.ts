@@ -1,3 +1,4 @@
+import { isTaskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import {
   EventId,
   MAX_SCRIPT_ID_LENGTH,
@@ -1100,7 +1101,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
-      if (command.threadId.startsWith("task:")) {
+      if (isTaskWorkbenchId(command.threadId)) {
         return yield* new OrchestrationCommandInvariantError({
           commandType: command.type,
           detail: "The task: thread ID prefix is reserved.",

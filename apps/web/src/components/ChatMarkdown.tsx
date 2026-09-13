@@ -1,3 +1,4 @@
+import { isTaskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import { workspaceFileAssetResource } from "@t3tools/client-runtime/workspace-file-asset-resource";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
@@ -2427,7 +2428,7 @@ function useChatMarkdownState({
     );
   }, []);
   const openChangeRequestLink = useOpenChangeRequestLink(
-    threadRef?.threadId.startsWith("task:") ? undefined : threadRef,
+    threadRef != null && isTaskWorkbenchId(threadRef.threadId) ? undefined : threadRef,
     explicitOwnerRef ?? pullRequestPanelRef,
   );
   const openDeferredMarkdownLink = useOpenLink(threadRef, explicitOwnerRef);
@@ -2438,7 +2439,7 @@ function useChatMarkdownState({
   const resolveThreadPullRequest = useCallback(
     (href: string): (ThreadPullRequestKey & { readonly url: string }) | null => {
       if (
-        threadRef?.threadId.startsWith("task:") ||
+        (threadRef != null && isTaskWorkbenchId(threadRef.threadId)) ||
         threadRef === undefined ||
         readThreadShell(threadRef) === null ||
         !pullRequestLinking.canLink(href)
@@ -2452,7 +2453,7 @@ function useChatMarkdownState({
   const linkedThreadPullRequestFor = useCallback(
     (href: string) => {
       if (
-        threadRef?.threadId.startsWith("task:") ||
+        (threadRef != null && isTaskWorkbenchId(threadRef.threadId)) ||
         threadRef === undefined ||
         !pullRequestLinking.isLinked(readThreadShell(threadRef), href)
       )
@@ -2465,7 +2466,7 @@ function useChatMarkdownState({
   const updateThreadPullRequestLink = useCallback(
     async (href: string, linked: boolean) => {
       if (
-        threadRef?.threadId.startsWith("task:") ||
+        (threadRef != null && isTaskWorkbenchId(threadRef.threadId)) ||
         threadRef === undefined ||
         (!linked && linkedThreadPullRequestFor(href) === null)
       )
@@ -2496,7 +2497,7 @@ function useChatMarkdownState({
         );
       return openUrlInPreview({ ownerRef, url, openPreview }).then((result) => {
         if (result._tag === "Success") {
-          if (!threadRef.threadId.startsWith("task:")) recordVisitForThread(threadRef, url);
+          if (!isTaskWorkbenchId(threadRef.threadId)) recordVisitForThread(threadRef, url);
         } else if (!isAtomCommandInterrupted(result)) {
           const error = squashAtomCommandFailure(result);
           if (error instanceof BrowserSettingsReadError) {

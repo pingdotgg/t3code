@@ -1,6 +1,9 @@
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
-import { taskWorkbenchRef, workbenchRefFor } from "@t3tools/client-runtime/state/task-workbench";
-import { TaskId, EnvironmentId, ThreadId } from "@t3tools/contracts";
+import {
+  taskWorkbenchRef,
+  resolveWorkbenchOwner,
+} from "@t3tools/client-runtime/state/task-workbench";
+import { TaskId, EnvironmentId, ThreadId, ProjectId } from "@t3tools/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -299,11 +302,26 @@ describe("terminalUiStateStore actions", () => {
 describe("task terminal ownership", () => {
   it("shares siblings, persists task keys, and preserves standalone tools on removal", () => {
     const environmentId = EnvironmentId.make("task-environment");
-    const task = { environmentId, id: TaskId.make("shared") };
+    const task = {
+      environmentId,
+      id: TaskId.make("shared"),
+      primaryProjectId: ProjectId.make("primary"),
+    };
     const first = scopeThreadRef(environmentId, ThreadId.make("first"));
     const second = scopeThreadRef(environmentId, ThreadId.make("second"));
-    const owner = workbenchRefFor(first, { taskId: task.id }, task);
-    const siblingOwner = workbenchRefFor(second, { taskId: task.id }, task);
+    const resolveOwner = (threadRef: typeof first, taskId: TaskId | null) => {
+      const result = resolveWorkbenchOwner({
+        threadRef,
+        thread: { environmentId, taskId, projectId: task.primaryProjectId, worktreePath: null },
+        task,
+        tasksSupported: true,
+        authoritative: true,
+      });
+      if (result.status !== "ready") throw new Error("Expected ready owner");
+      return result.ownerRef;
+    };
+    const owner = resolveOwner(first, task.id);
+    const siblingOwner = resolveOwner(second, task.id);
     const store = useTerminalUiStateStore.getState();
     store.ensureTerminal(first, "standalone", { open: true });
     store.ensureTerminal(owner, "task-terminal", { open: true });
@@ -316,7 +334,7 @@ describe("task terminal ownership", () => {
     expect(
       selectThreadTerminalUiState(
         useTerminalUiStateStore.getState().terminalUiStateByThreadKey,
-        workbenchRefFor(first, { taskId: null }, task),
+        resolveOwner(first, null),
       ).terminalIds,
     ).toContain("standalone");
     const restored = migratePersistedTerminalUiStateStoreState(

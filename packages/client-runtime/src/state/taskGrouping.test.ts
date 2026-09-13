@@ -28,6 +28,7 @@ import {
   taskMemberStatus,
   taskOrderRow,
   taskShelf,
+  effectiveTaskShelf,
   taskMatchesSearch,
   taskHasLocalWork,
   resolveTaskPresentation,
@@ -443,5 +444,30 @@ describe("task presentation", () => {
           selected || pending,
         );
       }
+  });
+});
+
+describe("effective task shelf", () => {
+  it("promotes pending work without losing pinning or changing saved expansion", () => {
+    for (const pinnedAt of [null, now])
+      for (const settledOverride of [null, "settled"] as const)
+        for (const snoozedUntil of [null, future])
+          for (const hasLocalWork of [false, true]) {
+            const candidate = task({ pinnedAt, settledOverride, snoozedUntil });
+            const shelf = effectiveTaskShelf({ task: candidate, now, hasLocalWork });
+            expect(shelf).toBe(
+              hasLocalWork ? (pinnedAt ? "pinned" : "active") : taskShelf(candidate, now),
+            );
+            expect(
+              resolveTaskPresentation({
+                task: candidate,
+                now,
+                hasLocalWork,
+                collapsed: true,
+                searching: false,
+                hasMatchingChildren: true,
+              }),
+            ).toEqual({ shelf, expanded: false });
+          }
   });
 });
