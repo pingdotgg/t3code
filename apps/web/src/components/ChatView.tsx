@@ -5086,106 +5086,6 @@ export default function ChatView(props: ChatViewProps) {
       }),
     [togglePreviewPanel],
   );
-  const refreshCheckoutBranchForNextTurn = useCallback(
-    async (fallback: string | null): Promise<AtomCommandResult<string | null, unknown>> => {
-      if (!serverThread || !gitStatusCwd) return AsyncResult.success(fallback);
-      const status = await refreshVcsStatus({ environmentId, input: { cwd: gitStatusCwd } });
-      return mapAtomCommandResult(status, (current) => {
-        const mismatch = resolveCheckoutBranchMismatch({
-          effectiveEnvMode: serverThread.worktreePath === null ? "local" : "worktree",
-          activeWorktreePath: serverThread.worktreePath,
-          activeThreadBranch: serverThread.branch,
-          currentGitBranch: current.refName,
-        });
-        return mismatch?.currentBranch ?? serverThread.branch;
-      });
-    },
-    [environmentId, gitStatusCwd, refreshVcsStatus, serverThread],
-  );
-  const persistThreadSettingsForNextTurn = useCallback(
-    async (input: {
-      threadId: ThreadId;
-      createdAt: string;
-      modelSelection?: ModelSelection;
-      branch?: string;
-      runtimeMode: RuntimeMode;
-      interactionMode: ProviderInteractionMode;
-    }): Promise<AtomCommandResult<void, unknown>> => {
-      if (!serverThread) {
-        return AsyncResult.success(undefined);
-      }
-
-      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
-      const branchResult = input.branch
-        ? await refreshCheckoutBranchForNextTurn(input.branch)
-        : AsyncResult.success(null);
-      if (branchResult._tag === "Failure") {
-        return mapAtomCommandResult(branchResult, () => undefined);
-      }
-      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
-        currentModelSelection: serverThread.modelSelection,
-        ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
-        currentBranch: serverThread.branch,
-        currentWorktreePath: serverThread.worktreePath,
-        ...(branchResult.value ? { nextBranch: branchResult.value } : {}),
-      });
-      if (metadataUpdate) {
-        result = mapAtomCommandResult(
-          await updateThreadMetadata({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              ...metadataUpdate,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
-      }
-
-      if (input.runtimeMode !== serverThread.runtimeMode) {
-        result = mapAtomCommandResult(
-          await setThreadRuntimeMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              runtimeMode: input.runtimeMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-        if (result._tag === "Failure") {
-          return result;
-        }
-      }
-
-      if (input.interactionMode !== serverThread.interactionMode) {
-        result = mapAtomCommandResult(
-          await setThreadInteractionMode({
-            environmentId,
-            input: {
-              threadId: input.threadId,
-              interactionMode: input.interactionMode,
-              createdAt: input.createdAt,
-            },
-          }),
-          () => undefined,
-        );
-      }
-      return result;
-    },
-    [
-      environmentId,
-      serverThread,
-      refreshCheckoutBranchForNextTurn,
-      setThreadInteractionMode,
-      setThreadRuntimeMode,
-      updateThreadMetadata,
-    ],
-  );
 
   // Debounce *showing* the scroll-to-bottom pill so it doesn't flash during
   // thread switches. LegendList fires scroll events with isAtEnd=false while
@@ -5761,6 +5661,110 @@ export default function ChatView(props: ChatViewProps) {
           })
         : null,
     [activeThreadBranch, activeWorktreePath, envMode, gitStatusQuery.data?.refName, isServerThread],
+  );
+  const resolveCheckoutBranchForNextTurn = useCallback(async (): Promise<
+    AtomCommandResult<string | null, unknown>
+  > => {
+    if (!checkoutBranchMismatch || !gitStatusCwd) return AsyncResult.success(null);
+    const status = await refreshVcsStatus({ environmentId, input: { cwd: gitStatusCwd } });
+    return mapAtomCommandResult(status, (current) => {
+      const mismatch = resolveCheckoutBranchMismatch({
+        effectiveEnvMode: envMode,
+        activeWorktreePath,
+        activeThreadBranch,
+        currentGitBranch: current.refName,
+      });
+      return mismatch?.currentBranch ?? activeThreadBranch;
+    });
+  }, [
+    environmentId,
+    gitStatusCwd,
+    refreshVcsStatus,
+    checkoutBranchMismatch,
+    envMode,
+    activeWorktreePath,
+    activeThreadBranch,
+  ]);
+  const persistThreadSettingsForNextTurn = useCallback(
+    async (input: {
+      threadId: ThreadId;
+      createdAt: string;
+      modelSelection?: ModelSelection;
+      runtimeMode: RuntimeMode;
+      interactionMode: ProviderInteractionMode;
+    }): Promise<AtomCommandResult<void, unknown>> => {
+      if (!serverThread) {
+        return AsyncResult.success(undefined);
+      }
+
+      let result: AtomCommandResult<void, unknown> = AsyncResult.success(undefined);
+      const branchResult = await resolveCheckoutBranchForNextTurn();
+      if (branchResult._tag === "Failure") {
+        return mapAtomCommandResult(branchResult, () => undefined);
+      }
+      const metadataUpdate = resolveThreadMetadataUpdateForNextTurn({
+        currentModelSelection: serverThread.modelSelection,
+        ...(input.modelSelection ? { nextModelSelection: input.modelSelection } : {}),
+        currentBranch: serverThread.branch,
+        currentWorktreePath: serverThread.worktreePath,
+        ...(branchResult.value ? { nextBranch: branchResult.value } : {}),
+      });
+      if (metadataUpdate) {
+        result = mapAtomCommandResult(
+          await updateThreadMetadata({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              ...metadataUpdate,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
+      }
+
+      if (input.runtimeMode !== serverThread.runtimeMode) {
+        result = mapAtomCommandResult(
+          await setThreadRuntimeMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              runtimeMode: input.runtimeMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
+        if (result._tag === "Failure") {
+          return result;
+        }
+      }
+
+      if (input.interactionMode !== serverThread.interactionMode) {
+        result = mapAtomCommandResult(
+          await setThreadInteractionMode({
+            environmentId,
+            input: {
+              threadId: input.threadId,
+              interactionMode: input.interactionMode,
+              createdAt: input.createdAt,
+            },
+          }),
+          () => undefined,
+        );
+      }
+      return result;
+    },
+    [
+      environmentId,
+      serverThread,
+      resolveCheckoutBranchForNextTurn,
+      setThreadInteractionMode,
+      setThreadRuntimeMode,
+      updateThreadMetadata,
+    ],
   );
   const activeComposerTasksProgress = useMemo(() => {
     if (!activeLatestTurn || latestTurnSettled || activePlan?.turnId !== activeLatestTurn.turnId) {
@@ -7037,7 +7041,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId,
         createdAt,
         modelSelection: context.selectedModelSelection,
-        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: context.interactionMode,
       });
@@ -7689,7 +7692,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         ...(ctxSelectedModel ? { modelSelection: ctxSelectedModelSelection } : {}),
-        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: sendInteractionMode,
       });
@@ -8243,7 +8245,6 @@ export default function ChatView(props: ChatViewProps) {
         threadId: threadIdForSend,
         createdAt: messageCreatedAt,
         modelSelection: ctxSelectedModelSelection,
-        ...(checkoutBranchMismatch ? { branch: checkoutBranchMismatch.currentBranch } : {}),
         runtimeMode,
         interactionMode: nextInteractionMode,
       });
@@ -8323,7 +8324,6 @@ export default function ChatView(props: ChatViewProps) {
       isConnecting,
       isSendBusy,
       isServerThread,
-      checkoutBranchMismatch,
       persistThreadSettingsForNextTurn,
       resetLocalDispatch,
       runtimeMode,
@@ -8388,34 +8388,24 @@ export default function ChatView(props: ChatViewProps) {
       resetLocalDispatch();
     };
 
-    const branchResult = checkoutBranchMismatch
-      ? await refreshCheckoutBranchForNextTurn(activeThreadBranch)
-      : AsyncResult.success(activeThreadBranch);
-    if (branchResult._tag === "Failure") {
-      if (!isAtomCommandInterrupted(branchResult)) {
-        const error = squashAtomCommandFailure(branchResult);
-        setThreadError(
-          activeThread.id,
-          error instanceof Error ? error.message : "Failed to refresh branch.",
-        );
-      }
-      finish();
-      return;
-    }
-    const createResult = await createThread({
-      environmentId,
-      input: {
-        threadId: nextThreadId,
-        projectId: activeProject.id,
-        title: nextThreadTitle,
-        modelSelection: nextThreadModelSelection,
-        runtimeMode: defaultRuntimeMode,
-        interactionMode: "default",
-        branch: branchResult.value,
-        worktreePath: activeThread.worktreePath,
-        createdAt,
-      },
-    });
+    const branchResult = await resolveCheckoutBranchForNextTurn();
+    const createResult =
+      branchResult._tag === "Failure"
+        ? branchResult
+        : await createThread({
+            environmentId,
+            input: {
+              threadId: nextThreadId,
+              projectId: activeProject.id,
+              title: nextThreadTitle,
+              modelSelection: nextThreadModelSelection,
+              runtimeMode: defaultRuntimeMode,
+              interactionMode: "default",
+              branch: branchResult.value ?? activeThreadBranch,
+              worktreePath: activeThread.worktreePath,
+              createdAt,
+            },
+          });
     let failure: AtomCommandResult<unknown, unknown> | null =
       createResult._tag === "Failure" ? createResult : null;
 
@@ -8465,17 +8455,19 @@ export default function ChatView(props: ChatViewProps) {
     }
 
     if (failure !== null) {
-      const cleanupResult = await deleteThread({
-        environmentId,
-        input: {
-          threadId: nextThreadId,
-        },
-      });
-      if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
-        console.warn(
-          "Failed to clean up implementation thread after start failure.",
-          squashAtomCommandFailure(cleanupResult),
-        );
+      if (branchResult._tag === "Success") {
+        const cleanupResult = await deleteThread({
+          environmentId,
+          input: {
+            threadId: nextThreadId,
+          },
+        });
+        if (cleanupResult._tag === "Failure" && !isAtomCommandInterrupted(cleanupResult)) {
+          console.warn(
+            "Failed to clean up implementation thread after start failure.",
+            squashAtomCommandFailure(cleanupResult),
+          );
+        }
       }
       if (!isAtomCommandInterrupted(failure)) {
         const error = squashAtomCommandFailure(failure);
@@ -8499,9 +8491,7 @@ export default function ChatView(props: ChatViewProps) {
     activeThread,
     beginLocalDispatch,
     activeEnvironmentUnavailable,
-    checkoutBranchMismatch,
-    refreshCheckoutBranchForNextTurn,
-    setThreadError,
+    resolveCheckoutBranchForNextTurn,
     createThread,
     deleteThread,
     isConnecting,
