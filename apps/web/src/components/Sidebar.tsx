@@ -1294,7 +1294,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
       compactStatus={
-        compact
+        compact || (props.compact && variant === "card")
           ? (topStatus?.label ??
             (variantAction === "unsnooze"
               ? "Snoozed"
