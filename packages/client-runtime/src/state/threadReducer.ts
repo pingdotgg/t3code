@@ -46,6 +46,7 @@ function withPullRequests(
 }
 
 const proposedPlanOrder = O.combineAll<OrchestrationThread["proposedPlans"][number]>([
+  O.mapInput(O.Number, (p) => Number(p.createdSequence !== undefined)),
   O.mapInput(O.Number, (p) => p.createdSequence ?? 0),
   O.mapInput(O.String, (p) => p.createdAt),
   O.mapInput(O.String, (p) => p.id),
@@ -58,6 +59,7 @@ const checkpointOrder = O.mapInput(
 );
 
 const activityOrder = O.combineAll<OrchestrationThreadActivity>([
+  O.mapInput(O.Number, (a) => Number(a.createdSequence !== undefined)),
   O.mapInput(O.Number, (a) => a.createdSequence ?? 0),
   O.mapInput(O.Number, (a) => a.sequence ?? Number.MAX_SAFE_INTEGER),
   O.mapInput(O.String, (a) => a.createdAt),
@@ -336,11 +338,25 @@ export function applyThreadDetailEvent(
       };
 
     // ── Turn lifecycle ──────────────────────────────────────────────
-    case "thread.turn-start-requested":
+    case "thread.turn-start-requested": {
+      const pendingMessage = thread.messages.find(
+        (message) => message.id === thread.pendingTurnStart?.messageId,
+      );
+      const keepPending =
+        pendingMessage?.text.trim().toLowerCase() === "/compact" &&
+        (pendingMessage.attachments?.length ?? 0) === 0;
       return {
         kind: "updated",
         thread: {
           ...thread,
+          pendingTurnStart: keepPending
+            ? thread.pendingTurnStart
+            : {
+                messageId: event.payload.messageId,
+                createdSequence:
+                  thread.messages.find((message) => message.id === event.payload.messageId)
+                    ?.createdSequence ?? event.sequence,
+              },
           ...(event.payload.modelSelection !== undefined
             ? { modelSelection: event.payload.modelSelection }
             : {}),
@@ -349,6 +365,7 @@ export function applyThreadDetailEvent(
           updatedAt: event.occurredAt,
         },
       };
+    }
 
     case "thread.turn-interrupt-requested": {
       if (event.payload.turnId === undefined) {
@@ -488,13 +505,14 @@ export function applyThreadDetailEvent(
           ? {
               turnId: event.payload.session.activeTurnId,
               createdSequence:
-                thread.session?.activeTurnId !== event.payload.session.activeTurnId
-                  ? (thread.messages.findLast(
-                      (message) =>
-                        message.role === "user" && !isImportedAgentSessionMessageId(message.id),
-                    )?.createdSequence ??
-                    turnCreatedSequence(thread, event.payload.session.activeTurnId, event.sequence))
-                  : turnCreatedSequence(thread, event.payload.session.activeTurnId, event.sequence),
+                thread.session?.activeTurnId === event.payload.session.activeTurnId
+                  ? turnCreatedSequence(thread, event.payload.session.activeTurnId, event.sequence)
+                  : (thread.pendingTurnStart?.createdSequence ??
+                    turnCreatedSequence(
+                      thread,
+                      event.payload.session.activeTurnId,
+                      event.sequence,
+                    )),
               state: "running",
               requestedAt:
                 thread.latestTurn?.turnId === event.payload.session.activeTurnId
@@ -529,6 +547,15 @@ export function applyThreadDetailEvent(
         thread: {
           ...thread,
           session: event.payload.session,
+          ...((event.payload.session.status === "running" &&
+            event.payload.session.activeTurnId !== null) ||
+          event.payload.session.status === "error" ||
+          event.payload.session.status === "stopped" ||
+          event.payload.session.status === "interrupted" ||
+          (event.payload.session.status === "ready" &&
+            event.commandId?.startsWith("server:provider-session-set:"))
+            ? { pendingTurnStart: null }
+            : {}),
           latestTurn,
           updatedAt: event.occurredAt,
         },
@@ -696,6 +723,16 @@ export function applyThreadDetailEvent(
 
     // ── Activities ──────────────────────────────────────────────────
     case "thread.activity-appended": {
+      const payload = event.payload.activity.payload;
+      const pendingPatch =
+        (event.payload.activity.kind === "provider.turn.start.failed" ||
+          event.payload.activity.kind === "context-compaction") &&
+        payload !== null &&
+        typeof payload === "object" &&
+        "requestId" in payload &&
+        payload.requestId === thread.pendingTurnStart?.messageId
+          ? { pendingTurnStart: null }
+          : {};
       const previousActivity =
         activityIdIndex.get(thread.activities)?.has(event.payload.activity.id) === false
           ? undefined
@@ -734,6 +771,7 @@ export function applyThreadDetailEvent(
           thread: {
             ...thread,
             activities,
+            ...pendingPatch,
             updatedAt: event.occurredAt,
           },
         };
@@ -756,7 +794,7 @@ export function applyThreadDetailEvent(
 
       return {
         kind: "updated",
-        thread: { ...thread, activities, updatedAt: event.occurredAt },
+        thread: { ...thread, ...pendingPatch, activities, updatedAt: event.occurredAt },
       };
     }
 

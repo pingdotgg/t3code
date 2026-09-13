@@ -53,6 +53,7 @@ import {
   ThreadRevertedPayload,
   ThreadSessionSetPayload,
   ThreadTurnDiffCompletedPayload,
+  ThreadTurnStartRequestedPayload,
 } from "./Schemas.ts";
 
 type ThreadPatch = Partial<Omit<OrchestrationThread, "id" | "projectId">>;
@@ -807,6 +808,38 @@ export function projectEvent(
         };
       });
 
+    case "thread.turn-start-requested":
+      return decodeForEvent(
+        ThreadTurnStartRequestedPayload,
+        event.payload,
+        event.type,
+        "payload",
+      ).pipe(
+        Effect.map((payload) => {
+          const thread = nextBase.threads.find((entry) => entry.id === payload.threadId);
+          if (!thread) return nextBase;
+          const pendingMessage = thread.messages.find(
+            (message) => message.id === thread.pendingTurnStart?.messageId,
+          );
+          if (
+            pendingMessage?.text.trim().toLowerCase() === "/compact" &&
+            (pendingMessage.attachments?.length ?? 0) === 0
+          )
+            return nextBase;
+          return {
+            ...nextBase,
+            threads: updateThread(nextBase.threads, payload.threadId, {
+              pendingTurnStart: {
+                messageId: payload.messageId,
+                createdSequence:
+                  thread.messages.find((message) => message.id === payload.messageId)
+                    ?.createdSequence ?? event.sequence,
+              },
+            }),
+          };
+        }),
+      );
+
     case "thread.session-set":
       return Effect.gen(function* () {
         const payload = yield* decodeForEvent(
@@ -834,6 +867,14 @@ export function projectEvent(
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
             session,
+            ...((session.status === "running" && session.activeTurnId !== null) ||
+            session.status === "error" ||
+            session.status === "stopped" ||
+            session.status === "interrupted" ||
+            (session.status === "ready" &&
+              event.commandId?.startsWith("server:provider-session-set:"))
+              ? { pendingTurnStart: null }
+              : {}),
             latestTurn:
               session.status === "running" && session.activeTurnId !== null
                 ? {
@@ -841,11 +882,7 @@ export function projectEvent(
                     createdSequence:
                       thread.session?.activeTurnId === session.activeTurnId
                         ? turnCreatedSequence(thread, session.activeTurnId, event.sequence)
-                        : (thread.messages.findLast(
-                            (message) =>
-                              message.role === "user" &&
-                              !isImportedAgentSessionMessageId(message.id),
-                          )?.createdSequence ??
+                        : (thread.pendingTurnStart?.createdSequence ??
                           turnCreatedSequence(thread, session.activeTurnId, event.sequence)),
                     state: "running",
                     requestedAt:
@@ -1087,6 +1124,12 @@ export function projectEvent(
             ...nextBase,
             threads: updateThread(nextBase.threads, payload.threadId, {
               activities,
+              ...((payload.activity.kind === "provider.turn.start.failed" ||
+                payload.activity.kind === "context-compaction") &&
+              Predicate.isObject(payload.activity.payload) &&
+              payload.activity.payload.requestId === thread.pendingTurnStart?.messageId
+                ? { pendingTurnStart: null }
+                : {}),
               updatedAt: event.occurredAt,
             }),
           };

@@ -236,7 +236,7 @@ projectionRepositoriesLayer("Projection repositories", (it) => {
       const statement = statements[0];
       if (statement === undefined) return yield* Effect.die("Expected a plan status query.");
       assert.deepEqual(yield* statement, [
-        { planId: "plan-metadata-current", implementedAt: null, updatedAt },
+        { planId: "plan-metadata-current", implementedAt: null, updatedAt, createdSequence: null },
       ]);
     }),
   );

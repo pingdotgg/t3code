@@ -9,6 +9,7 @@ interface CreatedEntry {
 /** Legacy snapshots form a timestamp-ordered prefix before newly persisted events. */
 export function compareCreatedOrder(left: CreatedEntry, right: CreatedEntry): number {
   return (
+    Number(left.createdSequence !== undefined) - Number(right.createdSequence !== undefined) ||
     (left.createdSequence ?? 0) - (right.createdSequence ?? 0) ||
     compareDateTimeStrings(left.createdAt, right.createdAt) ||
     left.id.localeCompare(right.id)
@@ -19,9 +20,10 @@ export function compareCreatedOrder(left: CreatedEntry, right: CreatedEntry): nu
 export function nextLocalMessageSequence(thread: {
   readonly messages: ReadonlyArray<{ readonly createdSequence?: number | undefined }>;
   readonly activities: ReadonlyArray<{ readonly createdSequence?: number | undefined }>;
+  readonly latestTurn?: { readonly createdSequence?: number | undefined } | null;
   readonly proposedPlans?: ReadonlyArray<{ readonly createdSequence?: number | undefined }>;
 }): number | undefined {
-  let latest: number | undefined;
+  let latest = thread.latestTurn?.createdSequence;
   for (const entries of [thread.messages, thread.activities, thread.proposedPlans ?? []]) {
     for (const entry of entries) {
       if (entry.createdSequence !== undefined) {

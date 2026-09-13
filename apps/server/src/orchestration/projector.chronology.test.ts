@@ -146,6 +146,14 @@ function checkpoint(turnId: string, count: number, at: string): InputEvent {
   };
 }
 
+function start(messageId: string, at: string): InputEvent {
+  return {
+    type: "thread.turn-start-requested",
+    at,
+    payload: { threadId, messageId, createdAt: at },
+  };
+}
+
 describe("projector chronology across clock corrections", () => {
   it.effect(
     "keeps the running turn anchored when a late checkpoint arrives after a queued prompt",
@@ -153,6 +161,9 @@ describe("projector chronology across clock corrections", () => {
       Effect.gen(function* () {
         const thread = yield* replay([
           message("initiating-prompt", before, "user"),
+          start("initiating-prompt", before),
+          session(null, "running", before),
+          message("queued-before-session", after, "user"),
           session("active-turn", "running", before),
           message("active-answer", before, "assistant", "active-turn"),
           message("queued-prompt", after, "user"),
@@ -175,6 +186,7 @@ describe("projector chronology across clock corrections", () => {
       Effect.gen(function* () {
         const thread = yield* replay([
           message("prompt", before, "user"),
+          start("prompt", before),
           message("assistant-1", after, "assistant", "turn-1"),
           checkpoint("turn-1", 1, after),
           session("turn-1", "running", after),
@@ -239,16 +251,18 @@ describe("projector chronology across clock corrections", () => {
     Effect.gen(function* () {
       const thread = yield* replay([
         message("old-prompt", before, "user"),
+        start("old-prompt", before),
         session("old-turn", "running", before),
         session(null, "interrupted", after),
         message("new-prompt", after, "user"),
+        start("new-prompt", after),
         session("new-turn", "running", after),
         session(null, "ready", after),
       ]);
 
       expect(thread.latestTurn).toMatchObject({
         turnId: "new-turn",
-        createdSequence: 5,
+        createdSequence: 6,
         state: "completed",
       });
       expect(thread.session?.status).toBe("ready");

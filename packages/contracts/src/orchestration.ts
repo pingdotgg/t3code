@@ -726,6 +726,14 @@ export const OrchestrationThread = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   branchPullRequest: Schema.optional(Schema.NullOr(ThreadLinkedPullRequest)),
+  pendingTurnStart: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        messageId: MessageId,
+        createdSequence: Schema.optional(NonNegativeInt),
+      }),
+    ),
+  ),
   latestTurn: Schema.NullOr(OrchestrationLatestTurn),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

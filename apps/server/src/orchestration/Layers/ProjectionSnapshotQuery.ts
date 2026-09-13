@@ -2048,10 +2048,47 @@ pending_approval_requests AS (
       `,
   });
 
+  const listPendingTurnStarts = SqlSchema.findAll({
+    Request: Schema.optional(ThreadId),
+    Result: Schema.Struct({
+      threadId: ThreadId,
+      messageId: MessageId,
+      createdSequence: Schema.NullOr(NonNegativeInt),
+    }),
+    execute: (threadId) => sql`
+      SELECT thread_id AS "threadId", pending_message_id AS "messageId", created_sequence AS "createdSequence"
+      FROM projection_turns
+      WHERE turn_id IS NULL AND state = 'pending' AND checkpoint_turn_count IS NULL AND pending_message_id IS NOT NULL
+        AND ${threadId === undefined ? sql`1 = 1` : sql`thread_id = ${threadId}`}
+    `,
+  });
+  const pendingTurnStarts = (threadId?: ThreadId) =>
+    listPendingTurnStarts(threadId).pipe(
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.pendingTurnStarts:query",
+          "ProjectionSnapshotQuery.pendingTurnStarts:decode",
+        ),
+      ),
+      Effect.map(
+        (rows) =>
+          new Map(
+            rows.map((row) => [
+              row.threadId,
+              {
+                messageId: row.messageId,
+                ...(row.createdSequence !== null ? { createdSequence: row.createdSequence } : {}),
+              },
+            ]),
+          ),
+      ),
+    );
+
   const getSnapshot: ProjectionSnapshotQueryShape["getSnapshot"] = () =>
     sql
       .withTransaction(
         Effect.all([
+          pendingTurnStarts(),
           listProjectRows(undefined).pipe(
             Effect.mapError(
               toPersistenceSqlOrDecodeError(
@@ -2137,6 +2174,7 @@ pending_approval_requests AS (
       .pipe(
         Effect.flatMap(
           ([
+            pendingStarts,
             projectRows,
             threadRows,
             messageRows,
@@ -2324,6 +2362,9 @@ pending_approval_requests AS (
                   repositoryIdentities.get(row.projectId),
                 ),
                 branchPullRequest: row.branchPullRequest,
+                ...(pendingStarts.has(row.threadId)
+                  ? { pendingTurnStart: pendingStarts.get(row.threadId) }
+                  : {}),
                 latestTurn: latestTurnByThread.get(row.threadId) ?? null,
                 createdAt: row.createdAt,
                 updatedAt: row.updatedAt,
@@ -3449,6 +3490,7 @@ pending_approval_requests AS (
             );
 
       const [
+        pendingStarts,
         threadRow,
         messageRows,
         proposedPlanRows,
@@ -3458,6 +3500,7 @@ pending_approval_requests AS (
         latestTurnRow,
         sessionRow,
       ] = yield* Effect.all([
+        pendingTurnStarts(threadId),
         getActiveThreadRowById({ threadId }).pipe(
           Effect.mapError(
             toPersistenceSqlOrDecodeError(
@@ -3542,6 +3585,7 @@ pending_approval_requests AS (
                 ?.repositoryIdentity,
         ),
         branchPullRequest: threadRow.value.branchPullRequest,
+        ...(pendingStarts.has(threadId) ? { pendingTurnStart: pendingStarts.get(threadId) } : {}),
         latestTurn: Option.isSome(latestTurnRow) ? mapLatestTurn(latestTurnRow.value) : null,
         createdAt: threadRow.value.createdAt,
         updatedAt: threadRow.value.updatedAt,

@@ -650,6 +650,24 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         snapshot.threads[0]?.linkedPullRequest,
       );
 
+      yield* sql`INSERT INTO projection_turns
+        (thread_id, turn_id, pending_message_id, state, requested_at, created_sequence, checkpoint_files_json)
+        VALUES ('thread-1', NULL, 'pending-prompt', 'pending', '2026-02-24T00:00:10.000Z', 42, '[]')`;
+      const pendingDetail = yield* snapshotQuery.getThreadDetailById(ThreadId.make("thread-1"));
+      assert.equal(pendingDetail._tag, "Some");
+      if (pendingDetail._tag === "Some") {
+        assert.deepEqual(pendingDetail.value.pendingTurnStart, {
+          messageId: "pending-prompt",
+          createdSequence: 42,
+        });
+      }
+      const pendingSnapshot = yield* snapshotQuery.getSnapshot();
+      assert.deepEqual(pendingSnapshot.threads[0]?.pendingTurnStart, {
+        messageId: "pending-prompt",
+        createdSequence: 42,
+      });
+      yield* sql`DELETE FROM projection_turns WHERE thread_id = 'thread-1' AND turn_id IS NULL`;
+
       // Without link rows the legacy field is omitted, whatever the old JSON
       // column still holds.
       yield* sql`DELETE FROM projection_thread_pull_requests`;

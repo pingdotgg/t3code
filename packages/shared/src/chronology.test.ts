@@ -13,6 +13,26 @@ describe("persisted chronology", () => {
       }),
     ).toBe(10);
   });
+  it("keeps sequence zero after legacy history", () => {
+    const legacy = { id: "legacy", createdAt: "2026-09-05T04:00:00.000Z" };
+    const persisted = {
+      id: "persisted",
+      createdAt: "2026-09-04T04:00:00.000Z",
+      createdSequence: 0,
+    };
+    expect([persisted, legacy].sort(compareCreatedOrder)).toEqual([legacy, persisted]);
+  });
+
+  it("anchors local prompts after a turn omitted from the current message page", () => {
+    expect(
+      nextLocalMessageSequence({
+        messages: [],
+        activities: [],
+        latestTurn: { createdSequence: 42 },
+      }),
+    ).toBe(43);
+  });
+
   it("keeps event order across a backward clock correction", () => {
     const before = { id: "before", createdAt: "2026-09-05T04:18:50.462Z", createdSequence: 272 };
     const after = { id: "after", createdAt: "2026-09-04T17:18:56.456Z", createdSequence: 273 };
