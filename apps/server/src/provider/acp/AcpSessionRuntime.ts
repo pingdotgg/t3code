@@ -928,7 +928,7 @@ export const make = (
         return;
       }
 
-      yield* acp.agent.cancel({ sessionId: started.sessionId });
+      yield* acp.agent.cancel({ sessionId: started.sessionId }).pipe(Effect.ignore);
       if (Option.isNone(activePrompt)) {
         return;
       }
