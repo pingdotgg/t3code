@@ -1,7 +1,7 @@
 name: Release desktop build
 
-# One desktop platform build, called four times from release.yml so each
-# platform is its own job with its own `needs`. The JS bundle (server, web
+# One desktop platform/arch build, called once per target from release.yml so
+# each target is its own job with its own `needs`. The JS bundle (server, web
 # client, Electron main) comes from the `js-bundle` artifact that build_bundle
 # produced; this job only packages it, builds the native helpers, and, where
 # `cli_archive` is set, the self-contained CLI archive for its platform.
@@ -166,12 +166,12 @@ jobs:
           path: apps
 
       # The WSL backend runs the Linux CLI archive inside the distro, so the
-      # Windows desktop embeds the same archive the release attaches.
+      # Windows desktop embeds the same-arch archive the release attaches.
       - name: Download Linux CLI archive for WSL
         if: inputs.platform == 'win'
         uses: actions/download-artifact@v8
         with:
-          name: cli-linux-x64
+          name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
 
       - name: Install Spectre-mitigated MSVC libs
@@ -183,7 +183,7 @@ jobs:
           $setupExe = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\setup.exe"
           $proc = Start-Process -FilePath $setupExe `
             -ArgumentList "modify", "--installPath", "`"$installPath`"", "--add", `
-            "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre", "--quiet", "--norestart" `
+            "Microsoft.VisualStudio.Component.VC.Runtimes.${{ inputs.arch == 'arm64' && 'ARM64' || 'x86.x64' }}.Spectre", "--quiet", "--norestart" `
             -Wait -PassThru -NoNewWindow
           if ($null -eq $proc -or $proc.ExitCode -ne 0) {
             $code = if ($null -ne $proc) { $proc.ExitCode } else { 1 }
@@ -335,9 +335,9 @@ jobs:
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
           elif [[ "${{ inputs.platform }}" == "win" ]]; then
-            # Embed the Linux CLI archive built by build_linux_cli as the WSL
-            # runtime. Required for a working WSL backend on Windows.
-            args+=(--wsl-runtime "$GITHUB_WORKSPACE"/wsl-runtime/t3-*-linux-x64.tar.gz)
+            # Embed the Linux CLI archive built by the same-arch Linux job as
+            # the WSL runtime. Required for a working WSL backend on Windows.
+            args+=(--wsl-runtime "$GITHUB_WORKSPACE"/wsl-runtime/t3-*-linux-${{ inputs.arch }}.tar.gz)
             if has_all \
               "$AZURE_TENANT_ID" \
               "$AZURE_CLIENT_ID" \
@@ -488,17 +488,17 @@ jobs:
             done
           fi
 
-          # Enable if Windows arm64 builds are enabled.
           # Windows updater metadata is channel-specific (for example
-          # "latest.yml" or "nightly.yml"). Suffix each per-arch copy so the
-          # release job can merge matching arm64/x64 manifests back into one
-          # canonical manifest per channel.
-          # if [[ "${{ inputs.platform }}" == "win" ]]; then
-          #   shopt -s nullglob
-          #   for manifest in release-publish/*.yml; do
-          #     mv "$manifest" "${manifest%.yml}-win-${{ inputs.arch }}.yml"
-          #   done
-          # fi
+          # "latest.yml" or "nightly.yml") and carries no arch, so the x64 and
+          # arm64 jobs would upload the same name. Suffix each per-arch copy;
+          # the release job merges them back into one manifest per channel.
+          # builder-debug.yml is electron-builder's config dump, not a feed.
+          if [[ "${{ inputs.platform }}" == "win" ]]; then
+            shopt -s nullglob extglob
+            for manifest in release-publish/!(builder-debug).yml; do
+              mv "$manifest" "${manifest%.yml}-win-${{ inputs.arch }}.yml"
+            done
+          fi
 
       - name: Collect resource monitor
         shell: bash
