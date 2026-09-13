@@ -66,6 +66,7 @@ import {
   RpcClientId,
   EnvironmentAuthorizationError,
   ThreadId,
+  TaskId,
   type TerminalAttachStreamEvent,
   type TerminalError,
   type TerminalEvent,
@@ -328,7 +329,8 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
       | "thread.activity-appended"
       | "thread.turn-diff-completed"
       | "thread.reverted"
-      | "thread.session-set";
+      | "thread.session-set"
+      | "thread.task-set";
   }
 > {
   return (
@@ -337,7 +339,8 @@ export function isThreadDetailEvent(event: OrchestrationEvent): event is Extract
     event.type === "thread.activity-appended" ||
     event.type === "thread.turn-diff-completed" ||
     event.type === "thread.reverted" ||
-    event.type === "thread.session-set"
+    event.type === "thread.session-set" ||
+    event.type === "thread.task-set"
   );
 }
 
@@ -785,6 +788,15 @@ const makeWsRpcLayer = (
                 projectId: ProjectId.make(event.aggregateId),
               }),
             );
+          case "task.deleted":
+          case "task.archived":
+            return Effect.succeed(
+              Option.some({
+                kind: "task-removed" as const,
+                sequence: event.sequence,
+                taskId: TaskId.make(event.aggregateId),
+              }),
+            );
           case "thread.deleted":
           case "thread.archived":
             return Effect.succeed(
@@ -797,6 +809,9 @@ const makeWsRpcLayer = (
           case "thread.unarchived":
             return threadUpsertOrRemove(ThreadId.make(event.aggregateId), event.sequence);
           default:
+            if (event.aggregateKind === "task") {
+              return taskUpsertOrRemove(TaskId.make(event.aggregateId), event.sequence);
+            }
             if (event.aggregateKind !== "thread") {
               return Effect.succeed(Option.none());
             }
@@ -810,7 +825,7 @@ const makeWsRpcLayer = (
       // If both attempts fail, log and drop the stream item; treating an error as
       // a missing row would incorrectly remove a still-active aggregate.
       const retryShellProjectionRead = <A, E>(
-        aggregateKind: "project" | "thread",
+        aggregateKind: "project" | "thread" | "task",
         aggregateId: string,
         read: Effect.Effect<A, E>,
       ): Effect.Effect<Option.Option<A>, never, never> =>
@@ -851,6 +866,33 @@ const makeWsRpcLayer = (
                     sequence,
                     project: nextProject,
                   }),
+              }),
+            ),
+          ),
+        );
+
+      const taskUpsertOrRemove = (
+        taskId: TaskId,
+        sequence: number,
+      ): Effect.Effect<Option.Option<OrchestrationShellStreamEvent>, never, never> =>
+        retryShellProjectionRead(
+          "task",
+          taskId,
+          projectionSnapshotQuery.getTaskShellById(taskId),
+        ).pipe(
+          Effect.map(
+            Option.map((task) =>
+              Option.match(task, {
+                onNone: (): OrchestrationShellStreamEvent => ({
+                  kind: "task-removed",
+                  sequence,
+                  taskId,
+                }),
+                onSome: (task): OrchestrationShellStreamEvent => ({
+                  kind: "task-upserted",
+                  sequence,
+                  task,
+                }),
               }),
             ),
           ),
@@ -1451,6 +1493,8 @@ const makeWsRpcLayer = (
           observeRpcStreamEffect(
             ORCHESTRATION_WS_METHODS.subscribeShell,
             Effect.gen(function* () {
+              const includeShellEvent = (event: OrchestrationEvent) =>
+                input.includeTasks === true || event.aggregateKind !== "task";
               // Coalesce the live shell stream per aggregate over a small window
               // so bursts of high-frequency events (streaming message deltas,
               // activity appends) collapse into a single shell refetch and never
@@ -1487,6 +1531,7 @@ const makeWsRpcLayer = (
               );
               yield* Effect.forkScoped(
                 orchestrationEngine.streamDomainEvents.pipe(
+                  Stream.filter(includeShellEvent),
                   Stream.map(toShellEvent),
                   Stream.runForEach((event) =>
                     liveBudget.retain({ kind: "event" as const, event }, event).pipe(
@@ -1513,18 +1558,20 @@ const makeWsRpcLayer = (
                 Stream.flatMap((items) => Stream.fromIterable(items)),
               );
 
-              const loadSnapshot = projectionSnapshotQuery.getShellSnapshot().pipe(
-                Effect.tapError((cause) =>
-                  Effect.logError("orchestration shell snapshot load failed", { cause }),
-                ),
-                Effect.mapError(
-                  (cause) =>
-                    new OrchestrationGetSnapshotError({
-                      message: "Failed to load orchestration shell snapshot",
-                      cause,
-                    }),
-                ),
-              );
+              const loadSnapshot = projectionSnapshotQuery
+                .getShellSnapshot({ includeTasks: input.includeTasks === true })
+                .pipe(
+                  Effect.tapError((cause) =>
+                    Effect.logError("orchestration shell snapshot load failed", { cause }),
+                  ),
+                  Effect.mapError(
+                    (cause) =>
+                      new OrchestrationGetSnapshotError({
+                        message: "Failed to load orchestration shell snapshot",
+                        cause,
+                      }),
+                  ),
+                );
 
               // Offer the completion marker into the same queue as live events.
               // Anything buffered while snapshot/replay work was in flight is
@@ -1579,7 +1626,9 @@ const makeWsRpcLayer = (
                   // are already covered by the live subscription, so this bound
                   // cannot chase a moving event-store head or grow the live
                   // buffer indefinitely while waiting for an empty page.
-                  orchestrationEngine.readEvents(afterSequence, replayGap),
+                  orchestrationEngine
+                    .readEvents(afterSequence, replayGap)
+                    .pipe(Stream.filter(includeShellEvent)),
                 ).pipe(
                   Stream.mapError(
                     (cause) =>
@@ -1603,21 +1652,23 @@ const makeWsRpcLayer = (
             }),
             { "rpc.aggregate": "orchestration" },
           ),
-        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (_input) =>
+        [ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot,
-            projectionSnapshotQuery.getArchivedShellSnapshot().pipe(
-              Effect.tapError((cause) =>
-                Effect.logError("orchestration archived shell snapshot load failed", { cause }),
+            projectionSnapshotQuery
+              .getArchivedShellSnapshot({ includeTasks: input.includeTasks === true })
+              .pipe(
+                Effect.tapError((cause) =>
+                  Effect.logError("orchestration archived shell snapshot load failed", { cause }),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationGetSnapshotError({
+                      message: "Failed to load archived orchestration shell snapshot",
+                      cause,
+                    }),
+                ),
               ),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationGetSnapshotError({
-                    message: "Failed to load archived orchestration shell snapshot",
-                    cause,
-                  }),
-              ),
-            ),
             { "rpc.aggregate": "orchestration" },
           ),
         [ORCHESTRATION_WS_METHODS.subscribeThread]: (input) =>
@@ -1627,6 +1678,7 @@ const makeWsRpcLayer = (
               const isThisThreadDetailEvent = (event: OrchestrationEvent) =>
                 event.aggregateKind === "thread" &&
                 event.aggregateId === input.threadId &&
+                (input.includeTasks === true || event.type !== "thread.task-set") &&
                 isThreadDetailEvent(event);
 
               const liveStream = orchestrationEngine.streamDomainEvents.pipe(

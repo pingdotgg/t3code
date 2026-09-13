@@ -254,6 +254,14 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/tasks": {
+      "types": "./src/state/tasks.ts",
+      "default": "./src/state/tasks.ts"
+    },
+    "./state/task-grouping": {
+      "types": "./src/state/taskGrouping.ts",
+      "default": "./src/state/taskGrouping.ts"
     }
   },
   "scripts": {

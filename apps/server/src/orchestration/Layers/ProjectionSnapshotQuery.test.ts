@@ -3569,6 +3569,28 @@ it.effect("hydrates task membership and opt-in active and archived task inventor
       Option.getOrThrow(yield* query.getThreadDetailSnapshot(memberId)).thread.taskId,
       "task-active",
     );
+    // Inventory size adds rows, never one task lookup per row.
+    const singleCounter = makeSqlStatementCounter();
+    yield* query
+      .getShellSnapshot({ includeTasks: true })
+      .pipe(Effect.withTracer(singleCounter.tracer));
+    for (let index = 0; index < 100; index++) {
+      yield* sql`INSERT INTO projection_tasks
+        (task_id, name, primary_project_id, created_at, updated_at)
+        VALUES (${`many-task-${index}`}, 'Task', 'task-project', ${createdAt}, ${createdAt})`;
+    }
+    const manyCounter = makeSqlStatementCounter();
+    const many = yield* query
+      .getShellSnapshot({ includeTasks: true })
+      .pipe(Effect.withTracer(manyCounter.tracer));
+    assert.equal(many.tasks?.length, 101);
+    assert.equal(manyCounter.count(), singleCounter.count());
+    const legacyCounter = makeSqlStatementCounter();
+    const legacy = yield* query
+      .getShellSnapshot({ includeTasks: false })
+      .pipe(Effect.withTracer(legacyCounter.tracer));
+    assert.isFalse("tasks" in legacy);
+    assert.equal(manyCounter.count(), legacyCounter.count() + 1);
   }).pipe(Effect.provide(layer));
 });
 

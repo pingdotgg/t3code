@@ -1,5 +1,7 @@
 import {
   EnvironmentId,
+  TaskId,
+  ProjectId,
   ORCHESTRATION_WS_METHODS,
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
@@ -47,6 +49,24 @@ const LIVE_SHELL_SNAPSHOT: OrchestrationShellSnapshot = {
   threads: [],
   updatedAt: "2026-06-06T00:00:00.000Z",
 };
+
+const TASK = {
+  id: TaskId.make("task-1"),
+  name: "Task",
+  description: null,
+  primaryProjectId: ProjectId.make("project-1"),
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
+  createdAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
+} as const;
 
 function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
   return {
@@ -246,10 +266,11 @@ describe("environment shell synchronization", () => {
         snapshotSequence: 5,
         projects: [],
         threads: [{ id: "cached-thread" } as never],
+        tasks: [TASK],
         updatedAt: "2026-06-06T00:00:00.000Z",
       };
       const resetSnapshot: OrchestrationShellSnapshot = {
-        ...cachedSnapshot,
+        ...LIVE_SHELL_SNAPSHOT,
         snapshotSequence: 9_999,
         threads: [],
         updatedAt: "2026-06-07T00:00:00.000Z",
@@ -259,12 +280,14 @@ describe("environment shell synchronization", () => {
       const subscribeInputs = yield* Queue.unbounded<{
         readonly afterSequence?: number;
         readonly requestCompletionMarker?: boolean;
+        readonly includeTasks?: boolean;
       }>();
       const loaderCalls = yield* Ref.make(0);
       const client = {
         [ORCHESTRATION_WS_METHODS.subscribeShell]: (input: {
           readonly afterSequence?: number;
           readonly requestCompletionMarker?: boolean;
+          readonly includeTasks?: boolean;
         }) =>
           Stream.unwrap(
             Queue.offer(subscribeInputs, input).pipe(Effect.as(Stream.fromQueue(events))),
@@ -313,6 +336,7 @@ describe("environment shell synchronization", () => {
       const subscribeInput = yield* Queue.take(subscribeInputs);
       expect(subscribeInput.afterSequence).toBeUndefined();
       expect(subscribeInput.requestCompletionMarker).toBe(true);
+      expect(subscribeInput.includeTasks).toBe(true);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
       const synchronizing = yield* SubscriptionRef.get(shellState);
       expect(synchronizing.status).toBe("synchronizing");
@@ -327,12 +351,14 @@ describe("environment shell synchronization", () => {
 
       const live = yield* SubscriptionRef.get(shellState);
       expect(Option.getOrThrow(live.snapshot)).toEqual(resetSnapshot);
+      expect(Option.getOrThrow(live.snapshot).tasks).toBeUndefined();
       expect(yield* Ref.get(loaderCalls)).toBe(1);
 
       yield* Queue.offer(wakeups, "application-active");
       const resumedInput = yield* Queue.take(subscribeInputs);
       expect(resumedInput.afterSequence).toBe(resetSnapshot.snapshotSequence);
       expect(resumedInput.requestCompletionMarker).toBe(true);
+      expect(resumedInput.includeTasks).toBe(true);
       expect(yield* Ref.get(loaderCalls)).toBe(1);
     }),
   );
@@ -381,7 +407,11 @@ describe("environment shell synchronization", () => {
         load: () =>
           Ref.updateAndGet(loaderCalls, (count) => count + 1).pipe(
             Effect.map((count) =>
-              Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: count * 10 }),
+              Option.some({
+                ...LIVE_SHELL_SNAPSHOT,
+                snapshotSequence: count * 10,
+                ...(count === 1 ? { tasks: [TASK] } : {}),
+              }),
             ),
           ),
       });
@@ -401,6 +431,9 @@ describe("environment shell synchronization", () => {
         yield* Effect.yieldNow;
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10]);
+      expect(Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot).tasks).toEqual([
+        TASK,
+      ]);
       yield* Queue.offer(events, { kind: "synchronized" });
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter((value) => value.status === "live"),
@@ -410,7 +443,7 @@ describe("environment shell synchronization", () => {
       // A newer snapshot arrives on the stream and advances the cursor.
       yield* Queue.offer(events, {
         kind: "snapshot",
-        snapshot: { ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 40 },
+        snapshot: { ...LIVE_SHELL_SNAPSHOT, tasks: [TASK], snapshotSequence: 40 },
       });
       yield* SubscriptionRef.changes(shellState).pipe(
         Stream.filter(
@@ -449,6 +482,9 @@ describe("environment shell synchronization", () => {
       }
       expect(yield* Ref.get(capturedAfterSequences)).toEqual([10, 40, 40, 20]);
       expect(yield* Ref.get(loaderCalls)).toBe(2);
+      expect(
+        Option.getOrThrow((yield* SubscriptionRef.get(shellState)).snapshot).tasks,
+      ).toBeUndefined();
     }),
   );
 });

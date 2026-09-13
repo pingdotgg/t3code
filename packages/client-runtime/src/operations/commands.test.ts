@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_WS_METHODS,
   ProjectId,
   ThreadId,
+  TaskId,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
@@ -22,6 +23,10 @@ import * as EnvironmentSupervisor from "../connection/supervisor.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
+  createTask,
+  updateTaskMetadata,
+  deleteTask,
+  setThreadTask,
   archiveThread,
   createProject,
   revertThreadCheckpoint,
@@ -48,6 +53,7 @@ const TARGET = new PrimaryConnectionTarget({
 
 const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(function* (
   dispatched: ClientOrchestrationCommand[],
+  tasks?: boolean,
 ) {
   const client = {
     [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
@@ -58,7 +64,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   } as unknown as WsRpcProtocolClient;
   const session: RpcSession.RpcSession = {
     client,
-    initialConfig: Effect.never,
+    initialConfig: Effect.succeed({ environment: { capabilities: { tasks } } } as never),
     subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
@@ -76,6 +82,53 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
 });
 
 describe("environment commands", () => {
+  it.effect("dispatches task metadata and membership using the selected environment", () =>
+    Effect.gen(function* () {
+      const first: ClientOrchestrationCommand[] = [];
+      const second: ClientOrchestrationCommand[] = [];
+      const firstSupervisor = yield* makeSupervisor(first, true);
+      const secondSupervisor = yield* makeSupervisor(second, true);
+      const taskId = TaskId.make("same-task");
+      yield* createTask({
+        taskId,
+        name: "Task",
+        primaryProjectId: ProjectId.make("project-1"),
+        createdAt: "2026-06-06T00:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, firstSupervisor));
+      yield* updateTaskMetadata({ taskId, description: null }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, firstSupervisor),
+      );
+      yield* setThreadTask({ threadId: ThreadId.make("member"), taskId }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, secondSupervisor),
+      );
+      yield* deleteTask({ taskId, threads: "keep" }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, secondSupervisor),
+      );
+      expect(first).toMatchObject([
+        { type: "task.create", taskId, createdAt: "2026-06-06T00:00:00.000Z" },
+        { type: "task.meta.update", taskId, description: null },
+      ]);
+      expect(first[1]).not.toHaveProperty("name");
+      expect(second).toMatchObject([
+        { type: "thread.task.set", threadId: "member", taskId },
+        { type: "task.delete", taskId, threads: "keep" },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect.each([undefined, false])("rejects task operations when capability is %s", (tasks) =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched, tasks);
+      const result = yield* setThreadTask({ threadId: ThreadId.make("member"), taskId: null }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+      expect(result._tag).toBe("EnvironmentRpcUnavailableError");
+      expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
   it.effect("adds generated command metadata", () =>
     Effect.gen(function* () {
       const dispatched: ClientOrchestrationCommand[] = [];

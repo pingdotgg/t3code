@@ -34,9 +34,14 @@ export const fetchEnvironmentShellSnapshot = Effect.fn(
     ...input,
     group: "orchestration",
     method: "GET",
-    url: (httpBaseUrl) => environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"),
+    url: (httpBaseUrl) => {
+      const url = new URL(environmentEndpointUrl(httpBaseUrl, "/api/orchestration/shell"));
+      url.searchParams.set("includeTasks", "true");
+      return url.toString();
+    },
     timeoutMs: input.timeoutMs ?? DEFAULT_SHELL_SNAPSHOT_TIMEOUT_MS,
-    request: ({ client, headers }) => client.shellSnapshot({ headers }),
+    request: ({ client, headers }) =>
+      client.shellSnapshot({ headers, payload: { includeTasks: true } }),
   });
 });
 

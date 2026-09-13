@@ -85,6 +85,7 @@ import type {
   OrchestrationShellSnapshot,
   OrchestrationShellStreamItem,
   OrchestrationSubscribeThreadInput,
+  OrchestrationGetArchivedShellSnapshotInput,
   OrchestrationThreadStreamItem,
 } from "./orchestration.ts";
 import { SnapShotSource } from "./orchestration.ts";
@@ -1558,10 +1559,13 @@ export interface EnvironmentApi {
     getFullThreadDiff: (
       input: OrchestrationGetFullThreadDiffInput,
     ) => Promise<OrchestrationGetFullThreadDiffResult>;
-    getArchivedShellSnapshot: () => Promise<OrchestrationShellSnapshot>;
+    getArchivedShellSnapshot: (
+      input?: OrchestrationGetArchivedShellSnapshotInput,
+    ) => Promise<OrchestrationShellSnapshot>;
     subscribeShell: (
       callback: (event: OrchestrationShellStreamItem) => void,
       options?: {
+        includeTasks?: boolean;
         onResubscribe?: () => void;
       },
     ) => () => void;

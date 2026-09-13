@@ -5,6 +5,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TaskId,
   TurnId,
   type OrchestrationThread,
   type OrchestrationThreadDetailSnapshot,
@@ -150,6 +151,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const subscriptionCount = yield* Ref.make(0);
   const loaderCalls = yield* Ref.make(0);
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
+  const lastIncludeTasks = yield* Ref.make<boolean | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make<boolean | undefined>(undefined);
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -167,11 +169,13 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     [ORCHESTRATION_WS_METHODS.subscribeThread]: (input: {
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: boolean;
+      readonly includeTasks?: boolean;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
           Effect.andThen(Ref.set(lastSubscribeAfterSequence, input.afterSequence)),
           Effect.andThen(Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker)),
+          Effect.andThen(Ref.set(lastIncludeTasks, input.includeTasks)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -259,6 +263,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     loaderCalls,
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
+    lastIncludeTasks,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -328,6 +333,37 @@ const deleted = (): OrchestrationThreadStreamItem => ({
 });
 
 describe("EnvironmentThreads", () => {
+  it.effect("opts into task membership updates on a resumed detail stream", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ cached: BASE_THREAD });
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      expect(yield* Ref.get(harness.lastIncludeTasks)).toBe(true);
+      const update = titleUpdated("unused", 8);
+      if (update.kind !== "event") throw new Error("Expected event fixture");
+      yield* Queue.offer(harness.inputs, {
+        kind: "event",
+        event: {
+          ...update.event,
+          type: "thread.task-set",
+          payload: {
+            threadId: THREAD_ID,
+            taskId: TaskId.make("task-1"),
+            updatedAt: "2026-04-01T01:00:00.000Z",
+          },
+        },
+      });
+      const joined = yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.taskId === "task-1",
+      );
+      expect(Option.getOrThrow(joined.data).projectId).toBe(BASE_THREAD.projectId);
+      yield* Queue.offer(harness.inputs, titleUpdated("Still streaming", 9));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => Option.isSome(value.data) && value.data.value.title === "Still streaming",
+      );
+    }),
+  );
   for (const source of ["disk", "HTTP"] as const) {
     it.effect(`does not rewrite an unchanged ${source} snapshot on navigation or warm return`, () =>
       Effect.gen(function* () {

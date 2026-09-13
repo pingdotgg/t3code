@@ -116,6 +116,7 @@ export function applyThreadDetailEvent(
         thread: {
           id: event.payload.threadId,
           projectId: event.payload.projectId,
+          taskId: event.payload.taskId ?? null,
           title: event.payload.title,
           modelSelection: event.payload.modelSelection,
           runtimeMode: event.payload.runtimeMode,
@@ -143,6 +144,11 @@ export function applyThreadDetailEvent(
         },
       };
 
+    case "thread.task-set":
+      return {
+        kind: "updated",
+        thread: { ...thread, taskId: event.payload.taskId, updatedAt: event.payload.updatedAt },
+      };
     case "thread.deleted":
       return { kind: "deleted" };
 

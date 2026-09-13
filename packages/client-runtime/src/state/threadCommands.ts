@@ -8,6 +8,8 @@ import {
   createEnvironmentRpcCommand,
 } from "./runtime.ts";
 import {
+  type SetThreadTaskInput,
+  setThreadTask,
   type ArchiveThreadInput,
   type CreateThreadInput,
   type DeleteThreadInput,
@@ -60,6 +62,7 @@ import {
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 
 export type {
+  SetThreadTaskInput,
   ArchiveThreadInput,
   CreateThreadInput,
   DeleteThreadInput,
@@ -96,6 +99,12 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   return {
+    setTask: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:set-task",
+      execute: (input: SetThreadTaskInput) => setThreadTask(input),
+      scheduler,
+      concurrency,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

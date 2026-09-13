@@ -3,11 +3,13 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type OrchestrationShellSnapshot,
+  TaskId,
+  OrchestrationShellSnapshot,
   type OrchestrationThread,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 import { AsyncResult, Atom, AtomRegistry } from "effect/unstable/reactivity";
 
 import { PrimaryConnectionTarget } from "../connection/model.ts";
@@ -26,7 +28,12 @@ import { createEnvironmentSnapshotAtom } from "./snapshots.ts";
 import { createEnvironmentThreadDetailAtoms } from "./threadDetail.ts";
 import { mergeEnvironmentThread } from "./threadDetail.ts";
 import { createEnvironmentThreadShellAtoms } from "./threadShell.ts";
+import { createEnvironmentTaskAtoms } from "./taskEntities.ts";
+import { parseScopedTaskKey, scopedTaskKey, scopeTaskRef } from "../environment/scoped.ts";
 import { applyShellStreamEvent } from "./shellReducer.ts";
+
+const encodeShellCache = Schema.encodeSync(Schema.fromJsonString(OrchestrationShellSnapshot));
+const decodeShellCache = Schema.decodeSync(Schema.fromJsonString(OrchestrationShellSnapshot));
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -199,6 +206,7 @@ function makeHarness(
     shellStateAtomForEnvironment: shellStateAtoms,
     threadStateAtom: (threadId: ThreadId) => threadStateAtoms(`${ENVIRONMENT_ID}\u0000${threadId}`),
     projects,
+    tasks: createEnvironmentTaskAtoms({ catalogValueAtom, snapshotAtom }),
     threadShells,
     threadDetails,
   };
@@ -210,6 +218,7 @@ describe("environment entity projections", () => {
     const detail = {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
+      taskId: TaskId.make("stale-task"),
       title: "Cached thread",
       branch: "stale-branch",
       worktreePath: "/repo/stale-worktree",
@@ -224,6 +233,7 @@ describe("environment entity projections", () => {
     const shell = {
       ...THREAD_SHELL,
       environmentId: ENVIRONMENT_ID,
+      taskId: TaskId.make("current-task"),
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
@@ -234,6 +244,7 @@ describe("environment entity projections", () => {
     const merged = mergeEnvironmentThread(detail, shell);
 
     expect(merged).toMatchObject({
+      taskId: TaskId.make("current-task"),
       title: "Current thread",
       branch: "current-branch",
       worktreePath: "/repo/current-worktree",
@@ -241,6 +252,10 @@ describe("environment entity projections", () => {
       unsettledAt: "2026-03-09T12:00:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
+    expect(mergeEnvironmentThread(detail, { ...shell, taskId: null })?.taskId).toBeNull();
+    expect(
+      mergeEnvironmentThread(detail, { ...THREAD_SHELL, environmentId: ENVIRONMENT_ID })?.taskId,
+    ).toBeNull();
   });
 
   it("preserves untouched project and thread identities across unrelated shell updates", () => {
@@ -549,5 +564,86 @@ describe("environment entity projections", () => {
 
     expect(harness.registry.get(messagesAtom)).toBe(messages);
     expect(harness.registry.get(activitiesAtom)).toBe(activities);
+  });
+});
+
+const TASK = {
+  id: TaskId.make("shared-id"),
+  name: "Task",
+  description: null,
+  primaryProjectId: PROJECT_ID,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
+  createdAt: "2026-06-01T00:00:00.000Z",
+  updatedAt: "2026-06-01T00:00:00.000Z",
+} as const;
+
+describe("task entities", () => {
+  it("isolates equal task IDs by environment, preserves references, and clears old-server state", () => {
+    const second = EnvironmentId.make("environment-2");
+    const harness = makeHarness([ENVIRONMENT_ID, second]);
+    const firstRef = scopeTaskRef(ENVIRONMENT_ID, TASK.id);
+    expect(parseScopedTaskKey(scopedTaskKey(firstRef))).toEqual(firstRef);
+    expect(parseScopedTaskKey("invalid")).toBeNull();
+    for (const environmentId of [ENVIRONMENT_ID, second]) {
+      harness.registry.set(
+        harness.shellStateAtomForEnvironment(environmentId),
+        AsyncResult.success(shellState({ ...SNAPSHOT, tasks: [{ ...TASK, name: environmentId }] })),
+      );
+    }
+    const firstAtom = harness.tasks.taskAtom(firstRef);
+    const first = harness.registry.get(firstAtom);
+    expect(first?.name).toBe(ENVIRONMENT_ID);
+    expect(harness.registry.get(harness.tasks.taskAtom(scopeTaskRef(second, TASK.id)))?.name).toBe(
+      second,
+    );
+    expect(harness.registry.get(harness.tasks.tasksAtom)).toHaveLength(2);
+    const snapshot = Option.getOrThrow(
+      AsyncResult.value(harness.registry.get(harness.shellStateAtom)),
+    ).snapshot;
+    const current = Option.getOrThrow(snapshot);
+    const changed = applyShellStreamEvent(current, {
+      kind: "thread-removed",
+      threadId: THREAD_ID,
+      sequence: 2,
+    });
+    expect(changed.tasks).toBe(current.tasks);
+    harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(changed)));
+    expect(harness.registry.get(firstAtom)).toBe(first);
+    harness.registry.set(harness.shellStateAtom, AsyncResult.success(shellState(SNAPSHOT)));
+    expect(harness.registry.get(firstAtom)).toBeNull();
+    expect(harness.registry.get(harness.tasks.tasksAtom)).toHaveLength(1);
+  });
+  it("reduces task changes immutably with stream sequence guards", () => {
+    const first = applyShellStreamEvent(SNAPSHOT, {
+      kind: "task-upserted",
+      task: TASK,
+      sequence: 2,
+    });
+    expect(first.tasks).toEqual([TASK]);
+    const cached = encodeShellCache(first);
+    expect(decodeShellCache(cached).tasks).toEqual([TASK]);
+    expect(first.threads).toBe(SNAPSHOT.threads);
+    expect(first.projects).toBe(SNAPSHOT.projects);
+    expect(
+      applyShellStreamEvent(first, { kind: "task-removed", taskId: TASK.id, sequence: 1 }),
+    ).toBe(first);
+    const updated = applyShellStreamEvent(first, {
+      kind: "task-upserted",
+      task: { ...TASK, name: "Renamed" },
+      sequence: 3,
+    });
+    expect(updated.tasks?.[0]?.name).toBe("Renamed");
+    expect(first.tasks?.[0]?.name).toBe("Task");
+    expect(
+      applyShellStreamEvent(updated, { kind: "task-removed", taskId: TASK.id, sequence: 4 }).tasks,
+    ).toEqual([]);
   });
 });

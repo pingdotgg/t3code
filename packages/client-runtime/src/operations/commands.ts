@@ -7,11 +7,13 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
-import type { EnvironmentSupervisor } from "../connection/supervisor.ts";
+import * as Option from "effect/Option";
+import * as SubscriptionRef from "effect/SubscriptionRef";
+import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import {
   type EnvironmentRpcFailure,
   type EnvironmentRpcSuccess,
-  type EnvironmentRpcUnavailableError,
+  EnvironmentRpcUnavailableError,
   request,
 } from "../rpc/client.ts";
 
@@ -376,4 +378,147 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     commandId: metadata.commandId,
     createdAt: metadata.createdAt,
   });
+});
+
+/** Fail closed against the connected server's capability, including after a downgrade. */
+const requireTasks = Effect.gen(function* () {
+  const supervisor = yield* EnvironmentSupervisor;
+  const session = yield* SubscriptionRef.get(supervisor.session);
+  const supported =
+    Option.isSome(session) &&
+    (yield* session.value.initialConfig.pipe(
+      Effect.map((config) => config.environment.capabilities.tasks === true),
+      Effect.orElseSucceed(() => false),
+    ));
+  if (!supported) {
+    return yield* new EnvironmentRpcUnavailableError({
+      environmentId: supervisor.target.environmentId,
+      message: "Tasks are not supported by this environment.",
+    });
+  }
+});
+
+export type CreateTaskInput = CommandInput<"task.create">;
+export const createTask: (input: CreateTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.createTask",
+)(function* (input) {
+  yield* requireTasks;
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({ ...input, type: "task.create", ...metadata });
+});
+
+export type UpdateTaskMetadataInput = CommandInput<"task.meta.update">;
+export const updateTaskMetadata: (input: UpdateTaskMetadataInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.updateTaskMetadata",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({
+    ...input,
+    type: "task.meta.update",
+    commandId: yield* commandId(input),
+  });
+});
+
+export type DeleteTaskInput = CommandInput<"task.delete">;
+export const deleteTask: (input: DeleteTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.deleteTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.delete", commandId: yield* commandId(input) });
+});
+
+export type ArchiveTaskInput = CommandInput<"task.archive">;
+export const archiveTask: (input: ArchiveTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.archiveTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.archive", commandId: yield* commandId(input) });
+});
+
+export type UnarchiveTaskInput = CommandInput<"task.unarchive">;
+export const unarchiveTask: (input: UnarchiveTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unarchiveTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.unarchive", commandId: yield* commandId(input) });
+});
+
+export type SettleTaskInput = CommandInput<"task.settle">;
+export const settleTask: (input: SettleTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.settleTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.settle", commandId: yield* commandId(input) });
+});
+
+export type UnsettleTaskInput = CommandInput<"task.unsettle">;
+export const unsettleTask: (input: UnsettleTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unsettleTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.unsettle", commandId: yield* commandId(input) });
+});
+
+export type SnoozeTaskInput = CommandInput<"task.snooze">;
+export const snoozeTask: (input: SnoozeTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.snoozeTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.snooze", commandId: yield* commandId(input) });
+});
+
+export type UnsnoozeTaskInput = CommandInput<"task.unsnooze">;
+export const unsnoozeTask: (input: UnsnoozeTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unsnoozeTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.unsnooze", commandId: yield* commandId(input) });
+});
+
+export type PinTaskInput = CommandInput<"task.pin">;
+export const pinTask: (input: PinTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.pinTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.pin", commandId: yield* commandId(input) });
+});
+
+export type UnpinTaskInput = CommandInput<"task.unpin">;
+export const unpinTask: (input: UnpinTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.unpinTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "task.unpin", commandId: yield* commandId(input) });
+});
+
+export type ReorderPinnedTaskInput = CommandInput<"task.pin.reorder">;
+export const reorderPinnedTask: (input: ReorderPinnedTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.reorderPinnedTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({
+    ...input,
+    type: "task.pin.reorder",
+    commandId: yield* commandId(input),
+  });
+});
+
+export type ReorderActiveTaskInput = CommandInput<"task.active.reorder">;
+export const reorderActiveTask: (input: ReorderActiveTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.reorderActiveTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({
+    ...input,
+    type: "task.active.reorder",
+    commandId: yield* commandId(input),
+  });
+});
+
+export type SetThreadTaskInput = CommandInput<"thread.task.set">;
+export const setThreadTask: (input: SetThreadTaskInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.setThreadTask",
+)(function* (input) {
+  yield* requireTasks;
+  return yield* dispatch({ ...input, type: "thread.task.set", commandId: yield* commandId(input) });
 });

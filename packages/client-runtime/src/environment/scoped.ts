@@ -2,6 +2,8 @@ import {
   EnvironmentId,
   ProjectId,
   ThreadId,
+  TaskId,
+  type ScopedTaskRef,
   type EnvironmentId as EnvironmentIdType,
   type ProjectId as ProjectIdType,
   type ScopedProjectRef,
@@ -66,4 +68,19 @@ export function parseScopedThreadKey(key: string): ScopedThreadRef | null {
     environmentId: parsed.environmentId,
     threadId: ThreadId.make(parsed.localId),
   };
+}
+
+export function scopeTaskRef(environmentId: EnvironmentIdType, taskId: TaskId): ScopedTaskRef {
+  return { environmentId, taskId };
+}
+
+export function scopedTaskKey(ref: ScopedTaskRef): string {
+  return `${ref.environmentId}:${ref.taskId}`;
+}
+
+export function parseScopedTaskKey(key: string): ScopedTaskRef | null {
+  const parsed = parseScopedKey(key);
+  return parsed === null
+    ? null
+    : { environmentId: parsed.environmentId, taskId: TaskId.make(parsed.localId) };
 }

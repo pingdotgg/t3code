@@ -25,6 +25,7 @@ import {
   type OrchestrationThreadStreamItem,
   type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
+  type OrchestrationTaskShell,
   TerminalNotRunningError,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -382,6 +383,89 @@ const makeDefaultOrchestrationThreadShell = (
     ...overrides,
   };
 };
+
+const taskWireNow = "2026-09-01T00:00:00.000Z";
+const taskWireTask: OrchestrationTaskShell = {
+  id: TaskId.make("wire-task"),
+  name: "Task",
+  description: null,
+  primaryProjectId: defaultProjectId,
+  archivedAt: null,
+  settledOverride: null,
+  settledAt: null,
+  unsettledAt: null,
+  snoozedUntil: null,
+  snoozedAt: null,
+  pinnedAt: null,
+  pinOrderKey: null,
+  activeOrderKey: null,
+  createdAt: taskWireNow,
+  updatedAt: taskWireNow,
+};
+
+const taskWireEvents: ReadonlyArray<OrchestrationEvent> = (
+  [
+    {
+      type: "task.created",
+      aggregateKind: "task",
+      aggregateId: taskWireTask.id,
+      payload: { ...taskWireTask, taskId: taskWireTask.id },
+    },
+    {
+      type: "thread.task-set",
+      aggregateKind: "thread",
+      aggregateId: defaultThreadId,
+      payload: { threadId: defaultThreadId, taskId: taskWireTask.id, updatedAt: taskWireNow },
+    },
+    {
+      type: "thread.session-set",
+      aggregateKind: "thread",
+      aggregateId: defaultThreadId,
+      payload: {
+        threadId: defaultThreadId,
+        session: {
+          threadId: defaultThreadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: taskWireNow,
+        },
+      },
+    },
+  ] as const
+).map((event, index) => ({
+  ...event,
+  sequence: index + 1,
+  eventId: EventId.make(`task-wire-${index}`),
+  occurredAt: taskWireNow,
+  commandId: null,
+  causationEventId: null,
+  correlationId: null,
+  metadata: {},
+}));
+
+// Pre-task clients reject new stream discriminants before reducing them.
+const decodeLegacyTaskWireItem = Schema.decodeUnknownSync(
+  Schema.Union([
+    Schema.Struct({ kind: Schema.Literal("snapshot"), snapshot: Schema.Unknown }),
+    Schema.Struct({ kind: Schema.Literal("synchronized") }),
+    Schema.Struct({
+      kind: Schema.Literals([
+        "thread-upserted",
+        "thread-removed",
+        "project-upserted",
+        "project-removed",
+      ]),
+      sequence: Schema.Finite,
+    }),
+    Schema.Struct({
+      kind: Schema.Literal("event"),
+      event: Schema.Struct({ type: Schema.Literal("thread.session-set"), sequence: Schema.Finite }),
+    }),
+  ]),
+);
 
 const browserOtlpTracingLayer = Layer.mergeAll(
   FetchHttpClient.layer,
@@ -8267,6 +8351,252 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         },
       ]);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("task opt-in reaches HTTP, full/reset shell and archived snapshots", () =>
+    Effect.gen(function* () {
+      const snapshot = (options?: { includeTasks?: boolean | undefined }) =>
+        Effect.succeed({
+          snapshotSequence: 0,
+          projects: [],
+          threads: [],
+          updatedAt: taskWireNow,
+          ...(options?.includeTasks === true ? { tasks: [taskWireTask] } : {}),
+        });
+      yield* buildAppUnderTest({
+        layers: {
+          projectionSnapshotQuery: {
+            getShellSnapshot: snapshot,
+            getArchivedShellSnapshot: snapshot,
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(
+                Option.some({
+                  snapshotSequence: 0,
+                  thread: {
+                    ...makeDefaultOrchestrationReadModel().threads[0]!,
+                    taskId: taskWireTask.id,
+                  },
+                }),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      for (const includeTasks of [undefined, false, true]) {
+        for (const afterSequence of [undefined, 99]) {
+          const items = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+                includeTasks,
+                ...(afterSequence === undefined ? {} : { afterSequence }),
+                requestCompletionMarker: true,
+              }).pipe(
+                Stream.takeUntil((item) => item.kind === "synchronized"),
+                Stream.runCollect,
+              ),
+            ),
+          );
+          const first = items[0];
+          assertTrue(first?.kind === "snapshot");
+          assert.equal("tasks" in first.snapshot, includeTasks === true);
+          const detail = yield* Effect.scoped(
+            withWsRpcClient(wsUrl, (client) =>
+              client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                threadId: defaultThreadId,
+                includeTasks,
+                ...(afterSequence === undefined ? {} : { afterSequence }),
+                requestCompletionMarker: true,
+              }).pipe(
+                Stream.takeUntil((item) => item.kind === "synchronized"),
+                Stream.runCollect,
+              ),
+            ),
+          );
+          const firstDetail = detail[0];
+          assertTrue(firstDetail?.kind === "snapshot");
+          assert.equal(firstDetail.snapshot.thread.taskId, taskWireTask.id);
+        }
+        const archived = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.getArchivedShellSnapshot]({ includeTasks }),
+          ),
+        );
+        assert.equal("tasks" in archived, includeTasks === true);
+      }
+      const baseUrl = yield* getHttpServerUrl();
+      const cookie = yield* getAuthenticatedSessionCookieHeader();
+      for (const query of ["", "?includeTasks=false", "?includeTasks=true"]) {
+        const response = yield* measureHttpGet({
+          url: `${baseUrl}/api/orchestration/shell${query}`,
+          headers: { cookie },
+        });
+        assert.equal(response.status, 200);
+        const body = yield* decodeTransferShellSnapshot(
+          Buffer.from(response.decodedBody).toString("utf8"),
+        );
+        assert.equal("tasks" in body, query === "?includeTasks=true");
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("task replay preserves legacy shell/detail unions and opts in to membership", () =>
+    Effect.gen(function* () {
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            latestSequence: Effect.succeed(3),
+            readEvents: () => Stream.fromIterable(taskWireEvents),
+            readThreadEvents: () => Stream.fromIterable(taskWireEvents),
+            getThreadReplayStats: () =>
+              Effect.succeed({ eventCount: 2, payloadBytes: 500, hasCreateEvent: false }),
+          },
+          projectionSnapshotQuery: {
+            getTaskShellById: () => Effect.succeed(Option.some(taskWireTask)),
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(makeDefaultOrchestrationThreadShell({ taskId: taskWireTask.id })),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      for (const includeTasks of [false, true]) {
+        const shell = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+              includeTasks,
+              afterSequence: 0,
+              requestCompletionMarker: true,
+            }).pipe(
+              Stream.takeUntil((item) => item.kind === "synchronized"),
+              Stream.runCollect,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          shell.map((item) => item.kind),
+          includeTasks
+            ? ["task-upserted", "thread-upserted", "synchronized"]
+            : ["thread-upserted", "synchronized"],
+        );
+        const detail = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+              threadId: defaultThreadId,
+              includeTasks,
+              afterSequence: 0,
+              requestCompletionMarker: true,
+            }).pipe(
+              Stream.takeUntil((item) => item.kind === "synchronized"),
+              Stream.runCollect,
+            ),
+          ),
+        );
+        assert.deepEqual(
+          detail.flatMap((item) => (item.kind === "event" ? [item.event.type] : [])),
+          includeTasks ? ["thread.task-set", "thread.session-set"] : ["thread.session-set"],
+        );
+        if (!includeTasks) for (const item of [...shell, ...detail]) decodeLegacyTaskWireItem(item);
+      }
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("task live streams keep two clients synchronized through membership and removal", () =>
+    Effect.gen(function* () {
+      const liveEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+      const ready = yield* Deferred.make<void>();
+      let synchronizedCount = 0;
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: { streamDomainEvents: Stream.fromPubSub(liveEvents) },
+          projectionSnapshotQuery: {
+            getTaskShellById: () => Effect.succeed(Option.none()),
+            getThreadShellById: () =>
+              Effect.succeed(
+                Option.some(makeDefaultOrchestrationThreadShell({ taskId: taskWireTask.id })),
+              ),
+            getThreadDetailSnapshot: () =>
+              Effect.succeed(
+                Option.some({
+                  snapshotSequence: 0,
+                  thread: makeDefaultOrchestrationReadModel().threads[0]!,
+                }),
+              ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const clients = yield* Effect.forEach([false, true], (includeTasks) =>
+            Effect.forEach(["shell", "detail"] as const, (kind) =>
+              withWsRpcClient(wsUrl, (client) => {
+                const stream =
+                  kind === "shell"
+                    ? client[ORCHESTRATION_WS_METHODS.subscribeShell]({
+                        includeTasks,
+                        requestCompletionMarker: true,
+                      }).pipe(
+                        Stream.map(
+                          (item): OrchestrationShellStreamItem | OrchestrationThreadStreamItem =>
+                            item,
+                        ),
+                      )
+                    : client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                        threadId: defaultThreadId,
+                        includeTasks,
+                        requestCompletionMarker: true,
+                      }).pipe(
+                        Stream.map(
+                          (item): OrchestrationShellStreamItem | OrchestrationThreadStreamItem =>
+                            item,
+                        ),
+                      );
+                return stream.pipe(
+                  Stream.tap((item) =>
+                    item.kind === "synchronized"
+                      ? Effect.sync(() => ++synchronizedCount).pipe(
+                          Effect.flatMap((count) =>
+                            count === 4 ? Deferred.succeed(ready, undefined) : Effect.void,
+                          ),
+                        )
+                      : Effect.void,
+                  ),
+                  Stream.takeUntil(
+                    (item) =>
+                      ("sequence" in item && item.sequence === 3) ||
+                      (item.kind === "event" && item.event.sequence === 3),
+                  ),
+                  Stream.runCollect,
+                );
+              }).pipe(Effect.forkScoped),
+            ),
+          );
+          yield* Deferred.await(ready);
+          const archived: OrchestrationEvent = {
+            ...taskWireEvents[0]!,
+            type: "task.archived",
+            payload: { taskId: taskWireTask.id, archivedAt: taskWireNow, updatedAt: taskWireNow },
+          };
+          for (const event of [archived, ...taskWireEvents.slice(1)])
+            yield* PubSub.publish(liveEvents, event);
+          for (const [index, fibers] of clients.entries()) {
+            const [shell, detail] = yield* Effect.forEach(fibers, Fiber.join);
+            assertTrue(shell !== undefined && detail !== undefined);
+            assert.equal(
+              shell.some((item) => item.kind === "task-removed"),
+              index === 1,
+            );
+            assert.equal(
+              detail.some((item) => item.kind === "event" && item.event.type === "thread.task-set"),
+              index === 1,
+            );
+            if (index === 0)
+              for (const item of [...shell, ...detail]) decodeLegacyTaskWireItem(item);
+          }
+        }),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
   );
 
   it.effect("routes websocket rpc orchestration shell snapshot errors", () =>

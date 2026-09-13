@@ -887,6 +887,16 @@ export type OrchestrationShellSnapshot = typeof OrchestrationShellSnapshot.Type;
 
 export const OrchestrationShellStreamEvent = Schema.Union([
   Schema.Struct({
+    kind: Schema.Literal("task-upserted"),
+    sequence: NonNegativeInt,
+    task: OrchestrationTaskShell,
+  }),
+  Schema.Struct({
+    kind: Schema.Literal("task-removed"),
+    sequence: NonNegativeInt,
+    taskId: TaskId,
+  }),
+  Schema.Struct({
     kind: Schema.Literal("project-upserted"),
     sequence: NonNegativeInt,
     project: OrchestrationProjectShell,
@@ -922,6 +932,7 @@ export const OrchestrationShellStreamItem = Schema.Union([
 export type OrchestrationShellStreamItem = typeof OrchestrationShellStreamItem.Type;
 
 export const OrchestrationSubscribeShellInput = Schema.Struct({
+  includeTasks: Schema.optional(Schema.Boolean),
   /**
    * When provided, the server skips the initial full shell snapshot and instead
    * replays shell events after this sequence before streaming live events.
@@ -940,6 +951,7 @@ export const OrchestrationSubscribeShellInput = Schema.Struct({
 export type OrchestrationSubscribeShellInput = typeof OrchestrationSubscribeShellInput.Type;
 
 export const OrchestrationSubscribeThreadInput = Schema.Struct({
+  includeTasks: Schema.optional(Schema.Boolean),
   threadId: ThreadId,
   /**
    * When provided, the server skips the initial snapshot frame and instead
@@ -2558,6 +2570,12 @@ export class OrchestrationGetWorkflowScriptError extends Schema.TaggedError<Orch
   }
 }
 
+export const OrchestrationGetArchivedShellSnapshotInput = Schema.Struct({
+  includeTasks: Schema.optional(Schema.Boolean),
+});
+export type OrchestrationGetArchivedShellSnapshotInput =
+  typeof OrchestrationGetArchivedShellSnapshotInput.Type;
+
 export const OrchestrationRpcSchemas = {
   dispatchCommand: {
     input: ClientOrchestrationCommand,
@@ -2580,7 +2598,7 @@ export const OrchestrationRpcSchemas = {
     output: OrchestrationSearchThreadsResult,
   },
   getArchivedShellSnapshot: {
-    input: Schema.Struct({}),
+    input: OrchestrationGetArchivedShellSnapshotInput,
     output: OrchestrationShellSnapshot,
   },
   subscribeThread: {

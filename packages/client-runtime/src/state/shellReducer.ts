@@ -16,6 +16,19 @@ export function applyShellStreamEvent(
   if (event.sequence <= snapshot.snapshotSequence) return snapshot;
 
   switch (event.kind) {
+    case "task-upserted": {
+      const current = snapshot.tasks ?? [];
+      const tasks = current.some((task) => task.id === event.task.id)
+        ? Arr.map(current, (task) => (task.id === event.task.id ? event.task : task))
+        : Arr.append(current, event.task);
+      return { ...snapshot, tasks, snapshotSequence: event.sequence };
+    }
+    case "task-removed":
+      return {
+        ...snapshot,
+        tasks: Arr.filter(snapshot.tasks ?? [], (task) => task.id !== event.taskId),
+        snapshotSequence: event.sequence,
+      };
     case "project-upserted": {
       const projects = snapshot.projects.some((p) => p.id === event.project.id)
         ? Arr.map(snapshot.projects, (p) => (p.id === event.project.id ? event.project : p))

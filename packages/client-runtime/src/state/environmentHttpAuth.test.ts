@@ -245,10 +245,14 @@ describe("authenticated environment HTTP requests", () => {
       expect(harness.proofs).toEqual([
         {
           method: loader.method,
-          url: `${CURRENT_ORIGIN}${loader.path}`,
+          url: `${CURRENT_ORIGIN}${loader.path}${loader.name === "shell snapshot" ? "?includeTasks=true" : ""}`,
           accessToken: "current-token",
         },
       ]);
+      if (loader.name === "shell snapshot") {
+        expect(url.searchParams.get("includeTasks")).toBe("true");
+        expect(harness.proofs[0]?.url).toBe(call.url);
+      }
       if (loader.name === "older thread history") {
         expect(url.searchParams.get("turnLimit")).toBe("20");
         expect(url.searchParams.get("beforeCursor")).toBe("older-page");
