@@ -579,6 +579,7 @@ export const make = Effect.gen(function* PreviewAutomationBrokerMake() {
           threadId: input.scope.threadId,
           tabId: requestContext.tabId,
           tabIdExplicit: input.tabId !== undefined,
+          supportsStartedResponse: true,
           operation: input.operation,
           input: input.input,
           timeoutMs,

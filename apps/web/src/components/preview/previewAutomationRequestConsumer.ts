@@ -68,7 +68,7 @@ export function createPreviewAutomationRequestConsumerAtom<E>(options: {
       const request = event.request;
       let started = false;
       const notifyStarted = async () => {
-        if (started) return;
+        if (started || request.supportsStartedResponse !== true) return;
         started = true;
         await options.respond({
           clientId: options.clientId,

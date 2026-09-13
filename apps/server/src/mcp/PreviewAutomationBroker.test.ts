@@ -94,6 +94,7 @@ it.effect("starts a fresh response deadline when the host begins navigation", ()
       const requests = requestsFrom(yield* broker.connect(makeHost()));
       yield* Stream.runForEach(requests, (request) =>
         Effect.gen(function* () {
+          expect(request.supportsStartedResponse).toBe(true);
           yield* broker.respond({
             clientId: "client-1",
             connectionId: request.connectionId,
