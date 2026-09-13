@@ -125,8 +125,9 @@ export function SettingsDiagnosticsRouteScreen() {
             </Pressable>
           </SettingsSection>
           <Text className="px-2 text-sm leading-normal text-foreground-muted">
-            Paste the report into a GitHub issue. It contains the app version, the JavaScript error,
-            and the component stack; no thread content or credentials.
+            Paste the report into a GitHub issue. It contains the app version, the JavaScript error
+            message, and the component stack. Error messages can quote values from the app, so read
+            it over before sharing.
           </Text>
         </View>
       </ScrollView>
