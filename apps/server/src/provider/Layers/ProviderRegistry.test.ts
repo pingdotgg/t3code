@@ -1286,6 +1286,41 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         });
       });
 
+      it("does not resurrect removed or previously borrowed Codex custom capabilities", () => {
+        const previousProvider = {
+          instanceId: ProviderInstanceId.make("codex_personal"),
+          driver: ProviderDriverKind.make("codex"),
+          status: "ready",
+          enabled: true,
+          installed: true,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-09-12T00:00:00.000Z",
+          version: "0.154.0",
+          models: [
+            {
+              slug: "personal/custom",
+              name: "Custom",
+              isCustom: true,
+              capabilities: codexModelCapabilities,
+            },
+          ],
+          slashCommands: [],
+          skills: [],
+        } as const satisfies ServerProvider;
+        for (const capabilities of [null, createModelCapabilities({ optionDescriptors: [] })]) {
+          for (const isCustom of [true, false]) {
+            const refreshedProvider = {
+              ...previousProvider,
+              models: [{ ...previousProvider.models[0], capabilities, isCustom }],
+            } satisfies ServerProvider;
+            assert.deepStrictEqual(
+              mergeProviderSnapshot(previousProvider, refreshedProvider).models,
+              refreshedProvider.models,
+            );
+          }
+        }
+      });
+
       it("fills missing capabilities from the previous provider snapshot", () => {
         const previousProvider = {
           instanceId: ProviderInstanceId.make("cursor"),
@@ -2395,7 +2430,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
                 if (command._tag !== "StandardCommand") return spawner.spawn(command);
-                spawnedCommands.push(command.command);
+                // Platform package-manager discovery may also spawn commands;
+                // this test observes only the configured Codex executable probes.
+                if (command.command === firstMissing || command.command === secondMissing) {
+                  spawnedCommands.push(command.command);
+                }
                 const beforeSpawn =
                   command.command === secondMissing
                     ? Deferred.succeed(secondProbeStarted, undefined).pipe(

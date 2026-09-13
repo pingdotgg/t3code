@@ -148,6 +148,13 @@ const mergeProviderModels = (
   const previousBySlug = new Map(previousModels.map((model) => [model.slug, model] as const));
   const mergedModels = nextModels.map((model) => {
     const previousModel = previousBySlug.get(model.slug);
+    // Custom settings and their replacement by discovery retire old borrowed controls.
+    if (
+      provider.driver === ProviderDriverKind.make("codex") &&
+      (model.isCustom || previousModel?.isCustom)
+    ) {
+      return model;
+    }
     if (!previousModel || hasModelCapabilities(model) || !hasModelCapabilities(previousModel)) {
       return model;
     }
