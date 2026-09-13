@@ -1,4 +1,5 @@
 export const PICK_FOLDER_CHANNEL = "desktop:pick-folder";
+export const SET_NOTIFICATION_BADGE_CHANNEL = "desktop:set-notification-badge";
 export const PICK_PROJECT_FAVICON_CHANNEL = "desktop:pick-project-favicon";
 export const PICK_THEME_FILES_CHANNEL = "desktop:pick-theme-files";
 export const SET_THEME_CHANNEL = "desktop:set-theme";
@@ -7,6 +8,7 @@ export const OPEN_EXTERNAL_CHANNEL = "desktop:open-external";
 export const OPEN_SYSTEM_SETTINGS_CHANNEL = "desktop:open-system-settings";
 export const PROBE_REMOTE_EDITORS_CHANNEL = "desktop:probe-remote-editors";
 export const MENU_ACTION_CHANNEL = "desktop:menu-action";
+export const PASTE_AS_TEXT_CHANNEL = "desktop:paste-as-text";
 export const SNAP_SHOT_EVENT_CHANNEL = "desktop:snap-shot-event";
 export const QUIT_SHORTCUT_CHANNEL = "desktop:quit-shortcut";
 export const GET_WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:get-window-fullscreen-state";

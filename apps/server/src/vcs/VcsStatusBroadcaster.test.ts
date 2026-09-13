@@ -22,7 +22,7 @@ import type {
   VcsStatusResult,
   VcsStatusStreamEvent,
 } from "@t3tools/contracts";
-import { GitManagerError } from "@t3tools/contracts";
+import { GitCommandError, GitManagerError } from "@t3tools/contracts";
 
 import * as VcsStatusBroadcaster from "./VcsStatusBroadcaster.ts";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
@@ -206,6 +206,80 @@ describe("VcsStatusBroadcaster", () => {
       }).pipe(Effect.provide(testLayer));
     },
   );
+
+  it.effect("publishes dirty local status when a background automatic pull fails", () => {
+    let local: VcsStatusLocalResult = { ...baseLocalStatus, isDefaultRef: true, refName: "main" };
+    let remote: VcsStatusRemoteResult = baseRemoteStatus;
+    let pullCalls = 0;
+    const testLayer = VcsStatusBroadcaster.layer.pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(makeBackgroundPolicyLayer(() => true)),
+      Layer.provide(
+        Layer.succeed(VcsStatusBroadcaster.VcsAutoPullPolicy, {
+          isEnabled: () => Effect.succeed(true),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(GitWorkflowService.GitWorkflowService)({
+          localStatus: () => Effect.sync(() => local),
+          remoteStatus: () => Effect.sync(() => remote),
+          invalidateLocalStatus: () => Effect.void,
+          invalidateRemoteStatus: () => Effect.void,
+          pullCurrentBranch: () =>
+            Effect.suspend(() => {
+              pullCalls += 1;
+              return Effect.fail(
+                new GitCommandError({
+                  operation: "pullCurrentBranch",
+                  command: "git pull",
+                  cwd: "/repo",
+                  detail: "Local changes would be overwritten by merge",
+                }),
+              );
+            }),
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const broadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
+      const initial = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(initial.hasWorkingTreeChanges, false);
+      const scope = yield* Scope.make();
+      const snapshotReceived = yield* Deferred.make<void>();
+      const remoteUpdated = yield* Deferred.make<void>();
+      const localUpdates: Array<VcsStatusLocalResult> = [];
+      yield* Stream.runForEach(
+        broadcaster.streamStatus(
+          { cwd: "/repo" },
+          { automaticRemoteRefreshInterval: Effect.succeed(Duration.minutes(1)) },
+        ),
+        (event) => {
+          if (event._tag === "snapshot") {
+            return Deferred.succeed(snapshotReceived, undefined).pipe(Effect.ignore);
+          }
+          if (event._tag === "localUpdated") {
+            localUpdates.push(event.local);
+          }
+          if (event._tag === "remoteUpdated") {
+            return Deferred.succeed(remoteUpdated, undefined).pipe(Effect.ignore);
+          }
+          return Effect.void;
+        },
+      ).pipe(Effect.forkIn(scope));
+      yield* Deferred.await(snapshotReceived);
+      local = { ...local, hasWorkingTreeChanges: true };
+      remote = { ...baseRemoteStatus, behindCount: 1 };
+      yield* TestClock.adjust(Duration.minutes(1));
+      yield* Deferred.await(remoteUpdated);
+
+      const cached = yield* broadcaster.getStatus({ cwd: "/repo" });
+      assert.equal(pullCalls, 1);
+      assert.equal(cached.hasWorkingTreeChanges, true);
+      assert.equal(cached.behindCount, 1);
+      assert.deepStrictEqual(localUpdates, [local]);
+      yield* Scope.close(scope, Exit.void);
+    }).pipe(Effect.provide(Layer.merge(testLayer, TestClock.layer())));
+  });
 
   it.effect("reuses the cached VCS status across repeated reads", () => {
     const state = {

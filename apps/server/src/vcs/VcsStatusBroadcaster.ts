@@ -434,6 +434,7 @@ export const make = Effect.gen(function* () {
       const local = yield* workflow.localStatus({ cwd });
       if (!local.isRepo || !local.isDefaultRef) return null;
 
+      yield* updateCachedLocalStatus(cwd, local, { publish: true });
       yield* workflow.pullCurrentBranch(cwd);
       yield* workflow.invalidateStatus(cwd);
       const [refreshedLocal, refreshedRemote] = yield* Effect.all(

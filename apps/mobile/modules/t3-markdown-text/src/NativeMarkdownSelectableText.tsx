@@ -98,7 +98,7 @@ function resolveHeadingFontSize(textStyle: NativeMarkdownTextStyle, headingLevel
   }
 
   const scale = textStyle.fontSize / DEFAULT_BODY_FONT_SIZE;
-  return Math.max(12, Math.round(DEFAULT_HEADING_FONT_SIZES[index] * scale));
+  return Math.max(12, Math.round((DEFAULT_HEADING_FONT_SIZES[index] ?? 15) * scale));
 }
 
 function runStyle(run: NativeMarkdownTextRun, textStyle: NativeMarkdownTextStyle): TextStyle {

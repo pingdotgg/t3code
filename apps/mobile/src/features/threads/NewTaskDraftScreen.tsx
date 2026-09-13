@@ -1,4 +1,10 @@
 import { useAtomValue } from "@effect/atom-react";
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import {
+  nextPastedTextFileName,
+  pastedTextDisposition,
+  replaceTextSelection,
+} from "@t3tools/client-runtime/text-paste";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   CommonActions,
@@ -22,11 +28,16 @@ import { useFontFamily } from "../../lib/useFontFamily";
 
 import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
 } from "@t3tools/contracts";
 
-import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import {
+  ComposerEditor,
+  type ComposerEditorHandle,
+  type ComposerTextPaste,
+} from "../../components/ComposerEditor";
 import { composerContextImportsAtom } from "../../state/use-composer-drafts";
 import {
   composerContextSendBlockReason,
@@ -41,7 +52,6 @@ import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
 import { ComposerAttachmentStrip } from "../../components/ComposerAttachmentStrip";
 import { composerStripAttachments } from "../../lib/composerImages";
-import { collectComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import { EnvironmentMachineSymbol } from "../../components/EnvironmentMachineSymbol";
 import {
   composerAttachmentUploadBlockReason,
@@ -73,13 +83,17 @@ import {
 import { makeTurnCommandMetadata } from "../../lib/commandMetadata";
 import {
   convertPastedImagesToAttachments,
+  createPastedTextComposerAttachment,
   pickComposerFiles,
   pickComposerMedia,
+  removePersistedComposerAttachmentFile,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import {
   clearComposerDraftContent,
+  captureComposerDraftInsertion,
+  countComposerDraftAttachmentsAfterSelection,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   restoreComposerDraftSnapshot,
@@ -297,12 +311,23 @@ export function NewTaskDraftScreen(props: {
   const shareImportDraftBackupRef = useRef(new Map<string, ComposerDraft>());
   const activeShareImportTokenRef = useRef<symbol | null>(null);
   const shareImportMountedRef = useRef(true);
+  const pendingPastedTextAttachmentCountRef = useRef(0);
+  const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
+  const pastedTextFileNamesRef = useRef<{ draftKey: string | null; names: Set<string> }>({
+    draftKey: null,
+    names: new Set(),
+  });
   const latestDraftKeyRef = useRef(flow.draftKey);
   const latestIncomingShareIdRef = useRef(props.incomingShareId);
   latestDraftKeyRef.current = flow.draftKey;
   latestIncomingShareIdRef.current = props.incomingShareId;
   const isImportingShare = importingShareKey !== null;
   const alertedUnavailableIncomingShareIdRef = useRef<string | null>(null);
+  // The share this screen already moved into its draft. Sending clears the
+  // draft (and its importedShareIds receipt) a frame before the screen leaves,
+  // and the inbox entry is long gone by then; without this the re-render in
+  // between reads as "shared content vanished" and alerts on every send.
+  const consumedIncomingShareIdRef = useRef<string | null>(null);
   const incomingShare = props.incomingShareId ? getShare(props.incomingShareId) : null;
   const requestedInitialProjectAvailable = Boolean(
     props.initialProjectRef?.environmentId &&
@@ -344,16 +369,8 @@ export function NewTaskDraftScreen(props: {
       : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   // Media needs its thumbnail; every other file already reads as its inline chip.
   const stripAttachments = useMemo(
-    () =>
-      composerStripAttachments(
-        flow.attachments,
-        new Set(
-          collectComposerContextReferences(flow.prompt).map(
-            (occurrence) => occurrence.contextId as string,
-          ),
-        ),
-      ),
-    [flow.attachments, flow.prompt],
+    () => composerStripAttachments(flow.attachments),
+    [flow.attachments],
   );
   const composerMenu = useComposerCommandMenu({
     draftMessage: flow.prompt,
@@ -404,8 +421,9 @@ export function NewTaskDraftScreen(props: {
   }, [navigation, preventRemove, submitNavigationAction]);
   const hasImportedIncomingShare = Boolean(
     props.incomingShareId &&
-    flow.draftKey &&
-    getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId),
+    (consumedIncomingShareIdRef.current === props.incomingShareId ||
+      (flow.draftKey &&
+        getComposerDraftSnapshot(flow.draftKey).importedShareIds?.includes(props.incomingShareId))),
   );
   const isIncomingShareUnavailable = Boolean(
     props.incomingShareId &&
@@ -735,6 +753,7 @@ export function NewTaskDraftScreen(props: {
       }
       await consumeShare(shareId);
       didConsumeShare = true;
+      consumedIncomingShareIdRef.current = shareId;
       // The consumed inbox draft was the last owner of files that never made
       // it into the composer draft (unsupported server, oversize, limit
       // skips). Release them before any early return: an unmount or a
@@ -903,15 +922,19 @@ export function NewTaskDraftScreen(props: {
       return;
     }
     const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
+    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerMedia({
-      existingCount: flow.attachments.length,
+      existingCount:
+        flow.draftKey && insertion
+          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+          : flow.attachments.length,
       maxVideoBytes:
         capabilities?.attachmentUploads === true
           ? capabilities.fileAttachments?.maxUploadBytes
           : undefined,
     });
     const rejectedCount =
-      result.attachments.length > 0 ? flow.appendAttachments(result.attachments) : 0;
+      result.attachments.length > 0 ? flow.appendAttachments(result.attachments, insertion) : 0;
     const problems = [
       ...(result.error ? [result.error] : []),
       ...(rejectedCount > 0
@@ -933,11 +956,16 @@ export function NewTaskDraftScreen(props: {
       Alert.alert("File attachments are not available on this server.");
       return;
     }
+    const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
     const result = await pickComposerFiles({
-      existingCount: flow.attachments.length,
+      existingCount:
+        flow.draftKey && insertion
+          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+          : flow.attachments.length,
       maxBytes,
     });
-    const rejectedCount = result.files.length > 0 ? flow.appendAttachments(result.files) : 0;
+    const rejectedCount =
+      result.files.length > 0 ? flow.appendAttachments(result.files, insertion) : 0;
     // The picker error and the live-cap rejection can both happen in one
     // pick; report both in a single alert.
     const problems = [
@@ -954,12 +982,16 @@ export function NewTaskDraftScreen(props: {
   const handleNativePasteImages = useCallback(
     async (uris: ReadonlyArray<string>) => {
       try {
+        const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
         const images = await convertPastedImagesToAttachments({
           uris,
-          existingCount: flow.attachments.length,
+          existingCount:
+            flow.draftKey && insertion
+              ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+              : flow.attachments.length,
         });
         if (images.length > 0) {
-          flow.appendAttachments(images);
+          flow.appendAttachments(images, insertion);
         }
       } catch (error) {
         console.error("[native paste] error converting images", error);
@@ -968,8 +1000,106 @@ export function NewTaskDraftScreen(props: {
     [flow],
   );
 
+  const handleNativePasteText = useCallback(
+    async (paste: ComposerTextPaste) => {
+      const draftKey = flow.draftKey;
+      if (!draftKey) return;
+      const insertion = { text: paste.value, ...paste.selection };
+      const insertPaste = () => {
+        const insertion = replaceTextSelection({
+          value: paste.value,
+          selection: paste.selection,
+          text: paste.text,
+        });
+        const selection = { start: insertion.cursor, end: insertion.cursor };
+        flow.setPrompt(insertion.value);
+        composerMenu.onSelectionChange(selection);
+      };
+      const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
+      const advertisedMax =
+        capabilities?.attachmentUploads === true
+          ? capabilities.fileAttachments?.maxUploadBytes
+          : undefined;
+      const maxBytes =
+        advertisedMax === undefined ? null : clampFileAttachmentUploadBytes(advertisedMax);
+      const wouldExceedInputLimit =
+        paste.value.length -
+          Math.max(0, paste.selection.end - paste.selection.start) +
+          paste.text.length >
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+      const canAttach =
+        maxBytes !== null &&
+        countComposerDraftAttachmentsAfterSelection(draftKey, insertion) <
+          PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+        new TextEncoder().encode(paste.text).byteLength <= maxBytes;
+      if (
+        pastedTextDisposition({
+          text: paste.text,
+          wouldExceedInputLimit,
+          canAttach: true,
+        }) === "attachment"
+      ) {
+        if (canAttach && maxBytes !== null) {
+          pendingPastedTextAttachmentCountRef.current += 1;
+          setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
+          try {
+            if (pastedTextFileNamesRef.current.draftKey !== draftKey) {
+              pastedTextFileNamesRef.current = { draftKey, names: new Set() };
+            }
+            const reservedNames = pastedTextFileNamesRef.current.names;
+            for (const attachment of flow.attachments) reservedNames.add(attachment.name);
+            const name = nextPastedTextFileName([...reservedNames]);
+            reservedNames.add(name);
+            const attachment = await createPastedTextComposerAttachment({
+              text: paste.text,
+              name,
+              maxBytes,
+            });
+            if (latestDraftKeyRef.current !== draftKey) {
+              await removePersistedComposerAttachmentFile(attachment.fileUri);
+              return;
+            }
+            if (flow.appendAttachments([attachment], insertion) > 0) {
+              await removePersistedComposerAttachmentFile(attachment.fileUri);
+              Alert.alert(
+                "Could not attach pasted text",
+                `You can attach up to ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} files per message.`,
+              );
+            }
+          } catch (error) {
+            Alert.alert(
+              "Could not attach pasted text",
+              error instanceof Error ? error.message : "Try again.",
+            );
+          } finally {
+            pendingPastedTextAttachmentCountRef.current = Math.max(
+              0,
+              pendingPastedTextAttachmentCountRef.current - 1,
+            );
+            setPendingPastedTextAttachmentCount(pendingPastedTextAttachmentCountRef.current);
+          }
+        } else if (!wouldExceedInputLimit) {
+          insertPaste();
+        } else {
+          Alert.alert(
+            wouldExceedInputLimit
+              ? "Pasted text is too large for this message"
+              : "Could not attach pasted text",
+            wouldExceedInputLimit
+              ? "Remove some text or an attachment, then paste again."
+              : "Remove an attachment or use a smaller paste, then try again.",
+          );
+        }
+        return;
+      }
+
+      insertPaste();
+    },
+    [composerMenu, flow, selectedEnvironmentServerConfig],
+  );
+
   async function handleStart(): Promise<void> {
-    if (voiceInput.blocksSubmission) return;
+    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     const selectedProject = flow.selectedProject;
     const draftKey = flow.draftKey;
     if (!selectedProject || !draftKey) {
@@ -1139,6 +1269,7 @@ export function NewTaskDraftScreen(props: {
     isIncomingShareReady &&
     !isImportingShare &&
     !flow.submitting &&
+    pendingPastedTextAttachmentCount === 0 &&
     !voiceInput.blocksSubmission &&
     !(flow.workspaceMode === "worktree" && !flow.selectedBranchName);
   const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
@@ -1195,6 +1326,7 @@ export function NewTaskDraftScreen(props: {
         onFocus={() => setIsComposerFocused(true)}
         onBlur={() => setIsComposerFocused(false)}
         onPasteImages={(uris) => void handleNativePasteImages(uris)}
+        onPasteText={(paste) => void handleNativePasteText(paste)}
         placeholder="Ask anything…"
         singleLineCentered={false}
         contentInsetVertical={0}
@@ -1486,13 +1618,15 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     attachmentBlockReason ??
-                    (flow.submitting
-                      ? "Starting task"
-                      : attachmentsUploading
-                        ? "Queue task, sends when uploads finish"
-                        : environmentConnected
-                          ? "Start task"
-                          : "Queue task")
+                    (pendingPastedTextAttachmentCount > 0
+                      ? "Attaching pasted text"
+                      : flow.submitting
+                        ? "Starting task"
+                        : attachmentsUploading
+                          ? "Queue task, sends when uploads finish"
+                          : environmentConnected
+                            ? "Start task"
+                            : "Queue task")
                   }
                   disabled={!canStart}
                   icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
