@@ -82,6 +82,7 @@ import {
   useAdaptiveWorkspacePaneRole,
   useRegisterWorkspaceInspector,
 } from "../layout/AdaptiveWorkspaceLayout";
+import { createAndroidSidebarAction } from "../layout/android-sidebar-action";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 import { ThreadFileNavigatorPane } from "../files/thread-file-navigator-pane";
 import {
@@ -707,6 +708,14 @@ function ThreadRouteContent(
     if (Platform.OS !== "android") return [];
 
     const actions: AndroidHeaderAction[] = [];
+    if (layout.usesSplitView) {
+      actions.push(
+        createAndroidSidebarAction({
+          visible: panes.primarySidebarVisible,
+          onPress: togglePrimarySidebar,
+        }),
+      );
+    }
     if (props.onReturnToThread) {
       actions.push({
         accessibilityLabel: "Return to chat",
@@ -747,9 +756,12 @@ function ThreadRouteContent(
     handleOpenTerminal,
     handleOpenGitInspector,
     handleToggleInspector,
+    layout.usesSplitView,
+    panes.primarySidebarVisible,
     props.onReturnToThread,
     selectedThreadCwd,
     selectedThreadProject?.workspaceRoot,
+    togglePrimarySidebar,
   ]);
 
   const handleEditFailedCreation = useCallback(async () => {
