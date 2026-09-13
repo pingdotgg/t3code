@@ -751,6 +751,17 @@ function KeybindingTableRow({
   onRemove: (row: KeybindingRow) => void;
 }) {
   const [draft, setDraft] = useReducer(keybindingRowDraftReducer, row, createKeybindingRowDraft);
+  // Reset draft when the persisted row changes (e.g. after a successful save
+  // pushes new config via the subscription stream). Without this the stale
+  // draft keeps showing the pre-save values and the row appears stuck.
+  useEffect(() => {
+    setDraft({
+      keyDraft: row.key,
+      whenDraft: row.binding.whenAst,
+      isRecording: false,
+      isWhenDraftValid: true,
+    });
+  }, [row.key, row.binding.whenAst]);
   const { keyDraft, whenDraft, isRecording, isWhenDraftValid } = draft;
   const whenDraftExpression = whenAstToExpression(whenDraft);
   const isDirty = keyDraft !== row.key || whenDraftExpression !== row.when;
