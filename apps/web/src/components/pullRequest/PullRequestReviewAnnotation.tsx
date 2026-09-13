@@ -30,6 +30,7 @@ import {
   mergePullRequestThreadComments,
 } from "./pullRequestDetail.logic";
 import { PullRequestActorLabel } from "./pullRequestPresentation";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -254,7 +255,7 @@ export function ReviewThreadCard({
             disabled={pending}
             onClick={onToggleResolved}
           >
-            {thread.isResolved ? "Unresolve" : "Resolve"}
+            {thread.isResolved ? "Reopen" : "Resolve"}
           </Button>
         ) : null}
       </div>
@@ -267,6 +268,9 @@ export function ReviewThreadCard({
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <PullRequestActorLabel actor={comment.author} className="text-foreground" />
                   <span>{formatRelativeTimeLabel(comment.createdAt)}</span>
+                  <span className="ml-auto">
+                    <PullRequestCommentActions comment={{ ...comment, path: thread.path }} />
+                  </span>
                 </div>
                 {editingId === comment.id ? (
                   <PullRequestMarkdownEditor

@@ -1,11 +1,12 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { type EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   migratePersistedRightPanelState,
   pullRequestSurface,
   pullRequestSurfaceId,
+  registerRightPanelLeaveGuard,
   selectActiveRightPanel,
   selectActiveRightPanelSurface,
   selectSelectedRightPanelSurface,
@@ -21,6 +22,83 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it.each([
+    "file",
+    "attachment",
+    "browser",
+    "terminal",
+    "device",
+    "pull-request",
+    "files",
+    "agents",
+    "close",
+  ] as const)("defers leaving a review for %s until its guard allows it", (action) => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "diff");
+    let resume!: () => void;
+    const unregister = registerRightPanelLeaveGuard(refA, (next) => {
+      if (next) resume = next;
+      return true;
+    });
+    const actions = {
+      file: () => store.openFile(refA, "file.ts"),
+      attachment: () =>
+        store.openAttachment(refA, {
+          type: "file",
+          id: "attachment",
+          name: "file.ts",
+          mimeType: "text/plain",
+          sizeBytes: 1,
+        }),
+      browser: () => store.openBrowser(refA, "browser"),
+      terminal: () => store.openTerminal(refA, "terminal"),
+      device: () =>
+        store.openDevice(refA, {
+          hostId: "host",
+          deviceId: "device",
+          platform: "ios",
+          name: "Phone",
+        }),
+      "pull-request": () =>
+        store.openPullRequest(refA, { projectId: "project", repository: "owner/repo", number: 1 }),
+      files: () => store.open(refA, "files"),
+      agents: () => store.open(refA, "agents"),
+      close: () => store.close(refA),
+    };
+    try {
+      actions[action]();
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    } finally {
+      unregister();
+    }
+    store.open(refB, "agents");
+    resume();
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).not.toBe(
+      "diff",
+    );
+    expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refB)).toBe("agents");
+  });
+
+  it("does not ask when an action keeps the active review or affects another thread", () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "files");
+    store.open(refA, "diff");
+    const guard = vi.fn(() => true);
+    const unregister = registerRightPanelLeaveGuard(refA, guard);
+    try {
+      store.closeSurface(refA, "files");
+      store.closeOtherSurfaces(refA, "diff");
+      store.closeSurfacesToRight(refA, "diff");
+      store.activateSurface(refA, "diff");
+      store.open(refB, "diff");
+      store.close(refB);
+      expect(guard).not.toHaveBeenCalled();
+      expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
+    } finally {
+      unregister();
+    }
+  });
+
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {

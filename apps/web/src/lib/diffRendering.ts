@@ -143,7 +143,7 @@ export function getRenderablePatch(
   }
 }
 
-export function resolveFileDiffPath(fileDiff: FileDiffMetadata): string {
+export function resolveFileDiffPath(fileDiff: Pick<FileDiffMetadata, "name" | "prevName">): string {
   const raw = fileDiff.name ?? fileDiff.prevName ?? "";
   if (raw.startsWith("a/") || raw.startsWith("b/")) {
     return raw.slice(2);

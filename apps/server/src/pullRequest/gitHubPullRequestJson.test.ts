@@ -835,6 +835,27 @@ describe("repository access decoding", () => {
 });
 
 describe("viewer permission decoding", () => {
+  it("only exposes admin merge when the host explicitly permits it", () => {
+    for (const allowed of [true, false, undefined]) {
+      const access = expectSuccess(
+        decodeViewerPermissionsJson(
+          JSON.stringify({
+            data: {
+              repository: {
+                viewerPermission: "ADMIN",
+                pullRequest: {
+                  viewerCanUpdate: true,
+                  viewerDidAuthor: false,
+                  viewerCanMergeAsAdmin: allowed,
+                },
+              },
+            },
+          }),
+        ),
+      );
+      expect(access.canBypassMergeChecks === true).toBe(allowed === true);
+    }
+  });
   const viewerJson = (repository: Record<string, unknown>) =>
     JSON.stringify({ data: { repository } });
 

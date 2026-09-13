@@ -39,6 +39,7 @@ import {
   type PullRequestTimelineEvent,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestComment } from "./pullRequestEditing.logic";
+import { PullRequestCommentActions } from "./PullRequestCommentActions";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
@@ -247,6 +248,16 @@ function ConversationCard({
               <PencilIcon className="size-3" />
             </Button>
           ) : null}
+          <PullRequestCommentActions
+            showResolution
+            comment={{
+              id: event.id,
+              author: event.actor,
+              body: event.body ?? "",
+              url: event.url,
+              path: event.path,
+            }}
+          />
           <OpenOnHostButton url={event.url} onOpen={onOpen} />
         </div>
       </div>

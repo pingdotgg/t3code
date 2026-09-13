@@ -813,6 +813,254 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
   });
 
   describe("review diff previews", () => {
+    it.effect("returns a truncated staged preview and refuses to unstage it", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "large.txt", "large staged line\n".repeat(8_000));
+        yield* git(cwd, ["add", "large.txt"]);
+        const index = yield* git(cwd, ["write-tree"]);
+        const source = (yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: "staged" }))
+          .sources[0]!;
+        assert.isTrue(source.truncated);
+        assert.include(source.diff, "diff --git a/large.txt b/large.txt");
+        const error = yield* driver
+          .applyReviewPatch({
+            cwd,
+            sourceKind: "staged",
+            expectedDiffHash: source.diffHash,
+            fileIndex: 0,
+          })
+          .pipe(Effect.flip);
+        assert.include(error.detail, "Refresh the diff");
+        assert.equal(yield* git(cwd, ["write-tree"]), index);
+      }),
+    );
+
+    it.effect(
+      "stages one hunk, retains the index across later edits, and commits only staged content",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          yield* initRepoWithCommit(cwd);
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const original = Array.from({ length: 30 }, (_, index) => `line ${index + 1}\n`).join("");
+          yield* writeTextFile(cwd, "review.txt", original);
+          yield* git(cwd, ["add", "."]);
+          yield* git(cwd, ["commit", "-m", "fixture"]);
+          const edited = original
+            .replace("line 2\n", "first edit\n")
+            .replace("line 28\n", "second edit\n");
+          yield* writeTextFile(cwd, "review.txt", edited);
+          const before = yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: "unstaged" });
+          const source = before.sources[0]!;
+          yield* driver.applyReviewPatch({
+            cwd,
+            sourceKind: "unstaged",
+            expectedDiffHash: source.diffHash,
+            fileIndex: 0,
+            hunkIndex: 0,
+          });
+          assert.include(yield* git(cwd, ["show", ":review.txt"]), "first edit");
+          assert.notInclude(yield* git(cwd, ["show", ":review.txt"]), "second edit");
+          const stale = yield* driver
+            .applyReviewPatch({
+              cwd,
+              sourceKind: "unstaged",
+              expectedDiffHash: source.diffHash,
+              fileIndex: 0,
+              hunkIndex: 1,
+            })
+            .pipe(Effect.flip);
+          assert.include(stale.detail, "Refresh the diff");
+          yield* writeTextFile(cwd, "review.txt", edited.replace("first edit", "later edit"));
+          const next = yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: "unstaged" });
+          assert.include(next.sources[0]!.diff, "-first edit");
+          assert.include(next.sources[0]!.diff, "+later edit");
+          const staged = yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: "staged" });
+          const expanded = yield* driver.getReviewDiffFileContents(
+            makeReviewDiffFileContentsInput(cwd, {
+              sourceKind: "staged",
+              oldPath: "review.txt",
+              newPath: "review.txt",
+            }),
+          );
+          assert.include(expanded.oldContents, "line 2");
+          assert.include(expanded.newContents, "first edit");
+          assert.notInclude(expanded.newContents, "later edit");
+          const context = yield* driver.prepareCommitContext(cwd, undefined, true);
+          assert.include(context!.stagedPatch, "+first edit");
+          assert.notInclude(context!.stagedPatch, "later edit");
+          yield* driver.commit(cwd, "Reviewed first change", "");
+          assert.include(yield* git(cwd, ["show", "HEAD:review.txt"]), "first edit");
+          assert.include(yield* git(cwd, ["diff"]), "+later edit");
+          assert.include(staged.sources[0]!.diff, "+first edit");
+        }),
+    );
+
+    it.effect("stages binary files from a nested workspace and rejects invalid selections", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* fileSystem.makeDirectory(`${cwd}/nested`);
+        yield* fileSystem.writeFile(`${cwd}/nested/binary.bin`, new Uint8Array([0, 1, 2, 3]));
+        const preview = yield* driver.getReviewDiffPreview({
+          cwd: `${cwd}/nested`,
+          workingTreeScope: "unstaged",
+        });
+        const source = preview.sources[0]!;
+        assert.include(source.diff, "GIT binary patch");
+        const input = {
+          cwd: `${cwd}/nested`,
+          sourceKind: "unstaged" as const,
+          expectedDiffHash: source.diffHash,
+          fileIndex: 0,
+        };
+        const invalid = yield* driver
+          .applyReviewPatch({ ...input, hunkIndex: 0 })
+          .pipe(Effect.flip);
+        assert.include(invalid.detail, "hunk is unavailable");
+        assert.equal(yield* git(cwd, ["diff", "--cached"]), "");
+        yield* driver.applyReviewPatch(input);
+        assert.equal(yield* git(cwd, ["diff", "--cached", "--name-only"]), "nested/binary.bin");
+        const index = yield* git(cwd, ["write-tree"]);
+        yield* driver.applyReviewPatch(input).pipe(Effect.flip);
+        assert.equal(yield* git(cwd, ["write-tree"]), index);
+      }),
+    );
+
+    it.effect(
+      "stages and unstages a new file before the first commit without changing its contents",
+      () =>
+        Effect.gen(function* () {
+          const cwd = yield* makeTmpDir();
+          const driver = yield* GitVcsDriver.GitVcsDriver;
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* driver.initRepo({ cwd });
+          yield* fileSystem.makeDirectory(`${cwd}/nested`);
+          yield* writeTextFile(cwd, "nested/new [file].txt", "new file\n\n");
+          for (const sourceKind of ["unstaged", "staged"] as const) {
+            const preview = yield* driver.getReviewDiffPreview({
+              cwd: `${cwd}/nested`,
+              workingTreeScope: sourceKind,
+            });
+            const source = preview.sources[0]!;
+            assert.include(source.diff, "+new file");
+            yield* driver.applyReviewPatch({
+              cwd: `${cwd}/nested`,
+              sourceKind,
+              expectedDiffHash: source.diffHash,
+              fileIndex: 0,
+            });
+            assert.equal(
+              yield* fileSystem.readFileString(`${cwd}/nested/new [file].txt`),
+              "new file\n\n",
+            );
+          }
+          assert.equal(yield* git(cwd, ["ls-files"]), "");
+        }),
+    );
+
+    it.effect("unstages a rename hunk while keeping the rename and other hunks staged", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const original = Array.from({ length: 50 }, (_, index) => `line ${index + 1}\n`).join("");
+        yield* writeTextFile(cwd, "before file.txt", original);
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "fixture"]);
+        yield* fileSystem.rename(`${cwd}/before file.txt`, `${cwd}/after file.txt`);
+        yield* writeTextFile(
+          cwd,
+          "after file.txt",
+          original.replace("line 2\n", "first edit\n").replace("line 48\n", "second edit\n"),
+        );
+        yield* git(cwd, ["add", "-A"]);
+        yield* git(cwd, ["update-index", "--chmod=+x", "--", "after file.txt"]);
+        const source = (yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: "staged" }))
+          .sources[0]!;
+        yield* driver.applyReviewPatch({
+          cwd,
+          sourceKind: "staged",
+          expectedDiffHash: source.diffHash,
+          fileIndex: 0,
+          hunkIndex: 0,
+        });
+        assert.equal(yield* git(cwd, ["ls-files"]), "README.md\nafter file.txt");
+        const contents = yield* git(cwd, ["show", ":after file.txt"]);
+        assert.notInclude(contents, "first edit");
+        assert.include(contents, "second edit");
+        assert.match(yield* git(cwd, ["ls-files", "--stage", "--", "after file.txt"]), /^100755 /);
+        assert.include(yield* git(cwd, ["diff"]), "+first edit");
+      }),
+    );
+
+    it.effect("ignores relative diff configuration when staging from a nested workspace", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        for (const file of ["file.txt", "nested/file.txt"])
+          yield* writeTextFile(cwd, file, "before\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "fixture"]);
+        yield* git(cwd, ["config", "diff.relative", "true"]);
+        yield* writeTextFile(cwd, "nested/file.txt", "after\n");
+        const source = (yield* driver.getReviewDiffPreview({
+          cwd: `${cwd}/nested`,
+          workingTreeScope: "unstaged",
+        })).sources[0]!;
+        assert.include(source.diff, "a/nested/file.txt");
+        yield* driver.applyReviewPatch({
+          cwd: `${cwd}/nested`,
+          sourceKind: "unstaged",
+          expectedDiffHash: source.diffHash,
+          fileIndex: 0,
+        });
+        assert.equal(yield* git(cwd, ["show", ":file.txt"]), "before");
+        assert.equal(yield* git(cwd, ["show", ":nested/file.txt"]), "after");
+        yield* writeTextFile(cwd, "file.txt", "root edit\n");
+        yield* git(cwd, ["add", "file.txt"]);
+        const context = yield* driver.prepareCommitContext(`${cwd}/nested`, undefined, true);
+        assert.include(context!.stagedSummary, "M\tfile.txt");
+        assert.include(context!.stagedSummary, "M\tnested/file.txt");
+        assert.include(context!.stagedPatch, "+root edit");
+      }),
+    );
+
+    it.effect("stages and reverses renames and deletions without changing the working tree", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const fileSystem = yield* FileSystem.FileSystem;
+        yield* writeTextFile(cwd, "before.txt", "rename me\n");
+        yield* writeTextFile(cwd, "deleted.txt", "delete me\n");
+        yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["commit", "-m", "fixture"]);
+        yield* fileSystem.rename(`${cwd}/before.txt`, `${cwd}/after.txt`);
+        yield* fileSystem.remove(`${cwd}/deleted.txt`);
+        for (const sourceKind of ["unstaged", "unstaged", "staged", "staged"] as const) {
+          const preview = yield* driver.getReviewDiffPreview({ cwd, workingTreeScope: sourceKind });
+          const source = preview.sources[0]!;
+          yield* driver.applyReviewPatch({
+            cwd,
+            sourceKind,
+            expectedDiffHash: source.diffHash,
+            fileIndex: 0,
+          });
+        }
+        assert.equal(yield* git(cwd, ["diff", "--cached"]), "");
+        assert.equal(yield* fileSystem.readFileString(`${cwd}/after.txt`), "rename me\n");
+        assert.isFalse(yield* fileSystem.exists(`${cwd}/deleted.txt`));
+      }),
+    );
+
     it.effect("drops an unterminated path from truncated NUL-separated git output", () =>
       Effect.sync(() => {
         const paths = splitNullSeparatedGitStdoutPaths({
@@ -1999,6 +2247,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         yield* (yield* GitVcsDriver.GitVcsDriver).prepareCommitContext(cwd);
         yield* (yield* GitVcsDriver.GitVcsDriver).commit(cwd, "Add feature", "");
 
+        const missingTarget = yield* (yield* GitVcsDriver.GitVcsDriver)
+          .pushCurrentBranch(cwd, null, { pushToUpstream: true })
+          .pipe(Effect.result);
+        assert.equal(missingTarget._tag, "Failure");
         const pushed = yield* (yield* GitVcsDriver.GitVcsDriver).pushCurrentBranch(cwd, null);
         assert.deepInclude(pushed, {
           status: "pushed",

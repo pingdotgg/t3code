@@ -179,6 +179,19 @@ const EMPTY_THREAD_STATE: ThreadRightPanelState = {
   surfaces: [],
 };
 
+const leaveGuards = new Map<string, (action?: () => void) => boolean>();
+
+export function registerRightPanelLeaveGuard(
+  ref: ScopedThreadRef,
+  guard: (action?: () => void) => boolean,
+) {
+  const key = scopedThreadKey(ref);
+  leaveGuards.set(key, guard);
+  return () => {
+    if (leaveGuards.get(key) === guard) leaveGuards.delete(key);
+  };
+}
+
 const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
@@ -283,9 +296,25 @@ const updateThread = (
   byThreadKey: Record<string, ThreadRightPanelState>,
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
+  automatic = false,
 ): Record<string, ThreadRightPanelState> => {
   const current = byThreadKey[threadKey] ?? EMPTY_THREAD_STATE;
   const next = updater(current);
+  const active = current.surfaces.find((surface) => surface.id === current.activeSurfaceId);
+  if (
+    current.isOpen &&
+    (active?.kind === "diff" || active?.kind === "pull-request") &&
+    (!next.isOpen || next.activeSurfaceId !== active.id) &&
+    leaveGuards.get(threadKey)?.(
+      automatic
+        ? undefined
+        : () =>
+            useRightPanelStore.setState((state) => ({
+              byThreadKey: updateThread(state.byThreadKey, threadKey, updater),
+            })),
+    )
+  )
+    return byThreadKey;
   if (
     !next.isOpen &&
     next.activeSurfaceId === null &&
@@ -308,7 +337,7 @@ const automaticUpdate = (
   threadKey: string,
   updater: (current: ThreadRightPanelState) => ThreadRightPanelState,
 ): Partial<RightPanelStoreState> => ({
-  byThreadKey: updateThread(state.byThreadKey, threadKey, updater),
+  byThreadKey: updateThread(state.byThreadKey, threadKey, updater, true),
 });
 
 const userAction = (
@@ -488,7 +517,8 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
         set((state) => {
           const threadKey = scopedThreadKey(ref);
           if (
-            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision
+            (state.userActionRevisionByThreadKey[threadKey] ?? 0) !== expectedUserActionRevision ||
+            leaveGuards.get(threadKey)?.()
           ) {
             return state;
           }
@@ -500,8 +530,11 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
           ) {
             return state;
           }
-          opened = true;
-          return automaticUpdate(state, threadKey, (current) => upsertSurface(current, surface));
+          const next = automaticUpdate(state, threadKey, (current) =>
+            upsertSurface(current, surface),
+          );
+          opened = next.byThreadKey !== state.byThreadKey;
+          return next;
         });
         return opened;
       },

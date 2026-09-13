@@ -538,11 +538,15 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       const cli = yield* AzureDevOpsPullRequestCli.AzureDevOpsPullRequestCli;
 
       const comments = yield* cli.listThreads({
+        pullRequestUrl: "https://dev.azure.com/acme/platform/_git/web/pullrequest/42",
         cwd: "/w",
         threadsUrl: "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads",
       });
 
       assert.strictEqual(comments.length, 1);
+      expect(comments[0]?.url).toBe(
+        "https://dev.azure.com/acme/platform/_git/web/pullrequest/42?discussionId=1",
+      );
       expect(argsOfCall(0)).toContain("rest");
       expect(argsOfCall(0)).toContain(
         "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads?api-version=7.1",

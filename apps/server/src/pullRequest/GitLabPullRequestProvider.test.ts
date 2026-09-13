@@ -195,3 +195,59 @@ describe("rewriting what has already been said", () => {
     }),
   );
 });
+
+describe("comment links", () => {
+  it.effect("links notes and discussion replies to their own anchors on the source host", () =>
+    Effect.gen(function* () {
+      const comment = {
+        id: "5",
+        kind: "review-comment" as const,
+        author: null,
+        body: "Please check this.",
+        createdAt: "2026-07-02T00:00:00Z",
+        url: null,
+        path: "src/app.ts",
+        reviewState: null,
+      };
+      const reply = { ...comment, id: "6", body: "Updated." };
+      const provider = yield* make.pipe(
+        Effect.provide(
+          Layer.mock(GitLabPullRequestCli.GitLabPullRequestCli)({
+            listNotes: () => Effect.succeed({ comments: [comment, reply], truncated: false }),
+            listCommits: () => Effect.succeed([]),
+            listDiscussions: () =>
+              Effect.succeed({
+                threads: [
+                  {
+                    id: "discussion",
+                    path: "src/app.ts",
+                    line: 1,
+                    side: "right" as const,
+                    isResolved: false,
+                    isOutdated: false,
+                    comments: [comment, reply],
+                  },
+                ],
+                truncated: false,
+              }),
+            listReactions: () => Effect.succeed({ reactions: [], reactionsByNoteId: new Map() }),
+          }),
+        ),
+      );
+
+      const activity = yield* provider.getChangeRequestActivity({
+        cwd: "/w",
+        host: "gitlab.example.com:8443",
+        repository: "team/sub group/web",
+        number: 7,
+      });
+
+      const links = [
+        "https://gitlab.example.com:8443/team/sub%20group/web/-/merge_requests/7#note_5",
+        "https://gitlab.example.com:8443/team/sub%20group/web/-/merge_requests/7#note_6",
+      ];
+      expect(activity.comments.map((item) => item.url)).toEqual(links);
+      expect(activity.reviewThreads[0]?.comments.map((item) => item.url)).toEqual(links);
+    }),
+  );
+});

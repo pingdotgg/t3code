@@ -129,6 +129,33 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("checkpoint capture preserves staged review progress across turns", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-staged-checkpoint-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* runGit(cwd, ["commit", "--allow-empty", "-m", "initial"]);
+    yield* fileSystem.writeFileString(`${cwd}/review.txt`, "reviewed\n");
+    yield* runGit(cwd, ["add", "review.txt"]);
+    yield* fileSystem.writeFileString(`${cwd}/review.txt`, "later edit\n");
+    yield* driver.checkpoints.captureCheckpoint({
+      cwd,
+      checkpointRef: CheckpointRef.make("refs/t3/checkpoints/review"),
+    });
+    const index = yield* driver.execute({ operation: "test", cwd, args: ["show", ":review.txt"] });
+    assert.equal(index.stdout, "reviewed\n");
+    const checkpoint = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["show", "refs/t3/checkpoints/review:review.txt"],
+    });
+    assert.equal(checkpoint.stdout, "later edit\n");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;

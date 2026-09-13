@@ -96,6 +96,45 @@ index ff78e2a..f9df318 100644
  			});
  			fileInstance.rerender();
  		}
+@@ -490,7 +487,7 @@ var Editor = class {
+ 		} else if (this.#scrollingToLine !== void 0) this.#scrollToLine(this.#scrollingToLine, this.#scrollingToLineChar, this.#scrollingToLineNoFocus);
+-		else if (this.#selections !== void 0 && this.#selections.length > 0 && !this.#retainSearchPanelFocus) this.focus({ preventScroll: true });
++		else if (this.#contentHasFocus && this.#selections !== void 0 && this.#selections.length > 0 && !this.#retainSearchPanelFocus) this.focus({ preventScroll: true });
+ 		if (this.#retainSearchPanelFocus) this.#searchPanel?.focus();
+ 		if (this.#options.__debug === true && renderRange !== void 0) {
+ 			const { startingLine, totalLines } = renderRange;
+ 			console.log("[diffs/editor] render file:", fileOrDiff.name, "RenderRange:", startingLine + "-" + (startingLine + totalLines), "of", this.#textDocument?.lineCount, "lines");
+ 		}
+@@ -741,4 +741,9 @@ var Editor = class {
+-			addEventListener(contentEl, "blur", () => {
+-				this.#contentHasFocus = false;
+-				onBlur?.();
++			addEventListener(contentEl, "blur", (event) => {
++				const finishBlur = () => {
++					if (!contentEl.isConnected && this.#contentElement != null || this.#contentElement?.matches(":focus")) return;
++					this.#contentHasFocus = false;
++					onBlur?.();
++				};
++				if (event.relatedTarget == null) queueMicrotask(finishBlur);
++				else finishBlur();
+ 			}, { passive: true }),
+@@ -756,6 +753,16 @@ var Editor = class {
+ 				}
+ 				this.#setDeletedTextSelectionActive(false);
+ 				this.#markerRenderer?.removePopup();
++				if (this.#selections === void 0 && e.button === 0 && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
++					const caret = document.caretPositionFromPoint?.(e.clientX, e.clientY, { shadowRoots: [this.#fileContainer.shadowRoot] });
++					if (caret != null && contentEl.contains(caret.offsetNode)) {
++						const selection = convertSelection({ startContainer: caret.offsetNode, startOffset: caret.offset, endContainer: caret.offsetNode, endOffset: caret.offset });
++						if (selection !== void 0) {
++							this.#updateSelections([selection]);
++							this.focus({ preventScroll: true });
++						}
++					}
++				}
+ 				if (isSafari() && this.#lineAnnotations !== void 0 && this.#lineAnnotations.length > 0) {
+ 					const annotationDisposes = [...contentEl.querySelectorAll("[data-line-annotation]")].map((el) => [addEventListener(el, "mouseenter", () => {
+ 						this.#shouldIgnoreSelectionChange = true;
 @@ -908,6 +905,7 @@ var Editor = class {
  				return lineNumber - 1;
  			};
@@ -104,6 +143,15 @@ index ff78e2a..f9df318 100644
  				const gutterRow = resolveGutterTarget(e.composedPath()[0]);
  				if (gutterRow?.dataset.lineType === "change-deletion") {
  					const code = gutterRow.closest("[data-code]");
+@@ -1420,7 +1418,7 @@ var Editor = class {
+ 		if (this.#selections !== void 0 || this.#matches !== void 0 || this.#markerRenderer !== void 0) {
+ 			this.#updateSelections(this.#selections ?? []);
+-			if (this.#selections !== void 0) this.focus();
++			if (this.#contentHasFocus && this.#selections !== void 0) this.focus();
+ 		}
+ 		this.#markerRenderer?.removePopup();
+ 		this.#computeContentOffset(this.#contentElement);
+ 	};
 @@ -1522,6 +1520,12 @@ var Editor = class {
  			if (gutterEl !== void 0) gutterEl.style.gridRow = "span " + gridRow;
  		}
@@ -118,6 +166,18 @@ index ff78e2a..f9df318 100644
 +		}
  		if (this.#isDiff && (this.#diffSyle === "unified" || didLineCountChange)) this.#resetCache();
  		if (newLineAnnotations !== void 0) {
+@@ -1578,6 +1582,11 @@ var Editor = class {
+ 			});
+ 			requestAnimationFrame(() => {
++				if (this.#retainSearchPanelFocus || document.activeElement !== document.body && document.activeElement !== this.#fileContainer) {
++					this.#shouldIgnoreSelectionChange = false;
++					return;
++				}
+ 				this.#contentElement?.focus({ preventScroll });
++				this.#setWindowSelection(this.#selections?.at(-1) ?? { start: position, end: position, direction: 0 });
+ 				requestAnimationFrame(() => {
+ 					this.#shouldIgnoreSelectionChange = false;
+ 				});
 @@ -1788,6 +1787,7 @@ var Editor = class {
  		}
  	}
@@ -126,6 +186,21 @@ index ff78e2a..f9df318 100644
  		try {
  			this.#fileInstance?.setSelectedLines(range, {
  				notify: false,
+diff --git a/dist/renderers/DiffHunksRenderer.js b/dist/renderers/DiffHunksRenderer.js
+--- a/dist/renderers/DiffHunksRenderer.js
++++ b/dist/renderers/DiffHunksRenderer.js
+@@ -77,4 +77,4 @@
+ 	beginEditSession(diff) {
+ 		this.editSessionActive = true;
+-		this.editSessionLines = diff != null ? normalizeEditorLines(diff.additionLines).slice() : void 0;
++		this.editSessionLines = diff != null && !diff.isPartial ? normalizeEditorLines(diff.additionLines).slice() : void 0;
+ 	}
+@@ -472,4 +472,5 @@
+ 		const { diffStyle, disableFileHeader, expandUnchanged, expansionLineCount, collapsedContextThreshold, hunkSeparators } = this.getOptionsWithDefaults();
+ 		const isRenderCacheDirty = this.renderCache?.isDirty ?? false;
+ 		this.diff = fileDiff;
++		if (this.editSessionActive && this.editSessionLines == null && !fileDiff.isPartial) this.beginEditSession(fileDiff);
+ 		const unified = diffStyle === "unified";
 diff --git a/dist/managers/ResizeManager.d.ts b/dist/managers/ResizeManager.d.ts
 --- a/dist/managers/ResizeManager.d.ts
 +++ b/dist/managers/ResizeManager.d.ts

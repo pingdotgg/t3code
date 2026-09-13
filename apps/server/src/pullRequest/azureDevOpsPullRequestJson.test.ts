@@ -237,6 +237,54 @@ describe("decodeViewerJson", () => {
 });
 
 describe("decodeThreadsJson", () => {
+  it("keeps comments when the host returned an unusable web URL", () => {
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 5,
+              comments: [
+                { id: 1, content: "Review comment", publishedDate: "2026-07-02T00:00:00Z" },
+              ],
+            },
+          ],
+        }),
+        "invalid URL",
+      ),
+    );
+
+    expect(comments[0]).toMatchObject({ body: "Review comment", url: null });
+  });
+
+  it.each([
+    "https://dev.azure.com/acme/My%20Project/_git/web/pullrequest/42",
+    "https://acme.visualstudio.com/DefaultCollection/My%20Project/_git/web/pullrequest/42",
+  ])("links comments to their discussion on %s", (pullRequestUrl) => {
+    const comments = expectSuccess(
+      decodeThreadsJson(
+        asJson({
+          value: [
+            {
+              id: 5,
+              comments: [1, 2].map((id) => ({
+                id,
+                content: "Review comment",
+                publishedDate: "2026-07-02T00:00:00Z",
+              })),
+            },
+          ],
+        }),
+        `${pullRequestUrl}?_a=overview`,
+      ),
+    );
+
+    expect(comments.map((comment) => comment.url)).toEqual([
+      `${pullRequestUrl}?_a=overview&discussionId=5`,
+      `${pullRequestUrl}?_a=overview&discussionId=5`,
+    ]);
+  });
+
   it("takes every real comment of every thread, oldest first", () => {
     const comments = expectSuccess(
       decodeThreadsJson(

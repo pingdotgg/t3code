@@ -88,6 +88,7 @@ export function PullRequestCommentComposer({
           <Button
             size="icon"
             variant="glass"
+            disabled={actionPending}
             className="rounded-full shadow-lg [--glass-opacity:50%]"
           />
         }

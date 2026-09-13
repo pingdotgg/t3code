@@ -1,12 +1,14 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { FileTreeBatchOperation, GitStatus } from "@pierre/trees";
 
-import { resolveFileDiffPath } from "~/lib/diffRendering";
+import { resolveFileDiffPath, resolveFileDiffPreviousPath } from "~/lib/diffRendering";
 
 /** One changed file as the tree shows it: its current path and how it changed. */
 export interface DiffFileTreeEntry {
   readonly path: string;
   readonly status: GitStatus;
+  readonly previousPath?: string;
+  readonly renamedWithChanges?: boolean;
 }
 
 function toGitStatus(file: FileDiffMetadata): GitStatus {
@@ -27,7 +29,35 @@ function toGitStatus(file: FileDiffMetadata): GitStatus {
 export function diffFileTreeEntries(
   files: ReadonlyArray<FileDiffMetadata>,
 ): ReadonlyArray<DiffFileTreeEntry> {
-  return files.map((file) => ({ path: resolveFileDiffPath(file), status: toGitStatus(file) }));
+  return files.map((file) => ({
+    path: resolveFileDiffPath(file),
+    status: toGitStatus(file),
+    ...(file.type === "rename-pure" || file.type === "rename-changed"
+      ? {
+          previousPath: resolveFileDiffPreviousPath(file),
+          renamedWithChanges: file.type === "rename-changed",
+        }
+      : {}),
+  }));
+}
+
+export function changedPathParts(previousPath: string, path: string) {
+  const before = Array.from(previousPath);
+  const after = Array.from(path);
+  let start = 0;
+  while (start < Math.min(before.length, after.length) && before[start] === after[start]) start++;
+  let end = 0;
+  while (
+    end < Math.min(before.length, after.length) - start &&
+    before[before.length - end - 1] === after[after.length - end - 1]
+  )
+    end++;
+  return {
+    prefix: before.slice(0, start).join(""),
+    before: before.slice(start, before.length - end).join(""),
+    after: after.slice(start, after.length - end).join(""),
+    suffix: before.slice(before.length - end).join(""),
+  };
 }
 
 /**

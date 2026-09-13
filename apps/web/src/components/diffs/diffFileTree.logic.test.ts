@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   buildDiffFileTreeUpdates,
   collectDirectoryPaths,
+  changedPathParts,
   diffFileTreeEntries,
 } from "./diffFileTree.logic";
 
@@ -24,10 +25,48 @@ describe("diffFileTreeEntries", () => {
     ).toEqual([
       { path: "src/a.ts", status: "added" },
       { path: "src/b.ts", status: "deleted" },
-      { path: "src/c.ts", status: "renamed" },
-      { path: "src/d.ts", status: "renamed" },
+      {
+        path: "src/c.ts",
+        status: "renamed",
+        previousPath: "src/old-c.ts",
+        renamedWithChanges: false,
+      },
+      {
+        path: "src/d.ts",
+        status: "renamed",
+        previousPath: "src/old-d.ts",
+        renamedWithChanges: true,
+      },
       { path: "README.md", status: "modified" },
     ]);
+  });
+});
+
+describe("changedPathParts", () => {
+  it.each([
+    [
+      "src/quality-control.ts",
+      "src/issues.ts",
+      { prefix: "src/", before: "quality-control", after: "issues", suffix: ".ts" },
+    ],
+    ["old/file.ts", "new/file.ts", { prefix: "", before: "old", after: "new", suffix: "/file.ts" }],
+    [
+      "src/file.ts",
+      "src/new-file.ts",
+      { prefix: "src/", before: "", after: "new-", suffix: "file.ts" },
+    ],
+    [
+      "src/new-file.ts",
+      "src/file.ts",
+      { prefix: "src/", before: "new-", after: "", suffix: "file.ts" },
+    ],
+    ["src/😀.ts", "src/😁.ts", { prefix: "src/", before: "😀", after: "😁", suffix: ".ts" }],
+    ["src/file.ts", "src/file.ts", { prefix: "src/file.ts", before: "", after: "", suffix: "" }],
+  ])("isolates the changed part of %s → %s", (previousPath, path, expected) => {
+    const parts = changedPathParts(previousPath, path);
+    expect(parts).toEqual(expected);
+    expect(parts.prefix + parts.before + parts.suffix).toBe(previousPath);
+    expect(parts.prefix + parts.after + parts.suffix).toBe(path);
   });
 });
 

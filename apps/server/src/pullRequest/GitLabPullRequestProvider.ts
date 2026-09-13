@@ -100,6 +100,11 @@ export function gitLabProviderFailure(
   return { reason: "failed" };
 }
 
+function commentUrl(input: { host: string; repository: string; number: number }, id: string) {
+  const repository = input.repository.split("/").map(encodeURIComponent).join("/");
+  return `https://${input.host}/${repository}/-/merge_requests/${input.number}#note_${id}`;
+}
+
 export const make = Effect.gen(function* () {
   const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
 
@@ -191,6 +196,7 @@ export const make = Effect.gen(function* () {
           reactions: awards.reactions,
           comments: notes.comments.map((comment) => ({
             ...comment,
+            url: commentUrl(input, comment.id),
             reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
           })),
           // GitLab reports no count of its own, so the walk's own total is the host's: the
@@ -202,6 +208,7 @@ export const make = Effect.gen(function* () {
             ...thread,
             comments: thread.comments.map((comment) => ({
               ...comment,
+              url: commentUrl(input, comment.id),
               reactions: awards.reactionsByNoteId.get(comment.id) ?? [],
             })),
           })),

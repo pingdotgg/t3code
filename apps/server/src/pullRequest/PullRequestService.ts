@@ -1683,6 +1683,19 @@ export const make = Effect.gen(function* () {
     requireProject(input).pipe(
       Effect.flatMap((project): Effect.Effect<string, PullRequestError> => {
         if (
+          input.bypassMergeChecks === true &&
+          (project.api.capabilities.bypassMergeChecks !== true ||
+            input.action !== "merge" ||
+            input.stackNumber !== undefined)
+        ) {
+          return Effect.fail(
+            new PullRequestOperationError({
+              operation: "runAction",
+              detail: "This host cannot bypass checks for this action.",
+            }),
+          );
+        }
+        if (
           input.stackNumber !== undefined &&
           (project.api.capabilities.stackActions !== true ||
             !["merge", "update-branch"].includes(input.action) ||
@@ -1743,6 +1756,14 @@ export const make = Effect.gen(function* () {
           input.action === "update-branch",
         ).pipe(
           Effect.flatMap((viewer): Effect.Effect<string, PullRequestError> => {
+            if (input.bypassMergeChecks === true && viewer.bypassMergeChecks !== true) {
+              return Effect.fail(
+                new PullRequestOperationError({
+                  operation: "runAction",
+                  detail: "You do not have permission to bypass merge checks on this pull request.",
+                }),
+              );
+            }
             const stackRebase = input.stackNumber !== undefined && input.action === "update-branch";
             if (
               stackRebase ? viewer.stackRebase !== true : !viewer.actions.includes(input.action)
@@ -1778,6 +1799,7 @@ export const make = Effect.gen(function* () {
                   ? {}
                   : { expectedStackHeads: input.expectedStackHeads }),
                 ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+                ...(input.bypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
                 ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
               })
               .pipe(

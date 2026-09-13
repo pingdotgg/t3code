@@ -132,6 +132,33 @@ describe("buildReviewSectionItems", () => {
     ]);
     expect(getDefaultReviewSectionId(items)).toBe("git:working-tree");
   });
+
+  it.each([
+    ["staged", "Staged changes", "Changes staged for commit"],
+    ["unstaged", "Unstaged changes", "Changes not staged for commit"],
+  ] as const)("keeps the %s source distinct from branch changes", (kind, title, subtitle) => {
+    const diff = `diff --git a/${kind}.ts b/${kind}.ts`;
+    const items = buildReviewSectionItems({
+      checkpoints: [],
+      gitSections: [
+        {
+          id: kind,
+          kind,
+          title,
+          baseRef: kind === "staged" ? "HEAD" : null,
+          headRef: null,
+          diff,
+          diffHash: kind,
+          truncated: false,
+        },
+      ],
+      turnDiffById: {},
+      loadingTurnIds: {},
+      loadingGitSections: false,
+    });
+    expect(items).toEqual([{ id: `git:${kind}`, kind, title, subtitle, diff, isLoading: false }]);
+    expect(getDefaultReviewSectionId(items)).toBe(`git:${kind}`);
+  });
 });
 
 describe("buildReviewParsedDiff", () => {

@@ -22,6 +22,7 @@ import {
 import type { GitHubViewerAccess, GitHubWorkflowRunApproval } from "./gitHubPullRequestJson.ts";
 
 const CAPABILITIES: PullRequestCapabilities = {
+  bypassMergeChecks: true,
   diff: true,
   comment: true,
   actions: [
@@ -73,6 +74,7 @@ const CAPABILITIES: PullRequestCapabilities = {
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
     ...(access.canWrite ? { stackRebase: true } : {}),
+    ...(access.canBypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
@@ -589,6 +591,7 @@ export const make = Effect.gen(function* () {
             ? {}
             : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
+          ...(input.bypassMergeChecks === true ? { bypassMergeChecks: true } : {}),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })
         .pipe(Effect.mapError(fail("runAction"))),

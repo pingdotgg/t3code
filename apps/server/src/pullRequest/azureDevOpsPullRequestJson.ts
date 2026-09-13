@@ -332,6 +332,7 @@ export function decodeViewerJson(raw: string): Result.Result<string | null, Deco
  */
 export function decodeThreadsJson(
   raw: string,
+  pullRequestUrl?: string,
 ): Result.Result<ReadonlyArray<PullRequestComment>, DecodeFailure> {
   const decoded = decodeThreadPage(raw);
   if (!Result.isSuccess(decoded)) {
@@ -344,6 +345,8 @@ export function decodeThreadsJson(
     const thread = decodedThread.value;
     if (thread.isDeleted === true) continue;
     const path = trimmed(thread.threadContext?.filePath);
+    const url = pullRequestUrl && URL.canParse(pullRequestUrl) ? new URL(pullRequestUrl) : null;
+    url?.searchParams.set("discussionId", String(thread.id));
     for (const comment of thread.comments ?? []) {
       const publishedDate = trimmed(comment.publishedDate);
       if (
@@ -360,7 +363,7 @@ export function decodeThreadsJson(
         author: toActor(comment.author),
         body: comment.content ?? "",
         createdAt: publishedDate,
-        url: null,
+        url: url?.href ?? null,
         path,
         reviewState: null,
       });

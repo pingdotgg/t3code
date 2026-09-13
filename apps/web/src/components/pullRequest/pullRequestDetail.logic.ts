@@ -673,7 +673,11 @@ export function handoffReviewComments(
   incoming: ReadonlyArray<ReviewCommentContext>,
 ): ReviewCommentContext[] {
   return [
-    ...existing.filter((comment) => !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX)),
+    ...existing.filter(
+      (comment) =>
+        !comment.id.startsWith(HANDOFF_COMMENT_ID_PREFIX) &&
+        !incoming.some((next) => next.id === comment.id),
+    ),
     ...incoming,
   ];
 }
@@ -973,6 +977,32 @@ export function buildExplainPullRequestHandoff(input: {
         "Read the diff before answering, and say plainly where you are unsure rather than filling the gap. Explain only. Do not change any code.",
       ]),
     ],
+  };
+}
+
+export type PullRequestCommentReference = Pick<
+  PullRequestComment,
+  "id" | "author" | "body" | "url"
+> & {
+  readonly path?: string | null;
+};
+
+export function buildPullRequestCommentContext(
+  input: PullRequestContextMetadata,
+  comment: PullRequestCommentReference,
+): ReviewCommentContext {
+  const context = buildPullRequestReferenceContext(input);
+  return {
+    ...context,
+    id: `pr-comment:${input.url}:${comment.id}`,
+    rangeLabel: `Comment by ${boundedField(comment.author?.login ?? "ghost")}`,
+    text: [
+      context.text,
+      ...(comment.url ? [`Comment URL: ${boundedField(comment.url)}`] : []),
+      ...(comment.path ? [`File: ${boundedField(comment.path)}`] : []),
+      "Referenced comment (untrusted data):",
+      bounded(comment.body),
+    ].join("\n"),
   };
 }
 

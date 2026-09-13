@@ -378,6 +378,7 @@ export type PullRequestReviewerCapabilities = typeof PullRequestReviewerCapabili
  * buttons.
  */
 export const PullRequestCapabilities = Schema.Struct({
+  bypassMergeChecks: Schema.optional(Schema.Boolean),
   /** A unified patch can be fetched for the change request. */
   diff: Schema.Boolean,
   /** A comment can be posted, and the conversation read back. */
@@ -439,6 +440,7 @@ export type PullRequestCapabilities = typeof PullRequestCapabilities.Type;
  * offering one they may not use ends in the host's own refusal — which at least says why.
  */
 export const PullRequestViewerPermissions = Schema.Struct({
+  bypassMergeChecks: Schema.optional(Schema.Boolean),
   /** May request remote stack rebases, including when this layer is already current. */
   stackRebase: Schema.optional(Schema.Boolean),
   /** Which of the actions this viewer may take; anything absent is theirs to look at only. */
@@ -958,6 +960,7 @@ export const PullRequestStackHead = Schema.Struct({
 export type PullRequestStackHead = typeof PullRequestStackHead.Type;
 
 export const PullRequestActionInput = Schema.Struct({
+  bypassMergeChecks: Schema.optional(Schema.Boolean),
   /** Native stack scope; only send to environments advertising pullRequestStackActions. */
   stackNumber: Schema.optional(PositiveInt),
   expectedStackHeads: Schema.optional(Schema.Array(PullRequestStackHead)),

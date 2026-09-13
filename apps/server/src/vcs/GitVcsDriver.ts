@@ -19,6 +19,7 @@ import {
   type VcsCreateWorktreeInput,
   type VcsCreateWorktreeResult,
   type ReviewDiffPreviewInput,
+  type ReviewApplyPatchInput,
   type ReviewDiffPreviewResult,
   type ReviewDiffFileContentsInput,
   type ReviewDiffFileContentsResult,
@@ -89,6 +90,8 @@ export interface GitRemoteStatusDetails {
 export interface GitPreparedCommitContext {
   stagedSummary: string;
   stagedPatch: string;
+  stagedTree?: string;
+  headCommit?: string | null;
 }
 
 export interface ExecuteGitProgress {
@@ -116,6 +119,9 @@ export interface GitCommitProgress {
 }
 
 export interface GitCommitOptions {
+  readonly stagedTree?: string;
+  readonly expectedHead?: string | null;
+  readonly expectedBranch?: string | null;
   readonly timeoutMs?: number;
   readonly progress?: GitCommitProgress;
 }
@@ -248,6 +254,7 @@ export class GitVcsDriver extends Context.Service<
     readonly prepareCommitContext: (
       cwd: string,
       filePaths?: readonly string[],
+      stagedOnly?: boolean,
     ) => Effect.Effect<GitPreparedCommitContext | null, GitCommandError>;
     readonly commit: (
       cwd: string,
@@ -258,7 +265,7 @@ export class GitVcsDriver extends Context.Service<
     readonly pushCurrentBranch: (
       cwd: string,
       fallbackBranch: string | null,
-      options?: { readonly remoteName?: string | null },
+      options?: { readonly remoteName?: string | null; readonly pushToUpstream?: boolean },
     ) => Effect.Effect<GitPushResult, GitCommandError>;
     readonly readRangeContext: (
       cwd: string,
@@ -267,6 +274,9 @@ export class GitVcsDriver extends Context.Service<
     readonly getReviewDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;
+    readonly applyReviewPatch: (
+      input: ReviewApplyPatchInput,
+    ) => Effect.Effect<void, GitCommandError>;
     readonly getReviewDiffFileContents: (
       input: ReviewDiffFileContentsInput,
     ) => Effect.Effect<ReviewDiffFileContentsResult, GitCommandError>;

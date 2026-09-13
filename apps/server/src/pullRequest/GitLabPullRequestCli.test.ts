@@ -1088,6 +1088,15 @@ layer("GitLabPullRequestCli.layer", (it) => {
       expect(argsOfCall(0)[1]).toContain("/discussions/abc123");
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       expect(JSON.parse(callAt(0).stdin ?? "")).toEqual({ resolved: true });
+      yield* cli.setDiscussionResolution({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        discussionId: "abc123",
+        resolved: false,
+      });
+      expect(argsOfCall(1)).toContain("PUT");
+      expect(callAt(1).stdin).toBe('{"resolved":false}');
     }),
   );
 

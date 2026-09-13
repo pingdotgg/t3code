@@ -151,6 +151,7 @@ export class AzureDevOpsPullRequestCli extends Context.Service<
     readonly listThreads: (input: {
       readonly cwd: string;
       readonly threadsUrl: string;
+      readonly pullRequestUrl: string;
     }) => Effect.Effect<ReadonlyArray<PullRequestComment>, AzureDevOpsPullRequestCliError>;
 
     readonly runPullRequestAction: (input: {
@@ -459,7 +460,7 @@ export const make = Effect.gen(function* () {
         ],
       }).pipe(
         Effect.flatMap((result) => {
-          const decoded = decodeThreadsJson(result.stdout.trim());
+          const decoded = decodeThreadsJson(result.stdout.trim(), input.pullRequestUrl);
           return Result.isSuccess(decoded)
             ? Effect.succeed(decoded.success)
             : Effect.fail(

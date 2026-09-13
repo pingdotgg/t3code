@@ -658,6 +658,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly stackNumber?: number;
       readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly mergeMethod?: PullRequestMergeMethod;
+      readonly bypassMergeChecks?: boolean;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
 
@@ -979,10 +980,11 @@ function actionArgs(
   action: PullRequestAction,
   mergeMethod: PullRequestMergeMethod | undefined,
   updateMethod: PullRequestUpdateMethod | undefined,
+  bypassMergeChecks = false,
 ): ReadonlyArray<string> {
   switch (action) {
     case "merge":
-      return ["merge", `--${mergeMethod ?? "merge"}`];
+      return ["merge", `--${mergeMethod ?? "merge"}`, ...(bypassMergeChecks ? ["--admin"] : [])];
     // `--auto` arms the same command instead of running it, and still needs the strategy: GitHub
     // stores the strategy with the standing instruction rather than choosing one at merge time.
     case "enable-auto-merge":
@@ -2416,6 +2418,7 @@ export const make = Effect.gen(function* () {
         input.action,
         input.mergeMethod,
         input.updateMethod,
+        input.bypassMergeChecks,
       );
       return github
         .execute({

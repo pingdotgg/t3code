@@ -549,6 +549,8 @@ function sanitizeProgressText(value: string): string | null {
 }
 
 interface CommitAndBranchSuggestion {
+  stagedTree?: string;
+  headCommit?: string | null;
   subject: string;
   body: string;
   branch?: string | undefined;
@@ -685,9 +687,13 @@ export const make = Effect.gen(function* () {
   const projectSettingsFor = Effect.fnUntraced(function* (input: {
     readonly cwd: string;
     readonly threadId?: ThreadId | undefined;
+    readonly projectId?: ProjectId | undefined;
   }) {
     const settings = yield* serverSettingsService.getSettings;
-    if (!hasProjectSettingsOverrides(settings) || Option.isNone(projectionQuery)) return settings;
+    if (!hasProjectSettingsOverrides(settings)) return settings;
+    if (input.projectId !== undefined)
+      return resolveProjectSettings(settings, input.projectId).settings;
+    if (Option.isNone(projectionQuery)) return settings;
     const projectId = yield* (
       input.threadId !== undefined
         ? projectionQuery.value
@@ -1813,9 +1819,14 @@ export const make = Effect.gen(function* () {
       /** When true, also produce a semantic feature branch name. */
       includeBranch?: boolean;
       filePaths?: readonly string[];
+      stagedOnly?: boolean;
       settings: SourceControlTextGenerationSettings;
     }) {
-      const context = yield* gitCore.prepareCommitContext(input.cwd, input.filePaths);
+      const context = yield* gitCore.prepareCommitContext(
+        input.cwd,
+        input.filePaths,
+        input.stagedOnly,
+      );
       if (!context) {
         return null;
       }
@@ -1829,6 +1840,9 @@ export const make = Effect.gen(function* () {
             ? { branch: sanitizeFeatureBranchName(customCommit.subject) }
             : {}),
           commitMessage: formatCommitMessage(customCommit.subject, customCommit.body),
+          ...(context.stagedTree
+            ? { stagedTree: context.stagedTree, headCommit: context.headCommit ?? null }
+            : {}),
         };
       }
 
@@ -1851,6 +1865,9 @@ export const make = Effect.gen(function* () {
         body: generated.body,
         ...(generated.branch !== undefined ? { branch: generated.branch } : {}),
         commitMessage: formatCommitMessage(generated.subject, generated.body),
+        ...(context.stagedTree
+          ? { stagedTree: context.stagedTree, headCommit: context.headCommit ?? null }
+          : {}),
       };
     },
   );
@@ -1865,6 +1882,7 @@ export const make = Effect.gen(function* () {
     filePaths?: readonly string[],
     progressReporter?: GitActionProgressReporter,
     actionId?: string,
+    stagedOnly?: boolean,
   ) {
     const emit = (event: GitActionProgressPayload) =>
       progressReporter && actionId
@@ -1891,6 +1909,7 @@ export const make = Effect.gen(function* () {
         branch,
         ...(commitMessage ? { commitMessage } : {}),
         ...(filePaths ? { filePaths } : {}),
+        ...(stagedOnly ? { stagedOnly } : {}),
         settings,
       });
     }
@@ -1949,6 +1968,13 @@ export const make = Effect.gen(function* () {
           }
         : null;
     const { commitSha } = yield* gitCore.commit(cwd, suggestion.subject, suggestion.body, {
+      ...(suggestion.stagedTree
+        ? {
+            stagedTree: suggestion.stagedTree,
+            expectedHead: suggestion.headCommit ?? null,
+            expectedBranch: branch,
+          }
+        : {}),
       timeoutMs: COMMIT_TIMEOUT_MS,
       ...(commitProgress ? { progress: commitProgress } : {}),
     });
@@ -2367,8 +2393,7 @@ export const make = Effect.gen(function* () {
         ...pullRequest,
         ...toPullRequestHeadRemoteInfo(pullRequestSummary),
       } as const;
-      const localPullRequestBranch =
-        resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo);
+      const localPullRequestBranch = `${input.mode === "review" ? "t3-review/" : ""}${resolvePullRequestWorktreeLocalBranchName(pullRequestWithRemoteInfo)}`;
 
       // Git refuses to move a branch that is checked out in a worktree, so the
       // reuse paths cannot go through materializePullRequestHeadBranch and instead
@@ -2474,7 +2499,7 @@ export const make = Effect.gen(function* () {
         if (localBranch) {
           return localBranch;
         }
-        if (localPullRequestBranch === pullRequest.headBranch) {
+        if (input.mode === "review" || localPullRequestBranch === pullRequest.headBranch) {
           return null;
         }
 
@@ -2565,6 +2590,7 @@ export const make = Effect.gen(function* () {
     branch: string | null,
     commitMessage?: string,
     filePaths?: readonly string[],
+    stagedOnly?: boolean,
   ) {
     const suggestion = yield* resolveCommitAndBranchSuggestion({
       cwd,
@@ -2572,6 +2598,7 @@ export const make = Effect.gen(function* () {
       ...(commitMessage ? { commitMessage } : {}),
       ...(filePaths ? { filePaths } : {}),
       includeBranch: true,
+      ...(stagedOnly ? { stagedOnly } : {}),
       settings,
     });
     if (!suggestion) {
@@ -2606,6 +2633,45 @@ export const make = Effect.gen(function* () {
         GitManagerServiceError
       > {
         const initialStatus = yield* gitCore.statusDetails(input.cwd);
+        if (input.expectedBranch !== undefined && initialStatus.branch !== input.expectedBranch) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "The checkout changed. Reopen the review before publishing.",
+          });
+        }
+        if (input.pullRequestUrl) {
+          const pullRequest = yield* (yield* sourceControlProvider(input.cwd)).getChangeRequest({
+            cwd: input.cwd,
+            reference: input.pullRequestUrl,
+          });
+          if (!initialStatus.branch || pullRequest.state !== "open") {
+            return yield* new GitManagerError({
+              operation: "runStackedAction",
+              cwd: input.cwd,
+              detail: "This PR is no longer open for edits.",
+            });
+          }
+          const head = {
+            ...toResolvedPullRequest(pullRequest),
+            ...toPullRequestHeadRemoteInfo(pullRequest),
+          };
+          if (head.isCrossRepository && !resolveHeadRepositoryNameWithOwner(head)) {
+            return yield* new GitManagerError({
+              operation: "runStackedAction",
+              cwd: input.cwd,
+              detail: "The PR source repository is unavailable. Refresh the review and try again.",
+            });
+          }
+          yield* configurePullRequestHeadUpstreamBase(input.cwd, head, initialStatus.branch);
+        }
+        if (input.stagedOnly && input.filePaths?.length) {
+          return yield* new GitManagerError({
+            operation: "runStackedAction",
+            cwd: input.cwd,
+            detail: "Choose staged changes or whole files for this commit, not both.",
+          });
+        }
         const wantsCommit = isCommitAction(input.action);
         const wantsPush =
           input.action === "push" ||
@@ -2702,6 +2768,7 @@ export const make = Effect.gen(function* () {
             initialStatus.branch,
             input.commitMessage,
             input.filePaths,
+            input.stagedOnly,
           );
           branchStep = result.branchStep;
           commitMessageForStep = result.resolvedCommitMessage;
@@ -2732,6 +2799,7 @@ export const make = Effect.gen(function* () {
                   input.filePaths,
                   options?.progressReporter,
                   progress.actionId,
+                  input.stagedOnly,
                 ),
               ),
             )
@@ -2746,7 +2814,13 @@ export const make = Effect.gen(function* () {
               })
               .pipe(
                 Effect.tap(() => Ref.set(currentPhase, Option.some("push"))),
-                Effect.flatMap(() => gitCore.pushCurrentBranch(input.cwd, currentBranch)),
+                Effect.flatMap(() =>
+                  gitCore.pushCurrentBranch(
+                    input.cwd,
+                    currentBranch,
+                    input.pullRequestUrl ? { pushToUpstream: true } : undefined,
+                  ),
+                ),
               )
           : { status: "skipped_not_requested" as const };
 

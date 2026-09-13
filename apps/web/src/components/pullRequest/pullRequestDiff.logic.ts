@@ -41,3 +41,19 @@ export function isFileDiffCollapsed(
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
 }
+
+export function describeReviewFile(file: FileDiffMetadata): string {
+  if (file.type === "rename-pure")
+    return "Renamed without content changes. Check the new path and its callers.";
+  const additions = file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0);
+  const deletions = file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0);
+  const change =
+    file.type === "new"
+      ? "New file"
+      : file.type === "deleted"
+        ? "Deleted file"
+        : file.type === "rename-changed"
+          ? "Renamed and edited file"
+          : "Modified file";
+  return `${change}. In this diff: ${additions} added ${additions === 1 ? "line" : "lines"}, ${deletions} removed ${deletions === 1 ? "line" : "lines"}.`;
+}

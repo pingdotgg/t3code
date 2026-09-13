@@ -1,7 +1,7 @@
-import type { FileDiffMetadata } from "@pierre/diffs";
+import { parseDiffFromFile, type FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import { describeReviewFile, isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -78,4 +78,19 @@ describe("isFileDiffCollapsed", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
   });
+});
+
+it("describes additions, deletions, and both kinds of rename from the actual diff", () => {
+  const file = parseDiffFromFile(
+    { name: "old.ts", contents: "const before = 1;\n" },
+    { name: "new.ts", contents: "const after = 2;\n" },
+  );
+  expect(describeReviewFile(file)).toBe(
+    "Renamed and edited file. In this diff: 1 added line, 1 removed line.",
+  );
+  expect(describeReviewFile({ ...file, type: "rename-pure", hunks: [] })).toContain(
+    "Renamed without content changes",
+  );
+  expect(describeReviewFile({ ...file, type: "deleted" })).toContain("Deleted file");
+  expect(describeReviewFile({ ...file, type: "new" })).toContain("New file");
 });

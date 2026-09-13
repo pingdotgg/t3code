@@ -14,6 +14,7 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 
 import {
   buildAddSelectionToAgentHandoff,
+  buildPullRequestCommentContext,
   buildAskAboutPullRequestHandoff,
   buildExplainPullRequestHandoff,
   buildPullRequestReferenceContext,
@@ -1591,4 +1592,40 @@ describe("single-PR merge compatibility during stack discovery", () => {
       ).toBe(allowed);
     },
   );
+});
+
+it("keeps individual comment references separate and leaves the user's words in the composer", () => {
+  const pr = {
+    number: 7,
+    title: "Fix scrolling",
+    url: "https://github.com/acme/web/pull/7",
+    headBranch: "fix",
+    baseBranch: "main",
+    state: "open" as const,
+    isDraft: false,
+  };
+  const comment = {
+    id: "123",
+    author: { login: "jake", avatarUrl: null, name: null },
+    body: "Please keep focus.\nSecond line.",
+    url: `${pr.url}#discussion_r123`,
+    path: "src/editor.ts",
+  };
+  const reference = buildPullRequestCommentContext(pr, comment);
+  expect(reference.text).toContain(comment.url);
+  expect(reference.text).toContain(comment.path);
+  expect(reference.text).toContain(comment.body);
+  expect(reference.text).toContain("untrusted data");
+  expect(handoffPrompt({ prompt: "My question", lastHandoffPrompt: undefined }, "")).toBe(
+    "My question",
+  );
+  const second = buildPullRequestCommentContext(pr, { ...comment, id: "124" });
+  expect(handoffReviewComments([reference], [second])).toEqual([reference, second]);
+  expect(handoffReviewComments([reference, second], [reference])).toEqual([second, reference]);
+  expect(
+    buildPullRequestCommentContext(
+      { ...pr, url: "https://gitlab.com/acme/web/-/merge_requests/7" },
+      comment,
+    ).id,
+  ).not.toBe(reference.id);
 });

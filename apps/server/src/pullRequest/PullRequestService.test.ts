@@ -4862,3 +4862,74 @@ it.effect("keeps Azure continuation cursors separate for repositories with the s
     assert.deepStrictEqual(seen, ["/org-b"]);
   }),
 );
+
+it.effect("requires current host permission for an explicit merge-check bypass", () =>
+  Effect.gen(function* () {
+    let allowed = false;
+    const calls: boolean[] = [];
+    const provider = fakeProvider("github");
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/a", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          capabilities: { ...provider.capabilities, bypassMergeChecks: true },
+          getViewerPermissions: (input) =>
+            provider
+              .getViewerPermissions(input)
+              .pipe(Effect.map((permissions) => ({ ...permissions, bypassMergeChecks: allowed }))),
+          getChangeRequestSummary: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+          runAction: (input) => {
+            calls.push(input.bypassMergeChecks === true);
+            return Effect.void;
+          },
+        }),
+      ],
+    });
+    const input = {
+      projectId: "p1" as ProjectId,
+      repository: "acme/web",
+      number: 1,
+      action: "merge" as const,
+      bypassMergeChecks: true,
+    };
+    const denied = yield* Effect.flip(service.runAction(input));
+    assert.include(denied.message, "permission to bypass");
+    assert.deepStrictEqual(calls, []);
+    allowed = true;
+    yield* service.runAction(input);
+    allowed = false;
+    yield* Effect.flip(service.runAction(input));
+    yield* service.runAction({ ...input, bypassMergeChecks: false });
+    yield* Effect.flip(service.runAction({ ...input, action: "close" }));
+    assert.deepStrictEqual(calls, [true, false]);
+  }),
+);
+
+it.effect("refuses bypass requests on every host without the capability", () =>
+  Effect.gen(function* () {
+    for (const kind of ["github", "gitlab", "bitbucket", "azure-devops"] as const) {
+      const service = yield* makeService({
+        projects: [
+          project({
+            id: "p1",
+            title: "web",
+            workspaceRoot: "/a",
+            repository: "acme/web",
+            provider: kind,
+          }),
+        ],
+        providers: [fakeProvider(kind, { runAction: () => Effect.die("must not run") })],
+      });
+      const error = yield* Effect.flip(
+        service.runAction({
+          projectId: "p1" as ProjectId,
+          repository: "acme/web",
+          number: 1,
+          action: "merge",
+          bypassMergeChecks: true,
+        }),
+      );
+      assert.strictEqual(error._tag, "PullRequestOperationError");
+    }
+  }),
+);
