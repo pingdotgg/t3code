@@ -6,6 +6,7 @@ import {
   ProjectId,
   ProviderInstanceId,
   ThreadId,
+  TaskId,
 } from "@t3tools/contracts";
 
 import { canonicalizeClientCommandTimestamps } from "./Normalizer.ts";
@@ -45,6 +46,7 @@ describe("canonicalizeClientCommandTimestamps", () => {
       interactionMode: "default",
       bootstrap: {
         createThread: {
+          taskId: TaskId.make("task-1"),
           projectId: ProjectId.make("project-1"),
           title: "Clock-safe thread",
           modelSelection: {
@@ -69,5 +71,6 @@ describe("canonicalizeClientCommandTimestamps", () => {
     }
     expect(result.createdAt).toBe(serverReceivedAt);
     expect(result.bootstrap?.createThread?.createdAt).toBe(serverReceivedAt);
+    expect(result.bootstrap?.createThread?.taskId).toBe(TaskId.make("task-1"));
   });
 });

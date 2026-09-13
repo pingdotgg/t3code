@@ -16,6 +16,7 @@ import { listThreadsByProjectId, requireThread, requireThreadAbsent } from "./co
 const now = "2026-01-01T00:00:00.000Z";
 
 const readModel: OrchestrationReadModel = {
+  tasks: [],
   snapshotSequence: 2,
   updatedAt: now,
   projects: [

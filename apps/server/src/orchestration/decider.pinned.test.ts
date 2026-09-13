@@ -24,6 +24,7 @@ function makeReadModel(input: {
   readonly snoozedAt?: string | null;
 }): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [],
     threads: [

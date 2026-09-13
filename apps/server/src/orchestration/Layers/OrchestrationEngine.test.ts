@@ -12,6 +12,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TaskId,
   TurnId,
   type OrchestrationCommand,
   type OrchestrationEvent,
@@ -358,6 +359,7 @@ describe("OrchestrationEngine", () => {
     };
 
     const projectionSnapshot = {
+      tasks: [],
       snapshotSequence: 7,
       updatedAt: "2026-03-03T00:00:04.000Z",
       projects: [
@@ -419,6 +421,8 @@ describe("OrchestrationEngine", () => {
     const layer = OrchestrationEngineLive.pipe(
       Layer.provide(
         Layer.succeed(ProjectionSnapshotQuery, {
+          getTaskShells: () => Effect.die("unused"),
+          getTaskShellById: () => Effect.die("unused"),
           getUserInputActivity: () => Effect.die("unused"),
           getCommandReadModel: () => Effect.succeed(commandReadModel),
           getSnapshot: () =>
@@ -2124,4 +2128,88 @@ describe("OrchestrationEngine", () => {
 
     await system.dispose();
   });
+});
+
+it("persists task aggregates and membership through restart and receipt retries", async () => {
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-task-restart-"));
+  let system = await createOrchestrationSystem(NodePath.join(directory, "state.sqlite"));
+  const projectId = ProjectId.make("task-project");
+  const taskId = TaskId.make("task-restart");
+  const threadId = ThreadId.make("task-member");
+  const taskCommand = {
+    type: "task.create",
+    commandId: CommandId.make("task-create"),
+    taskId,
+    primaryProjectId: projectId,
+    name: "Durable task",
+    createdAt: now(),
+  } as const;
+  const membership = {
+    type: "thread.task.set",
+    commandId: CommandId.make("task-membership"),
+    threadId,
+    taskId,
+  } as const;
+  try {
+    await system.run(
+      system.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("task-project-create"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/task-project",
+        createdAt: now(),
+      }),
+    );
+    const taskReceipt = await system.run(system.engine.dispatch(taskCommand));
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("task-thread-create"),
+        threadId,
+        projectId,
+        title: "Member",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: "member-branch",
+        worktreePath: "/tmp/member-worktree",
+        createdAt: now(),
+      }),
+    );
+    await system.run(
+      system.engine.dispatch({
+        type: "thread.pin",
+        commandId: CommandId.make("task-pin"),
+        threadId,
+      }),
+    );
+    const membershipReceipt = await system.run(system.engine.dispatch(membership));
+    const before = await system.readModel();
+    expect(before.tasks[0]).toMatchObject({ id: taskId, name: "Durable task" });
+    expect(before.threads[0]).toMatchObject({
+      taskId,
+      pinnedAt: null,
+      branch: "member-branch",
+      worktreePath: "/tmp/member-worktree",
+    });
+    await system.dispose();
+    system = await createOrchestrationSystem(NodePath.join(directory, "state.sqlite"));
+    expect(await system.run(system.engine.dispatch(taskCommand))).toEqual(taskReceipt);
+    expect(await system.run(system.engine.dispatch(membership))).toEqual(membershipReceipt);
+    const after = await system.readModel();
+    expect(after).toEqual(before);
+    await system.run(
+      system.engine.dispatch({
+        type: "task.meta.update",
+        commandId: CommandId.make("task-edit-after-restart"),
+        taskId,
+        description: "Restart retained the task",
+      }),
+    );
+    expect((await system.readModel()).tasks[0]?.description).toBe("Restart retained the task");
+  } finally {
+    await system.dispose();
+    await NodeFSP.rm(directory, { recursive: true, force: true });
+  }
 });

@@ -39,6 +39,8 @@ const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
       Effect.succeed(
         workspaceRoot === project.workspaceRoot ? Option.some(project) : Option.none(),
       ),
+    getTaskShells: () => Effect.die("unused"),
+    getTaskShellById: () => Effect.die("unused"),
     getProjectShells: () => Effect.die("unused"),
     getProjectShellById: (projectId) =>
       Effect.succeed(projectId === project.id ? Option.some(project) : Option.none()),

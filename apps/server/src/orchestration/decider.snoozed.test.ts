@@ -29,6 +29,7 @@ function makeReadModel(input: {
   readonly messages?: OrchestrationThread["messages"];
 }): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [],
     threads: [

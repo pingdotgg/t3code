@@ -5,6 +5,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  TaskId,
   ThreadId,
   type OrchestrationEvent,
 } from "@t3tools/contracts";
@@ -12,10 +13,13 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import { PersistenceDecodeError } from "../Errors.ts";
+import { OrchestrationCommandReceiptRepository } from "../Services/OrchestrationCommandReceipts.ts";
+import { OrchestrationCommandReceiptRepositoryLive } from "./OrchestrationCommandReceipts.ts";
 import { OrchestrationEventStore } from "../Services/OrchestrationEventStore.ts";
 import { OrchestrationEventStoreLive } from "./OrchestrationEventStore.ts";
 import { SqlitePersistenceMemory } from "./Sqlite.ts";
@@ -357,3 +361,62 @@ for (const reader of ["all", "aggregate"] as const) {
     ),
   );
 }
+
+it.effect("persists and replays task aggregates with their command receipts", () =>
+  Effect.gen(function* () {
+    const eventStore = yield* OrchestrationEventStore;
+    const receipts = yield* OrchestrationCommandReceiptRepository;
+    const now = "2026-09-13T00:00:00.000Z";
+    const taskId = TaskId.make("task-event-store");
+    const commandId = CommandId.make("cmd-task-event-store");
+    const created = yield* eventStore.append({
+      type: "task.created",
+      eventId: EventId.make("evt-task-event-store"),
+      aggregateKind: "task",
+      aggregateId: taskId,
+      occurredAt: now,
+      commandId,
+      causationEventId: null,
+      correlationId: commandId,
+      metadata: {},
+      payload: {
+        taskId,
+        name: "Persistent task",
+        description: null,
+        primaryProjectId: ProjectId.make("project-task-event-store"),
+        createdAt: now,
+        updatedAt: now,
+      },
+    });
+    const receipt = {
+      commandId,
+      aggregateKind: "task" as const,
+      aggregateId: taskId,
+      acceptedAt: now,
+      resultSequence: created.sequence,
+      status: "accepted" as const,
+      error: null,
+    };
+    yield* receipts.upsert(receipt);
+    assert.deepEqual(Option.getOrThrow(yield* receipts.getByCommandId({ commandId })), receipt);
+    const range = {
+      aggregateKind: "task" as const,
+      aggregateId: taskId,
+      fromSequenceExclusive: 0,
+      toSequenceInclusive: created.sequence,
+    };
+    assert.deepEqual(Array.from(yield* Stream.runCollect(eventStore.readAggregateRange(range))), [
+      created,
+    ]);
+    const stats = yield* eventStore.getAggregateReplayStats({ ...range, maxEvents: 10 });
+    assert.equal(stats.eventCount, 1);
+    assert.isTrue(stats.hasCreateEvent);
+    assert.isAbove(stats.payloadBytes, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(OrchestrationEventStoreLive, OrchestrationCommandReceiptRepositoryLive).pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      ),
+    ),
+  ),
+);

@@ -7,6 +7,7 @@ import {
   EventId,
   MessageId,
   ProjectId,
+  TaskId,
   ThreadId,
   type ThreadPullRequestSnapshot,
   ThreadLinkedPullRequest,
@@ -31,6 +32,8 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import { ProjectionTaskRepository } from "../../persistence/Services/ProjectionTasks.ts";
+import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
 import * as RepositoryIdentityResolver from "../../project/RepositoryIdentityResolver.ts";
 import { OrchestrationEngineLive } from "./OrchestrationEngine.ts";
@@ -110,6 +113,208 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-curs
             })),
         );
       }),
+    );
+  },
+);
+
+it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection-")))(
+  "task projection",
+  (it) => {
+    it.effect(
+      "projects sparse metadata and rebuilds tasks independently through unrelated events",
+      () =>
+        Effect.gen(function* () {
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const tasks = yield* ProjectionTaskRepository;
+          const states = yield* ProjectionStateRepository;
+          const sql = yield* SqlClient.SqlClient;
+          const taskId = TaskId.make("task-projection-replay");
+          const projectId = ProjectId.make("task-project-original");
+          const replacementProjectId = ProjectId.make("task-project-replacement");
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const updatedAt = "2026-01-02T00:00:00.000Z";
+          const fields = {
+            aggregateKind: "task" as const,
+            aggregateId: taskId,
+            occurredAt: createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+          };
+          const created = yield* eventStore.append({
+            ...fields,
+            type: "task.created",
+            eventId: EventId.make("evt-task-projection-created"),
+            payload: {
+              taskId,
+              name: "Original task",
+              description: "Original description",
+              primaryProjectId: projectId,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          yield* pipeline.projectEvent(created);
+          const renamed = yield* eventStore.append({
+            ...fields,
+            type: "task.meta-updated",
+            eventId: EventId.make("evt-task-projection-renamed"),
+            payload: { taskId, name: "Renamed task", updatedAt },
+          });
+          yield* pipeline.projectEvent(renamed);
+          assert.strictEqual(
+            Option.getOrThrow(yield* tasks.getById({ taskId })).description,
+            "Original description",
+          );
+          const edited = yield* eventStore.append({
+            ...fields,
+            type: "task.meta-updated",
+            eventId: EventId.make("evt-task-projection-edited"),
+            payload: {
+              taskId,
+              description: null,
+              primaryProjectId: replacementProjectId,
+              updatedAt,
+            },
+          });
+          yield* pipeline.projectEvent(edited);
+          const unrelated = yield* eventStore.append({
+            ...fields,
+            aggregateKind: "project",
+            aggregateId: replacementProjectId,
+            type: "project.created",
+            eventId: EventId.make("evt-task-projection-project"),
+            payload: {
+              projectId: replacementProjectId,
+              title: "Replacement project",
+              workspaceRoot: "/tmp/task-project-replacement",
+              defaultModelSelection: null,
+              scripts: [],
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          yield* pipeline.projectEvent(unrelated);
+          const expected = {
+            taskId,
+            name: "Renamed task",
+            description: null,
+            primaryProjectId: replacementProjectId,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            unsettledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            pinnedAt: null,
+            pinOrderKey: null,
+            activeOrderKey: null,
+            createdAt,
+            updatedAt,
+            deletedAt: null,
+          };
+          assert.deepEqual(Option.getOrThrow(yield* tasks.getById({ taskId })), expected);
+          assert.strictEqual(
+            Option.getOrThrow(
+              yield* states.getByProjector({ projector: ORCHESTRATION_PROJECTOR_NAMES.tasks }),
+            ).lastAppliedSequence,
+            unrelated.sequence,
+          );
+
+          yield* sql`DELETE FROM projection_tasks`;
+          yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.tasks}`;
+          yield* pipeline.bootstrap;
+          yield* pipeline.bootstrap;
+          assert.deepEqual(Option.getOrThrow(yield* tasks.getById({ taskId })), expected);
+          for (const state of yield* states.listAll()) {
+            assert.strictEqual(state.lastAppliedSequence, unrelated.sequence);
+          }
+        }),
+    );
+
+    it.effect(
+      "preserves thread checkout and lifecycle through membership, metadata and replay",
+      () =>
+        Effect.gen(function* () {
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const threads = yield* ProjectionThreadRepository;
+          const sql = yield* SqlClient.SqlClient;
+          const taskId = TaskId.make("task-membership-projection");
+          const threadId = ThreadId.make("task-member-projection");
+          const projectId = ProjectId.make("foreign-member-project");
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const updatedAt = "2026-01-02T00:00:00.000Z";
+          const fields = {
+            aggregateKind: "thread" as const,
+            aggregateId: threadId,
+            occurredAt: createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+          };
+          const created = yield* eventStore.append({
+            ...fields,
+            type: "thread.created",
+            eventId: EventId.make("evt-task-member-created"),
+            payload: {
+              threadId,
+              projectId,
+              taskId,
+              title: "Member thread",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: "feature/member",
+              worktreePath: "/tmp/member-checkout",
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          yield* pipeline.projectEvent(created);
+          assert.strictEqual(
+            Option.getOrThrow(yield* threads.getById({ threadId })).taskId,
+            taskId,
+          );
+          const archived = yield* eventStore.append({
+            ...fields,
+            type: "thread.archived",
+            eventId: EventId.make("evt-task-member-archived"),
+            payload: { threadId, archivedAt: createdAt, updatedAt: createdAt },
+          });
+          yield* pipeline.projectEvent(archived);
+          const original = Option.getOrThrow(yield* threads.getById({ threadId }));
+          for (const [index, membership] of [null, taskId, null].entries()) {
+            const changed = yield* eventStore.append({
+              ...fields,
+              type: "thread.task-set",
+              eventId: EventId.make(`evt-task-member-moved-${index}`),
+              payload: { threadId, taskId: membership, updatedAt },
+            });
+            yield* pipeline.projectEvent(changed);
+            assert.deepEqual(Option.getOrThrow(yield* threads.getById({ threadId })), {
+              ...original,
+              taskId: membership,
+              updatedAt,
+            });
+          }
+          const renamed = yield* eventStore.append({
+            ...fields,
+            type: "thread.meta-updated",
+            eventId: EventId.make("evt-task-member-renamed"),
+            payload: { threadId, title: "Renamed member", updatedAt },
+          });
+          yield* pipeline.projectEvent(renamed);
+          const expected = { ...original, taskId: null, title: "Renamed member", updatedAt };
+          assert.deepEqual(Option.getOrThrow(yield* threads.getById({ threadId })), expected);
+          yield* sql`DELETE FROM projection_threads WHERE thread_id = ${threadId}`;
+          yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threads}`;
+          yield* pipeline.bootstrap;
+          assert.deepEqual(Option.getOrThrow(yield* threads.getById({ threadId })), expected);
+        }),
     );
   },
 );

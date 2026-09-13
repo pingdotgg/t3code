@@ -39,6 +39,7 @@ function makeReadModel(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [],
     threads: [

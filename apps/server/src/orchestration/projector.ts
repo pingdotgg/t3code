@@ -28,6 +28,9 @@ import { toProjectorDecodeError, type OrchestrationProjectorDecodeError } from "
 import {
   MessageSentPayloadSchema,
   ProjectCreatedPayload,
+  TaskCreatedPayload,
+  TaskMetaUpdatedPayload,
+  ThreadTaskSetPayload,
   ProjectDeletedPayload,
   ProjectMetaUpdatedPayload,
   ThreadActivityAppendedPayload,
@@ -309,6 +312,7 @@ export function createEmptyReadModel(nowIso: string): OrchestrationReadModel {
   return {
     snapshotSequence: 0,
     projects: [],
+    tasks: [],
     threads: [],
     updatedAt: nowIso,
   };
@@ -325,6 +329,66 @@ export function projectEvent(
   };
 
   switch (event.type) {
+    case "task.created":
+      return decodeForEvent(TaskCreatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => {
+          const task = {
+            id: payload.taskId,
+            name: payload.name,
+            description: payload.description,
+            primaryProjectId: payload.primaryProjectId,
+            createdAt: payload.createdAt,
+            updatedAt: payload.updatedAt,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            unsettledAt: null,
+            snoozedUntil: null,
+            snoozedAt: null,
+            pinnedAt: null,
+            pinOrderKey: null,
+            activeOrderKey: null,
+            deletedAt: null,
+          };
+          return {
+            ...nextBase,
+            tasks: nextBase.tasks.some((entry) => entry.id === task.id)
+              ? nextBase.tasks.map((entry) => (entry.id === task.id ? task : entry))
+              : [...nextBase.tasks, task],
+          };
+        }),
+      );
+    case "task.meta-updated":
+      return decodeForEvent(TaskMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          tasks: nextBase.tasks.map((task) =>
+            task.id === payload.taskId
+              ? {
+                  ...task,
+                  ...(payload.name !== undefined ? { name: payload.name } : {}),
+                  ...(payload.description !== undefined
+                    ? { description: payload.description }
+                    : {}),
+                  ...(payload.primaryProjectId !== undefined
+                    ? { primaryProjectId: payload.primaryProjectId }
+                    : {}),
+                  updatedAt: payload.updatedAt,
+                }
+              : task,
+          ),
+        })),
+      );
+    case "thread.task-set":
+      return decodeForEvent(ThreadTaskSetPayload, event.payload, event.type, "payload").pipe(
+        Effect.map((payload) => ({
+          ...nextBase,
+          threads: updateThread(nextBase.threads, payload.threadId, {
+            taskId: payload.taskId,
+            updatedAt: payload.updatedAt,
+          }),
+        })),
+      );
     case "project.created":
       return decodeForEvent(ProjectCreatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {
@@ -417,6 +481,7 @@ export function projectEvent(
           {
             id: payload.threadId,
             projectId: payload.projectId,
+            taskId: payload.taskId ?? null,
             title: payload.title,
             modelSelection: payload.modelSelection,
             runtimeMode: payload.runtimeMode,

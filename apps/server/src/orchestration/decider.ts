@@ -43,6 +43,10 @@ import {
   requireThreadArchived,
   requireThreadAbsent,
   requireThreadNotArchived,
+  requireTask,
+  requireTaskAbsent,
+  requireTaskNotArchived,
+  requireTaskPrimaryProject,
 } from "./commandInvariants.ts";
 import { projectEvent } from "./projector.ts";
 import { threadHasQueuedTurnStart } from "./ThreadSettlementPolicy.ts";
@@ -220,6 +224,112 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
   Crypto.Crypto
 > {
   switch (command.type) {
+    case "task.create": {
+      yield* requireTaskAbsent({ readModel, command, taskId: command.taskId });
+      yield* requireTaskPrimaryProject({ readModel, command, projectId: command.primaryProjectId });
+      if (!command.name.trim()) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Task name must not be empty.",
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "task.created",
+        payload: {
+          taskId: command.taskId,
+          name: command.name.trim(),
+          description: command.description ?? null,
+          primaryProjectId: command.primaryProjectId,
+          createdAt: command.createdAt,
+          updatedAt: command.createdAt,
+        },
+      };
+    }
+    case "task.meta.update": {
+      yield* requireTask({ readModel, command, taskId: command.taskId });
+      if (command.primaryProjectId !== undefined) {
+        yield* requireTaskPrimaryProject({
+          readModel,
+          command,
+          projectId: command.primaryProjectId,
+        });
+      }
+      if (command.name !== undefined && !command.name.trim()) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Task name must not be empty.",
+        });
+      }
+      const occurredAt = yield* nowIso;
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "task",
+          aggregateId: command.taskId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "task.meta-updated",
+        payload: {
+          taskId: command.taskId,
+          ...(command.name !== undefined ? { name: command.name.trim() } : {}),
+          ...(command.description !== undefined ? { description: command.description } : {}),
+          ...(command.primaryProjectId !== undefined
+            ? { primaryProjectId: command.primaryProjectId }
+            : {}),
+          updatedAt: occurredAt,
+        },
+      };
+    }
+    case "thread.task.set": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      if (thread.deletedAt !== null) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is deleted.`,
+        });
+      }
+      if (command.taskId !== null) {
+        yield* requireTaskNotArchived({ readModel, command, taskId: command.taskId });
+      }
+      const occurredAt = yield* nowIso;
+      const unchanged = (thread.taskId ?? null) === command.taskId;
+      const membershipEvent = {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.task-set" as const,
+        payload: {
+          threadId: command.threadId,
+          taskId: command.taskId,
+          updatedAt: unchanged ? thread.updatedAt : occurredAt,
+        },
+      };
+      if (!unchanged && command.taskId !== null && thread.pinnedAt != null) {
+        return [
+          {
+            ...(yield* withEventBase({
+              aggregateKind: "thread",
+              aggregateId: command.threadId,
+              occurredAt,
+              commandId: command.commandId,
+            })),
+            type: "thread.unpinned" as const,
+            payload: { threadId: command.threadId, updatedAt: occurredAt },
+          },
+          membershipEvent,
+        ];
+      }
+      return membershipEvent;
+    }
     case "project.create": {
       yield* requireProjectAbsent({
         readModel,
@@ -319,6 +429,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         projectId: command.projectId,
       });
+      const primaryTasks = readModel.tasks.filter(
+        (task) => task.primaryProjectId === command.projectId && task.deletedAt === null,
+      );
+      if (primaryTasks.length > 0) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Project '${command.projectId}' is the primary project for tasks ${primaryTasks.map((task) => `'${task.name}' (${task.id})`).join(", ")}. Reassign or delete these tasks first.`,
+        });
+      }
       const activeThreads = listThreadsByProjectId(readModel, command.projectId).filter(
         (thread) => thread.deletedAt === null,
       );
@@ -365,6 +484,15 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
+      if (command.threadId.startsWith("task:")) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The task: thread ID prefix is reserved.",
+        });
+      }
+      if (command.taskId != null) {
+        yield* requireTaskNotArchived({ readModel, command, taskId: command.taskId });
+      }
       yield* requireProject({
         readModel,
         command,
@@ -387,6 +515,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         payload: {
           threadId: command.threadId,
           projectId: command.projectId,
+          taskId: command.taskId ?? null,
           title: command.title,
           modelSelection: command.modelSelection,
           runtimeMode: command.runtimeMode,

@@ -2,7 +2,7 @@ import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Schema from "effect/Schema";
-import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { CommandId, ProjectId, ThreadId, TaskId } from "./baseSchemas.ts";
 
 import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -11,6 +11,8 @@ import {
   ClientOrchestrationCommand,
   ModelSelection,
   OrchestrationCommand,
+  OrchestrationReadModel,
+  OrchestrationShellSnapshot,
   OrchestrationDispatchCommandError,
   OrchestrationEvent,
   OrchestrationGetFullThreadDiffInput,
@@ -37,6 +39,8 @@ import {
 } from "./orchestration.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
+const decodeReadModel = Schema.decodeUnknownEffect(OrchestrationReadModel);
+const decodeShellSnapshot = Schema.decodeUnknownEffect(OrchestrationShellSnapshot);
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
@@ -1514,3 +1518,56 @@ it("isProviderSendTurnSupportedImageMimeType accepts raster formats and rejects 
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("IMAGE/JPEG"), true);
   assert.strictEqual(isProviderSendTurnSupportedImageMimeType("image/svg+xml"), false);
 });
+
+it.effect("decodes legacy task-free snapshots and preserves explicit bootstrap membership", () =>
+  Effect.gen(function* () {
+    const now = "2026-01-01T00:00:00.000Z";
+    const legacy = { snapshotSequence: 0, projects: [], threads: [], updatedAt: now };
+    assert.deepEqual((yield* decodeReadModel(legacy)).tasks, []);
+    assert.equal((yield* decodeShellSnapshot(legacy)).tasks, undefined);
+    const command = yield* decodeOrchestrationCommand({
+      type: "thread.turn.start",
+      commandId: "command",
+      threadId: "thread",
+      createdAt: now,
+      message: { messageId: "message", role: "user", text: "Start", attachments: [] },
+      bootstrap: {
+        createThread: {
+          taskId: "task",
+          projectId: "project",
+          title: "Thread",
+          modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt: now,
+        },
+      },
+    });
+    assert.equal(command.type, "thread.turn.start");
+    if (command.type === "thread.turn.start")
+      assert.equal(command.bootstrap?.createThread?.taskId, TaskId.make("task"));
+  }),
+);
+it.effect("decodes task commands with sparse metadata and explicit null clearing", () =>
+  Effect.gen(function* () {
+    const decode = decodeClientOrchestrationCommand;
+    const base = { type: "task.meta.update", commandId: "command", taskId: "task" };
+    const omitted = yield* decode(base);
+    const cleared = yield* decode({ ...base, description: null, name: "  Renamed  " });
+    assert.equal(omitted.type, "task.meta.update");
+    if (omitted.type === "task.meta.update") assert.equal(omitted.description, undefined);
+    if (cleared.type === "task.meta.update") {
+      assert.equal(cleared.description, null);
+      assert.equal(cleared.name, "Renamed");
+    }
+    const membership = yield* decode({
+      type: "thread.task.set",
+      commandId: "command",
+      threadId: "thread",
+      taskId: null,
+    });
+    assert.equal(membership.type, "thread.task.set");
+  }),
+);

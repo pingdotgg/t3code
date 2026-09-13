@@ -34,6 +34,7 @@ const context: OrchestrationMessageContext = {
 
 function makeReadModel(): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [],
     threads: [

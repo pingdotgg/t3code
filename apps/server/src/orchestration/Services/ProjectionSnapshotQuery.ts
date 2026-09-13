@@ -19,6 +19,8 @@ import type {
   OrchestrationSearchThreadsInput,
   OrchestrationSearchThreadsResult,
   OrchestrationShellSnapshot,
+  OrchestrationTaskShell,
+  TaskId,
   OrchestrationThread,
   OrchestrationThreadActivity,
   OrchestrationThreadDetailSnapshot,
@@ -104,12 +106,12 @@ export interface ProjectionSnapshotQueryShape {
    * Read the latest orchestration shell snapshot.
    *
    * Returns only projects and thread shell summaries so clients can bootstrap
-   * lightweight navigation state without hydrating every thread body.
+   * lightweight navigation state without hydrating every thread body. Task
+   * inventory is opt-in for clients that support task navigation.
    */
-  readonly getShellSnapshot: () => Effect.Effect<
-    OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
+  readonly getShellSnapshot: (options?: {
+    readonly includeTasks?: boolean;
+  }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
 
   /**
    * Read archived thread shell summaries for the archive page.
@@ -117,10 +119,9 @@ export interface ProjectionSnapshotQueryShape {
    * This query is separate from the main shell snapshot so archived threads
    * are never bootstrapped into normal navigation state.
    */
-  readonly getArchivedShellSnapshot: () => Effect.Effect<
-    OrchestrationShellSnapshot,
-    ProjectionRepositoryError
-  >;
+  readonly getArchivedShellSnapshot: (options?: {
+    readonly includeTasks?: boolean;
+  }) => Effect.Effect<OrchestrationShellSnapshot, ProjectionRepositoryError>;
 
   /**
    * Search active thread navigation metadata, user messages, and canonical
@@ -165,6 +166,15 @@ export interface ProjectionSnapshotQueryShape {
   readonly getProjectShellById: (
     projectId: ProjectId,
   ) => Effect.Effect<Option.Option<OrchestrationProjectShell>, ProjectionRepositoryError>;
+
+  /** Read active task shells without hydrating their member threads. */
+  readonly getTaskShells: (
+    taskIds?: ReadonlyArray<TaskId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationTaskShell>, ProjectionRepositoryError>;
+
+  readonly getTaskShellById: (
+    taskId: TaskId,
+  ) => Effect.Effect<Option.Option<OrchestrationTaskShell>, ProjectionRepositoryError>;
 
   readonly getProjectShells: (
     projectIds?: ReadonlyArray<ProjectId>,

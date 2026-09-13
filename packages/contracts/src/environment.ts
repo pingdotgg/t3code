@@ -6,6 +6,7 @@ import {
   ForwardCompatibleOptional,
   ProjectId,
   ThreadId,
+  TaskId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
@@ -76,6 +77,7 @@ export const ServerSelfUpdateCapability = Schema.Literals([
 export type ServerSelfUpdateCapability = typeof ServerSelfUpdateCapability.Type;
 
 export const ExecutionEnvironmentCapabilities = Schema.Struct({
+  tasks: Schema.optionalKey(Schema.Boolean),
   repositoryIdentity: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   connectionProbe: Schema.optionalKey(Schema.Boolean),
   /** Missing on older servers, which still accept inline image attachments. */
@@ -205,6 +207,12 @@ export const ScopedProjectRef = Schema.Struct({
   projectId: ProjectId,
 });
 export type ScopedProjectRef = typeof ScopedProjectRef.Type;
+
+export const ScopedTaskRef = Schema.Struct({
+  environmentId: EnvironmentId,
+  taskId: TaskId,
+});
+export type ScopedTaskRef = typeof ScopedTaskRef.Type;
 
 export const ScopedThreadRef = Schema.Struct({
   environmentId: EnvironmentId,

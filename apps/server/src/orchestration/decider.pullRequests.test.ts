@@ -52,6 +52,7 @@ function makeLink(overrides: Partial<ThreadPullRequestLink> = {}): ThreadPullReq
 
 function makeReadModel(pullRequests: ReadonlyArray<ThreadPullRequestLink>): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [
       {

@@ -39,6 +39,7 @@ import {
   ResolvedKeybindingRule,
   type ServerLifecycleStreamEvent,
   ThreadId,
+  TaskId,
   TurnId,
   UsageLimitSourceId,
   WS_METHODS,
@@ -310,6 +311,7 @@ const testEnvironmentDescriptor = {
 const makeDefaultOrchestrationReadModel = () => {
   const now = "2026-01-01T00:00:00.000Z";
   return {
+    tasks: [],
     snapshotSequence: 0,
     updatedAt: now,
     projects: [
@@ -8132,6 +8134,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     Effect.gen(function* () {
       const now = "2026-01-01T00:00:00.000Z";
       const snapshot = {
+        tasks: [],
         snapshotSequence: 1,
         updatedAt: now,
         projects: [
@@ -10601,6 +10604,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               interactionMode: "default",
               bootstrap: {
                 createThread: {
+                  taskId: TaskId.make("bootstrap-task"),
                   projectId: defaultProjectId,
                   title: "Bootstrap Thread",
                   modelSelection: defaultModelSelection,
@@ -10624,6 +10628,11 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         );
 
         assert.equal(response.sequence, 5);
+        const createdThreadCommand = dispatchedCommands[0];
+        assertTrue(createdThreadCommand?.type === "thread.create");
+        if (createdThreadCommand?.type === "thread.create") {
+          assert.equal(createdThreadCommand.taskId, TaskId.make("bootstrap-task"));
+        }
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           [

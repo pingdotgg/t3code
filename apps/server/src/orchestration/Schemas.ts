@@ -70,3 +70,9 @@ export const ThreadApprovalResponseRequestedPayload =
 export const ThreadCheckpointRevertRequestedPayload =
   ContractsThreadCheckpointRevertRequestedPayloadSchema;
 export const ThreadSessionStopRequestedPayload = ContractsThreadSessionStopRequestedPayloadSchema;
+
+export {
+  TaskCreatedPayload,
+  TaskMetaUpdatedPayload,
+  ThreadTaskSetPayload,
+} from "@t3tools/contracts";

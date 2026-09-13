@@ -23,6 +23,7 @@ const THREAD_ID = ThreadId.make("thread-1");
 
 function makeReadModel(overrides: Partial<OrchestrationThread> = {}): OrchestrationReadModel {
   return {
+    tasks: [],
     snapshotSequence: 0,
     projects: [],
     threads: [

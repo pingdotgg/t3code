@@ -7,6 +7,7 @@ import {
   MessageId,
   ProjectId,
   ThreadId,
+  TaskId,
   type ThreadPullRequestLink,
   ThreadLinkedPullRequest,
   TurnId,
@@ -450,6 +451,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(snapshot.threads, [
         {
           id: ThreadId.make("thread-1"),
+          taskId: null,
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           modelSelection: {
@@ -575,6 +577,7 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.deepEqual(shellSnapshot.threads, [
         {
           id: ThreadId.make("thread-1"),
+          taskId: null,
           projectId: asProjectId("project-1"),
           title: "Thread 1",
           modelSelection: {
@@ -3461,5 +3464,110 @@ it.effect("omits foreign-host PRs from legacy snapshots while preserving native 
     for (const thread of yield* readThreads) {
       assert.equal(thread.linkedPullRequest?.url, "https://github.com/acme/web/pull/42");
     }
+  }).pipe(Effect.provide(layer));
+});
+
+it.effect("hydrates task membership and opt-in active and archived task inventories", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    const createdAt = "2026-09-01T00:00:00.000Z";
+    const updatedAt = "2026-09-02T00:00:00.000Z";
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+      VALUES ('task-project', 'Primary', '/primary', '[]', ${createdAt}, ${createdAt})`;
+    yield* sql`INSERT INTO projection_tasks
+      (task_id, name, description, primary_project_id, archived_at, created_at, updated_at, deleted_at)
+      VALUES
+      ('task-active', 'Active task', 'Description', 'task-project', NULL, ${createdAt}, ${updatedAt}, NULL),
+      ('task-archived', 'Archived task', NULL, 'task-project', ${createdAt}, ${createdAt}, ${createdAt}, NULL),
+      ('task-deleted', 'Deleted task', NULL, 'task-project', NULL, ${createdAt}, ${createdAt}, ${createdAt})`;
+    yield* sql`INSERT INTO projection_threads
+      (thread_id, project_id, task_id, title, model_selection_json, runtime_mode, interaction_mode, created_at, updated_at, archived_at)
+      VALUES
+      ('task-member', 'task-project', 'task-active', 'Member', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', ${createdAt}, ${createdAt}, NULL),
+      ('task-archived-member', 'task-project', 'task-archived', 'Archived member', '{"provider":"codex","model":"gpt-5-codex"}', 'full-access', 'default', ${createdAt}, ${createdAt}, ${createdAt})`;
+
+    for (const projector of Object.values(ORCHESTRATION_PROJECTOR_NAMES)) {
+      if (projector === ORCHESTRATION_PROJECTOR_NAMES.tasks) continue;
+      yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+        VALUES (${projector}, 8, ${createdAt})`;
+    }
+    assert.equal((yield* query.getSnapshotSequence()).snapshotSequence, 0);
+    yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+      VALUES (${ORCHESTRATION_PROJECTOR_NAMES.tasks}, 7, ${createdAt})`;
+    const snapshot = yield* query.getSnapshot();
+    const commandModel = yield* query.getCommandReadModel();
+    assert.deepStrictEqual(commandModel.tasks, snapshot.tasks);
+    assert.equal(snapshot.tasks.length, 3);
+    assert.equal(
+      snapshot.tasks.find((task) => task.id === "task-active")?.description,
+      "Description",
+    );
+    assert.equal(snapshot.tasks.find((task) => task.id === "task-deleted")?.deletedAt, createdAt);
+    assert.equal(snapshot.updatedAt, updatedAt);
+    assert.equal(commandModel.updatedAt, updatedAt);
+    assert.equal(snapshot.snapshotSequence, 7);
+    assert.equal(commandModel.snapshotSequence, 7);
+    assert.equal(
+      snapshot.threads.find((thread) => thread.id === "task-member")?.taskId,
+      "task-active",
+    );
+    assert.equal(
+      commandModel.threads.find((thread) => thread.id === "task-member")?.taskId,
+      "task-active",
+    );
+
+    assert.isFalse("tasks" in (yield* query.getShellSnapshot()));
+    assert.isFalse("tasks" in (yield* query.getArchivedShellSnapshot()));
+    const shell = yield* query.getShellSnapshot({ includeTasks: true });
+    const archivedShell = yield* query.getArchivedShellSnapshot({ includeTasks: true });
+    assert.deepStrictEqual(
+      shell.tasks?.map((task) => task.id),
+      ["task-active"],
+    );
+    assert.equal(shell.updatedAt, updatedAt);
+    assert.equal(shell.threads[0]?.taskId, "task-active");
+    assert.isFalse("deletedAt" in shell.tasks![0]!);
+    assert.deepStrictEqual(
+      archivedShell.tasks?.map((task) => task.id),
+      ["task-archived"],
+    );
+    assert.equal(archivedShell.threads[0]?.taskId, "task-archived");
+    assert.deepStrictEqual(
+      archivedShell.projects.map((project) => project.id),
+      ["task-project"],
+    );
+    assert.deepStrictEqual(yield* query.getTaskShells(), shell.tasks);
+    assert.deepStrictEqual(yield* query.getTaskShells([]), []);
+    assert.deepStrictEqual(yield* query.getTaskShells([TaskId.make("task-archived")]), []);
+    assert.isTrue(Option.isNone(yield* query.getTaskShellById(TaskId.make("task-deleted"))));
+    assert.equal(
+      Option.getOrThrow(yield* query.getTaskShellById(TaskId.make("task-active"))).id,
+      "task-active",
+    );
+    const memberId = ThreadId.make("task-member");
+    assert.equal(
+      Option.getOrThrow(yield* query.getThreadShellById(memberId)).taskId,
+      "task-active",
+    );
+    assert.equal(
+      Option.getOrThrow(yield* query.getThreadDetailById(memberId)).taskId,
+      "task-active",
+    );
+    assert.equal(
+      Option.getOrThrow(yield* query.getThreadDetailSnapshot(memberId)).thread.taskId,
+      "task-active",
+    );
   }).pipe(Effect.provide(layer));
 });
