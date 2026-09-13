@@ -107,6 +107,7 @@ export function useTaskSidebarModel(input: Input) {
         ...(input.threadSnoozeEnvironmentIds
           ? { threadSnoozeEnvironmentIds: input.threadSnoozeEnvironmentIds }
           : {}),
+        ...(input.queuedThreadKeys ? { queuedThreadKeys: input.queuedThreadKeys } : {}),
         now: input.now,
         projectScope: input.projectScope ?? null,
         search: input.search ?? "",
@@ -132,6 +133,7 @@ export function useTaskSidebarModel(input: Input) {
       input.taskCapableEnvironmentIds,
       input.threadSettlementEnvironmentIds,
       input.threadSnoozeEnvironmentIds,
+      input.queuedThreadKeys,
       input.now,
       input.projectScope,
       input.search,

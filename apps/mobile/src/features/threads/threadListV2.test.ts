@@ -1512,16 +1512,9 @@ function taskListFixture(overrides: Partial<Parameters<typeof buildMobileTaskLis
     makeThread({ id: ThreadId.make("member"), title: "Member", taskId: task.id }),
     makeThread({ id: ThreadId.make("loose"), title: "Loose" }),
   ];
-  const layout = buildThreadListV2Items({
-    threads,
-    environmentId: null,
-    searchQuery: "",
-    now: NOW,
-  });
   return {
     tasks: [task],
     threads,
-    items: buildThreadListV2ListItems({ items: layout.items, pendingTasks: [] }),
     pendingTasks: [],
     capableIds: new Set([environmentId]),
     collapsedTaskKeys: new Set<string>(),
@@ -1538,16 +1531,16 @@ function taskListFixture(overrides: Partial<Parameters<typeof buildMobileTaskLis
 describe("native task groups", () => {
   it("keeps collapsed members inside a task and selected or searched members reachable", () => {
     const base = taskListFixture({ collapsedTaskKeys: new Set([`${environmentId}:task-1`]) });
-    const collapsed = buildMobileTaskListItems(base);
+    const collapsed = buildMobileTaskListItems(base).items;
     expect(collapsed.map((item) => item.key)).not.toContain(`v2-thread:${environmentId}:member`);
     expect(collapsed.some((item) => item.type === "task-card")).toBe(true);
     for (const extra of [
       { selectedThreadKey: `${environmentId}:member` },
       { searchQuery: "Member" },
     ]) {
-      expect(buildMobileTaskListItems({ ...base, ...extra }).map((item) => item.key)).toContain(
-        `v2-thread:${environmentId}:member`,
-      );
+      expect(
+        buildMobileTaskListItems({ ...base, ...extra }).items.map((item) => item.key),
+      ).toContain(`v2-thread:${environmentId}:member`);
     }
   });
   it("retains flat rows for project scopes, unsupported servers and unresolved parents", () => {
@@ -1556,12 +1549,12 @@ describe("native task groups", () => {
       { capableIds: new Set<EnvironmentId>() },
       { tasks: [] },
     ]) {
-      const rows = buildMobileTaskListItems(taskListFixture(overrides));
+      const rows = buildMobileTaskListItems(taskListFixture(overrides)).items;
       expect(rows.some((item) => item.type === "task-card")).toBe(false);
       expect(rows.map((item) => item.key)).toContain(`v2-thread:${environmentId}:member`);
     }
   });
-  it("keeps queued creation within a parked task and exposes a separate settled shelf", () => {
+  it("keeps queued creation within a parked task without overriding saved collapse", () => {
     const task = makeContainer({ settledOverride: "settled" });
     const pending = { ...makePendingTask("queued"), taskId: task.id };
     const threads = [
@@ -1578,24 +1571,20 @@ describe("native task groups", () => {
         tasks: [task],
         threads,
         pendingTasks: [pending],
-        items: [],
         collapsedTaskKeys: new Set([`${environmentId}:${task.id}`]),
       }),
-    );
-    expect(rows.map((item) => item.type)).toEqual([
-      "task-card",
-      "v2-pending",
-      "task-new-thread",
-      "task-subshelf-header",
-    ]);
+    ).items;
+    expect(rows.map((item) => item.type)).toEqual(["task-card", "v2-pending"]);
     expect(rows.filter((item) => item.type === "v2-pending")).toHaveLength(1);
   });
   it("defaults parked tasks to slim collapsed rows and wakes at the exact clock boundary", () => {
     const task = makeContainer({ snoozedUntil: "2026-06-12T09:30:20.000Z" });
     const base = taskListFixture({ tasks: [task], now: "2026-06-12T09:30:19.000Z" });
-    const parked = buildMobileTaskListItems(base).find((item) => item.type === "task-slim");
+    const parked = buildMobileTaskListItems({ ...base, snoozedShelfExpanded: true }).items.find(
+      (item) => item.type === "task-slim",
+    );
     expect(parked?.type === "task-slim" && parked.expanded).toBe(false);
-    const awakened = buildMobileTaskListItems({ ...base, now: "2026-06-12T09:30:20.000Z" });
+    const awakened = buildMobileTaskListItems({ ...base, now: "2026-06-12T09:30:20.000Z" }).items;
     expect(awakened.some((item) => item.type === "task-card")).toBe(true);
   });
   it("isolates identical task IDs across environments", () => {
@@ -1607,7 +1596,7 @@ describe("native task groups", () => {
       tasks: [...base.tasks, foreign],
       capableIds: new Set([environmentId, otherId]),
       environmentId: otherId,
-    });
+    }).items;
     expect(rows.filter((item) => item.type === "task-card").map((item) => item.key)).toEqual([
       `task:${otherId}:task-1`,
     ]);
@@ -1680,5 +1669,293 @@ describe("native task arrangement", () => {
         destination: { targetId: threadOrderRow(loose).id, placement: "before" },
       }),
     ).toBeNull();
+  });
+});
+
+describe("native task shelf inventory", () => {
+  const taskKey = `${environmentId}:task-1`;
+  const future = "2026-06-13T12:00:00.000Z";
+  const member = (id: string, overrides: Partial<EnvironmentThreadShell> = {}) =>
+    makeThread({
+      id: ThreadId.make(id),
+      title: id,
+      taskId: TaskId.make("task-1"),
+      ...overrides,
+    });
+  const keys = (layout: ReturnType<typeof buildMobileTaskListItems>) =>
+    layout.items.map((item) => item.key);
+
+  it("interleaves pinned and active task/thread units in shared order", () => {
+    const layout = buildMobileTaskListItems(
+      taskListFixture({
+        tasks: [
+          makeContainer({ pinnedAt: NOW, pinOrderKey: "b" }),
+          makeContainer({ id: TaskId.make("active-task"), activeOrderKey: "b" }),
+        ],
+        threads: [
+          member("pinned", { taskId: null, pinnedAt: NOW, pinOrderKey: "a" }),
+          member("active", { taskId: null, activeOrderKey: "a" }),
+        ],
+        collapsedTaskKeys: new Set([taskKey, `${environmentId}:active-task`]),
+      }),
+    );
+    expect(keys(layout)).toEqual([
+      `v2-thread:${environmentId}:pinned`,
+      `task:${taskKey}`,
+      `v2-thread:${environmentId}:active`,
+      `task:${environmentId}:active-task`,
+    ]);
+    expect(layout.counts).toEqual({ pinned: 2, active: 2, snoozed: 0, settled: 0 });
+  });
+
+  it("shows a task-only Snoozed shelf and sorts wake times before scoped identities", () => {
+    const base = taskListFixture({
+      threads: [],
+      tasks: [
+        makeContainer({ snoozedUntil: future }),
+        makeContainer({ id: TaskId.make("earlier"), snoozedUntil: "2026-06-13T11:00:00.000Z" }),
+      ],
+    });
+    expect(keys(buildMobileTaskListItems(base))).toEqual(["v2-snoozed-shelf"]);
+    const layout = buildMobileTaskListItems({ ...base, snoozedShelfExpanded: true });
+    expect(keys(layout)).toEqual([
+      "v2-snoozed-shelf",
+      `task:${environmentId}:earlier`,
+      `task:${taskKey}`,
+    ]);
+    expect(layout.counts.snoozed).toBe(2);
+    expect(layout.nextSnoozeWakeAt).toBe("2026-06-13T11:00:00.000Z");
+  });
+
+  it("counts mixed task/thread shelves before collapse and top-level pagination", () => {
+    const base = taskListFixture({
+      tasks: [
+        makeContainer({ snoozedUntil: future }),
+        makeContainer({
+          id: TaskId.make("settled-task"),
+          settledOverride: "settled",
+          settledAt: NOW,
+        }),
+      ],
+      threads: [
+        member("live"),
+        member("snoozed-thread", { taskId: null, snoozedUntil: future }),
+        member("settled-thread", {
+          taskId: null,
+          settledOverride: "settled",
+          settledAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ],
+      snoozedShelfExpanded: false,
+      settledShelfExpanded: false,
+      settledLimit: 1,
+    });
+    const collapsed = buildMobileTaskListItems(base);
+    expect(keys(collapsed)).toEqual(["v2-snoozed-shelf", "v2-settled-shelf"]);
+    expect(collapsed.counts).toEqual({ pinned: 0, active: 0, snoozed: 2, settled: 2 });
+    expect(collapsed.hiddenSettledCount).toBe(1);
+    const expanded = buildMobileTaskListItems({
+      ...base,
+      snoozedShelfExpanded: true,
+      settledShelfExpanded: true,
+    });
+    expect(keys(expanded)).toEqual([
+      "v2-snoozed-shelf",
+      `task:${taskKey}`,
+      `v2-thread:${environmentId}:snoozed-thread`,
+      "v2-settled-shelf",
+      `task:${environmentId}:settled-task`,
+    ]);
+    const more = buildMobileTaskListItems({
+      ...base,
+      snoozedShelfExpanded: true,
+      settledShelfExpanded: true,
+      settledLimit: 2,
+    });
+    expect(keys(more).at(-1)).toBe(`v2-thread:${environmentId}:settled-thread`);
+    expect(more.hiddenSettledCount).toBe(0);
+  });
+
+  it("renders task-only shelf headers and expands parked members as slim rows without consuming page slots", () => {
+    const base = taskListFixture({
+      tasks: [
+        makeContainer({ settledOverride: "settled", settledAt: NOW }),
+        makeContainer({
+          id: TaskId.make("older"),
+          settledOverride: "settled",
+          settledAt: "2026-06-01T00:00:00.000Z",
+        }),
+      ],
+      threads: [
+        member("live"),
+        member("snoozed", { snoozedUntil: future }),
+        member("settled", { settledOverride: "settled" }),
+      ],
+      collapsedTaskKeys: new Set([`parked:${taskKey}`]),
+      settledShelfExpanded: true,
+      settledLimit: 1,
+    });
+    const layout = buildMobileTaskListItems(base);
+    expect(keys(layout)).toEqual([
+      "v2-settled-shelf",
+      `task:${taskKey}`,
+      `v2-thread:${environmentId}:live`,
+      `v2-thread:${environmentId}:snoozed`,
+      `v2-thread:${environmentId}:settled`,
+    ]);
+    expect(
+      layout.items
+        .filter((item) => item.type === "v2-thread")
+        .every((item) => item.item.variant === "slim"),
+    ).toBe(true);
+    expect(layout.counts.settled).toBe(2);
+    expect(layout.hiddenSettledCount).toBe(1);
+    expect(layout.nextSnoozeWakeAt).toBe(future);
+    expect(keys(buildMobileTaskListItems({ ...base, settledShelfExpanded: false }))).toEqual([
+      "v2-settled-shelf",
+    ]);
+  });
+
+  it("retains only the selected member through a collapsed task and outer shelf, including beyond the page", () => {
+    const base = taskListFixture({
+      tasks: [makeContainer({ settledOverride: "settled" })],
+      threads: [member("selected"), member("sibling")],
+      collapsedTaskKeys: new Set([`parked:${taskKey}`]),
+      selectedThreadKey: `${environmentId}:selected`,
+      settledShelfExpanded: false,
+      settledLimit: 0,
+    });
+    const layout = buildMobileTaskListItems(base);
+    expect(keys(layout)).toEqual([
+      "v2-settled-shelf",
+      `task:${taskKey}`,
+      `v2-thread:${environmentId}:selected`,
+    ]);
+    expect(layout.counts.settled).toBe(1);
+    expect(layout.hiddenSettledCount).toBe(0);
+    expect(keys(buildMobileTaskListItems({ ...base, selectedThreadKey: null }))).toEqual([
+      "v2-settled-shelf",
+    ]);
+    expect(base.collapsedTaskKeys).toEqual(new Set([`parked:${taskKey}`]));
+  });
+
+  it("keeps selected and queued members narrow while preserving saved task and sub-shelf collapse", () => {
+    const base = taskListFixture({
+      threads: [
+        member("chosen", { settledOverride: "settled" }),
+        member("other", { settledOverride: "settled" }),
+        member("live"),
+      ],
+      collapsedTaskKeys: new Set([taskKey]),
+      selectedThreadKey: `${environmentId}:chosen`,
+    });
+    expect(keys(buildMobileTaskListItems(base))).toEqual([
+      `task:${taskKey}`,
+      `task-settled:${taskKey}`,
+      `v2-thread:${environmentId}:chosen`,
+    ]);
+    const queued = buildMobileTaskListItems({
+      ...base,
+      selectedThreadKey: null,
+      queuedThreadKeys: new Set([`${environmentId}:chosen`]),
+      tasks: [makeContainer({ settledOverride: "settled" })],
+    });
+    expect(keys(queued)).toEqual([`task:${taskKey}`, `v2-thread:${environmentId}:chosen`]);
+    expect(queued.items[0]).toMatchObject({ type: "task-card", expanded: false, count: 3 });
+    const expanded = buildMobileTaskListItems({ ...base, collapsedTaskKeys: new Set() });
+    expect(keys(expanded)).toEqual([
+      `task:${taskKey}`,
+      `v2-thread:${environmentId}:live`,
+      `task-new:${taskKey}`,
+      `task-settled:${taskKey}`,
+      `v2-thread:${environmentId}:chosen`,
+    ]);
+    expect(expanded.items.find((item) => item.type === "task-subshelf-header")).toMatchObject({
+      expanded: false,
+      count: 2,
+    });
+    expect(keys(buildMobileTaskListItems({ ...base, selectedThreadKey: null }))).toEqual([
+      `task:${taskKey}`,
+    ]);
+  });
+
+  it("shares description, member and content search policy without narrowing member counts", () => {
+    const base = taskListFixture({
+      tasks: [makeContainer({ description: "Release checklist" })],
+      threads: [member("one"), member("two")],
+      collapsedTaskKeys: new Set([taskKey]),
+    });
+    expect(keys(buildMobileTaskListItems({ ...base, searchQuery: "checklist" }))).toEqual([
+      `task:${taskKey}`,
+    ]);
+    for (const extra of [
+      { searchQuery: "two" },
+      { searchQuery: "content", matchedThreadKeys: new Set([`${environmentId}:two`]) },
+    ]) {
+      const layout = buildMobileTaskListItems({ ...base, ...extra });
+      expect(keys(layout)).toEqual([
+        `task:${taskKey}`,
+        `v2-thread:${environmentId}:two`,
+        `task-new:${taskKey}`,
+      ]);
+      expect(layout.items[0]).toMatchObject({ count: 2, expanded: true });
+    }
+    expect(keys(buildMobileTaskListItems(base))).toEqual([`task:${taskKey}`]);
+  });
+
+  it("flattens project scopes and capability downgrades using complete inventories", () => {
+    const other = EnvironmentId.make("other");
+    const base = taskListFixture({
+      tasks: [makeContainer(), makeContainer({ environmentId: other })],
+      threads: [member("one"), member("one", { environmentId: other })],
+      capableIds: new Set([environmentId, other]),
+      projectScoped: true,
+      projectRefs: [{ environmentId: other, projectId: ProjectId.make("project-1") }],
+    });
+    expect(keys(buildMobileTaskListItems(base))).toEqual([`v2-thread:${other}:one`]);
+    const downgraded = buildMobileTaskListItems({
+      ...base,
+      projectScoped: false,
+      projectRefs: null,
+      capableIds: new Set([environmentId]),
+    });
+    expect(downgraded.counts.active).toBe(2);
+    expect(keys(downgraded)).toContain(`v2-thread:${other}:one`);
+    expect(keys(downgraded)).not.toContain(`task:${other}:task-1`);
+  });
+
+  it("keeps pending creation reachable under search without revealing siblings", () => {
+    const base = taskListFixture({
+      tasks: [makeContainer({ settledOverride: "settled" })],
+      threads: [member("one"), member("two")],
+      collapsedTaskKeys: new Set([taskKey]),
+      pendingTasks: [{ ...makePendingTask("pending"), taskId: TaskId.make("task-1") }],
+      searchQuery: "unrelated",
+    });
+    const layout = buildMobileTaskListItems(base);
+    expect(keys(layout)).toEqual([`task:${taskKey}`, "v2-pending-task:pending"]);
+    expect(layout.items[0]).toMatchObject({ count: 3, expanded: false });
+    expect(layout.counts.active).toBe(1);
+  });
+
+  it("uses the member lifecycle for swipe actions when a parked task makes its row slim", () => {
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "slim",
+        settled: false,
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+      }),
+    ).toEqual({ primary: "settle", secondary: "snooze" });
+    expect(
+      resolveThreadListV2SwipeActions({
+        variant: "slim",
+        settled: true,
+        settlementSupported: true,
+        snoozeSupported: true,
+        snoozable: true,
+      }),
+    ).toEqual({ primary: "unsettle", secondary: "snooze" });
   });
 });

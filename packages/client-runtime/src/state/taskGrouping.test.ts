@@ -28,6 +28,10 @@ import {
   taskMemberStatus,
   taskOrderRow,
   taskShelf,
+  taskMatchesSearch,
+  taskHasLocalWork,
+  resolveTaskPresentation,
+  taskChildVisible,
   threadOrderRow,
   type TaskGroupingTask,
   type TaskMemberStatus,
@@ -397,5 +401,47 @@ describe("mixed task/thread ordering", () => {
         shelf: "active",
       }),
     ).toEqual([]);
+  });
+});
+
+describe("task presentation", () => {
+  it("matches descriptions without treating the container match as a child match", () => {
+    expect(taskMatchesSearch(task({ description: "Release checklist" }), " CHECKLIST ")).toBe(true);
+    expect(taskMatchesSearch(task(), "missing")).toBe(false);
+    expect(
+      resolveTaskPresentation({
+        task: task(),
+        now,
+        hasLocalWork: false,
+        collapsed: false,
+        searching: true,
+        hasMatchingChildren: false,
+      }),
+    ).toEqual({ shelf: "active", expanded: false });
+  });
+  it("promotes pending work without changing lifecycle or expansion", () => {
+    const parked = task({ settledOverride: "settled", snoozedUntil: future });
+    const member = thread({ latestUserMessageAt: now });
+    expect(taskHasLocalWork({ members: [], pendingCount: 0, now })).toBe(false);
+    expect(taskHasLocalWork({ members: [], pendingCount: 1, now })).toBe(true);
+    expect(taskHasLocalWork({ members: [member], pendingCount: 0, now })).toBe(true);
+    expect(taskHasLocalWork({ members: [member], pendingCount: 0, now: future })).toBe(false);
+    expect(
+      resolveTaskPresentation({
+        task: parked,
+        now,
+        hasLocalWork: true,
+        collapsed: true,
+        searching: false,
+        hasMatchingChildren: false,
+      }),
+    ).toEqual({ shelf: "active", expanded: false });
+    expect(taskShelf(parked, now)).toBe("snoozed");
+    for (const selected of [false, true])
+      for (const pending of [false, true]) {
+        expect(taskChildVisible({ expanded: false, matches: true, selected, pending })).toBe(
+          selected || pending,
+        );
+      }
   });
 });

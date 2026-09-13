@@ -22,6 +22,11 @@ import {
   sortTaskRowsByOrderKey,
   taskOrderRow,
   taskShelf,
+  taskMatchesSearch,
+  taskHasLocalWork,
+  taskMemberHasLocalWork,
+  resolveTaskPresentation,
+  taskChildVisible,
   threadOrderRow,
   type TaskGroupingTask,
   type TaskMemberStatus,
@@ -31,6 +36,7 @@ import {
   resolveSettledThreadTimestamp,
   sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import { sidebarMarkerId, type SidebarListMarker, type SidebarSection } from "./Sidebar.logic";
 
 export interface TaskSidebarDraft {
@@ -129,6 +135,7 @@ export function buildTaskSidebarInventory(input: {
   const matchesThread = (thread: EnvironmentThreadShell) =>
     !searching ||
     thread.title.toLocaleLowerCase().includes(query) ||
+    threadPullRequestSearchTerms(thread).some((term) => term.toLocaleLowerCase().includes(query)) ||
     input.matchingThreadKeys?.has(keyForThread(thread)) === true;
   const selectedThread = (thread: EnvironmentThreadShell) =>
     keyForThread(thread) === input.selectedThreadKey;
@@ -207,28 +214,37 @@ export function buildTaskSidebarInventory(input: {
       members.some(selectedThread) ||
       input.selectedTaskKey === taskKey ||
       drafts.some((draft) => draft.key === input.selectedDraftKey);
+    const hasLocalWork = taskHasLocalWork({ ...input, members, pendingCount: drafts.length });
     const matchingDrafts = drafts.filter(
       (draft) => !searching || draft.title?.toLocaleLowerCase().includes(query),
     );
     if (
       searching &&
-      !task.name.toLocaleLowerCase().includes(query) &&
+      !taskMatchesSearch(task, query) &&
       !members.some(matchesThread) &&
       !matchingDrafts.length &&
-      !selected
+      !selected &&
+      !hasLocalWork
     )
       continue;
-    // A locally invested draft keeps the task reachable without mutating canonical lifecycle.
-    const section = drafts.length
+    const effectiveShelf = hasLocalWork
       ? task.pinnedAt
         ? "pinned"
         : "active"
       : taskShelf(task, input.now);
-    const expanded = searching
-      ? members.some(matchesThread) || matchingDrafts.length > 0
-      : input.expandedTaskKeys?.has(taskKey) === true ||
-        ((section === "active" || section === "pinned") &&
-          input.collapsedTaskKeys?.has(taskKey) !== true);
+    const { shelf: section, expanded } = resolveTaskPresentation({
+      task,
+      now: input.now,
+      hasLocalWork,
+      collapsed: !(
+        input.expandedTaskKeys?.has(taskKey) === true ||
+        ((effectiveShelf === "active" || effectiveShelf === "pinned") &&
+          input.collapsedTaskKeys?.has(taskKey) !== true)
+      ),
+      searching,
+      hasMatchingChildren: members.some(matchesThread) || matchingDrafts.length > 0,
+    });
+    const parked = section === "snoozed" || section === "settled";
     const block: TaskSidebarItem[] = [
       {
         kind: "task",
@@ -246,41 +262,48 @@ export function buildTaskSidebarInventory(input: {
       },
     ];
     const visibleMember = (thread: EnvironmentThreadShell) =>
-      (expanded && matchesThread(thread)) || selectedThread(thread);
+      taskChildVisible({
+        expanded,
+        matches: matchesThread(thread),
+        selected: selectedThread(thread),
+        pending: taskMemberHasLocalWork(thread, input),
+      });
     for (const thread of group.live.filter(visibleMember))
       block.push(threadRow(thread, "active", taskKey));
     for (const thread of group.snoozed.filter(visibleMember))
       block.push(threadRow(thread, "snoozed", taskKey));
     block.push(
-      ...drafts
-        .filter(
-          (draft) =>
-            (expanded && matchingDrafts.includes(draft)) || draft.key === input.selectedDraftKey,
-        )
-        .map((draft): TaskSidebarItem => ({
-          kind: "draft",
-          key: draft.key,
-          draft,
-          section: "active",
-          taskKey,
-        })),
+      ...drafts.map((draft): TaskSidebarItem => ({
+        kind: "draft",
+        key: draft.key,
+        draft,
+        section: "active",
+        taskKey,
+      })),
     );
-    if (expanded) {
+    if (expanded && !parked) {
       block.push({ kind: "task-new-thread", key: `${orderRow.id}:new-thread`, taskKey, taskRef });
     }
-    const settledExpanded = searching || input.expandedSettledTaskKeys?.has(taskKey) === true;
-    const settled = group.settled.filter(
-      (thread) => (expanded && settledExpanded && matchesThread(thread)) || selectedThread(thread),
+    const settledExpanded =
+      parked || searching || input.expandedSettledTaskKeys?.has(taskKey) === true;
+    const settled = group.settled.filter((thread) =>
+      taskChildVisible({
+        expanded: expanded && settledExpanded,
+        matches: matchesThread(thread),
+        selected: selectedThread(thread),
+        pending: taskMemberHasLocalWork(thread, input),
+      }),
     );
     if ((expanded && group.settled.length > 0) || settled.length > 0) {
-      block.push({
-        kind: "task-settled-header",
-        key: `${orderRow.id}:settled`,
-        taskKey,
-        taskRef,
-        count: group.settled.length,
-        expanded: settledExpanded,
-      });
+      if (!parked)
+        block.push({
+          kind: "task-settled-header",
+          key: `${orderRow.id}:settled`,
+          taskKey,
+          taskRef,
+          count: group.settled.length,
+          expanded: settledExpanded,
+        });
       block.push(...settled.map((thread) => threadRow(thread, "settled", taskKey)));
     }
     blocks.set(
@@ -342,8 +365,19 @@ export function buildTaskSidebarInventory(input: {
           (item.kind === "task" && item.taskKey === input.selectedTaskKey) ||
           (item.kind === "draft" && item.key === input.selectedDraftKey),
       ) === true;
-  const append = (rows: readonly TaskOrderRow[]) => {
-    for (const row of rows) items.push(...blocks.get(row.id)!);
+  const append = (rows: readonly TaskOrderRow[], retainedOnly = false) => {
+    for (const row of rows)
+      items.push(
+        ...blocks
+          .get(row.id)!
+          .filter(
+            (item) =>
+              !retainedOnly ||
+              item.kind === "task" ||
+              (item.kind === "thread" && item.key === input.selectedThreadKey) ||
+              (item.kind === "draft" && item.key === input.selectedDraftKey),
+          ),
+      );
   };
   marker("pinned-header");
   append(visibleRows.pinned);
@@ -371,17 +405,20 @@ export function buildTaskSidebarInventory(input: {
       visibleRows.snoozed.filter(
         (row) => searching || input.snoozedExpanded === true || selectedBlock(row),
       ),
+      !searching && input.snoozedExpanded !== true,
     );
   }
   marker("settled-header");
-  const visibleSettled = visibleRows.settled.filter(
-    (row, index) =>
+  let visibleSettledCount = 0;
+  for (const [index, row] of visibleRows.settled.entries()) {
+    const showFull =
       searching ||
-      (input.settledExpanded === true && index < (input.settledVisibleCount ?? Infinity)) ||
-      selectedBlock(row),
-  );
-  append(visibleSettled);
-  if (!visibleSettled.length) marker("settled-placeholder");
+      (input.settledExpanded === true && index < (input.settledVisibleCount ?? Infinity));
+    if (!showFull && !selectedBlock(row)) continue;
+    append([row], !showFull);
+    visibleSettledCount += 1;
+  }
+  if (!visibleSettledCount) marker("settled-placeholder");
   return {
     items,
     orderRows,

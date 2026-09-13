@@ -463,7 +463,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   // can't disagree. updatedAt is always present, so the resolver never
   // returns null here.
   const settledTimestamp =
-    variant === "slim" && !snoozedRow ? resolveSettledThreadTimestamp(thread) : null;
+    variant === "slim" && thread.settledOverride === "settled" && !snoozedRow
+      ? resolveSettledThreadTimestamp(thread)
+      : null;
   const timeLabel =
     settledTimestamp !== null ? relativeTime(settledTimestamp) : threadTimeLabel(thread);
 
@@ -488,7 +490,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
 
   // Swipe: the v2 primary action is the lifecycle transition. Un-settling a
   // settled row keeps it active until new activity clears the user override.
-  const canUnsettle = variant === "slim";
+  const canUnsettle = variant === "slim" && thread.settledOverride === "settled";
   const [snoozeGateTick, bumpSnoozeGateTick] = useState(0);
   const snoozeGateExpiryMs = props.snoozeSupported
     ? resolveThreadListV2SnoozeGateExpiryMs(thread, { now: new Date().toISOString() })
@@ -501,6 +503,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [snoozeGateExpiryMs, snoozeGateTick]);
   const swipeActions = resolveThreadListV2SwipeActions({
     variant,
+    settled: canUnsettle,
     settlementSupported: props.settlementSupported,
     snoozeSupported: props.snoozeSupported,
     snoozable: canSnooze(thread, { now: new Date().toISOString() }),

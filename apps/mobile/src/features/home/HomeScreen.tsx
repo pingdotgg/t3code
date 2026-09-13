@@ -1,5 +1,5 @@
 import { readMobileTaskMove } from "../threads/use-mobile-task-order";
-import { groupThreadsByTask, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "../threads/TaskListRow";
 import { useMobileTaskList } from "../threads/use-mobile-task-list";
 import { buildMobileTaskListItems } from "../threads/taskList";
@@ -61,9 +61,7 @@ import {
 } from "../threads/thread-list-v2-items";
 import { resolveThreadProviderInstance } from "../threads/thread-provider-instance";
 import {
-  buildThreadListV2Items,
   getThreadListV2OrderedSection,
-  buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -489,18 +487,7 @@ export function HomeScreen(props: HomeScreenProps) {
       ),
     [v2ScopeProjects],
   );
-  const v2ScopedProjectKeys = useMemo(
-    () =>
-      v2ScopedProjectGroup === null
-        ? null
-        : new Set(
-            v2ScopedProjectGroup.projectRefs.map((projectRef) =>
-              scopedProjectKey(projectRef.environmentId, projectRef.projectId),
-            ),
-          ),
-    [v2ScopedProjectGroup],
-  );
-  // The outer list partitions ungrouped threads; task groups add their own member shelves.
+  // Task and thread units share shelf collapse and pagination.
   // Settled threads stay in the live shell stream (settled ≠ archived), so
   // the partition works directly off live shells — no snapshot merging or
   // optimistic holds.
@@ -684,73 +671,51 @@ export function HomeScreen(props: HomeScreenProps) {
     snoozeWakeTick,
   ]);
   const mobileTaskList = useMobileTaskList();
-  const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled)
-      return {
-        items: [],
-        hiddenSettledCount: 0,
-        snoozedCount: 0,
-        snoozedShelfHeaderIndex: null,
-        settledCount: 0,
-        settledShelfHeaderIndex: null,
-        nextSnoozeWakeAt: null,
-      };
-    // Settled threads are live shells; archived threads keep their original
-    // "hidden from lists" meaning.
-    return buildThreadListV2Items({
+  const threadListV2Layout = useMemo(
+    () =>
+      buildMobileTaskListItems({
+        ...mobileTaskList,
+        tasks: threadListV2Enabled ? mobileTaskList.tasks : [],
+        threads: threadListV2Enabled ? props.threads : [],
+        pendingTasks: threadListV2Enabled ? props.pendingTasks : [],
+        pendingOrder,
+        environmentId: props.selectedEnvironmentId,
+        projectScoped: v2ScopedProjectGroup !== null,
+        projectRefs: v2ScopedProjectGroup?.projectRefs ?? null,
+        searchQuery: props.searchQuery,
+        matchedThreadKeys,
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+        queuedThreadKeys,
+        settledLimit: settledVisibleCount,
+        now: new Date().toISOString(),
+        snoozedShelfExpanded,
+        settledShelfExpanded,
+        selectedThreadKey: null,
+      }),
+    [
+      mobileTaskList,
+      threadListV2Enabled,
+      props.threads,
+      props.pendingTasks,
       pendingOrder,
-      threads:
-        v2ScopedProjectGroup !== null
-          ? props.threads.filter((thread) => thread.archivedAt === null)
-          : groupThreadsByTask({
-              tasks: mobileTaskList.tasks,
-              threads: props.threads,
-              taskCapableEnvironmentIds: mobileTaskList.capableIds,
-            }).ungrouped,
-      environmentId: props.selectedEnvironmentId,
-      projectRefs: v2ScopedProjectGroup === null ? null : v2ScopedProjectGroup.projectRefs,
-      searchQuery: props.searchQuery,
+      props.selectedEnvironmentId,
+      v2ScopedProjectGroup,
+      props.searchQuery,
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       queuedThreadKeys,
-      settledLimit: settledVisibleCount,
-      now: new Date().toISOString(),
+      settledVisibleCount,
       snoozedShelfExpanded,
       settledShelfExpanded,
-      selectedThreadKey: null,
-    });
-  }, [
-    mobileTaskList,
-    pendingOrder,
-    queuedThreadKeys,
-    nowMinute,
-    snoozeWakeTick,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
-    settledVisibleCount,
-    settlementEnvironmentIds,
-    snoozeEnvironmentIds,
-    props.searchQuery,
-    props.selectedEnvironmentId,
-    props.threads,
-    matchedThreadKeys,
-    threadListV2Enabled,
-    v2ScopedProjectGroup,
-  ]);
+      nowMinute,
+      snoozeWakeTick,
+    ],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
-  const nextSnoozeWakeAt = useMemo(() => {
-    const now = Date.now();
-    return (
-      [
-        threadListV2Layout.nextSnoozeWakeAt,
-        ...mobileTaskList.tasks.map((task) => task.snoozedUntil),
-      ]
-        .filter((value): value is string => value != null && Date.parse(value) > now)
-        .sort()[0] ?? null
-    );
-  }, [threadListV2Layout.nextSnoozeWakeAt, mobileTaskList.tasks, snoozeWakeTick, nowMinute]);
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
     const wakeAtMs = Date.parse(nextSnoozeWakeAt);
@@ -762,68 +727,7 @@ export function HomeScreen(props: HomeScreenProps) {
     // unchanged: after a clamped fire (wake beyond the 32-bit setTimeout
     // range) the boundary string is identical and the chain would die.
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
-  // Queued tasks are not thread shells, so the v2 partition never sees them;
-  // they are spliced in below the active block and stay visible and deletable
-  // while their environment is offline. Same environment scope and search
-  // filter as the list itself.
-  const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-  const v2PendingTasks = useMemo(
-    () =>
-      props.pendingTasks.filter(
-        (pendingTask) =>
-          (props.selectedEnvironmentId === null ||
-            pendingTask.environmentId === props.selectedEnvironmentId) &&
-          (v2ScopedProjectKeys === null ||
-            v2ScopedProjectKeys.has(
-              scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-            )) &&
-          (v2SearchQuery.length === 0 ||
-            pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-      ),
-    [props.pendingTasks, props.selectedEnvironmentId, v2ScopedProjectKeys, v2SearchQuery],
-  );
-  const threadListV2Items = useMemo(
-    () =>
-      buildMobileTaskListItems({
-        ...mobileTaskList,
-        ungroupedLayout: true,
-        threads: props.threads,
-        pendingTasks: props.pendingTasks,
-        environmentId: props.selectedEnvironmentId,
-        projectScoped: v2ScopedProjectGroup !== null,
-        searchQuery: props.searchQuery,
-        matchedThreadKeys,
-        queuedThreadKeys,
-        now: new Date().toISOString(),
-        items: buildThreadListV2ListItems({
-          items: threadListV2Layout.items,
-          pendingTasks: v2PendingTasks,
-          snoozedCount: threadListV2Layout.snoozedCount,
-          snoozedShelfExpanded,
-          snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-          settledCount: threadListV2Layout.settledCount,
-          settledShelfExpanded,
-          settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-          snoozeLabelNow: `${nowMinute}:00.000Z`,
-        }),
-      }),
-    [
-      snoozeWakeTick,
-      mobileTaskList,
-      props.threads,
-      props.pendingTasks,
-      props.selectedEnvironmentId,
-      props.searchQuery,
-      v2ScopedProjectGroup,
-      matchedThreadKeys,
-      queuedThreadKeys,
-      nowMinute,
-      settledShelfExpanded,
-      snoozedShelfExpanded,
-      threadListV2Layout,
-      v2PendingTasks,
-    ],
-  );
+  const threadListV2Items = threadListV2Layout.items;
 
   const renderV2Item = useCallback(
     ({ item, index }: { readonly item: ThreadListV2ListItem; readonly index: number }) => {
@@ -1239,7 +1143,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
                   <Pressable
                     accessibilityRole="button"
-                    accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+                    accessibilityLabel={`Show ${Math.min(threadListV2Layout.hiddenSettledCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled items`}
                     onPress={showMoreSettled}
                     className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
                     style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}

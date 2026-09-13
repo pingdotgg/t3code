@@ -98,12 +98,7 @@ export function partitionTaskMembers<T extends EnvironmentThreadShell>(
     if (member.archivedAt !== null) continue;
     if (effectiveSnoozed(member, options)) {
       snoozed.push(member);
-    } else if (
-      member.settledOverride === "settled" &&
-      options.queuedThreadKeys?.has(
-        scopedThreadKey(scopeThreadRef(member.environmentId, member.id)),
-      ) !== true
-    ) {
+    } else if (member.settledOverride === "settled" && !taskMemberHasLocalWork(member, options)) {
       settled.push(member);
     } else {
       live.push(member);
@@ -166,6 +161,75 @@ export function taskShelf(task: OrchestrationTaskShell, now: string) {
   if (task.settledOverride === "settled") return "settled";
   if (task.pinnedAt !== null) return "pinned";
   return "active";
+}
+
+/** Container search does not make unrelated children match. */
+export function taskMatchesSearch(
+  task: Pick<OrchestrationTaskShell, "name" | "description">,
+  query: string,
+) {
+  const normalized = query.trim().toLocaleLowerCase();
+  return (
+    !normalized ||
+    task.name.toLocaleLowerCase().includes(normalized) ||
+    task.description?.toLocaleLowerCase().includes(normalized) === true
+  );
+}
+
+/** Both native outbox messages and a server-accepted start awaiting adoption are pending work. */
+export function taskMemberHasLocalWork(
+  member: EnvironmentThreadShell,
+  options: {
+    readonly now: string;
+    readonly queuedThreadKeys?: ReadonlySet<string>;
+  },
+) {
+  return (
+    member.archivedAt === null &&
+    (options.queuedThreadKeys?.has(
+      scopedThreadKey(scopeThreadRef(member.environmentId, member.id)),
+    ) === true ||
+      hasQueuedTurnStart(member, options))
+  );
+}
+
+/** Pending creations here have already passed the client's invested-draft filter. */
+export function taskHasLocalWork(input: {
+  readonly members: readonly EnvironmentThreadShell[];
+  readonly pendingCount: number;
+  readonly now: string;
+  readonly queuedThreadKeys?: ReadonlySet<string>;
+}) {
+  return (
+    input.pendingCount > 0 || input.members.some((member) => taskMemberHasLocalWork(member, input))
+  );
+}
+
+/** Local work changes presentation only; selection never changes the saved expansion choice. */
+export function resolveTaskPresentation(input: {
+  readonly task: TaskGroupingTask;
+  readonly now: string;
+  readonly hasLocalWork: boolean;
+  readonly collapsed: boolean;
+  readonly searching: boolean;
+  readonly hasMatchingChildren: boolean;
+}) {
+  const shelf = input.hasLocalWork
+    ? input.task.pinnedAt
+      ? "pinned"
+      : "active"
+    : taskShelf(input.task, input.now);
+  return { shelf, expanded: input.searching ? input.hasMatchingChildren : !input.collapsed };
+}
+
+/** Selected and pending children survive collapse without revealing their siblings. */
+export function taskChildVisible(input: {
+  readonly expanded: boolean;
+  readonly matches: boolean;
+  readonly selected: boolean;
+  readonly pending: boolean;
+}) {
+  return (input.expanded && input.matches) || input.selected || input.pending;
 }
 
 export function resolveSettledTaskTimestamp(task: OrchestrationTaskShell): string {

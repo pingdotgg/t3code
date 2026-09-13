@@ -65,6 +65,8 @@ export function resolveThreadListV2SnoozeMenuSelection(input: {
 export function resolveThreadListV2SwipeActions(input: {
   readonly variant: "card" | "slim";
   readonly settlementSupported: boolean;
+  /** Parked task children can be slim while their own lifecycle remains active. */
+  readonly settled?: boolean;
   readonly snoozeSupported: boolean;
   readonly snoozable: boolean;
   /** Row is on the snoozed shelf. */
@@ -77,7 +79,7 @@ export function resolveThreadListV2SwipeActions(input: {
     return { primary: "unsnooze", secondary: null };
   }
   const primary = input.settlementSupported
-    ? input.variant === "slim"
+    ? (input.settled ?? input.variant === "slim")
       ? "unsettle"
       : "settle"
     : "archive";
@@ -403,6 +405,7 @@ export function buildThreadListV2Items(input: {
     }
     if (
       query.length > 0 &&
+      `${thread.environmentId}:${thread.id}` !== input.selectedThreadKey &&
       !thread.title.toLocaleLowerCase().includes(query) &&
       !threadPullRequestSearchTerms(thread).some((term) =>
         term.toLocaleLowerCase().includes(query),

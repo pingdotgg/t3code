@@ -1,5 +1,5 @@
 import { readMobileTaskMove } from "./use-mobile-task-order";
-import { groupThreadsByTask, threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
+import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { TaskListRow, TaskCreateListButton } from "./TaskListRow";
 import { useMobileTaskList } from "./use-mobile-task-list";
 import { buildMobileTaskListItems } from "./taskList";
@@ -86,9 +86,7 @@ import {
 } from "./thread-list-v2-items";
 import { resolveThreadProviderInstance } from "./thread-provider-instance";
 import {
-  buildThreadListV2Items,
   getThreadListV2OrderedSection,
-  buildThreadListV2ListItems,
   THREAD_LIST_V2_SETTLED_INITIAL_COUNT,
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
@@ -522,72 +520,54 @@ function ThreadNavigationSidebarPane(
     snoozeWakeTick,
   ]);
   const mobileTaskList = useMobileTaskList();
-  const threadListV2Layout = useMemo(() => {
-    if (!threadListV2Enabled)
-      return {
-        items: [],
-        hiddenSettledCount: 0,
-        snoozedCount: 0,
-        snoozedShelfHeaderIndex: null,
-        settledCount: 0,
-        settledShelfHeaderIndex: null,
-        nextSnoozeWakeAt: null,
-      };
-    return buildThreadListV2Items({
+  const threadListV2Layout = useMemo(
+    () =>
+      buildMobileTaskListItems({
+        ...mobileTaskList,
+        tasks: threadListV2Enabled ? mobileTaskList.tasks : [],
+        threads: threadListV2Enabled ? threads : [],
+        pendingTasks: threadListV2Enabled ? pendingTasks : [],
+        pendingOrder,
+        environmentId: options.selectedEnvironmentId,
+        projectScoped: selectedProjectScope !== null,
+        projectRefs: selectedProjectScope?.projectRefs ?? null,
+        searchQuery: props.searchQuery,
+        matchedThreadKeys,
+        settlementEnvironmentIds,
+        snoozeEnvironmentIds,
+        queuedThreadKeys,
+        settledLimit: settledVisibleCount,
+        now: new Date().toISOString(),
+        snoozedShelfExpanded,
+        settledShelfExpanded,
+        selectedThreadKey: props.selectedThreadKey,
+        selectedTaskKey: props.selectedTaskKey,
+      }),
+    [
+      mobileTaskList,
+      threadListV2Enabled,
+      threads,
+      pendingTasks,
       pendingOrder,
-      threads:
-        selectedProjectScope !== null
-          ? threads.filter((thread) => thread.archivedAt === null)
-          : groupThreadsByTask({
-              tasks: mobileTaskList.tasks,
-              threads,
-              taskCapableEnvironmentIds: mobileTaskList.capableIds,
-            }).ungrouped,
-      environmentId: options.selectedEnvironmentId,
-      projectRefs: selectedProjectScope === null ? null : selectedProjectScope.projectRefs,
-      searchQuery: props.searchQuery,
+      options.selectedEnvironmentId,
+      selectedProjectScope,
+      props.searchQuery,
       matchedThreadKeys,
       settlementEnvironmentIds,
       snoozeEnvironmentIds,
       queuedThreadKeys,
-      settledLimit: settledVisibleCount,
-      now: new Date().toISOString(),
+      settledVisibleCount,
       snoozedShelfExpanded,
       settledShelfExpanded,
-      selectedThreadKey: props.selectedThreadKey ?? null,
-    });
-  }, [
-    mobileTaskList,
-    pendingOrder,
-    queuedThreadKeys,
-    nowMinute,
-    snoozeWakeTick,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
-    props.selectedThreadKey,
-    options.selectedEnvironmentId,
-    props.searchQuery,
-    matchedThreadKeys,
-    settledVisibleCount,
-    settlementEnvironmentIds,
-    snoozeEnvironmentIds,
-    threadListV2Enabled,
-    threads,
-    selectedProjectScope,
-  ]);
+      nowMinute,
+      snoozeWakeTick,
+      props.selectedThreadKey,
+      props.selectedTaskKey,
+    ],
+  );
   // Re-partition the moment the earliest snooze expires (clamped to the
   // signed-32-bit setTimeout range; far-future wakes re-arm at the clamp).
-  const nextSnoozeWakeAt = useMemo(() => {
-    const now = Date.now();
-    return (
-      [
-        threadListV2Layout.nextSnoozeWakeAt,
-        ...mobileTaskList.tasks.map((task) => task.snoozedUntil),
-      ]
-        .filter((value): value is string => value != null && Date.parse(value) > now)
-        .sort()[0] ?? null
-    );
-  }, [threadListV2Layout.nextSnoozeWakeAt, mobileTaskList.tasks, snoozeWakeTick, nowMinute]);
+  const nextSnoozeWakeAt = threadListV2Layout.nextSnoozeWakeAt;
   useEffect(() => {
     if (nextSnoozeWakeAt === null) return;
     const wakeAtMs = Date.parse(nextSnoozeWakeAt);
@@ -601,48 +581,7 @@ function ThreadNavigationSidebarPane(
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const listItems = useMemo<readonly SidebarListItem[]>(() => {
     if (!threadListV2Enabled) return listLayout.items;
-    // Queued offline tasks are not thread shells, so the v2 item builder
-    // never sees them; the shared splice puts them below the active block
-    // (mirrors the compact Home v2 list) where they stay visible and
-    // deletable while their environment is offline. Same environment scope
-    // and search filter as the list.
-    const v2SearchQuery = props.searchQuery.trim().toLocaleLowerCase();
-    const v2PendingTasks = pendingTasks.filter(
-      (pendingTask) =>
-        (options.selectedEnvironmentId === null ||
-          pendingTask.environmentId === options.selectedEnvironmentId) &&
-        (selectedProjectRefs === null ||
-          selectedProjectRefs.has(
-            scopedProjectKey(pendingTask.environmentId, pendingTask.projectId),
-          )) &&
-        (v2SearchQuery.length === 0 ||
-          pendingTask.title.toLocaleLowerCase().includes(v2SearchQuery)),
-    );
-    const items: SidebarListItem[] = buildMobileTaskListItems({
-      ...mobileTaskList,
-      ungroupedLayout: true,
-      threads,
-      pendingTasks,
-      environmentId: options.selectedEnvironmentId,
-      projectScoped: selectedProjectScope !== null,
-      searchQuery: props.searchQuery,
-      selectedThreadKey: props.selectedThreadKey,
-      selectedTaskKey: props.selectedTaskKey,
-      matchedThreadKeys,
-      queuedThreadKeys,
-      now: new Date().toISOString(),
-      items: buildThreadListV2ListItems({
-        items: threadListV2Layout.items,
-        pendingTasks: v2PendingTasks,
-        snoozedCount: threadListV2Layout.snoozedCount,
-        snoozedShelfExpanded,
-        snoozedShelfHeaderIndex: threadListV2Layout.snoozedShelfHeaderIndex,
-        settledCount: threadListV2Layout.settledCount,
-        settledShelfExpanded,
-        settledShelfHeaderIndex: threadListV2Layout.settledShelfHeaderIndex,
-        snoozeLabelNow: `${nowMinute}:00.000Z`,
-      }),
-    });
+    const items: SidebarListItem[] = [...threadListV2Layout.items];
     if (settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0) {
       items.push({
         type: "v2-show-more",
@@ -651,26 +590,7 @@ function ThreadNavigationSidebarPane(
       });
     }
     return items;
-  }, [
-    snoozeWakeTick,
-    mobileTaskList,
-    threads,
-    selectedProjectScope,
-    props.selectedThreadKey,
-    props.selectedTaskKey,
-    matchedThreadKeys,
-    queuedThreadKeys,
-    listLayout.items,
-    nowMinute,
-    options.selectedEnvironmentId,
-    pendingTasks,
-    props.searchQuery,
-    selectedProjectRefs,
-    settledShelfExpanded,
-    snoozedShelfExpanded,
-    threadListV2Enabled,
-    threadListV2Layout,
-  ]);
+  }, [threadListV2Enabled, listLayout.items, settledShelfExpanded, threadListV2Layout]);
   const listMenuActions = useMemo<MenuAction[]>(
     () => [
       {
@@ -1041,7 +961,7 @@ function ThreadNavigationSidebarPane(
           return (
             <Pressable
               accessibilityRole="button"
-              accessibilityLabel={`Show ${Math.min(item.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled threads`}
+              accessibilityLabel={`Show ${Math.min(item.hiddenCount, THREAD_LIST_V2_SETTLED_PAGE_COUNT)} more settled items`}
               onPress={showMoreSettled}
               className="mx-4 mt-2 items-center rounded-lg border border-dashed border-border py-2.5"
               style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
@@ -1279,7 +1199,9 @@ function ThreadNavigationSidebarPane(
                 ListHeaderComponent={TaskCreateListButton}
                 estimatedItemSize={64}
                 extraData={listExtraData}
-                getItemType={(item) => item.type}
+                getItemType={(item) =>
+                  item.type === "v2-thread" ? `v2-thread:${item.item.variant}` : item.type
+                }
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
@@ -1340,7 +1262,9 @@ function ThreadNavigationSidebarPane(
               ListHeaderComponent={TaskCreateListButton}
               estimatedItemSize={64}
               extraData={listExtraData}
-              getItemType={(item) => item.type}
+              getItemType={(item) =>
+                item.type === "v2-thread" ? `v2-thread:${item.item.variant}` : item.type
+              }
               itemsAreEqual={sidebarItemsAreEqual}
               keyExtractor={(item) => item.key}
               renderItem={renderListItem}

@@ -138,8 +138,8 @@ describe("task sidebar inventory", () => {
       threads: [thread("one", { settledOverride: "settled" }), thread("two")],
       selectedThreadKey: key("one"),
     });
-    expect(items.map((item) => item.kind)).toEqual(["task", "task-settled-header", "thread"]);
-    expect(items[2]).toMatchObject({ key: key("one"), slim: true, section: "settled" });
+    expect(items.map((item) => item.kind)).toEqual(["task", "thread"]);
+    expect(items[1]).toMatchObject({ key: key("one"), slim: true, section: "settled" });
   });
 
   it("keeps a selected invested draft visible inside a collapsed task", () => {
@@ -254,5 +254,56 @@ describe("task drop intent", () => {
         (assignment) => assignment.kind,
       ),
     ).toEqual(["thread", "thread"]);
+  });
+});
+
+describe("task presentation across shelves", () => {
+  it("matches descriptions and keeps queued members reachable without expanding siblings", () => {
+    const collapsedTaskKeys = new Set([taskKey]);
+    expect(
+      content({
+        ...base,
+        tasks: [task({ description: "Deployment checklist" })],
+        search: "checklist",
+      }).map((item) => item.kind),
+    ).toEqual(["task"]);
+    const parked = task({ settledOverride: "settled" });
+    for (const pending of [
+      { queuedThreadKeys: new Set([key("two")]) },
+      { threads: [thread("one"), thread("two", { latestUserMessageAt: now })] },
+    ]) {
+      const items = content({ ...base, tasks: [parked], collapsedTaskKeys, ...pending });
+      expect(items.map((item) => item.key)).toEqual([`task:${taskKey}`, key("two")]);
+      expect(items[0]).toMatchObject({ section: "active", expanded: false, counts: { live: 2 } });
+    }
+    expect(content({ ...base, collapsedTaskKeys }).map((item) => item.kind)).toEqual(["task"]);
+    expect(collapsedTaskKeys).toEqual(new Set([taskKey]));
+  });
+  it("renders parked children slim without active-task structure and retains only a selected child through outer collapse", () => {
+    const input = {
+      ...base,
+      tasks: [task({ settledOverride: "settled" })],
+      threads: [thread("one"), thread("two", { settledOverride: "settled" })],
+      expandedTaskKeys: new Set([taskKey]),
+      settledExpanded: true,
+    };
+    const items = content(input);
+    expect(items.map((item) => item.kind)).toEqual(["task", "thread", "thread"]);
+    expect(items.slice(1).every((item) => item.kind === "thread" && item.slim)).toBe(true);
+    expect(
+      content({ ...input, settledExpanded: false, selectedThreadKey: key("two") }).map(
+        (item) => item.key,
+      ),
+    ).toEqual([`task:${taskKey}`, key("two")]);
+  });
+  it("retains pending drafts inside collapsed tasks even while another thread is selected", () => {
+    const items = content({
+      ...base,
+      tasks: [task({ settledOverride: "settled" })],
+      collapsedTaskKeys: new Set([taskKey]),
+      drafts: [{ key: "pending", environmentId, projectId, taskId: task().id }],
+      selectedThreadKey: key("outside"),
+    });
+    expect(items.map((item) => item.key)).toEqual([`task:${taskKey}`, "pending"]);
   });
 });
