@@ -1836,8 +1836,8 @@ export function ConnectionsSettings() {
     [environments],
   );
   // Machines "Update all" can reach: switched on, connected, behind the client
-  // version, and not already mid-update. Manual-update machines stay in the list
-  // with their own copy-command action.
+  // version, remotely updatable, and not already mid-update. The button only
+  // renders when this list is non-empty.
   const savedServerUpdateStatesAtom = useMemo(
     () =>
       Atom.make((get) =>
@@ -1853,12 +1853,17 @@ export function ConnectionsSettings() {
     () =>
       savedServerUpdateStates.flatMap(({ environment, updateStatus }): ServerUpdateTarget[] => {
         const mismatch = resolveServerConfigVersionMismatch(environment.serverConfig);
+        const selfUpdate = resolveServerSelfUpdateCapability(environment.serverConfig);
+        const desktopAppUpdate = supportsDesktopAppUpdate(environment.serverConfig);
         if (
           !mismatch ||
           updateStatus === "running" ||
           !environment.entry.enabled ||
           environment.connection.phase !== "connected" ||
-          isDesktopLocalConnectionTarget(environment.entry.target)
+          isDesktopLocalConnectionTarget(environment.entry.target) ||
+          // Manual-update machines only offer a copy command on their row.
+          selfUpdate === null ||
+          (selfUpdate === "desktop-managed" && !desktopAppUpdate)
         ) {
           return [];
         }
@@ -1866,8 +1871,8 @@ export function ConnectionsSettings() {
           {
             environmentId: environment.environmentId,
             serverLabel: environment.label,
-            selfUpdate: resolveServerSelfUpdateCapability(environment.serverConfig),
-            desktopAppUpdate: supportsDesktopAppUpdate(environment.serverConfig),
+            selfUpdate,
+            desktopAppUpdate,
             threadContinuation: supportsServerUpdateThreadContinuation(environment.serverConfig),
             continueThreadsAfterServerUpdate:
               environment.serverConfig?.settings.continueThreadsAfterServerUpdate ?? false,
