@@ -6,6 +6,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationReadModel,
+  type OrchestrationCommand,
 } from "@t3tools/contracts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { expect, it } from "@effect/vitest";
@@ -34,8 +35,8 @@ function makeReadModel(): OrchestrationReadModel {
         modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
         runtimeMode: "full-access",
         interactionMode: "default",
-        branch: null,
-        worktreePath: null,
+        branch: "original",
+        worktreePath: "/shared",
         latestTurn: null,
         createdAt: NOW,
         updatedAt: NOW,
@@ -59,6 +60,26 @@ function makeReadModel(): OrchestrationReadModel {
   };
 }
 
+const decideBranchUpdate = Effect.fn(function* (
+  readModel: OrchestrationReadModel,
+  updates: Partial<Extract<OrchestrationCommand, { type: "thread.meta.update" }>> = {},
+) {
+  const event = yield* decideOrchestrationCommand({
+    readModel,
+    checkoutDirectories,
+    command: {
+      type: "thread.meta.update",
+      commandId: CommandId.make("drift"),
+      threadId: ThreadId.make("thread-1"),
+      branch: "drifted",
+      expectedBranch: "original",
+      requireIdleWorktreePath: "/shared",
+      ...updates,
+    },
+  });
+  return Array.isArray(event) ? event[0] : event;
+});
+
 it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
   for (const status of ["starting", "running", "ready"] as const) {
     it.effect(
@@ -66,15 +87,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
       () =>
         Effect.gen(function* () {
           const base = makeReadModel();
-          const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/shared" };
-          const command = {
-            type: "thread.meta.update" as const,
-            commandId: CommandId.make("drift"),
-            threadId: thread.id,
-            branch: "drifted",
-            expectedBranch: "original",
-            requireIdleWorktreePath: "/shared",
-          };
+          const thread = base.threads[0]!;
           const sibling = {
             ...thread,
             id: ThreadId.make("sibling"),
@@ -90,24 +103,17 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
               updatedAt: NOW,
             },
           };
-          const event = yield* decideOrchestrationCommand({
-            checkoutDirectories,
-            command,
-            readModel: { ...base, threads: [thread, sibling] },
-          });
-          const events = Array.isArray(event) ? event : [event];
-          expect(events[0]).toMatchObject({
+          const event = yield* decideBranchUpdate({ ...base, threads: [thread, sibling] });
+          expect(event).toMatchObject({
             type: "thread.meta-updated",
             payload: { branch: "original", updatedAt: NOW },
           });
 
-          const idleEvent = yield* decideOrchestrationCommand({
-            checkoutDirectories,
-            command,
-            readModel: { ...base, threads: [thread, { ...sibling, session: null }] },
+          const idleEvent = yield* decideBranchUpdate({
+            ...base,
+            threads: [thread, { ...sibling, session: null }],
           });
-          const idleEvents = Array.isArray(idleEvent) ? idleEvent : [idleEvent];
-          expect(idleEvents[0]).toMatchObject({
+          expect(idleEvent).toMatchObject({
             type: "thread.meta-updated",
             payload: { branch: "drifted", updatedAt: "1970-01-01T00:00:00.000Z" },
           });
@@ -121,7 +127,7 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
       () =>
         Effect.gen(function* () {
           const base = makeReadModel();
-          const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/shared" };
+          const thread = base.threads[0]!;
           // Effect's test clock starts at the epoch. Stale messages exceed the queue grace period.
           const createdAt = queued ? "1970-01-01T00:00:00.000Z" : "1969-12-31T23:50:00.000Z";
           const sibling = {
@@ -140,20 +146,8 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
               },
             ],
           };
-          const event = yield* decideOrchestrationCommand({
-            checkoutDirectories,
-            command: {
-              type: "thread.meta.update",
-              commandId: CommandId.make("queued-drift"),
-              threadId: thread.id,
-              branch: "drifted",
-              expectedBranch: "original",
-              requireIdleWorktreePath: "/shared",
-            },
-            readModel: { ...base, threads: [thread, sibling] },
-          });
-          const events = Array.isArray(event) ? event : [event];
-          expect(events[0]).toMatchObject({
+          const event = yield* decideBranchUpdate({ ...base, threads: [thread, sibling] });
+          expect(event).toMatchObject({
             type: "thread.meta-updated",
             payload: { branch: queued ? "original" : "drifted" },
           });
@@ -164,21 +158,9 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
   it.effect("rejects drift after the thread moves to another checkout", () =>
     Effect.gen(function* () {
       const base = makeReadModel();
-      const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/new-checkout" };
-      const event = yield* decideOrchestrationCommand({
-        checkoutDirectories,
-        command: {
-          type: "thread.meta.update",
-          commandId: CommandId.make("drift-moved"),
-          threadId: thread.id,
-          branch: "drifted",
-          expectedBranch: "original",
-          requireIdleWorktreePath: "/shared",
-        },
-        readModel: { ...base, threads: [thread] },
-      });
-      const events = Array.isArray(event) ? event : [event];
-      expect(events[0]).toMatchObject({
+      const thread = { ...base.threads[0]!, worktreePath: "/new-checkout" };
+      const event = yield* decideBranchUpdate({ ...base, threads: [thread] });
+      expect(event).toMatchObject({
         type: "thread.meta-updated",
         payload: { branch: "original" },
       });
@@ -188,21 +170,9 @@ it.layer(NodeServices.layer)("worktree branch drift guard", (it) => {
   it.effect("still timestamps an explicit title update when branch adoption is blocked", () =>
     Effect.gen(function* () {
       const base = makeReadModel();
-      const thread = { ...base.threads[0]!, branch: "original", worktreePath: "/new-checkout" };
-      const event = yield* decideOrchestrationCommand({
-        checkoutDirectories,
-        command: {
-          type: "thread.meta.update",
-          commandId: CommandId.make("drift-with-title"),
-          threadId: thread.id,
-          title: "Renamed",
-          branch: "drifted",
-          requireIdleWorktreePath: "/shared",
-        },
-        readModel: { ...base, threads: [thread] },
-      });
-      const events = Array.isArray(event) ? event : [event];
-      expect(events[0]).toMatchObject({
+      const thread = { ...base.threads[0]!, worktreePath: "/new-checkout" };
+      const event = yield* decideBranchUpdate({ ...base, threads: [thread] }, { title: "Renamed" });
+      expect(event).toMatchObject({
         type: "thread.meta-updated",
         payload: { branch: "original", title: "Renamed", updatedAt: "1970-01-01T00:00:00.000Z" },
       });
