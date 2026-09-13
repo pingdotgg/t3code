@@ -5,7 +5,7 @@ import UIKit
 @testable import T3Code
 
 @MainActor
-@Suite("Home row trailing swipe actions")
+@Suite("Home row swipe actions")
 struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
@@ -153,6 +153,136 @@ struct HomeThreadSwipeActionTests {
         }
     }
 
+    /// The leading edge is a dedicated pin toggle: it pins a pinnable row and
+    /// reverses on a pinned one, so the gesture and the context menu always
+    /// agree on what is available.
+    @Test
+    func theLeadingSwipeTogglesPinning() {
+        let pinnable = thread(id: "pinnable")
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinnable, isArchived: false) == [.pin]
+        )
+
+        let pinned = thread(id: "pinned", pinnedAt: now.addingTimeInterval(-30))
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinned, isArchived: false) == [.unpin]
+        )
+
+        // Rows that cannot pin and archived rows offer nothing on this edge.
+        var unpinnable = thread(id: "unpinnable")
+        unpinnable.supportsPinning = false
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: unpinnable, isArchived: false).isEmpty
+        )
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinnable, isArchived: true).isEmpty
+        )
+        #expect(
+            HomeThreadSwipeAction.leadingActions(for: pinned, isArchived: true).isEmpty
+        )
+    }
+
+    /// Without snooze support, the leading edge remains the pin toggle.
+    @Test
+    func theLeadingSwipeNeverOffersSettlementOrDelete() {
+        for isSettled in [false, true] {
+            for isPinned in [false, true] {
+                for supportsSettlement in [nil, true, false] as [Bool?] {
+                    for supportsPinning in [nil, true, false] as [Bool?] {
+                        for isArchived in [false, true] {
+                            var candidate = thread(
+                                id: "row",
+                                pinnedAt: isPinned ? now.addingTimeInterval(-30) : nil
+                            )
+                            candidate.isSettled = isSettled
+                            candidate.supportsSettlement = supportsSettlement
+                            candidate.supportsPinning = supportsPinning
+                            candidate.isArchived = isArchived
+
+                            let actions = HomeThreadSwipeAction.leadingActions(
+                                for: candidate,
+                                isArchived: isArchived
+                            )
+
+                            #expect(actions.count <= 1)
+                            #expect(!actions.contains(.delete))
+                            #expect(actions.allSatisfy { $0.isPinToggle })
+                            #expect(
+                                HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions)
+                                    == (actions.first?.isPinToggle ?? false)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    func snoozeIsSecondAndPinningStillOwnsTheFullSwipe() {
+        for pinned in [false, true] {
+            var candidate = thread(id: "snooze", pinnedAt: pinned ? now : nil)
+            candidate.supportsSnooze = true
+            let actions = HomeThreadSwipeAction.leadingActions(
+                for: candidate, isArchived: false, at: now
+            )
+            #expect(actions == [pinned ? .unpin : .pin, .snooze])
+            #expect(HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+        }
+    }
+
+    @Test
+    func snoozeWithoutPinSupportRequiresAnExplicitTap() {
+        var candidate = thread(id: "snooze-only")
+        candidate.supportsPinning = false
+        candidate.supportsSnooze = true
+        let actions = HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        )
+        #expect(actions == [.snooze])
+        #expect(!HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+    }
+
+    @Test
+    func snoozeRequiresSupportAndDoesNotHideWorkAwaitingInput() {
+        for support in [nil, false, true] as [Bool?] {
+            for state in [FeatureThreadState.queued, .working, .monitoring,
+                          .waitingForApproval, .waitingForInput] {
+                var candidate = thread(id: "busy")
+                candidate.supportsSnooze = support
+                candidate.state = state
+                let actions = HomeThreadSwipeAction.leadingActions(
+                    for: candidate, isArchived: false, at: now
+                )
+                #expect(actions.contains(.snooze) ==
+                    (support == true && (state == .working || state == .monitoring)))
+                #expect(actions.first == .pin)
+                #expect(HomeThreadSwipeAction.performsLeadingFullSwipe(with: actions))
+            }
+        }
+    }
+
+    @Test
+    func wakeUsesEffectiveSnoozeStateAndKeepsPinningFirst() {
+        var candidate = thread(id: "snoozed", pinnedAt: now)
+        candidate.snoozedUntil = now.addingTimeInterval(3600)
+        candidate.supportsSnooze = false
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        ) == [.unpin, .wake])
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: true, at: now
+        ).isEmpty)
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now.addingTimeInterval(3600)
+        ) == [.unpin, .snooze])
+
+        candidate.state = .waitingForInput
+        #expect(HomeThreadSwipeAction.leadingActions(
+            for: candidate, isArchived: false, at: now
+        ) == [.unpin])
+    }
+
     /// Delete must never reach the edge slot, because the edge slot is what a
     /// full swipe runs. This sweeps every pinned/settled/capability/archived
     /// combination rather than trusting the branch order.
@@ -205,6 +335,7 @@ struct HomeThreadSwipeActionTests {
     func actionsRequestExactlyOneLifecycleMutationEach() {
         #expect(HomeThreadSwipeAction.settle.intent == .setSettled(true))
         #expect(HomeThreadSwipeAction.reopen.intent == .setSettled(false))
+        #expect(HomeThreadSwipeAction.pin.intent == .setPinned(true))
         #expect(HomeThreadSwipeAction.unpin.intent == .setPinned(false))
         #expect(HomeThreadSwipeAction.archive.intent == .setArchived(true))
         #expect(HomeThreadSwipeAction.restore.intent == .setArchived(false))
@@ -212,8 +343,13 @@ struct HomeThreadSwipeActionTests {
 
         #expect(HomeThreadSwipeAction.settle.isSettlement)
         #expect(HomeThreadSwipeAction.reopen.isSettlement)
+        #expect(!HomeThreadSwipeAction.pin.isSettlement)
         #expect(!HomeThreadSwipeAction.unpin.isSettlement)
         #expect(!HomeThreadSwipeAction.delete.isSettlement)
+        #expect(HomeThreadSwipeAction.pin.isPinToggle)
+        #expect(HomeThreadSwipeAction.unpin.isPinToggle)
+        #expect(!HomeThreadSwipeAction.settle.isPinToggle)
+        #expect(HomeThreadSwipeAction.pin.backgroundColor == .systemOrange)
 
         // The settlement actions keep the row's existing accent vocabulary and
         // never inherit the destructive style that arms a destructive swipe.
@@ -1182,6 +1318,7 @@ struct HomeThreadSwipeActionTests {
                 onSettle(thread, settled, completion)
                 if let settlementResult { completion(settlementResult) }
             },
+            onChooseSnooze: { _ in },
             onSnooze: { _, _ in },
             onPin: { _, _ in },
             onDelete: { _ in },

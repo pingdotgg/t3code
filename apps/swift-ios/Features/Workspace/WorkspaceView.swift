@@ -57,6 +57,7 @@ public struct WorkspaceView: View {
     @State private var showingSettings = false
     @State private var renamingThread: FeatureThread?
     @State private var deletingThread: FeatureThread?
+    @State private var snoozingThread: FeatureThread?
     @State private var renameTitle = ""
     @State private var sidebarBoundaryNow = Date.now
     @State private var preferredCompactColumn = NavigationSplitViewColumn.sidebar
@@ -300,6 +301,9 @@ public struct WorkspaceView: View {
                 onSettle: { thread, settled, completion in
                     Task { completion(await model.setSettled(thread.id, settled: settled)) }
                 },
+                onChooseSnooze: { thread in
+                    snoozingThread = thread
+                },
                 onSnooze: { thread, until in
                     Task { await model.setSnoozed(thread.id, until: until) }
                 },
@@ -319,6 +323,25 @@ public struct WorkspaceView: View {
             )
         }
         .background(T3Colors.background)
+        .confirmationDialog(
+            "Snooze thread",
+            isPresented: Binding(
+                get: { snoozingThread != nil },
+                set: { if !$0 { snoozingThread = nil } }
+            ),
+            titleVisibility: .visible,
+            presenting: snoozingThread
+        ) { thread in
+            ForEach(DailyUXSnoozePresets.resolve(now: .now)) { preset in
+                Button(preset.label) {
+                    snoozingThread = nil
+                    Task { await model.setSnoozed(thread.id, until: preset.until) }
+                }
+            }
+            Button("Cancel", role: .cancel) { snoozingThread = nil }
+        } message: { thread in
+            Text(thread.title)
+        }
     }
 
     @ViewBuilder

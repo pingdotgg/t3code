@@ -1177,6 +1177,11 @@ extension FeatureThread {
         return boundary > now ? boundary : nil
     }
 
+    var canSnoozeNow: Bool {
+        canToggleSnooze && state != .queued
+            && state != .waitingForApproval && state != .waitingForInput
+    }
+
     func isEffectivelySnoozed(at now: Date) -> Bool {
         guard let snoozedUntil, snoozedUntil > now else { return false }
         if state == .waitingForApproval || state == .waitingForInput {
