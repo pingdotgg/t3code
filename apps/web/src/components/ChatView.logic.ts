@@ -260,6 +260,9 @@ export function resolveDraftHeroState(input: {
   /** A worktree setup card is on the timeline, so the timeline must stay visible. */
   hasWorktreeSetupCard?: boolean;
 }): boolean {
+  if (input.hasWorktreeSetupCard) {
+    return false;
+  }
   if (input.backgroundSubmissionPending) {
     return true;
   }
@@ -267,8 +270,7 @@ export function resolveDraftHeroState(input: {
     input.isLocalDraftThread &&
     !input.hasTimelineEntries &&
     !input.isWorking &&
-    !input.draftHeroDockRequested &&
-    !input.hasWorktreeSetupCard
+    !input.draftHeroDockRequested
   );
 }
 

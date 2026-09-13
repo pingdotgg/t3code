@@ -1660,6 +1660,13 @@ export default function ChatView(props: ChatViewProps) {
   // Keyed by draft id so a bootstrap rotating the thread id keeps it, while
   // moving to another draft drops it without an effect.
   const [workLocallyResendDraftId, setWorkLocallyResendDraftId] = useState<DraftId | null>(null);
+  // The draft route reuses this component across drafts, so a resend recorded
+  // for one draft must not fire when the user comes back to it later.
+  useEffect(() => {
+    if (workLocallyResendDraftId !== null && workLocallyResendDraftId !== draftId) {
+      setWorkLocallyResendDraftId(null);
+    }
+  }, [draftId, workLocallyResendDraftId]);
   const [feedbackSubmissionsByThreadKey, setFeedbackSubmissionsByThreadKey] = useState<
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});

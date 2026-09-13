@@ -608,6 +608,17 @@ describe("draft hero submission transition", () => {
         hasWorktreeSetupCard: true,
       }),
     ).toBe(false);
+    // A background submission normally pins the hero, but never over the card.
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: true,
+        hasTimelineEntries: false,
+        isWorking: false,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: true,
+        hasWorktreeSetupCard: true,
+      }),
+    ).toBe(false);
   });
 
   it("keeps the composer in the hero layout until navigation after server promotion", () => {
