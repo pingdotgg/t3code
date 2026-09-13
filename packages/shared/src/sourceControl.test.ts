@@ -44,6 +44,41 @@ describe("source control presentation", () => {
 });
 
 describe("detectSourceControlProviderFromRemoteUrl", () => {
+  it.each(["https://staging.git.cafe/owner/repo.git", "ssh@staging.git.cafe:owner/repo.git"])(
+    "preserves the GitCafe staging origin for %s",
+    (remote) => {
+      expect(detectSourceControlProviderFromRemoteUrl(remote)).toEqual({
+        kind: "gitcafe",
+        name: "GitCafe",
+        baseUrl: "https://staging.git.cafe",
+      });
+    },
+  );
+
+  it.each([
+    "https://git.cafe/owner/repo.git",
+    "ssh@git.cafe:owner/repo.git",
+    "ssh://ssh@git.cafe/owner/repo.git",
+  ])("recognizes GitCafe remote %s", (remote) => {
+    const provider = detectSourceControlProviderFromRemoteUrl(remote);
+    expect(provider).toEqual({ kind: "gitcafe", name: "GitCafe", baseUrl: "https://git.cafe" });
+    expect(resolveChangeRequestPresentation(provider)).toMatchObject({
+      providerName: "GitCafe",
+      shortName: "PR",
+      checkoutCommandExample: "cafe pr checkout 123",
+      urlExample: "https://git.cafe/owner/repo/pulls/42",
+    });
+  });
+
+  it.each(["git.cafe.example", "sub.git.cafe", "gitcafe.example"])(
+    "does not assume a custom GitCafe host at %s",
+    (host) => {
+      expect(detectSourceControlProviderFromRemoteUrl(`https://${host}/owner/repo.git`)?.kind).toBe(
+        "unknown",
+      );
+    },
+  );
+
   it("detects common source control hosts", () => {
     expect(detectSourceControlProviderFromRemoteUrl("git@github.com:owner/repo.git")?.kind).toBe(
       "github",

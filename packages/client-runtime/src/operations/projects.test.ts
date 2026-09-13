@@ -95,6 +95,42 @@ describe("add project shared logic", () => {
     ).toBe("git@gitlab.com:group/project.git");
   });
 
+  it("defaults GitCafe clones to HTTPS", () => {
+    expect(
+      getDefaultCloneUrl({
+        provider: "gitcafe",
+        url: "https://git.cafe/owner/repo.git",
+        sshUrl: "ssh@git.cafe:owner/repo.git",
+      }),
+    ).toBe("https://git.cafe/owner/repo.git");
+  });
+
+  it("offers GitCafe when its environment has an authenticated Cafe CLI", () => {
+    expect(buildAddProjectRemoteSourceReadiness(null).gitcafe.ready).toBe(false);
+    const discovery: SourceControlDiscoveryResult = {
+      versionControlSystems: [],
+      sourceControlProviders: [
+        {
+          kind: "gitcafe",
+          label: "GitCafe",
+          status: "available",
+          installHint: "Install cafe",
+          version: Option.some("1.0.0"),
+          detail: Option.none(),
+          auth: {
+            status: "authenticated",
+            account: Option.some("owner"),
+            host: Option.some("git.cafe"),
+            detail: Option.none(),
+          },
+        },
+      ],
+    };
+    const readiness = buildAddProjectRemoteSourceReadiness(discovery);
+    expect(readiness.gitcafe).toEqual({ ready: true, hint: null });
+    expect(sortAddProjectProviderSources(readiness)[0]).toBe("gitcafe");
+  });
+
   it("derives the clone folder name from any pasted clone URL", () => {
     expect(getCloneDirectoryName("https://github.com/owner/repo.git")).toBe("repo");
     expect(getCloneDirectoryName("https://github.com/owner/repo")).toBe("repo");

@@ -187,7 +187,7 @@ import {
   CommandPaletteVirtualizedResults,
   scrollCommandPaletteRowIntoView,
 } from "./CommandPaletteResults";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon, ForgejoIcon } from "./Icons";
+import { AzureDevOpsIcon, BitbucketIcon, GitCafeIcon, GitHubIcon, GitLabIcon, ForgejoIcon } from "./Icons";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { Checkbox } from "./ui/checkbox";
 import { ProjectFavicon } from "./ProjectFavicon";
@@ -252,7 +252,7 @@ interface AddProjectEnvironmentOption {
 
 type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "gitcafe" | "forgejo" | "bitbucket" | "azure-devops"
 >;
 type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -277,6 +277,7 @@ const REMOTE_PROJECT_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "forgejo",
   "bitbucket",
+  "gitcafe",
   "azure-devops",
 ];
 const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKind> = [
@@ -284,6 +285,7 @@ const REMOTE_PROJECT_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProviderKin
   "gitlab",
   "forgejo",
   "bitbucket",
+  "gitcafe",
   "azure-devops",
 ];
 
@@ -295,6 +297,8 @@ function remoteProjectSourceLabel(source: AddProjectRemoteSource): string {
       return "Forgejo / Gitea";
     case "gitlab":
       return "GitLab";
+    case "gitcafe":
+      return "GitCafe";
     case "bitbucket":
       return "Bitbucket";
     case "azure-devops":
@@ -308,6 +312,7 @@ function remoteProjectSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "forgejo":
     case "github":
+    case "gitcafe":
       return "owner/repo";
     case "gitlab":
       return "group/project";
@@ -334,6 +339,8 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
       return <ForgejoIcon className={className} />;
     case "gitlab":
       return <GitLabIcon className={className} />;
+    case "gitcafe":
+      return <GitCafeIcon className={className} />;
     case "bitbucket":
       return <BitbucketIcon className={className} />;
     case "azure-devops":
@@ -391,6 +398,7 @@ function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     forgejo: unavailable,
     bitbucket: unavailable,
+    gitcafe: unavailable,
     "azure-devops": unavailable,
   };
 
@@ -2091,6 +2099,7 @@ function OpenCommandPaletteDialog(props: {
       "gitlab",
       "forgejo",
       "bitbucket",
+      "gitcafe",
       "azure",
       "devops",
       "url",

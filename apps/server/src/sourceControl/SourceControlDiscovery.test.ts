@@ -19,6 +19,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubApi from "./GitHubApi.ts";
+import * as GitCafeCli from "./GitCafeCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
@@ -44,6 +45,7 @@ const layerSourceControlProviderRegistryTest = (input: {
         Layer.mock(GitVcsDriver.GitVcsDriver)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
+        Layer.mock(GitCafeCli.GitCafeCli)({}),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
         Layer.mock(VcsProcess.VcsProcess)(input.process),
       ),
@@ -582,6 +584,7 @@ it.effect("reports implemented tools separately from locally available executabl
         account: item.auth.account,
       })),
       [
+        { kind: "gitcafe", status: "missing", auth: "unknown", account: Option.none() },
         {
           kind: "github",
           status: "available",
@@ -646,6 +649,12 @@ it.effect("probes provider authentication without exposing token details", () =>
           ),
         );
       }
+      if (input.command === "cafe")
+        return Effect.succeed(
+          processOutput(
+            JSON.stringify({ schemaVersion: 1, data: { host: "git.cafe", username: "cafe-user" } }),
+          ),
+        );
       if (input.command === "glab" && input.args.join(" ") === "auth status") {
         return Effect.succeed(
           processOutput(`gitlab.com
@@ -720,6 +729,12 @@ Logged in to gitlab.com as gitlab-user
         detail: item.auth.detail,
       })),
       [
+        {
+          kind: "gitcafe",
+          auth: "authenticated",
+          account: Option.some("cafe-user"),
+          detail: Option.none(),
+        },
         {
           kind: "github",
           auth: "authenticated",

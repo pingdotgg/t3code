@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  changeRequestRepositoryUrl,
   changeRequestUrlFor,
   parseChangeRequestUrl,
   pullRequestCandidateUrlFromReferenceAutolink,
@@ -8,6 +9,42 @@ import {
 } from "./changeRequestUrl.ts";
 
 describe("parseChangeRequestUrl", () => {
+  it("keeps GitCafe staging PR links on staging", () => {
+    const url = "https://staging.git.cafe/owner/repo/pulls/42";
+    expect(parseChangeRequestUrl(url)).toEqual({
+      host: "staging.git.cafe",
+      repository: "owner/repo",
+      number: 42,
+    });
+    expect(changeRequestRepositoryUrl(url)).toBe("https://staging.git.cafe/owner/repo");
+    expect(siblingPullRequestUrl(url, 43)).toBe("https://staging.git.cafe/owner/repo/pulls/43");
+  });
+  it("uses GitCafe pull links consistently for parsing, repository roots, and siblings", () => {
+    const url = "https://git.cafe/Owner/Repo/pulls/42/files?view=split#diff";
+    expect(parseChangeRequestUrl(url)).toEqual({
+      host: "git.cafe",
+      repository: "owner/repo",
+      number: 42,
+    });
+    expect(changeRequestUrlFor("gitcafe", "git.cafe", "owner/repo", 42)).toBe(
+      "https://git.cafe/owner/repo/pulls/42",
+    );
+    expect(changeRequestRepositoryUrl(url)).toBe("https://git.cafe/Owner/Repo");
+    expect(siblingPullRequestUrl(url, 43)).toBe("https://git.cafe/owner/repo/pulls/43");
+  });
+
+  it.each([
+    "https://git.cafe/owner/repo/pull/42",
+    "https://git.cafe/owner/repo/pulls/0",
+    "https://git.cafe/owner/repo/pulls/42invalid",
+    "https://git.cafe/owner/repo/pulls/9007199254740992",
+    "https://git.cafe/owner/repo/nested/pulls/42",
+  ])("does not claim unsupported GitCafe link %s", (url) => {
+    expect(parseChangeRequestUrl(url)).toBeNull();
+    expect(changeRequestRepositoryUrl(url)).toBeNull();
+    expect(siblingPullRequestUrl(url, 43)).toBeNull();
+  });
+
   it("reads a GitHub pull request, lower-casing the repository", () => {
     expect(parseChangeRequestUrl("https://github.com/T3Tools/T3Code/pull/123")).toEqual({
       host: "github.com",
