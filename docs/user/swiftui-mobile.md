@@ -12,6 +12,16 @@ selected computer. Other connected computers are not refreshed.
 Star a model to keep it in **Favorites**, including legacy models. Removing a star from a legacy
 model returns it to **Legacy models**.
 
+## Thread swipes
+
+Open **Settings > Swipe Actions** to choose the buttons shown when you swipe a thread left or
+right, and the action performed by a full swipe in each direction. Choose **None** to disable a
+full swipe. Try your choices on the example thread without changing your real threads.
+
+These settings stay on this device and apply across your connected computers. Actions adapt to
+the thread: Pin becomes Unpin, Settle becomes Reopen, and Archive becomes Restore. If the selected
+full-swipe action is unavailable, the gesture does nothing. Delete always asks for confirmation.
+
 ## Providers and skills
 
 Open **Settings > Providers**, or **Providers** in the model picker, to manage a provider on its

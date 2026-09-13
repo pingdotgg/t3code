@@ -245,6 +245,7 @@ public struct WorkspaceView: View {
                 selectedThreadID: threadSelection.highlightedID,
                 forceRichRows: dynamicTypeSize.isAccessibilitySize,
                 hapticsEnabled: model.snapshot.settings.hapticsEnabled,
+                swipeSettings: model.snapshot.settings.swipeActions,
                 isSnoozedExpanded: isSnoozedExpanded,
                 isSettledExpanded: isSettledExpanded,
                 isArchiveExpanded: isArchiveExpanded,

@@ -1127,6 +1127,7 @@ public struct FeatureTextSizeAdjustment: Sendable, Equatable, Hashable, Codable 
 }
 
 public struct FeatureSettings: Sendable, Equatable, Codable {
+    public var swipeActions: FeatureSwipeSettings
     public var appearance: FeatureAppearance
     public var textSize: FeatureTextSizeAdjustment
     public var codeSize: FeatureTextSizeAdjustment
@@ -1137,6 +1138,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 
     public init(
         appearance: FeatureAppearance = .system,
+        swipeActions: FeatureSwipeSettings = .init(),
         textSize: FeatureTextSizeAdjustment = .standard,
         codeSize: FeatureTextSizeAdjustment = .standard,
         hapticsEnabled: Bool = true,
@@ -1145,6 +1147,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
         defaultSelection: FeatureSelection? = nil
     ) {
         self.appearance = appearance
+        self.swipeActions = swipeActions
         self.textSize = textSize
         self.codeSize = codeSize
         self.hapticsEnabled = hapticsEnabled
@@ -1154,6 +1157,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     }
 
     private enum CodingKeys: String, CodingKey {
+        case swipeActions
         case appearance
         case textSize
         case codeSize
@@ -1165,6 +1169,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        swipeActions = try container.decodeIfPresent(FeatureSwipeSettings.self, forKey: .swipeActions) ?? .init()
         appearance = try container.decodeIfPresent(
             FeatureAppearance.self,
             forKey: .appearance
@@ -1197,6 +1202,7 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
 
     public func encode(to encoder: any Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(swipeActions, forKey: .swipeActions)
         try container.encode(appearance, forKey: .appearance)
         try container.encode(textSize, forKey: .textSize)
         try container.encode(codeSize, forKey: .codeSize)
