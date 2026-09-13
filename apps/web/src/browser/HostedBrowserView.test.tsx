@@ -212,11 +212,15 @@ describe("HostedBrowserView capture and input", () => {
     const lease = acquireBrowserSurface("capture-tab");
     const rect = { x: 0, y: 0, width: 400, height: 300, right: 400, bottom: 300 };
     lease.present(rect, true);
+    const capturedPointers = new Set<number>();
     const node = Object.assign(new EventTarget(), {
       srcObject: null as MediaStream | null,
       getBoundingClientRect: () => rect,
       scrollTo: () => undefined,
       focus: () => undefined,
+      setPointerCapture: (id: number) => capturedPointers.add(id),
+      hasPointerCapture: (id: number) => capturedPointers.has(id),
+      releasePointerCapture: (id: number) => capturedPointers.delete(id),
       scrollLeft: 0,
       scrollTop: 0,
       style: {},

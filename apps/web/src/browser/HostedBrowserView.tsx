@@ -337,10 +337,15 @@ export function HostedBrowserView(props: {
     const button = down
       ? event.button
       : (pressedButtons.current.get(event.pointerId) ?? event.button);
-    if (!down) pressedButtons.current.delete(event.pointerId);
+    if (!down) {
+      pressedButtons.current.delete(event.pointerId);
+      if (event.currentTarget.hasPointerCapture(event.pointerId))
+        event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     if (button < 0) return;
     if (down) {
       pressedButtons.current.set(event.pointerId, button);
+      event.currentTarget.setPointerCapture(event.pointerId);
       // Keep DOM focus on the browser while the native page handles input.
       focusingFromPointer.current = true;
       event.currentTarget.focus({ preventScroll: true });
