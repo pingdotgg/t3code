@@ -1,10 +1,14 @@
 import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contracts";
 import { mergeUsage } from "@t3tools/shared/usageMerge";
+import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
+  navigate: vi.fn(),
+  canGoBack: true,
   metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
 }));
@@ -39,7 +43,10 @@ vi.mock("react", async (importOriginal) => {
 });
 
 vi.mock("../../env", () => ({ isElectron: false }));
-vi.mock("../../hooks/useNavigateBack", () => ({ useEscapeToGoBack: () => {} }));
+vi.mock("@tanstack/react-router", () => ({
+  useNavigate: () => testState.navigate,
+  useCanGoBack: () => testState.canGoBack,
+}));
 vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
@@ -169,6 +176,73 @@ beforeEach(() => {
     isPending: false,
     isPartial: false,
     refresh: vi.fn(),
+  });
+});
+
+describe("UsagePage Escape navigation", () => {
+  let renderer: ReactTestRenderer;
+  let events: EventTarget;
+  const back = vi.fn();
+
+  beforeEach(async () => {
+    events = new EventTarget();
+    back.mockClear();
+    testState.navigate.mockClear();
+    testState.canGoBack = true;
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("window", {
+      addEventListener: events.addEventListener.bind(events),
+      removeEventListener: events.removeEventListener.bind(events),
+      history: { back },
+    });
+    vi.stubGlobal("document", { activeElement: null, querySelector: () => null });
+    vi.stubGlobal("HTMLElement", vi.fn());
+    await act(() => {
+      renderer = create(<UsagePage />);
+    });
+  });
+
+  afterEach(async () => {
+    await act(() => renderer.unmount());
+    vi.unstubAllGlobals();
+  });
+
+  function escape(properties: { repeat?: boolean; isComposing?: boolean } = {}) {
+    return Object.assign(new Event("keydown", { cancelable: true }), {
+      key: "Escape",
+      ...properties,
+    });
+  }
+
+  it("returns to the previous page on Escape", () => {
+    events.dispatchEvent(escape());
+    expect(back).toHaveBeenCalledOnce();
+    expect(testState.navigate).not.toHaveBeenCalled();
+  });
+
+  it("returns home when there is no previous app page", async () => {
+    testState.canGoBack = false;
+    await act(() => renderer.update(<UsagePage />));
+
+    events.dispatchEvent(escape());
+    expect(testState.navigate).toHaveBeenCalledWith({ to: "/" });
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it("leaves a consumed Escape to the popup, then handles the next Escape", () => {
+    const consumed = escape();
+    consumed.preventDefault();
+    events.dispatchEvent(consumed);
+    expect(back).not.toHaveBeenCalled();
+
+    events.dispatchEvent(escape());
+    expect(back).toHaveBeenCalledOnce();
+  });
+
+  it.each([{ repeat: true }, { isComposing: true }])("ignores Escape with %j", (properties) => {
+    events.dispatchEvent(escape(properties));
+    expect(back).not.toHaveBeenCalled();
+    expect(testState.navigate).not.toHaveBeenCalled();
   });
 });
 
