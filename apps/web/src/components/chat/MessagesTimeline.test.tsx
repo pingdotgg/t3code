@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   MessageId,
   TurnId,
+  type ComposerContextRecord,
 } from "@t3tools/contracts";
 import { act, createRef, useLayoutEffect, type ReactNode, type Ref } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -143,6 +144,7 @@ function matchMedia() {
 }
 
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
+let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
 beforeAll(async () => {
   const classList = {
@@ -176,7 +178,7 @@ beforeAll(async () => {
     },
   });
 
-  ({ MessagesTimeline } = await import("./MessagesTimeline"));
+  ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
 }, 30_000);
 
 const ACTIVE_THREAD_ENVIRONMENT_ID = EnvironmentId.make("environment-local");
@@ -346,14 +348,24 @@ describe("MessagesTimeline", () => {
             />,
           );
         });
-        const toggle = renderer!.root.findByProps({ "aria-expanded": false });
-        await act(() => toggle.props.onClick());
+        const questionToggle = renderer!.root.find(
+          (node) =>
+            node.props["aria-label"]?.startsWith("Question answer submitted:") &&
+            node.props["aria-expanded"] === false,
+        );
+        expect(questionToggle.props["aria-label"]).toContain(
+          Object.values(answers)[0] ?? "spec.txt",
+        );
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
+        await act(() => questionToggle.props.onClick());
         const markup = JSON.stringify(renderer!.toJSON());
         expect(markup.match(/Provide a spec/g)).toHaveLength(1);
-        expect(markup.match(/spec\.txt/g)).toHaveLength(1);
+        expect(markup).toContain("spec.txt");
         expect(markup).toContain("Provide a screenshot");
         expect(markup).toContain("shot.png");
         for (const answer of Object.values(answers)) expect(markup).toContain(answer);
+        await act(() => questionToggle.props.onClick());
+        expect(JSON.stringify(renderer!.toJSON())).not.toContain("Provide a spec");
       } finally {
         await act(() => renderer?.unmount());
       }
@@ -686,7 +698,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain("t3code — Tests");
     expect(markup).toContain('src="data:image/png;base64,aWNvbg=="');
     expect(markup).toContain("h-28 w-52 max-w-full");
-    expect(markup).not.toContain("col-span-2");
     expect(onAnchorReady).toHaveBeenCalledOnce();
     expect(onAnchorReady).toHaveBeenCalledWith(firstEntry.message.id, 0);
   });
@@ -809,7 +820,7 @@ describe("MessagesTimeline", () => {
     expect(markup).not.toContain("<video");
     expect(markup).toContain(">pending-demo.mp4</div>");
   });
-  it("renders an ordinary file download button without creating its URL in advance", () => {
+  it("renders an ordinary file with preview and download controls without creating its URL in advance", () => {
     const entry = {
       ...buildUserTimelineEntry("Read the report."),
       message: {
@@ -830,9 +841,8 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(markup).toContain(
-      '<button type="button" aria-label="Download archive.zip" class="flex min-w-0 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70">',
-    );
+    expect(markup).toContain('aria-label="Preview archive.zip"');
+    expect(markup).toContain('aria-label="Download archive.zip"');
     expect(markup).not.toContain("<a href=");
   });
 
@@ -1174,8 +1184,8 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("Terminal 1 lines 1-5");
     expect(markup).toContain("lucide-terminal");
-    expect(markup).toContain("yoo what&#x27;s</p>");
-    expect(markup).toContain('<span aria-hidden="true"> </span>');
+    expect(markup).toContain("yoo what&#x27;s");
+    expect(markup).not.toContain("terminal_context");
     expect(markup).toContain("Show full message");
   }, 20_000);
 
@@ -1646,9 +1656,8 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("contextWindow.test.ts");
-    expect(markup).toContain("Wadduo");
-    expect(markup).toContain('data-testid="file-diff"');
+    expect(markup).toContain("contextWindow.test.ts +47 to +58");
+    expect(markup).toContain("lucide-message-circle");
     expect(markup).not.toContain(">Review comment<");
     expect(markup).not.toContain("&lt;review_comment");
     expect(markup).not.toContain("&lt;/review_comment&gt;");
@@ -1685,10 +1694,210 @@ describe("MessagesTimeline", () => {
       />,
     );
 
-    expect(markup).toContain("plan.md");
-    expect(markup).toContain("Clarify this.");
-    expect(markup).toContain("# Plan");
+    expect(markup).toContain("plan.md L1 to L2");
+    expect(markup).not.toContain("review_comment");
     expect(markup).not.toContain('data-testid="file-diff"');
+  });
+
+  it("renders attachment chips bound to server ids and hides their file rows", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-attachments",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-attachments"),
+              role: "user",
+              text: "See ![shot.png](t3-context://v1/image/img-1) and [notes.txt](t3-context://v1/file/file-1).",
+              attachments: [
+                {
+                  type: "image",
+                  id: "thread-1-aaa",
+                  name: "shot.png",
+                  mimeType: "image/png",
+                  sizeBytes: 3,
+                },
+                {
+                  type: "file",
+                  id: "thread-1-bbb",
+                  name: "notes.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 3,
+                },
+                {
+                  type: "file",
+                  id: "thread-1-ccc",
+                  name: "legacy.txt",
+                  mimeType: "text/plain",
+                  sizeBytes: 3,
+                },
+              ],
+              context: {
+                version: 1,
+                records: [
+                  {
+                    version: 1,
+                    contextId: "img-1" as never,
+                    kind: "image",
+                    label: "shot.png",
+                    attachmentId: "thread-1-aaa",
+                    name: "shot.png",
+                    mimeType: "image/png",
+                    sizeBytes: 3,
+                  },
+                  {
+                    version: 1,
+                    contextId: "file-1" as never,
+                    kind: "file",
+                    label: "notes.txt",
+                    attachmentId: "thread-1-bbb",
+                    name: "notes.txt",
+                    mimeType: "text/plain",
+                    sizeBytes: 3,
+                  },
+                ],
+              },
+              turnId: null,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    // Images report their size like every other attachment chip.
+    expect(markup).toContain('aria-label="Image attachment, shot.png, 1 KB"');
+    // Selection copy re-emits chips as their canonical links.
+    expect(markup).toContain('data-markdown-copy="![shot.png](t3-context://v1/image/img-1)"');
+    expect(markup).toContain('aria-label="File attachment, notes.txt, 1 KB"');
+    expect(markup).toContain(">1 KB</span>");
+    expect(markup).not.toContain('aria-label="Download notes.txt"');
+    expect(markup).toContain("legacy.txt");
+    expect(markup).not.toContain('href="t3-context://');
+    // A picture keeps its tile even though it also has a chip: the chip names it, the tile is
+    // the only way to see it. A plain file's row is what a chip replaces.
+    expect(markup).toContain("grid-cols-2");
+  });
+
+  it("resolves an annotation screenshot through its image context record", () => {
+    const image = {
+      type: "image" as const,
+      id: "thread-1-screenshot",
+      name: "capture.png",
+      mimeType: "image/png",
+      sizeBytes: 42,
+    };
+    const annotation = {
+      version: 1 as const,
+      contextId: "annotation-1" as never,
+      kind: "preview-annotation" as const,
+      label: "Checkout button",
+      annotationId: "producer-id",
+      pageUrl: "https://example.test/checkout",
+      pageTitle: "Checkout",
+      comment: "This changed after clicking",
+      targetSummary: "1 selected element",
+      styleChanges: [],
+      screenshotContextId: "screenshot-1" as never,
+    };
+    const screenshotRecord = {
+      version: 1 as const,
+      contextId: "screenshot-1" as never,
+      kind: "image" as const,
+      label: "capture.png",
+      attachmentId: image.id,
+      name: image.name,
+      mimeType: image.mimeType,
+      sizeBytes: image.sizeBytes,
+    };
+
+    expect(
+      resolvePreviewAnnotationImage({
+        record: annotation,
+        recordsById: new Map<string, ComposerContextRecord>([
+          [annotation.contextId, annotation],
+          [screenshotRecord.contextId, screenshotRecord],
+        ]),
+        userImages: [image],
+        previewImages: [],
+        annotationRecordIds: [annotation.contextId],
+      }),
+    ).toBe(image);
+  });
+
+  it("returns no annotation screenshot when its binding cannot be resolved", () => {
+    expect(
+      resolvePreviewAnnotationImage({
+        record: {
+          version: 1,
+          contextId: "annotation-1" as never,
+          kind: "preview-annotation",
+          label: "Google",
+          annotationId: "producer-id",
+          pageUrl: "https://google.com",
+          pageTitle: "Google",
+          comment: "What is this?",
+          targetSummary: "8 drawings",
+          styleChanges: [],
+          screenshotContextId: "missing-image" as never,
+        },
+        recordsById: new Map(),
+        userImages: [],
+        previewImages: [],
+        annotationRecordIds: ["annotation-1"],
+      }),
+    ).toBeNull();
+  });
+
+  it("renders structured context records as chips without reparsing text", () => {
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[
+          {
+            id: "entry-structured",
+            kind: "message",
+            createdAt: "2026-03-17T19:12:28.000Z",
+            message: {
+              id: MessageId.make("message-structured"),
+              role: "user",
+              text: "Compare [Terminal 1 line 4](t3-context://v1/terminal/ctx-t) with [gone](t3-context://v1/future/ctx-x).",
+              context: {
+                version: 1,
+                records: [
+                  {
+                    version: 1,
+                    contextId: "ctx-t" as never,
+                    kind: "terminal",
+                    label: "Terminal 1 line 4",
+                    terminalId: "default",
+                    terminalLabel: "Terminal 1",
+                    lineStart: 4,
+                    lineEnd: 4,
+                    text: "boom",
+                  },
+                ],
+              },
+              turnId: null,
+              createdAt: "2026-03-17T19:12:28.000Z",
+              updatedAt: "2026-03-17T19:12:28.000Z",
+              streaming: false,
+            },
+          },
+        ]}
+      />,
+    );
+
+    expect(markup).toContain("lucide-terminal");
+    expect(markup).toContain("Terminal 1 line 4");
+    expect(markup).toContain('data-context-unresolved="true"');
+    expect(markup).toContain(">gone<");
+    expect(markup).not.toContain('href="t3-context://');
   });
 
   it("keeps failed lifecycle entries discoverable in mixed activity summaries", () => {
@@ -1763,5 +1972,54 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("lucide-circle-alert");
     expect(markup).toContain("text-destructive");
+  });
+
+  it("only withholds an expanded tool-call label click while text is selected", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[
+              {
+                id: "entry-standalone",
+                kind: "work",
+                createdAt: MESSAGE_CREATED_AT,
+                entry: {
+                  id: "work-standalone",
+                  createdAt: MESSAGE_CREATED_AT,
+                  toolCallId: "call-standalone",
+                  label: "Run lint",
+                  tone: "tool",
+                  itemType: "command_execution",
+                  command: "pnpm lint",
+                  toolLifecycleStatus: "completed",
+                },
+              },
+            ]}
+          />,
+        );
+      });
+      await act(() => renderer!.root.findByProps({ "aria-expanded": false }).props.onClick());
+      const label = renderer!.root.findAll(
+        (node) => node.type === "span" && String(node.props.className).includes("select-text"),
+      )[0];
+      const stopPropagation = vi.fn();
+      // Only the click that ends a selection may be withheld from the row
+      // toggle; the plain click has to reach it so the label can collapse.
+      for (const isCollapsed of [false, true]) {
+        label!.props.onClick({
+          currentTarget: { ownerDocument: { getSelection: () => ({ isCollapsed }) } },
+          stopPropagation,
+        });
+      }
+      expect(stopPropagation).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => renderer?.unmount());
+    }
   });
 });
