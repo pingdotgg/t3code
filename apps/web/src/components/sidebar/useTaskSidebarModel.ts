@@ -1,3 +1,4 @@
+import { useClientSettings } from "../../hooks/useSettings";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { scopedTaskKey, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { threadOrderRow } from "@t3tools/client-runtime/state/task-grouping";
@@ -32,7 +33,12 @@ type DropCommandResult =
 
 type Input = Omit<
   Parameters<typeof buildTaskSidebarInventory>[0],
-  "drafts" | "collapsedTaskKeys" | "expandedTaskKeys" | "expandedSettledTaskKeys"
+  | "drafts"
+  | "collapsedTaskKeys"
+  | "expandedTaskKeys"
+  | "expandedSettledTaskKeys"
+  | "showAllTaskKeys"
+  | "taskThreadPreviewCount"
 > & {
   enabled: boolean;
   routeDraftId: string | null;
@@ -44,6 +50,10 @@ type Input = Omit<
 export function useTaskSidebarModel(input: Input) {
   const taskActions = useTaskActions();
   const threadActions = useThreadActions();
+  const showAll = useUiStateStore((state) => state.taskShowAllByKey);
+  const taskThreadPreviewCount = useClientSettings(
+    (settings) => settings.sidebarTaskThreadPreviewCount,
+  );
   const expanded = useUiStateStore((state) => state.taskExpandedByKey);
   const settledExpanded = useUiStateStore((state) => state.taskSettledExpandedByKey);
   const sessions = useComposerDraftStore((state) => state.draftThreadsByThreadKey);
@@ -119,6 +129,8 @@ export function useTaskSidebarModel(input: Input) {
         settledExpanded: input.settledExpanded ?? false,
         settledVisibleCount: input.settledVisibleCount ?? Infinity,
         drafts,
+        taskThreadPreviewCount,
+        showAllTaskKeys: new Set(Object.keys(showAll).filter((key) => showAll[key] === true)),
         collapsedTaskKeys: new Set(Object.keys(expanded).filter((key) => expanded[key] === false)),
         expandedTaskKeys: new Set(Object.keys(expanded).filter((key) => expanded[key] === true)),
         expandedSettledTaskKeys: new Set(
@@ -127,6 +139,8 @@ export function useTaskSidebarModel(input: Input) {
       }),
     [
       projected,
+      showAll,
+      taskThreadPreviewCount,
       drafts,
       expanded,
       settledExpanded,

@@ -841,3 +841,17 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
+
+describe("task thread preview settings", () => {
+  it("defaults older clients to six and round-trips a separate task limit", () => {
+    expect(decodeClientSettings({}).sidebarTaskThreadPreviewCount).toBe(6);
+    const patch = { sidebarTaskThreadPreviewCount: 12 };
+    expect(decodeClientSettingsPatch(patch)).toEqual(patch);
+    const settings = encodeClientSettings(decodeClientSettings(patch));
+    expect(settings.sidebarTaskThreadPreviewCount).toBe(12);
+    expect(settings.sidebarThreadPreviewCount).toBe(6);
+  });
+  it.each([0, -1, 1.5, 51, "6"])("rejects invalid task limits: %s", (value) => {
+    expect(() => decodeClientSettingsPatch({ sidebarTaskThreadPreviewCount: value })).toThrow();
+  });
+});

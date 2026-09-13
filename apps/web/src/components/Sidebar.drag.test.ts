@@ -850,7 +850,7 @@ describe("task block drag projection", () => {
       },
       section: "active",
     },
-    { kind: "task-new-thread", key: "new", taskKey, taskRef },
+    { kind: "task-thread-limit", key: "new", taskKey, taskRef, count: 10, showAll: true },
     { kind: "task-settled-header", key: "shelf", taskKey, taskRef, count: 1, expanded: true },
     {
       kind: "thread",

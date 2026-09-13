@@ -1870,7 +1870,6 @@ describe("native task shelf inventory", () => {
     expect(keys(expanded)).toEqual([
       `task:${taskKey}`,
       `v2-thread:${environmentId}:live`,
-      `task-new:${taskKey}`,
       `task-settled:${taskKey}`,
       `v2-thread:${environmentId}:chosen`,
     ]);
@@ -1897,11 +1896,7 @@ describe("native task shelf inventory", () => {
       { searchQuery: "content", matchedThreadKeys: new Set([`${environmentId}:two`]) },
     ]) {
       const layout = buildMobileTaskListItems({ ...base, ...extra });
-      expect(keys(layout)).toEqual([
-        `task:${taskKey}`,
-        `v2-thread:${environmentId}:two`,
-        `task-new:${taskKey}`,
-      ]);
+      expect(keys(layout)).toEqual([`task:${taskKey}`, `v2-thread:${environmentId}:two`]);
       expect(layout.items[0]).toMatchObject({ count: 2, expanded: true });
     }
     expect(keys(buildMobileTaskListItems(base))).toEqual([`task:${taskKey}`]);
@@ -2118,5 +2113,80 @@ describe("retained native task expansion", () => {
         (item) => item.type === "task-slim" && item.task.id === task.id,
       ),
     ).toMatchObject({ expanded: false, retainedShelfVisibleCount: 2 });
+  });
+});
+
+describe("native task previews", () => {
+  const task = makeContainer();
+  const key = `${environmentId}:${task.id}`;
+  const threads = Array.from({ length: 8 }, (_, index) =>
+    makeThread({
+      id: ThreadId.make(`member-${index}`),
+      title: `Member ${index}`,
+      taskId: task.id,
+      activeOrderKey: String.fromCharCode(98 + index),
+    }),
+  );
+  const rows = (extra: Partial<Parameters<typeof buildMobileTaskListItems>[0]> = {}) =>
+    buildMobileTaskListItems(taskListFixture({ threads, ...extra })).items;
+  const members = (items: ReturnType<typeof rows>) =>
+    items.filter((item) => item.type === "v2-thread");
+
+  it("previews six in manual order and remembers show-all through task collapse", () => {
+    expect(
+      members(rows({ threads: threads.toReversed() })).map((item) => item.item.thread.id),
+    ).toEqual(threads.slice(0, 6).map((thread) => thread.id));
+    expect(rows().find((item) => item.type === "task-thread-limit")).toMatchObject({
+      count: 8,
+      expanded: false,
+    });
+    const showAllTaskKeys = new Set([key]);
+    expect(members(rows({ showAllTaskKeys }))).toHaveLength(8);
+    expect(members(rows({ showAllTaskKeys, collapsedTaskKeys: new Set([key]) }))).toHaveLength(0);
+    expect(members(rows({ showAllTaskKeys }))).toHaveLength(8);
+  });
+
+  it("includes snoozed and settled in the budget while preserving the settled chevron", () => {
+    const mixed = [
+      ...threads.slice(0, 6),
+      { ...threads[6]!, snoozedUntil: "2099-01-01T00:00:00.000Z" },
+      { ...threads[7]!, settledOverride: "settled" as const },
+    ];
+    expect(members(rows({ threads: mixed }))).toHaveLength(6);
+    expect(rows({ threads: mixed }).some((item) => item.type === "task-subshelf-header")).toBe(
+      false,
+    );
+    const extra = { threads: mixed, showAllTaskKeys: new Set([key]) };
+    expect(members(rows(extra))).toHaveLength(7);
+    expect(rows(extra).find((item) => item.type === "task-subshelf-header")).toMatchObject({
+      expanded: false,
+    });
+    expect(members(rows({ ...extra, expandedTaskShelfKeys: new Set([key]) }))).toHaveLength(8);
+    const taskRows = rows({ ...extra, expandedTaskShelfKeys: new Set([key]) }).filter(
+      (item) => !item.type.startsWith("v2-") || item.type === "v2-thread",
+    );
+    expect(taskRows.at(-1)).toMatchObject({ type: "task-thread-limit" });
+  });
+
+  it("keeps selected and queued members and searches beyond the limit", () => {
+    expect(
+      members(
+        rows({
+          taskThreadPreviewCount: 1,
+          selectedThreadKey: `${environmentId}:member-7`,
+          queuedThreadKeys: new Set([`${environmentId}:member-6`]),
+        }),
+      ),
+    ).toHaveLength(3);
+    expect(members(rows({ taskThreadPreviewCount: 1, searchQuery: "Member 7" }))).toHaveLength(1);
+    expect(rows({ searchQuery: "Member" }).some((item) => item.type === "task-thread-limit")).toBe(
+      false,
+    );
+    for (const count of [0, 2, 6])
+      expect(
+        rows({ threads: threads.slice(0, count) }).some(
+          (item) => item.type === "task-thread-limit",
+        ),
+      ).toBe(false);
   });
 });

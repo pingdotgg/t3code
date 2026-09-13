@@ -11,16 +11,21 @@ export function useMobileTaskListActions() {
   const update = useAtomSet(updateMobilePreferencesAtom);
   const latest = useRef<{
     source: unknown;
-    value: { collapsedTaskKeys?: readonly string[]; expandedTaskShelfKeys?: readonly string[] };
+    value: {
+      collapsedTaskKeys?: readonly string[];
+      expandedTaskShelfKeys?: readonly string[];
+      showAllTaskKeys?: readonly string[];
+    };
   }>({ source: null, value: {} });
   return useCallback(
-    (key: string, shelf = false, present?: boolean) => {
+    (key: string, shelf: boolean | "all" = false, present?: boolean) => {
       const preferences = appAtomRegistry.get(mobilePreferencesAtom);
       if (!AsyncResult.isSuccess(preferences)) return;
       if (latest.current.source !== preferences) {
         latest.current = { source: preferences, value: preferences.value };
       }
-      const field = shelf ? "expandedTaskShelfKeys" : "collapsedTaskKeys";
+      const field =
+        shelf === "all" ? "showAllTaskKeys" : shelf ? "expandedTaskShelfKeys" : "collapsedTaskKeys";
       const keys = new Set(latest.current.value[field] ?? preferences.value[field] ?? []);
       if (present ?? !keys.has(key)) keys.add(key);
       else keys.delete(key);
@@ -48,8 +53,18 @@ export function useMobileTaskList() {
       ),
       collapsedTaskKeys: new Set(value.collapsedTaskKeys ?? []),
       expandedTaskShelfKeys: new Set(value.expandedTaskShelfKeys ?? []),
+      showAllTaskKeys: new Set(value.showAllTaskKeys ?? []),
+      taskThreadPreviewCount: value.sidebarTaskThreadPreviewCount,
       toggle,
     }),
-    [tasks, configs, value.collapsedTaskKeys, value.expandedTaskShelfKeys, toggle],
+    [
+      tasks,
+      configs,
+      value.collapsedTaskKeys,
+      value.expandedTaskShelfKeys,
+      value.showAllTaskKeys,
+      value.sidebarTaskThreadPreviewCount,
+      toggle,
+    ],
   );
 }

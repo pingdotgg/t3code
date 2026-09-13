@@ -28,6 +28,7 @@ import {
   taskMemberHasLocalWork,
   resolveTaskPresentation,
   taskChildVisible,
+  taskThreadPreview,
   threadOrderRow,
   type TaskGroupingTask,
   type TaskMemberStatus,
@@ -86,7 +87,9 @@ export type TaskSidebarItem =
       readonly taskKey?: string;
     }
   | {
-      readonly kind: "task-new-thread";
+      readonly kind: "task-thread-limit";
+      readonly showAll: boolean;
+      readonly count: number;
       readonly key: string;
       readonly taskKey: string;
       readonly taskRef: ScopedTaskRef;
@@ -127,6 +130,8 @@ export function buildTaskSidebarInventory(input: {
   readonly collapsedTaskKeys?: ReadonlySet<string>;
   readonly expandedTaskKeys?: ReadonlySet<string>;
   readonly expandedSettledTaskKeys?: ReadonlySet<string>;
+  readonly showAllTaskKeys?: ReadonlySet<string>;
+  readonly taskThreadPreviewCount?: number;
   readonly drafts?: readonly TaskSidebarDraft[];
   readonly queuedThreadKeys?: ReadonlySet<string>;
   readonly snoozedExpanded?: boolean;
@@ -278,9 +283,15 @@ export function buildTaskSidebarInventory(input: {
               ),
       },
     ];
+    const showAll = input.showAllTaskKeys?.has(taskKey) === true;
+    const preview = taskThreadPreview(members, {
+      limit: input.taskThreadPreviewCount,
+      showAll,
+      searching,
+    });
     const visibleMember = (thread: EnvironmentThreadShell) =>
       taskChildVisible({
-        expanded,
+        expanded: expanded && preview.members.has(thread),
         matches: matchesThread(thread),
         selected: selectedThread(thread),
         pending: taskMemberHasLocalWork(thread, input),
@@ -298,20 +309,20 @@ export function buildTaskSidebarInventory(input: {
         taskKey,
       })),
     );
-    if (expanded && !parked) {
-      block.push({ kind: "task-new-thread", key: `${orderRow.id}:new-thread`, taskKey, taskRef });
-    }
     const settledExpanded =
       parked || searching || input.expandedSettledTaskKeys?.has(taskKey) === true;
     const settled = group.settled.filter((thread) =>
       taskChildVisible({
-        expanded: expanded && settledExpanded,
+        expanded: expanded && settledExpanded && preview.members.has(thread),
         matches: matchesThread(thread),
         selected: selectedThread(thread),
         pending: taskMemberHasLocalWork(thread, input),
       }),
     );
-    if ((expanded && group.settled.length > 0) || settled.length > 0) {
+    if (
+      (expanded && group.settled.some((thread) => preview.members.has(thread))) ||
+      settled.length > 0
+    ) {
       if (!parked)
         block.push({
           kind: "task-settled-header",
@@ -322,6 +333,16 @@ export function buildTaskSidebarInventory(input: {
           expanded: settledExpanded,
         });
       block.push(...settled.map((thread) => threadRow(thread, "settled", taskKey)));
+    }
+    if (expanded && !searching && preview.overflowing) {
+      block.push({
+        kind: "task-thread-limit",
+        key: `${orderRow.id}:thread-limit`,
+        taskKey,
+        taskRef,
+        showAll,
+        count: members.length,
+      });
     }
     blocks.set(
       orderRow.id,
@@ -503,7 +524,7 @@ export function resolveTaskSidebarDrop(
       return null;
     return { kind: "move-to-task", threadRef: source.threadRef, taskRef: target.taskRef };
   }
-  if (target.kind === "draft" || target.kind === "task-new-thread") return null;
+  if (target.kind === "draft" || target.kind === "task-thread-limit") return null;
   const section =
     target.kind === "marker"
       ? target.marker === "pinned-header"

@@ -205,6 +205,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "task-thread-preview-count",
+    title: "Threads shown per task",
+    to: "/settings/general",
+    searchTerms: ["sidebar task preview limit show all show less"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

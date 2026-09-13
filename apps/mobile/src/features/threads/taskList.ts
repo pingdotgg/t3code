@@ -18,6 +18,7 @@ import {
   taskMemberHasLocalWork,
   resolveTaskPresentation,
   taskChildVisible,
+  taskThreadPreview,
   type TaskMemberStatus,
 } from "@t3tools/client-runtime/state/task-grouping";
 import {
@@ -54,7 +55,13 @@ export type MobileTaskListItem =
       readonly expanded: boolean;
       readonly count: number;
     }
-  | { readonly type: "task-new-thread"; readonly key: string; readonly task: EnvironmentTask };
+  | {
+      readonly type: "task-thread-limit";
+      readonly key: string;
+      readonly task: EnvironmentTask;
+      readonly expanded: boolean;
+      readonly count: number;
+    };
 
 export function mobileTaskKey(task: Pick<EnvironmentTask, "environmentId" | "id">) {
   return `${task.environmentId}:${task.id}`;
@@ -70,6 +77,8 @@ export function buildMobileTaskListItems(
     readonly capableIds: ReadonlySet<EnvironmentId>;
     readonly collapsedTaskKeys: ReadonlySet<string>;
     readonly expandedTaskShelfKeys: ReadonlySet<string>;
+    readonly showAllTaskKeys?: ReadonlySet<string>;
+    readonly taskThreadPreviewCount?: number;
     readonly projectScoped: boolean;
     readonly selectedTaskKey?: string | null;
   } & Omit<Parameters<typeof buildThreadListV2Items>[0], "threads">,
@@ -170,6 +179,24 @@ export function buildMobileTaskListItems(
     });
     const parked = shelf === "snoozed" || shelf === "settled";
     const partition = partitionTaskMembers(members, input);
+    const live = sortActiveThreadsByOrderKey(partition.live);
+    const snoozed = [...partition.snoozed].sort(
+      (a, b) =>
+        (a.snoozedUntil ?? "").localeCompare(b.snoozedUntil ?? "") ||
+        threadKey(a).localeCompare(threadKey(b)),
+    );
+    const settled = [...partition.settled].sort(
+      (a, b) =>
+        (resolveSettledThreadTimestamp(b) ?? "").localeCompare(
+          resolveSettledThreadTimestamp(a) ?? "",
+        ) || threadKey(a).localeCompare(threadKey(b)),
+    );
+    const showAll = input.showAllTaskKeys?.has(key) === true;
+    const preview = taskThreadPreview([...live, ...snoozed, ...settled], {
+      limit: input.taskThreadPreviewCount,
+      showAll,
+      searching,
+    });
     const block: ThreadListV2ListItem[] = [
       {
         type: parked ? "task-slim" : "task-card",
@@ -196,7 +223,7 @@ export function buildMobileTaskListItems(
     ) => {
       if (
         !taskChildVisible({
-          expanded: showExpanded,
+          expanded: showExpanded && preview.members.has(thread),
           matches: matches(thread),
           selected: selected(thread),
           pending: queued(thread),
@@ -220,14 +247,8 @@ export function buildMobileTaskListItems(
             : undefined,
       });
     };
-    for (const thread of sortActiveThreadsByOrderKey(partition.live))
-      addMember(thread, parked, false);
-    for (const thread of [...partition.snoozed].sort(
-      (a, b) =>
-        (a.snoozedUntil ?? "").localeCompare(b.snoozedUntil ?? "") ||
-        threadKey(a).localeCompare(threadKey(b)),
-    ))
-      addMember(thread, true, true);
+    for (const thread of live) addMember(thread, parked, false);
+    for (const thread of snoozed) addMember(thread, true, true);
     for (const pendingTask of pending)
       block.push({
         type: "v2-pending",
@@ -235,9 +256,12 @@ export function buildMobileTaskListItems(
         pendingTask,
         showPendingDivider: false,
       });
-    if (expanded && !parked) block.push({ type: "task-new-thread", key: `task-new:${key}`, task });
     const shelfExpanded = searching || input.expandedTaskShelfKeys.has(key);
-    if (!parked && partition.settled.length > 0 && (expanded || partition.settled.some(selected))) {
+    if (
+      !parked &&
+      ((expanded && settled.some((thread) => preview.members.has(thread))) ||
+        settled.some((thread) => selected(thread) || queued(thread)))
+    ) {
       block.push({
         type: "task-subshelf-header",
         key: `task-settled:${key}`,
@@ -246,13 +270,17 @@ export function buildMobileTaskListItems(
         expanded: shelfExpanded,
       });
     }
-    for (const thread of [...partition.settled].sort(
-      (a, b) =>
-        (resolveSettledThreadTimestamp(b) ?? "").localeCompare(
-          resolveSettledThreadTimestamp(a) ?? "",
-        ) || threadKey(a).localeCompare(threadKey(b)),
-    )) {
+    for (const thread of settled) {
       addMember(thread, true, false, expanded && (parked || shelfExpanded));
+    }
+    if (expanded && !searching && preview.overflowing) {
+      block.push({
+        type: "task-thread-limit",
+        key: `task-limit:${key}`,
+        task,
+        expanded: showAll,
+        count: members.length,
+      });
     }
     const row = taskOrderRow(task);
     orderedRows[shelf].push(row);

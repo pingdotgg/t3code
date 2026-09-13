@@ -15,7 +15,7 @@ import {
   threadSearchMatchKey,
   type EnvironmentThreadSearchMatch,
 } from "@t3tools/client-runtime/state/thread-search";
-import { LegendList } from "@legendapp/list/react-native";
+import { LegendList, type LegendListRef } from "@legendapp/list/react-native";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useAtomValue } from "@effect/atom-react";
 import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
@@ -832,11 +832,11 @@ function ThreadNavigationSidebarPane(
       if (
         previous.type === "task-card" ||
         previous.type === "task-slim" ||
-        previous.type === "task-new-thread" ||
+        previous.type === "task-thread-limit" ||
         previous.type === "task-subshelf-header" ||
         item.type === "task-card" ||
         item.type === "task-slim" ||
-        item.type === "task-new-thread" ||
+        item.type === "task-thread-limit" ||
         item.type === "task-subshelf-header" ||
         previous.type === "v2-thread" ||
         previous.type === "v2-show-more" ||
@@ -872,17 +872,27 @@ function ThreadNavigationSidebarPane(
     return true;
   }, [props.nativeChrome, props.onRequestVisibility, props.visible]);
   useHardwareKeyboardCommand("focusSearch", focusSearch);
+  const taskListRef = useRef<LegendListRef | null>(null);
+  const revealTask = useCallback(
+    (key: string) => {
+      const index = listItems.findIndex((item) => item.key === `task:${key}`);
+      if (index >= 0)
+        taskListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    },
+    [listItems],
+  );
   const renderListItem = useCallback(
     ({ item }: { readonly item: SidebarListItem }) => {
       switch (item.type) {
         case "task-card":
         case "task-slim":
-        case "task-new-thread":
+        case "task-thread-limit":
         case "task-subshelf-header":
           return (
             <TaskListRow
               item={item}
               revealShelf={revealTaskShelf}
+              revealTask={revealTask}
               canMoveUp={
                 pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "up")
               }
@@ -1134,6 +1144,7 @@ function ThreadNavigationSidebarPane(
       snoozeThread,
       nowMinute,
       revealTaskShelf,
+      revealTask,
       toggleSettledShelf,
       toggleSnoozedShelf,
       unpinThread,
@@ -1240,6 +1251,7 @@ function ThreadNavigationSidebarPane(
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <GestureDetector gesture={sidebarScrollGesture}>
               <LegendList
+                ref={taskListRef}
                 data={listItems}
                 drawDistance={500}
                 ListHeaderComponent={listHeader}
@@ -1303,6 +1315,7 @@ function ThreadNavigationSidebarPane(
         <SwipeableScrollGateProvider enabled={swipeEnabled}>
           <GestureDetector gesture={sidebarScrollGesture}>
             <LegendList
+              ref={taskListRef}
               data={listItems}
               drawDistance={500}
               ListHeaderComponent={listHeader}

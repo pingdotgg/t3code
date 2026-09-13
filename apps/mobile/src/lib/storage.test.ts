@@ -327,3 +327,30 @@ describe("mobile connection storage", () => {
     expect(JSON.parse(mocks.getPreferencesJson() ?? "")).toEqual({ baseFontSize: 21 });
   });
 });
+
+describe("task preview preferences", () => {
+  beforeEach(() => {
+    mocks.clear();
+    vi.clearAllMocks();
+  });
+  it("persists independent task previews and disclosure choices", async () => {
+    const preferences = {
+      sidebarTaskThreadPreviewCount: 12,
+      showAllTaskKeys: ["local:task", "remote:task"],
+      collapsedTaskKeys: ["local:task"],
+      expandedTaskShelfKeys: ["remote:task"],
+    };
+    await savePreferencesPatch(preferences);
+    await expect(loadPreferences()).resolves.toEqual(preferences);
+    await savePreferencesPatch({ collapsedTaskKeys: [] });
+    await expect(loadPreferences()).resolves.toEqual({ ...preferences, collapsedTaskKeys: [] });
+  });
+
+  it.each([0, 51, 2.5, "6"])("drops invalid saved task limits: %s", async (count) => {
+    mocks.setPreferencesJson(
+      JSON.stringify({ sidebarTaskThreadPreviewCount: count, showAllTaskKeys: ["local:task", 2] }),
+      10,
+    );
+    await expect(loadPreferences()).resolves.toEqual({ showAllTaskKeys: ["local:task"] });
+  });
+});

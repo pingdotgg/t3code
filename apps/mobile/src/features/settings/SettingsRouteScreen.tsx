@@ -39,6 +39,9 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { useEnvironments } from "../../state/environments";
 import {
   DEFAULT_SERVER_SETTINGS,
+  DEFAULT_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
+  MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
+  MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
 } from "@t3tools/contracts";
@@ -574,9 +577,46 @@ function GeneralSettingsSection() {
   return (
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      <TaskThreadPreviewSettingsRow />
       <AutoSettleSettingsRows />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>
+  );
+}
+
+function TaskThreadPreviewSettingsRow() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const save = useAtomSet(updateMobilePreferencesAtom);
+  const value =
+    (AsyncResult.isSuccess(preferences)
+      ? preferences.value.sidebarTaskThreadPreviewCount
+      : undefined) ?? DEFAULT_SIDEBAR_TASK_THREAD_PREVIEW_COUNT;
+  const [draft, setDraft] = useState<string | null>(null);
+  const commit = () => {
+    if (draft === null) return;
+    const count = Number(draft);
+    if (
+      Number.isInteger(count) &&
+      count >= MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT &&
+      count <= MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT
+    )
+      save({ sidebarTaskThreadPreviewCount: count });
+    setDraft(null);
+  };
+  return (
+    <View className="flex-row items-center gap-4 border-t border-border-subtle p-4">
+      <Text className="flex-1 text-lg text-foreground">Threads shown per task</Text>
+      <TextInput
+        className="min-h-10 w-20 rounded-xl px-3 py-2 text-center text-base"
+        keyboardType="number-pad"
+        returnKeyType="done"
+        accessibilityLabel="Threads shown per task"
+        value={draft ?? String(value)}
+        onChangeText={setDraft}
+        onBlur={commit}
+        onSubmitEditing={commit}
+      />
+    </View>
   );
 }
 

@@ -390,7 +390,7 @@ describe("mobile task item equality", () => {
   ])("updates for observable field change %j", (patch) => {
     expect(mobileTaskItemsAreEqual(item, { ...item, ...patch } as MobileTaskListItem)).toBe(false);
   });
-  it("compares member order, subshelf count/expansion and creation task identity", () => {
+  it("compares member order, subshelf count/expansion and preview controls", () => {
     const another = { ...member, id: ThreadId.make("another") };
     expect(
       mobileTaskItemsAreEqual(
@@ -407,7 +407,15 @@ describe("mobile task item equality", () => {
     };
     expect(mobileTaskItemsAreEqual(shelf, { ...shelf, count: 2 })).toBe(false);
     expect(mobileTaskItemsAreEqual(shelf, { ...shelf, expanded: false })).toBe(false);
-    const create: MobileTaskListItem = { type: "task-new-thread", key: "new", task };
+    const create: MobileTaskListItem = {
+      type: "task-thread-limit",
+      key: "limit",
+      task,
+      count: 10,
+      expanded: false,
+    };
+    expect(mobileTaskItemsAreEqual(create, { ...create, count: 11 })).toBe(false);
+    expect(mobileTaskItemsAreEqual(create, { ...create, expanded: true })).toBe(false);
     expect(mobileTaskItemsAreEqual(create, { ...create })).toBe(true);
     expect(mobileTaskItemsAreEqual(create, { ...create, task: { ...task, archivedAt: NOW } })).toBe(
       false,

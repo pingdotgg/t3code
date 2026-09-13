@@ -4,7 +4,7 @@ export function isMobileTaskListItem(item: { type: string }): item is MobileTask
   return (
     item.type === "task-card" ||
     item.type === "task-slim" ||
-    item.type === "task-new-thread" ||
+    item.type === "task-thread-limit" ||
     item.type === "task-subshelf-header"
   );
 }
@@ -16,9 +16,14 @@ export function mobileTaskItemsAreEqual(
 ): boolean {
   if (previous.type !== next.type || previous.key !== next.key || previous.task !== next.task)
     return false;
-  if (previous.type === "task-new-thread" || next.type === "task-new-thread") return true;
   if (previous.expanded !== next.expanded || previous.count !== next.count) return false;
-  if (previous.type === "task-subshelf-header" || next.type === "task-subshelf-header") return true;
+  if (
+    previous.type === "task-subshelf-header" ||
+    next.type === "task-subshelf-header" ||
+    previous.type === "task-thread-limit" ||
+    next.type === "task-thread-limit"
+  )
+    return true;
   return (
     previous.retainedShelfVisibleCount === next.retainedShelfVisibleCount &&
     previous.selected === next.selected &&

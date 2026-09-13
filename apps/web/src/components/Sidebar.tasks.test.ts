@@ -141,7 +141,6 @@ describe("task sidebar inventory", () => {
       "task",
       "thread",
       "draft",
-      "task-new-thread",
       "task-settled-header",
       "thread",
     ]);
@@ -152,10 +151,7 @@ describe("task sidebar inventory", () => {
   });
 
   it("shows empty tasks and keeps matching parents without unrelated children", () => {
-    expect(content({ ...base, threads: [] }).map((item) => item.kind)).toEqual([
-      "task",
-      "task-new-thread",
-    ]);
+    expect(content({ ...base, threads: [] }).map((item) => item.kind)).toEqual(["task"]);
     expect(content({ ...base, search: "release" }).map((item) => item.kind)).toEqual(["task"]);
   });
 
@@ -167,7 +163,7 @@ describe("task sidebar inventory", () => {
       matchingThreadKeys: new Set([key("two")]),
       collapsedTaskKeys,
     });
-    expect(items.map((item) => item.kind)).toEqual(["task", "thread", "task-new-thread"]);
+    expect(items.map((item) => item.kind)).toEqual(["task", "thread"]);
     expect(items[0]).toMatchObject({ counts: { live: 2, snoozed: 0, settled: 0 }, expanded: true });
     expect(items[1]).toMatchObject({ key: key("two") });
     expect(collapsedTaskKeys).toEqual(new Set([taskKey]));
@@ -444,5 +440,130 @@ describe("retained task expansion", () => {
         (item) => item.kind === "task" && item.taskKey === taskKey,
       ),
     ).toMatchObject({ expanded: true });
+  });
+});
+
+describe("task thread previews", () => {
+  const live = Array.from({ length: 8 }, (_, index) =>
+    thread(`live-${index}`, { activeOrderKey: String.fromCharCode(98 + index) }),
+  );
+  const visibleKeys = (input: Parameters<typeof buildTaskSidebarInventory>[0]) =>
+    content(input)
+      .filter((item) => item.kind === "thread")
+      .map((item) => item.key);
+
+  it("limits the existing manual order and restores it after show all and task collapse", () => {
+    const input = { ...base, threads: live.toReversed() };
+    expect(visibleKeys(input)).toEqual(live.slice(0, 6).map((item) => key(item.id)));
+    expect(content(input).at(-1)).toMatchObject({
+      kind: "task-thread-limit",
+      showAll: false,
+      count: 8,
+    });
+    const showAllTaskKeys = new Set([taskKey]);
+    expect(visibleKeys({ ...input, showAllTaskKeys })).toHaveLength(8);
+    expect(
+      visibleKeys({ ...input, showAllTaskKeys, collapsedTaskKeys: new Set([taskKey]) }),
+    ).toEqual([]);
+    expect(visibleKeys({ ...input, showAllTaskKeys })).toHaveLength(8);
+    expect(content({ ...input, showAllTaskKeys }).at(-1)).toMatchObject({ showAll: true });
+  });
+
+  it("counts snoozed and settled members without opening their independent disclosure", () => {
+    const snoozed = thread("snoozed", { snoozedUntil: "2026-09-14T12:00:00.000Z" });
+    const settled = thread("settled", { settledOverride: "settled" });
+    const input = { ...base, threads: [...live.slice(0, 6), snoozed, settled] };
+    expect(visibleKeys(input)).toHaveLength(6);
+    expect(content(input).some((item) => item.kind === "task-settled-header")).toBe(false);
+    const full = { ...input, showAllTaskKeys: new Set([taskKey]) };
+    expect(visibleKeys(full)).toHaveLength(7);
+    expect(content(full).at(-2)).toMatchObject({ kind: "task-settled-header", expanded: false });
+    expect(visibleKeys({ ...full, expandedSettledTaskKeys: new Set([taskKey]) })).toHaveLength(8);
+    expect(content({ ...full, expandedSettledTaskKeys: new Set([taskKey]) }).at(-1)).toMatchObject({
+      kind: "task-thread-limit",
+    });
+    expect(visibleKeys({ ...input, expandedSettledTaskKeys: new Set([taskKey]) })).toHaveLength(6);
+  });
+
+  it("shares the budget with an opened settled section and hides the footer for small tasks", () => {
+    const input = {
+      ...base,
+      threads: [
+        live[0]!,
+        ...live.slice(1, 4).map((item) => ({ ...item, settledOverride: "settled" as const })),
+      ],
+      taskThreadPreviewCount: 2,
+      expandedSettledTaskKeys: new Set([taskKey]),
+    };
+    expect(visibleKeys(input)).toHaveLength(2);
+    expect(content(input).find((item) => item.kind === "task-settled-header")).toMatchObject({
+      count: 3,
+      expanded: true,
+    });
+    for (const count of [0, 2, 6]) {
+      expect(
+        content({ ...base, threads: live.slice(0, count) }).some(
+          (item) => item.kind === "task-thread-limit",
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it("retains current threads, queued submissions and invested drafts outside the budget", () => {
+    const input = {
+      ...base,
+      threads: live,
+      taskThreadPreviewCount: 1,
+      selectedThreadKey: key("live-7"),
+      queuedThreadKeys: new Set([key("live-6")]),
+      drafts: [{ key: "draft", environmentId, projectId, taskId: task().id }],
+    };
+    expect(visibleKeys(input)).toEqual([key("live-0"), key("live-6"), key("live-7")]);
+    expect(content(input).some((item) => item.kind === "draft")).toBe(true);
+  });
+
+  it("searches beyond the preview without changing preferences", () => {
+    const showAllTaskKeys = new Set<string>();
+    const input = {
+      ...base,
+      threads: live,
+      taskThreadPreviewCount: 1,
+      showAllTaskKeys,
+      search: "live-7",
+    };
+    expect(visibleKeys(input)).toEqual([key("live-7")]);
+    expect(content(input).some((item) => item.kind === "task-thread-limit")).toBe(false);
+    expect(visibleKeys({ ...input, search: "" })).toEqual([key("live-0")]);
+    expect(showAllTaskKeys.size).toBe(0);
+  });
+
+  it.each(["settled", "snoozed"] as const)("limits explicitly expanded %s tasks too", (shelf) => {
+    const input = {
+      ...base,
+      threads: live,
+      tasks: [
+        task(
+          shelf === "settled"
+            ? { settledOverride: "settled" }
+            : { snoozedUntil: "2026-09-14T12:00:00.000Z" },
+        ),
+      ],
+      expandedTaskKeys: new Set([taskKey]),
+      settledExpanded: true,
+      snoozedExpanded: true,
+      taskThreadPreviewCount: 2,
+    };
+    expect(visibleKeys(input)).toHaveLength(2);
+    expect(visibleKeys({ ...input, showAllTaskKeys: new Set([taskKey]) })).toHaveLength(8);
+  });
+
+  it("preserves hidden manual keys when reordering the preview", () => {
+    const items = content({ ...base, threads: live, taskThreadPreviewCount: 2 });
+    const drop = resolveTaskSidebarDrop(items, key("live-1"), key("live-0"), "before");
+    expect(drop?.kind).toBe("reorder");
+    if (drop?.kind !== "reorder") throw new Error("Expected reorder");
+    const changes = planTaskSidebarReorder(drop, live.map(threadOrderRow));
+    expect(changes).toHaveLength(1);
+    expect(changes[0]?.ref).toEqual(scopeThreadRef(environmentId, live[1]!.id));
   });
 });

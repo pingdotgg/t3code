@@ -74,3 +74,21 @@ describe("task expansion actions", () => {
     expect(state.update).toHaveBeenLastCalledWith({ collapsedTaskKeys: ["new-other", "task"] });
   });
 });
+
+it("keeps show-all choices separate while toggling both disclosures", () => {
+  const toggle = useMobileTaskListActions();
+  toggle("task", "all", true);
+  toggle("task");
+  toggle("task", true);
+  toggle("task");
+  toggle("remote:task", "all", true);
+  toggle("task", "all", false);
+  expect(state.update.mock.calls).toEqual([
+    [{ showAllTaskKeys: ["task"] }],
+    [{ collapsedTaskKeys: ["other", "task"] }],
+    [{ expandedTaskShelfKeys: ["settled", "task"] }],
+    [{ collapsedTaskKeys: ["other"] }],
+    [{ showAllTaskKeys: ["task", "remote:task"] }],
+    [{ showAllTaskKeys: ["remote:task"] }],
+  ]);
+});

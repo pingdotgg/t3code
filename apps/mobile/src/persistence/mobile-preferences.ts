@@ -1,3 +1,7 @@
+import {
+  MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
+  MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
+} from "@t3tools/contracts/settings";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -31,6 +35,8 @@ export interface Preferences {
   readonly collapsedProjectGroups?: readonly string[];
   readonly collapsedTaskKeys?: readonly string[];
   readonly expandedTaskShelfKeys?: readonly string[];
+  readonly showAllTaskKeys?: readonly string[];
+  readonly sidebarTaskThreadPreviewCount?: number;
   /** @deprecated Kept temporarily so older OTA bundles retain the selected mode. */
   readonly projectGroupingEnabled?: boolean;
   readonly projectGroupingMode?: SidebarProjectGroupingMode;
@@ -103,6 +109,8 @@ function sanitizePreferences(parsed: Preferences): Preferences {
     collapsedProjectGroups?: readonly string[];
     collapsedTaskKeys?: readonly string[];
     expandedTaskShelfKeys?: readonly string[];
+    showAllTaskKeys?: readonly string[];
+    sidebarTaskThreadPreviewCount?: number;
     projectGroupingEnabled?: boolean;
     projectGroupingMode?: SidebarProjectGroupingMode;
     legacyThreadListEnabled?: boolean;
@@ -158,9 +166,17 @@ function sanitizePreferences(parsed: Preferences): Preferences {
       (account): account is string => typeof account === "string",
     );
   }
-  for (const key of ["collapsedTaskKeys", "expandedTaskShelfKeys"] as const) {
+  for (const key of ["collapsedTaskKeys", "expandedTaskShelfKeys", "showAllTaskKeys"] as const) {
     if (Array.isArray(parsed[key]))
       preferences[key] = parsed[key].filter((value): value is string => typeof value === "string");
+  }
+  if (
+    typeof parsed.sidebarTaskThreadPreviewCount === "number" &&
+    Number.isInteger(parsed.sidebarTaskThreadPreviewCount) &&
+    parsed.sidebarTaskThreadPreviewCount >= MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT &&
+    parsed.sidebarTaskThreadPreviewCount <= MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT
+  ) {
+    preferences.sidebarTaskThreadPreviewCount = parsed.sidebarTaskThreadPreviewCount;
   }
   if (Array.isArray(parsed.collapsedProjectGroups)) {
     preferences.collapsedProjectGroups = parsed.collapsedProjectGroups.filter(

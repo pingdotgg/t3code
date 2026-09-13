@@ -1,3 +1,4 @@
+import { flushSync } from "react-dom";
 import {
   closestCenter,
   DndContext,
@@ -12,7 +13,6 @@ import { useEffect, useCallback, useMemo, useRef, useState, type ReactNode } fro
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
-import { useTaskActions } from "../../hooks/useTaskActions";
 import { useUiStateStore } from "../../uiStateStore";
 import { cn } from "../../lib/utils";
 import type { SortableThreadRowBag } from "../Sidebar";
@@ -86,7 +86,8 @@ export function TaskSidebar(props: {
   renderDraft: (key: string, taskMember: boolean, bag: SortableThreadRowBag) => ReactNode;
 }) {
   const { model } = props;
-  const actions = useTaskActions();
+  const taskNodes = useRef(new Map<string, HTMLLIElement>());
+  const setShowAll = useUiStateStore((state) => state.setTaskShowAll);
   const setSettledExpanded = useUiStateStore((state) => state.setTaskSettledExpanded);
   const [dragging, setDragging] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -234,7 +235,11 @@ export function TaskSidebar(props: {
                           ? props.searchIndexByKey.get(item.key) === props.activeSearchIndex
                           : undefined
                       }
-                      ref={bag.setNodeRef}
+                      ref={(node) => {
+                        bag.setNodeRef(node);
+                        if (node) taskNodes.current.set(item.taskKey, node);
+                        else taskNodes.current.delete(item.taskKey);
+                      }}
                       style={style}
                       {...bag.listeners}
                       className={cn(
@@ -271,16 +276,23 @@ export function TaskSidebar(props: {
                     </li>
                   );
                 }
-                if (item.kind === "task-new-thread")
+                if (item.kind === "task-thread-limit")
                   return (
                     <li ref={bag.setNodeRef} style={style} className={cn("list-none", memberClass)}>
                       <button
                         type="button"
                         className="flex h-7 w-full cursor-pointer items-center gap-2 rounded-md px-2.5 text-left text-xs text-muted-foreground/70 hover:bg-sidebar-row-hover hover:text-foreground"
-                        onClick={() => void actions.newThreadInTask(item.taskRef)}
+                        aria-expanded={item.showAll}
+                        onClick={() => {
+                          flushSync(() => setShowAll(item.taskRef, !item.showAll));
+                          if (item.showAll)
+                            taskNodes.current
+                              .get(item.taskKey)
+                              ?.scrollIntoView({ block: "nearest", behavior: "instant" });
+                        }}
                       >
-                        <PlusIcon className="size-3.5" />
-                        New thread in task
+                        <ChevronDownIcon className={cn("size-3.5", item.showAll && "rotate-180")} />
+                        {item.showAll ? "Show less" : `Show all ${item.count} threads`}
                       </button>
                     </li>
                   );

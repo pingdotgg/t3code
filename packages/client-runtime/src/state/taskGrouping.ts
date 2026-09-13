@@ -1,3 +1,4 @@
+import { DEFAULT_SIDEBAR_TASK_THREAD_PREVIEW_COUNT } from "@t3tools/contracts/settings";
 import type {
   EnvironmentId,
   OrchestrationTaskShell,
@@ -232,6 +233,23 @@ export function resolveTaskPresentation(input: {
     shelf,
     expanded: input.searching ? input.hasMatchingChildren : !input.collapsed,
   } as const;
+}
+
+/** Budget canonical members before disclosure/filtering; selected and pending rows
+ * remain the caller's visibility exceptions. Never reorder the underlying members. */
+export function taskThreadPreview<T>(
+  members: readonly T[],
+  input: {
+    limit?: number | undefined;
+    showAll?: boolean;
+    searching?: boolean;
+  },
+) {
+  const limit = input.limit ?? DEFAULT_SIDEBAR_TASK_THREAD_PREVIEW_COUNT;
+  return {
+    members: new Set(input.showAll || input.searching ? members : members.slice(0, limit)),
+    overflowing: members.length > limit,
+  };
 }
 
 /** Selected and pending children survive collapse without revealing their siblings. */

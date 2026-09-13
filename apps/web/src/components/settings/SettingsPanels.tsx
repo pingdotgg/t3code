@@ -32,6 +32,7 @@ import {
   MAX_PANEL_ANIMATION_DURATION_MS,
   MAX_PROMPT_FONT_SIZE,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
   MAX_TERMINAL_FONT_SIZE,
   MIN_CODE_FONT_SIZE,
   MIN_APPEARANCE_CONTRAST,
@@ -40,6 +41,7 @@ import {
   MIN_PANEL_ANIMATION_DURATION_MS,
   MIN_PROMPT_FONT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
 } from "@t3tools/contracts/settings";
@@ -1886,12 +1888,18 @@ function FontFamilySettingsRow({
 
 const AUTO_SETTLE_DEFAULT_DAYS = DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ?? 3;
 
-function AutoSettleDaysInput({
+function BoundedIntegerSettingsInput({
   value,
   onCommit,
+  min,
+  max,
+  label,
 }: {
   value: number;
-  onCommit: (days: number) => void;
+  onCommit: (value: number) => void;
+  min: number;
+  max: number;
+  label: string;
 }) {
   // Local draft so the field can be emptied mid-edit; the setting only moves
   // on valid input and snaps back to the persisted value on blur.
@@ -1904,8 +1912,8 @@ function AutoSettleDaysInput({
     <Input
       size="sm"
       type="number"
-      min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
-      max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+      min={min}
+      max={max}
       className="w-full sm:w-24"
       value={draft}
       onChange={(event) => {
@@ -1914,16 +1922,12 @@ function AutoSettleDaysInput({
         // committed 3 while the field shows 3.5) — commit only when the
         // persisted value matches the displayed one.
         const parsed = Number(event.target.value);
-        if (
-          Number.isInteger(parsed) &&
-          parsed >= MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS &&
-          parsed <= MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS
-        ) {
+        if (Number.isInteger(parsed) && parsed >= min && parsed <= max) {
           onCommit(parsed);
         }
       }}
       onBlur={() => setDraft(String(value))}
-      aria-label="Days of inactivity before auto-settle"
+      aria-label={label}
     />
   );
 }
@@ -2135,6 +2139,33 @@ export function GeneralSettingsPanel() {
       <ProjectDefaultsSettings category="general" />
       <SettingsSection id="organization" title="Organization">
         <SettingsRow
+          {...searchableSetting("task-thread-preview-count")}
+          description="Default number of threads shown inside an expanded task. Show all reveals the rest."
+          resetAction={
+            settings.sidebarTaskThreadPreviewCount !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarTaskThreadPreviewCount ? (
+              <SettingResetButton
+                label="threads shown per task"
+                onClick={() =>
+                  updateSettings({
+                    sidebarTaskThreadPreviewCount:
+                      DEFAULT_UNIFIED_SETTINGS.sidebarTaskThreadPreviewCount,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <BoundedIntegerSettingsInput
+              value={settings.sidebarTaskThreadPreviewCount}
+              min={MIN_SIDEBAR_TASK_THREAD_PREVIEW_COUNT}
+              max={MAX_SIDEBAR_TASK_THREAD_PREVIEW_COUNT}
+              label="Threads shown per task"
+              onCommit={(count) => updateSettings({ sidebarTaskThreadPreviewCount: count })}
+            />
+          }
+        />
+        <SettingsRow
           {...searchableSetting("project-grouping")}
           description="Combine matching repositories across environments."
           resetAction={
@@ -2241,7 +2272,10 @@ export function GeneralSettingsPanel() {
                 title={searchableSetting("days-before-auto-settle").title}
                 description="Any new activity un-settles a thread automatically."
                 control={
-                  <AutoSettleDaysInput
+                  <BoundedIntegerSettingsInput
+                    min={MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                    max={MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS}
+                    label="Days of inactivity before auto-settle"
                     value={settings.sidebarAutoSettleAfterDays}
                     onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
                   />

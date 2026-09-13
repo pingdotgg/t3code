@@ -751,18 +751,28 @@ export function HomeScreen(props: HomeScreenProps) {
   }, [nextSnoozeWakeAt, snoozeWakeTick]);
   const threadListV2Items = threadListV2Layout.items;
 
+  const taskListRef = useRef<FlatList<ThreadListV2ListItem> | null>(null);
+  const revealTask = useCallback(
+    (key: string) => {
+      const index = threadListV2Items.findIndex((item) => item.key === `task:${key}`);
+      if (index >= 0)
+        taskListRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0 });
+    },
+    [threadListV2Items],
+  );
   const renderV2Item = useCallback(
     ({ item, index }: { readonly item: ThreadListV2ListItem; readonly index: number }) => {
       if (
         item.type === "task-card" ||
         item.type === "task-slim" ||
-        item.type === "task-new-thread" ||
+        item.type === "task-thread-limit" ||
         item.type === "task-subshelf-header"
       )
         return (
           <TaskListRow
             item={item}
             revealShelf={revealTaskShelf}
+            revealTask={revealTask}
             canMoveUp={
               pendingOrder === null && taskMovePlanner.canMove(taskOrderRow(item.task), "up")
             }
@@ -917,6 +927,7 @@ export function HomeScreen(props: HomeScreenProps) {
       threadSearchMatchByKey,
       titleRegenerationEnvironmentIds,
       revealTaskShelf,
+      revealTask,
       toggleSettledShelf,
       toggleSnoozedShelf,
       v2ProjectTitleByProjectKey,
@@ -1170,6 +1181,7 @@ export function HomeScreen(props: HomeScreenProps) {
         >
           <SwipeableScrollGateProvider enabled={swipeEnabled}>
             <FlatList
+              ref={taskListRef}
               data={threadListV2Items}
               renderItem={renderV2Item}
               keyExtractor={v2KeyExtractor}

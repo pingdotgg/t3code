@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 import {
   legacyProjectCwdPreferenceKey,
   setTaskExpanded,
+  setTaskShowAll,
   setTaskSettledExpanded,
   markThreadUnread,
   markThreadVisited,
@@ -24,6 +25,7 @@ function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
     taskExpandedByKey: {},
     taskSettledExpandedByKey: {},
+    taskShowAllByKey: {},
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
@@ -199,6 +201,7 @@ describe("parsePersistedState", () => {
     expect(parsed).toEqual({
       taskExpandedByKey: {},
       taskSettledExpandedByKey: {},
+      taskShowAllByKey: {},
       projectExpandedById: {
         logical: false,
       },
@@ -323,6 +326,7 @@ describe("uiStateStore persistence", () => {
     expect(persisted).toEqual({
       taskExpandedByKey: {},
       taskSettledExpandedByKey: {},
+      taskShowAllByKey: {},
       projectExpandedById: {
         logical: false,
       },
@@ -351,11 +355,16 @@ describe("uiStateStore persistence", () => {
       environmentId: EnvironmentId.make("environment-a"),
       taskId: TaskId.make("task-1"),
     };
-    const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), task, false), task, true);
+    const state = setTaskShowAll(
+      setTaskSettledExpanded(setTaskExpanded(makeUiState(), task, false), task, true),
+      task,
+      true,
+    );
     persistState(state);
     const restored = parsePersistedState(
       JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
     );
+    expect(restored.taskShowAllByKey).toEqual(state.taskShowAllByKey);
     expect(restored.taskExpandedByKey).toEqual(state.taskExpandedByKey);
     expect(restored.taskSettledExpandedByKey).toEqual(state.taskSettledExpandedByKey);
   });
@@ -434,4 +443,17 @@ describe("task expansion preferences", () => {
     expect(restored.taskExpandedByKey).toEqual(state.taskExpandedByKey);
     expect(restored.taskSettledExpandedByKey).toEqual(state.taskSettledExpandedByKey);
   });
+});
+
+it("persists show-all independently of both disclosures and across environments", () => {
+  const ref = { environmentId: EnvironmentId.make("local"), taskId: TaskId.make("task") };
+  const remote = { ...ref, environmentId: EnvironmentId.make("remote") };
+  const full = setTaskShowAll(makeUiState(), ref, true);
+  const closed = setTaskExpanded(setTaskSettledExpanded(full, ref, true), ref, false);
+  const restored = parsePersistedState(JSON.parse(JSON.stringify(closed)));
+  expect(restored.taskShowAllByKey).toEqual({ "local:task": true });
+  expect(setTaskExpanded(restored, ref, true).taskShowAllByKey).toEqual(full.taskShowAllByKey);
+  const less = setTaskShowAll(setTaskShowAll(restored, remote, true), ref, false);
+  expect(less.taskShowAllByKey).toEqual({ "local:task": false, "remote:task": true });
+  expect(less.taskSettledExpandedByKey).toEqual(closed.taskSettledExpandedByKey);
 });

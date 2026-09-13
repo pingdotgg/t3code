@@ -23,6 +23,7 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 export interface PersistedUiState {
   taskExpandedByKey?: Record<string, boolean>;
   taskSettledExpandedByKey?: Record<string, boolean>;
+  taskShowAllByKey?: Record<string, boolean>;
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
@@ -53,6 +54,7 @@ export interface UiThreadState {
 export interface UiTaskState {
   taskExpandedByKey: Record<string, boolean>;
   taskSettledExpandedByKey: Record<string, boolean>;
+  taskShowAllByKey: Record<string, boolean>;
 }
 
 export interface UiEndpointState {
@@ -69,6 +71,7 @@ export interface UiState
 const initialState: UiState = {
   taskExpandedByKey: {},
   taskSettledExpandedByKey: {},
+  taskShowAllByKey: {},
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
@@ -167,6 +170,7 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
   return {
     taskExpandedByKey: sanitizeTaskPreferences(parsed.taskExpandedByKey),
     taskSettledExpandedByKey: sanitizeTaskPreferences(parsed.taskSettledExpandedByKey),
+    taskShowAllByKey: sanitizeTaskPreferences(parsed.taskShowAllByKey),
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
@@ -247,6 +251,7 @@ export function persistState(state: UiState): void {
       JSON.stringify({
         taskExpandedByKey: state.taskExpandedByKey,
         taskSettledExpandedByKey: state.taskSettledExpandedByKey,
+        taskShowAllByKey: state.taskShowAllByKey,
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
@@ -402,6 +407,16 @@ export function setProjectExpanded(
   };
 }
 
+export function setTaskShowAll(state: UiState, ref: ScopedTaskRef, showAll: boolean): UiState {
+  const key = scopedTaskKey(ref);
+  return state.taskShowAllByKey[key] === showAll
+    ? state
+    : {
+        ...state,
+        taskShowAllByKey: { ...state.taskShowAllByKey, [key]: showAll },
+      };
+}
+
 export function setTaskExpanded(state: UiState, ref: ScopedTaskRef, expanded: boolean): UiState {
   const key = scopedTaskKey(ref);
   return state.taskExpandedByKey[key] === expanded
@@ -469,6 +484,7 @@ export function reorderProjects(
 
 interface UiStateStore extends UiState {
   setTaskExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
+  setTaskShowAll: (ref: ScopedTaskRef, showAll: boolean) => void;
   setTaskSettledExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
@@ -486,6 +502,7 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  setTaskShowAll: (ref, showAll) => set((state) => setTaskShowAll(state, ref, showAll)),
   setTaskExpanded: (ref, expanded) => set((state) => setTaskExpanded(state, ref, expanded)),
   setTaskSettledExpanded: (ref, expanded) =>
     set((state) => setTaskSettledExpanded(state, ref, expanded)),

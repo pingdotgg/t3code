@@ -38,6 +38,13 @@ list without changing its conversation or checkout.
 threads in a flat list, including members of tasks whose primary project is
 elsewhere. Servers without Tasks support continue to show flat thread lists.
 
+Expanded tasks initially show up to six threads in their existing order. Change
+**Threads shown per task** in General settings to adjust this limit. **Show all**
+reveals the remaining threads and the Settled section, which keeps its own chevron.
+**Show less** restores the preview. Each device remembers this choice per task,
+even after closing and reopening it. Your current thread and pending local work
+remain visible outside the preview; sidebar search also finds hidden threads.
+
 Open a task to edit its details or choose **New thread**. Web and desktop open the
 usual draft page; mobile opens the new-thread sheet. Creating from a task selects
 that task and its primary project. On web and desktop, the task selector beside the
@@ -53,7 +60,7 @@ the file root and defaults for new tools; existing terminals keep their process 
 working directory. See [terminals](./terminal.md).
 
 Pin the task to keep the whole group above active work; members cannot be pinned
-individually. Settling a task settles its visible members together. Running or
+individually. Settling a task settles its members together. Running or
 queued work, approvals, and questions that require an agent response block the
 whole action; idle async questions can be dismissed by settlement. **Un-settle
 task** reopens the task while its members stay parked. Snoozing and waking a task

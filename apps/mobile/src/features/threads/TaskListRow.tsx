@@ -22,26 +22,34 @@ export const TaskListRow = memo(
     canMoveUp,
     canMoveDown,
     revealShelf,
+    revealTask,
   }: {
     item: MobileTaskListItem;
     canMoveUp: boolean;
     canMoveDown: boolean;
+    revealTask: (taskKey: string) => void;
     revealShelf: (shelf: "snoozed" | "settled", visibleCount: number) => void;
   }) {
     const navigateTask = useTaskNavigation(item.task);
     const order = useMobileTaskOrder();
     const toggle = useMobileTaskListActions();
     const task = item.task;
-    if (item.type === "task-new-thread")
+    if (item.type === "task-thread-limit")
       return (
         <Pressable
           accessibilityRole="button"
-          accessibilityLabel={`New thread in ${task.name}`}
-          onPress={() => navigateTask("new-thread")}
+          accessibilityLabel={item.expanded ? "Show less" : `Show all ${item.count} threads`}
+          accessibilityState={{ expanded: item.expanded }}
+          onPress={() => {
+            if (item.expanded) revealTask(mobileTaskKey(task));
+            toggle(mobileTaskKey(task), "all", !item.expanded);
+          }}
           className="ml-9 mr-4 min-h-11 flex-row items-center gap-2 px-3"
         >
-          <SymbolView name="plus" size={15} />
-          <Text className="text-sm text-foreground-muted">New thread</Text>
+          <SymbolView name={item.expanded ? "chevron.up" : "chevron.down"} size={15} />
+          <Text className="text-sm text-foreground-muted">
+            {item.expanded ? "Show less" : `Show all ${item.count} threads`}
+          </Text>
         </Pressable>
       );
     if (item.type === "task-subshelf-header")
@@ -141,6 +149,7 @@ export const TaskListRow = memo(
   },
   (previous, next) =>
     previous.revealShelf === next.revealShelf &&
+    previous.revealTask === next.revealTask &&
     previous.canMoveUp === next.canMoveUp &&
     previous.canMoveDown === next.canMoveDown &&
     mobileTaskItemsAreEqual(previous.item, next.item),
