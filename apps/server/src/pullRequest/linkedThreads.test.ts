@@ -18,6 +18,22 @@ it.effect(
     `;
       const fixtures = [
         {
+          id: "forgejo-old",
+          host: "forge.example",
+          repository: "acme/web",
+          number: 7,
+          source: "manual",
+          url: "http://forge.example:3000/acme/web/pulls/7",
+        },
+        {
+          id: "forgejo-other-port",
+          host: "forge.example:4000",
+          repository: "acme/web",
+          number: 7,
+          source: "manual",
+          url: "http://forge.example:4000/acme/web/pulls/7",
+        },
+        {
           id: "azure",
           host: "dev.azure.com",
           repository: "org/project/_git/web",
@@ -83,10 +99,24 @@ it.effect(
         yield* sql`
         INSERT INTO projection_thread_pull_requests (thread_id, host, repository, number, url, source, linked_at)
         VALUES (${fixture.id}, ${fixture.host}, ${fixture.repository}, ${fixture.number},
-          'https://github.com/acme/web/pull/7', ${fixture.source}, ${createdAt})
+          ${fixture.url ?? "https://github.com/acme/web/pull/7"}, ${fixture.source}, ${createdAt})
       `;
       }
 
+      expect(
+        (yield* listLinkedPullRequestThreads({
+          host: "forge.example:3000",
+          repository: "acme/web",
+          number: 7,
+        })).threads.map((thread) => thread.id),
+      ).toEqual(["forgejo-old"]);
+      expect(
+        (yield* listLinkedPullRequestThreads({
+          host: "forge.example:4000",
+          repository: "acme/web",
+          number: 7,
+        })).threads.map((thread) => thread.id),
+      ).toEqual(["forgejo-other-port"]);
       expect(
         (yield* listLinkedPullRequestThreads({
           host: "org.visualstudio.com",

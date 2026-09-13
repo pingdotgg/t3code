@@ -5,6 +5,7 @@ import { VcsDriverKind } from "./vcs.ts";
 export const SourceControlProviderKind = Schema.Literals([
   "github",
   "gitlab",
+  "forgejo",
   "azure-devops",
   "bitbucket",
   "unknown",

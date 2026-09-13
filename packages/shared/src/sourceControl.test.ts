@@ -59,6 +59,22 @@ describe("detectSourceControlProviderFromRemoteUrl", () => {
     ).toBe("bitbucket");
   });
 
+  it("detects Forgejo and Gitea hosts while preserving HTTP origins", () => {
+    for (const host of ["codeberg.org", "forgejo.example.test", "gitea.example.test"]) {
+      expect(detectSourceControlProviderFromRemoteUrl(`http://${host}:3000/team/repo.git`)).toEqual(
+        {
+          kind: "forgejo",
+          name: "Forgejo",
+          baseUrl: `http://${host}:3000`,
+        },
+      );
+    }
+    expect(getChangeRequestTerminologyForKind("forgejo")).toEqual({
+      shortLabel: "PR",
+      singular: "pull request",
+    });
+  });
+
   it("detects Azure DevOps SSH remotes", () => {
     // The default Azure DevOps SSH clone URL uses the ssh.dev.azure.com host.
     expect(

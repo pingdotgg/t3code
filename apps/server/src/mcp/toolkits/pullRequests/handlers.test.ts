@@ -265,6 +265,40 @@ describe("pull request toolkit handlers", () => {
     }),
   );
 
+  it.effect("links a numeric Forgejo reference with its remote's web origin and mount path", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        project: makeProject({
+          canonicalKey: "forge.example/git/owner/repo",
+          locator: {
+            source: "git-remote",
+            remoteName: "origin",
+            remoteUrl: "http://forge.example:3000/git/owner/repo.git",
+          },
+          provider: "forgejo",
+          displayName: "git/owner/repo",
+        }),
+      });
+      const result = yield* harness.call("link_pull_request", {
+        repository: "git/owner/repo",
+        number: 42,
+      });
+      expect(result).toEqual({
+        host: "forge.example:3000",
+        repository: "git/owner/repo",
+        number: 42,
+        url: "http://forge.example:3000/git/owner/repo/pulls/42",
+        alreadyLinked: false,
+      });
+      const other = yield* harness.call("link_pull_request", {
+        host: "other.example",
+        repository: "owner/repo",
+        number: 42,
+      });
+      expect(other.url).toBe("https://other.example/owner/repo/pull/42");
+    }),
+  );
+
   it.effect("rejects a target that names neither a URL nor repository and number", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -333,6 +367,18 @@ describe("pull request toolkit handlers", () => {
       ]);
     }),
   );
+
+  it("reports an older Forgejo link's HTTP port when listing thread links", () => {
+    const result = listThreadPullRequests(
+      makeThread([
+        makeLink(42, {
+          host: "forge.example",
+          url: "http://forge.example:3000/t3tools/t3code/pulls/42",
+        }),
+      ]),
+    );
+    expect(result.pullRequests[0]?.host).toBe("forge.example:3000");
+  });
 
   it.effect("fails cleanly when the token's thread no longer exists", () =>
     Effect.gen(function* () {

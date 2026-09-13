@@ -19,6 +19,24 @@ const input = {
 };
 
 describe("thread pull request capability negotiation", () => {
+  it.each([true, false])(
+    "preserves Forgejo ports in a multi-link mutation: linked=%s",
+    (linked) => {
+      const mutation = planThreadPullRequestMutation({
+        ...input,
+        linked,
+        capabilities: { threadPullRequests: true },
+        reference: {
+          host: "forge.example",
+          repository: "team/repo",
+          number: 7,
+          url: "http://forge.example:3000/team/repo/pulls/7",
+        },
+      });
+      expect(mutation).toMatchObject({ input: { host: "forge.example:3000", number: 7 } });
+    },
+  );
+
   it.each([undefined, {}, { threadPullRequests: false, threadPullRequestLinking: false }])(
     "does not dispatch when linking is unadvertised: %j",
     (capabilities) => {

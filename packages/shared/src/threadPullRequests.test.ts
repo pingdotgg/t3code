@@ -62,6 +62,28 @@ function link(
 }
 
 describe("threadPullRequestKeysEqual", () => {
+  it("recovers Forgejo ports from old stored URLs and keeps separate servers distinct", () => {
+    const old = link(1, {
+      host: "forge.example",
+      repository: "team/repo",
+      url: "http://forge.example:3000/team/repo/pulls/1",
+    });
+    expect(threadPullRequestKeysEqual(old, { ...old, host: "forge.example:3000" })).toBe(true);
+    expect(
+      threadPullRequestKeysEqual(old, {
+        host: "forge.example:3000",
+        repository: "team/repo",
+        number: 1,
+      }),
+    ).toBe(true);
+    expect(
+      threadPullRequestKeysEqual(old, {
+        ...old,
+        url: "http://forge.example:4000/team/repo/pulls/1",
+      }),
+    ).toBe(false);
+  });
+
   it("ignores host and repository case", () => {
     expect(
       threadPullRequestKeysEqual(

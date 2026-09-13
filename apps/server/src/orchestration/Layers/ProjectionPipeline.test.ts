@@ -889,6 +889,39 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-projection-pull
         assert.deepEqual(yield* readLinks(), []);
         assert.deepEqual(yield* readThreadUpdatedAt(), [{ updatedAt: "2026-01-01T00:00:05.000Z" }]);
 
+        // Older Forgejo rows stored a portless host; unlink by their URL's authority.
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:05.100Z"),
+          type: "thread.pull-request-linked",
+          payload: {
+            threadId,
+            link: {
+              host: "forge.example",
+              repository: "team/repo",
+              number: 42,
+              url: "http://forge.example:3000/team/repo/pulls/42",
+              source: "agent",
+              linkedAt: "2026-01-01T00:00:05.100Z",
+              snapshot: null,
+              stack: null,
+            },
+            updatedAt: "2026-01-01T00:00:05.100Z",
+          },
+        });
+        yield* eventStore.append({
+          ...base("2026-01-01T00:00:05.200Z"),
+          type: "thread.pull-request-unlinked",
+          payload: {
+            threadId,
+            host: "forge.example:3000",
+            repository: "team/repo",
+            number: 42,
+            updatedAt: "2026-01-01T00:00:05.200Z",
+          },
+        });
+        yield* projectionPipeline.bootstrap;
+        assert.deepEqual(yield* readLinks(), []);
+
         // Deleting the thread clears whatever links it still had.
         yield* eventStore.append({
           ...base("2026-01-01T00:00:06.000Z"),

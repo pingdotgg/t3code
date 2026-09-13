@@ -37,6 +37,10 @@ import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as GitHubSourceControlProvider from "../sourceControl/GitHubSourceControlProvider.ts";
 import * as GitLabSourceControlProvider from "../sourceControl/GitLabSourceControlProvider.ts";
+import {
+  ForgejoPullRequestSchema,
+  toForgejoChangeRequest,
+} from "../sourceControl/forgejoPullRequests.ts";
 import type { SourceControlProvider } from "../sourceControl/SourceControlProvider.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as ServerConfig from "../config.ts";
@@ -46,6 +50,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as GitManager from "./GitManager.ts";
 
 const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const decodeForgejoPullRequest = Schema.decodeEffect(ForgejoPullRequestSchema);
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -3849,6 +3854,69 @@ it.layer(GitManagerTestLayer)("GitManager", (it) => {
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
       }),
     20_000,
+  );
+
+  it.effect("matches mounted Forgejo heads without confusing forks sharing a branch", () =>
+    Effect.gen(function* () {
+      for (const owner of ["maria", "reviewer"]) {
+        const mapped = toForgejoChangeRequest(
+          yield* decodeForgejoPullRequest({
+            number: 42,
+            title: "Greeting",
+            html_url: "https://forgejo.example/forgejo/maria/project/pulls/42",
+            state: "open",
+            merged: false,
+            base: {
+              ref: "main",
+              sha: "base",
+              repo: { full_name: "maria/project", owner: { login: "maria" } },
+            },
+            head: {
+              ref: "greeting",
+              sha: "head",
+              repo: { full_name: `${owner}/project`, owner: { login: owner } },
+            },
+          }),
+        );
+        const pr = {
+          ...mapped,
+          isDraft: mapped.isDraft ?? false,
+          closedAt: mapped.closedAt ?? null,
+          mergedAt: mapped.mergedAt ?? null,
+        };
+        const repository = GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+          `https://forgejo.example/forgejo/${owner}/project.git`,
+          "forgejo",
+        );
+        expect(repository).toBe(`${owner}/project`);
+        const context = {
+          headBranch: "greeting",
+          headRepositoryNameWithOwner: repository,
+          headRepositoryOwnerLogin: repository?.split("/")[0] ?? null,
+          isCrossRepository: owner !== "maria",
+        };
+        expect(GitManager.matchesBranchHeadContext(pr, context)).toBe(true);
+        expect(
+          GitManager.matchesBranchHeadContext(pr, {
+            ...context,
+            headRepositoryNameWithOwner: "other/project",
+            headRepositoryOwnerLogin: "other",
+          }),
+        ).toBe(false);
+      }
+      expect(
+        GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+          "git@forgejo.example:maria/project.git",
+          "forgejo",
+        ),
+      ).toBe("maria/project");
+      expect(
+        GitManager.parseRepositoryNameWithOwnerFromRemoteUrl(
+          "https://gitlab.example/group/maria/project.git",
+          "gitlab",
+        ),
+      ).toBe("group/maria/project");
+    }),
   );
 
   it.effect("rejects same-repo PR metadata when matching a cross-repo head context", () =>

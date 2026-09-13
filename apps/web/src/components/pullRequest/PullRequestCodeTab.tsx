@@ -976,6 +976,7 @@ function PullRequestCodeTab({
               environmentId={environmentId}
               reference={reference}
               verdicts={review.verdicts}
+              requestChangesSummaryRequired={detail.provider === "forgejo"}
               onSubmitted={() => {
                 onRefresh();
                 setReviewOpen(false);

@@ -11,6 +11,7 @@ import {
 import { makeDrainableWorker } from "@t3tools/shared/DrainableWorker";
 import {
   threadPullRequestKeyOf,
+  normalizeThreadPullRequestKey,
   threadPullRequestKeysEqual,
   visibleThreadPullRequests,
 } from "@t3tools/shared/threadPullRequests";
@@ -191,7 +192,7 @@ export const make = Effect.gen(function* () {
           type: "thread.pull-request-link.sync",
           commandId: CommandId.make(`server:pr-sync:${thread.id}:${uuid}`),
           threadId: thread.id,
-          host: link.host,
+          host: normalizeThreadPullRequestKey(link).host,
           repository: link.repository,
           number: link.number,
           snapshot: { ...fields, syncedAt: nowIso },
@@ -200,7 +201,11 @@ export const make = Effect.gen(function* () {
       }
       if (fetchedStack === null || fetchedStack.stack === null) return;
       for (const layer of fetchedStack.stack.layers) {
-        const layerKey = { host: link.host, repository: link.repository, number: layer.number };
+        const layerKey = {
+          host: normalizeThreadPullRequestKey(link).host,
+          repository: link.repository,
+          number: layer.number,
+        };
         const dedupeKey = `${thread.id}:${threadPullRequestKeyOf(layerKey)}`;
         if (linkedThisSweep.has(dedupeKey)) continue;
         // Tombstones count as present: a dismissed layer is never re-added.
@@ -240,7 +245,7 @@ export const make = Effect.gen(function* () {
       const first = entries[0]!;
       const ref = {
         projectId: first.thread.projectId,
-        host: first.link.host,
+        host: normalizeThreadPullRequestKey(first.link).host,
         repository: first.link.repository,
         number: first.link.number,
       };
