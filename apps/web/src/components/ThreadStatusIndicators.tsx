@@ -144,6 +144,7 @@ export function ThreadPullRequestBadgeControl({
   number,
   url,
   status,
+  iconOnly = false,
   onOpenStack,
   onOpenPullRequest,
 }: {
@@ -152,6 +153,8 @@ export function ThreadPullRequestBadgeControl({
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
+  /** Dense rows drop the number/layer count and keep only the state glyph. */
+  iconOnly?: boolean;
   onOpenStack: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
 }) {
@@ -179,7 +182,7 @@ export function ThreadPullRequestBadgeControl({
   const content = (
     <>
       <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
-      {isStack ? badge.layers : linkedCount !== null ? `+${linkedCount}` : number}
+      {iconOnly ? null : isStack ? badge.layers : linkedCount !== null ? `+${linkedCount}` : number}
     </>
   );
   return (
