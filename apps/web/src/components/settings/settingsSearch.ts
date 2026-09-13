@@ -591,7 +591,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "gh glab az executable binary path custom location not found on path wrapper mise asdf volta homebrew",
     ],
-    primaryOnly: true,
   },
   {
     id: "git-fetch-interval",

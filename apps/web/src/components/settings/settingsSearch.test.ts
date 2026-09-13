@@ -249,6 +249,29 @@ describe("searchSettings", () => {
     expect(result).not.toHaveProperty("targetId");
   });
 
+  it.each(["hosting cli path", "gh", "glab", "az"])(
+    "finds hosting CLI paths by %s with a connected environment",
+    (query) => {
+      const available = filterAvailableSettingsSearchItems({
+        hasCloudPublicConfig: false,
+        hasEnvironment: true,
+        hasProviderSettingsEnvironment: true,
+        canManageLocalBackend: false,
+        isWslSettingsRowVisible: false,
+        hasThreadAutoSettlement: false,
+      });
+
+      const result = searchSettings(query, available).find(
+        (item) => item.id === "hosting-cli-path",
+      );
+      expect(result).toMatchObject({
+        id: "hosting-cli-path",
+        to: "/settings/source-control",
+      });
+      expect(result).not.toHaveProperty("targetId");
+    },
+  );
+
   it("routes browser recording quality to integrations", () => {
     const result = searchSettings("recording frame rate")[0];
     expect(result).toMatchObject({

@@ -695,14 +695,10 @@ export function SourceControlSettingsPanel() {
                   key={`vcs:${item.kind}`}
                   item={item}
                   expandForSearchTarget={
-                    item.kind === "git"
-                      ? searchableSetting("git-fetch-interval").id
-                      : undefined
+                    item.kind === "git" ? searchableSetting("git-fetch-interval").id : undefined
                   }
                 >
-                  {item.kind === "git" ? (
-                    <GitFetchIntervalSettings />
-                  ) : undefined}
+                  {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
                 </DiscoveryItemRow>
               ))}
             </SettingsSection>
