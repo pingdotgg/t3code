@@ -1,5 +1,11 @@
 import { Debouncer } from "@tanstack/react-pacer";
-import type { PullRequestMergeMethod } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  PullRequestMergeMethod,
+  ScopedTaskRef,
+  TaskId,
+} from "@t3tools/contracts";
+import { parseScopedTaskKey, scopedTaskKey } from "@t3tools/client-runtime/environment";
 import { create } from "zustand";
 import { normalizeProjectPathForComparison } from "./lib/projectPaths";
 
@@ -20,6 +26,8 @@ const LEGACY_PERSISTED_STATE_KEYS = [
 ] as const;
 
 export interface PersistedUiState {
+  taskExpandedByKey?: Record<string, boolean>;
+  taskSettledExpandedByKey?: Record<string, boolean>;
   projectExpandedById?: Record<string, boolean>;
   projectOrder?: string[];
   threadLastVisitedAtById?: Record<string, string>;
@@ -47,6 +55,11 @@ export interface UiThreadState {
   threadChangedFilesExpandedById: Record<string, Record<string, boolean>>;
 }
 
+export interface UiTaskState {
+  taskExpandedByKey: Record<string, boolean>;
+  taskSettledExpandedByKey: Record<string, boolean>;
+}
+
 export interface UiEndpointState {
   defaultAdvertisedEndpointKey: string | null;
 }
@@ -56,9 +69,11 @@ export interface UiPullRequestState {
 }
 
 export interface UiState
-  extends UiProjectState, UiThreadState, UiEndpointState, UiPullRequestState {}
+  extends UiProjectState, UiThreadState, UiTaskState, UiEndpointState, UiPullRequestState {}
 
 const initialState: UiState = {
+  taskExpandedByKey: {},
+  taskSettledExpandedByKey: {},
   projectExpandedById: {},
   projectOrder: [],
   sidebarProjectScopeKey: null,
@@ -94,6 +109,15 @@ function sanitizeBooleanRecord(value: unknown): Record<string, boolean> {
   return Object.fromEntries(
     Object.entries(value).filter(
       (entry): entry is [string, boolean] => entry[0].length > 0 && typeof entry[1] === "boolean",
+    ),
+  );
+}
+
+function sanitizeTaskPreferences(value: unknown): Record<string, boolean> {
+  if (Array.isArray(value)) return {};
+  return Object.fromEntries(
+    Object.entries(sanitizeBooleanRecord(value)).filter(
+      ([key]) => parseScopedTaskKey(key) !== null,
     ),
   );
 }
@@ -146,6 +170,8 @@ export function parsePersistedState(parsed: PersistedUiState): UiState {
       : sanitizeStringArray(parsed.projectOrder);
 
   return {
+    taskExpandedByKey: sanitizeTaskPreferences(parsed.taskExpandedByKey),
+    taskSettledExpandedByKey: sanitizeTaskPreferences(parsed.taskSettledExpandedByKey),
     projectExpandedById,
     projectOrder,
     threadLastVisitedAtById: sanitizeTimestampRecord(parsed.threadLastVisitedAtById),
@@ -224,6 +250,8 @@ export function persistState(state: UiState): void {
     window.localStorage.setItem(
       PERSISTED_STATE_KEY,
       JSON.stringify({
+        taskExpandedByKey: state.taskExpandedByKey,
+        taskSettledExpandedByKey: state.taskSettledExpandedByKey,
         projectExpandedById,
         projectOrder: state.projectOrder,
         threadLastVisitedAtById: state.threadLastVisitedAtById,
@@ -379,6 +407,62 @@ export function setProjectExpanded(
   };
 }
 
+/** Saved choices apply to either presentation; active tasks initially expand. */
+export function resolveTaskExpanded(
+  preferences: Readonly<Record<string, boolean>>,
+  ref: ScopedTaskRef,
+  parked: boolean,
+): boolean {
+  return preferences[scopedTaskKey(ref)] ?? !parked;
+}
+
+export function setTaskExpanded(state: UiState, ref: ScopedTaskRef, expanded: boolean): UiState {
+  const key = scopedTaskKey(ref);
+  return state.taskExpandedByKey[key] === expanded
+    ? state
+    : { ...state, taskExpandedByKey: { ...state.taskExpandedByKey, [key]: expanded } };
+}
+
+export function setTaskSettledExpanded(
+  state: UiState,
+  ref: ScopedTaskRef,
+  expanded: boolean,
+): UiState {
+  const key = scopedTaskKey(ref);
+  return state.taskSettledExpandedByKey[key] === expanded
+    ? state
+    : {
+        ...state,
+        taskSettledExpandedByKey: { ...state.taskSettledExpandedByKey, [key]: expanded },
+      };
+}
+
+/** Call only with the complete inventory (including archived tasks) of a live snapshot. */
+export function pruneTaskPreferences(
+  state: UiState,
+  environmentId: EnvironmentId,
+  taskIds: readonly TaskId[],
+  authoritative: boolean,
+): UiState {
+  if (!authoritative) return state;
+  const retained = new Set(taskIds);
+  const prune = (preferences: Record<string, boolean>) => {
+    const entries = Object.entries(preferences).filter(([key]) => {
+      const ref = parseScopedTaskKey(key);
+      return ref?.environmentId !== environmentId || retained.has(ref.taskId);
+    });
+    return entries.length === Object.keys(preferences).length
+      ? preferences
+      : Object.fromEntries(entries);
+  };
+  const taskExpandedByKey = prune(state.taskExpandedByKey);
+  const taskSettledExpandedByKey = prune(state.taskSettledExpandedByKey);
+  return taskExpandedByKey === state.taskExpandedByKey &&
+    taskSettledExpandedByKey === state.taskSettledExpandedByKey
+    ? state
+    : { ...state, taskExpandedByKey, taskSettledExpandedByKey };
+}
+
 export function reorderProjects(
   state: UiState,
   currentProjectOrder: readonly string[],
@@ -424,6 +508,13 @@ export function reorderProjects(
 }
 
 interface UiStateStore extends UiState {
+  setTaskExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
+  setTaskSettledExpanded: (ref: ScopedTaskRef, expanded: boolean) => void;
+  pruneTaskPreferences: (
+    environmentId: EnvironmentId,
+    taskIds: readonly TaskId[],
+    authoritative: boolean,
+  ) => void;
   markThreadVisited: (threadId: string, visitedAt: string) => void;
   markThreadUnread: (threadId: string, latestTurnCompletedAt: string | null | undefined) => void;
   setThreadChangedFilesExpanded: (threadId: string, turnId: string, expanded: boolean) => void;
@@ -440,6 +531,11 @@ interface UiStateStore extends UiState {
 
 export const useUiStateStore = create<UiStateStore>((set) => ({
   ...readPersistedState(),
+  setTaskExpanded: (ref, expanded) => set((state) => setTaskExpanded(state, ref, expanded)),
+  setTaskSettledExpanded: (ref, expanded) =>
+    set((state) => setTaskSettledExpanded(state, ref, expanded)),
+  pruneTaskPreferences: (environmentId, taskIds, authoritative) =>
+    set((state) => pruneTaskPreferences(state, environmentId, taskIds, authoritative)),
   markThreadVisited: (threadId, visitedAt) =>
     set((state) => markThreadVisited(state, threadId, visitedAt)),
   markThreadUnread: (threadId, latestTurnCompletedAt) =>

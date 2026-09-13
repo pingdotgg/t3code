@@ -4,6 +4,7 @@ import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sort
 import {
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
+  createTaskSidebarSortingStrategy,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import {
@@ -14,6 +15,9 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import { EnvironmentId, ProjectId, TaskId, ThreadId } from "@t3tools/contracts";
+import { scopeTaskRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { taskSidebarItemId, type TaskSidebarItem } from "./Sidebar.tasks";
 
 const thread = (key: string, section: SidebarSection): SidebarListItem => ({
   kind: "thread",
@@ -802,5 +806,153 @@ describe("lifted card clearance", () => {
   it("follows the list when it scrolls and includes content preceding Pins", () => {
     expect(511 + apply(511, 36, -500, 96).y).toBe(128);
     expect(511 + apply(511, 36, -500, 136, 114).y).toBe(250);
+  });
+});
+
+describe("task block drag projection", () => {
+  const environmentId = EnvironmentId.make("local");
+  const taskRef = scopeTaskRef(environmentId, TaskId.make("task"));
+  const taskKey = "owner";
+  const items: TaskSidebarItem[] = [
+    {
+      kind: "task",
+      key: "task",
+      taskKey,
+      taskRef,
+      section: "active",
+      expanded: true,
+      counts: { live: 1, snoozed: 0, settled: 1 },
+      status: "idle",
+    },
+    {
+      kind: "thread",
+      key: "member",
+      taskKey,
+      threadRef: scopeThreadRef(environmentId, ThreadId.make("member")),
+      section: "active",
+    },
+    {
+      kind: "draft",
+      key: "draft",
+      taskKey,
+      draft: {
+        key: "draft",
+        environmentId,
+        projectId: ProjectId.make("project"),
+        taskId: taskRef.taskId,
+      },
+      section: "active",
+    },
+    { kind: "task-new-thread", key: "new", taskKey, taskRef },
+    { kind: "task-settled-header", key: "shelf", taskKey, taskRef, count: 1, expanded: true },
+    {
+      kind: "thread",
+      key: "settled",
+      taskKey,
+      threadRef: scopeThreadRef(environmentId, ThreadId.make("settled")),
+      section: "settled",
+    },
+    {
+      kind: "thread",
+      key: "free",
+      threadRef: scopeThreadRef(environmentId, ThreadId.make("free")),
+      section: "active",
+    },
+  ];
+  function taskLayout(activeIndex: number, overIndex: number, scale = 1) {
+    let top = 100;
+    const rects = [82, 82, 36, 28, 28, 36, 82].map((height) => {
+      height *= scale;
+      const rect = { top, bottom: top + height, height, left: 0, right: 260, width: 260 };
+      top += height;
+      return rect;
+    });
+    return {
+      rects,
+      activeIndex,
+      overIndex,
+      index: 0,
+      activeNodeRect: rects[activeIndex]!,
+    } satisfies Parameters<SortingStrategy>[0];
+  }
+  it.each([1, 2])(
+    "moves the complete expanded block with measured structural geometry at scale %s",
+    (scale) => {
+      const strategy = createTaskSidebarSortingStrategy({ items, placement: "after" });
+      const args = taskLayout(0, 6, scale);
+      const projected = items.map((_, index) => strategy({ ...args, index }));
+      expect(projected[0]).toEqual(stationary);
+      expect(projected[6]).toEqual({ ...stationary, y: -292 * scale });
+      expect(projected.slice(1, 6).every((transform) => transform?.y === 82 * scale)).toBe(true);
+    },
+  );
+  it("keeps every child with the lifted header while the surrounding rows reserve the whole block", () => {
+    const strategy = createTaskSidebarSortingStrategy({
+      items,
+      placement: "after",
+      activeOffsetY: 147,
+    });
+    const args = taskLayout(0, 6);
+    expect(items.slice(1, 6).map((_, index) => strategy({ ...args, index: index + 1 })?.y)).toEqual(
+      [147, 147, 147, 147, 147],
+    );
+    expect(strategy({ ...args, index: 6 })?.y).toBe(-292);
+  });
+  it.each([
+    ["the pickup card", 0],
+    ["no collision", -1],
+    ["an invalid child target", 1],
+  ] as const)("keeps the complete lifted block together over %s", (_, overIndex) => {
+    const strategy = createTaskSidebarSortingStrategy({ items, activeOffsetY: 147 });
+    const args = taskLayout(0, overIndex);
+    expect(strategy({ ...args, index: 0 })).toEqual(stationary);
+    expect(items.slice(1, 6).map((_, index) => strategy({ ...args, index: index + 1 }))).toEqual(
+      Array.from({ length: 5 }, () => ({ ...stationary, y: 147 })),
+    );
+    expect(strategy({ ...args, index: 6 })).toEqual(stationary);
+  });
+  it("does not split task children when a top-level peer moves before the card", () => {
+    const strategy = createTaskSidebarSortingStrategy({ items, placement: "before" });
+    const args = taskLayout(6, 0);
+    expect(items.slice(0, 6).map((_, index) => strategy({ ...args, index })?.y)).toEqual([
+      82, 82, 82, 82, 82, 82,
+    ]);
+  });
+  it("leaves membership hover and rejected nesting stationary", () => {
+    const strategy = createTaskSidebarSortingStrategy({ items });
+    for (const args of [taskLayout(6, 0), taskLayout(0, 1)]) {
+      expect(
+        items.map((item, index) => [taskSidebarItemId(item), strategy({ ...args, index })]),
+      ).toEqual(items.map((item) => [taskSidebarItemId(item), stationary]));
+    }
+  });
+  it("reserves slim task and member geometry when the whole block enters Settled", () => {
+    const rows: TaskSidebarItem[] = [
+      ...items,
+      { kind: "marker", marker: "settled-header" },
+      {
+        kind: "thread",
+        key: "parked",
+        threadRef: scopeThreadRef(environmentId, ThreadId.make("parked")),
+        section: "settled",
+      },
+    ];
+    const initial = taskLayout(0, 8);
+    const bottom = initial.rects.at(-1)!.bottom;
+    const rect = (top: number, height: number) => ({
+      top,
+      bottom: top + height,
+      height,
+      left: 0,
+      right: 260,
+      width: 260,
+    });
+    const args = { ...initial, rects: [...initial.rects, rect(bottom, 32), rect(bottom + 32, 36)] };
+    const strategy = createTaskSidebarSortingStrategy({ items: rows, placement: "before" });
+    expect(strategy({ ...args, index: 6 })?.y).toBe(-292);
+    expect(strategy({ ...args, index: 7 })?.y).toBe(-292);
+    expect(strategy({ ...args, index: 8 })?.y).toBe(-92);
+    expect(strategy({ ...args, index: 1 })?.scaleY).toBe(36 / 82);
+    expect(strategy({ ...args, index: 5 })?.scaleY).toBe(1);
   });
 });

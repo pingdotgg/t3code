@@ -1,8 +1,12 @@
-import { ProjectId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, TaskId, ThreadId } from "@t3tools/contracts";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import {
   legacyProjectCwdPreferenceKey,
+  pruneTaskPreferences,
+  resolveTaskExpanded,
+  setTaskExpanded,
+  setTaskSettledExpanded,
   markThreadUnread,
   markThreadVisited,
   parsePersistedState,
@@ -20,6 +24,8 @@ import {
 
 function makeUiState(overrides: Partial<UiState> = {}): UiState {
   return {
+    taskExpandedByKey: {},
+    taskSettledExpandedByKey: {},
     projectExpandedById: {},
     projectOrder: [],
     sidebarProjectScopeKey: null,
@@ -193,6 +199,8 @@ describe("parsePersistedState", () => {
     });
 
     expect(parsed).toEqual({
+      taskExpandedByKey: {},
+      taskSettledExpandedByKey: {},
       projectExpandedById: {
         logical: false,
       },
@@ -315,6 +323,8 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(persisted).toEqual({
+      taskExpandedByKey: {},
+      taskSettledExpandedByKey: {},
       projectExpandedById: {
         logical: false,
       },
@@ -336,6 +346,20 @@ describe("uiStateStore persistence", () => {
     expect(parsePersistedState(persisted)).toEqual({
       ...state,
     });
+  });
+
+  it("restores task and settled shelf expansion independently across reloads", () => {
+    const task = {
+      environmentId: EnvironmentId.make("environment-a"),
+      taskId: TaskId.make("task-1"),
+    };
+    const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), task, false), task, true);
+    persistState(state);
+    const restored = parsePersistedState(
+      JSON.parse(localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}") as PersistedUiState,
+    );
+    expect(restored.taskExpandedByKey).toEqual(state.taskExpandedByKey);
+    expect(restored.taskSettledExpandedByKey).toEqual(state.taskSettledExpandedByKey);
   });
 
   it("restores the sidebar project scope across reloads", () => {
@@ -361,5 +385,71 @@ describe("uiStateStore persistence", () => {
       localStorageStub.getItem(PERSISTED_STATE_KEY) ?? "{}",
     ) as PersistedUiState;
     expect(resolveProjectExpanded(persisted.projectExpandedById ?? {}, ["unknown"])).toBe(true);
+  });
+});
+
+describe("task expansion preferences", () => {
+  const envA = EnvironmentId.make("environment-a");
+  const envB = EnvironmentId.make("environment-b");
+  const taskId = TaskId.make("task-1");
+  const refA = { environmentId: envA, taskId };
+  const refB = { environmentId: envB, taskId };
+
+  it("starts active tasks expanded and parked tasks collapsed without writing defaults", () => {
+    expect(resolveTaskExpanded({}, refA, false)).toBe(true);
+    expect(resolveTaskExpanded({}, refA, true)).toBe(false);
+  });
+
+  it("keeps explicit expansion and settled shelf choices scoped across lifecycle changes", () => {
+    const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), refA, false), refA, true);
+    expect(resolveTaskExpanded(state.taskExpandedByKey, refA, false)).toBe(false);
+    expect(resolveTaskExpanded(state.taskExpandedByKey, refB, false)).toBe(true);
+    expect(state.taskSettledExpandedByKey).toEqual({ "environment-a:task-1": true });
+    expect(setTaskExpanded(state, refA, false)).toBe(state);
+    expect(setTaskSettledExpanded(state, refA, true)).toBe(state);
+    const opened = setTaskExpanded(state, refA, true);
+    expect(resolveTaskExpanded(opened.taskExpandedByKey, refA, true)).toBe(true);
+  });
+
+  it("rehydrates only boolean preferences with valid scoped keys", () => {
+    const parsed = parsePersistedState({
+      taskExpandedByKey: {
+        "environment-a:task-1": false,
+        "environment-b:task-1": true,
+        unscoped: true,
+        ":missing-environment": false,
+        "environment-a:": false,
+        "environment-a:invalid-value": "false" as unknown as boolean,
+      },
+      taskSettledExpandedByKey: { "environment-a:task-1": true },
+    });
+    expect(parsed.taskExpandedByKey).toEqual({
+      "environment-a:task-1": false,
+      "environment-b:task-1": true,
+    });
+    expect(parsed.taskSettledExpandedByKey).toEqual({ "environment-a:task-1": true });
+    expect(parsePersistedState({}).taskExpandedByKey).toEqual({});
+    expect(
+      parsePersistedState({ taskExpandedByKey: [] as unknown as Record<string, boolean> })
+        .taskExpandedByKey,
+    ).toEqual({});
+  });
+
+  it("preserves every preference while inventory is cached, disconnected or loading", () => {
+    const state = setTaskSettledExpanded(setTaskExpanded(makeUiState(), refA, false), refB, true);
+    expect(pruneTaskPreferences(state, envA, [], false)).toBe(state);
+    expect(pruneTaskPreferences(state, envB, [], false)).toBe(state);
+  });
+
+  it("prunes only missing tasks in the authoritative environment", () => {
+    let state = setTaskExpanded(makeUiState(), refA, false);
+    state = setTaskExpanded(state, refB, true);
+    state = setTaskSettledExpanded(state, refA, true);
+    state = setTaskSettledExpanded(state, refB, false);
+    expect(pruneTaskPreferences(state, envA, [taskId], true)).toBe(state);
+    const pruned = pruneTaskPreferences(state, envA, [], true);
+    expect(pruned.taskExpandedByKey).toEqual({ "environment-b:task-1": true });
+    expect(pruned.taskSettledExpandedByKey).toEqual({ "environment-b:task-1": false });
+    expect(pruneTaskPreferences(pruned, envA, [], true)).toBe(pruned);
   });
 });

@@ -8,6 +8,7 @@ import {
   type SidebarListMarker,
   type SidebarSection,
 } from "./Sidebar.logic";
+import { resolveTaskSidebarDrop, taskSidebarItemId, type TaskSidebarItem } from "./Sidebar.tasks";
 
 const stationary = { x: 0, y: 0, scaleX: 1, scaleY: 1 };
 const hidden = { ...stationary, scaleY: 0 };
@@ -228,5 +229,135 @@ export function createSidebarSortingStrategy(input: {
     return transforms === null
       ? verticalListSortingStrategy(args)
       : (transforms[args.index] ?? stationary);
+  };
+}
+
+/** Expanded task children occupy the same moving block as their header. Measured
+ * row heights include drafts and sub-shelves, so no child can be orphaned by a gap. */
+export function createTaskSidebarSortingStrategy(input: {
+  items: readonly TaskSidebarItem[];
+  placement?: "on" | "before" | "after";
+  activeOffsetY?: number;
+  cardHeight?: number;
+  slimHeight?: number;
+}): SortingStrategy {
+  const { items } = input;
+  let previous: Pick<Layout, "rects" | "activeIndex" | "overIndex"> | undefined;
+  let transforms: ReturnType<SortingStrategy>[] = [];
+  function project(args: Layout) {
+    const active = items[args.activeIndex];
+    const over = items[args.overIndex];
+    const result = items.map(() => stationary);
+    if (!active || !over || !args.rects[0]) return result;
+    const drop = resolveTaskSidebarDrop(
+      items,
+      taskSidebarItemId(active),
+      taskSidebarItemId(over),
+      input.placement,
+    );
+    if (drop?.kind !== "reorder") return result;
+    const owned = (item: TaskSidebarItem) =>
+      item === active ||
+      (active.kind === "task" &&
+        item.kind !== "marker" &&
+        "taskKey" in item &&
+        item.taskKey === active.taskKey);
+    const block = items.filter(owned);
+    const remaining = items.filter((item) => !owned(item));
+    const rank = drop.order.indexOf(drop.source.key);
+    const nextKey = drop.order[rank + 1];
+    const previousKey = drop.order[rank - 1];
+    let insertion = nextKey
+      ? remaining.findIndex((item) => taskSidebarItemId(item) === nextKey)
+      : -1;
+    if (insertion < 0 && previousKey) {
+      insertion = remaining.findIndex((item) => taskSidebarItemId(item) === previousKey);
+      const previousItem = remaining[insertion];
+      insertion += 1;
+      if (previousItem?.kind === "task") {
+        while (insertion < remaining.length) {
+          const item = remaining[insertion]!;
+          if (
+            item.kind === "marker" ||
+            !("taskKey" in item) ||
+            item.taskKey !== previousItem.taskKey
+          )
+            break;
+          insertion += 1;
+        }
+      }
+    }
+    if (insertion < 0) {
+      insertion = remaining.indexOf(over);
+      if (over.kind === "marker" || over.kind === "task-settled-header") insertion += 1;
+    }
+    if (insertion < 0) return result;
+    const projected = [...remaining.slice(0, insertion), ...block, ...remaining.slice(insertion)];
+    const indices = new Map(items.map((item, index) => [taskSidebarItemId(item), index]));
+    const sourceRect = args.rects[args.activeIndex];
+    const sourceSlim =
+      drop.source.section === "snoozed" ||
+      drop.source.section === "settled" ||
+      (drop.source.kind === "thread" && drop.source.slim === true);
+    const scale = sourceRect ? sourceRect.height / (sourceSlim ? 36 : 82) : 1;
+    const cardHeight = input.cardHeight ?? 82 * scale;
+    const slimHeight = input.slimHeight ?? 36 * scale;
+    const destinationSlim = drop.section === "settled";
+    const defaultGap =
+      args.rects.length > 1 ? Math.max(0, args.rects[1]!.top - args.rects[0].bottom) : 0;
+    let top = args.rects[0].top;
+    for (const item of projected) {
+      const index = indices.get(taskSidebarItemId(item))!;
+      const rect = args.rects[index];
+      if (!rect) continue;
+      const moved = owned(item);
+      const height =
+        moved && (item.kind === "task" || item.kind === "thread")
+          ? destinationSlim ||
+            (item !== active &&
+              item.kind === "thread" &&
+              (item.section === "snoozed" || item.section === "settled"))
+            ? slimHeight
+            : cardHeight
+          : rect.height;
+      result[index] = {
+        ...stationary,
+        y: top - rect.top,
+        scaleY: rect.height > 0 ? height / rect.height : 1,
+      };
+      // Preserve the actual list spacing (including zero-height shelf markers).
+      const following = args.rects[index + 1];
+      const gap = following ? Math.max(0, following.top - rect.bottom) : defaultGap;
+      top += height + gap;
+    }
+    result[args.activeIndex] = stationary;
+    return result;
+  }
+  return (args) => {
+    if (
+      previous?.rects !== args.rects ||
+      previous.activeIndex !== args.activeIndex ||
+      previous.overIndex !== args.overIndex
+    ) {
+      previous = args;
+      transforms = project(args);
+    }
+    // The lifted block follows the gesture even while no valid drop projection
+    // exists; dnd-kit already applies the pointer transform to its header.
+    const active = items[args.activeIndex];
+    const item = items[args.index];
+    if (
+      active?.kind === "task" &&
+      input.activeOffsetY !== undefined &&
+      item &&
+      item.kind !== "marker" &&
+      "taskKey" in item &&
+      item.taskKey === active.taskKey
+    ) {
+      return args.index === args.activeIndex
+        ? stationary
+        : { ...stationary, y: input.activeOffsetY };
+    }
+    return transforms[args.index] ?? stationary;
   };
 }
