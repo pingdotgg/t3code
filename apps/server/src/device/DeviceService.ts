@@ -156,6 +156,22 @@ interface ServiceState {
   readonly state: DeviceServiceState;
 }
 
+/**
+ * Exit 127 is ProcessRunner's code for a spawn that never happened, so the
+ * number describes nothing the user can act on and the stderr behind it is an
+ * internal error type. Every other code came from the emulator itself, where
+ * the first line of stderr is usually the whole explanation.
+ */
+const avdFailureDetail = (avds: { readonly code: number; readonly stderr: string }): string => {
+  if (avds.code === 127)
+    return "Android emulators could not be listed: the emulator command could not be started. Install the Android Emulator in Android Studio's SDK Manager, or set ANDROID_HOME to your SDK directory.";
+  const reason = avds.stderr
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return `Android emulators could not be listed (exit code ${avds.code})${reason ? `: ${reason}` : ""}`;
+};
+
 const vendorPrefix = (platform: DevicePlatform) =>
   platform === "ios" ? "/vendor/serve-sim" : "/vendor/serve-emu";
 
@@ -358,35 +374,40 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
       physical: device.physical,
     });
     const devices = [...list.simulators, ...list.emulators].map(toSummary);
+    // The hub already reports per-backend problems this way rather than
+    // failing the call, so everything the user should see about a partial
+    // result travels in `detail`.
+    const details = list.errors?.map((error) => error.message) ?? [];
     const host = yield* resolveHost(ready.hostId);
     if ((yield* host.platformAvailability("android")).available) {
       const avds = yield* ready.run("emulator", ["-list-avds"]);
       if (avds.code !== 0) {
-        return yield* new DeviceOperationError({
-          operation: "list",
-          reason: "command_failed",
-          exitCode: avds.code,
-          cause: avds,
-        });
-      }
-      for (const name of avds.stdout
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean)) {
-        if (!devices.some((device) => device.platform === "android" && device.name === name)) {
-          devices.push({
-            hostId: ready.hostId,
-            id: name,
-            name,
-            platform: "android",
-            version: "Android",
-            booted: false,
-            physical: false,
-          });
+        // Degrade instead of failing: a broken Android toolchain should cost
+        // the user their emulators, not the simulators the hub already
+        // returned. Returning an error here discards the whole list and marks
+        // the host failed, which hides both the working platform and which
+        // platform actually broke.
+        details.push(avdFailureDetail(avds));
+      } else {
+        for (const name of avds.stdout
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)) {
+          if (!devices.some((device) => device.platform === "android" && device.name === name)) {
+            devices.push({
+              hostId: ready.hostId,
+              id: name,
+              name,
+              platform: "android",
+              version: "Android",
+              booted: false,
+              physical: false,
+            });
+          }
         }
       }
     }
-    return { devices, detail: list.errors?.map((error) => error.message).join("\n") || undefined };
+    return { devices, detail: details.join("\n") || undefined };
   });
 
   const refresh = Effect.fn("DeviceService.refresh")(function* (ready: DeviceReadiness) {
