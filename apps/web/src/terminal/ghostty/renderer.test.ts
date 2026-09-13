@@ -226,8 +226,74 @@ describe("renderGhosttySnapshot", () => {
     });
 
     // The cursor row still repaints so the block disappears, but the inverted
-    // glyph the on phase draws over the cell is gone.
-    expect(fillTextCalls).toEqual([["abx", 4, 15, 21.6]]);
+    // glyph the on phase draws over the cell is gone. The blink-off path also
+    // redraws the cursor cell's own glyph after clearing it, so the cell text
+    // appears twice: once as part of the row and once as the per-cell redraw.
+    expect(fillTextCalls).toEqual([
+      ["abx", 4, 15, 21.6],
+      ["x", 18.4, 15, 7.2],
+    ]);
+  });
+
+  it("clears the full cursor cell and redraws text during blink off phase", () => {
+    const fillRectCalls: number[][] = [];
+    const fillTextCalls: unknown[][] = [];
+    const context = {
+      canvas: { width: 200, height: 40 },
+      beginPath: () => {},
+      clip: () => {},
+      fillRect: (...args: number[]) => fillRectCalls.push(args),
+      fillText: (...args: unknown[]) => fillTextCalls.push(args),
+      rect: () => {},
+      resetTransform: () => {},
+      restore: () => {},
+      save: () => {},
+      set fillStyle(_value: string) {},
+      set font(_value: string) {},
+      set textBaseline(_value: string) {},
+    } as unknown as CanvasRenderingContext2D;
+    const snapshot: GhosttySnapshot = {
+      cols: 3,
+      rows: 1,
+      foreground: { r: 255, g: 255, b: 255 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 255, g: 255, b: 255 },
+      cursorX: 2,
+      cursorY: 0,
+      cursorVisible: true,
+      cursorBlinking: true,
+      cursorStyle: 0,
+      dirtyRows: new Set(),
+      rowData: [
+        {
+          cells: [cell("a"), cell("b"), cell("x")],
+          text: "abx",
+          isWrapContinuation: false,
+          wrapsToNext: false,
+        },
+      ],
+    };
+
+    renderGhosttySnapshot({
+      context,
+      snapshot,
+      metrics: { width: 7.2, height: 16, baseline: 11 },
+      fontSize: 12,
+      fontFamily: "monospace",
+      padding: 4,
+      forceFull: false,
+      cursorOn: false,
+    });
+
+    // The cursor cell must be explicitly cleared with a full-width rect to
+    // erase bar/underline/stroke edge remnants, not just rely on the row
+    // background fill which may leave subpixel artifacts at cell boundaries.
+    const cursorCellClear = fillRectCalls.find(
+      ([x, , w]) => Math.abs(x - (4 + 2 * 7.2)) < 0.01 && Math.abs(w - 7.2) < 0.01,
+    );
+    expect(cursorCellClear).toBeDefined();
+    // The glyph under the cursor must be redrawn so it remains visible.
+    expect(fillTextCalls.some(([text]) => text === "x")).toBe(true);
   });
 
   it("repaints the previous cursor row after the cursor moves", () => {
