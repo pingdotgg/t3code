@@ -68,6 +68,7 @@ import {
   type ComposerSubmissionIntent,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
+  composerEnterCommandAction,
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -3778,12 +3779,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const submitCitationAndSend = useCallback(() => {
     const intent = composerSubmissionIntentForEnter({
       isMobileViewport,
+      sendKey: settings.composerSendKey,
       shiftKey: false,
       modifierKey: true,
       isDraftThread: routeKind === "draft",
     });
     submitComposer(undefined, intent ?? "foreground");
-  }, [isMobileViewport, routeKind, submitComposer]);
+  }, [isMobileViewport, routeKind, settings.composerSendKey, submitComposer]);
   const compactThreadContext = useCallback(() => {
     if (
       compactDisabled ||
@@ -3925,9 +3927,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
     const { trigger } = resolveActiveComposerTrigger();
     const menuIsActive = composerMenuOpenRef.current || trigger !== null;
+    const currentItems = composerMenuItemsRef.current;
+    const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
     if (menuIsActive) {
-      const currentItems = composerMenuItemsRef.current;
-      const selectedItem = activeComposerMenuItemRef.current ?? currentItems[0];
       if (key === "ArrowDown" && currentItems.length > 0) {
         nudgeComposerMenuHighlight("ArrowDown");
         return true;
@@ -3936,7 +3938,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         nudgeComposerMenuHighlight("ArrowUp");
         return true;
       }
-      if ((key === "Enter" || key === "Tab") && selectedItem) {
+      if (key === "Tab" && selectedItem) {
         onSelectComposerItem(selectedItem);
         return true;
       }
@@ -3944,18 +3946,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (key === "ArrowUp" || key === "ArrowDown") {
       return navigatePromptHistory(key === "ArrowUp" ? "backward" : "forward", event);
     }
-    const submissionIntent =
-      key === "Enter"
-        ? composerSubmissionIntentForEnter({
-            isMobileViewport,
-            shiftKey: event.shiftKey,
-            modifierKey: event.metaKey || event.ctrlKey,
-            isDraftThread: routeKind === "draft",
-          })
-        : null;
-    if (submissionIntent) {
-      submitComposer(undefined, submissionIntent);
-      return true;
+    if (key === "Enter") {
+      const action = composerEnterCommandAction({
+        menuCanSelect: menuIsActive && selectedItem != null,
+        isMobileViewport,
+        sendKey: settings.composerSendKey,
+        shiftKey: event.shiftKey,
+        modifierKey: event.metaKey || event.ctrlKey,
+        isDraftThread: routeKind === "draft",
+      });
+      if (action?.kind === "submit") {
+        submitComposer(undefined, action.intent);
+        return true;
+      }
+      if (action?.kind === "select-menu" && selectedItem) {
+        onSelectComposerItem(selectedItem);
+        return true;
+      }
     }
     return false;
   };

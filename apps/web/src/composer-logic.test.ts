@@ -10,6 +10,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   clampCollapsedComposerCursor,
   collapseExpandedComposerCursor,
+  composerEnterCommandAction,
   composerSubmissionIntentForEnter,
   detectComposerTrigger,
   expandCollapsedComposerCursor,
@@ -61,13 +62,15 @@ describe("formatAssistantCitationForComposer", () => {
 });
 
 describe("composerSubmissionIntentForEnter", () => {
+  const desktop = { isMobileViewport: false, isDraftThread: true } as const;
+
   it("submits plain Enter on desktop", () => {
     expect(
       composerSubmissionIntentForEnter({
-        isMobileViewport: false,
+        ...desktop,
+        sendKey: "enter",
         shiftKey: false,
         modifierKey: false,
-        isDraftThread: true,
       }),
     ).toBe("foreground");
   });
@@ -75,10 +78,11 @@ describe("composerSubmissionIntentForEnter", () => {
   it("inserts a newline for plain Enter on mobile", () => {
     expect(
       composerSubmissionIntentForEnter({
+        ...desktop,
         isMobileViewport: true,
+        sendKey: "enter",
         shiftKey: false,
         modifierKey: false,
-        isDraftThread: true,
       }),
     ).toBeNull();
   });
@@ -86,10 +90,10 @@ describe("composerSubmissionIntentForEnter", () => {
   it("inserts a newline for Shift+Enter", () => {
     expect(
       composerSubmissionIntentForEnter({
-        isMobileViewport: false,
+        ...desktop,
+        sendKey: "enter",
         shiftKey: true,
         modifierKey: false,
-        isDraftThread: true,
       }),
     ).toBeNull();
   });
@@ -97,10 +101,10 @@ describe("composerSubmissionIntentForEnter", () => {
   it("submits a new thread in the background with Mod+Enter", () => {
     expect(
       composerSubmissionIntentForEnter({
-        isMobileViewport: false,
+        ...desktop,
+        sendKey: "enter",
         shiftKey: false,
         modifierKey: true,
-        isDraftThread: true,
       }),
     ).toBe("background");
   });
@@ -108,12 +112,124 @@ describe("composerSubmissionIntentForEnter", () => {
   it("keeps Mod+Enter in the foreground for an active thread", () => {
     expect(
       composerSubmissionIntentForEnter({
-        isMobileViewport: false,
+        ...desktop,
+        isDraftThread: false,
+        sendKey: "enter",
         shiftKey: false,
         modifierKey: true,
-        isDraftThread: false,
       }),
     ).toBe("foreground");
+  });
+
+  describe("with Mod+Enter as the send key", () => {
+    it.each([
+      ["plain Enter", false],
+      ["Shift+Enter", true],
+    ])("inserts a newline for %s", (_label, shiftKey) => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          sendKey: "mod-enter",
+          shiftKey,
+          modifierKey: false,
+        }),
+      ).toBeNull();
+    });
+
+    it("submits a draft in the foreground with Mod+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          sendKey: "mod-enter",
+          shiftKey: false,
+          modifierKey: true,
+        }),
+      ).toBe("foreground");
+    });
+
+    it("moves the background start to Shift+Mod+Enter", () => {
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          sendKey: "mod-enter",
+          shiftKey: true,
+          modifierKey: true,
+        }),
+      ).toBe("background");
+      expect(
+        composerSubmissionIntentForEnter({
+          ...desktop,
+          isDraftThread: false,
+          sendKey: "mod-enter",
+          shiftKey: true,
+          modifierKey: true,
+        }),
+      ).toBe("foreground");
+    });
+  });
+});
+
+describe("composerEnterCommandAction", () => {
+  const desktop = { isMobileViewport: false, isDraftThread: true } as const;
+
+  it("lets the completion menu consume unmodified Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "enter",
+        shiftKey: false,
+        modifierKey: false,
+      }),
+    ).toEqual({ kind: "select-menu" });
+  });
+
+  it("sends with Mod+Enter even when the completion menu is open", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: false,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "foreground" });
+  });
+
+  it("starts a background draft with Shift+Mod+Enter while the menu is open", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: true,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "background" });
+  });
+
+  it("still lets the menu consume Enter when send is Mod+Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "mod-enter",
+        shiftKey: false,
+        modifierKey: false,
+      }),
+    ).toEqual({ kind: "select-menu" });
+  });
+
+  it("submits Mod+Enter as a background draft when send is Enter", () => {
+    expect(
+      composerEnterCommandAction({
+        ...desktop,
+        menuCanSelect: true,
+        sendKey: "enter",
+        shiftKey: false,
+        modifierKey: true,
+      }),
+    ).toEqual({ kind: "submit", intent: "background" });
   });
 });
 
