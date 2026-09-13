@@ -1,6 +1,6 @@
 # Source control
 
-T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, and Azure DevOps to clone and publish
+T3 Code integrates with GitHub, GitLab, Forgejo, Gitea, Bitbucket, Azure DevOps, and GitCafe to clone and publish
 repositories, create pull requests, and review changes.
 
 ## Connect an account
@@ -72,6 +72,23 @@ Install [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/), add the DevOp
 az extension add --name azure-devops
 az login
 ```
+
+### GitCafe
+
+Install the GitCafe CLI with Bun, then sign in on the server:
+
+```bash
+bun install -g @gitcafe/cli
+cafe auth login --host https://git.cafe/api
+```
+
+GitCafe repositories use HTTPS by default. If Git credentials need refreshing, run
+`cafe auth http setup`. Requests follow the repository URL on `git.cafe` or
+`staging.git.cafe`. Sign in separately for staging with
+`cafe auth login --host https://staging.git.cafe/api`.
+
+GitCafe's review browser currently supports reading pull requests, diffs, conversations, and
+native stacks. Use GitCafe itself for review edits, comments, and merge or restack actions.
 
 ## Clone or publish a project
 
@@ -163,3 +180,8 @@ the scope and merge strategy. GitHub rebases the remaining stack after merging.
 It can rewrite history and restart checks. If a layer fails, earlier updates remain; resolve that
 layer before retrying. GitHub may require manual conflict resolution after a lower layer is amended,
 even when its changes look independent. Stack actions require an environment that supports them.
+
+## GitCafe stacks
+
+Open a GitCafe review's stack badge to navigate its native stack. Linked reviews also group by
+stack. Stack navigation is read-only; stack merging and restacking are not available in T3 Code yet.

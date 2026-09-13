@@ -5,7 +5,14 @@ import type {
 } from "@t3tools/contracts";
 
 export interface ChangeRequestPresentation {
-  readonly icon: "github" | "gitlab" | "forgejo" | "azure-devops" | "bitbucket" | "change-request";
+  readonly icon:
+    | "github"
+    | "gitlab"
+    | "gitcafe"
+    | "forgejo"
+    | "azure-devops"
+    | "bitbucket"
+    | "change-request";
   readonly providerName: string;
   readonly shortName: string;
   readonly longName: string;
@@ -79,6 +86,17 @@ const BITBUCKET_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   urlExample: "https://bitbucket.org/workspace/repo/pull-requests/42",
 };
 
+const GITCAFE_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
+  icon: "gitcafe",
+  providerName: "GitCafe",
+  shortName: "PR",
+  longName: "pull request",
+  pluralLongName: "pull requests",
+  providerLongName: "GitCafe pull request",
+  checkoutCommandExample: "cafe pr checkout 123",
+  urlExample: "https://git.cafe/owner/repo/pulls/42",
+};
+
 const GENERIC_CHANGE_REQUEST_PRESENTATION: ChangeRequestPresentation = {
   icon: "change-request",
   providerName: "source control",
@@ -104,6 +122,8 @@ export function resolveChangeRequestPresentation(
       return AZURE_DEVOPS_CHANGE_REQUEST_PRESENTATION;
     case "bitbucket":
       return BITBUCKET_CHANGE_REQUEST_PRESENTATION;
+    case "gitcafe":
+      return GITCAFE_CHANGE_REQUEST_PRESENTATION;
     case "unknown":
       return GENERIC_CHANGE_REQUEST_PRESENTATION;
   }
@@ -212,6 +232,14 @@ export function detectSourceControlProviderFromRemoteUrl(
     return null;
   }
   const hostname = parseHostName(host);
+
+  if (hostname === "git.cafe" || hostname === "staging.git.cafe") {
+    return {
+      kind: "gitcafe",
+      name: "GitCafe",
+      baseUrl: toBaseUrl(host),
+    };
+  }
 
   if (
     hostname === "codeberg.org" ||

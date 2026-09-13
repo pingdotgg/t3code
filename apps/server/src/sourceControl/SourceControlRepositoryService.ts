@@ -67,13 +67,15 @@ function toRepositoryInfo(
 function selectRemoteUrl(
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
+  provider: SourceControlProviderKind,
 ): string {
   switch (protocol ?? "auto") {
     case "https":
       return urls.url;
     case "ssh":
-    case "auto":
       return urls.sshUrl;
+    case "auto":
+      return provider === "gitcafe" ? urls.url : urls.sshUrl;
   }
 }
 
@@ -182,7 +184,7 @@ export const make = Effect.gen(function* () {
         repository: input.repository,
         cwd: preparedDestination.parentPath,
       });
-      remoteUrl = selectRemoteUrl(repository, input.protocol);
+      remoteUrl = selectRemoteUrl(repository, input.protocol, input.provider);
       provider = input.provider;
     }
 
@@ -221,7 +223,7 @@ export const make = Effect.gen(function* () {
         repository: input.repository.trim(),
         visibility: input.visibility,
       });
-      const remoteUrl = selectRemoteUrl(urls, input.protocol);
+      const remoteUrl = selectRemoteUrl(urls, input.protocol, providerKind);
       const remoteName = yield* git.ensureRemote({
         cwd: input.cwd,
         preferredName: input.remoteName?.trim() || "origin",

@@ -1645,7 +1645,7 @@ export function PullRequestDetailPanel({
         <div className="mr-4 flex h-7 shrink-0 items-center justify-end gap-1">
           {detail ? (
             <TooltipProvider delay={150} closeDelay={150} timeout={400}>
-              {!nativeStack && supportsStackActions && nativeStackQuery.error ? (
+              {!nativeStack && stackReference !== null && nativeStackQuery.error ? (
                 <Button variant="ghost" size="xs" onClick={nativeStackQuery.refresh}>
                   Retry stack lookup
                 </Button>
@@ -1735,7 +1735,7 @@ export function PullRequestDetailPanel({
                       <span className="flex min-w-0 flex-col">
                         <span>In this repository</span>
                         <span className="text-xs text-muted-foreground">
-                          Switches the branch you are working in, like `gh pr checkout`.
+                          Switches the branch you are working in to this pull request.
                         </span>
                       </span>
                     </MenuItem>

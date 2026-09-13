@@ -8,6 +8,7 @@ const GITLAB_MERGE_REQUEST_URL_PATTERN =
 const AZURE_DEVOPS_PULL_REQUEST_URL_PATTERN =
   /^https:\/\/(?:dev\.azure\.com\/[^/\s]+\/[^/\s]+|[^/\s]+\.visualstudio\.com\/[^/\s]+)\/_git\/[^/\s]+\/pullrequest\/(\d+)(?:[/?#].*)?$/i;
 const PULL_REQUEST_NUMBER_PATTERN = /^#?(\d+)$/;
+const GITCAFE_CLI_PR_CHECKOUT_PATTERN = /^cafe\s+pr\s+checkout\s+(.+)$/i;
 const GITHUB_CLI_PR_CHECKOUT_PATTERN = /^gh\s+pr\s+checkout\s+(.+)$/i;
 const GITLAB_CLI_MR_CHECKOUT_PATTERN = /^glab\s+mr\s+checkout\s+(.+)$/i;
 const AZURE_DEVOPS_CLI_PR_CHECKOUT_PATTERN = /^az\s+repos\s+pr\s+checkout\s+(.+)$/i;
@@ -31,11 +32,13 @@ export function parsePullRequestReference(input: string): string | null {
     return null;
   }
 
+  const cafeCliCheckoutMatch = GITCAFE_CLI_PR_CHECKOUT_PATTERN.exec(trimmed);
   const ghCliCheckoutMatch = GITHUB_CLI_PR_CHECKOUT_PATTERN.exec(trimmed);
   const glabCliCheckoutMatch = GITLAB_CLI_MR_CHECKOUT_PATTERN.exec(trimmed);
   const azureDevOpsCliCheckoutMatch = AZURE_DEVOPS_CLI_PR_CHECKOUT_PATTERN.exec(trimmed);
   const normalizedInput =
     FORGEJO_CLI_PR_CHECKOUT_PATTERN.exec(trimmed)?.[1]?.trim() ??
+    cafeCliCheckoutMatch?.[1]?.trim() ??
     ghCliCheckoutMatch?.[1]?.trim() ??
     glabCliCheckoutMatch?.[1]?.trim() ??
     (azureDevOpsCliCheckoutMatch?.[1]

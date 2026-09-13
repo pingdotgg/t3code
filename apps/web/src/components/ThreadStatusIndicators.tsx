@@ -102,9 +102,11 @@ export function linkedPullRequestSnapshotStatus(
       ? "azure-devops"
       : link.url.includes("/pull-requests/")
         ? "bitbucket"
-        : link.url.includes("/pulls/")
-          ? "forgejo"
-          : "github";
+        : link.host === "git.cafe" || link.host === "staging.git.cafe"
+          ? "gitcafe"
+          : link.url.includes("/pulls/")
+            ? "forgejo"
+            : "github";
   return {
     pr: {
       number: link.number,

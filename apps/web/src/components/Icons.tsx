@@ -1,5 +1,7 @@
 import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
+export { CoffeeIcon as GitCafeIcon } from "lucide-react";
+
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
 export const FinderIcon: Icon = (props) => (

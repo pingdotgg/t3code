@@ -399,3 +399,81 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+const CAFE_CLONE_URLS = {
+  nameWithOwner: "acme/project",
+  url: "https://git.cafe/acme/project.git",
+  sshUrl: "ssh@git.cafe:acme/project.git",
+};
+
+for (const protocol of ["auto", "ssh"] as const) {
+  it.effect(
+    `publishes GitCafe with ${protocol === "auto" ? "HTTPS by default" : "explicit SSH"}`,
+    () => {
+      const remotes: string[] = [];
+      return Effect.gen(function* () {
+        const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+        const result = yield* service.publishRepository({
+          cwd: "/workspace",
+          provider: "gitcafe",
+          repository: "acme/project",
+          visibility: "private",
+          protocol,
+        });
+        const expected = protocol === "auto" ? CAFE_CLONE_URLS.url : CAFE_CLONE_URLS.sshUrl;
+        assert.strictEqual(result.remoteUrl, expected);
+        assert.deepStrictEqual(remotes, [expected]);
+      }).pipe(
+        Effect.provide(
+          makeLayer({
+            provider: makeProvider({
+              kind: "gitcafe",
+              createRepository: () => Effect.succeed(CAFE_CLONE_URLS),
+            }),
+            git: {
+              ensureRemote: (input) =>
+                Effect.sync(() => {
+                  remotes.push(input.url);
+                  return "origin";
+                }),
+            },
+          }),
+        ),
+      );
+    },
+  );
+}
+
+it.effect("clones GitCafe over HTTPS with automatic protocol selection", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-gitcafe-clone-" });
+    const calls: ReadonlyArray<string>[] = [];
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({
+        provider: "gitcafe",
+        repository: "acme/project",
+        destinationPath: path.join(parent, "project"),
+      });
+      assert.deepStrictEqual(calls, [["clone", CAFE_CLONE_URLS.url, "project"]]);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          provider: makeProvider({
+            kind: "gitcafe",
+            getRepositoryCloneUrls: () => Effect.succeed(CAFE_CLONE_URLS),
+          }),
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                calls.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
