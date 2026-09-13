@@ -332,6 +332,292 @@ describe("pools", () => {
   };
   const laptop = { entry: { target: { label: "Laptop" } } };
 
+  it.each([true, false])(
+    "merges legacy reports with one known workspace and retains hub redemption, native ID %s",
+    (nativeHasId) => {
+      const driver = ProviderDriverKind.make("codex");
+      const native = provider({
+        driver,
+        auth: {
+          status: "authenticated",
+          email: "Same@example.com",
+          ...(nativeHasId ? { accountId: "workspace" } : {}),
+        },
+        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 40 }] },
+      });
+      const hub = {
+        ...source,
+        accounts: [
+          {
+            id: "account.json",
+            driver,
+            email: "same@example.com",
+            ...(!nativeHasId ? { accountId: "workspace" } : {}),
+            usageLimits: {
+              checkedAt,
+              windows: [{ ...weekly, usedPercent: 40 }],
+              resetCredits: { availableCount: 1, nextCreditId: "hub-credit" },
+            },
+          },
+        ],
+      };
+      const input = new Map([
+        [
+          EnvironmentId.make("env-a"),
+          { ...laptop, serverConfig: { providers: [native], usageLimitSources: [hub] } },
+        ],
+        [
+          EnvironmentId.make("env-b"),
+          {
+            ...laptop,
+            serverConfig: {
+              providers: [
+                {
+                  ...native,
+                  auth: { status: "authenticated" as const, email: "same@example.com" },
+                },
+              ],
+              usageLimitSources: [],
+            },
+          },
+        ],
+      ]);
+      const accounts = collectLimitAccounts(input);
+      expect(accounts).toHaveLength(1);
+      expect(accounts[0]?.environments).toHaveLength(2);
+      expect(accounts[0]?.redeem?.input).toEqual({
+        sourceId: source.id,
+        accountId: "account.json",
+        creditId: "hub-credit",
+      });
+      expect(collectLimitSources(input)[0]?.accounts).toHaveLength(0);
+      const report = collectProviderUsageLimits(
+        native.instanceId,
+        [native],
+        [hub],
+        Date.parse(checkedAt),
+      );
+      expect(report?.accounts).toHaveLength(1);
+      expect(report?.accounts[0]?.resetCreditInput).toEqual({
+        sourceId: source.id,
+        accountId: "account.json",
+        creditId: "hub-credit",
+      });
+    },
+  );
+
+  it("keeps ambiguous legacy reports separate from identified workspaces in either order", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const providers = ["workspace-a", "workspace-b", undefined].map((accountId, index) =>
+      provider({
+        driver,
+        instanceId: ProviderInstanceId.make(`codex-${index}`),
+        auth: {
+          status: "authenticated",
+          email: "same@example.com",
+          ...(accountId ? { accountId } : {}),
+        },
+        usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: index * 20 }] },
+      }),
+    );
+    for (const ordered of [providers, providers.toReversed()]) {
+      const accounts = collectLimitAccounts(
+        new Map([
+          [EnvironmentId.make("env-a"), { ...laptop, serverConfig: { providers: ordered } }],
+        ]),
+      );
+      expect(accounts).toHaveLength(3);
+      expect(accounts.map((account) => account.limits.windows[0]?.usedPercent).sort()).toEqual([
+        0, 20, 40,
+      ]);
+    }
+  });
+
+  it("keeps members of one Business workspace separate across native and hub reports", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const native = provider({
+      driver,
+      auth: { status: "authenticated", email: "Primary@example.com", accountId: "business" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 71 }] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "primary.json",
+          accountId: "business",
+          driver,
+          email: "primary@example.com",
+          usageLimits: {
+            ...native.usageLimits!,
+            resetCredits: { availableCount: 1, nextCreditId: "primary-credit" },
+          },
+        },
+        {
+          id: "review.json",
+          accountId: "business",
+          driver,
+          email: "review@example.com",
+          usageLimits: {
+            checkedAt,
+            windows: [{ ...weekly, usedPercent: 23 }],
+            resetCredits: { availableCount: 3, nextCreditId: "review-credit" },
+          },
+        },
+      ],
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [hub] } },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        { ...laptop, serverConfig: { providers: [native], usageLimitSources: [] } },
+      ],
+    ]);
+    const accounts = collectLimitAccounts(input);
+    expect(accounts).toHaveLength(2);
+    expect(
+      accounts.map((account) => [
+        account.email?.toLowerCase(),
+        account.limits.windows[0]?.usedPercent,
+        account.limits.resetCredits?.availableCount,
+        account.redeem?.input,
+      ]),
+    ).toEqual([
+      [
+        "primary@example.com",
+        71,
+        1,
+        { sourceId: source.id, accountId: "primary.json", creditId: "primary-credit" },
+      ],
+      [
+        "review@example.com",
+        23,
+        3,
+        { sourceId: source.id, accountId: "review.json", creditId: "review-credit" },
+      ],
+    ]);
+    expect(accounts[0]?.environments).toHaveLength(2);
+    expect(collectLimitSources(input)[0]?.accounts.map((account) => account.id)).toEqual([
+      "review.json",
+    ]);
+    const report = collectProviderUsageLimits(
+      native.instanceId,
+      [native],
+      [hub],
+      Date.parse(checkedAt),
+    );
+    expect(report?.accounts).toHaveLength(2);
+    expect(report?.accounts.map((account) => account.resetCreditInput)).toEqual([
+      { sourceId: source.id, accountId: "primary.json", creditId: "primary-credit" },
+      { sourceId: source.id, accountId: "review.json", creditId: "review-credit" },
+    ]);
+  });
+
+  it("keeps a workspace report without an email separate from identified members", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "known.json",
+          driver,
+          accountId: "business",
+          email: "known@example.com",
+          usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 20 }] },
+        },
+        {
+          id: "unknown.json",
+          driver,
+          accountId: "business",
+          usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 20 }] },
+        },
+      ],
+    };
+    const accounts = collectLimitAccounts(
+      new Map([
+        [
+          EnvironmentId.make("env-a"),
+          { ...laptop, serverConfig: { providers: [], usageLimitSources: [hub] } },
+        ],
+      ]),
+    );
+    expect(accounts).toHaveLength(2);
+    expect(accounts.map((account) => account.email)).toEqual(["known@example.com", undefined]);
+  });
+
+  it("keeps same-email Codex workspaces separate and merges only matching account IDs", () => {
+    const driver = ProviderDriverKind.make("codex");
+    const native = provider({
+      driver,
+      instanceId: ProviderInstanceId.make("codex"),
+      auth: { status: "authenticated", email: "same@example.com", accountId: "pro" },
+      usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 90 }] },
+    });
+    const hub = {
+      ...source,
+      accounts: [
+        {
+          id: "pro.json",
+          accountId: "pro",
+          driver,
+          email: "same@example.com",
+          usageLimits: native.usageLimits!,
+        },
+        {
+          id: "business.json",
+          accountId: "business",
+          driver,
+          email: "same@example.com",
+          usageLimits: { checkedAt, windows: [{ ...weekly, usedPercent: 0 }] },
+        },
+      ],
+    };
+    const input = new Map([
+      [
+        EnvironmentId.make("env-a"),
+        {
+          ...laptop,
+          serverConfig: { providers: [native], usageLimitSources: [hub] },
+        },
+      ],
+      [
+        EnvironmentId.make("env-b"),
+        {
+          entry: { target: { label: "Desktop" } },
+          serverConfig: {
+            providers: [{ ...native, instanceId: ProviderInstanceId.make("codex-work") }],
+            usageLimitSources: [
+              {
+                ...hub,
+                id: UsageLimitSourceId.make("other-hub"),
+                accounts: hub.accounts.map((account) => ({ ...account, id: `copy-${account.id}` })),
+              },
+            ],
+          },
+        },
+      ],
+    ]);
+    const pooled = collectLimitAccounts(input);
+    expect(pooled).toHaveLength(2);
+    expect(
+      pooled.find((account) => account.limits.windows[0]?.usedPercent === 90)?.environments,
+    ).toHaveLength(2);
+    expect(pooled.map((account) => account.limits.windows[0]?.usedPercent).sort()).toEqual([0, 90]);
+    expect(collectLimitSources(input)[0]?.accounts.map((account) => account.accountId)).toEqual([
+      "business",
+    ]);
+    const report = collectProviderUsageLimits(
+      native.instanceId,
+      [native],
+      [hub],
+      Date.parse(checkedAt),
+    );
+    expect(report?.accounts).toHaveLength(2);
+  });
+
   it("merges one account reported natively on two environments and by a hub into one entry", () => {
     const native = provider({
       driver: claude,

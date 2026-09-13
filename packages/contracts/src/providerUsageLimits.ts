@@ -81,6 +81,8 @@ export const UsageLimitSourceAccount = Schema.Struct({
   driver: ProviderDriverKind,
   /** The signed-in address, when the source names one; clients blur it like provider auth. */
   email: Schema.optional(TrimmedNonEmptyString),
+  /** Provider account or workspace ID; an email can belong to several quota buckets. */
+  accountId: Schema.optional(TrimmedNonEmptyString),
   /** Plan as the matching provider would label it (`ChatGPT Pro 20x Subscription`). */
   plan: Schema.optional(TrimmedNonEmptyString),
   usageLimits: ServerProviderUsageLimits,
