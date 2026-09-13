@@ -2,13 +2,14 @@ import { EnvironmentId, UsageDay, USAGE_CONTRACT_VERSION } from "@t3tools/contra
 import { mergeUsage } from "@t3tools/shared/usageMerge";
 import { act } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { create, type ReactTestRenderer } from "react-test-renderer";
+import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
   navigate: vi.fn(),
   canGoBack: true,
+  interactive: false,
   metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
 }));
@@ -17,28 +18,32 @@ vi.mock("react", async (importOriginal) => {
   const actual = await importOriginal<typeof import("react")>();
   return {
     ...actual,
-    useState: vi.fn((initial: unknown) => [
-      initial === readUsagePagePreferences
-        ? { metric: testState.metric, windowDays: 30 }
-        : typeof initial === "function"
-          ? {
-              days: 1,
-              window: {
-                sinceDay: "2026-08-10",
-                untilDay: "2026-08-11",
-                timeZone: "UTC",
-                resolution: "hour",
-                sinceTime: "2026-08-10T12:37:00.000Z",
-                untilTime: "2026-08-11T12:37:00.000Z",
-              },
-            }
-          : initial === "cost"
-            ? testState.metric
-            : initial === "model"
-              ? testState.breakdown
-              : initial,
-      vi.fn(),
-    ]),
+    useState: vi.fn((initial: unknown) =>
+      testState.interactive
+        ? actual.useState(initial)
+        : [
+            initial === readUsagePagePreferences
+              ? { metric: testState.metric, windowDays: 30 }
+              : typeof initial === "function"
+                ? {
+                    days: 1,
+                    window: {
+                      sinceDay: "2026-08-10",
+                      untilDay: "2026-08-11",
+                      timeZone: "UTC",
+                      resolution: "hour",
+                      sinceTime: "2026-08-10T12:37:00.000Z",
+                      untilTime: "2026-08-11T12:37:00.000Z",
+                    },
+                  }
+                : initial === "cost"
+                  ? testState.metric
+                  : initial === "model"
+                    ? testState.breakdown
+                    : initial,
+            vi.fn(),
+          ],
+    ),
   };
 });
 
@@ -180,67 +185,73 @@ beforeEach(() => {
 });
 
 describe("UsagePage Escape navigation", () => {
-  let renderer: ReactTestRenderer;
-  let events: EventTarget;
-  const back = vi.fn();
+  let renderer: Root;
+  let container: HTMLDivElement;
+  let back: ReturnType<typeof vi.spyOn>;
 
   beforeEach(async () => {
-    events = new EventTarget();
-    back.mockClear();
+    testState.interactive = true;
+    back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     testState.navigate.mockClear();
     testState.canGoBack = true;
     vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
-    vi.stubGlobal("window", {
-      addEventListener: events.addEventListener.bind(events),
-      removeEventListener: events.removeEventListener.bind(events),
-      history: { back },
-    });
-    vi.stubGlobal("document", { activeElement: null, querySelector: () => null });
-    vi.stubGlobal("HTMLElement", vi.fn());
+    container = document.createElement("div");
+    document.body.append(container);
+    renderer = createRoot(container);
     await act(() => {
-      renderer = create(<UsagePage />);
+      renderer.render(<UsagePage />);
     });
   });
 
   afterEach(async () => {
     await act(() => renderer.unmount());
+    container.remove();
+    back.mockRestore();
+    testState.interactive = false;
     vi.unstubAllGlobals();
   });
 
   function escape(properties: { repeat?: boolean; isComposing?: boolean } = {}) {
-    return Object.assign(new Event("keydown", { cancelable: true }), {
+    return new KeyboardEvent("keydown", {
+      bubbles: true,
+      cancelable: true,
       key: "Escape",
       ...properties,
     });
   }
 
   it("returns to the previous page on Escape", () => {
-    events.dispatchEvent(escape());
+    document.body.dispatchEvent(escape());
     expect(back).toHaveBeenCalledOnce();
     expect(testState.navigate).not.toHaveBeenCalled();
   });
 
   it("returns home when there is no previous app page", async () => {
     testState.canGoBack = false;
-    await act(() => renderer.update(<UsagePage />));
+    await act(() => renderer.render(<UsagePage />));
 
-    events.dispatchEvent(escape());
+    document.body.dispatchEvent(escape());
     expect(testState.navigate).toHaveBeenCalledWith({ to: "/" });
     expect(back).not.toHaveBeenCalled();
   });
 
-  it("leaves a consumed Escape to the popup, then handles the next Escape", () => {
-    const consumed = escape();
-    consumed.preventDefault();
-    events.dispatchEvent(consumed);
+  it("closes the environment menu before Escape navigates back", async () => {
+    const trigger = container.querySelector<HTMLButtonElement>('[data-slot="menu-trigger"]')!;
+    await act(() => trigger.click());
+    expect(document.querySelector('[role="menu"]')).not.toBeNull();
+
+    await act(() => {
+      document.activeElement!.dispatchEvent(escape());
+    });
+    expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(back).not.toHaveBeenCalled();
 
-    events.dispatchEvent(escape());
+    document.body.dispatchEvent(escape());
     expect(back).toHaveBeenCalledOnce();
   });
 
   it.each([{ repeat: true }, { isComposing: true }])("ignores Escape with %j", (properties) => {
-    events.dispatchEvent(escape(properties));
+    document.body.dispatchEvent(escape(properties));
     expect(back).not.toHaveBeenCalled();
     expect(testState.navigate).not.toHaveBeenCalled();
   });
@@ -304,3 +315,4 @@ describe("UsagePage model breakdown", () => {
     ]);
   });
 });
+// @vitest-environment jsdom
