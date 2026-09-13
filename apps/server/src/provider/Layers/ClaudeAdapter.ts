@@ -3320,10 +3320,16 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
     // in again. Stopping it lets the next turn resume from the persisted
     // cursor on a fresh CLI that picks up the current credentials.
     if (status === "failed" && turn?.authenticationFailureMessage !== undefined) {
-      yield* Effect.logInfo("claude.session.stopped.authentication-failed", {
-        threadId: context.session.threadId,
-      });
-      yield* stopSessionInternal(context, { emitExitEvent: true });
+      yield* stopSessionInternal(context, { emitExitEvent: true }).pipe(
+        Effect.tap(() =>
+          Effect.logInfo("claude.session.stopped.authentication-failed", {
+            threadId: context.session.threadId,
+          }),
+        ),
+        // A failed close leaves the session registered for another stop attempt,
+        // so its stream must keep running to process subsequent turns.
+        Effect.catch((error) => emitRuntimeError(context, error.detail)),
+      );
     }
   });
 

@@ -3842,6 +3842,67 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("keeps reading events when closing a signed-out session fails", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const closeFailure = yield* Deferred.make<void>();
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.tap((event) =>
+          event.type === "runtime.error" &&
+          event.payload.message === "Failed to close Claude runtime query."
+            ? Deferred.succeed(closeFailure, undefined).pipe(Effect.ignore)
+            : Effect.void,
+        ),
+        Stream.takeUntil((event) => event.type === "session.exited"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      harness.query.closeError = new Error("close failed");
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "hello", attachments: [] });
+      harness.query.emit(AUTH_FAILURE_ASSISTANT);
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        errors: [],
+        session_id: "sdk-session-auth",
+        uuid: "result-auth-close-failed",
+      } as unknown as SDKMessage);
+      yield* Deferred.await(closeFailure);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), true);
+      assert.equal(harness.query.closeCalls, 1);
+
+      harness.query.closeError = undefined;
+      yield* adapter.sendTurn({ threadId: THREAD_ID, input: "retry", attachments: [] });
+      harness.query.emit({
+        ...AUTH_FAILURE_ASSISTANT,
+        uuid: "00000000-0000-0000-0000-000000000002",
+      });
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: true,
+        errors: [],
+        session_id: "sdk-session-auth",
+        uuid: "result-auth-retry",
+      } as unknown as SDKMessage);
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      assert.equal(events.filter((event) => event.type === "turn.completed").length, 2);
+      assert.equal(events.filter((event) => event.type === "session.exited").length, 1);
+      assert.equal(harness.query.closeCalls, 2);
+      assert.equal(yield* adapter.hasSession(THREAD_ID), false);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("keeps the session after a failure that is not an authentication failure", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
