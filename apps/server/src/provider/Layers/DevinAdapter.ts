@@ -66,6 +66,12 @@ import {
   normalizeDevinReasoningEffort,
   resolveDevinAcpBaseModelId,
 } from "../acp/DevinAcpSupport.ts";
+import {
+  extractXAiAskUserQuestions,
+  makeXAiAskUserQuestionCancelledResponse,
+  makeXAiAskUserQuestionResponse,
+  XAiAskUserQuestionRequest,
+} from "../acp/XAiAcpExtension.ts";
 import { type DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 
@@ -899,10 +905,29 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
               issue: "cwd is required and must be non-empty.",
             });
           }
+          if (
+            input.providerInstanceId !== undefined &&
+            input.providerInstanceId !== boundInstanceId
+          ) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: `Devin session is bound to instance '${input.providerInstanceId}', expected '${boundInstanceId}'.`,
+            });
+          }
+          if (
+            input.modelSelection?.instanceId !== undefined &&
+            input.modelSelection.instanceId !== boundInstanceId
+          ) {
+            return yield* new ProviderAdapterValidationError({
+              provider: PROVIDER,
+              operation: "startSession",
+              issue: `Devin model selection is bound to instance '${input.modelSelection.instanceId}', expected '${boundInstanceId}'.`,
+            });
+          }
 
           const cwd = path.resolve(input.cwd.trim());
-          const devinModelSelection =
-            input.modelSelection?.instanceId === boundInstanceId ? input.modelSelection : undefined;
+          const devinModelSelection = input.modelSelection;
           const existing = sessions.get(input.threadId);
           if (existing && !existing.stopped) {
             yield* stopSessionInternal(existing);
@@ -946,6 +971,62 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
             ),
           );
           const started = yield* Effect.gen(function* () {
+            yield* Effect.forEach(
+              ["x.ai/ask_user_question", "_x.ai/ask_user_question"] as const,
+              (method) =>
+                acp.handleExtRequest(method, XAiAskUserQuestionRequest, (params) =>
+                  mapAcpCallbackFailure(
+                    Effect.gen(function* () {
+                      yield* logNative(input.threadId, method, params);
+                      const requestId = ApprovalRequestId.make(yield* randomUUIDv4);
+                      const runtimeRequestId = RuntimeRequestId.make(requestId);
+                      const resolution = yield* Deferred.make<PendingUserInputResolution>();
+                      const turnId = resolveSessionCallbackTurnId(sessions, input.threadId);
+                      pendingUserInputs.set(requestId, { resolution });
+                      yield* signalSessionTurnLiveness(input.threadId, turnId);
+                      yield* offerRuntimeEvent({
+                        type: "user-input.requested",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId,
+                        requestId: runtimeRequestId,
+                        payload: { questions: extractXAiAskUserQuestions(params) },
+                        raw: {
+                          source: "acp.devin.extension",
+                          method,
+                          payload: params,
+                        },
+                      });
+                      const resolved = yield* Deferred.await(resolution);
+                      pendingUserInputs.delete(requestId);
+                      yield* resumeSessionTurnLiveness(input.threadId, turnId);
+                      const resolvedAnswers = resolved._tag === "answered" ? resolved.answers : {};
+                      yield* offerRuntimeEvent({
+                        type: "user-input.resolved",
+                        ...(yield* makeEventStamp()),
+                        provider: PROVIDER,
+                        threadId: input.threadId,
+                        turnId,
+                        requestId: runtimeRequestId,
+                        payload: { answers: resolvedAnswers },
+                        raw: {
+                          source: "acp.devin.extension",
+                          method,
+                          payload: params,
+                        },
+                      });
+                      switch (resolved._tag) {
+                        case "answered":
+                          return makeXAiAskUserQuestionResponse(params, resolved.answers);
+                        case "cancelled":
+                          return makeXAiAskUserQuestionCancelledResponse();
+                      }
+                    }),
+                  ),
+                ),
+              { discard: true },
+            );
             yield* acp.handleRequestPermission((params) =>
               mapAcpCallbackFailure(
                 Effect.gen(function* () {
@@ -1386,7 +1467,7 @@ export function makeDevinAdapter(devinSettings: DevinSettings, options?: DevinAd
               const runtimeInstructions = buildRuntimeInstructions({
                 harness: "Devin",
                 model: displayModel,
-                reasoningEffort: normalizeDevinReasoningEffort(requestedTurnReasoningEffort),
+                reasoningEffort: ctx.currentReasoningEffort,
               });
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;

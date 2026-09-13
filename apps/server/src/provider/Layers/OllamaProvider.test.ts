@@ -31,11 +31,11 @@ describe("Ollama HTTP provider", () => {
 
   it.effect("does not leave a provider status probe pending when Ollama hangs", () =>
     Effect.gen(function* () {
-      const probe = yield* checkOllamaProviderStatus(
-        settings,
-        {},
-        () => new Promise<Response>(() => undefined),
-      ).pipe(Effect.forkChild);
+      let requestSignal: AbortSignal | undefined;
+      const probe = yield* checkOllamaProviderStatus(settings, {}, (_input, init) => {
+        requestSignal = init?.signal as AbortSignal;
+        return new Promise<Response>(() => undefined);
+      }).pipe(Effect.forkChild);
       yield* Effect.yieldNow;
       yield* TestClock.adjust("10 seconds");
 
@@ -45,6 +45,7 @@ describe("Ollama HTTP provider", () => {
         installed: false,
         message: "Ollama did not respond within 10 seconds.",
       });
+      expect(requestSignal?.aborted).toBe(true);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 });

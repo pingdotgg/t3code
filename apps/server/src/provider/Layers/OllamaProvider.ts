@@ -37,9 +37,10 @@ export function probeOllama(
   fetchImpl: OllamaFetch = fetch,
 ) {
   return Effect.tryPromise({
-    try: async () => {
+    try: async (signal) => {
       const response = await fetchImpl(ollamaApiUrl(settings.host, "/tags"), {
         headers: authHeaders(settings, environment),
+        signal,
       });
       if (!response.ok) throw new OllamaProbeError({ detail: `HTTP ${response.status}` });
       const body = (await response.json()) as {

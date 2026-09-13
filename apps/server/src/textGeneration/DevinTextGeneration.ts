@@ -130,14 +130,18 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         ),
       );
 
+      if (promptResult.stopReason === "cancelled") {
+        return yield* new TextGenerationError({
+          operation,
+          detail: "Devin ACP request was cancelled.",
+        });
+      }
+
       const trimmed = (yield* Ref.get(outputRef)).trim();
       if (!trimmed) {
         return yield* new TextGenerationError({
           operation,
-          detail:
-            promptResult.stopReason === "cancelled"
-              ? "Devin ACP request was cancelled."
-              : "Devin Agent returned empty output.",
+          detail: "Devin Agent returned empty output.",
         });
       }
 
@@ -225,6 +229,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
       const { prompt, outputSchema } = buildBranchNamePrompt({
         message: input.message,
         attachments: input.attachments,
+        policy: input.policy,
       });
 
       const generated = yield* runDevinJson({

@@ -779,6 +779,16 @@ describe("server state projection", () => {
       const first = yield* serverConfigProjectionChanges(state).pipe(Stream.runHead);
 
       expect(first).toEqual(Option.some(cachedProjection));
+
+      const duplicate = yield* serverConfigProjectionChanges(state).pipe(
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      expect(duplicate.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(duplicate);
     }),
   );
 

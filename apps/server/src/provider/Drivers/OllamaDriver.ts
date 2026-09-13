@@ -66,7 +66,7 @@ export const OllamaDriver: ProviderDriver<OllamaSettings, OllamaDriverEnv> = {
         checkProvider: checkOllamaProviderStatus(effectiveConfig, processEnv).pipe(
           Effect.map(stamp),
         ),
-        refreshOnInterval: false,
+        refreshOnInterval: true,
       }).pipe(
         Effect.mapError(
           (cause) =>

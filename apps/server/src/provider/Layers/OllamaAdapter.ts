@@ -1,4 +1,3 @@
-// @effect-diagnostics globalDate:off globalDateInEffect:off abortControllerInEffect:off preferSchemaOverJson:off schemaSyncInEffect:off preferTypedSchemaDecoder:off
 import * as NodeCrypto from "node:crypto";
 import {
   EventId,
@@ -13,6 +12,7 @@ import {
   type ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as PubSub from "effect/PubSub";
 import * as Stream from "effect/Stream";
@@ -34,8 +34,6 @@ type Context = {
   controller?: AbortController;
   stopped: boolean;
 };
-const now = () => new Date().toISOString();
-const eventStamp = () => ({ eventId: EventId.make(NodeCrypto.randomUUID()), createdAt: now() });
 const decodeOllamaJson = Schema.decodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 const decodeOllamaStreamChunk = Schema.decodeUnknownSync(
   Schema.Struct({
@@ -69,6 +67,12 @@ export function makeOllamaAdapter(
     const eventBus = yield* PubSub.unbounded<ProviderRuntimeEvent>();
     const instanceId = options?.instanceId ?? ProviderInstanceId.make("ollama");
     const fetchImpl = options?.fetch ?? fetch;
+    const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+    const makeEventStamp = () =>
+      Effect.all({
+        eventId: Effect.sync(() => EventId.make(NodeCrypto.randomUUID())),
+        createdAt: nowIso,
+      });
     const headers = () => {
       const key = settings.apiKey.trim() || options?.environment?.[OLLAMA_API_KEY_ENV]?.trim();
       return {
@@ -90,17 +94,18 @@ export function makeOllamaAdapter(
       errorMessage?: string,
     ) =>
       Effect.gen(function* () {
-        if (context.session.activeTurnId !== turnId) return;
+        if (context.stopped || context.session.activeTurnId !== turnId) return;
+        delete context.controller;
         const { activeTurnId: _activeTurnId, ...sessionWithoutActiveTurn } = context.session;
         context.session = {
           ...sessionWithoutActiveTurn,
           status: state === "failed" ? "error" : "ready",
-          updatedAt: now(),
+          updatedAt: yield* nowIso,
           ...(errorMessage ? { lastError: errorMessage } : { lastError: undefined }),
         };
         yield* PubSub.publish(eventBus, {
           type: "turn.completed",
-          ...eventStamp(),
+          ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: context.session.threadId,
           turnId,
@@ -108,6 +113,21 @@ export function makeOllamaAdapter(
             state === "failed"
               ? { state, errorMessage: errorMessage ?? "Ollama request failed." }
               : { state, stopReason: state === "cancelled" ? "cancelled" : "stop" },
+        } as ProviderRuntimeEvent);
+      });
+    const stopContext = (context: Context) =>
+      Effect.gen(function* () {
+        if (context.stopped) return;
+        context.stopped = true;
+        context.controller?.abort();
+        delete context.controller;
+        sessions.delete(context.session.threadId);
+        yield* PubSub.publish(eventBus, {
+          type: "session.exited",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          threadId: context.session.threadId,
+          payload: { exitKind: "graceful" },
         } as ProviderRuntimeEvent);
       });
     const startSession = (input: ProviderSessionStartInput) =>
@@ -124,6 +144,23 @@ export function makeOllamaAdapter(
             operation: "startSession",
             issue: "cwd is required.",
           });
+        if (input.providerInstanceId !== undefined && input.providerInstanceId !== instanceId)
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: `Ollama session is bound to instance '${input.providerInstanceId}', expected '${instanceId}'.`,
+          });
+        if (
+          input.modelSelection?.instanceId !== undefined &&
+          input.modelSelection.instanceId !== instanceId
+        )
+          return yield* new ProviderAdapterValidationError({
+            provider: PROVIDER,
+            operation: "startSession",
+            issue: `Ollama model selection is bound to instance '${input.modelSelection.instanceId}', expected '${instanceId}'.`,
+          });
+        const existing = sessions.get(input.threadId);
+        if (existing) yield* stopContext(existing);
         const model =
           input.modelSelection?.model?.trim() || settings.defaultModel.trim() || "llama3.2";
         const session: ProviderSession = {
@@ -134,13 +171,13 @@ export function makeOllamaAdapter(
           cwd: input.cwd.trim(),
           model,
           threadId: input.threadId,
-          createdAt: now(),
-          updatedAt: now(),
+          createdAt: yield* nowIso,
+          updatedAt: yield* nowIso,
         };
         sessions.set(input.threadId, { session, messages: [], stopped: false });
         yield* PubSub.publish(eventBus, {
           type: "session.started",
-          ...eventStamp(),
+          ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: input.threadId,
           payload: {},
@@ -184,6 +221,7 @@ export function makeOllamaAdapter(
         context.messages.push({ role: "user", content: text });
         context.controller?.abort();
         if (previousTurnId) yield* finishTurn(context, previousTurnId, "cancelled");
+        // @effect-diagnostics-next-line abortControllerInEffect:off -- Detached turns need an externally abortable request controller.
         const controller = new AbortController();
         context.controller = controller;
         context.session = {
@@ -191,17 +229,17 @@ export function makeOllamaAdapter(
           status: "running",
           activeTurnId: turnId,
           model,
-          updatedAt: now(),
+          updatedAt: yield* nowIso,
         };
         yield* PubSub.publish(eventBus, {
           type: "turn.started",
-          ...eventStamp(),
+          ...(yield* makeEventStamp()),
           provider: PROVIDER,
           threadId: input.threadId,
           turnId,
           payload: { model },
         } as ProviderRuntimeEvent);
-        return yield* Effect.gen(function* () {
+        const runTurn = Effect.gen(function* () {
           const response = yield* Effect.tryPromise({
             try: () =>
               fetchImpl(ollamaApiUrl(settings.host, "/chat"), {
@@ -224,7 +262,8 @@ export function makeOllamaAdapter(
           let assistant = "";
           const processLine = (line: string) =>
             Effect.gen(function* () {
-              if (!line.trim()) return;
+              if (!line.trim() || context.stopped || context.session.activeTurnId !== turnId)
+                return;
               const chunk = yield* Effect.try({
                 try: () => decodeOllamaStreamChunk(decodeOllamaJson(line)),
                 catch: (cause) => requestError("/api/chat", "Invalid Ollama stream chunk.", cause),
@@ -234,7 +273,7 @@ export function makeOllamaAdapter(
               assistant += delta;
               yield* PubSub.publish(eventBus, {
                 type: "content.delta",
-                ...eventStamp(),
+                ...(yield* makeEventStamp()),
                 provider: PROVIDER,
                 threadId: input.threadId,
                 turnId,
@@ -254,9 +293,10 @@ export function makeOllamaAdapter(
           }
           buffer += decoder.decode();
           yield* processLine(buffer);
-          context.messages.push({ role: "assistant", content: assistant });
-          yield* finishTurn(context, turnId, "completed");
-          return { threadId: input.threadId, turnId } as ProviderTurnStartResult;
+          if (!context.stopped && context.session.activeTurnId === turnId) {
+            context.messages.push({ role: "assistant", content: assistant });
+            yield* finishTurn(context, turnId, "completed");
+          }
         }).pipe(
           Effect.tapError((cause) =>
             finishTurn(
@@ -271,7 +311,14 @@ export function makeOllamaAdapter(
             ),
           ),
           Effect.onInterrupt(() => finishTurn(context, turnId, "cancelled")),
+          Effect.ensuring(
+            Effect.sync(() => {
+              controller.abort();
+            }),
+          ),
         );
+        yield* runTurn.pipe(Effect.ignore, Effect.forkDetach);
+        return { threadId: input.threadId, turnId } as ProviderTurnStartResult;
       });
     const interruptTurn = (threadId: ThreadId, turnId?: TurnId) =>
       Effect.gen(function* () {
@@ -282,13 +329,7 @@ export function makeOllamaAdapter(
         if (activeTurnId) yield* finishTurn(context, activeTurnId, "cancelled");
       });
     const stopSession = (threadId: ThreadId) =>
-      Effect.flatMap(requireSession(threadId), (context) =>
-        Effect.sync(() => {
-          context.stopped = true;
-          context.controller?.abort();
-          sessions.delete(threadId);
-        }),
-      ).pipe(Effect.asVoid);
+      Effect.flatMap(requireSession(threadId), stopContext).pipe(Effect.asVoid);
     const unsupported = (threadId: ThreadId, operation: string) =>
       Effect.flatMap(requireSession(threadId), () =>
         Effect.fail(requestError(operation, "Ollama does not support this operation.")),

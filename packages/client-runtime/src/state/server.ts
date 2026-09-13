@@ -461,10 +461,7 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
 export function serverConfigProjectionChanges(
   state: SubscriptionRef.SubscriptionRef<Option.Option<ServerConfigProjection>>,
 ) {
-  return Stream.concat(
-    Stream.fromEffect(SubscriptionRef.get(state)),
-    SubscriptionRef.changes(state),
-  ).pipe(
+  return SubscriptionRef.changes(state).pipe(
     Stream.filterMap((projection) =>
       Option.match(projection, {
         onNone: () => Result.failVoid,
