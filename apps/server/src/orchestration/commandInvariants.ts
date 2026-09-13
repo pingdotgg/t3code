@@ -183,6 +183,20 @@ export function listVisibleTaskMembers(readModel: OrchestrationReadModel, taskId
   return listRetainedTaskMembers(readModel, taskId).filter((thread) => thread.archivedAt === null);
 }
 
+function taskDestinationError(
+  command: OrchestrationCommand,
+  taskId: TaskId,
+  reason: "missing" | "archived",
+): OrchestrationCommandInvariantError {
+  return new OrchestrationCommandInvariantError({
+    commandType: command.type,
+    detail: `Task '${taskId}' ${reason === "missing" ? "does not exist" : "is archived"}.`,
+    ...(command.type === "thread.create" || command.type === "thread.task.set"
+      ? { taskMembershipRejection: reason }
+      : {}),
+  });
+}
+
 export function requireTask(input: {
   readonly readModel: OrchestrationReadModel;
   readonly command: OrchestrationCommand;
@@ -193,7 +207,7 @@ export function requireTask(input: {
   );
   return task
     ? Effect.succeed(task)
-    : Effect.fail(invariantError(input.command.type, `Task '${input.taskId}' does not exist.`));
+    : Effect.fail(taskDestinationError(input.command, input.taskId, "missing"));
 }
 
 export function requireTaskAbsent(input: {
@@ -215,7 +229,7 @@ export function requireTaskNotArchived(input: {
     Effect.flatMap((task) =>
       task.archivedAt === null
         ? Effect.succeed(task)
-        : Effect.fail(invariantError(input.command.type, `Task '${input.taskId}' is archived.`)),
+        : Effect.fail(taskDestinationError(input.command, input.taskId, "archived")),
     ),
   );
 }

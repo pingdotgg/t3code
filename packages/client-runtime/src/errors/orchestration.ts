@@ -8,3 +8,7 @@ export function wasBootstrapThreadDeleted(error: unknown): boolean {
     isOrchestrationDispatchCommandError(error) && error.bootstrapThreadDisposition === "deleted"
   );
 }
+
+export function taskMembershipRejection(error: unknown) {
+  return isOrchestrationDispatchCommandError(error) ? error.taskMembershipRejection : undefined;
+}

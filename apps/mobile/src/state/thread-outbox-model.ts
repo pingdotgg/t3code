@@ -1,3 +1,4 @@
+import { taskMembershipRejection } from "@t3tools/client-runtime/errors";
 import { isTransportConnectionErrorMessage } from "@t3tools/client-runtime/errors";
 import {
   clampFileAttachmentUploadBytes,
@@ -301,6 +302,18 @@ export function resolveThreadOutboxFailureAction(input: {
     return "retry";
   }
   return "restore";
+}
+
+export function resolveThreadOutboxFailure(input: {
+  readonly stage: ThreadOutboxCommandStage;
+  readonly error: unknown;
+  readonly interrupted: boolean;
+}) {
+  return {
+    action: resolveThreadOutboxFailureAction(input),
+    message: input.error instanceof Error ? input.error.message : "The message could not be sent.",
+    taskMembershipRejection: taskMembershipRejection(input.error),
+  };
 }
 
 /** Missing or archived parents keep their queued payload until explicitly edited. */

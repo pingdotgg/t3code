@@ -33,6 +33,7 @@ import { useTasks } from "./tasks";
 import { useProjects, useServerConfigs, useThreadShells } from "./entities";
 import {
   clearPendingThreadCreationOutcome,
+  isPendingTaskMembershipRejected,
   pendingThreadCreationOutcomesAtom,
   recordPendingThreadCreationOutcome,
 } from "./pending-thread-creation";
@@ -50,7 +51,7 @@ import {
   modelSelectionsEqual,
   resolveThreadOutboxDeliveryAction,
   resolveThreadOutboxDispatchStep,
-  resolveThreadOutboxFailureAction,
+  resolveThreadOutboxFailure,
   resolveQueuedThreadSettings,
   shouldRetryThreadOutboxDelivery,
   threadOutboxRetryDelayMs,
@@ -344,6 +345,28 @@ export async function recoverEditedCreationAfterDelivery(
     console.warn("[thread-outbox] could not remove recovered pending task", error);
     return false;
   }
+}
+
+/** Keep membership rejections in the queue so the pending editor can repair them. */
+export function retainRejectedTaskCreation(
+  message: QueuedThreadMessage,
+  failure: ReturnType<typeof resolveThreadOutboxFailure>,
+): boolean {
+  if (
+    failure.action !== "restore" ||
+    message.creation?.taskId == null ||
+    failure.taskMembershipRejection === undefined
+  ) {
+    return false;
+  }
+  recordPendingThreadCreationOutcome({
+    kind: "failed",
+    message,
+    reason: failure.message,
+    retainedInOutbox: true,
+    taskMembershipRejection: failure.taskMembershipRejection,
+  });
+  return true;
 }
 
 /** Exported for tests; the drain is the only production caller. */
@@ -666,12 +689,12 @@ export function useThreadOutboxDrain(): void {
     const reportFailure = (
       commandResult: AtomCommandResult<unknown, unknown>,
       stage: ThreadOutboxCommandStage,
-    ): { readonly action: "retry" | "restore"; readonly message: string } | null => {
+    ): ReturnType<typeof resolveThreadOutboxFailure> | null => {
       if (!AsyncResult.isFailure(commandResult)) {
         return null;
       }
       const error = Cause.squash(commandResult.cause);
-      const action = resolveThreadOutboxFailureAction({
+      const failure = resolveThreadOutboxFailure({
         stage,
         error,
         interrupted: Cause.hasInterruptsOnly(commandResult.cause),
@@ -682,12 +705,9 @@ export function useThreadOutboxDrain(): void {
         messageId: queuedMessage.messageId,
         stage,
         cause: commandResult.cause,
-        action,
+        action: failure.action,
       });
-      return {
-        action,
-        message: error instanceof Error ? error.message : "The message could not be sent.",
-      };
+      return failure;
     };
     return { reportFailure };
   }, []);
@@ -967,14 +987,8 @@ export function useThreadOutboxDrain(): void {
         return false;
       }
       if (failure?.action === "restore") {
-        if (creation.taskId != null && /task/i.test(failure.message)) {
-          recordPendingThreadCreationOutcome({
-            kind: "failed",
-            message: persistedMessage,
-            reason: failure.message,
-            retainedInOutbox: true,
-          });
-          return false;
+        if (retainRejectedTaskCreation(persistedMessage, failure)) {
+          return true;
         }
         return restoreQueuedMessage(persistedMessage, failure.message);
       }
@@ -1132,13 +1146,16 @@ export function useThreadOutboxDrain(): void {
         continue;
       }
       if (dispatchStep.step === "send" && creation !== undefined) {
+        const previous = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey];
+        if (isPendingTaskMembershipRejected(nextQueuedMessage, previous)) {
+          continue;
+        }
         const reason = queuedCreationTaskBlockReason(
           nextQueuedMessage,
           tasks,
           serverConfig?.environment.capabilities.tasks === true,
         );
         if (reason) {
-          const previous = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey];
           if (
             previous?.kind !== "failed" ||
             previous.message !== nextQueuedMessage ||
@@ -1153,7 +1170,6 @@ export function useThreadOutboxDrain(): void {
           }
           continue;
         }
-        const previous = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[threadKey];
         if (previous?.kind === "failed" && previous.retainedInOutbox)
           clearPendingThreadCreationOutcome(threadKey);
       }

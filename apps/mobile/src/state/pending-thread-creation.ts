@@ -1,5 +1,5 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
-import type { OrchestrationThread } from "@t3tools/contracts";
+import type { OrchestrationThread, TaskMembershipRejection } from "@t3tools/contracts";
 import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -23,12 +23,29 @@ export type PendingThreadCreationOutcome =
       readonly message: QueuedThreadMessage;
       readonly reason: string;
       readonly retainedInOutbox?: boolean;
+      readonly taskMembershipRejection?: TaskMembershipRejection;
     };
 
 export type PendingThreadCreation = {
   readonly message: QueuedThreadMessage;
   readonly outcome: PendingThreadCreationOutcome | null;
 };
+
+/** A server rejection stays blocked even while the local task shell is stale. */
+export function isPendingTaskMembershipRejected(
+  message: QueuedThreadMessage,
+  outcome: PendingThreadCreationOutcome | undefined,
+): boolean {
+  return (
+    outcome?.kind === "failed" &&
+    outcome.retainedInOutbox === true &&
+    outcome.taskMembershipRejection !== undefined &&
+    outcome.message.messageId === message.messageId &&
+    outcome.message.environmentId === message.environmentId &&
+    message.creation?.taskId != null &&
+    outcome.message.creation?.taskId === message.creation.taskId
+  );
+}
 
 /** Keep the screen's creation state until its detail can take over the pill. */
 export function resolvePendingThreadCreation(input: {

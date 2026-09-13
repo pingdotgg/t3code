@@ -1,6 +1,7 @@
 import { acknowledgedThreadMessagesAtom } from "./acknowledged-thread-messages";
 import {
   CommandId,
+  OrchestrationDispatchCommandError,
   ComposerContextId,
   EnvironmentId,
   MessageId,
@@ -152,9 +153,10 @@ vi.mock("./thread-outbox", async () => {
 import { appAtomRegistry } from "./atom-registry";
 import {
   clearPendingThreadCreationOutcome,
+  isPendingTaskMembershipRejected,
   pendingThreadCreationOutcomesAtom,
 } from "./pending-thread-creation";
-import type { QueuedThreadMessage } from "./thread-outbox-model";
+import { resolveThreadOutboxFailure, type QueuedThreadMessage } from "./thread-outbox-model";
 import * as composerDrafts from "./use-composer-drafts";
 import {
   recoverFailedThreadDraft,
@@ -163,6 +165,7 @@ import {
 import { editingQueuedMessageIdsAtom, dispatchingQueuedMessageIdAtom } from "./use-thread-outbox";
 import {
   completeQueuedMessageDelivery,
+  retainRejectedTaskCreation,
   prepareQueuedMessageAttachments,
   recoverEditedCreationAfterDelivery,
   removeAcknowledgedExistingThreadMessage,
@@ -738,6 +741,97 @@ describe("thread outbox recovery rollback", () => {
     expect(openEditor).not.toHaveBeenCalled();
     expect(remainingMessages()).toEqual([message]);
   });
+
+  it.each(["missing", "archived", "unsupported"] as const)(
+    "retains %s membership failures without reading prose and blocks until membership changes",
+    async (taskMembershipRejection) => {
+      const message: QueuedThreadMessage = {
+        ...queuedMessage({
+          messageId: "semantic-rejection",
+          text: "Original prompt",
+          fileUri: "file:///attachment",
+        }),
+        creation: {
+          projectId: ProjectId.make("project"),
+          taskId: TaskId.make("parent"),
+          workspaceMode: "local",
+          branch: "main",
+          worktreePath: null,
+        },
+      };
+      await harness.manager.enqueue(message);
+      const failure = resolveThreadOutboxFailure({
+        stage: "start-turn",
+        interrupted: false,
+        error: new OrchestrationDispatchCommandError({
+          message: "The selected parent is unavailable.",
+          taskMembershipRejection,
+        }),
+      });
+      expect(retainRejectedTaskCreation(message, failure)).toBe(true);
+      const key = `${message.environmentId}:${message.threadId}`;
+      const outcome = appAtomRegistry.get(pendingThreadCreationOutcomesAtom)[key];
+      expect(outcome).toMatchObject({
+        kind: "failed",
+        retainedInOutbox: true,
+        taskMembershipRejection,
+      });
+      expect(remainingMessages()).toEqual([message]);
+      expect(isPendingTaskMembershipRejected(message, outcome)).toBe(true);
+      expect(isPendingTaskMembershipRejected({ ...message, text: "Setup edited" }, outcome)).toBe(
+        true,
+      );
+      const edited = { ...message, creation: { ...message.creation!, taskId: null } };
+      await harness.manager.update(edited, harness.manager.revisionOf(message.messageId));
+      expect(isPendingTaskMembershipRejected(remainingMessages()[0]!, outcome)).toBe(false);
+      expect(
+        isPendingTaskMembershipRejected(
+          { ...message, creation: { ...message.creation!, taskId: TaskId.make("other") } },
+          outcome,
+        ),
+      ).toBe(false);
+      expect(remainingMessages()[0]?.attachments).toEqual(message.attachments);
+    },
+  );
+
+  it.each(["The task runner failed.", "Rejected by an older server."])(
+    "restores unstructured permanent failures durably: %s",
+    async (messageText) => {
+      const message: QueuedThreadMessage = {
+        ...queuedMessage({
+          messageId: "unstructured-rejection",
+          text: "Keep this prompt",
+          fileUri: "file:///attachment",
+        }),
+        creation: {
+          projectId: ProjectId.make("project"),
+          taskId: TaskId.make("parent"),
+          workspaceMode: "local",
+          branch: "main",
+          worktreePath: null,
+        },
+      };
+      await harness.manager.enqueue(message);
+      const failure = resolveThreadOutboxFailure({
+        stage: "start-turn",
+        interrupted: false,
+        error: new OrchestrationDispatchCommandError({ message: messageText }),
+      });
+      expect(retainRejectedTaskCreation(message, failure)).toBe(false);
+      expect(failure.action).toBe("restore");
+      await expect(restoreRejectedQueuedMessage(message, failure.message)).resolves.toBe(
+        "restored",
+      );
+      expect(remainingMessages()).toEqual([]);
+      expect(
+        composerDrafts.getComposerDraftSnapshot(`new-task:restored-${message.messageId}`),
+      ).toMatchObject({
+        text: message.text,
+        attachments: message.attachments,
+        taskId: message.creation!.taskId,
+      });
+    },
+  );
 
   it("keeps a blocked task creation queued while recovering its prompt and setup edits for the pending editor", async () => {
     const message: QueuedThreadMessage = {

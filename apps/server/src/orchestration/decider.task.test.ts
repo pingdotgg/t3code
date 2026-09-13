@@ -160,6 +160,37 @@ it.layer(NodeServices.layer)("task decisions", (it) => {
         });
       }),
   );
+  it.effect(
+    "identifies missing and archived membership destinations without tagging other task commands",
+    () =>
+      Effect.gen(function* () {
+        const initial = yield* seed;
+        for (const reason of ["missing", "archived"] as const) {
+          const model =
+            reason === "missing"
+              ? { ...initial, tasks: [] }
+              : { ...initial, tasks: initial.tasks.map((task) => ({ ...task, archivedAt: now })) };
+          for (const command of [
+            { ...threadCreate, threadId: ThreadId.make("new-member"), taskId },
+            { type: "thread.task.set", commandId, threadId, taskId },
+          ] satisfies OrchestrationCommand[]) {
+            const error = yield* decideOrchestrationCommand({ readModel: model, command }).pipe(
+              Effect.flip,
+            );
+            expect(error).toMatchObject({
+              _tag: "OrchestrationCommandInvariantError",
+              taskMembershipRejection: reason,
+            });
+          }
+          const error = yield* decideOrchestrationCommand({
+            readModel: model,
+            command: { type: "task.pin", commandId, taskId },
+          }).pipe(Effect.flip);
+          expect(error).not.toHaveProperty("taskMembershipRejection");
+        }
+      }),
+  );
+
   it.effect("validates task destinations, primary projects, unique IDs and nonempty names", () =>
     Effect.gen(function* () {
       const model = yield* seed;

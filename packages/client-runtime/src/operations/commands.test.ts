@@ -1,5 +1,7 @@
 import {
   CommandId,
+  MessageId,
+  ProviderInstanceId,
   EnvironmentId,
   ORCHESTRATION_WS_METHODS,
   ProjectId,
@@ -24,6 +26,8 @@ import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
 import {
   createTask,
+  createThread,
+  startThreadTurn,
   updateTaskMetadata,
   deleteTask,
   setThreadTask,
@@ -125,6 +129,74 @@ describe("environment commands", () => {
         Effect.flip,
       );
       expect(result._tag).toBe("EnvironmentRpcUnavailableError");
+      expect(dispatched).toEqual([]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect(
+    "rejects membership on older servers before dispatching bootstrap or direct creation",
+    () =>
+      Effect.gen(function* () {
+        for (const tasks of [undefined, false]) {
+          const dispatched: ClientOrchestrationCommand[] = [];
+          const supervisor = yield* makeSupervisor(dispatched, tasks);
+          const create = {
+            projectId: ProjectId.make("project"),
+            taskId: TaskId.make("parent"),
+            title: "Member",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "full-access" as const,
+            interactionMode: "default" as const,
+            branch: null,
+            worktreePath: null,
+            createdAt: "2026-06-06T00:00:00.000Z",
+          };
+          const threadId = ThreadId.make("member");
+          for (const command of [
+            createThread({ ...create, threadId }),
+            setThreadTask({ threadId, taskId: create.taskId }),
+            startThreadTurn({
+              threadId,
+              message: {
+                messageId: MessageId.make("message"),
+                role: "user",
+                text: "hello",
+                attachments: [],
+              },
+              modelSelection: create.modelSelection,
+              runtimeMode: create.runtimeMode,
+              interactionMode: create.interactionMode,
+              bootstrap: { createThread: create },
+            }),
+          ]) {
+            const error = yield* command.pipe(
+              Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+              Effect.flip,
+            );
+            expect(error).toMatchObject({
+              _tag: "OrchestrationDispatchCommandError",
+              taskMembershipRejection: "unsupported",
+            });
+          }
+          expect(dispatched).toEqual([]);
+        }
+      }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("keeps a disconnected membership attempt retryable", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched, true);
+      yield* SubscriptionRef.set(supervisor.session, Option.none());
+      const error = yield* setThreadTask({
+        threadId: ThreadId.make("member"),
+        taskId: TaskId.make("parent"),
+      }).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("EnvironmentRpcUnavailableError");
+      expect(error).not.toHaveProperty("taskMembershipRejection");
       expect(dispatched).toEqual([]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );

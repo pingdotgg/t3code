@@ -72,6 +72,7 @@ const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationComma
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
+const encodeDispatchCommandError = Schema.encodeEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
 
 it.effect("decodes a dispatch error after its bootstrap thread was deleted", () =>
@@ -84,6 +85,31 @@ it.effect("decodes a dispatch error after its bootstrap thread was deleted", () 
 
     assert.strictEqual(error.bootstrapThreadDisposition, "deleted");
   }),
+);
+
+it.effect(
+  "round trips membership reasons independently of bootstrap cleanup and accepts old errors",
+  () =>
+    Effect.gen(function* () {
+      for (const taskMembershipRejection of [
+        undefined,
+        "missing",
+        "archived",
+        "unsupported",
+      ] as const) {
+        for (const bootstrapThreadDisposition of [undefined, "deleted"] as const) {
+          const error = new OrchestrationDispatchCommandError({
+            message: "Membership rejected.",
+            ...(taskMembershipRejection ? { taskMembershipRejection } : {}),
+            ...(bootstrapThreadDisposition ? { bootstrapThreadDisposition } : {}),
+          });
+          const encoded = yield* encodeDispatchCommandError(error);
+          const decoded = yield* decodeDispatchCommandError(encoded);
+          assert.strictEqual(decoded.taskMembershipRejection, taskMembershipRejection);
+          assert.strictEqual(decoded.bootstrapThreadDisposition, bootstrapThreadDisposition);
+        }
+      }
+    }),
 );
 
 it.effect("parses turn diff input when fromTurnCount <= toTurnCount", () =>

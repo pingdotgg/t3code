@@ -119,6 +119,7 @@ import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import {
   OrchestrationListenerCallbackError,
+  OrchestrationCommandInvariantError,
   OrchestrationThreadSettleBlockedError,
 } from "./orchestration/Errors.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -11680,6 +11681,100 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         setupActivities.every((command) => command.activity.kind !== "setup-script.failed"),
       );
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("preserves membership rejection through direct dispatch and bootstrap cleanup", () =>
+    Effect.gen(function* () {
+      let failedCommandType: "thread.create" | "thread.turn.start" = "thread.create";
+      let cleanupFails = false;
+      let reason: "missing" | "archived" = "missing";
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) => {
+              if (command.type === failedCommandType) {
+                return Effect.fail(
+                  new OrchestrationCommandInvariantError({
+                    commandType: command.type,
+                    detail: "The selected parent is unavailable.",
+                    taskMembershipRejection: reason,
+                  }),
+                );
+              }
+              if (command.type === "thread.delete" && cleanupFails) {
+                return Effect.fail(
+                  new OrchestrationListenerCallbackError({
+                    listener: "domain-event",
+                    detail: "Cleanup unavailable.",
+                  }),
+                );
+              }
+              return Effect.succeed({ sequence: 1 });
+            },
+            readEvents: () => Stream.empty,
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const create = {
+              projectId: defaultProjectId,
+              taskId: TaskId.make("parent"),
+              title: "Member",
+              modelSelection: defaultModelSelection,
+              runtimeMode: "full-access" as const,
+              interactionMode: "default" as const,
+              branch: null,
+              worktreePath: null,
+              createdAt: "2026-01-01T00:00:00.000Z",
+            };
+            const direct = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+              ...create,
+              type: "thread.create",
+              commandId: CommandId.make("direct-member"),
+              threadId: ThreadId.make("member"),
+            }).pipe(Effect.flip);
+            assertTrue(direct._tag === "OrchestrationDispatchCommandError");
+            assert.equal(direct.taskMembershipRejection, "missing");
+            assert.equal(direct.bootstrapThreadDisposition, undefined);
+            for (const scenario of [
+              { commandType: "thread.create", reason: "missing", cleanupFails: false },
+              { commandType: "thread.turn.start", reason: "archived", cleanupFails: false },
+              { commandType: "thread.turn.start", reason: "archived", cleanupFails: true },
+            ] as const) {
+              failedCommandType = scenario.commandType;
+              reason = scenario.reason;
+              cleanupFails = scenario.cleanupFails;
+              const error = yield* client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.turn.start",
+                commandId: CommandId.make("bootstrap-member"),
+                threadId: ThreadId.make("member"),
+                message: {
+                  messageId: MessageId.make("member-message"),
+                  role: "user",
+                  text: "hello",
+                  attachments: [],
+                },
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                bootstrap: { createThread: create, runSetupScript: false },
+                createdAt: create.createdAt,
+              }).pipe(Effect.flip);
+              assertTrue(error._tag === "OrchestrationDispatchCommandError");
+              assert.equal(error.taskMembershipRejection, reason);
+              assert.equal(
+                error.bootstrapThreadDisposition,
+                failedCommandType === "thread.turn.start" && !cleanupFails ? "deleted" : undefined,
+              );
+              assert.include(error.message, "The selected parent is unavailable.");
+            }
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

@@ -96,6 +96,7 @@ import {
   cleanupFailedUploadedAttachments,
   normalizeDispatchCommand,
 } from "./orchestration/Normalizer.ts";
+import { OrchestrationCommandInvariantError } from "./orchestration/Errors.ts";
 import * as OrchestrationEngine from "./orchestration/Services/OrchestrationEngine.ts";
 import * as ProjectionSnapshotQuery from "./orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ProviderCommandReactor } from "./orchestration/Services/ProviderCommandReactor.ts";
@@ -168,6 +169,7 @@ import * as SessionStore from "./auth/SessionStore.ts";
 import { failEnvironmentAuthInvalid, failEnvironmentInternal } from "./auth/http.ts";
 import * as RelayClient from "@t3tools/shared/relayClient";
 const isOrchestrationDispatchCommandError = Schema.is(OrchestrationDispatchCommandError);
+const isOrchestrationCommandInvariantError = Schema.is(OrchestrationCommandInvariantError);
 
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -729,6 +731,10 @@ const makeWsRpcLayer = (
           ? cause
           : new OrchestrationDispatchCommandError({
               message: cause instanceof Error ? cause.message : fallbackMessage,
+              ...(isOrchestrationCommandInvariantError(cause) &&
+              cause.taskMembershipRejection !== undefined
+                ? { taskMembershipRejection: cause.taskMembershipRejection }
+                : {}),
               cause,
             });
       const randomUUID = crypto.randomUUIDv4.pipe(
@@ -786,13 +792,7 @@ const makeWsRpcLayer = (
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
         const error = Cause.squash(cause);
-        return isOrchestrationDispatchCommandError(error)
-          ? error
-          : new OrchestrationDispatchCommandError({
-              message:
-                error instanceof Error ? error.message : "Failed to bootstrap thread turn start.",
-              cause,
-            });
+        return toDispatchCommandError(error, "Failed to bootstrap thread turn start.");
       };
 
       // Shell updates refetch the aggregate. Message and tool bodies are not needed.
@@ -1288,6 +1288,9 @@ const makeWsRpcLayer = (
                             ...(dispatchError.cause !== undefined
                               ? { cause: dispatchError.cause }
                               : {}),
+                            ...(dispatchError.taskMembershipRejection !== undefined
+                              ? { taskMembershipRejection: dispatchError.taskMembershipRejection }
+                              : {}),
                             bootstrapThreadDisposition: "deleted",
                           })
                         : dispatchError,
@@ -1413,12 +1416,7 @@ const makeWsRpcLayer = (
               return result;
             }).pipe(
               Effect.mapError((cause) =>
-                isOrchestrationDispatchCommandError(cause)
-                  ? cause
-                  : new OrchestrationDispatchCommandError({
-                      message: "Failed to dispatch orchestration command",
-                      cause,
-                    }),
+                toDispatchCommandError(cause, "Failed to dispatch orchestration command"),
               ),
             ),
             { "rpc.aggregate": "orchestration" },

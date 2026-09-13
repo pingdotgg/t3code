@@ -2619,12 +2619,16 @@ export class OrchestrationGetSnapshotError extends Schema.TaggedError<Orchestrat
   },
 ) {}
 
+export const TaskMembershipRejection = Schema.Literals(["missing", "archived", "unsupported"]);
+export type TaskMembershipRejection = typeof TaskMembershipRejection.Type;
+
 export class OrchestrationDispatchCommandError extends Schema.TaggedError<OrchestrationDispatchCommandError>()(
   "OrchestrationDispatchCommandError",
   {
     message: TrimmedNonEmptyString,
     cause: Schema.optional(Schema.Defect()),
     bootstrapThreadDisposition: Schema.optional(Schema.Literal("deleted")),
+    taskMembershipRejection: Schema.optional(TaskMembershipRejection),
   },
 ) {}
 

@@ -1,5 +1,6 @@
 import {
   CommandId,
+  OrchestrationDispatchCommandError,
   ORCHESTRATION_WS_METHODS,
   type ClientOrchestrationCommand,
 } from "@t3tools/contracts";
@@ -90,9 +91,34 @@ function timestampedCommandMetadata(input: {
   });
 }
 
-function dispatch(command: ClientOrchestrationCommand) {
-  return request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
-}
+const dispatch = Effect.fn("EnvironmentCommands.dispatch")(function* (
+  command: ClientOrchestrationCommand,
+) {
+  const hasMembership =
+    ((command.type === "thread.create" || command.type === "thread.task.set") &&
+      command.taskId != null) ||
+    (command.type === "thread.turn.start" && command.bootstrap?.createThread?.taskId != null);
+  if (hasMembership) {
+    const supervisor = yield* EnvironmentSupervisor;
+    const session = yield* SubscriptionRef.get(supervisor.session);
+    const config = Option.isSome(session)
+      ? yield* session.value.initialConfig.pipe(Effect.option)
+      : Option.none();
+    if (Option.isNone(config)) {
+      return yield* new EnvironmentRpcUnavailableError({
+        environmentId: supervisor.target.environmentId,
+        message: "The selected environment's capabilities are unavailable.",
+      });
+    }
+    if (config.value.environment.capabilities.tasks !== true) {
+      return yield* new OrchestrationDispatchCommandError({
+        message: "The selected environment does not support task membership.",
+        taskMembershipRejection: "unsupported",
+      });
+    }
+  }
+  return yield* request(ORCHESTRATION_WS_METHODS.dispatchCommand, command);
+});
 
 export const createProject: (input: CreateProjectInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.createProject",
@@ -519,6 +545,6 @@ export type SetThreadTaskInput = CommandInput<"thread.task.set">;
 export const setThreadTask: (input: SetThreadTaskInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.setThreadTask",
 )(function* (input) {
-  yield* requireTasks;
+  if (input.taskId == null) yield* requireTasks;
   return yield* dispatch({ ...input, type: "thread.task.set", commandId: yield* commandId(input) });
 });

@@ -1,4 +1,4 @@
-import { TaskId, ThreadId } from "@t3tools/contracts";
+import { TaskId, ThreadId, TaskMembershipRejection } from "@t3tools/contracts";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as Schema from "effect/Schema";
 
@@ -33,6 +33,7 @@ export class OrchestrationCommandInvariantError extends Schema.TaggedError<Orche
   {
     commandType: Schema.String,
     detail: Schema.String,
+    taskMembershipRejection: Schema.optional(TaskMembershipRejection),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
