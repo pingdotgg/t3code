@@ -880,7 +880,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                         <button
                           type="button"
                           className="cursor-pointer flex min-w-0 items-center"
-                          onClick={() => props.onActivate(surface)}
+                          onClick={() => {
+                            setAddSurfaceMenuOpen(false);
+                            props.onActivate(surface);
+                          }}
                         >
                           <span className="truncate">{title}</span>
                         </button>
