@@ -1391,6 +1391,32 @@ export function AppearanceSettingsPanel() {
             </div>
           }
         />
+        <SettingsRow
+          {...searchableSetting("compact-thread-list")}
+          description="Use denser, one-line threads when the sidebar is expanded. Hover a thread for its full details."
+          resetAction={
+            settings.sidebarCompactThreadRows !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows ? (
+              <SettingResetButton
+                label="compact thread list"
+                onClick={() =>
+                  updateSettings({
+                    sidebarCompactThreadRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarCompactThreadRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarCompactThreadRows: Boolean(checked) })
+              }
+              aria-label="Compact thread list"
+            />
+          }
+        />
       </SettingsSection>
 
       <TypographySection />
@@ -2298,33 +2324,6 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-        <SettingsRow
-          {...searchableSetting("compact-thread-list")}
-          description="Show active and pinned threads on one line. Hover a thread to see its full details."
-          resetAction={
-            settings.sidebarCompactThreadRows !==
-            DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows ? (
-              <SettingResetButton
-                label="compact thread list"
-                onClick={() =>
-                  updateSettings({
-                    sidebarCompactThreadRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.sidebarCompactThreadRows}
-              onCheckedChange={(checked) =>
-                updateSettings({ sidebarCompactThreadRows: Boolean(checked) })
-              }
-              aria-label="Compact thread list"
-            />
-          }
-        />
-
         <SettingsRow
           {...searchableSetting("time-format")}
           description="System default follows your browser or OS clock preference."

@@ -1880,9 +1880,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     );
   }
 
-  const compact = props.compact;
+  const compactRows = props.compact;
+  const CompactStatusIcon = topStatus
+    ? {
+        working: CircleDashedIcon,
+        monitoring: EyeIcon,
+        approval: ShieldQuestionIcon,
+        input: MessageCircleQuestionIcon,
+        failed: CircleAlertIcon,
+        woke: AlarmClockIcon,
+        done: CircleCheckIcon,
+      }[topStatus.icon]
+    : null;
   const compactCompletedAt =
-    compact && status === "ready" && !isWokeStatus
+    compactRows && status === "ready" && !isWokeStatus
       ? (thread.latestTurn?.completedAt ?? null)
       : null;
   const diff = latestTurnDiff(thread);
@@ -1894,7 +1905,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...(fileDropHandlers ?? {})}
       className={cn(
         "list-none [content-visibility:auto]",
-        compact
+        compactRows
           ? "[contain-intrinsic-size:auto_36px]"
           : "py-0.5 [contain-intrinsic-size:auto_78px]",
         sortable?.isDragging && "relative z-20",
@@ -1911,7 +1922,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ref={rowRef}
               role="button"
               tabIndex={0}
-              data-testid={compact ? "sidebar-row-compact" : "sidebar-row-card"}
+              data-testid={compactRows ? "sidebar-row-compact" : "sidebar-row-card"}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
@@ -1924,7 +1935,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
           <div
             className={cn(
               "relative z-10",
-              compact
+              compactRows
                 ? "flex h-9 items-center px-2.5"
                 : "h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]",
             )}
@@ -1934,7 +1945,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {compact ? (
+              {compactRows ? (
                 title
               ) : props.projectDisplayName ? (
                 <span
@@ -1949,6 +1960,50 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {pinIndicator}
+              {compactRows ? (
+                <>
+                  {isRemote ? (
+                    <span
+                      role="img"
+                      aria-label={props.environmentLabel ?? "Remote environment"}
+                      className="inline-flex shrink-0 text-sidebar-muted-foreground/70"
+                    >
+                      <EnvironmentMachineIcon
+                        kind={props.environmentMachine}
+                        className="size-3.5"
+                      />
+                    </span>
+                  ) : null}
+                  {terminalStatusIcon}
+                  {topStatus && CompactStatusIcon ? (
+                    isWokeStatus ? (
+                      <button
+                        type="button"
+                        aria-label="Dismiss Woke notification"
+                        onClick={handleAcknowledgeWokeClick}
+                        className={cn(
+                          "shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          topStatus.className,
+                        )}
+                      >
+                        <CompactStatusIcon aria-hidden className="size-3.5" />
+                        <span role="status" className="sr-only">
+                          {topStatus.label}
+                        </span>
+                      </button>
+                    ) : (
+                      <span
+                        role="status"
+                        className={cn("inline-flex shrink-0", topStatus.className)}
+                      >
+                        <CompactStatusIcon aria-hidden className="size-3.5" />
+                        <span className="sr-only">{topStatus.label}</span>
+                      </span>
+                    )
+                  ) : null}
+                  {prBadge}
+                </>
+              ) : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -1962,15 +2017,21 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     while the other controls appear beside it. */}
                   <span
                     className={cn(
-                      isWokeStatus
+                      isWokeStatus && !compactRows
                         ? "pointer-events-auto"
                         : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {compactCompletedAt ? (
-                      <SidebarCompletedTime completedAt={compactCompletedAt} />
+                    {compactRows ? (
+                      status === "working" ? (
+                        <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                      ) : compactCompletedAt ? (
+                        <SidebarCompletedTime completedAt={compactCompletedAt} />
+                      ) : (
+                        threadTimeLabel(thread)
+                      )
                     ) : topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
@@ -2015,12 +2076,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                           {/* The label alone is the live region: a role="status"
                             wrapper around the ticking duration would make
                             screen readers announce every second. */}
-                          <span
-                            role="status"
-                            className={compact && status === "working" ? "sr-only" : undefined}
-                          >
-                            {topStatus.label}
-                          </span>
+                          <span role="status">{topStatus.label}</span>
                           {status === "working" ? (
                             <span aria-hidden>
                               <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
@@ -2032,10 +2088,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                       threadTimeLabel(thread)
                     )}
                   </span>
-                  {props.settlementSupported ||
-                  showSnoozeButton ||
-                  hasUnsentDraft ||
-                  (compact && prBadge) ? (
+                  {props.settlementSupported || showSnoozeButton || hasUnsentDraft ? (
                     <span
                       className={cn(
                         // focus-visible, not focus-within: a mouse click leaves
@@ -2047,7 +2100,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                         snoozeMenuOpen && "pointer-events-auto static opacity-100",
                       )}
                     >
-                      {compact ? prBadge : null}
                       {hasUnsentDraft ? (
                         <Tooltip>
                           <TooltipTrigger
@@ -2086,7 +2138,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             }
                           >
                             <CheckIcon className="size-3.5" />
-                            {compact ? null : "Settle"}
+                            {compactRows ? null : "Settle"}
                           </TooltipTrigger>
                           <TooltipPopup>Settle thread</TooltipPopup>
                         </Tooltip>
@@ -2101,7 +2153,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 Regenerating title
               </span>
             ) : null}
-            {compact ? null : (
+            {compactRows ? null : (
               <>
                 <div className="mt-1 flex min-w-0">{title}</div>
                 <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">

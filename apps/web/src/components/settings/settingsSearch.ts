@@ -166,6 +166,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["collapsed icons rail hover navigation preview"],
   },
   {
+    id: "compact-thread-list",
+    title: "Compact thread list",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar expanded dense density one line rows chats threads"],
+  },
+  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
@@ -215,11 +221,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Project grouping",
     to: "/settings/general",
     searchTerms: ["combine matching repositories environments sidebar"],
-  },
-  {
-    id: "compact-thread-list",
-    title: "Compact thread list",
-    to: "/settings/general",
   },
   {
     id: "auto-settle-inactive-threads",
