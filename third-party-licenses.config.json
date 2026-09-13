@@ -3,6 +3,34 @@
     {
       "bundles": ["assets", "desktop", "web"],
       "license": "CC0-1.0",
+      "name": "Notification Sound 1 by deadrobotmusic",
+      "sourceUrl": "https://freesound.org/people/deadrobotmusic/sounds/750607/",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The bundled notification-completion.mp3 is derived from Notification Sound 1 by deadrobotmusic:\nhttps://freesound.org/people/deadrobotmusic/sounds/750607/\n\nThe original sound is dedicated to the public domain under CC0 1.0 Universal."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0",
+      "name": "Notification Sound 3 by deadrobotmusic",
+      "sourceUrl": "https://freesound.org/people/deadrobotmusic/sounds/750609/",
+      "generatedNotices": [
+        {
+          "licenseId": "CC0-1.0",
+          "preamble": [
+            "The bundled notification-input.mp3 is derived from Notification Sound 3 by deadrobotmusic:\nhttps://freesound.org/people/deadrobotmusic/sounds/750609/\n\nThe original sound is dedicated to the public domain under CC0 1.0 Universal."
+          ]
+        }
+      ]
+    },
+    {
+      "bundles": ["assets", "desktop", "web"],
+      "license": "CC0-1.0",
       "name": "Folder_Whoosh.wav by BaggoNotes",
       "sourceUrl": "https://freesound.org/people/BaggoNotes/sounds/704258/",
       "generatedNotices": [
