@@ -38,7 +38,10 @@ import {
 } from "../acp/AntigravityAcpSupport.ts";
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
-import { removeAntigravitySessionFiles } from "../acp/AntigravitySessionFiles.ts";
+import {
+  cleanOrphanedAntigravityTempDirs,
+  removeAntigravitySessionFiles,
+} from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeAntigravityAdapter } from "../Layers/AntigravityAdapter.ts";
 import { makeAntigravityProvider } from "../Layers/AntigravityProvider.ts";
@@ -97,6 +100,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       const profileDirectory = resolveAntigravityProfileDirectory(
         serverConfig.stateDir,
         instanceId,
+      );
+      yield* cleanOrphanedAntigravityTempDirs(profileDirectory).pipe(
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
+        Effect.ignore,
       );
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
@@ -258,24 +266,47 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       // Kick the TTL-gated manifest refresh alongside the health check, as
       // Codex and Claude do. Without it an environment that only runs
       // Antigravity would keep classifying against a stale disk cache.
+      // Antigravity's binary is a PyInstaller single-file bundle. Spawning it
+      // extracts ~860 MB of files to a temporary directory on every run.
+      // The health probe only needs to verify that the executable and harness
+      // exist on disk and resolve the installed version; actual ACP sessions
+      // and explicit model refreshes spawn the runtime when needed.
       const probe = Effect.gen(function* () {
         yield* modelManifest.refreshInBackground;
-        const processScope = yield* Scope.make();
-        yield* Effect.addFinalizer((exit) => Scope.close(processScope, exit));
-        return yield* authFlow
-          .withProcess(
-            Scope.close(processScope, Exit.void),
-            Effect.gen(function* () {
-              const runtime = yield* makeRuntime({
-                cwd: serverConfig.stateDir,
-                clientInfo: { name: "t3-code-provider-probe", version: "0.0.0" },
-                mcpServers: [],
-              });
-              return yield* runtime.initialize();
-            }),
-          )
-          .pipe(Effect.provideService(Scope.Scope, processScope));
-      }).pipe(Effect.scoped);
+        if (authConfigIssue !== null) {
+          return yield* new ProviderSetupError({
+            instanceId,
+            operation: "configure",
+            detail: authConfigIssue,
+          });
+        }
+        const executable = yield* installation
+          .resolve(settings.binaryPath, processEnvironment)
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "resolve",
+                  detail: cause.detail,
+                }),
+            ),
+          );
+        return {
+          protocolVersion: 1,
+          agentCapabilities: {
+            loadSession: true,
+            promptCapabilities: { image: true, audio: true, embeddedContext: true },
+            sessionCapabilities: { list: {}, resume: {} },
+          },
+          authMethods: [{ id: "oauth-personal", name: "Log in with Google" }],
+          agentInfo: {
+            name: "antigravity-acp",
+            title: "Google Antigravity",
+            version: executable.version ?? "unknown",
+          },
+        };
+      });
 
       const provider = yield* makeAntigravityProvider(settings, {
         stampIdentity: classifyModels,

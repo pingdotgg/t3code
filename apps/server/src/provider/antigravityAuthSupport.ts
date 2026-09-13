@@ -214,6 +214,7 @@ function antigravityEnvironment(
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
+  const tempDirectory = NodePath.join(profile.acpDirectory, "tmp");
   return {
     ...environment,
     ...credential,
@@ -222,6 +223,12 @@ function antigravityEnvironment(
     BROWSER: profile.browserCommand,
     PYTHONUNBUFFERED: "1",
     ELECTRON_RUN_AS_NODE: "1",
+    ...(profile.platform === "win32"
+      ? {
+          TEMP: tempDirectory,
+          TMP: tempDirectory,
+        }
+      : {}),
   };
 }
 
@@ -301,8 +308,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     browserCommand.includes(platform === "win32" ? ";" : ":") ||
     helperExecutable.includes("\r") ||
     helperExecutable.includes("\n") ||
-    helperExecutable.includes("\0") ||
-    helperExecutable.includes("%s")
+    helperExecutable.includes("\0")
   ) {
     return yield* authSupportError(
       "The T3 runtime path cannot be used to suppress Antigravity browser launches.",
@@ -311,6 +317,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
 
   const geminiHome = path.resolve(input.profileDirectory);
   const acpDirectory = path.join(geminiHome, "antigravity-acp");
+  const tempDirectory = path.join(acpDirectory, "tmp");
   const profile: AntigravityProfile = {
     platform,
     geminiHome,
@@ -358,7 +365,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
     ),
   );
 
-  for (const directory of [geminiHome, acpDirectory]) {
+  for (const directory of [geminiHome, acpDirectory, tempDirectory]) {
     yield* fs
       .makeDirectory(directory, { recursive: true, mode: 0o700 })
       .pipe(

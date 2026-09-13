@@ -58,7 +58,7 @@ function shellQuote(value: string): string {
 }
 
 const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
-  options: { readonly config?: Partial<AntigravitySettings> } = {},
+  options: { readonly config?: Partial<AntigravitySettings>; readonly enabled?: boolean } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -129,6 +129,16 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
 
   const installation = Layer.mock(AntigravityInstallation)({
     managedDirectory: root,
+    resolve: (binaryPath, environment) =>
+      Effect.gen(function* () {
+        if (controls.failResolution) {
+          return yield* new AntigravityInstallationError({
+            operation: "resolve",
+            detail: "Fixture resolution failed.",
+          });
+        }
+        return controls.selected;
+      }),
     acquire: (binaryPath, environment) =>
       Effect.gen(function* () {
         acquisitions.push({ binaryPath, path: environment?.PATH });
@@ -174,7 +184,7 @@ const makeHarness = Effect.fn("makeAntigravityDriverHarness")(function* (
   const instance = yield* AntigravityDriver.create({
     instanceId,
     displayName: "Google test account",
-    enabled: false,
+    enabled: options.enabled ?? false,
     config: { ...AntigravityDriver.defaultConfig(), ...options.config },
     environment: [
       { name: "PATH", value: instancePath },
@@ -433,6 +443,17 @@ it.layer(testLayer)("AntigravityDriver", (it) => {
       expect(h.acquisitions).toHaveLength(2);
       expect(h.releases).toEqual([h.first.version]);
       yield* h.assertClosed;
+    }).pipe(Effect.scoped),
+  );
+
+  it.effect("probes through installation resolution without launching a process", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ enabled: true });
+      const snapshot = yield* h.instance.snapshot.refresh;
+      expect(snapshot.installed).toBe(true);
+      expect(snapshot.version).toBe(h.first.version);
+      expect(h.launches).toEqual([]);
+      expect(h.acquisitions).toEqual([]);
     }).pipe(Effect.scoped),
   );
 });

@@ -38,6 +38,64 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
       recursive: true,
       force: true,
     });
+
+    // Best-effort cleanup of any unlocked temporary unpack directories left by PyInstaller
+    const tmpDirectory = path.join(acpDirectory, "tmp");
+    if (yield* fs.exists(tmpDirectory)) {
+      const entries = yield* fs.readDirectory(tmpDirectory).pipe(Effect.orElseSucceed(() => []));
+      for (const entry of entries) {
+        if (entry.startsWith("_MEI")) {
+          yield* fs
+            .remove(path.join(tmpDirectory, entry), { recursive: true, force: true })
+            .pipe(Effect.ignore);
+        }
+      }
+    }
   },
   Effect.catch(() => Effect.logWarning("Could not remove temporary Antigravity session files.")),
+);
+
+/** Sweeps orphaned PyInstaller unpack directories from prior runs. */
+export const cleanOrphanedAntigravityTempDirs = Effect.fn("cleanOrphanedAntigravityTempDirs")(
+  function* (profileDirectory?: string) {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+
+    // 1. Clean profile-isolated tmp directory if provided
+    if (profileDirectory) {
+      const acpTmp = path.join(profileDirectory, "antigravity-acp", "tmp");
+      if (yield* fs.exists(acpTmp)) {
+        const entries = yield* fs.readDirectory(acpTmp).pipe(Effect.orElseSucceed(() => []));
+        for (const entry of entries) {
+          if (entry.startsWith("_MEI")) {
+            yield* fs
+              .remove(path.join(acpTmp, entry), { recursive: true, force: true })
+              .pipe(Effect.ignore);
+          }
+        }
+      }
+    }
+
+    // 2. Clean orphaned _MEI folders in system temp directory left by previous Antigravity probes
+    const systemTemp = process.env.TEMP || process.env.TMP;
+    if (systemTemp && (yield* fs.exists(systemTemp))) {
+      const entries = yield* fs.readDirectory(systemTemp).pipe(Effect.orElseSucceed(() => []));
+      for (const entry of entries) {
+        if (entry.startsWith("_MEI")) {
+          const fullPath = path.join(systemTemp, entry);
+          const hasGoogle3 = yield* fs
+            .exists(path.join(fullPath, "google3"))
+            .pipe(Effect.orElseSucceed(() => false));
+          const hasGoogle =
+            hasGoogle3 ||
+            (yield* fs
+              .exists(path.join(fullPath, "google"))
+              .pipe(Effect.orElseSucceed(() => false)));
+          if (hasGoogle) {
+            yield* fs.remove(fullPath, { recursive: true, force: true }).pipe(Effect.ignore);
+          }
+        }
+      }
+    }
+  },
 );

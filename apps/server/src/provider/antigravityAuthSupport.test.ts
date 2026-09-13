@@ -187,6 +187,29 @@ describe("Antigravity process environment", () => {
     ).toBeNull();
   });
 
+  it("isolates TEMP and TMP to the profile directory on Windows", () => {
+    const windowsProfile: AntigravityProfile = {
+      platform: "win32",
+      geminiHome: "C:\\state\\providers\\antigravity\\profile",
+      acpDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp",
+      tokenPath: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\acp_token.json",
+      browserCommand: "managed-browser-helper",
+    };
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: {
+        executablePath: "C:\\release\\agy_acp_server.exe",
+        harnessPath: "C:\\release\\localharness_external.exe",
+      },
+      profile: windowsProfile,
+      cwd: "C:\\project",
+      baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
+    });
+    expect(spawn.env?.TEMP).toBe(
+      "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp",
+    );
+    expect(spawn.env?.TMP).toBe("C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp");
+  });
+
   it("uses the registry launch arguments for each supported host platform", () => {
     for (const platform of ["linux", "darwin", "win32"] as const) {
       const spawn = buildAntigravityAcpSpawnInput({
