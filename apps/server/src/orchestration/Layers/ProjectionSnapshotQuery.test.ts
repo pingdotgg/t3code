@@ -657,13 +657,13 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
       assert.equal(pendingDetail._tag, "Some");
       if (pendingDetail._tag === "Some") {
         assert.deepEqual(pendingDetail.value.pendingTurnStart, {
-          messageId: "pending-prompt",
+          messageId: MessageId.make("pending-prompt"),
           createdSequence: 42,
         });
       }
       const pendingSnapshot = yield* snapshotQuery.getSnapshot();
       assert.deepEqual(pendingSnapshot.threads[0]?.pendingTurnStart, {
-        messageId: "pending-prompt",
+        messageId: MessageId.make("pending-prompt"),
         createdSequence: 42,
       });
       yield* sql`DELETE FROM projection_turns WHERE thread_id = 'thread-1' AND turn_id IS NULL`;
