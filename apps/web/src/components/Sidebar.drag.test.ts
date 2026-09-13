@@ -9,6 +9,7 @@ import {
   createSidebarSortingStrategy,
   createTaskSidebarSortingStrategy,
   createTaskSidebarDragOffset,
+  createTaskSidebarCollisionDetection,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import {
@@ -866,6 +867,65 @@ describe("task block drag projection", () => {
       section: "active",
     },
   ];
+  for (const section of ["settled", "snoozed"] as const) {
+    it.each([101, 118, 135])(
+      `accepts an outside thread across the whole ${section} task row at y=%s`,
+      (y) => {
+        const task = items[0]!;
+        if (task.kind !== "task") throw new Error("Expected task fixture");
+        const rows: TaskSidebarItem[] = [
+          { ...task, section },
+          items[5]!,
+          {
+            kind: "thread",
+            key: "outside",
+            section: "settled",
+            threadRef: scopeThreadRef(environmentId, ThreadId.make("outside")),
+          },
+        ];
+        const rects = [100, 136, 300].map((top) => ({
+          top,
+          bottom: top + 36,
+          height: 36,
+          left: 0,
+          right: 260,
+          width: 260,
+        }));
+        // Pick up near the top of a thread: its center reaches the child while the pointer is still over the task.
+        const collisionRect = { ...rects[2]!, top: y - 1, bottom: y + 35 };
+        const args = {
+          active: {
+            id: "outside",
+            data: { current: {} },
+            rect: { current: { initial: rects[2]!, translated: collisionRect } },
+          },
+          collisionRect,
+          pointerCoordinates: { x: 130, y },
+          droppableRects: new Map(
+            rows.map((row, index) => [taskSidebarItemId(row), rects[index]!]),
+          ),
+          droppableContainers: rows.map((row, index) => ({
+            id: taskSidebarItemId(row),
+            key: taskSidebarItemId(row),
+            disabled: false,
+            data: { current: {} },
+            node: { current: null },
+            rect: { current: rects[index]! },
+          })),
+        } satisfies Parameters<CollisionDetection>[0];
+        const detector = createTaskSidebarCollisionDetection(rows);
+        const { collisions, placement } = detector(args);
+        const hit = collisions[0];
+        expect(hit?.id).toBe(task.key);
+        expect(
+          taskSidebar.resolveTaskSidebarDrop(rows, "outside", String(hit?.id), placement ?? "on"),
+        ).toMatchObject({
+          kind: "move-to-task",
+          taskRef,
+        });
+      },
+    );
+  }
   function taskLayout(activeIndex: number, overIndex: number, scale = 1) {
     let top = 100;
     const rects = [82, 82, 36, 28, 28, 36, 82].map((height) => {

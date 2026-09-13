@@ -1,11 +1,5 @@
 import { flushSync } from "react-dom";
-import {
-  closestCenter,
-  DndContext,
-  useSensor,
-  useSensors,
-  type CollisionDetection,
-} from "@dnd-kit/core";
+import { DndContext, useSensor, useSensors, type CollisionDetection } from "@dnd-kit/core";
 import { SortableContext, useSortable } from "@dnd-kit/sortable";
 import { restrictToFirstScrollableAncestor, restrictToVerticalAxis } from "@dnd-kit/modifiers";
 import { CSS } from "@dnd-kit/utilities";
@@ -19,6 +13,7 @@ import type { SortableThreadRowBag } from "../Sidebar";
 import {
   collapseDraggedTask,
   createTaskSidebarDragOffset,
+  createTaskSidebarCollisionDetection,
   createTaskSidebarSortingStrategy,
 } from "../Sidebar.drag";
 import { animateSidebarLayoutChanges, type SidebarSection } from "../Sidebar.logic";
@@ -122,31 +117,14 @@ export function TaskSidebar(props: {
   const sensors = useSensors(
     useSensor(SidebarPointerSensor, { distance: 5, onAttach: attach, onFinish: finish }),
   );
+  const detectCollision = useMemo(() => createTaskSidebarCollisionDetection(items), [items]);
   const collision: CollisionDetection = useCallback(
     (args) => {
-      const collisions = closestCenter(args);
-      const nearest = collisions[0];
-      if (!nearest || nearest.id === args.active.id) return collisions;
-      const rect = args.droppableRects.get(nearest.id);
-      const pointerY = args.pointerCoordinates?.y;
-      const next =
-        rect && pointerY != null
-          ? pointerY < rect.top + Math.min(12, rect.height / 4)
-            ? "before"
-            : pointerY > rect.bottom - Math.min(12, rect.height / 4)
-              ? "after"
-              : "on"
-          : "on";
-      placementRef.current = next;
-      const intent = resolveTaskSidebarDrop(
-        items,
-        String(args.active.id),
-        String(nearest.id),
-        next,
-      );
-      return intent ? collisions : collisions.filter((entry) => entry.id === args.active.id);
+      const result = detectCollision(args);
+      if (result.placement) placementRef.current = result.placement;
+      return result.collisions;
     },
-    [items],
+    [detectCollision],
   );
   const strategy = useMemo(
     () => createTaskSidebarSortingStrategy({ items, placement, activeOffsetY: dragOffset.read }),

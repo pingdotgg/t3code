@@ -1,4 +1,9 @@
-import { closestCenter, type CollisionDetection, type Modifier } from "@dnd-kit/core";
+import {
+  closestCenter,
+  pointerWithin,
+  type CollisionDetection,
+  type Modifier,
+} from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   resolveSidebarDropTarget,
@@ -385,5 +390,42 @@ export function createTaskSidebarSortingStrategy(input: {
         : { ...stationary, y: input.activeOffsetY() + scrollOffset };
     }
     return transforms[args.index] ?? stationary;
+  };
+}
+
+/** Parked task rows accept membership across their full height; active cards keep ordering edges. */
+export function createTaskSidebarCollisionDetection(items: readonly TaskSidebarItem[]) {
+  const byId = new Map(items.map((item) => [taskSidebarItemId(item), item]));
+  return (args: Parameters<CollisionDetection>[0]) => {
+    const source = byId.get(String(args.active.id));
+    const membershipHit =
+      source?.kind === "thread"
+        ? pointerWithin(args).find((hit) => {
+            const target = byId.get(String(hit.id));
+            return (
+              target?.kind === "task" &&
+              target.taskKey !== source.taskKey &&
+              (target.section === "settled" || target.section === "snoozed")
+            );
+          })
+        : undefined;
+    const collisions = membershipHit ? [membershipHit] : closestCenter(args);
+    const nearest = collisions[0];
+    if (!nearest || nearest.id === args.active.id) return { collisions, placement: null };
+    const rect = args.droppableRects.get(nearest.id);
+    const pointerY = args.pointerCoordinates?.y;
+    const next =
+      !membershipHit && rect && pointerY != null
+        ? pointerY < rect.top + Math.min(12, rect.height / 4)
+          ? "before"
+          : pointerY > rect.bottom - Math.min(12, rect.height / 4)
+            ? "after"
+            : "on"
+        : "on";
+    const intent = resolveTaskSidebarDrop(items, String(args.active.id), String(nearest.id), next);
+    return {
+      collisions: intent ? collisions : collisions.filter((entry) => entry.id === args.active.id),
+      placement: next,
+    } as const;
   };
 }
