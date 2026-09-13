@@ -681,6 +681,7 @@ export function HomeScreen(props: HomeScreenProps) {
     () =>
       buildMobileTaskListItems({
         ...mobileTaskList,
+        projects: props.projects,
         tasks: threadListV2Enabled ? mobileTaskList.tasks : [],
         threads: threadListV2Enabled ? props.threads : [],
         pendingTasks: threadListV2Enabled ? props.pendingTasks : [],
@@ -701,6 +702,7 @@ export function HomeScreen(props: HomeScreenProps) {
       }),
     [
       mobileTaskList,
+      props.projects,
       threadListV2Enabled,
       props.threads,
       props.pendingTasks,

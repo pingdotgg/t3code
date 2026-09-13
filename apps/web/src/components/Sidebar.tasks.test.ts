@@ -307,3 +307,26 @@ describe("task presentation across shelves", () => {
     expect(items.map((item) => item.key)).toEqual([`task:${taskKey}`, "pending"]);
   });
 });
+
+describe("task card settlement eligibility", () => {
+  it("uses all indexed members even when search hides a blocking sibling", () => {
+    const rows = content({
+      ...base,
+      search: "one",
+      threads: [thread("one"), thread("blocked", { hasPendingApprovals: true })],
+    });
+    expect(rows.filter((row) => row.kind === "thread").map((row) => row.key)).toEqual([key("one")]);
+    expect(rows.find((row) => row.kind === "task")).toMatchObject({ settleBlocked: true });
+  });
+  it("does not borrow a blocker from another environment or archived member", () => {
+    const rows = content({
+      ...base,
+      threads: [
+        thread("one"),
+        thread("foreign", { environmentId: remote, hasPendingApprovals: true }),
+        thread("archived", { archivedAt: now, hasPendingApprovals: true }),
+      ],
+    });
+    expect(rows.find((row) => row.kind === "task")).toMatchObject({ settleBlocked: false });
+  });
+});

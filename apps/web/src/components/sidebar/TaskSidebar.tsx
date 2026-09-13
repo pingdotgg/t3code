@@ -228,6 +228,7 @@ export function TaskSidebar(props: {
                     onToggle: () => setExpanded(item.taskRef, !item.expanded),
                     counts: item.counts,
                     status: item.status,
+                    settleBlocked: item.settleBlocked,
                     primaryProjectName: project?.title ?? "Project",
                     primaryProjectIcon: project ? (
                       <ProjectFavicon project={project} className="size-3.5" />

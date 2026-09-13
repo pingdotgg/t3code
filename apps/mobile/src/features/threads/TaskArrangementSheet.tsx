@@ -144,7 +144,7 @@ export function TaskArrangementSheet({ onClose }: { onClose: () => void }) {
                   </Pressable>
                 ))}
                 {row.kind === "task" ? (
-                  <TaskActionsMenu task={row.entity} />
+                  <TaskActionsMenu task={row.entity} onNavigate={onClose} />
                 ) : (
                   <ControlPillMenu
                     actions={[

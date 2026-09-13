@@ -1,5 +1,7 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId } from "@t3tools/contracts";
+import { useFocusEffect } from "@react-navigation/native";
+import { useCallback, useRef } from "react";
 import { Pressable, TextInput, View } from "react-native";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -7,6 +9,8 @@ import { useEnvironments } from "../../state/environments";
 
 export function TaskMetadataForm(props: {
   readonly name: string;
+  readonly focusName?: boolean;
+  readonly onNameFocused?: () => void;
   readonly description: string;
   readonly projectId: ProjectId | null;
   readonly environmentId?: EnvironmentId;
@@ -18,6 +22,15 @@ export function TaskMetadataForm(props: {
   readonly onDescriptionSubmit?: () => void;
   readonly onCancel?: () => void;
 }) {
+  const nameInput = useRef<TextInput>(null);
+  const { focusName, onNameFocused } = props;
+  useFocusEffect(
+    useCallback(() => {
+      if (!focusName) return;
+      if (nameInput.current?.isFocused()) onNameFocused?.();
+      else nameInput.current?.focus();
+    }, [focusName, onNameFocused]),
+  );
   const { environments } = useEnvironments();
   const showEnvironment = new Set(props.projects.map((project) => project.environmentId)).size > 1;
   const projectLabel = (project: EnvironmentProject) => {
@@ -36,6 +49,9 @@ export function TaskMetadataForm(props: {
   return (
     <View className="gap-3">
       <TextInput
+        ref={nameInput}
+        selectTextOnFocus
+        onFocus={props.onNameFocused}
         accessibilityLabel="Task name"
         placeholder="Task name"
         value={props.name}

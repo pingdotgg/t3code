@@ -13,7 +13,10 @@ import {
 } from "./threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
-import { resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
+import {
+  resolveSnoozePresets,
+  snoozeWakeLabel,
+} from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
   EnvironmentId,
@@ -1514,6 +1517,7 @@ function taskListFixture(overrides: Partial<Parameters<typeof buildMobileTaskLis
   ];
   return {
     tasks: [task],
+    projects: [],
     threads,
     pendingTasks: [],
     capableIds: new Set([environmentId]),
@@ -1957,5 +1961,78 @@ describe("native task shelf inventory", () => {
         snoozable: true,
       }),
     ).toEqual({ primary: "unsettle", secondary: "snooze" });
+  });
+});
+
+describe("native task row context", () => {
+  const project = (env: EnvironmentId, title: string) => ({
+    environmentId: env,
+    id: ProjectId.make("project-1"),
+    title,
+    workspaceRoot: `/${title}`,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: NOW,
+    updatedAt: NOW,
+  });
+  it("resolves primary project identity by task scope, including empty and foreign-member tasks", () => {
+    const other = EnvironmentId.make("other");
+    const localProject = project(environmentId, "Primary");
+    const otherProject = project(other, "Remote");
+    const layout = buildMobileTaskListItems(
+      taskListFixture({
+        projects: [otherProject, localProject],
+        tasks: [makeContainer(), makeContainer({ environmentId: other })],
+        capableIds: new Set([environmentId, other]),
+        threads: [
+          makeThread({
+            id: ThreadId.make("member"),
+            title: "Foreign checkout",
+            projectId: ProjectId.make("foreign"),
+            taskId: TaskId.make("task-1"),
+          }),
+        ],
+      }),
+    );
+    const rows = layout.items.filter((item) => item.type === "task-card");
+    expect(rows.map((row) => [row.task.environmentId, row.primaryProject?.title]).sort()).toEqual(
+      [
+        [environmentId, "Primary"],
+        [other, "Remote"],
+      ].sort(),
+    );
+    expect(rows.find((row) => row.task.environmentId === other)?.members).toEqual([]);
+    expect(rows.find((row) => row.task.environmentId === environmentId)?.members).toHaveLength(1);
+    const missing = buildMobileTaskListItems(taskListFixture({ projects: [otherProject] })).items;
+    expect(missing.find((row) => row.type === "task-card")).toMatchObject({ primaryProject: null });
+  });
+  it("derives each parked wake label from its own scoped task and the shared clock", () => {
+    const other = EnvironmentId.make("other");
+    const soon = "2026-06-02T00:15:00.000Z";
+    const later = "2026-06-03T15:00:00.000Z";
+    const base = taskListFixture({
+      tasks: [
+        makeContainer({ snoozedUntil: soon }),
+        makeContainer({ environmentId: other, snoozedUntil: later }),
+      ],
+      capableIds: new Set([environmentId, other]),
+      snoozedShelfExpanded: true,
+    });
+    const layout = buildMobileTaskListItems(base);
+    expect(
+      layout.items
+        .filter((row) => row.type === "task-slim")
+        .map((row) => [row.task.environmentId, row.snoozeWakeLabelText]),
+    ).toEqual([
+      [environmentId, snoozeWakeLabel(soon, { now: NOW })],
+      [other, snoozeWakeLabel(later, { now: NOW })],
+    ]);
+    expect(layout.nextSnoozeWakeAt).toBe(soon);
+    const woken = buildMobileTaskListItems({ ...base, now: soon }).items;
+    expect(woken.find((row) => row.type === "task-card")).toMatchObject({
+      snoozeWakeLabelText: undefined,
+    });
+    expect(woken.filter((row) => row.type === "task-slim")).toHaveLength(1);
   });
 });

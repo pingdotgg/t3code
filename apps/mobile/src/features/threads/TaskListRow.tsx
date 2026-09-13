@@ -1,4 +1,5 @@
-import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { useTaskNavigation } from "../tasks/useTaskNavigation";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { taskOrderRow } from "@t3tools/client-runtime/state/task-grouping";
 import { useMobileTaskOrder, readMobileTaskMove } from "./use-mobile-task-order";
 import { appAtomRegistry } from "../../state/atom-registry";
@@ -15,31 +16,16 @@ import { mobileTaskKey, type MobileTaskListItem } from "./taskList";
 import type { TaskCreateContext } from "../tasks/taskCreateContext";
 
 export const TaskListRow = memo(function TaskListRow({ item }: { item: MobileTaskListItem }) {
-  const navigation = useNavigation<NativeStackNavigationProp<ReactNavigation.RootParamList>>();
-  const { layout } = useAdaptiveWorkspaceLayout();
-  const openTask = () => {
-    const state = navigation.getState();
-    const name = state.routes[state.index]?.name;
-    const params = { environmentId: item.task.environmentId, taskId: item.task.id };
-    if (!layout.usesSplitView || name === "Home") navigation.push("Task", params);
-    else if (name === "Task") navigation.setParams(params);
-    else navigation.replace("Task", params);
-  };
+  const navigateTask = useTaskNavigation(item.task);
   const order = useMobileTaskOrder();
   const { toggle } = useMobileTaskList();
   const task = item.task;
-  const params = { environmentId: task.environmentId, taskId: task.id };
   if (item.type === "task-new-thread")
     return (
       <Pressable
         accessibilityRole="button"
         accessibilityLabel={`New thread in ${task.name}`}
-        onPress={() =>
-          navigation.navigate("NewTaskSheet", {
-            screen: "NewTaskDraft",
-            params: { ...params, projectId: task.primaryProjectId },
-          })
-        }
+        onPress={() => navigateTask("new-thread")}
         className="ml-9 mr-4 min-h-11 flex-row items-center gap-2 px-3"
       >
         <SymbolView name="plus" size={15} />
@@ -75,25 +61,39 @@ export const TaskListRow = memo(function TaskListRow({ item }: { item: MobileTas
       </Pressable>
       <Pressable
         accessibilityRole="button"
-        onPress={openTask}
+        onPress={() => navigateTask("open")}
         className="min-h-11 flex-1 justify-center py-2"
       >
+        {item.type === "task-card" ? (
+          <View className="mb-1 flex-row items-center gap-1.5">
+            <ProjectFavicon
+              environmentId={task.environmentId}
+              projectTitle={item.primaryProject?.title ?? "Project"}
+              workspaceRoot={item.primaryProject?.workspaceRoot}
+              faviconPath={item.primaryProject?.faviconPath}
+              size={14}
+            />
+            <Text numberOfLines={1} className="flex-1 text-xs text-foreground-muted">
+              {item.primaryProject?.title ?? "Project"}
+            </Text>
+          </View>
+        ) : null}
         <Text numberOfLines={1} className="font-t3-semibold">
           {task.name}
         </Text>
         <Text className="text-xs text-foreground-muted">
           {item.count} threads
-          {item.status !== "idle"
-            ? ` · ${item.status}`
-            : item.snoozed
-              ? " · Snoozed"
-              : task.settledOverride === "settled"
-                ? " · Settled"
-                : ""}
+          {item.status !== "idle" ? ` · ${item.status}` : ""}
+          {item.snoozed
+            ? ` · ${item.snoozeWakeLabelText ?? "Snoozed"}`
+            : task.settledOverride === "settled"
+              ? " · Settled"
+              : ""}
         </Text>
       </Pressable>
       <TaskActionsMenu
         task={task}
+        members={item.members}
         extraActions={[
           {
             id: "move-up",

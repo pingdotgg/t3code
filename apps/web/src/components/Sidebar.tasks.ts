@@ -22,6 +22,7 @@ import {
   sortTaskRowsByOrderKey,
   taskOrderRow,
   taskShelf,
+  taskSettleBlocker,
   taskMatchesSearch,
   taskHasLocalWork,
   taskMemberHasLocalWork,
@@ -62,6 +63,7 @@ export type TaskSidebarItem =
         readonly settled: number;
       };
       readonly status: TaskMemberStatus;
+      readonly settleBlocked: boolean;
     }
   | {
       readonly kind: "thread";
@@ -259,6 +261,7 @@ export function buildTaskSidebarInventory(input: {
           settled: group.settled.length,
         },
         status: rollupTaskStatus(group.live),
+        settleBlocked: taskSettleBlocker(members, input) !== null,
       },
     ];
     const visibleMember = (thread: EnvironmentThreadShell) =>

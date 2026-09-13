@@ -530,6 +530,7 @@ function ThreadNavigationSidebarPane(
     () =>
       buildMobileTaskListItems({
         ...mobileTaskList,
+        projects: projects,
         tasks: threadListV2Enabled ? mobileTaskList.tasks : [],
         threads: threadListV2Enabled ? threads : [],
         pendingTasks: threadListV2Enabled ? pendingTasks : [],
@@ -551,6 +552,7 @@ function ThreadNavigationSidebarPane(
       }),
     [
       mobileTaskList,
+      projects,
       threadListV2Enabled,
       threads,
       pendingTasks,

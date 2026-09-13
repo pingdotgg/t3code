@@ -1,7 +1,10 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
-import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import type {
+  EnvironmentProject,
+  EnvironmentThreadShell,
+} from "@t3tools/client-runtime/state/shell";
 import {
   groupThreadsByTask,
   partitionTaskMembers,
@@ -38,6 +41,9 @@ export type MobileTaskListItem =
       readonly selected?: boolean;
       readonly snoozed?: boolean;
       readonly status: TaskMemberStatus;
+      readonly members: readonly EnvironmentThreadShell[];
+      readonly primaryProject: EnvironmentProject | null;
+      readonly snoozeWakeLabelText: string | undefined;
     })
   | {
       readonly type: "task-subshelf-header";
@@ -56,6 +62,7 @@ export function mobileTaskKey(task: Pick<EnvironmentTask, "environmentId" | "id"
 export function buildMobileTaskListItems(
   input: {
     readonly tasks: readonly EnvironmentTask[];
+    readonly projects: readonly EnvironmentProject[];
     readonly threads: readonly EnvironmentThreadShell[];
     readonly pendingTasks: readonly PendingNewTask[];
     readonly capableIds: ReadonlySet<EnvironmentId>;
@@ -70,6 +77,9 @@ export function buildMobileTaskListItems(
     threads: input.threads,
     taskCapableEnvironmentIds: input.capableIds,
   });
+  const projectsByKey = new Map(
+    input.projects.map((project) => [`${project.environmentId}:${project.id}`, project]),
+  );
   const taskKeys = new Set(groups.tasks.map(mobileTaskKey));
   const query = input.searchQuery.trim().toLocaleLowerCase();
   const searching = query.length > 0;
@@ -172,6 +182,12 @@ export function buildMobileTaskListItems(
         selected: key === input.selectedTaskKey,
         snoozed: shelf === "snoozed",
         status: rollupTaskStatus(partition.live),
+        members,
+        primaryProject: projectsByKey.get(`${task.environmentId}:${task.primaryProjectId}`) ?? null,
+        snoozeWakeLabelText:
+          shelf === "snoozed" && task.snoozedUntil !== null
+            ? snoozeWakeLabel(task.snoozedUntil, { now: input.now })
+            : undefined,
       },
     ];
     const addMember = (

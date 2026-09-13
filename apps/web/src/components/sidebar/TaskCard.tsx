@@ -1,9 +1,12 @@
+import { useAtomValue } from "@effect/atom-react";
+import { environmentShell } from "../../state/shell";
 import { scopeTaskRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
 import type { TaskMemberStatus } from "@t3tools/client-runtime/state/task-grouping";
 import {
   ArrowUpRightIcon,
   ChevronRightIcon,
+  CheckIcon,
   FolderIcon,
   LayersIcon,
   MoreHorizontalIcon,
@@ -22,6 +25,7 @@ export interface TaskRowProps {
   onToggle: () => void;
   counts: { live: number; snoozed: number; settled: number };
   status: TaskMemberStatus;
+  settleBlocked: boolean;
   primaryProjectName: string;
   primaryProjectIcon?: ReactNode;
   timeLabel: string;
@@ -72,10 +76,12 @@ export function TaskRowAction({
   label,
   onClick,
   children,
+  disabled = false,
 }: {
   label: string;
   onClick: (element: HTMLButtonElement) => void;
   children: ReactNode;
+  disabled?: boolean;
 }) {
   return (
     <Tooltip>
@@ -84,13 +90,14 @@ export function TaskRowAction({
           <button
             type="button"
             aria-label={label}
+            aria-disabled={disabled || undefined}
             onPointerDown={(event) => event.stopPropagation()}
             onKeyDown={(event) => event.stopPropagation()}
             onClick={(event) => {
               event.stopPropagation();
-              onClick(event.currentTarget);
+              if (!disabled) onClick(event.currentTarget);
             }}
-            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-control-surface hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm text-muted-foreground hover:bg-sidebar-control-surface hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring aria-disabled:cursor-default aria-disabled:opacity-40"
           />
         }
       >
@@ -108,6 +115,7 @@ export const TaskCard = memo(function TaskCard({
   onToggle,
   counts,
   status,
+  settleBlocked,
   primaryProjectName,
   primaryProjectIcon,
   timeLabel,
@@ -117,6 +125,7 @@ export const TaskCard = memo(function TaskCard({
   const ref = scopeTaskRef(task.environmentId, task.id);
   const actions = useTaskActions();
   const { openMenu } = useTaskActionMenu(ref);
+  const shell = useAtomValue(environmentShell.stateValueAtom(task.environmentId));
   return (
     <div
       role="button"
@@ -158,6 +167,13 @@ export const TaskCard = memo(function TaskCard({
         ) : null}
         <TaskRowAction label="New thread in task" onClick={() => void actions.newThreadInTask(ref)}>
           <PlusIcon className="size-3.5" />
+        </TaskRowAction>
+        <TaskRowAction
+          label="Settle task"
+          disabled={settleBlocked || shell.status !== "live" || task.archivedAt !== null}
+          onClick={() => void actions.settleTask(ref)}
+        >
+          <CheckIcon className="size-3.5" />
         </TaskRowAction>
         <TaskRowAction label="Open task" onClick={() => void actions.openTask(ref)}>
           <ArrowUpRightIcon className="size-3.5" />

@@ -121,7 +121,7 @@ export function TaskPageBody({
   const { openMenu } = useTaskActionMenu(taskRef);
   const now = `${useNowMinute()}:00.000Z`;
   const shell = useAtomValue(environmentShell.stateValueAtom(taskRef.environmentId));
-  const disabled = shell.status !== "live";
+  const disabled = shell.status !== "live" || config?.environment.capabilities.tasks !== true;
   const { groups, settleBlocked } = useMemo(() => {
     const members = threads.filter(
       (thread) =>
@@ -155,6 +155,16 @@ export function TaskPageBody({
       >
         <header className="flex flex-col gap-2">
           <div className="flex items-center justify-end gap-2">
+            <Button
+              size="xs"
+              variant="ghost-muted"
+              disabled={disabled || task.archivedAt !== null}
+              onClick={() => {
+                void (task.pinnedAt ? actions.unpinTask(taskRef) : actions.pinTask(taskRef));
+              }}
+            >
+              {task.pinnedAt ? "Unpin" : "Pin"}
+            </Button>
             {shelf === "snoozed" ? (
               <Button
                 size="xs"

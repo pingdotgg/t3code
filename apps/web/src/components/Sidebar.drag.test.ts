@@ -824,6 +824,7 @@ describe("task block drag projection", () => {
       expanded: true,
       counts: { live: 1, snoozed: 0, settled: 1 },
       status: "idle",
+      settleBlocked: false,
     },
     {
       kind: "thread",

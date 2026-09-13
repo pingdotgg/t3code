@@ -24,14 +24,22 @@ import { useTask } from "../../state/tasks";
 import { usePendingNewTasks } from "../../state/use-pending-new-tasks";
 import { queuedThreadKeysAtom } from "../../state/use-thread-outbox";
 import { useArchivedThreadSnapshots } from "../archive/useArchivedThreadSnapshots";
+import { useTaskNavigation } from "./useTaskNavigation";
 import { TaskActionsMenu } from "./TaskActionsMenu";
 import { TaskMetadataForm } from "./TaskMetadataForm";
 import { useTaskActions } from "./useTaskActions";
 import { resolveThreadProviderInstance } from "../threads/thread-provider-instance";
 
-function TaskBody({ task }: { readonly task: EnvironmentTask }) {
+function TaskBody({
+  task,
+  focusName,
+}: {
+  readonly task: EnvironmentTask;
+  readonly focusName?: boolean;
+}) {
   const navigation = useNavigation();
   const actions = useTaskActions();
+  const navigateTask = useTaskNavigation(task);
   const allProjects = useProjects();
   const projects = allProjects.filter((project) => project.environmentId === task.environmentId);
   const threads = useThreadShells();
@@ -69,15 +77,7 @@ function TaskBody({ task }: { readonly task: EnvironmentTask }) {
   }, [wakeBoundary]);
   const groups = partitionTaskMembers(members, { now, queuedThreadKeys });
   const shelf = taskShelf(task, now);
-  const openNewThread = () =>
-    navigation.navigate("NewTaskSheet", {
-      screen: "NewTaskDraft",
-      params: {
-        environmentId: task.environmentId,
-        projectId: task.primaryProjectId,
-        taskId: task.id,
-      },
-    });
+  const openNewThread = () => navigateTask("new-thread");
   return (
     <ScrollView
       className="flex-1 bg-screen"
@@ -90,7 +90,11 @@ function TaskBody({ task }: { readonly task: EnvironmentTask }) {
           {groups.live.length} live · {groups.snoozed.length} snoozed · {groups.settled.length}{" "}
           settled
         </Text>
-        <TaskActionsMenu task={task} />
+        <TaskActionsMenu
+          task={task}
+          members={members}
+          onRename={() => navigation.setParams({ focusName: true })}
+        />
       </View>
       {task.archivedAt !== null ? (
         <>
@@ -116,6 +120,10 @@ function TaskBody({ task }: { readonly task: EnvironmentTask }) {
             </Text>
           ) : null}
           <TaskMetadataForm
+            focusName={focusName}
+            onNameFocused={() => {
+              if (focusName) navigation.setParams({ focusName: false });
+            }}
             name={name}
             description={description}
             projectId={task.primaryProjectId}
@@ -302,7 +310,11 @@ function TaskHomeButton() {
 
 export function TaskRouteScreen({
   route,
-}: StaticScreenProps<{ readonly environmentId: string; readonly taskId: string }>) {
+}: StaticScreenProps<{
+  readonly environmentId: string;
+  readonly taskId: string;
+  readonly focusName?: boolean;
+}>) {
   const navigation = useNavigation();
   const environmentId = EnvironmentId.make(route.params.environmentId);
   const taskId = TaskId.make(route.params.taskId);
@@ -336,7 +348,11 @@ export function TaskRouteScreen({
               Showing saved task. Reconnect to update it.
             </Text>
           ) : null}
-          <TaskBody key={`${environmentId}:${taskId}`} task={resolved} />
+          <TaskBody
+            key={`${environmentId}:${taskId}`}
+            task={resolved}
+            focusName={route.params.focusName}
+          />
         </>
       );
     return (
