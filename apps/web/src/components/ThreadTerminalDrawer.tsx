@@ -1,3 +1,4 @@
+import { workbenchTerminalAttachInput } from "@t3tools/client-runtime/state/task-workbench";
 import { useAtomValue } from "@effect/atom-react";
 import {
   isAtomCommandInterrupted,
@@ -307,6 +308,7 @@ export function shouldHandleTerminalExit(
 }
 
 interface TerminalViewportProps {
+  launchAllowed?: boolean;
   advancedTypography: boolean;
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
@@ -333,6 +335,7 @@ interface TerminalLaunchLocation {
 }
 
 export function TerminalViewport({
+  launchAllowed = true,
   advancedTypography,
   threadRef,
   threadId,
@@ -351,6 +354,7 @@ export function TerminalViewport({
   drawerHeight,
   keybindings,
 }: TerminalViewportProps) {
+  const canLaunchTerminalTool = useEffectEvent(() => launchAllowed);
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<GhosttyTerminalSurface | null>(null);
   const visibleRef = useRef(visible);
@@ -403,14 +407,17 @@ export function TerminalViewport({
   const terminalFontRef = useRef({ family: terminalFontFamily, size: terminalFontSize });
   const terminalSession = useAttachedTerminalSession({
     environmentId,
-    terminal: {
-      threadId,
-      terminalId,
-      cwd,
-      ...(worktreePath !== undefined ? { worktreePath } : {}),
-      ...(runtimeEnv ? { env: runtimeEnv } : {}),
-      ...(providerInstanceId ? { providerInstanceId } : {}),
-    },
+    terminal: workbenchTerminalAttachInput(
+      {
+        threadId,
+        terminalId,
+        cwd,
+        ...(worktreePath !== undefined ? { worktreePath } : {}),
+        ...(runtimeEnv ? { env: runtimeEnv } : {}),
+        ...(providerInstanceId ? { providerInstanceId } : {}),
+      },
+      launchAllowed,
+    ),
   });
   const writeTerminal = useEffectEvent((data: string) =>
     runTerminalWrite({
@@ -782,6 +789,7 @@ export function TerminalViewport({
       }
 
       function handleLinkActivate(text: string, event: MouseEvent): void {
+        if (!canLaunchTerminalTool()) return;
         const latestTerminal = terminalRef.current;
         if (!latestTerminal) return;
         if (isTerminalUrl(text)) {
@@ -987,6 +995,7 @@ export function TerminalViewport({
 }
 
 interface ThreadTerminalDrawerProps {
+  launchAllowed?: boolean;
   mode?: "drawer" | "panel";
   threadRef: ScopedThreadRef;
   threadId: ThreadId;
@@ -1048,6 +1057,7 @@ function TerminalActionButton({ label, className, onClick, children }: TerminalA
 }
 
 export default function ThreadTerminalDrawer({
+  launchAllowed = true,
   mode = "drawer",
   threadRef,
   threadId,
@@ -1267,16 +1277,16 @@ export default function ThreadTerminalDrawer({
     ? `Close Terminal (${closeShortcutLabel})`
     : "Close Terminal";
   const onSplitTerminalAction = useCallback(() => {
-    if (hasReachedSplitLimit) return;
+    if (!launchAllowed || hasReachedSplitLimit) return;
     onSplitTerminal();
-  }, [hasReachedSplitLimit, onSplitTerminal]);
+  }, [launchAllowed, hasReachedSplitLimit, onSplitTerminal]);
   const onSplitTerminalVerticalAction = useCallback(() => {
-    if (hasReachedSplitLimit) return;
+    if (!launchAllowed || hasReachedSplitLimit) return;
     onSplitTerminalVertical();
-  }, [hasReachedSplitLimit, onSplitTerminalVertical]);
+  }, [launchAllowed, hasReachedSplitLimit, onSplitTerminalVertical]);
   const onNewTerminalAction = useCallback(() => {
-    onNewTerminal();
-  }, [onNewTerminal]);
+    if (launchAllowed) onNewTerminal();
+  }, [launchAllowed, onNewTerminal]);
   const confirmCloseTerminal = useCallback(
     (terminalId: string) => {
       const label = terminalLabelById.get(terminalId) ?? getTerminalLabel(terminalId);
@@ -1528,6 +1538,7 @@ export default function ThreadTerminalDrawer({
                     >
                       <div className="h-full">
                         <TerminalViewport
+                          launchAllowed={launchAllowed}
                           advancedTypography={advancedTypography}
                           threadRef={threadRef}
                           threadId={threadId}
@@ -1557,6 +1568,7 @@ export default function ThreadTerminalDrawer({
             ) : (
               <div className="h-full">
                 <TerminalViewport
+                  launchAllowed={launchAllowed}
                   advancedTypography={advancedTypography}
                   key={resolvedActiveTerminalId}
                   threadRef={threadRef}

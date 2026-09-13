@@ -7,6 +7,11 @@ same terminals running. Changing the primary project affects new terminals, whil
 existing terminals retain their working directory and process. Agent commands
 still run in the member thread's checkout.
 
+Project script controls in a task or member thread list, edit, and run the primary
+project's scripts. Those scripts use the primary project's workspace and runtime
+environment, including when started with a keyboard shortcut. Worktree setup
+still belongs to the individual thread's project.
+
 Archiving or deleting a member leaves the task's shared terminals available.
 Archiving or deleting the task closes them; restoring a task does not restart its
 previous terminal processes.

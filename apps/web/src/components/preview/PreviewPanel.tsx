@@ -9,6 +9,7 @@ import { PreviewPanelShell, type PreviewPanelMode } from "./PreviewPanelShell";
 import { PreviewView } from "./PreviewView";
 
 interface Props {
+  launchAllowed?: boolean;
   mode: PreviewPanelMode;
   threadRef: ScopedThreadRef;
   tabId?: string | null;
@@ -21,6 +22,7 @@ interface Props {
 }
 
 export function PreviewPanel({
+  launchAllowed = true,
   mode,
   threadRef,
   tabId,
@@ -43,6 +45,7 @@ export function PreviewPanel({
   return (
     <PreviewPanelShell mode={mode}>
       <PreviewView
+        launchAllowed={launchAllowed}
         threadRef={threadRef}
         {...(tabId !== undefined ? { tabId } : {})}
         configuredUrls={configuredUrls}

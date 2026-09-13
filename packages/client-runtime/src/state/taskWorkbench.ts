@@ -6,6 +6,7 @@ import {
   type TaskId,
   type ProjectId,
   type ScopedProjectRef,
+  type TerminalAttachInput,
 } from "@t3tools/contracts";
 import { taskWorkbenchId } from "@t3tools/shared/taskWorkbench";
 import { scopeThreadRef } from "../environment/scoped.ts";
@@ -128,5 +129,19 @@ export function resolveWorkbench(input: WorkbenchInput): WorkbenchResolution {
     workspaceRoot: project.workspaceRoot,
     cwd: worktreePath ?? project.workspaceRoot,
     worktreePath,
+  };
+}
+
+/** Without current project authority, attach can observe a retained PTY but cannot create one. */
+export function workbenchTerminalAttachInput(
+  input: TerminalAttachInput,
+  launchAllowed: boolean,
+): TerminalAttachInput {
+  if (launchAllowed) return input;
+  return {
+    threadId: input.threadId,
+    terminalId: input.terminalId,
+    ...(input.cols !== undefined ? { cols: input.cols } : {}),
+    ...(input.rows !== undefined ? { rows: input.rows } : {}),
   };
 }

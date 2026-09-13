@@ -14,10 +14,14 @@ import {
   browserDefaultOpenViewport,
   resolveBrowserDefaults,
 } from "~/browser/browserDefaults";
-import { BrowserSettingsReadError } from "~/browser/openFileInPreview";
+import {
+  BrowserPreviewUnavailableError,
+  BrowserSettingsReadError,
+} from "~/browser/openFileInPreview";
 import { applyPreviewServerSnapshot, rememberPreviewUrl } from "~/previewStateStore";
 
 interface OpenPreviewSessionInput<E> {
+  isCurrent?: () => boolean;
   openPreview: (input: {
     readonly environmentId: EnvironmentId;
     readonly input: PreviewOpenInput;
@@ -32,7 +36,19 @@ interface OpenPreviewSessionInput<E> {
 
 export async function openPreviewSession<E>(
   input: OpenPreviewSessionInput<E>,
-): Promise<AtomCommandResult<PreviewSessionSnapshot, E | BrowserSettingsReadError>> {
+): Promise<
+  AtomCommandResult<
+    PreviewSessionSnapshot,
+    E | BrowserSettingsReadError | BrowserPreviewUnavailableError
+  >
+> {
+  const unavailable = () =>
+    AsyncResult.failure<PreviewSessionSnapshot, BrowserPreviewUnavailableError>(
+      Cause.fail(
+        new BrowserPreviewUnavailableError({ message: "The browser workspace is unavailable." }),
+      ),
+    );
+  if (input.isCurrent?.() === false) return unavailable();
   // Resolved once: a tab opened before client settings hydrate would otherwise
   // be born at the schema defaults and never corrected.
   const defaults = await resolveBrowserDefaults().catch(
@@ -41,6 +57,7 @@ export async function openPreviewSession<E>(
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  if (input.isCurrent?.() === false) return unavailable();
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {

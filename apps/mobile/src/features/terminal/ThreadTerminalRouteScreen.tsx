@@ -1,3 +1,4 @@
+import { workbenchTerminalAttachInput } from "@t3tools/client-runtime/state/task-workbench";
 import { BlurTargetView } from "expo-blur";
 import { DEFAULT_TERMINAL_ID, EnvironmentId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
@@ -334,19 +335,23 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       hasMeasuredSurface &&
       isEnvironmentReady &&
       !shouldRedirectToRunningTerminal
-        ? {
-            threadId: terminalOwner.threadId,
-            terminalId,
-            cwd: launchLocation.cwd,
-            worktreePath: launchLocation.worktreePath,
-            cols: initialAttachGridSize.cols,
-            rows: initialAttachGridSize.rows,
-            ...(pendingLaunch?.env ? { env: pendingLaunch.env } : {}),
-            ...(pendingLaunch ? { restartIfNotRunning: true } : {}),
-          }
+        ? workbenchTerminalAttachInput(
+            {
+              threadId: terminalOwner.threadId,
+              terminalId,
+              cwd: launchLocation.cwd,
+              worktreePath: launchLocation.worktreePath,
+              cols: initialAttachGridSize.cols,
+              rows: initialAttachGridSize.rows,
+              ...(pendingLaunch?.env ? { env: pendingLaunch.env } : {}),
+              ...(pendingLaunch ? { restartIfNotRunning: true } : {}),
+            },
+            workbenchResolution.status === "ready",
+          )
         : null,
     [
       pendingLaunchValid,
+      workbenchResolution.status,
       workbenchLoading,
       activeKnownSession,
       hasMeasuredSurface,
@@ -402,7 +407,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       return;
     }
     if (
-      terminalAttachInput === null ||
+      !terminalAttachInput?.cwd ||
+      workbenchResolution.status !== "ready" ||
       !terminalOwner ||
       (terminal.status !== "closed" && terminal.status !== "exited") ||
       terminal.version === 0 ||
@@ -431,6 +437,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [
     isRunning,
+    workbenchResolution.status,
     openTerminal,
     terminalOwner,
     terminal.status,
@@ -994,7 +1001,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   );
 
   const handleOpenNewTerminal = useCallback(() => {
-    if (!terminalOwner || workbenchLoading) {
+    if (!terminalOwner || workbenchResolution.status !== "ready") {
       return;
     }
 
@@ -1007,7 +1014,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         }),
       }),
     );
-  }, [navigation, params, terminalOwner, terminalId, terminalMenuSessions, workbenchLoading]);
+  }, [
+    navigation,
+    params,
+    terminalOwner,
+    terminalId,
+    terminalMenuSessions,
+    workbenchResolution.status,
+  ]);
 
   const handleDecreaseFontSize = useCallback(() => {
     setTerminalFontSize(stepTerminalFontSize(fontSize, -1));

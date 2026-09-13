@@ -25,7 +25,9 @@ worktree**, each background submission creates its own worktree.
 
 Choose **New task** from the sidebar or command palette, give it a name, and select
 its primary project. A task can start empty and contain threads from different
-projects in the same environment. On web and desktop, choose **Add threads…** from
+projects in the same environment. On mobile, **New task** preselects the project
+when you are viewing a specific project. From **All projects**, select a project
+before creating the task. On web and desktop, choose **Add threads…** from
 the task page or its actions to search and select existing threads, then choose
 **Add to task**. Threads already in another task move to the selected task.
 Use a thread's **Move to task** menu to group it
@@ -56,6 +58,8 @@ queued work, approvals, and questions that require an agent response block the
 whole action; idle async questions can be dismissed by settlement. **Un-settle
 task** reopens the task while its members stay parked. Snoozing and waking a task
 also leave member states alone. New member activity can reopen or wake its task.
+An error or completed turn newer than the task's snooze wakes it; an older result
+does not interrupt a later snooze.
 Inactive tasks with no live members follow the primary project's inactivity
 settings; see [settlement settings](#settle-finished-work).
 

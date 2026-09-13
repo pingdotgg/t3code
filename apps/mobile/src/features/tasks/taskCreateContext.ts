@@ -3,10 +3,10 @@ import type { EnvironmentId, ScopedProjectRef, TaskId } from "@t3tools/contracts
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
 
-export interface TaskCreateContext {
+export type TaskCreateContext = {
   readonly environmentId?: string;
   readonly projectId?: string;
-}
+};
 
 /** Carry a physical filter through navigation without guessing within a logical group. */
 export function resolveTaskCreateContext(input: {

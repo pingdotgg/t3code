@@ -74,6 +74,7 @@ import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 
 interface Props {
+  launchAllowed?: boolean;
   threadRef: ScopedThreadRef;
   tabId?: string | null;
   configuredUrls?: ReadonlyArray<string> | undefined;
@@ -98,12 +99,15 @@ const localApi = typeof window === "undefined" ? null : ensureLocalApi();
  * state when no session exists for the thread.
  */
 export function PreviewView({
+  launchAllowed = true,
   threadRef,
   tabId: requestedTabId,
   configuredUrls,
   visible,
   onSendAnnotation,
 }: Props) {
+  const launchAllowedRef = useRef(launchAllowed);
+  launchAllowedRef.current = launchAllowed;
   const [focusUrlNonce, setFocusUrlNonce] = useState<number | undefined>(undefined);
   const [pickActive, setPickActive] = useState(false);
   const activeRecordingTabIds = useActiveBrowserRecordingTabIds();
@@ -193,7 +197,14 @@ export function PreviewView({
         rememberPreviewUrl(threadRef, resolvedUrl);
         return true;
       }
-      const result = await openPreviewSession({ openPreview: open, threadRef, url: resolvedUrl });
+      const result = await openPreviewSession({
+        openPreview: open,
+        threadRef,
+        url: resolvedUrl,
+        isCurrent: () =>
+          launchAllowedRef.current &&
+          scopedThreadKey(threadRefRef.current) === scopedThreadKey(threadRef),
+      });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         if (error instanceof BrowserSettingsReadError) {

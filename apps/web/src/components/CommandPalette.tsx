@@ -1856,7 +1856,8 @@ function OpenCommandPaletteDialog(props: {
         disabled: visibleThreadPullRequests(activeThread.pullRequests).length === 0,
         icon: <GitPullRequestArrowIcon className={ITEM_ICON_CLASS} />,
         run: async () => {
-          useRightPanelStore.getState().open(readWorkbenchRef(threadRef), "pull-requests");
+          const ownerRef = readWorkbenchRef(threadRef);
+          if (ownerRef) useRightPanelStore.getState().open(ownerRef, "pull-requests");
         },
       });
     }

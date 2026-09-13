@@ -216,10 +216,13 @@ export function resolveTaskPresentation(input: {
 }) {
   const shelf = input.hasLocalWork
     ? input.task.pinnedAt
-      ? "pinned"
-      : "active"
+      ? ("pinned" as const)
+      : ("active" as const)
     : taskShelf(input.task, input.now);
-  return { shelf, expanded: input.searching ? input.hasMatchingChildren : !input.collapsed };
+  return {
+    shelf,
+    expanded: input.searching ? input.hasMatchingChildren : !input.collapsed,
+  } as const;
 }
 
 /** Selected and pending children survive collapse without revealing their siblings. */

@@ -874,6 +874,7 @@ function serverTerminalIdsStrictSubsetOfClient(
 }
 
 interface PersistentThreadTerminalDrawerProps {
+  launchAllowed: boolean;
   threadRef: { environmentId: EnvironmentId; threadId: ThreadId };
   threadId: ThreadId;
   active: boolean;
@@ -889,6 +890,7 @@ interface PersistentThreadTerminalDrawerProps {
 }
 
 const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDrawer({
+  launchAllowed,
   threadRef,
   threadId,
   active,
@@ -1067,7 +1069,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   );
 
   const splitTerminal = useCallback(() => {
-    if (!cwd) {
+    if (!launchAllowed || !cwd) {
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
@@ -1084,6 +1086,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       },
     });
   }, [
+    launchAllowed,
     allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
@@ -1095,7 +1098,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     openTerminal,
   ]);
   const splitTerminalVertical = useCallback(() => {
-    if (!cwd) {
+    if (!launchAllowed || !cwd) {
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
@@ -1112,6 +1115,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       },
     });
   }, [
+    launchAllowed,
     allocatableTerminalIds,
     bumpFocusRequestId,
     cwd,
@@ -1124,7 +1128,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
   ]);
 
   const createNewTerminal = useCallback(() => {
-    if (!cwd) {
+    if (!launchAllowed || !cwd) {
       return;
     }
     const terminalId = nextTerminalId(allocatableTerminalIds);
@@ -1141,6 +1145,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
       },
     });
   }, [
+    launchAllowed,
     bumpFocusRequestId,
     cwd,
     effectiveWorktreePath,
@@ -1221,6 +1226,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     >
       <div className="min-h-0 overflow-clip">
         <ThreadTerminalDrawer
+          launchAllowed={launchAllowed}
           threadRef={threadRef}
           threadId={threadId}
           cwd={cwd}
@@ -1255,6 +1261,7 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
 });
 
 interface PersistentThreadTerminalPanelProps {
+  launchAllowed: boolean;
   visible: boolean;
   threadRef: ScopedThreadRef;
   surface: Extract<RightPanelSurface, { kind: "terminal" }>;
@@ -1275,6 +1282,7 @@ interface PersistentThreadTerminalPanelProps {
 }
 
 const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPanel({
+  launchAllowed,
   visible,
   threadRef,
   surface,
@@ -1401,6 +1409,7 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
 
   return (
     <ThreadTerminalDrawer
+      launchAllowed={launchAllowed}
       mode="panel"
       visible={visible}
       threadRef={threadRef}
@@ -4485,7 +4494,7 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const openFileSurface = useCallback(
     (relativePath: string, cwd?: string) => {
-      if (!activeThreadRef || !activeProject) return;
+      if (!activeThreadRef || !activeProject || workbench.status !== "ready") return;
       useRightPanelStore
         .getState()
         .openFile(
@@ -4495,7 +4504,7 @@ export default function ChatView(props: ChatViewProps) {
           cwd && cwd !== workbenchRoot ? cwd : undefined,
         );
     },
-    [activeProject, workbenchRoot, workbenchRef, activeThreadRef],
+    [activeProject, workbench, workbenchRoot, workbenchRef, activeThreadRef],
   );
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;
@@ -8665,6 +8674,7 @@ export default function ChatView(props: ChatViewProps) {
     renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
+          launchAllowed={workbench.status === "ready"}
           mode="embedded"
           threadRef={workbenchRef}
           tabId={renderedRightPanelSurface.resourceId}
@@ -8677,6 +8687,7 @@ export default function ChatView(props: ChatViewProps) {
       </Suspense>
     ) : renderedRightPanelSurface?.kind === "terminal" ? (
       <PersistentThreadTerminalPanel
+        launchAllowed={workbench.status === "ready"}
         visible={rightPanelOpen}
         threadRef={workbenchRef}
         surface={renderedRightPanelSurface}
@@ -9398,6 +9409,7 @@ export default function ChatView(props: ChatViewProps) {
 
         {mountedTerminalThreadRefs.map(({ key: mountedThreadKey, threadRef: mountedThreadRef }) => (
           <PersistentThreadTerminalDrawer
+            launchAllowed={mountedThreadKey === workbenchKey && workbench.status === "ready"}
             key={mountedThreadKey}
             threadRef={mountedThreadRef}
             threadId={mountedThreadRef.threadId}

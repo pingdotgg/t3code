@@ -1605,10 +1605,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         if (preview) onExpandImage(preview);
       },
       openFile: setPreviewFileId,
-      openMention: (path: string) =>
-        useRightPanelStore
-          .getState()
-          .openFile(readWorkbenchRef(routeThreadRef), path, undefined, gitCwd ?? undefined),
+      openMention: (path: string) => {
+        const ownerRef = readWorkbenchRef(routeThreadRef);
+        if (ownerRef)
+          useRightPanelStore.getState().openFile(ownerRef, path, undefined, gitCwd ?? undefined);
+      },
       expandVideo: (fileId: string) => {
         const file = composerFiles.find((candidate) => candidate.id === fileId);
         if (!file || !isVideoAttachment(file)) return;

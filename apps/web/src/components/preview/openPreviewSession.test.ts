@@ -45,6 +45,38 @@ afterEach(() => {
 });
 
 describe("openPreviewSession", () => {
+  it("does not open or publish a tab without current workspace authority", async () => {
+    const open = vi.fn(async () => AsyncResult.success(snapshot));
+    const result = await openPreviewSession({
+      openPreview: open,
+      threadRef,
+      isCurrent: () => false,
+    });
+    expect(result._tag).toBe("Failure");
+    expect(open).not.toHaveBeenCalled();
+    expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
+  });
+  it("revalidates authority after waiting for browser defaults", async () => {
+    let release!: (
+      value: Awaited<ReturnType<typeof browserDefaults.resolveBrowserDefaults>>,
+    ) => void;
+    const defaults = await browserDefaults.resolveBrowserDefaults();
+    vi.spyOn(browserDefaults, "resolveBrowserDefaults").mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = resolve;
+        }),
+    );
+    let current = true;
+    const open = vi.fn(async () => AsyncResult.success(snapshot));
+    const pending = openPreviewSession({ openPreview: open, threadRef, isCurrent: () => current });
+    current = false;
+    release(defaults);
+    expect((await pending)._tag).toBe("Failure");
+    expect(open).not.toHaveBeenCalled();
+    expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
+  });
+
   it("creates an idle tab without recording a recently visited URL", async () => {
     const idleSnapshot: PreviewSessionSnapshot = {
       ...snapshot,

@@ -136,10 +136,13 @@ describe("openFileInPreview", () => {
 
   it("does not open a tab when minting fails", async () => {
     const input = fixture();
-    const failure = AsyncResult.failure(Cause.fail(new Error("missing file")));
-    expect((await openFileInPreview({ ...input, createAssetUrl: async () => failure }))._tag).toBe(
-      "Failure",
-    );
+    const failure = () =>
+      AsyncResult.failure<Awaited<ReturnType<typeof input.createAssetUrl>>["value"], Error>(
+        Cause.fail(new Error("missing file")),
+      );
+    expect(
+      (await openFileInPreview({ ...input, createAssetUrl: async () => failure() }))._tag,
+    ).toBe("Failure");
     expect(input.openPreview).not.toHaveBeenCalled();
     expect(openBrowser).not.toHaveBeenCalled();
   });

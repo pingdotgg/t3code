@@ -1,7 +1,11 @@
 import { EnvironmentId, TaskId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "../environment/scoped.ts";
-import { taskWorkbenchRef, workbenchRefFor } from "./taskWorkbench.ts";
+import {
+  taskWorkbenchRef,
+  workbenchRefFor,
+  workbenchTerminalAttachInput,
+} from "./taskWorkbench.ts";
 
 const environmentId = EnvironmentId.make("one");
 const task = { environmentId, id: TaskId.make("task") };
@@ -125,5 +129,29 @@ describe("resolved workbench", () => {
       resolveWorkbench({ ...input, task: { ...input.task!, archivedAt: "2026-09-13T00:00:00Z" } })
         .status,
     ).toBe("unavailable");
+  });
+});
+
+describe("retained terminal attachment authority", () => {
+  const input = {
+    threadId: ThreadId.make("task:task"),
+    terminalId: "terminal-1",
+    cwd: "/old-project",
+    worktreePath: null,
+    env: { PROJECT: "/old-project" },
+    restartIfNotRunning: true,
+    cols: 100,
+    rows: 30,
+  };
+  it("strips every launch field while preserving session identity and dimensions", () => {
+    expect(workbenchTerminalAttachInput(input, false)).toEqual({
+      threadId: "task:task",
+      terminalId: "terminal-1",
+      cols: 100,
+      rows: 30,
+    });
+  });
+  it("keeps the explicit location and environment when launches are authorized", () => {
+    expect(workbenchTerminalAttachInput(input, true)).toEqual(input);
   });
 });

@@ -93,9 +93,9 @@ export function openDiffFilePrimaryAction({
   if (!workspaceFilePath) return;
 
   if (threadRef) {
-    useRightPanelStore
-      .getState()
-      .openFile(readWorkbenchRef(threadRef), workspaceFilePath, undefined, activeCwd);
+    const ownerRef = readWorkbenchRef(threadRef);
+    if (ownerRef)
+      useRightPanelStore.getState().openFile(ownerRef, workspaceFilePath, undefined, activeCwd);
     return;
   }
 

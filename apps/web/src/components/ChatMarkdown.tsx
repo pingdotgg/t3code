@@ -1574,6 +1574,7 @@ function ChatMarkdownVideo(props: {
 
 /** Environment-hosted media loads through an exact-file signed asset URL. */
 export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props: {
+  readonly ownerRef?: ScopedThreadRef | undefined;
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
@@ -1625,16 +1626,19 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     ...(reference ? { reference } : {}),
     ...(relativePath && resource._tag !== "attachment"
       ? {
-          onOpenFile: () =>
-            useRightPanelStore.getState().openFile(
-              readWorkbenchRef({
-                environmentId: props.environmentId,
-                threadId: resource.threadId,
-              }),
-              relativePath,
-              undefined,
-              props.workspaceRoot,
-            ),
+          onOpenFile: () => {
+            const ownerRef =
+              resource._tag === "draft-workspace-file"
+                ? props.ownerRef
+                : readWorkbenchRef({
+                    environmentId: props.environmentId,
+                    threadId: resource.threadId,
+                  });
+            if (ownerRef)
+              useRightPanelStore
+                .getState()
+                .openFile(ownerRef, relativePath, undefined, props.workspaceRoot);
+          },
         }
       : {}),
   };
@@ -2287,15 +2291,11 @@ function useChatMarkdownState({
           preparedConnection._tag === "Some" ? preparedConnection.value.httpBaseUrl : undefined,
         createAssetUrl,
         onOpenFile: threadRef
-          ? (path) =>
-              useRightPanelStore
-                .getState()
-                .openFile(
-                  assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef),
-                  path,
-                  undefined,
-                  cwd,
-                )
+          ? (path) => {
+              const ownerRef =
+                assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef);
+              if (ownerRef) useRightPanelStore.getState().openFile(ownerRef, path, undefined, cwd);
+            }
           : undefined,
       }).then(
         (preview) => {
@@ -2537,15 +2537,10 @@ function useChatMarkdownState({
       // Claimed on every open so a synchronous one supersedes a lookup already
       // in flight.
       const isLatestLookup = claimWorkspaceBasenameLookup();
-      const openAt = (path: string) =>
-        useRightPanelStore
-          .getState()
-          .openFile(
-            assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef),
-            path,
-            line,
-            cwd,
-          );
+      const openAt = (path: string) => {
+        const ownerRef = assetSourceCwd !== undefined ? threadRef : readWorkbenchRef(threadRef);
+        if (ownerRef) useRightPanelStore.getState().openFile(ownerRef, path, line, cwd);
+      };
       if (!cwd || !needsWorkspaceBasenameLookup(panelPath)) {
         openAt(panelPath);
         return;
@@ -3194,6 +3189,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
       }
       return (
         <ChatMarkdownAssetImage
+          ownerRef={assetSourceCwd !== undefined ? threadRef : undefined}
           environmentId={threadRef.environmentId}
           resource={resource}
           alt={altText}

@@ -2602,15 +2602,11 @@ function UserMessageMentionChip(props: {
             )}
             data-markdown-copy={props.copyMarkdown}
             onClick={() => {
-              if (ctx.threadRef)
+              const ownerRef = ctx.threadRef ? readWorkbenchRef(ctx.threadRef) : null;
+              if (ownerRef)
                 useRightPanelStore
                   .getState()
-                  .openFile(
-                    readWorkbenchRef(ctx.threadRef),
-                    props.record.path,
-                    undefined,
-                    ctx.workspaceRoot,
-                  );
+                  .openFile(ownerRef, props.record.path, undefined, ctx.workspaceRoot);
             }}
           >
             <PierreEntryIcon

@@ -130,7 +130,7 @@ const listAtom = Atom.make(AsyncResult.success(emptyList));
 const requestsAtom = Atom.make<AsyncResult.AsyncResult<PreviewAutomationStreamEvent, Error>>(
   AsyncResult.initial(false),
 );
-const requestEvent: PreviewAutomationStreamEvent = {
+const requestEvent: Extract<PreviewAutomationStreamEvent, { type: "request" }> = {
   type: "request",
   connectionId: "automation-connection",
   request: {
