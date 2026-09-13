@@ -37,6 +37,7 @@ import {
   ThreadHistoryController,
   type ThreadHistoryLoadEarlierResult,
 } from "./threadHistoryController.ts";
+import { fetchEnvironmentBoundedThreadSnapshot } from "./boundedThreadSnapshotHttp.ts";
 import { fetchEnvironmentThreadHistoryPage } from "./threadHistoryHttp.ts";
 import {
   applyHistoryPageMeta,
@@ -669,6 +670,58 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
       }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value), Effect.result);
 
       if (Result.isFailure(pageResult)) {
+        const failure = pageResult.failure;
+        // A typed invalid_history_cursor means the anchor row no longer
+        // resolves (deleted or superseded). Reseed progressive meta from a
+        // fresh bounded snapshot instead of retrying the dead cursor forever.
+        if (
+          failure._tag === "EnvironmentRequestInvalidError" &&
+          failure.reason === "invalid_history_cursor"
+        ) {
+          const refreshed = yield* fetchEnvironmentBoundedThreadSnapshot({
+            prepared: preparedOption.value,
+            threadId,
+            signer: dpopSigner,
+            remoteAuthorization,
+          }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient.value), Effect.result);
+          if (Result.isSuccess(refreshed)) {
+            const bounded = refreshed.success;
+            return yield* applyLock.withPermits(1)(
+              Effect.gen(function* () {
+                const latest = yield* SubscriptionRef.get(state);
+                if (!isActiveHistoryRequestCursor(requestCursor, latest.history)) {
+                  return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+                }
+                const sequence = yield* SubscriptionRef.get(lastSequence);
+                if (bounded.snapshotSequence < sequence) {
+                  // The reseed predates events the socket already applied, so
+                  // installing it would drop them. Keep the dead cursor so a
+                  // later retry can land a fresh-enough snapshot. Patch only
+                  // history; status/error writers run outside applyLock.
+                  const message = formatHistoryError(pageResult.failure);
+                  yield* SubscriptionRef.update(state, (current) => ({
+                    ...current,
+                    history: { ...current.history, loading: false, error: message },
+                  }));
+                  return { _tag: "error", message } satisfies ThreadHistoryLoadEarlierResult;
+                }
+                yield* SubscriptionRef.set(lastSequence, bounded.snapshotSequence);
+                yield* setThread(bounded.projection, {
+                  history: {
+                    historyCursor: bounded.historyCursor,
+                    hasMoreHistory: bounded.hasMoreHistory,
+                    loading: false,
+                    error: null,
+                    expanded: false,
+                    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+                  },
+                });
+                yield* remember;
+                return { _tag: "loaded" } satisfies ThreadHistoryLoadEarlierResult;
+              }),
+            );
+          }
+        }
         const message = formatHistoryError(pageResult.failure);
         // Only mark error when this request's cursor is still active. Leave
         // stream/status/error alone so concurrent live updates stay intact.
