@@ -1,3 +1,4 @@
+import { NewTaskDialog } from "./sidebar/NewTaskDialog";
 import { useAtomValue } from "@effect/atom-react";
 import * as Schema from "effect/Schema";
 import {
@@ -227,6 +228,7 @@ export function AppSidebarLayout({ children }: { children: ReactNode }) {
         style={sidebarProviderStyle}
       >
         <ProjectProjectionRetention />
+        <NewTaskDialog />
         <Sidebar
           side="left"
           collapsible="offcanvas"

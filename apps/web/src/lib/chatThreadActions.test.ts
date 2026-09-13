@@ -3,11 +3,13 @@ import {
   EnvironmentId,
   ProjectId,
   ProviderInstanceId,
+  TaskId,
   type ModelSelection,
 } from "@t3tools/contracts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import {
   resolveThreadActionProjectRef,
+  resolveNewThreadInTaskTarget,
   hasExplicitComposerModelSelection,
   resolveNewDraftStartFromOrigin,
   resolveNewThreadModelSelectionOverride,
@@ -38,6 +40,39 @@ function createContext(overrides: Partial<ChatThreadActionContext> = {}): ChatTh
 }
 
 describe("chatThreadActions", () => {
+  it("creates in the task primary project and falls back outside a supported live task", () => {
+    const taskId = TaskId.make("task-1");
+    const task = {
+      environmentId: ENVIRONMENT_ID,
+      id: taskId,
+      primaryProjectId: PROJECT_ID,
+      archivedAt: null,
+    };
+    const taskRef = { environmentId: ENVIRONMENT_ID, taskId };
+    expect(resolveNewThreadInTaskTarget({ task, taskRef, supportsTasks: true })).toEqual({
+      projectRef: scopeProjectRef(ENVIRONMENT_ID, PROJECT_ID),
+      taskId,
+    });
+    expect(resolveNewThreadInTaskTarget({ task, taskRef, supportsTasks: false })).toBeNull();
+    expect(
+      resolveNewThreadInTaskTarget({ task: null, taskRef: null, supportsTasks: true }),
+    ).toBeNull();
+    expect(
+      resolveNewThreadInTaskTarget({
+        task: { ...task, archivedAt: "2026-09-13T00:00:00Z" },
+        taskRef,
+        supportsTasks: true,
+      }),
+    ).toBeNull();
+    expect(
+      resolveNewThreadInTaskTarget({
+        task,
+        taskRef: { ...taskRef, environmentId: EnvironmentId.make("other") },
+        supportsTasks: true,
+      }),
+    ).toBeNull();
+  });
+
   it("only treats an active stored selection marked explicit as an explicit pick", () => {
     const draft = {
       activeProvider: PROJECT_DEFAULT_SELECTION.instanceId,

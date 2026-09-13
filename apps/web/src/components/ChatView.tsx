@@ -1,3 +1,5 @@
+import { DraftTaskContext } from "./chat/DraftTaskContext";
+import { readTask, readEnvironmentSupportsTasks } from "../state/tasks";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -2273,8 +2275,16 @@ export default function ChatView(props: ChatViewProps) {
         activeProject,
         projectGroupingSettings,
       );
-      const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey);
-      if (storedDraftSession) {
+      const storedDraftSession = getDraftSessionByLogicalProjectKey(logicalProjectKey, {
+        taskId: activeThread?.taskId ?? null,
+        projectRef: activeProjectRef,
+      });
+      if (
+        storedDraftSession &&
+        !composerDraftHasUserContent(
+          useComposerDraftStore.getState().getComposerDraft(storedDraftSession.draftId),
+        )
+      ) {
         setDraftThreadContext(storedDraftSession.draftId, input);
         setLogicalProjectDraftThreadId(
           logicalProjectKey,
@@ -2297,8 +2307,9 @@ export default function ChatView(props: ChatViewProps) {
       const activeDraftSession = routeKind === "draft" && draftId ? getDraftSession(draftId) : null;
       if (
         !isServerThread &&
+        draftId &&
         activeDraftSession?.logicalProjectKey === logicalProjectKey &&
-        draftId
+        !composerDraftHasUserContent(useComposerDraftStore.getState().getComposerDraft(draftId))
       ) {
         setDraftThreadContext(draftId, input);
         setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, draftId, {
@@ -2315,6 +2326,7 @@ export default function ChatView(props: ChatViewProps) {
       const nextThreadId = newThreadId();
       setLogicalProjectDraftThreadId(logicalProjectKey, activeProjectRef, nextDraftId, {
         threadId: nextThreadId,
+        taskId: activeThread?.taskId ?? null,
         createdAt: new Date().toISOString(),
         runtimeMode: resolveProjectSettings(settings, activeProject.id, activeProject).settings
           .defaultRuntimeMode,
@@ -2329,6 +2341,7 @@ export default function ChatView(props: ChatViewProps) {
     },
     [
       activeProject,
+      activeThread?.taskId,
       draftId,
       getDraftSession,
       getDraftSessionByLogicalProjectKey,
@@ -2394,6 +2407,7 @@ export default function ChatView(props: ChatViewProps) {
   const automaticEnvironment = Boolean(
     clientSettingsHydrated &&
     draftId &&
+    draftThread?.taskId == null &&
     !envLocked &&
     hasMultipleEnvironments &&
     loadBalancingSettings.loadBalancingEnabled &&
@@ -3533,7 +3547,7 @@ export default function ChatView(props: ChatViewProps) {
     setDraftThreadContext,
   ]);
   const onAutoEnvironment = useCallback(() => {
-    if (envLocked || !draftId) return;
+    if (envLocked || !draftId || draftThread?.taskId != null) return;
     if (composerHasAttachments) {
       toastManager.add({
         type: "warning",
@@ -3556,6 +3570,7 @@ export default function ChatView(props: ChatViewProps) {
   }, [
     envLocked,
     draftId,
+    draftThread?.taskId,
     setDraftThreadContext,
     loadBalancing.refresh,
     logicalProjectEnvironments,
@@ -3576,7 +3591,7 @@ export default function ChatView(props: ChatViewProps) {
   // project in that environment while keeping the same logical project.
   const onEnvironmentChange = useCallback(
     (nextEnvironmentId: EnvironmentId) => {
-      if (envLocked || !draftId) return;
+      if (envLocked || !draftId || draftThread?.taskId != null) return;
       const target = logicalProjectEnvironments.find(
         (env) => env.environmentId === nextEnvironmentId,
       );
@@ -3587,7 +3602,7 @@ export default function ChatView(props: ChatViewProps) {
         loadBalancedEnvironmentId: null,
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [draftId, draftThread?.taskId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
   );
 
   const activeTerminalGroup =
@@ -6344,7 +6359,8 @@ export default function ChatView(props: ChatViewProps) {
       if (command === "thread.pin") {
         event.preventDefault();
         event.stopPropagation();
-        if (!isServerThread || !activeThreadRef || !supportsPinning) return;
+        if (!isServerThread || !activeThreadRef || !supportsPinning || activeThread?.taskId != null)
+          return;
         const pinned = activeThreadPinned;
         void (pinned ? confirmAndUnpinThread(activeThreadRef) : pinThread(activeThreadRef)).then(
           (result) => {
@@ -6779,6 +6795,25 @@ export default function ChatView(props: ChatViewProps) {
     },
   ) => {
     e?.preventDefault();
+    const sendingDraft = draftId ? getDraftSession(draftId) : null;
+    if (sendingDraft?.taskId != null) {
+      const parent = readTask({
+        environmentId: sendingDraft.environmentId,
+        taskId: sendingDraft.taskId,
+      });
+      if (
+        !parent ||
+        parent.archivedAt !== null ||
+        !readEnvironmentSupportsTasks(sendingDraft.environmentId)
+      ) {
+        toastManager.add({
+          type: "warning",
+          title: "Task is unavailable",
+          description: "Choose another task or remove this draft from its task before sending.",
+        });
+        return;
+      }
+    }
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -7392,6 +7427,11 @@ export default function ChatView(props: ChatViewProps) {
 
     const turnAttachmentsResult = await settlePromise(async () => {
       const turnAttachments = await turnAttachmentsPromise;
+      if (sendingDraft?.taskId != null && !readEnvironmentSupportsTasks(environmentId)) {
+        throw new Error(
+          "This environment no longer supports tasks. Remove this draft from its task before sending.",
+        );
+      }
       const liveFileBlockReason = readLiveAttachmentCapabilities().fileBlockReason;
       if (liveFileBlockReason !== null) {
         throw new Error(liveFileBlockReason);
@@ -7411,6 +7451,7 @@ export default function ChatView(props: ChatViewProps) {
                 ? {
                     createThread: {
                       projectId: activeProject.id,
+                      ...(sendingDraft?.taskId != null ? { taskId: sendingDraft.taskId } : {}),
                       title,
                       modelSelection: threadCreateModelSelection,
                       runtimeMode,
@@ -7505,11 +7546,14 @@ export default function ChatView(props: ChatViewProps) {
           try {
             const nextDraft = await handleNewThread(
               scopeProjectRef(activeProject.environmentId, activeProject.id),
-              resolveBackgroundDraftWorkspaceOptions({
-                envMode: sendEnvMode,
-                branch: activeThreadBranch,
-                startFromOrigin,
-              }),
+              {
+                ...resolveBackgroundDraftWorkspaceOptions({
+                  envMode: sendEnvMode,
+                  branch: activeThreadBranch,
+                  startFromOrigin,
+                }),
+                taskId: sendingDraft?.taskId ?? null,
+              },
             );
             if (nextDraft) {
               finalizePromotedDraftThreadByRef(backgroundThreadRef);
@@ -8088,6 +8132,7 @@ export default function ChatView(props: ChatViewProps) {
         threadId: nextThreadId,
         projectId: activeProject.id,
         title: nextThreadTitle,
+        ...(activeThread.taskId != null ? { taskId: activeThread.taskId } : {}),
         modelSelection: nextThreadModelSelection,
         runtimeMode: defaultRuntimeMode,
         interactionMode: "default",
@@ -8891,6 +8936,7 @@ export default function ChatView(props: ChatViewProps) {
                     <ComposerSurface.Shell contextStrip={showComposerContextStrip}>
                       <ComposerSurface.Host>
                         <div ref={attachDraftHeroComposerAnchorRef} className="relative z-10">
+                          {draftId ? <DraftTaskContext draftId={draftId} /> : null}
                           <ChatComposer
                             composerRef={composerRef}
                             composerDraftTarget={composerDraftTarget}
@@ -9049,10 +9095,13 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(hasMultipleEnvironments && draftThread?.taskId == null
+                                  ? { onEnvironmentChange }
+                                  : {})}
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&
+                                  draftThread?.taskId == null &&
                                   !envLocked &&
                                   hasMultipleEnvironments &&
                                   loadBalancingSettings.loadBalancingEnabled

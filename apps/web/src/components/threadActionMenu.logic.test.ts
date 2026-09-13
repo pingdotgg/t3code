@@ -107,3 +107,8 @@ describe("buildThreadActionMenuItems", () => {
     expect(archiveItem?.disabled).toBe(true);
   });
 });
+
+it("omits pin controls for a task member in a flat list", () => {
+  expect(allIds({ ...baseState, isTaskMember: true })).not.toContain("pin");
+  expect(allIds({ ...baseState, isTaskMember: true, isPinned: true })).not.toContain("unpin");
+});

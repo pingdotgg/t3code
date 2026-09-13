@@ -1,17 +1,20 @@
-import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
+import { Outlet, createFileRoute, redirect, useParams } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { useEffect, useMemo } from "react";
 
 import { isCommandPaletteOpen } from "../commandPaletteBus";
 import { useClientSettings, useLegacySidebarEnabled } from "../hooks/useSettings";
 import { openCommandPalette } from "../commandPaletteBus";
-import { useProjects } from "../state/entities";
+import { scopeTaskRef } from "@t3tools/client-runtime/environment";
+import { useTask } from "../state/tasks";
+import { resolveThreadRouteTarget } from "../threadRoutes";
+import { useProjects, useServerConfigs } from "../state/entities";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { selectProjectGroupingSettings } from "../logicalProject";
 import { buildSidebarProjectSnapshots } from "../sidebarProjectGrouping";
 import { dispatchPreviewAction } from "../components/preview/previewActionBus";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
-import { startNewThreadFromContext } from "../lib/chatThreadActions";
+import { resolveNewThreadInTaskTarget, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { isPreviewFocused } from "../lib/previewFocus";
 import { isTerminalFocused } from "../lib/terminalFocus";
 import { resolveShortcutCommand } from "../keybindings";
@@ -27,6 +30,24 @@ function ChatRouteGlobalShortcuts() {
   const selectedThreadKeysSize = useThreadSelectionStore((state) => state.selectedThreadKeys.size);
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread, routeThreadRef } =
     useHandleNewThread();
+  const routeTarget = useParams({ strict: false, select: resolveThreadRouteTarget });
+  const memberTaskId = activeThread ? activeThread.taskId : activeDraftThread?.taskId;
+  const memberEnvironmentId = activeThread?.environmentId ?? activeDraftThread?.environmentId;
+  const taskRef =
+    routeTarget?.kind === "task"
+      ? routeTarget.taskRef
+      : memberTaskId && memberEnvironmentId
+        ? scopeTaskRef(memberEnvironmentId, memberTaskId)
+        : null;
+  const task = useTask(taskRef);
+  const serverConfigs = useServerConfigs();
+  const taskCreationTarget = resolveNewThreadInTaskTarget({
+    task,
+    taskRef,
+    supportsTasks:
+      taskRef !== null &&
+      serverConfigs.get(taskRef.environmentId)?.environment.capabilities.tasks === true,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -89,7 +110,14 @@ function ChatRouteGlobalShortcuts() {
         return;
       }
 
-      if (command === "chat.new") {
+      if (command === "chat.newInTask" && taskCreationTarget) {
+        event.preventDefault();
+        event.stopPropagation();
+        void handleNewThread(taskCreationTarget.projectRef, { taskId: taskCreationTarget.taskId });
+        return;
+      }
+
+      if (command === "chat.new" || command === "chat.newInTask") {
         event.preventDefault();
         event.stopPropagation();
         // The default sidebar routes creation through the command palette
@@ -169,6 +197,7 @@ function ChatRouteGlobalShortcuts() {
     selectedThreadKeysSize,
     legacySidebarEnabled,
     terminalOpen,
+    taskCreationTarget,
   ]);
 
   return null;

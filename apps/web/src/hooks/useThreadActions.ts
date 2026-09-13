@@ -553,6 +553,12 @@ export function useThreadActions() {
 
   const pinThread = useCallback(
     async (target: ScopedThreadRef, opts: { orderKey?: string } = {}) => {
+      if (readThreadShell(target)?.taskId != null) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("Task members cannot be pinned. Pin the task instead.")),
+        );
+      }
+
       // Version skew: never send the command to a server that predates it.
       if (!readEnvironmentSupportsPinning(target.environmentId)) {
         return AsyncResult.failure(
@@ -626,6 +632,12 @@ export function useThreadActions() {
 
   const reorderPinnedThread = useCallback(
     async (target: ScopedThreadRef, orderKey: string) => {
+      if (readThreadShell(target)?.taskId != null) {
+        return AsyncResult.failure(
+          Cause.fail(new Error("Task members cannot be pinned. Pin the task instead.")),
+        );
+      }
+
       // Callers (the sidebar drag handler) only enable dragging on
       // reorder-capable environments; this guard covers races around
       // capability changes mid-drag.

@@ -4,6 +4,8 @@ import type {
   ModelSelection,
   ProjectId,
   ScopedProjectRef,
+  ScopedTaskRef,
+  TaskId,
 } from "@t3tools/contracts";
 import type { ComposerThreadDraftState, DraftThreadEnvMode } from "../composerDraftStore";
 
@@ -21,6 +23,7 @@ interface NewThreadHandler {
   (
     projectRef: ScopedProjectRef,
     options?: {
+      taskId?: TaskId | null;
       branch?: string | null;
       worktreePath?: string | null;
       envMode?: DraftThreadEnvMode;
@@ -99,4 +102,31 @@ export async function startNewThreadFromContext(
 
   await context.handleNewThread(projectRef);
   return true;
+}
+
+/** Resolves task creation without carrying a member's checkout or foreign project. */
+export function resolveNewThreadInTaskTarget(input: {
+  task: {
+    environmentId: EnvironmentId;
+    id: TaskId;
+    primaryProjectId: ProjectId;
+    archivedAt: string | null;
+  } | null;
+  taskRef: ScopedTaskRef | null;
+  supportsTasks: boolean;
+}): { projectRef: ScopedProjectRef; taskId: TaskId } | null {
+  const { task, taskRef } = input;
+  if (
+    !input.supportsTasks ||
+    !task ||
+    !taskRef ||
+    task.archivedAt !== null ||
+    task.environmentId !== taskRef.environmentId ||
+    task.id !== taskRef.taskId
+  )
+    return null;
+  return {
+    projectRef: scopeProjectRef(task.environmentId, task.primaryProjectId),
+    taskId: task.id,
+  };
 }

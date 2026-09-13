@@ -14,6 +14,7 @@ import {
   ProviderInstanceId,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ThreadId,
+  TaskId,
   type ModelSelection,
   type PreviewAnnotationPayload,
   type ProviderOptionSelection,
@@ -3338,5 +3339,127 @@ describe("composerDraftStore attachment references", () => {
     expect(merged.draftsByThreadKey[threadKeyFor(threadId, TEST_ENVIRONMENT_ID)]?.prompt).toBe(
       prompt,
     );
+  });
+});
+
+describe("task draft context", () => {
+  beforeEach(resetComposerDraftStore);
+  const projectRef = scopeProjectRef(
+    EnvironmentId.make("task-env"),
+    ProjectId.make("task-project"),
+  );
+  const taskId = TaskId.make("task-one");
+  const draftId = DraftId.make("task-draft");
+  const logicalKey = "shared-project";
+
+  it("keeps separate empty drafts for task, physical project, environment, and ungrouped contexts", () => {
+    const store = useComposerDraftStore.getState();
+    const contexts = [
+      { projectRef, taskId },
+      { projectRef, taskId: TaskId.make("task-two") },
+      {
+        projectRef: scopeProjectRef(projectRef.environmentId, ProjectId.make("other-project")),
+        taskId,
+      },
+      {
+        projectRef: scopeProjectRef(EnvironmentId.make("other-env"), projectRef.projectId),
+        taskId,
+      },
+      { projectRef, taskId: null },
+    ];
+    contexts.forEach((context, index) =>
+      store.setLogicalProjectDraftThreadId(
+        logicalKey,
+        context.projectRef,
+        DraftId.make(`draft-${index}`),
+        { taskId: context.taskId },
+      ),
+    );
+    contexts.forEach((context, index) => {
+      expect(store.getDraftSessionByLogicalProjectKey(logicalKey, context)).toMatchObject({
+        draftId: `draft-${index}`,
+        logicalProjectKey: logicalKey,
+        taskId: context.taskId,
+      });
+    });
+    expect(Object.keys(useComposerDraftStore.getState().draftThreadsByThreadKey)).toHaveLength(5);
+    expect(store.getDraftSessionByLogicalProjectKey(logicalKey)?.draftId).toBe("draft-4");
+  });
+
+  it("preserves invested content, checkout and task through reset and promotion", () => {
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(logicalKey, projectRef, draftId, {
+      taskId,
+      worktreePath: "/checkout",
+      branch: "feature",
+    });
+    store.setPrompt(draftId, "Do not lose this work");
+    store.addFiles(draftId, [makeFile("file-task")]);
+    store.setDraftThreadContext(draftId, { runtimeMode: "full-access" });
+    store.setLogicalProjectDraftThreadId(logicalKey, projectRef, DraftId.make("next-draft"), {
+      taskId,
+    });
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      taskId,
+      worktreePath: "/checkout",
+      branch: "feature",
+    });
+    const promotedTo = scopeThreadRef(
+      projectRef.environmentId,
+      ThreadId.make("promoted-task-thread"),
+    );
+    store.markDraftThreadPromoting(draftId, promotedTo);
+    expect(store.getDraftSession(draftId)).toMatchObject({ taskId, promotedTo });
+    store.finalizePromotedDraftThread(draftId);
+    expect(store.getComposerDraft(promotedTo)?.prompt).toBe("Do not lose this work");
+    expect(store.getComposerDraft(promotedTo)?.files).toHaveLength(1);
+    expect(
+      store.getDraftSessionByLogicalProjectKey(logicalKey, { taskId, projectRef })?.draftId,
+    ).toBe("next-draft");
+  });
+
+  it("rejects cross-environment retargeting and permits explicit recovery without discarding content", () => {
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(logicalKey, projectRef, draftId, {
+      taskId,
+      branch: "feature",
+      worktreePath: "/checkout",
+    });
+    store.setPrompt(draftId, "Keep me");
+    const remote = scopeProjectRef(EnvironmentId.make("other-env"), projectRef.projectId);
+    store.setDraftThreadContext(draftId, { projectRef: remote });
+    store.setLogicalProjectDraftThreadId(logicalKey, remote, draftId);
+    expect(store.getDraftSession(draftId)?.environmentId).toBe(projectRef.environmentId);
+    const nextTask = TaskId.make("task-recovered");
+    store.setDraftThreadContext(draftId, { taskId: nextTask });
+    expect(
+      store.getDraftSessionByLogicalProjectKey(logicalKey, { taskId: nextTask, projectRef })
+        ?.draftId,
+    ).toBe(draftId);
+    expect(store.getDraftSessionByLogicalProjectKey(logicalKey, { taskId, projectRef })).toBeNull();
+    store.setDraftThreadContext(draftId, { taskId: null });
+    expect(store.getDraftSessionByLogicalProjectKey(logicalKey)?.draftId).toBe(draftId);
+    expect(store.getDraftSession(draftId)).toMatchObject({
+      taskId: null,
+      worktreePath: "/checkout",
+      branch: "feature",
+    });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("Keep me");
+    store.setDraftThreadContext(draftId, { projectRef: remote });
+    expect(store.getDraftSession(draftId)?.environmentId).toBe(remote.environmentId);
+  });
+
+  it("round trips task context without changing logical project identity", () => {
+    const store = useComposerDraftStore.getState();
+    store.setLogicalProjectDraftThreadId(logicalKey, projectRef, draftId, { taskId });
+    store.setPrompt(draftId, "Persist task draft");
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+    const merge = useComposerDraftStore.persist.getOptions().merge!;
+    const hydrated = merge(persisted, useComposerDraftStore.getState());
+    useComposerDraftStore.setState(hydrated);
+    expect(
+      store.getDraftSessionByLogicalProjectKey(logicalKey, { taskId, projectRef }),
+    ).toMatchObject({ draftId, logicalProjectKey: logicalKey, taskId });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("Persist task draft");
   });
 });

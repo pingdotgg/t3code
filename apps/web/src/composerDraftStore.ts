@@ -20,6 +20,7 @@ import {
   type ScopedProjectRef,
   type ScopedThreadRef,
   ThreadId,
+  TaskId,
   SnapShotSource,
 } from "@t3tools/contracts";
 import {
@@ -313,6 +314,7 @@ const PersistedDraftThreadState = Schema.Struct({
   threadId: ThreadId,
   environmentId: Schema.String,
   projectId: ProjectId,
+  taskId: Schema.optionalKey(Schema.NullOr(TaskId)),
   logicalProjectKey: Schema.optionalKey(Schema.String),
   environmentSelection: Schema.optionalKey(Schema.Literals(["auto", "manual"])),
   loadBalancedEnvironmentId: Schema.optionalKey(Schema.NullOr(Schema.String)),
@@ -441,6 +443,7 @@ export interface DraftSessionState {
   environmentId: EnvironmentId;
   projectId: ProjectId;
   logicalProjectKey: string;
+  taskId?: TaskId | null;
   environmentSelection?: "auto" | "manual";
   loadBalancedEnvironmentId?: EnvironmentId | null;
   createdAt: string;
@@ -489,9 +492,12 @@ interface ComposerDraftStoreState {
   stickyActiveProvider: ProviderInstanceId | null;
   /** Returns the editable composer content for a draft session or server thread. */
   getComposerDraft: (target: ComposerThreadTarget) => ComposerThreadDraftState | null;
-  /** Looks up the active draft session for a logical project identity. */
+  /** Looks up an ungrouped draft, or a task draft on its physical project when context is supplied. */
   getDraftThreadByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
-  getDraftSessionByLogicalProjectKey: (logicalProjectKey: string) => ProjectDraftSession | null;
+  getDraftSessionByLogicalProjectKey: (
+    logicalProjectKey: string,
+    context?: { taskId?: TaskId | null; projectRef: ScopedProjectRef },
+  ) => ProjectDraftSession | null;
   getDraftThreadByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
   getDraftSessionByProjectRef: (projectRef: ScopedProjectRef) => ProjectDraftSession | null;
   /** Reads mutable draft-session metadata by `DraftId`. */
@@ -512,6 +518,7 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     draftId: DraftId,
     options?: {
+      taskId?: TaskId | null;
       threadId?: ThreadId;
       branch?: string | null;
       worktreePath?: string | null;
@@ -529,6 +536,7 @@ interface ComposerDraftStoreState {
     projectRef: ScopedProjectRef,
     draftId: DraftId,
     options?: {
+      taskId?: TaskId | null;
       threadId?: ThreadId;
       branch?: string | null;
       worktreePath?: string | null;
@@ -545,6 +553,7 @@ interface ComposerDraftStoreState {
   setDraftThreadContext: (
     threadRef: ComposerThreadTarget,
     options: {
+      taskId?: TaskId | null;
       branch?: string | null;
       worktreePath?: string | null;
       projectRef?: ScopedProjectRef;
@@ -1490,12 +1499,29 @@ function toProjectDraftSession(
   };
 }
 
+function draftContextKey(
+  logicalProjectKey: string,
+  projectRef: ScopedProjectRef,
+  taskId?: TaskId | null,
+): string {
+  return taskId == null
+    ? logicalProjectDraftKey(logicalProjectKey)
+    : JSON.stringify([
+        "task",
+        logicalProjectDraftKey(logicalProjectKey),
+        projectRef.environmentId,
+        projectRef.projectId,
+        taskId,
+      ]);
+}
+
 function createDraftThreadState(
   projectRef: ScopedProjectRef,
   threadId: ThreadId,
   logicalProjectKey: string,
   existingThread: DraftThreadState | undefined,
   options?: {
+    taskId?: TaskId | null;
     threadId?: ThreadId;
     branch?: string | null;
     worktreePath?: string | null;
@@ -1539,6 +1565,7 @@ function createDraftThreadState(
     environmentId: projectRef.environmentId,
     projectId: projectRef.projectId,
     logicalProjectKey,
+    taskId: options?.taskId === undefined ? (existingThread?.taskId ?? null) : options.taskId,
     ...(environmentSelection ? { environmentSelection } : {}),
     ...(options?.loadBalancedEnvironmentId !== undefined
       ? { loadBalancedEnvironmentId: options.loadBalancedEnvironmentId }
@@ -1583,6 +1610,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.environmentId === right.environmentId &&
     left.projectId === right.projectId &&
     left.logicalProjectKey === right.logicalProjectKey &&
+    (left.taskId ?? null) === (right.taskId ?? null) &&
     left.environmentSelection === right.environmentSelection &&
     left.loadBalancedEnvironmentId === right.loadBalancedEnvironmentId &&
     left.createdAt === right.createdAt &&
@@ -1717,6 +1745,10 @@ function normalizePersistedDraftThreads(
         threadId,
         environmentId: normalizedEnvironmentId,
         projectId: projectId as ProjectId,
+        taskId:
+          typeof candidateDraftThread.taskId === "string" && candidateDraftThread.taskId.length > 0
+            ? TaskId.make(candidateDraftThread.taskId)
+            : null,
         logicalProjectKey:
           typeof candidateDraftThread.logicalProjectKey === "string" &&
           candidateDraftThread.logicalProjectKey.length > 0
@@ -1777,7 +1809,11 @@ function normalizePersistedDraftThreads(
       // Logical project keys may contain a workspace path after the
       // environment prefix. When the persisted draft already names that
       // logical key, its concrete project id remains authoritative.
-      if (existingDraftThread?.logicalProjectKey === logicalProjectKey) {
+      if (
+        existingDraftThread &&
+        (existingDraftThread.taskId != null ||
+          existingDraftThread.logicalProjectKey === logicalProjectKey)
+      ) {
         continue;
       }
       if (!projectRef) {
@@ -2470,6 +2506,7 @@ function toHydratedDraftThreadState(
     threadId: persistedDraftThread.threadId,
     environmentId: persistedDraftThread.environmentId as EnvironmentId,
     projectId: persistedDraftThread.projectId,
+    taskId: persistedDraftThread.taskId ?? null,
     logicalProjectKey:
       persistedDraftThread.logicalProjectKey ??
       projectDraftKey(
@@ -2520,8 +2557,10 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
         getDraftThreadByLogicalProjectKey: (logicalProjectKey) => {
           return get().getDraftSessionByLogicalProjectKey(logicalProjectKey);
         },
-        getDraftSessionByLogicalProjectKey: (logicalProjectKey) => {
-          const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);
+        getDraftSessionByLogicalProjectKey: (logicalProjectKey, context) => {
+          const normalizedLogicalProjectKey = context
+            ? draftContextKey(logicalProjectKey, context.projectRef, context.taskId)
+            : logicalProjectDraftKey(logicalProjectKey);
           if (normalizedLogicalProjectKey.length === 0) {
             return null;
           }
@@ -2531,7 +2570,14 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             return null;
           }
           const draftThread = get().draftThreadsByThreadKey[draftId];
-          if (!draftThread || isDraftThreadPromoting(draftThread)) {
+          if (
+            !draftThread ||
+            isDraftThreadPromoting(draftThread) ||
+            (draftThread.taskId ?? null) !== (context?.taskId ?? null) ||
+            (context?.taskId != null &&
+              (draftThread.environmentId !== context.projectRef.environmentId ||
+                draftThread.projectId !== context.projectRef.projectId))
+          ) {
             return null;
           }
           return toProjectDraftSession(DraftId.make(draftId), draftThread);
@@ -2552,6 +2598,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               continue;
             }
             if (
+              draftThread.taskId == null &&
               draftThread.projectId === projectRef.projectId &&
               draftThread.environmentId === projectRef.environmentId
             ) {
@@ -2563,6 +2610,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               continue;
             }
             if (
+              draftThread.taskId == null &&
               draftThread.projectId === projectRef.projectId &&
               draftThread.environmentId === projectRef.environmentId
             ) {
@@ -2601,8 +2649,20 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             (draftThread) => draftThread.environmentId === environmentId,
           ),
         setLogicalProjectDraftThreadId: (logicalProjectKey, projectRef, draftId, options) => {
-          const normalizedLogicalProjectKey = logicalProjectDraftKey(logicalProjectKey);
-          if (normalizedLogicalProjectKey.length === 0 || draftId.length === 0) {
+          const existingSession = get().draftThreadsByThreadKey[draftId];
+          const taskId = options?.taskId === undefined ? existingSession?.taskId : options.taskId;
+          if (
+            taskId != null &&
+            existingSession &&
+            existingSession.environmentId !== projectRef.environmentId
+          )
+            return;
+          const normalizedLogicalProjectKey = draftContextKey(
+            logicalProjectKey,
+            projectRef,
+            taskId,
+          );
+          if (logicalProjectKey.length === 0 || draftId.length === 0) {
             return;
           }
           set((state) => {
@@ -2612,7 +2672,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const nextDraftThread = createDraftThreadState(
               projectRef,
               options?.threadId ?? existingThread?.threadId ?? ThreadId.make(draftId),
-              normalizedLogicalProjectKey,
+              logicalProjectDraftKey(logicalProjectKey),
               existingThread,
               options,
             );
@@ -2727,6 +2787,11 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             ) {
               return state;
             }
+            if (
+              (options.taskId === undefined ? existing.taskId : options.taskId) != null &&
+              nextProjectRef.environmentId !== existing.environmentId
+            )
+              return state;
             // Mirrors createDraftThreadState: a project/environment change
             // drops machine-specific context (branch, worktree path) but
             // keeps the user's env mode and start-from-origin intent.
@@ -2759,6 +2824,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
               logicalProjectKey: existing.logicalProjectKey,
+              taskId: options.taskId === undefined ? (existing.taskId ?? null) : options.taskId,
               ...(environmentSelection ? { environmentSelection } : {}),
               loadBalancedEnvironmentId:
                 options.loadBalancedEnvironmentId === undefined
@@ -2783,6 +2849,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.environmentId === existing.environmentId &&
               nextDraftThread.projectId === existing.projectId &&
               nextDraftThread.logicalProjectKey === existing.logicalProjectKey &&
+              (nextDraftThread.taskId ?? null) === (existing.taskId ?? null) &&
               nextDraftThread.environmentSelection === existing.environmentSelection &&
               nextDraftThread.loadBalancedEnvironmentId === existing.loadBalancedEnvironmentId &&
               nextDraftThread.createdAt === existing.createdAt &&
@@ -2796,7 +2863,19 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             if (isUnchanged) {
               return state;
             }
+            const mappings = Object.fromEntries(
+              Object.entries(state.logicalProjectDraftThreadKeyByLogicalProjectKey).filter(
+                ([, id]) => id !== threadKey,
+              ),
+            );
+            const contextKey = draftContextKey(
+              nextDraftThread.logicalProjectKey,
+              nextProjectRef,
+              nextDraftThread.taskId,
+            );
+            if (!mappings[contextKey]) mappings[contextKey] = threadKey;
             return {
+              logicalProjectDraftThreadKeyByLogicalProjectKey: mappings,
               draftThreadsByThreadKey: {
                 ...state.draftThreadsByThreadKey,
                 [threadKey]: nextDraftThread,

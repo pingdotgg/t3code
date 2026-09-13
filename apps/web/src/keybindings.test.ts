@@ -1,4 +1,5 @@
 import { assert, describe, it } from "vite-plus/test";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   type KeybindingCommand,
@@ -556,6 +557,29 @@ describe("chat/editor shortcuts", () => {
       }),
       "chat.new",
     );
+  });
+
+  it("matches chat.newInTask outside terminal focus", () => {
+    for (const [platform, modifier] of [
+      ["MacIntel", { metaKey: true }],
+      ["Linux", { ctrlKey: true }],
+    ] as const) {
+      const keyEvent = event({ key: "t", shiftKey: true, ...modifier });
+      assert.strictEqual(
+        resolveShortcutCommand(keyEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false },
+        }),
+        "chat.newInTask",
+      );
+      assert.notStrictEqual(
+        resolveShortcutCommand(keyEvent, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+        "chat.newInTask",
+      );
+    }
   });
 
   it("matches chat.newLocal shortcut", () => {

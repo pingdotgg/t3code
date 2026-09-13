@@ -1,5 +1,9 @@
 "use client";
 
+import { requestNewTask } from "../taskDialogStore";
+import { useTasks, readEnvironmentSupportsTasks } from "../state/tasks";
+import { useTaskActions } from "../hooks/useTaskActions";
+import { taskMembershipDestinations } from "./taskActions.logic";
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -46,6 +50,7 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
+  ListTodoIcon,
   GitPullRequestArrowIcon,
   LinkIcon,
   MessageSquareIcon,
@@ -642,6 +647,28 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
+  const tasks = useTasks();
+  const taskActions = useTaskActions();
+  const taskRoute = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const activeTaskRef =
+    taskRoute?.kind === "task"
+      ? taskRoute.taskRef
+      : activeThread?.taskId
+        ? { environmentId: activeThread.environmentId, taskId: activeThread.taskId }
+        : activeDraftThread?.taskId
+          ? { environmentId: activeDraftThread.environmentId, taskId: activeDraftThread.taskId }
+          : null;
+  const activeTask = activeTaskRef
+    ? tasks.find(
+        (task) =>
+          task.id === activeTaskRef.taskId &&
+          task.environmentId === activeTaskRef.environmentId &&
+          task.archivedAt === null,
+      )
+    : null;
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1634,6 +1661,103 @@ function OpenCommandPaletteDialog(props: {
   ]);
 
   const actionItems: Array<CommandPaletteActionItem | CommandPaletteSubmenuItem> = [];
+  if (projects.some((project) => readEnvironmentSupportsTasks(project.environmentId))) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-task",
+      title: "New task",
+      searchTerms: ["new task", "create task", "group threads"],
+      icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        requestNewTask();
+      },
+    });
+  }
+  if (activeTask && readEnvironmentSupportsTasks(activeTask.environmentId)) {
+    actionItems.push({
+      kind: "action",
+      value: "action:new-thread-in-task",
+      title: `New thread in ${activeTask.name}`,
+      searchTerms: ["new thread in task", activeTask.name],
+      shortcutCommand: "chat.newInTask",
+      icon: <SquarePenIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await taskActions.newThreadInTask({
+          environmentId: activeTask.environmentId,
+          taskId: activeTask.id,
+        });
+      },
+    });
+  }
+  if (activeThread && readEnvironmentSupportsTasks(activeThread.environmentId)) {
+    const threadRef = scopeThreadRef(activeThread.environmentId, activeThread.id);
+    const destinations = taskMembershipDestinations(tasks, {
+      ...threadRef,
+      taskId: activeThread.taskId,
+    });
+    actionItems.push({
+      kind: "submenu",
+      value: "action:move-to-task",
+      title: "Move to task",
+      searchTerms: ["move thread to task", "group"],
+      disabled: destinations.length === 0,
+      icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+      addonIcon: <ListTodoIcon className={ADDON_ICON_CLASS} />,
+      groups: [
+        {
+          value: "task-destinations",
+          label: "Tasks",
+          items: destinations.map((task) => ({
+            kind: "action",
+            value: `move-task:${task.environmentId}:${task.id}`,
+            title: task.name,
+            searchTerms: [task.name],
+            description: projects.find(
+              (project) =>
+                project.environmentId === task.environmentId &&
+                project.id === task.primaryProjectId,
+            )?.title,
+            icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+            run: async () => {
+              await taskActions.moveThreadToTask(threadRef, task.id);
+            },
+          })),
+        },
+      ],
+    });
+    if (activeThread.taskId)
+      actionItems.push({
+        kind: "action",
+        value: "action:remove-from-task",
+        title: "Remove from task",
+        searchTerms: ["remove thread from task", "ungroup"],
+        icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await taskActions.moveThreadToTask(threadRef, null);
+        },
+      });
+  }
+  const taskSearchItems: CommandPaletteActionItem[] = tasks
+    .filter((task) => task.archivedAt === null && readEnvironmentSupportsTasks(task.environmentId))
+    .map((task) => ({
+      kind: "action",
+      value: `task:${task.environmentId}:${task.id}`,
+      title: task.name,
+      description: [
+        projects.find(
+          (project) =>
+            project.environmentId === task.environmentId && project.id === task.primaryProjectId,
+        )?.title,
+        environments.find((environment) => environment.environmentId === task.environmentId)?.label,
+      ]
+        .filter(Boolean)
+        .join(" · "),
+      searchTerms: [task.name, task.description ?? "", "task"],
+      icon: <ListTodoIcon className={ITEM_ICON_CLASS} />,
+      run: async () => {
+        await taskActions.openTask({ environmentId: task.environmentId, taskId: task.id });
+      },
+    }));
 
   if (projects.length > 0) {
     const activeProjectTitle =
@@ -1891,6 +2015,7 @@ function OpenCommandPaletteDialog(props: {
     query: deferredQuery,
     isInSubmenu: currentView !== null,
     projectSearchItems: projectSearchItems,
+    taskSearchItems,
     settingsSearchItems,
     threadSearchItems:
       linkedThreadSearch?.linkedThreads && deferredQuery === linkedThreadSearch.query

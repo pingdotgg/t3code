@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, TaskId, ThreadId } from "@t3tools/contracts";
 import { DraftId } from "./composerDraftStore";
 
 import {
   buildDraftThreadRouteParams,
+  buildTaskRouteParams,
+  resolveTaskRouteRef,
   buildThreadRouteParams,
   resolveActiveThreadRouteRef,
   resolveThreadRouteRenderState,
@@ -13,6 +15,18 @@ import {
 } from "./threadRoutes";
 
 describe("threadRoutes", () => {
+  it("resolves task routes without presenting a synthetic active thread", () => {
+    const params = { environmentId: EnvironmentId.make("env-1"), taskId: TaskId.make("task-1") };
+    const target = resolveThreadRouteTarget(params);
+    expect(target).toEqual({ kind: "task", taskRef: params });
+    expect(buildTaskRouteParams(params)).toEqual(params);
+    expect(resolveTaskRouteRef(params)).toEqual(params);
+    expect(resolveTaskRouteRef({ taskId: params.taskId })).toBeNull();
+    expect(resolveThreadRouteRef(params)).toBeNull();
+    expect(resolveActiveThreadRouteRef(target, null)).toBeNull();
+    expect(resolveTaskRouteRef({ ...params, environmentId: "env-2" })).not.toEqual(params);
+  });
+
   it("builds canonical thread route params from a scoped ref", () => {
     const ref = scopeThreadRef("env-1" as never, ThreadId.make("thread-1"));
 

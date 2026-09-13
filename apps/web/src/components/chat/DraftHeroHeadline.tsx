@@ -42,7 +42,18 @@ export function DraftHeroHeadline({
   activeProjectRef,
   activeProjectTitle,
 }: DraftHeroHeadlineProps) {
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const draftSession = useComposerDraftStore((store) =>
+    draftId ? store.getDraftSession(draftId) : null,
+  );
+  const taskEnvironmentId = draftSession?.taskId != null ? draftSession.environmentId : null;
+  const projects = useMemo(
+    () =>
+      taskEnvironmentId == null
+        ? allProjects
+        : allProjects.filter((project) => project.environmentId === taskEnvironmentId),
+    [allProjects, taskEnvironmentId],
+  );
   const threads = useThreadShells();
   const { environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
@@ -147,6 +158,7 @@ export function DraftHeroHeadline({
         {activeProjectDisplayName ? (
           <TooltipPopup side="top" className="max-w-80">
             {activeProjectDisplayName}
+            {taskEnvironmentId ? " — Task threads stay on this environment" : ""}
           </TooltipPopup>
         ) : null}
       </Tooltip>

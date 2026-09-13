@@ -29,6 +29,7 @@ export type ThreadActionMenuId =
 export interface ThreadActionMenuState {
   readonly branch: string | null;
   readonly isPinned: boolean;
+  readonly isTaskMember?: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
   readonly canSnoozeNow: boolean;
@@ -62,7 +63,7 @@ export function buildThreadActionMenuItems(
           },
         ]
       : []),
-    ...(state.supports.pinning
+    ...(state.supports.pinning && !state.isTaskMember
       ? [
           state.isPinned
             ? { id: "unpin" as const, label: "Unpin thread", icon: "pin-off" }

@@ -14,8 +14,12 @@ const testState = vi.hoisted(() => {
     readonly draftId: string;
     readonly environmentId: string;
     readonly promotedTo: null;
+    readonly taskId?: string | null;
+    readonly projectId?: string;
     readonly threadId: string;
   } | null = null;
+  let taskAvailable = true;
+  let hasContent = false;
   const router = {
     state: {
       location: { href: "/" },
@@ -37,6 +41,18 @@ const testState = vi.hoisted(() => {
   };
 
   return {
+    setTaskAvailable: (value: boolean) => {
+      taskAvailable = value;
+    },
+    get taskAvailable() {
+      return taskAvailable;
+    },
+    setHasContent: (value: boolean) => {
+      hasContent = value;
+    },
+    get hasContent() {
+      return hasContent;
+    },
     completeProjectFileRead: (value: null) => completeProjectFileRead(value),
     draftStore,
     get projectFileRead() {
@@ -53,6 +69,8 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      taskAvailable = true;
+      hasContent = false;
       targetSettings = {
         defaultThreadEnvMode: workspaceDefaults.envMode,
         newWorktreesStartFromOrigin: workspaceDefaults.startFromOrigin,
@@ -126,7 +144,7 @@ vi.mock("../composerDraftStore", () => {
     getState: () => testState.draftStore,
   });
   return {
-    composerDraftHasUserContent: () => false,
+    composerDraftHasUserContent: () => testState.hasContent,
     markPromotedDraftThreadByRef: vi.fn(),
     useComposerDraftStore,
   };
@@ -161,6 +179,10 @@ vi.mock("../state/entities", () => ({
   readThreadShell: () => null,
   useProjects: () => [],
   useThread: () => null,
+}));
+vi.mock("../state/tasks", () => ({
+  readTask: () => (testState.taskAvailable ? { archivedAt: null } : null),
+  readEnvironmentSupportsTasks: () => true,
 }));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
@@ -279,4 +301,82 @@ describe.each([
       );
     },
   );
+});
+
+describe("task draft preparation", () => {
+  const projectRef = {
+    environmentId: "environment-ssh",
+    projectId: "project-remote",
+  } as Parameters<ReturnType<typeof useNewThreadHandler>>[0];
+  const taskId = "task-one" as NonNullable<
+    NonNullable<Parameters<ReturnType<typeof useNewThreadHandler>>[1]>["taskId"]
+  >;
+  it.each([
+    null,
+    {
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+      promotedTo: null,
+      taskId: "task-one",
+      threadId: "thread-existing",
+    },
+  ])("prepares a task draft without navigating (%j)", async (draft) => {
+    testState.reset(draft);
+    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    testState.completeProjectFileRead(null);
+    const result = await pending;
+    expect(result?.draftId).toBe(draft?.draftId ?? "draft-delayed");
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.draftStore.getDraftSessionByLogicalProjectKey).toHaveBeenCalledWith(
+      "remote-project",
+      { taskId, projectRef },
+    );
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      result?.draftId,
+      expect.objectContaining({ taskId }),
+    );
+  });
+  it("does not create a draft when its task disappears during defaults resolution", async () => {
+    testState.reset(null);
+    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    testState.setTaskAvailable(false);
+    testState.completeProjectFileRead(null);
+    expect(await pending).toBeNull();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+  });
+  it("does not reset a task draft that gains content during defaults resolution", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+      promotedTo: null,
+      taskId: "task-one",
+      threadId: "thread-existing",
+    });
+    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    testState.setHasContent(true);
+    testState.completeProjectFileRead(null);
+    expect(await pending).toBeNull();
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
+    expect(testState.router.navigate).not.toHaveBeenCalled();
+  });
+  it("keeps an invested task draft and prepares a fresh composer", async () => {
+    testState.reset({
+      draftId: "invested",
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+      promotedTo: null,
+      taskId: "task-one",
+      threadId: "thread-invested",
+    });
+    testState.setHasContent(true);
+    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    testState.completeProjectFileRead(null);
+    expect(await pending).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
+    expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();
+  });
 });

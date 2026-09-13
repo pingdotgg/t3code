@@ -1,3 +1,7 @@
+import {
+  readTaskMembershipMenuItems,
+  useTaskMembershipActions,
+} from "../hooks/useTaskMembershipActions";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -2226,6 +2230,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     updateSettings,
   ]);
 
+  const { handleTaskMembershipAction } = useTaskMembershipActions();
   const handleThreadContextMenu = useCallback(
     async (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       const api = readLocalApi();
@@ -2243,6 +2248,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           ...(thread.branch
             ? [{ id: "new-thread-on-branch", label: `New thread on ${thread.branch}` }]
             : []),
+          ...readTaskMembershipMenuItems(threadRef),
+          ...(thread.taskId ? [{ id: "open-task", label: "Open task" }] : []),
           { id: "rename", label: "Rename thread" },
           { id: "mark-unread", label: "Mark unread" },
           { id: "copy-path", label: "Copy Path" },
@@ -2252,6 +2259,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         ],
         position,
       );
+
+      if (await handleTaskMembershipAction(threadRef, clicked)) return;
 
       if (clicked === "project-settings") {
         if (isMobile) setOpenMobile(false);
@@ -2267,6 +2276,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         // has one, otherwise its branch on the local checkout.
         const result = await settlePromise(() =>
           handleNewThread(scopeProjectRef(thread.environmentId, thread.projectId), {
+            taskId: thread.taskId ?? null,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             envMode: thread.worktreePath ? "worktree" : "local",
@@ -2339,6 +2349,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
     },
     [
+      handleTaskMembershipAction,
       appSettingsConfirmThreadDelete,
       copyPathToClipboard,
       copyThreadIdToClipboard,

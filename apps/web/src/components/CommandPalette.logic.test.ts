@@ -738,3 +738,34 @@ it.each([
     "Implementation",
   ]);
 });
+
+it("finds tasks by name without adding them to thread jump enumeration", () => {
+  const task = {
+    kind: "action" as const,
+    value: "task:remote:same-id",
+    title: "Database migration",
+    searchTerms: ["Database migration"],
+    icon: null,
+    run: async () => {},
+  };
+  expect(
+    filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "migration",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+      taskSearchItems: [task],
+    }),
+  ).toEqual([{ value: "tasks-search", label: "Tasks", items: [task] }]);
+  expect(
+    filterCommandPaletteGroups({
+      activeGroups: [],
+      query: ">migration",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      threadSearchItems: [],
+      taskSearchItems: [task],
+    }),
+  ).toEqual([]);
+});

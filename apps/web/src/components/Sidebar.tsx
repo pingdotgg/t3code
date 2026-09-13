@@ -1,3 +1,9 @@
+import { requestNewTask } from "../taskDialogStore";
+import { readEnvironmentSupportsTasks } from "../state/tasks";
+import {
+  readTaskMembershipMenuItems,
+  useTaskMembershipActions,
+} from "../hooks/useTaskMembershipActions";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -3958,6 +3964,7 @@ export default function Sidebar() {
     ],
   );
 
+  const { handleTaskMembershipAction } = useTaskMembershipActions();
   const handleThreadContextMenu = useCallback(
     (threadRef: ScopedThreadRef, position: { x: number; y: number }) => {
       void (async () => {
@@ -3996,27 +4003,32 @@ export default function Sidebar() {
         const snoozePresets = resolveSnoozePresets(new Date(), timestampFormat);
         const clicked = await settlePromise(() =>
           api.contextMenu.show(
-            buildThreadActionMenuItems({
-              branch: thread.branch ?? null,
-              isPinned,
-              isSettled,
-              isSnoozed,
-              canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
-              isRegeneratingTitle,
-              isRunning:
-                thread.session?.status === "running" && thread.session.activeTurnId != null,
-              supports: {
-                settlement: supportsSettlement,
-                snooze: supportsSnooze,
-                pinning: supportsPinning,
-                titleRegeneration: supportsTitleRegeneration,
-              },
-              snoozePresets,
-            }),
+            [
+              ...buildThreadActionMenuItems({
+                branch: thread.branch ?? null,
+                isPinned,
+                isTaskMember: thread.taskId != null,
+                isSettled,
+                isSnoozed,
+                canSnoozeNow: canSnooze(thread, { now: new Date().toISOString() }),
+                isRegeneratingTitle,
+                isRunning:
+                  thread.session?.status === "running" && thread.session.activeTurnId != null,
+                supports: {
+                  settlement: supportsSettlement,
+                  snooze: supportsSnooze,
+                  pinning: supportsPinning,
+                  titleRegeneration: supportsTitleRegeneration,
+                },
+                snoozePresets,
+              }),
+              ...readTaskMembershipMenuItems(threadRef),
+            ],
             position,
           ),
         );
         if (clicked._tag === "Failure") return;
+        if (await handleTaskMembershipAction(threadRef, clicked.value)) return;
         if (clicked.value?.startsWith("snooze:")) {
           const preset = snoozePresets.find(
             (candidate) => `snooze:${candidate.id}` === clicked.value,
@@ -4041,6 +4053,7 @@ export default function Sidebar() {
             // has one, otherwise its branch on the local checkout.
             const result = await settlePromise(() =>
               handleNewThreadRef.current(scopeProjectRef(thread.environmentId, thread.projectId), {
+                taskId: thread.taskId ?? null,
                 branch: thread.branch,
                 worktreePath: thread.worktreePath,
                 envMode: thread.worktreePath ? "worktree" : "local",
@@ -4180,6 +4193,7 @@ export default function Sidebar() {
       })();
     },
     [
+      handleTaskMembershipAction,
       archiveThread,
       attemptPin,
       attemptSettle,
@@ -4327,6 +4341,16 @@ export default function Sidebar() {
           // header and would otherwise paint across the search row's outline.
           <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)] pt-1">
             <SidebarThreadHeader
+              onNewTask={
+                projects.some((project) => readEnvironmentSupportsTasks(project.environmentId))
+                  ? () => {
+                      const group = projectScopeKey
+                        ? projectGroupByScopeKey.get(projectScopeKey)
+                        : null;
+                      requestNewTask(group ? scopeProjectRef(group.environmentId, group.id) : null);
+                    }
+                  : undefined
+              }
               searchFieldRef={headerSearchRef}
               hasProjects={projectGroups.length > 0}
               projectScope={
