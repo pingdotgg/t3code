@@ -494,8 +494,8 @@ jobs:
           # the release job merges them back into one manifest per channel.
           # builder-debug.yml is electron-builder's config dump, not a feed.
           if [[ "${{ inputs.platform }}" == "win" ]]; then
-            shopt -s nullglob extglob
-            for manifest in release-publish/!(builder-debug).yml; do
+            for manifest in release-publish/*.yml; do
+              [[ "$manifest" == */builder-debug.yml ]] && continue
               mv "$manifest" "${manifest%.yml}-win-${{ inputs.arch }}.yml"
             done
           fi
