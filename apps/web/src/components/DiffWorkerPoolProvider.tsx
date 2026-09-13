@@ -95,7 +95,7 @@ function DiffWorkerThemeSync({ themeName }: { themeName: DiffThemeName }) {
 }
 
 // Plain-text views do not queue a highlight task that could retry a blank first render.
-function DiffWorkerReady({ children }: { children?: ReactNode }) {
+function DiffWorkerReady({ children, fallback }: { children?: ReactNode; fallback?: ReactNode }) {
   const workerPool = useWorkerPool();
   const [readyPool, setReadyPool] = useState<WorkerPoolManager>();
   const ready = workerPool
@@ -116,19 +116,25 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
     };
   }, [ready, workerPool]);
 
-  return ready ? (
-    children
-  ) : (
-    <div
-      role="status"
-      className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
-    >
-      Loading code...
-    </div>
-  );
+  return ready
+    ? children
+    : (fallback ?? (
+        <div
+          role="status"
+          className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
+        >
+          Loading code...
+        </div>
+      ));
 }
 
-export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
+export function DiffWorkerPoolProvider({
+  children,
+  fallback,
+}: {
+  children?: ReactNode;
+  fallback?: ReactNode;
+}) {
   const { resolvedTheme } = useTheme();
   const diffThemeName = resolveDiffThemeName(resolvedTheme);
   const workerPoolSize = useMemo(() => {
@@ -161,7 +167,7 @@ export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {
   return (
     <WorkerPoolContext value={workerPool}>
       <DiffWorkerThemeSync themeName={diffThemeName} />
-      <DiffWorkerReady>{children}</DiffWorkerReady>
+      <DiffWorkerReady fallback={fallback}>{children}</DiffWorkerReady>
     </WorkerPoolContext>
   );
 }

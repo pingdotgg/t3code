@@ -1,5 +1,7 @@
 import { ThreadId } from "@t3tools/contracts";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+vi.mock("./DiffWorkerPoolProvider", () => ({ DiffWorkerPoolProvider: () => null }));
 
 import { buildMessageContext } from "~/lib/composerContextRecords";
 import {

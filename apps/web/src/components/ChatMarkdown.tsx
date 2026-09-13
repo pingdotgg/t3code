@@ -55,7 +55,6 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/unstable/reactivity";
 import React, {
   Children,
-  Suspense,
   type CSSProperties,
   type ComponentProps,
   type ClipboardEvent as ReactClipboardEvent,
@@ -77,7 +76,6 @@ import type {
   Options as ReactMarkdownOptions,
 } from "react-markdown";
 import ReactMarkdown from "react-markdown";
-import { toHtml } from "hast-util-to-html";
 import { createIncrementalMarkdownPlugin } from "../markdown-incremental";
 import { defaultUrlTransform } from "react-markdown";
 import rehypeRaw from "rehype-raw";
@@ -128,13 +126,9 @@ import {
   usePreferredEditor,
 } from "../editorPreferences";
 import { openInEditorMenuLabel } from "../editorLabels";
-import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
-import { fnv1a32 } from "../lib/diffRendering";
-import { LRUCache } from "../lib/lruCache";
-import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
+import { resolveDiffThemeName } from "../lib/diffRendering";
+import { MarkdownCodeHighlight } from "./MarkdownCodeHighlight";
 import { GitHubIcon } from "./Icons";
-import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
-import { HighlightedCodeLines } from "./chat/HighlightedCodeLines";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
@@ -330,8 +324,6 @@ function CodexArtifactTemplateCard(props: {
 
 const CODE_FENCE_LANGUAGE_REGEX = /(?:^|\s)language-([^\s]+)/;
 const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
-const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
-const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
 interface MarkdownActionFailureContext {
   readonly operation: string;
@@ -345,11 +337,6 @@ interface MarkdownActionFailureContext {
 function reportMarkdownActionFailure(context: MarkdownActionFailureContext, cause: unknown): void {
   console.error("[chat-markdown] action failed", context, cause);
 }
-
-const highlightedCodeCache = new LRUCache<string>(
-  MAX_HIGHLIGHT_CACHE_ENTRIES,
-  MAX_HIGHLIGHT_CACHE_MEMORY_BYTES,
-);
 
 function findTaskListMarkerOffset(markdown: string, listItemStart: number): number | null {
   const firstLineEnd = markdown.indexOf("\n", listItemStart);
@@ -681,14 +668,6 @@ function extractCodeBlock(
   };
 }
 
-function createHighlightCacheKey(code: string, language: string, themeName: DiffThemeName): string {
-  return `${fnv1a32(code).toString(36)}:${code.length}:${language}:${themeName}`;
-}
-
-function estimateHighlightedSize(html: string, code: string): number {
-  return Math.max(html.length * 2, code.length * 3);
-}
-
 function readInitialWordWrapSetting(): boolean {
   return getClientSettings().wordWrap;
 }
@@ -918,7 +897,7 @@ function MarkdownCodeBlock({
   language: string;
   fenceTitle: string | null;
   theme: "light" | "dark";
-  children: ReactNode;
+  children: (wrapped: boolean) => ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
@@ -1016,112 +995,7 @@ function MarkdownCodeBlock({
           </Tooltip>
         </span>
       </div>
-      {children}
-    </div>
-  );
-}
-
-interface SuspenseShikiCodeBlockProps {
-  className: string | undefined;
-  code: string;
-  themeName: DiffThemeName;
-  isStreaming: boolean;
-}
-
-function SuspenseShikiCodeBlock({
-  className,
-  code,
-  themeName,
-  isStreaming,
-}: SuspenseShikiCodeBlockProps) {
-  const [hasStreamed, setHasStreamed] = useState(isStreaming);
-  if (isStreaming && !hasStreamed) setHasStreamed(true);
-  const language = extractFenceLanguage(className);
-  const cacheKey = createHighlightCacheKey(code, language, themeName);
-  // Once lines are mounted individually, keep that renderer when streaming
-  // finishes so switching to cached HTML cannot clear an existing selection.
-  const cachedHighlightedHtml =
-    !isStreaming && !hasStreamed ? highlightedCodeCache.get(cacheKey) : null;
-
-  if (cachedHighlightedHtml != null) {
-    return (
-      <div
-        className="chat-markdown-shiki"
-        dangerouslySetInnerHTML={{ __html: cachedHighlightedHtml }}
-      />
-    );
-  }
-
-  return (
-    <UncachedShikiCodeBlock
-      code={code}
-      language={language}
-      themeName={themeName}
-      cacheKey={cacheKey}
-      isStreaming={isStreaming}
-      preserveLines={isStreaming || hasStreamed}
-    />
-  );
-}
-
-interface UncachedShikiCodeBlockProps {
-  code: string;
-  language: string;
-  themeName: DiffThemeName;
-  cacheKey: string;
-  isStreaming: boolean;
-  preserveLines: boolean;
-}
-
-function UncachedShikiCodeBlock({
-  code,
-  language,
-  themeName,
-  cacheKey,
-  isStreaming,
-  preserveLines,
-}: UncachedShikiCodeBlockProps) {
-  const highlighter = use(getSyntaxHighlighterPromise(language));
-  const incrementalHighlight = useMemo(
-    () =>
-      preserveLines ? createIncrementalHighlightedDocument(highlighter, language, themeName) : null,
-    [highlighter, preserveLines, language, themeName],
-  );
-  const highlighted = useMemo(() => {
-    try {
-      if (incrementalHighlight) return incrementalHighlight(code);
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: language, theme: themeName })
-        : highlighter.codeToHtml(code, { lang: language, theme: themeName });
-    } catch (error) {
-      // Log highlighting failures for debugging while falling back to plain text
-      console.warn(
-        `Code highlighting failed for language "${language}", falling back to plain text.`,
-        error instanceof Error ? error.message : error,
-      );
-      // If highlighting fails for this language, render as plain text
-      return preserveLines
-        ? highlighter.codeToHast(code, { lang: "text", theme: themeName })
-        : highlighter.codeToHtml(code, { lang: "text", theme: themeName });
-    }
-  }, [code, highlighter, incrementalHighlight, language, preserveLines, themeName]);
-
-  useEffect(() => {
-    if (!isStreaming) {
-      const highlightedHtml = typeof highlighted === "string" ? highlighted : toHtml(highlighted);
-      highlightedCodeCache.set(
-        cacheKey,
-        highlightedHtml,
-        estimateHighlightedSize(highlightedHtml, code),
-      );
-    }
-  }, [cacheKey, code, highlighted, isStreaming]);
-
-  return typeof highlighted === "string" ? (
-    <div className="chat-markdown-shiki" dangerouslySetInnerHTML={{ __html: highlighted }} />
-  ) : (
-    <div className="chat-markdown-shiki">
-      <HighlightedCodeLines root={highlighted} />
+      {children(wrapped)}
     </div>
   );
 }
@@ -3192,19 +3066,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
         fenceTitle={fenceTitle}
         theme={resolvedTheme}
       >
-        <RenderErrorBoundary
-          resetKeys={[codeBlock.code, language, diffThemeName, isStreaming]}
-          fallback={<pre {...props}>{children}</pre>}
-        >
-          <Suspense fallback={<pre {...props}>{children}</pre>}>
-            <SuspenseShikiCodeBlock
-              className={codeBlock.className}
+        {(wrapped) => (
+          <RenderErrorBoundary
+            resetKeys={[codeBlock.code, language, diffThemeName, isStreaming, wrapped]}
+            fallback={<pre {...props}>{children}</pre>}
+          >
+            <MarkdownCodeHighlight
+              language={language}
+              fallback={<pre {...props}>{children}</pre>}
               code={codeBlock.code}
               themeName={diffThemeName}
+              wrapped={wrapped}
               isStreaming={isStreaming}
             />
-          </Suspense>
-        </RenderErrorBoundary>
+          </RenderErrorBoundary>
+        )}
       </MarkdownCodeBlock>
     );
   },
