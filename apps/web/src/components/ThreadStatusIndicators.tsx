@@ -148,7 +148,7 @@ export function ThreadPullRequestBadgeControl({
   onOpenStack,
   onOpenPullRequest,
 }: {
-  variant: "underline" | "ghost";
+  variant: "underline" | "ghost" | "badge";
   badge: ThreadPullRequestBadge | null;
   number?: number | undefined;
   url?: string | undefined;
@@ -171,7 +171,9 @@ export function ThreadPullRequestBadgeControl({
   const className = cn(
     variant === "ghost"
       ? buttonVariants({ variant: "ghost", size: "xs" })
-      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+      : variant === "badge"
+        ? "inline-flex size-3 shrink-0 cursor-pointer items-center justify-center rounded-full bg-sidebar ring-1 ring-sidebar outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
     "text-xs tabular-nums",
     variant === "ghost" &&
       "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
@@ -181,7 +183,10 @@ export function ThreadPullRequestBadgeControl({
   );
   const content = (
     <>
-      <ThreadPullRequestBadgeIcon icon={badge?.kind ?? "pull-request"} />
+      <ThreadPullRequestBadgeIcon
+        icon={badge?.kind ?? "pull-request"}
+        className={variant === "badge" ? "size-2.5" : undefined}
+      />
       {iconOnly ? null : isStack ? badge.layers : linkedCount !== null ? `+${linkedCount}` : number}
     </>
   );
