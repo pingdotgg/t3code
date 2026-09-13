@@ -124,6 +124,7 @@ import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
+import { SidebarCompletedTime } from "./sidebar/SidebarCompletedTime";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
 import {
@@ -1031,6 +1032,7 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   thread: SidebarThreadSummary;
   variant: "card" | "slim";
+  compact: boolean;
   // Slim rows are either settled (action: un-settle) or merely quiet
   // (seen Ready threads — action: settle).
   variantAction: "settle" | "unsettle" | "unsnooze";
@@ -1292,7 +1294,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
       compactStatus={
-        compact
+        compact || (props.compact && variant === "card")
           ? (topStatus?.label ??
             (variantAction === "unsnooze"
               ? "Snoozed"
@@ -1878,6 +1880,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     );
   }
 
+  const compactRows = props.compact;
+  const CompactStatusIcon = topStatus
+    ? {
+        working: CircleDashedIcon,
+        monitoring: EyeIcon,
+        approval: ShieldQuestionIcon,
+        input: MessageCircleQuestionIcon,
+        failed: CircleAlertIcon,
+        woke: AlarmClockIcon,
+        done: CircleCheckIcon,
+      }[topStatus.icon]
+    : null;
+  const compactCompletedAt =
+    compactRows && status === "ready" && !isWokeStatus
+      ? (thread.latestTurn?.completedAt ?? null)
+      : null;
   const diff = latestTurnDiff(thread);
 
   return (
@@ -1886,8 +1904,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       {...sortableRootProps}
       {...(fileDropHandlers ?? {})}
       className={cn(
-        // Matches the h-[4.875rem] content box; the py-0.5 padding is added on top.
-        "list-none py-0.5 [content-visibility:auto] [contain-intrinsic-size:auto_78px]",
+        "list-none [content-visibility:auto]",
+        compactRows
+          ? "[contain-intrinsic-size:auto_36px]"
+          : "py-0.5 [contain-intrinsic-size:auto_78px]",
         sortable?.isDragging && "relative z-20",
       )}
     >
@@ -1902,7 +1922,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               ref={rowRef}
               role="button"
               tabIndex={0}
-              data-testid="sidebar-row-card"
+              data-testid={compactRows ? "sidebar-row-compact" : "sidebar-row-card"}
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
               onClick={handleClick}
@@ -1912,13 +1932,22 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
             />
           }
         >
-          <div className="relative z-10 h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]">
-            <div className="flex h-5 min-w-0 items-center gap-1.5">
+          <div
+            className={cn(
+              "relative z-10",
+              compactRows
+                ? "flex h-9 items-center px-2.5"
+                : "h-[4.875rem] px-[var(--sidebar-row-content-inset)] py-[var(--sidebar-content-inset)]",
+            )}
+          >
+            <div className="flex h-5 w-full min-w-0 items-center gap-1.5">
               {draftIndicator}
               {props.project ? (
                 <ProjectFavicon project={props.project} className="size-4 shrink-0" />
               ) : null}
-              {props.projectDisplayName ? (
+              {compactRows ? (
+                title
+              ) : props.projectDisplayName ? (
                 <span
                   className={cn(
                     "min-w-0 flex-1 truncate text-secondary-label text-xs",
@@ -1931,6 +1960,50 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 <span className="flex-1" />
               )}
               {pinIndicator}
+              {compactRows ? (
+                <>
+                  {isRemote ? (
+                    <span
+                      role="img"
+                      aria-label={props.environmentLabel ?? "Remote environment"}
+                      className="inline-flex shrink-0 text-sidebar-muted-foreground/70"
+                    >
+                      <EnvironmentMachineIcon
+                        kind={props.environmentMachine}
+                        className="size-3.5"
+                      />
+                    </span>
+                  ) : null}
+                  {terminalStatusIcon}
+                  {topStatus && CompactStatusIcon ? (
+                    isWokeStatus ? (
+                      <button
+                        type="button"
+                        aria-label="Dismiss Woke notification"
+                        onClick={handleAcknowledgeWokeClick}
+                        className={cn(
+                          "shrink-0 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                          topStatus.className,
+                        )}
+                      >
+                        <CompactStatusIcon aria-hidden className="size-3.5" />
+                        <span role="status" className="sr-only">
+                          {topStatus.label}
+                        </span>
+                      </button>
+                    ) : (
+                      <span
+                        role="status"
+                        className={cn("inline-flex shrink-0", topStatus.className)}
+                      >
+                        <CompactStatusIcon aria-hidden className="size-3.5" />
+                        <span className="sr-only">{topStatus.label}</span>
+                      </span>
+                    )
+                  ) : null}
+                  {prBadge}
+                </>
+              ) : null}
               {/* The visible state owns this slot's width: status at rest,
                   actions on hover/keyboard focus or while the popover is open. Keeping
                   the hidden state out of flow lets the project label reclaim
@@ -1938,20 +2011,33 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               {sortable?.isDragging ? (
                 dragDestination
               ) : (
-                <span className="group/sidebar-status-slot relative ml-auto flex h-5 min-w-8 shrink-0 items-stretch justify-end text-xs">
+                <span
+                  className={cn(
+                    "group/sidebar-status-slot relative ml-auto flex h-5 shrink-0 items-stretch justify-end text-xs",
+                    !compactRows && "min-w-8",
+                  )}
+                >
                   {/* Read-only status labels yield to the hover actions. Woke is
                     itself an action, so it stays pointer-enabled and visible
                     while the other controls appear beside it. */}
                   <span
                     className={cn(
-                      isWokeStatus
+                      isWokeStatus && !compactRows
                         ? "pointer-events-auto"
                         : "pointer-events-none group-has-[:focus-visible]/sidebar-status-slot:absolute group-has-[:focus-visible]/sidebar-status-slot:right-0 group-has-[:focus-visible]/sidebar-status-slot:opacity-0 group-hover/sidebar-row:absolute group-hover/sidebar-row:right-0 group-hover/sidebar-row:opacity-0",
                       "flex items-center self-center justify-self-end tabular-nums text-secondary-label transition-opacity",
                       snoozeMenuOpen && "pointer-events-none absolute right-0 opacity-0",
                     )}
                   >
-                    {topStatus ? (
+                    {compactRows ? (
+                      status === "working" ? (
+                        <WorkingDuration startedAt={resolveWorkingStartedAt(thread)} />
+                      ) : compactCompletedAt ? (
+                        <SidebarCompletedTime completedAt={compactCompletedAt} />
+                      ) : (
+                        threadTimeLabel(thread)
+                      )
+                    ) : topStatus ? (
                       isWokeStatus ? (
                         <Tooltip>
                           <TooltipTrigger
@@ -2057,7 +2143,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                             }
                           >
                             <CheckIcon className="size-3.5" />
-                            Settle
+                            {compactRows ? null : "Settle"}
                           </TooltipTrigger>
                           <TooltipPopup>Settle thread</TooltipPopup>
                         </Tooltip>
@@ -2067,68 +2153,70 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 </span>
               )}
             </div>
-            <div className="mt-1 flex min-w-0">
-              {title}
-              {isRegeneratingTitle ? (
-                <span role="status" className="sr-only">
-                  Regenerating title
-                </span>
-              ) : null}
-            </div>
-            <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
-              {/* Always the branch. The plan step used to take this slot while
+            {isRegeneratingTitle ? (
+              <span role="status" className="sr-only">
+                Regenerating title
+              </span>
+            ) : null}
+            {compactRows ? null : (
+              <>
+                <div className="mt-1 flex min-w-0">{title}</div>
+                <div className="mt-0.5 flex min-w-0 items-center gap-1.5 text-secondary-label text-xs">
+                  {/* Always the branch. The plan step used to take this slot while
                   working, but it truncated to a half-sentence and dropped the
                   branch, so the row lost its most stable identifier. */}
-              {thread.branch ? (
-                <>
-                  <ThreadWorktreeIndicator thread={thread} />
-                  <span className="min-w-0 flex-1 truncate whitespace-nowrap text-muted-foreground/40">
-                    {thread.branch}
+                  {thread.branch ? (
+                    <>
+                      <ThreadWorktreeIndicator thread={thread} />
+                      <span className="min-w-0 flex-1 truncate whitespace-nowrap text-muted-foreground/40">
+                        {thread.branch}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="flex-1" />
+                  )}
+                  {terminalStatusIcon}
+                  {prBadge}
+                  {diff ? (
+                    <span className="shrink-0 font-mono">
+                      <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
+                      <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
+                    </span>
+                  ) : null}
+                  <span
+                    aria-hidden
+                    className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
+                  >
+                    {isRemote ? (
+                      <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
+                        <EnvironmentMachineIcon
+                          aria-hidden
+                          kind={props.environmentMachine}
+                          className="size-3.5"
+                        />
+                      </span>
+                    ) : null}
+                    {driverKind ? (
+                      <span className="inline-flex shrink-0 items-center">
+                        <ProviderInstanceIcon
+                          driverKind={driverKind}
+                          displayName={
+                            providerEntry?.displayName ??
+                            thread.session?.providerName ??
+                            modelInstanceId
+                          }
+                          accentColor={providerEntry?.accentColor}
+                          showBadge={showInstanceBadge}
+                          // Glyph dims, badge stays saturated; offset matches the composer trigger.
+                          iconClassName="size-3.5 opacity-60"
+                          badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-[7px]"
+                        />
+                      </span>
+                    ) : null}
                   </span>
-                </>
-              ) : (
-                <span className="flex-1" />
-              )}
-              {terminalStatusIcon}
-              {prBadge}
-              {diff ? (
-                <span className="shrink-0 font-mono">
-                  <span className="text-diff-addition-foreground">+{diff.insertions}</span>{" "}
-                  <span className="text-diff-deletion-foreground">−{diff.deletions}</span>
-                </span>
-              ) : null}
-              <span
-                aria-hidden
-                className="pointer-events-none ml-auto inline-flex shrink-0 items-center gap-1"
-              >
-                {isRemote ? (
-                  <span className="inline-flex shrink-0 items-center text-sidebar-muted-foreground/70">
-                    <EnvironmentMachineIcon
-                      aria-hidden
-                      kind={props.environmentMachine}
-                      className="size-3.5"
-                    />
-                  </span>
-                ) : null}
-                {driverKind ? (
-                  <span className="inline-flex shrink-0 items-center">
-                    <ProviderInstanceIcon
-                      driverKind={driverKind}
-                      displayName={
-                        providerEntry?.displayName ??
-                        thread.session?.providerName ??
-                        modelInstanceId
-                      }
-                      accentColor={providerEntry?.accentColor}
-                      showBadge={showInstanceBadge}
-                      // Glyph dims, badge stays saturated; offset matches the composer trigger.
-                      iconClassName="size-3.5 opacity-60"
-                      badgeClassName="right-[-0.1875rem] bottom-[-0.1875rem] h-3 min-w-3 px-0.5 text-[7px]"
-                    />
-                  </span>
-                ) : null}
-              </span>
-            </div>
+                </div>
+              </>
+            )}
           </div>
           {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
         </TooltipTrigger>
@@ -2303,6 +2391,7 @@ export default function Sidebar() {
   const compact = compactEnabled && sidebarState === "collapsed" && !isMobile;
   const [snoozedFooter, setSnoozedFooter] = useState<HTMLUListElement | null>(null);
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const compactThreadRows = useClientSettings((s) => s.sidebarCompactThreadRows);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
@@ -4829,10 +4918,9 @@ export default function Sidebar() {
                         const threadKey = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
-                        // Settled and snoozed are the ONLY things that collapse a
-                        // row: every other thread is a full card. Density comes
-                        // from users (or the auto rules) actually parking work,
-                        // not from the sidebar second-guessing what still matters.
+                        // Settled and snoozed always use slim rows. Active and
+                        // pinned threads use cards unless the user has explicitly
+                        // enabled the compact thread-list preference.
                         const isCard = section === "active" || section === "pinned";
                         const rowVariant = isCard ? "card" : "slim";
                         return (
@@ -4842,6 +4930,7 @@ export default function Sidebar() {
                             key={`${threadKey}:${rowVariant}`}
                             thread={thread}
                             variant={rowVariant}
+                            compact={compactThreadRows}
                             // Snoozed rows wake, settled rows un-settle, and cards settle.
                             variantAction={
                               section === "snoozed"
