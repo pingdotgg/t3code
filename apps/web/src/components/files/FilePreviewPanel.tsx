@@ -21,7 +21,7 @@ import {
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
-import { Code2, Eye, FolderTree, Globe2, Table2 } from "lucide-react";
+import { Code2, Eye, FolderTree, Globe2, Table2, WrapTextIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
@@ -31,7 +31,7 @@ import { OpenInPicker } from "~/components/chat/OpenInPicker";
 import { MediaVideoPlayer } from "~/components/media/MediaVideoPlayer";
 import { MediaActions, type MediaActionSource } from "~/components/media/MediaActions";
 import { useRemoteOpenState } from "~/remoteOpen";
-import { useClientSettings } from "~/hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { useTheme } from "~/hooks/useTheme";
 import { getLocalStorageItem, setLocalStorageItem, useLocalStorage } from "~/hooks/useLocalStorage";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
@@ -995,6 +995,15 @@ export default function FilePreviewPanel({
         ? ("html" as const)
         : null;
   const canToggleRendered = attachment === undefined && renderedMode !== null;
+  const updateClientSettings = useUpdateClientSettings();
+  // Word wrap only reaches the text bodies. A rendered Markdown document, a table and the
+  // browser frame all lay themselves out, so the toggle stays hidden rather than inert.
+  const showsRawText =
+    relativePath !== null &&
+    file.data !== null &&
+    !(isMarkdown && renderMarkdown) &&
+    !(tableDelimiter && renderTable) &&
+    !renderBrowserFile;
   const rendered = isMarkdown ? renderMarkdown : tableDelimiter ? renderTable : renderBrowserFile;
   const setRenderedPreferred = isMarkdown
     ? setRenderMarkdownPreferred
@@ -1120,6 +1129,15 @@ export default function FilePreviewPanel({
               ) : (
                 <Eye className="size-3.5" />
               )}
+            </FileSurfaceAction>
+          ) : null}
+          {showsRawText ? (
+            <FileSurfaceAction
+              label={wordWrap ? "Disable word wrap" : "Enable word wrap"}
+              pressed={wordWrap}
+              onPress={() => updateClientSettings({ wordWrap: !wordWrap })}
+            >
+              <WrapTextIcon className="size-3.5" />
             </FileSurfaceAction>
           ) : null}
           {canOpenInBrowser ? (

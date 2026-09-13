@@ -198,7 +198,11 @@ function uploadedReference(
   // chat view with nothing to show a thumbnail from, on every client.
   return isComposerImageAttachment(attachment)
     ? { type: "image", ...fields }
-    : { type: "file", ...fields };
+    : {
+        type: "file",
+        ...fields,
+        ...(attachment.source ? { source: attachment.source } : {}),
+      };
 }
 
 function attachmentUploadInput(attachment: DraftComposerAttachment) {
