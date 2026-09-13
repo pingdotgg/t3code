@@ -37,7 +37,11 @@ class TestRow {
     public offsetHeight = 82,
   ) {}
   getBoundingClientRect() {
-    return { top: this.offsetTop + this.dragTranslate, height: this.offsetHeight };
+    return {
+      top: this.offsetTop + this.dragTranslate,
+      bottom: this.offsetTop + this.dragTranslate + this.offsetHeight,
+      height: this.offsetHeight,
+    };
   }
   getAttribute(name: string) {
     return this.attributes.find((attribute) => attribute.name === name)?.value ?? null;
@@ -68,10 +72,12 @@ class TestRow {
   });
 }
 
-function fixture(rows: TestRow[]) {
+function fixture(rows: TestRow[], viewportTop = 0) {
   const media = { matches: false };
+  const viewport = { getBoundingClientRect: () => ({ top: viewportTop }), clientTop: 0 };
   const parent = {
     children: rows,
+    closest: () => viewport,
     ownerDocument: { defaultView: { matchMedia: () => media } },
     getBoundingClientRect: () => ({ top: 0 }),
     append(node: TestRow) {
@@ -550,6 +556,59 @@ describe("sidebar list motion", () => {
 });
 
 describe("pinning motion", () => {
+  it("finishes an offscreen pin at the top clipping edge instead of rushing through the viewport", () => {
+    const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
+    const pin = rows.at(-1)!;
+    const { motion, layout } = fixture(rows, 1000);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, ...rows.slice(0, -1)]);
+    motion.update(true);
+    const [frames, timing] = pin.animate.mock.lastCall!;
+    expect(timing.duration).toBe(550);
+    expect(frames[0]?.transform).toBe("translate(0px, 1245px)");
+    // The row's bottom reaches 1000; removing the transform then lands it
+    // in the real pinned slot, entirely outside the viewport.
+    expect(frames.at(-1)?.transform).toBe("translate(0px, 910px)");
+  });
+
+  it("keeps the real destination when the pinned row is partly visible", () => {
+    const [first, pin] = [new TestRow("first"), new TestRow("pin")];
+    const { motion, layout } = fixture([first, pin], 50);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, first]);
+    motion.update(true);
+    expect(pin.animate.mock.lastCall![0].at(-1)?.transform).toBe("translate(0px, 0px)");
+  });
+
+  it("keeps an interrupted offscreen pin aimed at the clipping edge", () => {
+    const rows = Array.from({ length: 16 }, (_, index) => new TestRow(String(index)));
+    const pin = rows.at(-1)!;
+    const inserted = new TestRow("inserted");
+    const { motion, layout } = fixture(rows, 1000);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, ...rows.slice(0, -1)]);
+    motion.update(true);
+    pin.animations[0]!.progress = Number(pin.animate.mock.lastCall![0][80]!.offset);
+    layout([inserted, pin, ...rows.slice(0, -1)]);
+    motion.update(true);
+    const frames = pin.animate.mock.lastCall![0];
+    expect(frames[0]?.transform).toBe("translate(7.68px, 1168px)");
+    expect(frames.at(-1)?.transform).toBe("translate(0px, 827px)");
+  });
+
+  it("does not fly a pin whose entire journey is already above the viewport", () => {
+    const [first, pin] = [new TestRow("first"), new TestRow("pin")];
+    const { motion, layout } = fixture([first, pin], 1000);
+    motion.update(false);
+    pin.setAttribute("data-thread-pinned", "true");
+    layout([pin, first]);
+    motion.update(true);
+    expect(pin.animate).not.toHaveBeenCalled();
+  });
+
   it("retargets a pin from its curved XY position during another layout change", () => {
     const first = new TestRow("first");
     const pin = new TestRow("pin");

@@ -23,6 +23,7 @@ function progress(animation: Animation) {
 /** Animate rows between their layout positions. The list must be
  * positioned so every direct child's offsetTop has the same origin. */
 export function createSidebarListMotion(parent: HTMLUListElement) {
+  const viewport = parent.closest<HTMLElement>('[data-slot="scroll-area-viewport"]');
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
   const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
@@ -137,11 +138,26 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     // The newer transform supersedes entry travel; its original opacity keeps fading.
     if (entry) entry.travel = 0;
     if (offset === 0 && offsetX === 0 && !entry) return;
+    // Spend the flight on the visible journey. Once the whole row clears the
+    // scrollport, removing its transform lands it in the real offscreen slot.
+    const targetY =
+      pinVisual && viewport
+        ? Math.max(
+            0,
+            viewport.getBoundingClientRect().top +
+              viewport.clientTop -
+              node.getBoundingClientRect().bottom,
+          )
+        : 0;
+    if (targetY > 0 && offset <= targetY) return;
     const path = pinning
-      ? sidebarPinPath(offsetX, offset)
+      ? sidebarPinPath(offsetX, offset - targetY).map((point) => ({
+          ...point,
+          y: point.y + targetY,
+        }))
       : [
           { x: offsetX, y: offset, offset: 0 },
-          { x: 0, y: 0, offset: 1 },
+          { x: 0, y: targetY, offset: 1 },
         ];
     // A pinning row stays opaque and above its neighbours until it settles.
     const animation = node.animate(
