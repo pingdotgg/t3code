@@ -1346,7 +1346,10 @@ const program = Effect.gen(function* () {
       return Deferred.succeed(resumeRelease, undefined).pipe(Effect.as({}));
     }
     if (method === "_test/finish-cancel") {
-      return Deferred.succeed(nativeCancelRelease, undefined).pipe(Effect.as({}));
+      return Effect.gen(function* () {
+        yield* Deferred.succeed(nativeCancelRequested, undefined);
+        yield* Deferred.succeed(nativeCancelRelease, undefined);
+      }).pipe(Effect.as({}));
     }
     if (method === "_test/startup-metadata") {
       return Effect.gen(function* () {
