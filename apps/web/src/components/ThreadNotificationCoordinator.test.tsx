@@ -24,7 +24,9 @@ const state = vi.hoisted(() => ({
   close: vi.fn(),
   navigate: vi.fn(),
   sound: vi.fn(),
-  notification: vi.fn(function () {}),
+  notification: vi.fn(function (_title: string, options: NotificationOptions) {
+    return Object.assign(new EventTarget(), { tag: options.tag, close: vi.fn() });
+  }),
 }));
 
 vi.mock("@effect/atom-react", () => ({
@@ -70,6 +72,7 @@ vi.mock("../state/shell", () => ({
 vi.mock("../threadNotifications", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../threadNotifications")>()),
   playNotificationSound: state.sound,
+  setNotificationBadge: vi.fn(),
 }));
 vi.mock("./ui/toast", () => ({
   toastManager: { add: state.add, close: state.close },
@@ -108,6 +111,7 @@ beforeEach(() => {
     turnError: false,
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  vi.stubGlobal("window", new EventTarget());
   vi.stubGlobal("document", {
     get visibilityState() {
       return state.visible;
@@ -188,7 +192,8 @@ describe("thread notifications", () => {
     });
   });
 
-  it("keeps desktop alerts when in-app notifications are disabled", async () => {
+  it("keeps background desktop alerts when in-app notifications are disabled", async () => {
+    state.focused = false;
     state.inApp = false;
     state.mode = "notifications";
     await render();

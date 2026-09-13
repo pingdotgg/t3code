@@ -2,7 +2,7 @@ import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Option from "effect/Option";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironments } from "../state/environments";
@@ -11,6 +11,7 @@ import {
   hasDesktopNotifications,
   hasNotificationSound,
   playNotificationSound,
+  setNotificationBadge,
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveSidebarThreadStatus } from "./Sidebar.logic";
@@ -22,6 +23,42 @@ export function ThreadNotificationCoordinator() {
   const inAppNotificationsEnabled = useClientSettings(
     (settings) => settings.inAppNotificationsEnabled,
   );
+  const pending = useRef(
+    new Map<string, { environmentId: EnvironmentId; notification: Notification }>(),
+  );
+  const onNotification = useCallback((environmentId: EnvironmentId, notification: Notification) => {
+    pending.current.get(notification.tag)?.notification.close();
+    pending.current.set(notification.tag, { environmentId, notification });
+    setNotificationBadge(pending.current.size);
+  }, []);
+
+  useEffect(() => {
+    const activeIds = new Set(environments.map(({ environmentId }) => environmentId));
+    const count = pending.current.size;
+    for (const [tag, { environmentId, notification }] of pending.current) {
+      if (activeIds.has(environmentId)) continue;
+      notification.close();
+      pending.current.delete(tag);
+    }
+    if (count !== pending.current.size) setNotificationBadge(pending.current.size);
+  }, [environments]);
+
+  useEffect(() => {
+    const clear = () => {
+      for (const { notification } of pending.current.values()) notification.close();
+      pending.current.clear();
+      setNotificationBadge(0);
+    };
+    clear();
+    if (!hasDesktopNotifications(mode)) return;
+    const unsubscribe = window.desktopBridge?.onNotificationBadgeClear?.(clear);
+    window.addEventListener("focus", clear);
+    return () => {
+      unsubscribe?.();
+      window.removeEventListener("focus", clear);
+      clear();
+    };
+  }, [mode]);
 
   useEffect(() => {
     if (!hasNotificationSound(mode)) return;
@@ -39,11 +76,18 @@ export function ThreadNotificationCoordinator() {
     <EnvironmentNotifications
       key={environment.environmentId}
       environmentId={environment.environmentId}
+      onNotification={onNotification}
     />
   ));
 }
 
-function EnvironmentNotifications({ environmentId }: { environmentId: EnvironmentId }) {
+function EnvironmentNotifications({
+  environmentId,
+  onNotification,
+}: {
+  environmentId: EnvironmentId;
+  onNotification: (environmentId: EnvironmentId, notification: Notification) => void;
+}) {
   const shell = useAtomValue(environmentShell.stateValueAtom(environmentId));
   const mode = useClientSettings((settings) => settings.notificationMode);
   const inAppNotificationsEnabled = useClientSettings(
@@ -126,6 +170,7 @@ function EnvironmentNotifications({ environmentId }: { environmentId: Environmen
       }
       if (
         !hasDesktopNotifications(mode) ||
+        (document.visibilityState === "visible" && document.hasFocus()) ||
         typeof Notification === "undefined" ||
         Notification.permission !== "granted"
       )
@@ -136,6 +181,7 @@ function EnvironmentNotifications({ environmentId }: { environmentId: Environmen
           tag: `${environmentId}:${thread.id}`,
           silent: true,
         });
+        onNotification(environmentId, notification);
         notification.addEventListener("click", () => {
           notification.close();
           window.focus();
@@ -156,6 +202,7 @@ function EnvironmentNotifications({ environmentId }: { environmentId: Environmen
     inAppNotificationsEnabled,
     mode,
     navigate,
+    onNotification,
     shell,
   ]);
 
