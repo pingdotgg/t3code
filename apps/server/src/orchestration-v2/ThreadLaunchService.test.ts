@@ -1363,6 +1363,32 @@ it.effect("rejects a server-allocated launch receipt from another project", () =
   }).pipe(Effect.provide(harness.layer));
 });
 
+it.effect("rejects a server-allocated launch retry after the thread is deleted", () => {
+  const harness = makeHarness();
+  return Effect.gen(function* () {
+    const launches = yield* ThreadLaunch.ThreadLaunchService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const { threadId: _unusedThreadId, ...rest } = launchInput({
+      command: "command:launch:allocated-deleted",
+      thread: "unused",
+      message: "Deleted before retry",
+    });
+    const first = yield* launches.launch(rest);
+    yield* threads.dispatch({
+      type: "thread.delete",
+      commandId: CommandId.make("command:launch:allocated-deleted:delete"),
+      threadId: first.threadId,
+    });
+    const failed = yield* launches.launch(rest).pipe(Effect.flip);
+    assert.equal(failed._tag, "ThreadLaunchError");
+    assert.equal(failed.operation, "create-thread");
+    assert.equal(failed.threadId, first.threadId);
+    assert.equal(failed.cause, "Thread not found.");
+    const shells = yield* threads.listProjectThreads({ projectId, includeSubagents: true });
+    assert.equal(shells.length, 0);
+  }).pipe(Effect.provide(harness.layer));
+});
+
 it.effect("does not treat an unrelated accepted command receipt as a launch", () => {
   const harness = makeHarness();
   return Effect.gen(function* () {
