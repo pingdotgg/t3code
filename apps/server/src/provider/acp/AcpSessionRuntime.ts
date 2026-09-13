@@ -320,7 +320,12 @@ interface AcpActivePrompt {
   readonly cancelled: Ref.Ref<boolean>;
 }
 
-function isPromptCancellationError(error: unknown): boolean {
+/**
+ * Determines whether a given error represents an intentional cancellation or abort
+ * from the ACP provider or transport, ensuring other -32000 errors (such as authRequired)
+ * are not falsely classified as cancellation.
+ */
+export function isPromptCancellationError(error: unknown): boolean {
   if (
     typeof error === "object" &&
     error !== null &&
@@ -329,7 +334,8 @@ function isPromptCancellationError(error: unknown): boolean {
   ) {
     const reqErr = error as EffectAcpErrors.AcpRequestError;
     const msg = (reqErr.errorMessage ?? "").toLowerCase();
-    return reqErr.code === -32000 || msg.includes("cancel") || msg.includes("abort");
+    // Require a cancellation/abort keyword so other -32000 errors (e.g. authRequired) are not masked
+    return msg.includes("cancel") || msg.includes("abort");
   }
   return false;
 }
@@ -1040,6 +1046,10 @@ export const make = (
                         Cause.hasInterruptsOnly(cause)) ||
                       (isCancelled && isPromptCancellationCause(cause))
                     ) {
+                      yield* finalizeActiveToolCallsOnCancellation({
+                        queue: eventQueue,
+                        toolCallsRef,
+                      });
                       return {
                         stopReason: "cancelled",
                       } satisfies EffectAcpSchema.PromptResponse;
@@ -1306,6 +1316,35 @@ const ensureActiveAssistantSegment = ({
         : Effect.succeed(result.itemId),
     ),
   );
+
+/**
+ * Finalizes any active in-flight tool calls with a failed terminal cancellation status
+ * when an ACP prompt turn is cancelled.
+ */
+const finalizeActiveToolCallsOnCancellation = ({
+  queue,
+  toolCallsRef,
+}: {
+  readonly queue: Queue.Queue<AcpSessionRuntimeEvent>;
+  readonly toolCallsRef: Ref.Ref<Map<string, AcpToolCallTrackedState>>;
+}) =>
+  Effect.gen(function* () {
+    const activeToolCalls = yield* Ref.modify(toolCallsRef, (current) => {
+      const active = Array.from(current.values()).map((tracked) => tracked.state);
+      return [active, new Map<string, AcpToolCallTrackedState>()] as const;
+    });
+    for (const toolCall of activeToolCalls) {
+      yield* Queue.offer(queue, {
+        _tag: "ToolCallUpdated",
+        toolCall: {
+          ...toolCall,
+          status: "failed",
+          detail: toolCall.detail ?? "Cancelled.",
+        },
+        rawPayload: undefined,
+      });
+    }
+  });
 
 const closeActiveAssistantSegment = ({
   queue,

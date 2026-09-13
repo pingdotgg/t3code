@@ -31,6 +31,52 @@ const mockRuntimeOptions = {
   authMethodId: "test",
 } satisfies AcpSessionRuntime.AcpSessionRuntimeOptions;
 
+describe("isPromptCancellationError", () => {
+  it("identifies cancel and abort error messages as cancellations", () => {
+    expect(
+      AcpSessionRuntime.isPromptCancellationError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32000,
+          errorMessage: "context canceled: The request was canceled by the client.",
+        }),
+      ),
+    ).toBe(true);
+    expect(
+      AcpSessionRuntime.isPromptCancellationError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32000,
+          errorMessage: "The operation was aborted",
+        }),
+      ),
+    ).toBe(true);
+  });
+
+  it("does not classify authRequired (-32000) or other non-cancellation errors as cancellation", () => {
+    expect(
+      AcpSessionRuntime.isPromptCancellationError(
+        EffectAcpErrors.AcpRequestError.authRequired("Authentication required"),
+      ),
+    ).toBe(false);
+    expect(
+      AcpSessionRuntime.isPromptCancellationError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32000,
+          errorMessage: "Authentication required",
+        }),
+      ),
+    ).toBe(false);
+    expect(
+      AcpSessionRuntime.isPromptCancellationError(
+        new EffectAcpErrors.AcpRequestError({
+          code: -32603,
+          errorMessage: "Internal server error",
+        }),
+      ),
+    ).toBe(false);
+    expect(AcpSessionRuntime.isPromptCancellationError(new Error("boom"))).toBe(false);
+  });
+});
+
 describe("AcpSessionRuntime", () => {
   for (const setupMethod of ["session/new", "session/resume"] as const) {
     it.effect(`buffers root metadata while ${setupMethod} startup is still pending`, () =>
@@ -222,6 +268,120 @@ describe("AcpSessionRuntime", () => {
   );
 
   it.effect(
+    "drains active prompt successfully when session/cancel notification fails with transport error",
+    () =>
+      Effect.gen(function* () {
+        const toolStarted = yield* Deferred.make<void>();
+        const cancelFailed = yield* Deferred.make<void>();
+        let promptRequests = 0;
+        const events: Array<AcpSessionRuntime.AcpSessionRuntimeEvent> = [];
+        const runtime = yield* AcpSessionRuntime.make({
+          ...mockRuntimeOptions,
+          spawn: {
+            ...mockRuntimeOptions.spawn,
+            env: {
+              T3_ACP_COMPLETE_FIRST_PROMPT_ON_CANCEL: "1",
+            },
+          },
+          protocolLogging: {
+            logOutgoing: true,
+            logger: (event) => {
+              if (
+                event.direction === "outgoing" &&
+                typeof event.payload === "object" &&
+                event.payload !== null &&
+                "_tag" in event.payload &&
+                event.payload._tag === "Notification" &&
+                "tag" in event.payload &&
+                event.payload.tag === "session/cancel"
+              ) {
+                return Deferred.succeed(cancelFailed, undefined).pipe(
+                  Effect.andThen(
+                    Effect.fail(
+                      new EffectAcpErrors.AcpTransportError({
+                        operation: "call-rpc",
+                        method: "session/cancel",
+                        detail: "Broken pipe",
+                        cause: undefined,
+                      }),
+                    ),
+                  ),
+                ) as unknown as Effect.Effect<void, never>;
+              }
+              return Effect.void;
+            },
+          },
+          cancelBehavior: "wait-for-prompt",
+          requestLogger: (event) =>
+            Effect.sync(() => {
+              if (event.method === "session/prompt" && event.status === "started")
+                promptRequests += 1;
+            }),
+        });
+        yield* runtime.getEvents().pipe(
+          Stream.runForEach((event) => {
+            if (event._tag === "EventStreamBarrier") {
+              return Deferred.succeed(event.acknowledge, undefined);
+            }
+            events.push(event);
+            if (event._tag === "ToolCallUpdated" && event.toolCall.status === "inProgress") {
+              return Deferred.succeed(toolStarted, undefined);
+            }
+            return Effect.void;
+          }),
+          Effect.forkChild,
+        );
+        yield* runtime.start();
+        const prompt = yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "first" }],
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(toolStarted);
+        const cancellation = yield* runtime.cancel.pipe(Effect.forkChild);
+        yield* Deferred.await(cancelFailed);
+        const replacement = yield* runtime
+          .prompt({
+            prompt: [{ type: "text", text: "second" }],
+          })
+          .pipe(Effect.forkChild({ startImmediately: true }));
+
+        expect(prompt.pollUnsafe()).toBeUndefined();
+        expect(cancellation.pollUnsafe()).toBeUndefined();
+        expect(promptRequests).toBe(1);
+        yield* runtime.request("_test/finish-cancel", {});
+        yield* Fiber.join(cancellation);
+
+        expect(yield* Fiber.join(prompt)).toEqual({
+          stopReason: "cancelled",
+          _meta: { nativeCancel: true },
+        });
+        expect(
+          events.some(
+            (event) =>
+              event._tag === "ToolCallUpdated" &&
+              event.toolCall.status === "failed" &&
+              event.toolCall.detail === "Cancelled.",
+          ),
+        ).toBe(true);
+        const cancelledDelta = events.find(
+          (event) => event._tag === "ContentDelta" && event.text === "Request cancelled.",
+        );
+        expect(cancelledDelta?._tag).toBe("ContentDelta");
+        if (cancelledDelta?._tag === "ContentDelta") {
+          expect(
+            events.filter(
+              (event) =>
+                event._tag === "AssistantItemCompleted" && event.itemId === cancelledDelta.itemId,
+            ),
+          ).toHaveLength(1);
+        }
+        expect(yield* Fiber.join(replacement)).toMatchObject({ stopReason: "end_turn" });
+        expect(promptRequests).toBe(2);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
     "drains active prompt successfully when agent cancels by failing in-flight prompt with context canceled",
     () =>
       Effect.gen(function* () {
@@ -279,6 +439,15 @@ describe("AcpSessionRuntime", () => {
         expect(yield* Fiber.join(prompt)).toEqual({
           stopReason: "cancelled",
         });
+        expect(
+          events.some(
+            (event) =>
+              event._tag === "ToolCallUpdated" &&
+              event.toolCall.toolCallId === "native-cancel-tool" &&
+              event.toolCall.status === "failed" &&
+              event.toolCall.detail === "Cancelled.",
+          ),
+        ).toBe(true);
         expect(yield* Fiber.join(replacement)).toMatchObject({ stopReason: "end_turn" });
         expect(promptRequests).toBe(2);
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
