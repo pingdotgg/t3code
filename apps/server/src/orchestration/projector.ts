@@ -1,3 +1,7 @@
+import {
+  taskSettlementInvalidation,
+  invalidatesThreadTaskSettlement,
+} from "./taskSettlementRestore.ts";
 import type {
   OrchestrationEvent,
   OrchestrationProject,
@@ -343,8 +347,23 @@ export function projectEvent(
   model: OrchestrationReadModel,
   event: OrchestrationEvent,
 ): Effect.Effect<OrchestrationReadModel, OrchestrationProjectorDecodeError> {
+  const invalidation = taskSettlementInvalidation(event);
   const nextBase: OrchestrationReadModel = {
     ...model,
+    ...(invalidation
+      ? {
+          threads: model.threads.map((thread) => {
+            const restore = thread.taskSettlementRestore;
+            if (!restore) return thread;
+            const matches =
+              invalidation.kind === "task"
+                ? restore.taskId === invalidation.taskId
+                : thread.id === invalidation.threadId &&
+                  invalidatesThreadTaskSettlement(event, restore, thread.taskId);
+            return matches ? { ...thread, taskSettlementRestore: null } : thread;
+          }),
+        }
+      : {}),
     snapshotSequence: event.sequence,
     updatedAt: event.occurredAt,
   };
@@ -725,6 +744,7 @@ export function projectEvent(
         Effect.map((payload) => ({
           ...nextBase,
           threads: updateThread(nextBase.threads, payload.threadId, {
+            taskSettlementRestore: payload.taskSettlementRestore ?? null,
             settledOverride: "settled",
             settledAt: payload.settledAt,
             unsettledAt: null,
@@ -750,6 +770,7 @@ export function projectEvent(
                 existing?.settledOverride === "active"
                   ? (existing.unsettledAt ?? null)
                   : payload.updatedAt,
+              ...payload.restoredState,
               updatedAt: payload.updatedAt,
             }),
           };

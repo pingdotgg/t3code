@@ -7,6 +7,7 @@
  * @module ProjectionThreadRepository
  */
 import {
+  ThreadTaskSettlementRestore,
   CommandId,
   IsoDateTime,
   ModelSelection,
@@ -30,6 +31,7 @@ export const ProjectionThread = Schema.Struct({
   threadId: ThreadId,
   projectId: ProjectId,
   taskId: Schema.optional(Schema.NullOr(TaskId)),
+  taskSettlementRestore: Schema.optional(Schema.NullOr(ThreadTaskSettlementRestore)),
   title: Schema.String,
   modelSelection: ModelSelection,
   runtimeMode: RuntimeMode,

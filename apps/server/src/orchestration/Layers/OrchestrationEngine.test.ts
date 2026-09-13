@@ -2481,3 +2481,99 @@ it("accepts task automatic settlement after unrelated events and replays its rec
     await system.dispose();
   }
 });
+
+it.each(["reopen", "detach", "activity"] as const)(
+  "retains task settlement restoration across restarts and respects %s",
+  async (action) => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-task-restore-"));
+    const databasePath = NodePath.join(directory, "state.sqlite");
+    let system = await createOrchestrationSystem(databasePath);
+    try {
+      const { taskId, threadId } = await seedGuardTask(system);
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.active.reorder",
+          commandId: CommandId.make("restore-order"),
+          threadId,
+          orderKey: "a",
+        }),
+      );
+      await system.run(
+        system.engine.dispatch({
+          type: "thread.snooze",
+          commandId: CommandId.make("restore-snooze"),
+          threadId,
+          snoozedUntil: "2099-01-01T00:00:00.000Z",
+        }),
+      );
+      const before = (await system.readModel()).threads[0]!;
+      const settle = {
+        type: "task.settle",
+        commandId: CommandId.make("restore-settle"),
+        taskId,
+      } as const;
+      const receipt = await system.run(system.engine.dispatch(settle));
+      const saved = (await system.readModel()).threads[0]?.taskSettlementRestore;
+      expect(saved).toMatchObject({
+        taskId,
+        state: { snoozedUntil: before.snoozedUntil, activeOrderKey: "a" },
+      });
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      expect(await system.run(system.engine.dispatch(settle))).toEqual(receipt);
+      expect((await system.readModel()).threads[0]?.taskSettlementRestore).toEqual(saved);
+      if (action === "detach") {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.task.set",
+            commandId: CommandId.make("restore-detach"),
+            threadId,
+            taskId: null,
+          }),
+        );
+      } else if (action === "activity") {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.unsettle",
+            commandId: CommandId.make("restore-member-wake"),
+            threadId,
+            reason: "user",
+          }),
+        );
+      }
+      const reopen = {
+        type: "task.unsettle",
+        commandId: CommandId.make("restore-reopen"),
+        taskId,
+        reason: "user",
+      } as const;
+      await system.run(system.engine.dispatch(reopen));
+      const restored = (await system.readModel()).threads[0]!;
+      expect(restored.taskSettlementRestore).toBeNull();
+      if (action === "reopen") {
+        expect(restored).toMatchObject({
+          settledOverride: before.settledOverride,
+          snoozedUntil: before.snoozedUntil,
+          snoozedAt: before.snoozedAt,
+          unsettledAt: before.unsettledAt,
+          activeOrderKey: before.activeOrderKey,
+        });
+      } else if (action === "detach") {
+        expect(restored).toMatchObject({
+          taskId: null,
+          settledOverride: "settled",
+          snoozedUntil: null,
+        });
+      } else {
+        expect(restored).toMatchObject({ settledOverride: "active", snoozedUntil: null });
+      }
+      await system.dispose();
+      system = await createOrchestrationSystem(databasePath);
+      await system.run(system.engine.dispatch(reopen));
+      expect((await system.readModel()).threads[0]).toEqual(restored);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  },
+);

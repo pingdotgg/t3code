@@ -262,6 +262,110 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection
         }),
     );
 
+    for (const action of ["restore", "detach", "activity"] as const) {
+      it.effect(`replays task member restoration and ${action} invalidation`, () =>
+        Effect.gen(function* () {
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const store = yield* OrchestrationEventStore;
+          const threads = yield* ProjectionThreadRepository;
+          const sql = yield* SqlClient.SqlClient;
+          const threadId = ThreadId.make(`restore-${action}`);
+          const taskId = TaskId.make(`restore-task-${action}`);
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const updatedAt = "2026-01-02T00:00:00.000Z";
+          const fields = {
+            aggregateKind: "thread" as const,
+            aggregateId: threadId,
+            occurredAt: updatedAt,
+            commandId: CommandId.make(`restore-${action}`),
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+          };
+          const created = yield* store.append({
+            ...fields,
+            type: "thread.created",
+            eventId: EventId.make(`created-${action}`),
+            payload: {
+              threadId,
+              taskId,
+              projectId: ProjectId.make("restore-project"),
+              title: "Restorable member",
+              modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+              createdAt,
+              updatedAt: createdAt,
+            },
+          });
+          yield* pipeline.projectEvent(created);
+          const state = {
+            settledOverride: null,
+            settledAt: null,
+            unsettledAt: createdAt,
+            snoozedAt: createdAt,
+            snoozedUntil: "2026-02-01T00:00:00.000Z",
+            pinnedAt: null,
+            pinOrderKey: null,
+            activeOrderKey: "a",
+          };
+          const restore = { taskId, settlementId: fields.commandId, state };
+          const settled = yield* store.append({
+            ...fields,
+            type: "thread.settled",
+            eventId: EventId.make(`settled-${action}`),
+            payload: { threadId, settledAt: updatedAt, updatedAt, taskSettlementRestore: restore },
+          });
+          yield* pipeline.projectEvent(settled);
+          const saved = Option.getOrThrow(yield* threads.getById({ threadId }));
+          assert.deepEqual(saved.taskSettlementRestore, restore);
+          // Rebuild the thread projection from events, including the durable restore record.
+          yield* sql`DELETE FROM projection_threads WHERE thread_id = ${threadId}`;
+          yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threads}`;
+          yield* pipeline.bootstrap;
+          assert.deepEqual(Option.getOrThrow(yield* threads.getById({ threadId })), saved);
+          const event = yield* store.append(
+            action === "restore"
+              ? {
+                  ...fields,
+                  type: "thread.unsettled",
+                  eventId: EventId.make(`end-${action}`),
+                  payload: { threadId, reason: "user", updatedAt, restoredState: state },
+                }
+              : action === "detach"
+                ? {
+                    ...fields,
+                    type: "thread.task-set",
+                    eventId: EventId.make(`end-${action}`),
+                    payload: { threadId, taskId: null, updatedAt },
+                  }
+                : {
+                    ...fields,
+                    aggregateKind: "task",
+                    aggregateId: taskId,
+                    type: "task.unsettled",
+                    eventId: EventId.make(`end-${action}`),
+                    payload: { taskId, reason: "activity", updatedAt },
+                  },
+          );
+          yield* pipeline.projectEvent(event);
+          const expected = Option.getOrThrow(yield* threads.getById({ threadId }));
+          assert.isNull(expected.taskSettlementRestore);
+          assert.strictEqual(
+            expected.snoozedUntil,
+            action === "restore" ? state.snoozedUntil : null,
+          );
+          assert.strictEqual(expected.activeOrderKey, action === "restore" ? "a" : null);
+          yield* sql`DELETE FROM projection_threads WHERE thread_id = ${threadId}`;
+          yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.threads}`;
+          yield* pipeline.bootstrap;
+          assert.deepEqual(Option.getOrThrow(yield* threads.getById({ threadId })), expected);
+        }),
+      );
+    }
+
     it.effect("replays every task lifecycle event identically in memory and SQLite", () =>
       Effect.gen(function* () {
         const pipeline = yield* OrchestrationProjectionPipeline;

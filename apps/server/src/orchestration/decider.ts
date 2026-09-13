@@ -7,6 +7,7 @@ import {
   ThreadLinkedPullRequest,
   UserInputRequestedPayload,
   isImportedAgentSessionMessageId,
+  type TaskId,
   type OrchestrationCommand,
   type OrchestrationEvent,
   type OrchestrationReadModel,
@@ -198,6 +199,40 @@ function taskMemberSettlementEvidence(thread: OrchestrationThread) {
     hasPendingUserInput: requests.some((request) => request.kind === "user-input.requested"),
   };
 }
+
+/** Explicit reopening restores only members still owned by this settlement. */
+const restoreTaskMembers = Effect.fn("restoreTaskMembers")(function* (
+  readModel: OrchestrationReadModel,
+  taskId: TaskId,
+  commandId: OrchestrationCommand["commandId"],
+  occurredAt: string,
+) {
+  if (readModel.tasks.find((task) => task.id === taskId)?.settledOverride !== "settled") return [];
+  const events: PlannedOrchestrationEvent[] = [];
+  for (const member of listVisibleTaskMembers(readModel, taskId)) {
+    const restore = member.taskSettlementRestore;
+    if (!restore || restore.taskId !== taskId || member.settledOverride !== "settled") continue;
+    const state = restore.state;
+    const expired =
+      state.snoozedUntil !== null && Date.parse(state.snoozedUntil) <= Date.parse(occurredAt);
+    events.push({
+      ...(yield* withEventBase({
+        aggregateKind: "thread",
+        aggregateId: member.id,
+        commandId,
+        occurredAt,
+      })),
+      type: "thread.unsettled",
+      payload: {
+        threadId: member.id,
+        reason: "user",
+        updatedAt: occurredAt,
+        restoredState: { ...state, ...(expired ? { snoozedUntil: null, snoozedAt: null } : {}) },
+      },
+    });
+  }
+  return events;
+});
 
 /** Activity wakes a parked parent once; ordinary updates preserve its saved slot. */
 const taskReengagementEvents = Effect.fn("taskReengagementEvents")(function* ({
@@ -496,7 +531,34 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           });
         }
       }
-      const events: PlannedOrchestrationEvent[] = [...memberEvents];
+      const memberById = new Map(members.map((member) => [member.id, member]));
+      const events: PlannedOrchestrationEvent[] = memberEvents.map((event) => {
+        if (event.type !== "thread.settled" || !("threadId" in event.payload)) return event;
+        const member = memberById.get(event.payload.threadId);
+        if (!member) return event;
+        const restore =
+          member.settledOverride === "settled" &&
+          member.snoozedUntil == null &&
+          member.pinnedAt == null
+            ? task.settledOverride === "settled"
+              ? member.taskSettlementRestore
+              : null
+            : {
+                taskId: task.id,
+                settlementId: command.commandId,
+                state: {
+                  settledOverride: member.settledOverride,
+                  settledAt: member.settledAt,
+                  unsettledAt: member.unsettledAt ?? null,
+                  snoozedUntil: member.snoozedUntil ?? null,
+                  snoozedAt: member.snoozedAt ?? null,
+                  pinnedAt: member.pinnedAt ?? null,
+                  pinOrderKey: member.pinOrderKey ?? null,
+                  activeOrderKey: member.activeOrderKey ?? null,
+                },
+              };
+        return { ...event, payload: { ...event.payload, taskSettlementRestore: restore ?? null } };
+      });
       if (task.pinnedAt != null) {
         events.push({
           ...(yield* withEventBase({
@@ -641,20 +703,29 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       });
       const alreadyPinnedActive = task.settledOverride === "active" && task.snoozedUntil === null;
       const occurredAt = yield* nowIso;
-      return {
-        ...(yield* withEventBase({
-          aggregateKind: "task",
-          aggregateId: command.taskId,
-          occurredAt,
-          commandId: command.commandId,
-        })),
-        type: "task.unsettled",
-        payload: {
-          taskId: command.taskId,
-          reason: command.reason,
-          updatedAt: alreadyPinnedActive ? task.updatedAt : occurredAt,
+      const memberEvents = yield* restoreTaskMembers(
+        readModel,
+        task.id,
+        command.commandId,
+        occurredAt,
+      );
+      return [
+        ...memberEvents,
+        {
+          ...(yield* withEventBase({
+            aggregateKind: "task",
+            aggregateId: command.taskId,
+            occurredAt,
+            commandId: command.commandId,
+          })),
+          type: "task.unsettled",
+          payload: {
+            taskId: command.taskId,
+            reason: command.reason,
+            updatedAt: alreadyPinnedActive ? task.updatedAt : occurredAt,
+          },
         },
-      };
+      ];
     }
 
     case "task.snooze": {
@@ -766,6 +837,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
       const promotionEvents: Array<Omit<OrchestrationEvent, "sequence">> = [];
       if (task.settledOverride === "settled") {
+        promotionEvents.push(
+          ...(yield* restoreTaskMembers(readModel, task.id, command.commandId, occurredAt)),
+        );
         promotionEvents.push({
           ...(yield* withEventBase({
             aggregateKind: "task",

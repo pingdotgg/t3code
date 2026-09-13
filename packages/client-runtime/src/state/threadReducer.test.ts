@@ -1669,3 +1669,38 @@ describe("applyThreadDetailEvent", () => {
     });
   });
 });
+
+it("restores task member organization without changing its conversation", () => {
+  const restoredState = {
+    settledOverride: null,
+    settledAt: null,
+    unsettledAt: "2026-03-01T00:00:00.000Z",
+    snoozedUntil: "2026-05-01T00:00:00.000Z",
+    snoozedAt: "2026-04-01T00:00:00.000Z",
+    activeOrderKey: "a",
+    pinnedAt: null,
+    pinOrderKey: null,
+  } as const;
+  const result = applyThreadDetailEvent(
+    { ...baseThread, settledOverride: "settled" },
+    {
+      ...baseEventFields,
+      sequence: 1,
+      aggregateKind: "thread",
+      aggregateId: baseThread.id,
+      occurredAt: "2026-04-02T00:00:00.000Z",
+      type: "thread.unsettled",
+      payload: {
+        threadId: baseThread.id,
+        reason: "user",
+        updatedAt: "2026-04-02T00:00:00.000Z",
+        restoredState,
+      },
+    },
+  );
+  expect(result.kind).toBe("updated");
+  if (result.kind !== "updated") throw new Error("Expected a restored thread");
+  expect(result.thread).toMatchObject({ ...restoredState, settledAt: null });
+  expect(result.thread.messages).toBe(baseThread.messages);
+  expect(result.thread.session).toBe(baseThread.session);
+});

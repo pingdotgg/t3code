@@ -273,26 +273,260 @@ it.layer(NodeServices.layer)("task lifecycle", (it) => {
     return (yield* apply(model, { type: "thread.task.set", commandId, threadId, taskId })).model;
   });
 
-  it.effect("settles all members atomically and reopens only the task", () =>
+  it.effect(
+    "settles all members atomically and restores changed members on explicit reopening",
+    () =>
+      Effect.gen(function* () {
+        let model = yield* memberSeed;
+        ({ model } = yield* apply(model, { type: "task.pin", commandId, taskId, orderKey: "a" }));
+        const result = yield* apply(model, { type: "task.settle", commandId, taskId });
+        expect(result.events.at(-1)?.type).toBe("task.settled");
+        expect(result.model.tasks[0]).toMatchObject({ settledOverride: "settled", pinnedAt: null });
+        expect(result.model.threads[0]?.settledOverride).toBe("settled");
+        const duplicate = yield* apply(result.model, { type: "task.settle", commandId, taskId });
+        expect(duplicate.model.tasks).toEqual(result.model.tasks);
+        expect(duplicate.model.threads).toEqual(result.model.threads);
+        const reopened = yield* apply(result.model, {
+          type: "task.unsettle",
+          commandId,
+          taskId,
+          reason: "user",
+        });
+        expect(reopened.events.map((event) => event.type)).toEqual([
+          "thread.unsettled",
+          "task.unsettled",
+        ]);
+        expect(reopened.model.tasks[0]?.settledOverride).toBe("active");
+        expect(reopened.model.threads[0]?.settledOverride).toBe(null);
+        expect(reopened.model.threads[0]?.taskSettlementRestore).toBe(null);
+      }),
+  );
+
+  it.effect(
+    "restores mixed member states and order, preserves the snapshot on duplicate settlement",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(now));
+        let model = yield* memberSeed;
+        const snoozedId = ThreadId.make("snoozed");
+        const settledId = ThreadId.make("already-settled");
+        const snoozedSettledId = ThreadId.make("snoozed-settled");
+        for (const id of [snoozedId, settledId, snoozedSettledId]) {
+          ({ model } = yield* apply(model, { ...threadCreate, threadId: id }));
+          ({ model } = yield* apply(model, {
+            type: "thread.task.set",
+            commandId,
+            threadId: id,
+            taskId,
+          }));
+        }
+        ({ model } = yield* apply(model, {
+          type: "thread.unsettle",
+          commandId,
+          threadId,
+          reason: "user",
+        }));
+        ({ model } = yield* apply(model, {
+          type: "thread.active.reorder",
+          commandId,
+          threadId,
+          orderKey: "a",
+        }));
+        const wakeAt = "2026-01-02T00:00:00.000Z";
+        ({ model } = yield* apply(model, {
+          type: "thread.snooze",
+          commandId,
+          threadId: snoozedId,
+          snoozedUntil: wakeAt,
+        }));
+        ({ model } = yield* apply(model, {
+          type: "thread.settle",
+          commandId,
+          threadId: settledId,
+        }));
+        ({ model } = yield* apply(model, {
+          type: "thread.settle",
+          commandId,
+          threadId: snoozedSettledId,
+        }));
+        ({ model } = yield* apply(model, {
+          type: "thread.snooze",
+          commandId,
+          threadId: snoozedSettledId,
+          snoozedUntil: wakeAt,
+        }));
+        const original = model.threads;
+        ({ model } = yield* apply(model, {
+          type: "task.settle",
+          commandId: CommandId.make("settle"),
+          taskId,
+        }));
+        const first = model.threads;
+        ({ model } = yield* apply(model, {
+          type: "task.settle",
+          commandId: CommandId.make("duplicate"),
+          taskId,
+        }));
+        expect(model.threads).toEqual(first);
+        ({ model } = yield* apply(model, {
+          type: "task.unsettle",
+          commandId,
+          taskId,
+          reason: "user",
+        }));
+        for (const before of original) {
+          const restored = model.threads.find((thread) => thread.id === before.id)!;
+          for (const key of [
+            "settledOverride",
+            "settledAt",
+            "unsettledAt",
+            "snoozedAt",
+            "snoozedUntil",
+            "activeOrderKey",
+          ] as const)
+            expect(restored[key]).toEqual(before[key]);
+          expect(restored.taskSettlementRestore).toBeNull();
+        }
+        const repeated = yield* apply(model, {
+          type: "task.unsettle",
+          commandId,
+          taskId,
+          reason: "user",
+        });
+        expect(repeated.model.threads).toEqual(model.threads);
+      }),
+  );
+
+  it.effect("expired snoozes return active and a new settlement captures a fresh state", () =>
     Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now));
       let model = yield* memberSeed;
-      ({ model } = yield* apply(model, { type: "task.pin", commandId, taskId, orderKey: "a" }));
-      const result = yield* apply(model, { type: "task.settle", commandId, taskId });
-      expect(result.events.at(-1)?.type).toBe("task.settled");
-      expect(result.model.tasks[0]).toMatchObject({ settledOverride: "settled", pinnedAt: null });
-      expect(result.model.threads[0]?.settledOverride).toBe("settled");
-      const duplicate = yield* apply(result.model, { type: "task.settle", commandId, taskId });
-      expect(duplicate.model.tasks).toEqual(result.model.tasks);
-      expect(duplicate.model.threads).toEqual(result.model.threads);
-      const reopened = yield* apply(result.model, {
+      ({ model } = yield* apply(model, {
+        type: "thread.snooze",
+        commandId,
+        threadId,
+        snoozedUntil: "2026-01-02T00:00:00.000Z",
+      }));
+      ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
+      yield* TestClock.setTime(Date.parse("2026-01-03T00:00:00.000Z"));
+      ({ model } = yield* apply(model, {
         type: "task.unsettle",
         commandId,
         taskId,
         reason: "user",
+      }));
+      expect(model.threads[0]).toMatchObject({
+        settledOverride: null,
+        snoozedUntil: null,
+        snoozedAt: null,
       });
-      expect(reopened.events.every((event) => event.aggregateKind === "task")).toBe(true);
-      expect(reopened.model.tasks[0]?.settledOverride).toBe("active");
-      expect(reopened.model.threads[0]?.settledOverride).toBe("settled");
+      ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
+      expect(model.threads[0]?.taskSettlementRestore?.state.snoozedUntil).toBeNull();
+      ({ model } = yield* apply(model, { type: "task.pin", commandId, taskId }));
+      expect(model.tasks[0]?.pinnedAt).not.toBeNull();
+      expect(model.threads[0]?.settledOverride).toBeNull();
+    }),
+  );
+
+  for (const change of ["detach-and-readd", "settle-again", "snooze", "archive"] as const) {
+    it.effect(`does not restore members after ${change}`, () =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(now));
+        let model = yield* memberSeed;
+        ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
+        const newer = CommandId.make("newer");
+        if (change === "detach-and-readd") {
+          ({ model } = yield* apply(model, {
+            type: "thread.task.set",
+            commandId: newer,
+            threadId,
+            taskId: null,
+          }));
+          expect(model.threads[0]).toMatchObject({
+            settledOverride: "settled",
+            taskSettlementRestore: null,
+          });
+          ({ model } = yield* apply(model, {
+            type: "thread.task.set",
+            commandId: newer,
+            threadId,
+            taskId,
+          }));
+        } else if (change === "snooze") {
+          ({ model } = yield* apply(model, {
+            type: "thread.snooze",
+            commandId: newer,
+            threadId,
+            snoozedUntil: "2026-01-02T00:00:00.000Z",
+          }));
+        } else {
+          ({ model } = yield* apply(model, {
+            type: change === "archive" ? "thread.archive" : "thread.settle",
+            commandId: newer,
+            threadId,
+          }));
+        }
+        const before = model.threads;
+        ({ model } = yield* apply(model, {
+          type: "task.unsettle",
+          commandId,
+          taskId,
+          reason: "user",
+        }));
+        expect(model.threads).toEqual(before);
+      }),
+    );
+  }
+
+  it.effect("member activity ends restoration without reopening its settled siblings", () =>
+    Effect.gen(function* () {
+      let model = yield* memberSeed;
+      const otherId = ThreadId.make("other");
+      ({ model } = yield* apply(model, { ...threadCreate, threadId: otherId }));
+      ({ model } = yield* apply(model, {
+        type: "thread.task.set",
+        commandId,
+        threadId: otherId,
+        taskId,
+      }));
+      ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
+      ({ model } = yield* apply(model, {
+        type: "thread.unsettle",
+        commandId,
+        threadId,
+        reason: "user",
+      }));
+      expect(model.threads.find((thread) => thread.id === otherId)).toMatchObject({
+        settledOverride: "settled",
+        taskSettlementRestore: null,
+      });
+      ({ model } = yield* apply(model, {
+        type: "task.unsettle",
+        commandId,
+        taskId,
+        reason: "user",
+      }));
+      expect(model.threads.find((thread) => thread.id === otherId)?.settledOverride).toBe(
+        "settled",
+      );
+    }),
+  );
+
+  it.effect("reopens legacy tasks without guessing member states", () =>
+    Effect.gen(function* () {
+      let model = yield* memberSeed;
+      ({ model } = yield* apply(model, { type: "task.settle", commandId, taskId }));
+      model = {
+        ...model,
+        threads: model.threads.map((thread) => ({ ...thread, taskSettlementRestore: undefined })),
+      };
+      ({ model } = yield* apply(model, {
+        type: "task.unsettle",
+        commandId,
+        taskId,
+        reason: "user",
+      }));
+      expect(model.threads[0]?.settledOverride).toBe("settled");
     }),
   );
 

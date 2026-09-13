@@ -195,6 +195,7 @@ export function applyThreadDetailEvent(
             thread.settledOverride === "active"
               ? (thread.unsettledAt ?? null)
               : event.payload.updatedAt,
+          ...event.payload.restoredState,
           updatedAt: event.payload.updatedAt,
         },
       };

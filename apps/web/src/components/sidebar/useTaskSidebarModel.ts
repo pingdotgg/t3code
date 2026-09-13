@@ -207,16 +207,18 @@ export function useTaskSidebarModel(input: Input) {
           taskId,
           ...(taskId
             ? { pinnedAt: null, pinOrderKey: null }
-            : {
-                settledOverride: "active",
-                unsettledAt: now,
-                settledAt: null,
-                snoozedUntil: null,
-                snoozedAt: null,
-              }),
+            : intent.kind === "remove-from-task" && intent.section === "settled"
+              ? {}
+              : {
+                  settledOverride: "active",
+                  unsettledAt: now,
+                  settledAt: null,
+                  snoozedUntil: null,
+                  snoozedAt: null,
+                }),
         });
         add(ref.environmentId, () => taskActions.moveThreadToTask(ref, taskId));
-        if (intent.kind === "remove-from-task") {
+        if (intent.kind === "remove-from-task" && intent.section === "active") {
           if (thread.settledOverride === "settled")
             add(ref.environmentId, () => threadActions.unsettleThread(ref));
           if (thread.snoozedUntil) add(ref.environmentId, () => threadActions.unsnoozeThread(ref));

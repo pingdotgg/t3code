@@ -489,7 +489,7 @@ export type TaskSidebarDrop =
   | {
       readonly kind: "remove-from-task";
       readonly threadRef: ScopedThreadRef;
-      readonly section: "active";
+      readonly section: "active" | "settled";
     }
   | {
       readonly kind: "reorder";
@@ -542,8 +542,13 @@ export function resolveTaskSidebarDrop(
     target.kind === "thread" || target.kind === "task-settled-header" ? target.taskKey : undefined;
   const sourceParent = source.kind === "thread" ? source.taskKey : undefined;
   if (sourceParent !== targetParent) {
-    if (source.kind === "thread" && sourceParent && !targetParent && section === "active")
-      return { kind: "remove-from-task", threadRef: source.threadRef, section: "active" };
+    if (
+      source.kind === "thread" &&
+      sourceParent &&
+      !targetParent &&
+      (section === "active" || (section === "settled" && source.section === "settled"))
+    )
+      return { kind: "remove-from-task", threadRef: source.threadRef, section };
     return null;
   }
   if (sourceParent && section === "pinned") return null;

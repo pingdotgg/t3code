@@ -1,3 +1,4 @@
+import { ThreadTaskSettlementRestore } from "@t3tools/contracts";
 import {
   AgentSessionImportSource,
   ApprovalRequestId,
@@ -131,6 +132,7 @@ const ProjectionThreadPullRequestDbRowSchema = ProjectionThreadPullRequest.mapFi
 );
 const ProjectionThreadDbRowSchema = ProjectionThread.mapFields(
   Struct.assign({
+    taskSettlementRestore: Schema.NullOr(Schema.fromJsonString(ThreadTaskSettlementRestore)),
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -604,6 +606,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -645,6 +648,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -688,6 +692,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -1249,6 +1254,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -2412,6 +2418,7 @@ pending_approval_requests AS (
               const threads: ReadonlyArray<OrchestrationThread> = threadRows.map((row) => ({
                 id: row.threadId,
                 taskId: row.taskId ?? null,
+                taskSettlementRestore: row.taskSettlementRestore ?? null,
                 projectId: row.projectId,
                 title: row.title,
                 modelSelection: row.modelSelection,
@@ -2670,6 +2677,7 @@ pending_approval_requests AS (
                 threads.push({
                   id: row.threadId,
                   taskId: row.taskId ?? null,
+                  taskSettlementRestore: row.taskSettlementRestore ?? null,
                   projectId: row.projectId,
                   title: row.title,
                   modelSelection: row.modelSelection,
@@ -3725,6 +3733,7 @@ pending_approval_requests AS (
       const thread = {
         id: threadRow.value.threadId,
         taskId: threadRow.value.taskId ?? null,
+        taskSettlementRestore: threadRow.value.taskSettlementRestore ?? null,
         projectId: threadRow.value.projectId,
         title: threadRow.value.title,
         modelSelection: threadRow.value.modelSelection,

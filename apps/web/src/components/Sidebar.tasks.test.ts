@@ -273,6 +273,27 @@ describe("task drop intent", () => {
     expect(resolveTaskSidebarDrop(items, key("free"), key("one"))).toBeNull();
   });
 
+  for (const parentSettled of [false, true]) {
+    it(`detaches settled members into Settled with parent settled=${parentSettled}`, () => {
+      const { items } = buildTaskSidebarInventory({
+        now,
+        tasks: [task(parentSettled ? { settledOverride: "settled", settledAt: now } : {})],
+        threads: [thread("one", { settledOverride: "settled", settledAt: now })],
+        taskCapableEnvironmentIds: new Set([environmentId]),
+        expandedTaskKeys: new Set([taskKey]),
+        expandedSettledTaskKeys: new Set([taskKey]),
+        settledExpanded: true,
+      });
+      expect(
+        resolveTaskSidebarDrop(items, key("one"), sidebarMarkerId("settled-header")),
+      ).toMatchObject({
+        kind: "remove-from-task",
+        section: "settled",
+        threadRef: scopeThreadRef(environmentId, ThreadId.make("one")),
+      });
+    });
+  }
+
   it("uses mixed order planning to materialize keyless neighbors without touching member keys", () => {
     const { items, orderRows } = inventory();
     const drop = resolveTaskSidebarDrop(items, key("free"), `task:${taskKey}`, "before");

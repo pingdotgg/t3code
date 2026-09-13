@@ -14,10 +14,15 @@ import {
   ProjectionThreadRepository,
   type ProjectionThreadRepositoryShape,
 } from "../Services/ProjectionThreads.ts";
-import { ModelSelection, ThreadLinkedPullRequest } from "@t3tools/contracts";
+import {
+  ThreadTaskSettlementRestore,
+  ModelSelection,
+  ThreadLinkedPullRequest,
+} from "@t3tools/contracts";
 
 const ProjectionThreadDbRow = ProjectionThread.mapFields(
   Struct.assign({
+    taskSettlementRestore: Schema.NullOr(Schema.fromJsonString(ThreadTaskSettlementRestore)),
     modelSelection: Schema.fromJsonString(ModelSelection),
     linkedPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
     branchPullRequest: Schema.NullOr(Schema.fromJsonString(ThreadLinkedPullRequest)),
@@ -36,6 +41,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           thread_id,
           project_id,
           task_id,
+          task_settlement_restore_json,
           title,
           model_selection_json,
           runtime_mode,
@@ -68,6 +74,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           ${row.threadId},
           ${row.projectId},
           ${row.taskId ?? null},
+          ${row.taskSettlementRestore ? JSON.stringify(row.taskSettlementRestore) : null},
           ${row.title},
           ${JSON.stringify(row.modelSelection)},
           ${row.runtimeMode},
@@ -100,6 +107,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
         DO UPDATE SET
           project_id = excluded.project_id,
           task_id = excluded.task_id,
+          task_settlement_restore_json = excluded.task_settlement_restore_json,
           title = excluded.title,
           model_selection_json = excluded.model_selection_json,
           runtime_mode = excluded.runtime_mode,
@@ -139,6 +147,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",
@@ -180,6 +189,7 @@ const makeProjectionThreadRepository = Effect.gen(function* () {
           thread_id AS "threadId",
           project_id AS "projectId",
           task_id AS "taskId",
+          task_settlement_restore_json AS "taskSettlementRestore",
           title,
           model_selection_json AS "modelSelection",
           runtime_mode AS "runtimeMode",

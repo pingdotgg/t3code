@@ -1,4 +1,8 @@
 import {
+  taskSettlementInvalidation,
+  invalidatesThreadTaskSettlement,
+} from "../taskSettlementRestore.ts";
+import {
   ApprovalRequestId,
   isImportedAgentSessionMessageId,
   UserInputAttachmentAnswerPayload,
@@ -829,6 +833,22 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
     const applyThreadsProjection: ProjectorDefinition["apply"] = Effect.fn(
       "applyThreadsProjection",
     )(function* (event, attachmentSideEffects) {
+      const invalidation = taskSettlementInvalidation(event);
+      if (invalidation?.kind === "task") {
+        yield* sql`UPDATE projection_threads SET task_settlement_restore_json = NULL
+          WHERE task_id = ${invalidation.taskId} AND task_settlement_restore_json IS NOT NULL`.pipe(
+          Effect.mapError(toPersistenceSqlError("ProjectionPipeline.clearTaskSettlementRestore")),
+        );
+      } else if (invalidation?.kind === "thread") {
+        const row = yield* projectionThreadRepository.getById({ threadId: invalidation.threadId });
+        if (
+          Option.isSome(row) &&
+          row.value.taskSettlementRestore &&
+          invalidatesThreadTaskSettlement(event, row.value.taskSettlementRestore, row.value.taskId)
+        ) {
+          yield* projectionThreadRepository.upsert({ ...row.value, taskSettlementRestore: null });
+        }
+      }
       switch (event.type) {
         case "thread.created":
           // A draft retry can re-create this id; links belong to the old incarnation.
@@ -927,6 +947,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...existingRow.value,
             settledOverride: "settled",
             settledAt: event.payload.settledAt,
+            taskSettlementRestore: event.payload.taskSettlementRestore ?? null,
             unsettledAt: null,
             activeOrderKey: null,
             updatedAt: event.payload.updatedAt,
@@ -952,6 +973,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
               existingRow.value.settledOverride === "active"
                 ? existingRow.value.unsettledAt
                 : event.payload.updatedAt,
+            ...event.payload.restoredState,
             updatedAt: event.payload.updatedAt,
           });
           return;

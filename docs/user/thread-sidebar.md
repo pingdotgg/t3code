@@ -63,8 +63,10 @@ Pin the task to keep the whole group above active work; members cannot be pinned
 individually. Settling a task settles its members together. Running or
 queued work, approvals, and questions that require an agent response block the
 whole action; idle async questions can be dismissed by settlement. **Un-settle
-task** reopens the task while its members stay parked. Snoozing and waking a task
-also leave member states alone. New member activity can reopen or wake its task.
+task** restores member states changed by that settlement, including snoozes whose
+deadlines have not passed. Already-settled members and threads subsequently moved
+or changed stay as they are. New member activity reopens the task without restoring
+other members. Snoozing and waking a task leave member states alone.
 An error or completed turn newer than the task's snooze wakes it; an older result
 does not interrupt a later snooze.
 Inactive tasks with no live members follow the primary project's inactivity

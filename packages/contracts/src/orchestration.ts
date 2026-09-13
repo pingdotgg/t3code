@@ -727,7 +727,26 @@ export type OrchestrationTask = typeof OrchestrationTask.Type;
 export const OrchestrationTaskShell = OrchestrationTask.mapFields(Struct.omit(["deletedAt"]));
 export type OrchestrationTaskShell = typeof OrchestrationTaskShell.Type;
 
+// Organizational state changed by task settlement; never includes conversation/runtime state.
+export const TaskMemberRestoreState = Schema.Struct({
+  settledOverride: Schema.NullOr(Schema.Literals(["active", "settled"])),
+  settledAt: Schema.NullOr(IsoDateTime),
+  unsettledAt: Schema.NullOr(IsoDateTime),
+  snoozedUntil: Schema.NullOr(IsoDateTime),
+  snoozedAt: Schema.NullOr(IsoDateTime),
+  pinnedAt: Schema.NullOr(IsoDateTime),
+  pinOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+  activeOrderKey: Schema.NullOr(TrimmedNonEmptyString),
+});
+export const ThreadTaskSettlementRestore = Schema.Struct({
+  taskId: TaskId,
+  settlementId: CommandId,
+  state: TaskMemberRestoreState,
+});
+export type ThreadTaskSettlementRestore = typeof ThreadTaskSettlementRestore.Type;
+
 export const OrchestrationThread = Schema.Struct({
+  taskSettlementRestore: Schema.optional(Schema.NullOr(ThreadTaskSettlementRestore)),
   taskId: Schema.optional(Schema.NullOr(TaskId)),
   id: ThreadId,
   projectId: ProjectId,
@@ -1929,12 +1948,14 @@ export const ThreadUnarchivedPayload = Schema.Struct({
 });
 
 export const ThreadSettledPayload = Schema.Struct({
+  taskSettlementRestore: Schema.optional(Schema.NullOr(ThreadTaskSettlementRestore)),
   threadId: ThreadId,
   settledAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
 
 export const ThreadUnsettledPayload = Schema.Struct({
+  restoredState: Schema.optional(TaskMemberRestoreState),
   threadId: ThreadId,
   reason: Schema.Literals(["user", "activity"]),
   updatedAt: IsoDateTime,
