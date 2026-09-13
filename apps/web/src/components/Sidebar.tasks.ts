@@ -38,6 +38,8 @@ import {
   sortActiveThreadsByOrderKey,
 } from "@t3tools/client-runtime/state/thread-sort";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
+import { formatRelativeTimeLabel } from "../timestampFormat";
+import { snoozeWakeLabel } from "./Sidebar.snooze";
 import { sidebarMarkerId, type SidebarListMarker, type SidebarSection } from "./Sidebar.logic";
 
 export interface TaskSidebarDraft {
@@ -64,6 +66,7 @@ export type TaskSidebarItem =
       };
       readonly status: TaskMemberStatus;
       readonly settleBlocked: boolean;
+      readonly timeLabel: string;
     }
   | {
       readonly kind: "thread";
@@ -101,6 +104,7 @@ export function taskSidebarItemId(item: TaskSidebarItem) {
 
 export interface TaskSidebarGroup {
   readonly task: TaskGroupingTask;
+  readonly latestActivityAt: string;
   readonly live: readonly EnvironmentThreadShell[];
   readonly snoozed: readonly EnvironmentThreadShell[];
   readonly settled: readonly EnvironmentThreadShell[];
@@ -201,9 +205,14 @@ export function buildTaskSidebarInventory(input: {
     const taskRef = scopeTaskRef(task.environmentId, task.id);
     const taskKey = scopedTaskKey(taskRef);
     const orderRow = taskOrderRow(task);
-    const partition = partitionTaskMembers(grouped.membersByTaskKey.get(taskKey) ?? [], input);
+    const taskMembers = grouped.membersByTaskKey.get(taskKey) ?? [];
+    const partition = partitionTaskMembers(taskMembers, input);
     const group = {
       task,
+      latestActivityAt: taskMembers.reduce(
+        (latest, member) => (member.updatedAt > latest ? member.updatedAt : latest),
+        task.updatedAt,
+      ),
       live: sortMembers(partition.live, "active"),
       snoozed: sortMembers(partition.snoozed, "snoozed"),
       settled: sortMembers(partition.settled, "settled"),
@@ -262,6 +271,13 @@ export function buildTaskSidebarInventory(input: {
         },
         status: rollupTaskStatus(group.live),
         settleBlocked: taskSettleBlocker(members, input) !== null,
+        timeLabel:
+          section === "snoozed" && task.snoozedUntil
+            ? snoozeWakeLabel(task.snoozedUntil, { now: input.now })
+            : formatRelativeTimeLabel(
+                section === "settled" ? (task.settledAt ?? task.updatedAt) : group.latestActivityAt,
+                Date.parse(input.now),
+              ),
       },
     ];
     const visibleMember = (thread: EnvironmentThreadShell) =>

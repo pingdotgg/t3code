@@ -242,12 +242,23 @@ export function collapseDraggedTask(items: readonly TaskSidebarItem[], activeKey
   });
 }
 
+/** Capture the constrained offset during DndContext rendering, before sortable
+ * children render. onDragMove runs in a passive effect and is too late. */
+export function createTaskSidebarDragOffset() {
+  let offsetY = 0;
+  const capture: Modifier = ({ transform }) => {
+    offsetY = transform.y;
+    return transform;
+  };
+  return { capture, read: () => offsetY };
+}
+
 /** Expanded task children occupy the same moving block as their header. Measured
  * row heights include drafts and sub-shelves, so no child can be orphaned by a gap. */
 export function createTaskSidebarSortingStrategy(input: {
   items: readonly TaskSidebarItem[];
   placement?: "on" | "before" | "after";
-  activeOffsetY?: number;
+  activeOffsetY?: () => number;
   cardHeight?: number;
   slimHeight?: number;
 }): SortingStrategy {
@@ -364,9 +375,14 @@ export function createTaskSidebarSortingStrategy(input: {
       "taskKey" in item &&
       item.taskKey === active.taskKey
     ) {
+      const activeRect = args.rects[args.activeIndex];
+      // Droppable rectangles follow scrolling; the measured draggable rectangle
+      // does not. Match the scroll adjustment dnd-kit applies to the lifted header.
+      const scrollOffset =
+        activeRect && args.activeNodeRect ? args.activeNodeRect.top - activeRect.top : 0;
       return args.index === args.activeIndex
         ? stationary
-        : { ...stationary, y: input.activeOffsetY };
+        : { ...stationary, y: input.activeOffsetY() + scrollOffset };
     }
     return transforms[args.index] ?? stationary;
   };

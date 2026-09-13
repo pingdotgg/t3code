@@ -419,9 +419,16 @@ export function createEnvironmentShellAtoms<R, E>(
     ).pipe(Atom.withLabel(`environment-shell-state-value:${environmentId}`)),
   );
 
+  const statusAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => get(stateValueAtom(environmentId)).status).pipe(
+      Atom.withLabel(`environment-shell-status:${environmentId}`),
+    ),
+  );
+
   return {
     stateAtom,
     stateValueAtom,
+    statusAtom,
   };
 }
 

@@ -125,7 +125,7 @@ export const TaskCard = memo(function TaskCard({
   const ref = scopeTaskRef(task.environmentId, task.id);
   const actions = useTaskActions();
   const { openMenu } = useTaskActionMenu(ref);
-  const shell = useAtomValue(environmentShell.stateValueAtom(task.environmentId));
+  const shellStatus = useAtomValue(environmentShell.statusAtom(task.environmentId));
   return (
     <div
       role="button"
@@ -170,7 +170,7 @@ export const TaskCard = memo(function TaskCard({
         </TaskRowAction>
         <TaskRowAction
           label="Settle task"
-          disabled={settleBlocked || shell.status !== "live" || task.archivedAt !== null}
+          disabled={settleBlocked || shellStatus !== "live" || task.archivedAt !== null}
           onClick={() => void actions.settleTask(ref)}
         >
           <CheckIcon className="size-3.5" />

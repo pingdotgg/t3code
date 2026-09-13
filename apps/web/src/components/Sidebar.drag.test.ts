@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import { closestCenter, type CollisionDetection } from "@dnd-kit/core";
+import { act, createElement } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { closestCenter, DndContext, type Modifier, type CollisionDetection } from "@dnd-kit/core";
 import { verticalListSortingStrategy, type SortingStrategy } from "@dnd-kit/sortable";
 import {
   collapseDraggedTask,
   createSidebarCollisionDetection,
   createSidebarSortingStrategy,
   createTaskSidebarSortingStrategy,
+  createTaskSidebarDragOffset,
   restrictBelowSidebarLabel,
 } from "./Sidebar.drag";
 import {
@@ -18,6 +21,7 @@ import {
 } from "./Sidebar.logic";
 import { EnvironmentId, ProjectId, TaskId, ThreadId } from "@t3tools/contracts";
 import { scopeTaskRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import * as taskSidebar from "./Sidebar.tasks";
 import { taskSidebarItemId, type TaskSidebarItem } from "./Sidebar.tasks";
 
 const thread = (key: string, section: SidebarSection): SidebarListItem => ({
@@ -825,6 +829,7 @@ describe("task block drag projection", () => {
       counts: { live: 1, snoozed: 0, settled: 1 },
       status: "idle",
       settleBlocked: false,
+      timeLabel: "just now",
     },
     {
       kind: "thread",
@@ -927,7 +932,7 @@ describe("task block drag projection", () => {
     const strategy = createTaskSidebarSortingStrategy({
       items,
       placement: "after",
-      activeOffsetY: 147,
+      activeOffsetY: () => 147,
     });
     const args = taskLayout(0, 6);
     expect(items.slice(1, 6).map((_, index) => strategy({ ...args, index: index + 1 })?.y)).toEqual(
@@ -940,13 +945,121 @@ describe("task block drag projection", () => {
     ["no collision", -1],
     ["an invalid child target", 1],
   ] as const)("keeps the complete lifted block together over %s", (_, overIndex) => {
-    const strategy = createTaskSidebarSortingStrategy({ items, activeOffsetY: 147 });
+    const strategy = createTaskSidebarSortingStrategy({ items, activeOffsetY: () => 147 });
     const args = taskLayout(0, overIndex);
     expect(strategy({ ...args, index: 0 })).toEqual(stationary);
     expect(items.slice(1, 6).map((_, index) => strategy({ ...args, index: index + 1 }))).toEqual(
       Array.from({ length: 5 }, () => ({ ...stationary, y: 147 })),
     );
     expect(strategy({ ...args, index: 6 })).toEqual(stationary);
+  });
+  it("reuses layout projection across pointer deltas and invalidates geometry and targets", () => {
+    const resolve = vi.spyOn(taskSidebar, "resolveTaskSidebarDrop");
+    let offset = 10;
+    const strategy = createTaskSidebarSortingStrategy({
+      items,
+      placement: "after",
+      activeOffsetY: () => offset,
+    });
+    const args = taskLayout(0, 6);
+    try {
+      for (const delta of [10, 30, 147]) {
+        offset = delta;
+        expect(strategy({ ...args, index: 0 })).toEqual(stationary);
+        for (let index = 1; index < 6; index += 1) {
+          expect(strategy({ ...args, index })).toEqual({ ...stationary, y: delta });
+        }
+        expect(strategy({ ...args, index: 6 })?.y).toBe(-292);
+      }
+      expect(resolve).toHaveBeenCalledTimes(1);
+      expect(strategy({ ...args, overIndex: 0, index: 6 })?.y).toBe(0);
+      expect(resolve).toHaveBeenCalledTimes(2);
+      const scaled = taskLayout(0, 6, 2);
+      expect(strategy({ ...scaled, index: 6 })?.y).toBe(-584);
+      expect(resolve).toHaveBeenCalledTimes(3);
+      // Placement and inventory are closure inputs and recreate the strategy.
+      const before = createTaskSidebarSortingStrategy({
+        items,
+        placement: "before",
+        activeOffsetY: () => offset,
+      });
+      expect(before({ ...scaled, index: 6 })?.y).toBe(0);
+      expect(resolve).toHaveBeenCalledTimes(4);
+      const updated = createTaskSidebarSortingStrategy({ items: [...items], placement: "after" });
+      expect(updated({ ...scaled, index: 6 })?.y).toBe(-584);
+      expect(resolve).toHaveBeenCalledTimes(5);
+    } finally {
+      resolve.mockRestore();
+    }
+  });
+  it("captures constrained deltas before children render in the installed DndContext", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    const offset = createTaskSidebarDragOffset();
+    const strategy = createTaskSidebarSortingStrategy({
+      items,
+      placement: "after",
+      activeOffsetY: offset.read,
+    });
+    const args = taskLayout(0, 6);
+    const resolve = vi.spyOn(taskSidebar, "resolveTaskSidebarDrop");
+    const rendered: number[][] = [];
+    let renderer: ReactTestRenderer | undefined;
+    const onDragMove = vi.fn();
+    function Children() {
+      rendered.push(
+        items.slice(1, 6).map((_, index) => strategy({ ...args, index: index + 1 })!.y),
+      );
+      return null;
+    }
+    try {
+      for (const delta of [10, 30, 147, 0]) {
+        // Feed a sensor-independent displacement through the real modifier pipeline.
+        const displacement: Modifier = ({ transform }) => ({ ...transform, y: delta });
+        const constrain: Modifier = ({ transform }) => ({
+          ...transform,
+          y: Math.min(transform.y, 100),
+        });
+        await act(() => {
+          const tree = createElement(
+            DndContext,
+            { modifiers: [displacement, constrain, offset.capture], onDragMove },
+            createElement(Children),
+          );
+          if (renderer) renderer.update(tree);
+          else renderer = create(tree);
+        });
+        expect(rendered.at(-1)).toEqual(Array.from({ length: 5 }, () => Math.min(delta, 100)));
+      }
+      // Capturing does not depend on a post-render drag callback or recreate projection.
+      expect(onDragMove).not.toHaveBeenCalled();
+      expect(resolve).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(() => renderer?.unmount());
+      resolve.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+  it("keeps owned children aligned with the header when scrolling moves measured drop rectangles", () => {
+    const offset = createTaskSidebarDragOffset();
+    const strategy = createTaskSidebarSortingStrategy({
+      items,
+      placement: "after",
+      activeOffsetY: offset.read,
+    });
+    const initial = taskLayout(0, 6);
+    const args = {
+      ...initial,
+      rects: initial.rects.map((rect) => ({
+        ...rect,
+        top: rect.top - 40,
+        bottom: rect.bottom - 40,
+      })),
+    };
+    // The core applies this scroll delta after modifiers to the active header.
+    expect(strategy({ ...args, index: 1 })?.y).toBe(40);
+    expect(strategy({ ...args, index: 0 })).toEqual(stationary);
+    // Remeasuring the draggable establishes the new scroll anchor.
+    expect(strategy({ ...args, activeNodeRect: args.rects[0]!, index: 1 })?.y).toBe(0);
   });
   it("does not split task children when a top-level peer moves before the card", () => {
     const strategy = createTaskSidebarSortingStrategy({ items, placement: "before" });

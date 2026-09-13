@@ -82,6 +82,49 @@ const content = (input: Parameters<typeof buildTaskSidebarInventory>[0]) =>
   buildTaskSidebarInventory(input).items.filter((item) => item.kind !== "marker");
 
 describe("task sidebar inventory", () => {
+  it("prepares latest activity and labels from all task members using the supplied clock", () => {
+    const inventory = buildTaskSidebarInventory({
+      ...base,
+      tasks: [task({ updatedAt: "2026-09-13T09:00:00.000Z" })],
+      threads: [
+        thread("live", { updatedAt: "2026-09-13T10:00:00.000Z" }),
+        thread("snoozed", {
+          updatedAt: "2026-09-13T11:00:00.000Z",
+          snoozedUntil: "2026-09-14T12:00:00.000Z",
+        }),
+        thread("settled", { updatedAt: "2026-09-13T11:30:00.000Z", settledOverride: "settled" }),
+      ],
+    });
+    expect(inventory.groupsByTaskKey.get(taskKey)?.latestActivityAt).toBe(
+      "2026-09-13T11:30:00.000Z",
+    );
+    expect(inventory.items.find((item) => item.kind === "task")).toMatchObject({
+      timeLabel: "30m ago",
+    });
+    expect(
+      content({
+        ...base,
+        threads: [],
+        tasks: [task({ updatedAt: "2026-09-13T11:00:00.000Z" })],
+      })[0],
+    ).toMatchObject({ timeLabel: "1h ago" });
+    expect(
+      content({
+        ...base,
+        threads: [],
+        tasks: [task({ snoozedUntil: "2026-09-13T14:00:00.000Z" })],
+        snoozedExpanded: true,
+      })[0],
+    ).toMatchObject({ timeLabel: "2h" });
+    expect(
+      content({
+        ...base,
+        threads: [],
+        tasks: [task({ settledOverride: "settled", settledAt: "2026-09-13T08:00:00.000Z" })],
+        settledExpanded: true,
+      })[0],
+    ).toMatchObject({ timeLabel: "4h ago" });
+  });
   it("interleaves top-level entities and keeps every structural child in its task block", () => {
     const draft: TaskSidebarDraft = { key: "draft", environmentId, projectId, taskId: task().id };
     const items = content({

@@ -6,9 +6,11 @@ import {
   type OrchestrationShellSnapshot,
   type OrchestrationShellStreamItem,
 } from "@t3tools/contracts";
-import { describe, expect, it } from "@effect/vitest";
+import { describe, expect, it, vi } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Layer from "effect/Layer";
+import { Atom, AtomRegistry, AsyncResult } from "effect/unstable/reactivity";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -25,7 +27,12 @@ import * as ConnectionWakeups from "../connection/wakeups.ts";
 import * as Persistence from "../platform/persistence.ts";
 import * as RpcSession from "../rpc/session.ts";
 import type { WsRpcProtocolClient } from "../rpc/protocol.ts";
-import { makeEnvironmentShellState, ShellSnapshotLoader } from "./shell.ts";
+import {
+  createEnvironmentShellAtoms,
+  makeEnvironmentShellState,
+  ShellSnapshotLoader,
+  type EnvironmentShellState,
+} from "./shell.ts";
 
 const TARGET = new PrimaryConnectionTarget({
   environmentId: EnvironmentId.make("environment-1"),
@@ -80,6 +87,46 @@ function session(client: WsRpcProtocolClient): RpcSession.RpcSession {
 }
 
 describe("environment shell synchronization", () => {
+  it("only notifies status subscribers when shell status changes", () => {
+    const state: EnvironmentShellState = {
+      status: "live",
+      snapshot: Option.some(LIVE_SHELL_SNAPSHOT),
+      error: Option.none(),
+    };
+    const source = Atom.make(AsyncResult.success(state));
+    // Replace transport emissions while exercising the factory's real derived atoms.
+    const runtime = Atom.runtime(Layer.empty);
+    const emissions = vi.spyOn(runtime, "atom").mockReturnValue(source);
+    const shell = createEnvironmentShellAtoms(
+      runtime as unknown as Parameters<typeof createEnvironmentShellAtoms>[0],
+    );
+    const registry = AtomRegistry.make();
+    const statuses: string[] = [];
+    const unsubscribe = registry.subscribe(
+      shell.statusAtom(TARGET.environmentId),
+      (status) => statuses.push(status),
+      { immediate: true },
+    );
+    try {
+      registry.set(
+        source,
+        AsyncResult.success({
+          ...state,
+          snapshot: Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 2 }),
+        }),
+      );
+      expect(registry.get(shell.stateValueAtom(TARGET.environmentId)).snapshot).toEqual(
+        Option.some({ ...LIVE_SHELL_SNAPSHOT, snapshotSequence: 2 }),
+      );
+      expect(statuses).toEqual(["live"]);
+      registry.set(source, AsyncResult.success({ ...state, status: "cached" }));
+      expect(statuses).toEqual(["live", "cached"]);
+    } finally {
+      unsubscribe();
+      registry.dispose();
+      emissions.mockRestore();
+    }
+  });
   it.effect("publishes live state before persistence and preserves it when ready", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<OrchestrationShellStreamItem>();

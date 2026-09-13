@@ -14,32 +14,32 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { ChevronDownIcon, PlusIcon } from "lucide-react";
 import { useTaskActions } from "../../hooks/useTaskActions";
 import { useUiStateStore } from "../../uiStateStore";
-import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { cn } from "../../lib/utils";
 import type { SortableThreadRowBag } from "../Sidebar";
-import { collapseDraggedTask, createTaskSidebarSortingStrategy } from "../Sidebar.drag";
+import {
+  collapseDraggedTask,
+  createTaskSidebarDragOffset,
+  createTaskSidebarSortingStrategy,
+} from "../Sidebar.drag";
 import { animateSidebarLayoutChanges, type SidebarSection } from "../Sidebar.logic";
 import { SidebarDragLifecycle, SidebarPointerSensor } from "../Sidebar.pointer";
 import { resolveTaskSidebarDrop, taskSidebarItemId, type TaskSidebarItem } from "../Sidebar.tasks";
-import { snoozeWakeLabel } from "../Sidebar.snooze";
-import { ProjectFavicon } from "../ProjectFavicon";
-import { TaskCard } from "./TaskCard";
-import { TaskSlimRow } from "./TaskSlimRow";
+import { TaskSidebarRow } from "./TaskSidebarRow";
 import type { TaskSidebarModel } from "./useTaskSidebarModel";
 
 const memberClass = "ml-[0.9rem] border-l border-sidebar-border/70 pl-1";
 
 function SortableItem({
-  item,
+  id,
   disabled,
   children,
 }: {
-  item: TaskSidebarItem;
+  id: string;
   disabled: boolean;
   children: (bag: SortableThreadRowBag) => ReactNode;
 }) {
   const sortable = useSortable({
-    id: taskSidebarItemId(item),
+    id,
     disabled: { draggable: disabled },
     animateLayoutChanges: animateSidebarLayoutChanges,
   });
@@ -86,7 +86,6 @@ export function TaskSidebar(props: {
 }) {
   const { model } = props;
   const actions = useTaskActions();
-  const setExpanded = useUiStateStore((state) => state.setTaskExpanded);
   const setSettledExpanded = useUiStateStore((state) => state.setTaskSettledExpanded);
   const [dragging, setDragging] = useState(false);
   const [activeKey, setActiveKey] = useState<string | null>(null);
@@ -95,7 +94,7 @@ export function TaskSidebar(props: {
     [model.items, activeKey],
   );
   const [targetKey, setTargetKey] = useState<string | null>(null);
-  const [offset, setOffset] = useState(0);
+  const [dragOffset] = useState(createTaskSidebarDragOffset);
   const [placement, setPlacement] = useState<"on" | "before" | "after">("on");
   const placementRef = useRef(placement);
   const sensor = useRef<SidebarPointerSensor | null>(null);
@@ -107,7 +106,6 @@ export function TaskSidebar(props: {
     setDragging(false);
     setActiveKey(null);
     setTargetKey(null);
-    setOffset(0);
   }, []);
   const cancel = useCallback(() => {
     sensor.current?.cancel();
@@ -149,8 +147,8 @@ export function TaskSidebar(props: {
     [items],
   );
   const strategy = useMemo(
-    () => createTaskSidebarSortingStrategy({ items, placement, activeOffsetY: offset }),
-    [items, placement, offset],
+    () => createTaskSidebarSortingStrategy({ items, placement, activeOffsetY: dragOffset.read }),
+    [items, placement, dragOffset],
   );
   const threadByKey = useMemo(
     () =>
@@ -163,17 +161,16 @@ export function TaskSidebar(props: {
     <DndContext
       sensors={sensors}
       collisionDetection={collision}
-      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor]}
+      modifiers={[restrictToVerticalAxis, restrictToFirstScrollableAncestor, dragOffset.capture]}
       onDragStart={(event) => {
         setDragging(true);
         setActiveKey(String(event.active.id));
       }}
-      onDragMove={(event) => {
-        setOffset(event.delta.y);
-        setPlacement(placementRef.current);
+      onDragMove={() => {
+        if (placement !== placementRef.current) setPlacement(placementRef.current);
       }}
       onDragOver={(event) => {
-        setPlacement(placementRef.current);
+        if (placement !== placementRef.current) setPlacement(placementRef.current);
         setTargetKey(event.over ? String(event.over.id) : null);
       }}
       onDragEnd={(event) => {
@@ -198,7 +195,7 @@ export function TaskSidebar(props: {
           {items.map((item) => (
             <SortableItem
               key={taskSidebarItemId(item)}
-              item={item}
+              id={taskSidebarItemId(item)}
               disabled={props.searching || model.pending || !props.canDrag(item)}
             >
               {(bag) => {
@@ -222,33 +219,6 @@ export function TaskSidebar(props: {
                   const project = props.projectByKey.get(
                     `${group.task.environmentId}:${group.task.primaryProjectId}`,
                   );
-                  const rowProps = {
-                    task: group.task,
-                    expanded: item.expanded,
-                    onToggle: () => setExpanded(item.taskRef, !item.expanded),
-                    counts: item.counts,
-                    status: item.status,
-                    settleBlocked: item.settleBlocked,
-                    primaryProjectName: project?.title ?? "Project",
-                    primaryProjectIcon: project ? (
-                      <ProjectFavicon project={project} className="size-3.5" />
-                    ) : undefined,
-                    timeLabel:
-                      item.section === "snoozed" && group.task.snoozedUntil
-                        ? snoozeWakeLabel(group.task.snoozedUntil, {
-                            now: new Date().toISOString(),
-                          })
-                        : formatRelativeTimeLabel(
-                            item.section === "settled"
-                              ? (group.task.settledAt ?? group.task.updatedAt)
-                              : [...group.live, ...group.snoozed, ...group.settled].reduce(
-                                  (latest, member) =>
-                                    member.updatedAt > latest ? member.updatedAt : latest,
-                                  group.task.updatedAt,
-                                ),
-                          ),
-                    selected: props.selectedTaskKey === item.taskKey,
-                  };
                   return (
                     <li
                       id={
@@ -281,11 +251,19 @@ export function TaskSidebar(props: {
                           "rounded-md ring-1 ring-inset ring-ring",
                       )}
                     >
-                      {item.section === "settled" || item.section === "snoozed" ? (
-                        <TaskSlimRow {...rowProps} snoozed={item.section === "snoozed"} />
-                      ) : (
-                        <TaskCard {...rowProps} />
-                      )}
+                      <TaskSidebarRow
+                        task={group.task}
+                        project={project}
+                        section={item.section}
+                        expanded={item.expanded}
+                        liveCount={item.counts.live}
+                        snoozedCount={item.counts.snoozed}
+                        settledCount={item.counts.settled}
+                        status={item.status}
+                        settleBlocked={item.settleBlocked}
+                        timeLabel={item.timeLabel}
+                        selected={props.selectedTaskKey === item.taskKey}
+                      />
                     </li>
                   );
                 }
