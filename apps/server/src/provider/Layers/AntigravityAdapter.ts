@@ -1028,27 +1028,46 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         });
       }).pipe(Effect.uninterruptible);
 
-    const requestedModel = input.modelSelection?.model ?? context.session.model;
-    const configOptions = yield* context.runtime.getConfigOptions;
-    const model = resolveAntigravityModel({
-      configOptions,
-      model: requestedModel,
-      defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
-    });
-    const availableModels = antigravityModelOptions(configOptions);
-    if (model && !availableModels.some((option) => option.value === model)) {
-      return yield* mapAntigravityError(
-        input.threadId,
-        "session/prompt",
-        EffectAcpErrors.AcpRequestError.invalidParams(
-          `Antigravity model '${model}' is unavailable for this Google account. Select an available model.`,
-        ),
-      );
+    if (input.modelSelection?.model) {
+      const configOptions = yield* context.runtime.getConfigOptions;
+      const explicitModel = resolveAntigravityModel({
+        configOptions,
+        model: input.modelSelection.model,
+        defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
+      });
+      const availableModels = antigravityModelOptions(configOptions);
+      if (explicitModel && !availableModels.some((option) => option.value === explicitModel)) {
+        return yield* mapAntigravityError(
+          input.threadId,
+          "session/prompt",
+          EffectAcpErrors.AcpRequestError.invalidParams(
+            `Antigravity model '${explicitModel}' is unavailable for this Google account. Select an available model.`,
+          ),
+        );
+      }
     }
 
     return yield* context.turnQueue
       .withPermit(
         Effect.gen(function* () {
+          const requestedModel = input.modelSelection?.model ?? context.session.model;
+          const configOptions = yield* context.runtime.getConfigOptions;
+          const model = resolveAntigravityModel({
+            configOptions,
+            model: requestedModel,
+            defaultModel: yield* options.defaultModel ?? Effect.succeed(undefined),
+          });
+          const availableModels = antigravityModelOptions(configOptions);
+          if (model && !availableModels.some((option) => option.value === model)) {
+            return yield* mapAntigravityError(
+              input.threadId,
+              "session/prompt",
+              EffectAcpErrors.AcpRequestError.invalidParams(
+                `Antigravity model '${model}' is unavailable for this Google account. Select an available model.`,
+              ),
+            );
+          }
+
           const launch = yield* context.promptLock.withPermit(
             Effect.gen(function* () {
               yield* requireSession(input.threadId);

@@ -612,7 +612,7 @@ it.layer(layer)("AntigravityAdapter", (it) => {
           input: "Follow-up prompt",
           modelSelection: { instanceId, model: nativeAlternative },
         })
-        .pipe(Effect.forkChild);
+        .pipe(Effect.forkChild({ startImmediately: true }));
 
       expect(h.hasActivePrompt()).toBe(true);
       expect(h.calls.slice(marker)).toEqual([]);
@@ -642,6 +642,48 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         activeTurnId: undefined,
         model: nativeAlternative,
       });
+    }),
+  );
+
+  it.effect("queued follow-up turn without explicit model inherits updated session model", () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness();
+      yield* h.adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "approval-required",
+      });
+      const first = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "First prompt",
+          modelSelection: { instanceId, model: nativeAlternative },
+        })
+        .pipe(Effect.forkChild);
+      const initialPrompt = yield* h.nextPrompt;
+
+      const second = yield* h.adapter
+        .sendTurn({
+          threadId,
+          input: "Second queued prompt without model",
+        })
+        .pipe(Effect.forkChild({ startImmediately: true }));
+
+      expect(h.hasActivePrompt()).toBe(true);
+
+      yield* Deferred.succeed(initialPrompt.result, { stopReason: "end_turn" });
+      yield* Fiber.join(first);
+
+      const replacement = yield* h.nextPrompt;
+      expect(replacement.content).toEqual([
+        { type: "text", text: "Second queued prompt without model" },
+        {
+          type: "text",
+          text: expect.stringContaining(`Antigravity harness, as ${nativeAlternative}`),
+        },
+      ]);
+      yield* Deferred.succeed(replacement.result, { stopReason: "end_turn" });
+      yield* Fiber.join(second);
     }),
   );
 
