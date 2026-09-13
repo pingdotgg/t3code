@@ -17,7 +17,8 @@ export function assertPreviewRuntimeCurrent(
   threadRef: ScopedThreadRef,
   tabId: string,
   runtimeTabId: string,
-  request: Pick<PreviewAutomationRequest, "operation" | "requestId">,
+  request: Pick<PreviewAutomationRequest, "operation" | "requestId"> &
+    Partial<Pick<PreviewAutomationRequest, "threadId">>,
 ) {
   const state = readThreadPreviewState(threadRef);
   if (
@@ -30,7 +31,7 @@ export function assertPreviewRuntimeCurrent(
     requestId: request.requestId,
     operation: request.operation,
     environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
+    threadId: request.threadId ?? threadRef.threadId,
     tabId,
     bridgeAvailable: Boolean(previewBridge),
   });
@@ -44,14 +45,23 @@ export async function waitForNavigationReadiness(
   operation: PreviewAutomationRequest["operation"],
   readiness: PreviewAutomationNavigateInput["readiness"],
   timeoutMs: number,
+  conversationRef: ScopedThreadRef = threadRef,
 ): Promise<void> {
   const targetReadiness = readiness ?? "load";
   if (!previewBridge) return;
-  assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, { operation, requestId });
+  assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
+    operation,
+    requestId,
+    threadId: conversationRef.threadId,
+  });
   if (targetReadiness === "none") return;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, { operation, requestId });
+    assertPreviewRuntimeCurrent(threadRef, tabId, runtimeTabId, {
+      operation,
+      requestId,
+      threadId: conversationRef.threadId,
+    });
     if (targetReadiness === "domContentLoaded") {
       const readyState = await previewBridge.automation.evaluate(runtimeTabId, {
         expression: "document.readyState",
@@ -65,8 +75,7 @@ export async function waitForNavigationReadiness(
   }
   throw new PreviewAutomationNavigationTimeoutError({
     requestId,
-    environmentId: threadRef.environmentId,
-    threadId: threadRef.threadId,
+    ...conversationRef,
     tabId,
     readiness: targetReadiness,
     timeoutMs,
