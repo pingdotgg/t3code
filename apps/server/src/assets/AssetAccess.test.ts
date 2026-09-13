@@ -25,6 +25,7 @@ import { ASSET_ROUTE_PREFIX, issueAssetUrl, resolveAsset } from "./AssetAccess.t
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
 import { openMediaFile } from "./MediaFile.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { workspaceFileAssetResource } from "../../../../packages/client-runtime/src/workspaceFileAssetResource.ts";
 
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof NodeFSP>();
@@ -47,6 +48,85 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect("accepts file-panel media from each source checkout with exact file grants", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-panel-media-" });
+      const primary = path.join(directory, "primary");
+      const member = path.join(directory, "member");
+      const outside = path.join(directory, "outside");
+      for (const root of [primary, member, outside]) {
+        yield* fs.makeDirectory(root);
+        for (const name of ["clip.mp4", "audio.wav", "sibling.png"]) {
+          yield* fs.writeFileString(path.join(root, name), `${root}/${name}`);
+        }
+      }
+      for (const cwd of [primary, member]) {
+        for (const [name, mimeType] of [
+          ["clip.mp4", "video/mp4"],
+          ["audio.wav", "audio/wav"],
+        ] as const) {
+          for (const requestedPath of [
+            name,
+            path.join(cwd, name),
+            `../outside/${name}`,
+            path.join(outside, name),
+          ]) {
+            const resource = workspaceFileAssetResource({ cwd, path: requestedPath });
+            if (!resource) throw new Error("Expected a file-panel resource");
+            const result = yield* issueAssetUrl({ resource });
+            const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+            const separator = suffix.indexOf("/");
+            const token = suffix.slice(0, separator);
+            const asset = yield* resolveAsset(token, suffix.slice(separator + 1));
+            const expectedPath = path.resolve(cwd, requestedPath);
+            expect(asset).toMatchObject({
+              kind: "file",
+              path: yield* fs.realPath(expectedPath),
+              mimeType,
+            });
+            if (!asset) throw new Error("Expected a resolved file-panel media asset");
+            const response = HttpServerResponse.toWeb(yield* assetFileResponse(asset));
+            expect(yield* Effect.promise(() => response.text())).toBe(expectedPath);
+            expect(yield* resolveAsset(token, "sibling.png")).toBeNull();
+          }
+        }
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
+  it.effect("keeps HTML sibling access and image exact grants through the file-panel factory", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-panel-documents-" });
+      for (const name of ["report.html", "report.css", "image.png", "other.png", "clip.mp4"]) {
+        yield* fs.writeFileString(path.join(cwd, name), name);
+      }
+      for (const name of ["report.html", "image.png"]) {
+        const resource = workspaceFileAssetResource({ cwd, path: path.join(cwd, name) });
+        if (!resource) throw new Error("Expected a file-panel resource");
+        const result = yield* issueAssetUrl({ resource });
+        const suffix = result.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, name)).toMatchObject({
+          kind: "file",
+          path: yield* fs.realPath(path.join(cwd, name)),
+        });
+        if (name === "report.html") {
+          expect(yield* resolveAsset(token, "report.css")).toMatchObject({
+            kind: "file",
+            path: yield* fs.realPath(path.join(cwd, "report.css")),
+          });
+        } else {
+          expect(yield* resolveAsset(token, "other.png")).toBeNull();
+        }
+        expect(yield* resolveAsset(token, "clip.mp4")).toBeNull();
+      }
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

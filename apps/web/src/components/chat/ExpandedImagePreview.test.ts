@@ -16,6 +16,36 @@ describe("resolveMarkdownMediaPreview", () => {
     vi.unstubAllGlobals();
   });
 
+  it.each(["clip.mp4", "clip.webm"])(
+    "uses exact media resources for file-panel markdown (%s)",
+    async (name) => {
+      const createAssetUrl = vi.fn(async () =>
+        AsyncResult.success({ relativeUrl: `/api/assets/token/${name}`, expiresAt: 999999 }),
+      );
+      await resolveMarkdownMediaPreview({
+        source: name,
+        cwd: "/member/docs",
+        assetSourceCwd: "/member",
+        threadRef: {
+          environmentId: EnvironmentId.make("remote"),
+          threadId: ThreadId.make("task:parent"),
+        },
+        httpBaseUrl: "https://remote.example/",
+        createAssetUrl,
+      });
+      expect(createAssetUrl).toHaveBeenCalledWith({
+        environmentId: "remote",
+        input: {
+          resource: {
+            _tag: "draft-workspace-file",
+            cwd: "/member",
+            path: `/member/docs/${name}`,
+          },
+        },
+      });
+    },
+  );
+
   it.each([undefined, "/foreign"])(
     "retains transcript ownership unless a panel source cwd is supplied (%s)",
     async (assetSourceCwd) => {

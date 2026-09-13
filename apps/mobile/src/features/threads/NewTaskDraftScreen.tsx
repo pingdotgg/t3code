@@ -1,4 +1,4 @@
-import { useTasks } from "../../state/tasks";
+import { environmentTasks, useTasks } from "../../state/tasks";
 import { useAtomValue } from "@effect/atom-react";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import {
@@ -196,6 +196,12 @@ export function NewTaskDraftScreen(props: {
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
   );
+  const supportsTasks = selectedEnvironmentServerConfig?.environment.capabilities.tasks === true;
+  const taskDestinations = supportsTasks
+    ? tasks.filter(
+        (task) => task.environmentId === selectedProject?.environmentId && task.archivedAt === null,
+      )
+    : [];
   const environmentConnected =
     selectedProject !== null &&
     connectedEnvironments.find(
@@ -1394,7 +1400,7 @@ export function NewTaskDraftScreen(props: {
         </View>
       </View>
 
-      {flow.taskId !== null ? (
+      {supportsTasks || flow.taskId !== null ? (
         <View className="w-full gap-2">
           <Pressable
             accessibilityRole="button"
@@ -1406,22 +1412,17 @@ export function NewTaskDraftScreen(props: {
           >
             <Text className="text-foreground-muted">
               Task:{" "}
-              {tasks.find(
-                (task) =>
-                  task.environmentId === selectedProject.environmentId && task.id === flow.taskId,
-              )?.name ?? "Unavailable task"}{" "}
+              {flow.taskId === null
+                ? "No task"
+                : (taskDestinations.find((task) => task.id === flow.taskId)?.name ??
+                  "Unavailable task")}{" "}
               · Change
             </Text>
           </Pressable>
           {taskPickerOpen ? (
             <View className="gap-1">
-              {tasks
-                .filter(
-                  (task) =>
-                    task.environmentId === selectedProject.environmentId &&
-                    task.archivedAt === null &&
-                    task.id !== flow.taskId,
-                )
+              {taskDestinations
+                .filter((task) => task.id !== flow.taskId)
                 .map((task) => (
                   <Pressable
                     key={task.id}
@@ -1429,6 +1430,22 @@ export function NewTaskDraftScreen(props: {
                     disabled={isComposerInteractionLocked}
                     className="px-3 py-2"
                     onPress={() => {
+                      if (isComposerInteractionLocked) return;
+                      const config = appAtomRegistry.get(
+                        serverEnvironment.configValueAtom(selectedProject.environmentId),
+                      );
+                      const destination = appAtomRegistry.get(
+                        environmentTasks.taskAtom({
+                          environmentId: selectedProject.environmentId,
+                          taskId: task.id,
+                        }),
+                      );
+                      if (
+                        config?.environment.capabilities.tasks !== true ||
+                        destination == null ||
+                        destination.archivedAt !== null
+                      )
+                        return;
                       flow.setTaskId(task.id);
                       setTaskPickerOpen(false);
                     }}
@@ -1441,11 +1458,12 @@ export function NewTaskDraftScreen(props: {
                 disabled={isComposerInteractionLocked}
                 className="px-3 py-2"
                 onPress={() => {
+                  if (isComposerInteractionLocked) return;
                   flow.setTaskId(null);
                   setTaskPickerOpen(false);
                 }}
               >
-                <Text className="text-foreground">Remove from task</Text>
+                <Text className="text-foreground">No task</Text>
               </Pressable>
             </View>
           ) : null}

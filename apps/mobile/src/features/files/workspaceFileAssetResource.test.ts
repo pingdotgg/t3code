@@ -3,6 +3,25 @@ import { ThreadId } from "@t3tools/contracts";
 import { workspaceFileAssetResource } from "./workspaceFileAssetResource";
 
 describe("workspace file preview resources", () => {
+  it.each(["clip.mp4", "audio.wav"])(
+    "issues exact media resources from the explicit source checkout (%s)",
+    (name) => {
+      for (const relativePath of [name, `/member/${name}`]) {
+        expect(
+          workspaceFileAssetResource({
+            cwd: "/primary",
+            explicitCwd: "/member",
+            threadId: ThreadId.make("member"),
+            relativePath,
+          }),
+        ).toEqual({
+          _tag: "draft-workspace-file",
+          cwd: "/member",
+          path: `/member/${name}`,
+        });
+      }
+    },
+  );
   it("loads empty-task previews using the explicit primary root without a fake thread", () => {
     expect(
       workspaceFileAssetResource({

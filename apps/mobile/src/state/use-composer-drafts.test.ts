@@ -1896,6 +1896,44 @@ describe("mobile composer drafts", () => {
     });
   });
 
+  it("persists task to none to task transitions without losing draft content or choices", async () => {
+    const key = createNewTaskDraft({
+      environmentId: EnvironmentId.make("environment-1"),
+      projectId: ProjectId.make("project-1"),
+    });
+    setComposerDraftText(key, "Keep this prompt");
+    replaceComposerDraftAttachments(key, [
+      {
+        type: "file",
+        id: "video",
+        name: "clip.mp4",
+        mimeType: "video/mp4",
+        sizeBytes: 10,
+        fileUri: "file:///clip.mp4",
+      },
+    ]);
+    updateComposerDraftSettings(key, {
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+      workspaceSelection: { mode: "worktree", branch: "main", worktreePath: null },
+    });
+    const original = getComposerDraftSnapshot(key);
+    for (const taskId of [TaskId.make("first-task"), null, TaskId.make("second-task")]) {
+      updateComposerDraftSettings(key, { taskId });
+      await flushComposerDrafts();
+      expect(getComposerDraftSnapshot(key)).toEqual({ ...original, taskId });
+      const restored = decodePersistedComposerState(
+        JSON.parse(composerDraftFileMocks.getDocument()),
+      );
+      expect(restored.drafts[key]).toMatchObject({
+        text: original.text,
+        attachments: original.attachments,
+        modelSelection: original.modelSelection,
+        workspaceSelection: original.workspaceSelection,
+        taskId,
+      });
+    }
+  });
+
   it("retargets a new-task draft to another project without losing its text", () => {
     const from = {
       environmentId: EnvironmentId.make("environment-1"),
