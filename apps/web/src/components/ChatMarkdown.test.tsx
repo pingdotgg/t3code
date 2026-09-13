@@ -57,6 +57,10 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   parseChangeRequestUrl: () => null,
   useOpenChangeRequestLink: () => vi.fn(),
 }));
+const MermaidDiagramMock = vi.hoisted(() =>
+  vi.fn(() => <div data-mermaid-diagram="">mock diagram</div>),
+);
+vi.mock("./MermaidDiagram", () => ({ default: MermaidDiagramMock }));
 
 import ChatMarkdown, {
   canUseMarkdownFileShellActions,
@@ -64,6 +68,7 @@ import ChatMarkdown, {
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
 
+/** Finds a rendered code-block action button by its visible label. */
 function codeButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root
     .findAllByType(Button)
@@ -373,6 +378,129 @@ describe("ChatMarkdown streaming", () => {
     } finally {
       await act(async () => renderer?.unmount());
       vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe("ChatMarkdown Mermaid fences", () => {
+  const validDiagram = "flowchart TD\n  start((Start)) --> finish((Finish))";
+
+  it("renders an indented complete Mermaid fence through the lazy diagram component", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={`\n   \`\`\`mermaid\n   ${validDiagram}\n   \`\`\`\n`}
+          />,
+        );
+      });
+      expect(renderer!.root.findByProps({ "data-mermaid-diagram": "" })).toBeDefined();
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
+    }
+  });
+
+  it("renders a complete Mermaid fence through the lazy diagram component", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={`\n\`\`\`mermaid\n${validDiagram}\n\`\`\`\n`} />,
+        );
+      });
+      expect(renderer!.root.findByProps({ "data-mermaid-diagram": "" })).toBeDefined();
+      expect(renderer!.root.findAllByProps({ className: "chat-markdown-shiki" })).toHaveLength(0);
+      expect(MermaidDiagramMock).toHaveBeenCalledWith(
+        expect.objectContaining({ code: `${validDiagram}\n` }),
+        undefined,
+      );
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
+    }
+  });
+
+  it("keeps source rendering when a Mermaid fence is unterminated", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown cwd="/tmp/project" text={`\n\`\`\`mermaid\n${validDiagram}\n`} />,
+        );
+      });
+      expect(MermaidDiagramMock).not.toHaveBeenCalled();
+      expect(renderer!.root.findByProps({ "data-language": "mermaid" })).toBeDefined();
+      expect(renderer!.root.findByProps({ className: "chat-markdown-shiki" })).toBeDefined();
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
+    }
+  });
+
+  it("renders a completed Mermaid fence before an unterminated one", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={`\n\`\`\`mermaid\n${validDiagram}\n\`\`\`\n\n\`\`\`mermaid\n${validDiagram}\n`}
+          />,
+        );
+      });
+      expect(MermaidDiagramMock).toHaveBeenCalledTimes(1);
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
+    }
+  });
+
+  it("keeps source rendering while a Mermaid fence is streaming", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(
+          <ChatMarkdown
+            cwd="/tmp/project"
+            text={`\n\`\`\`mermaid\n${validDiagram}\n\`\`\`\n`}
+            isStreaming
+          />,
+        );
+      });
+      expect(MermaidDiagramMock).not.toHaveBeenCalled();
+      expect(renderer!.root.findByProps({ "data-language": "mermaid" })).toBeDefined();
+      expect(renderer!.root.findByProps({ className: "chat-markdown-shiki" })).toBeDefined();
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
+    }
+  });
+
+  it("does not load Mermaid merely because ordinary markdown boots", async () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(async () => {
+        renderer = create(<ChatMarkdown cwd="/tmp/project" text="Hello, **world**." />);
+      });
+      expect(MermaidDiagramMock).not.toHaveBeenCalled();
+    } finally {
+      await act(async () => renderer?.unmount());
+      vi.unstubAllGlobals();
+      MermaidDiagramMock.mockClear();
     }
   });
 });
