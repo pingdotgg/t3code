@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as Logger from "effect/Logger";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -241,7 +242,32 @@ const stageRuntimeExternals = Effect.fn("stageRuntimeExternals")(function* (inpu
   ]) {
     yield* fs.remove(path.join(input.stageDir, entry), { recursive: true, force: true });
   }
+  // A hoisted install still leaves nested `node_modules/.bin` shim directories
+  // inside packages that declare bins (msgpackr-extract's). They are symlinks
+  // nothing runs, and the npm registry refuses a tarball that contains any
+  // symlink, so strip every `.bin` directory below node_modules.
+  yield* removeNestedBinDirectories(fs, path, path.join(input.stageDir, "node_modules"));
 });
+
+const removeNestedBinDirectories = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  root: string,
+): Effect.Effect<void, PlatformError.PlatformError> =>
+  Effect.gen(function* () {
+    const entries = yield* fs.readDirectory(root).pipe(Effect.orElseSucceed(() => []));
+    for (const entry of entries) {
+      const child = path.join(root, entry);
+      if (entry === ".bin") {
+        yield* fs.remove(child, { recursive: true, force: true });
+        continue;
+      }
+      const info = yield* fs.stat(child).pipe(Effect.option);
+      if (Option.isSome(info) && info.value.type === "Directory") {
+        yield* removeNestedBinDirectories(fs, path, child);
+      }
+    }
+  });
 
 /** Copies the web client without its sourcemaps, which nothing serves. */
 const stageWebClient = Effect.fn("stageWebClient")(function* (source: string, target: string) {
