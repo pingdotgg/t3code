@@ -103,6 +103,28 @@ export function npmPlatformPackageManifest(platformKey: CliArchivePlatformKey, v
   };
 }
 
+/**
+ * README for one platform package. Without one at the package root, npm
+ * shows the first README it finds in the tarball, which is a bundled
+ * dependency's (ffi-rs).
+ */
+export function npmPlatformPackageReadme(platformKey: CliArchivePlatformKey): string {
+  return [
+    `# ${npmPlatformPackageName(platformKey)}`,
+    "",
+    `The T3 Code CLI executable for ${platformKey}. Do not install this package directly:`,
+    `it is an optional dependency of \`${NPM_LAUNCHER_PACKAGE_NAME}\`, which picks the package for the`,
+    "current platform and runs the executable inside it.",
+    "",
+    "```sh",
+    `npx ${NPM_LAUNCHER_PACKAGE_NAME}@latest`,
+    "```",
+    "",
+    "Source and documentation: https://github.com/pingdotgg/t3code",
+    "",
+  ].join("\n");
+}
+
 /** package.json for the `t3` launcher. No engines: bin/t3.js is trivial CJS. */
 export function npmLauncherPackageManifest(
   version: string,
@@ -282,6 +304,10 @@ const stagePlatformPackage = Effect.fn("stagePlatformPackage")(function* (input:
   yield* fs.writeFileString(
     path.join(contentDir, "package.json"),
     `${yield* encodePackageJson(npmPlatformPackageManifest(input.key, input.version))}\n`,
+  );
+  yield* fs.writeFileString(
+    path.join(contentDir, "README.md"),
+    npmPlatformPackageReadme(input.key),
   );
   // npm tarballs root everything under `package/`.
   yield* fs.rename(contentDir, path.join(scratch, "package"));

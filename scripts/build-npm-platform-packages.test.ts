@@ -128,6 +128,11 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.isUndefined(linuxManifest.bin);
       // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
+      // A root README, or npm would display a bundled dependency's.
+      assert.include(
+        yield* fs.readFileString(path.join(linuxDir, "README.md")),
+        "# @t3code/t3-linux-x64",
+      );
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "node_modules/node-pty")));
       assert.equal(Number((yield* fs.stat(path.join(linuxDir, "t3"))).mode) & 0o111, 0o111);
 
