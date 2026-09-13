@@ -9,8 +9,4 @@ export default Effect.gen(function* () {
   if (!columns.some((column) => column.name === "task_id")) {
     yield* sql`ALTER TABLE projection_threads ADD COLUMN task_id TEXT`;
   }
-  yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_projection_threads_task_id
-    ON projection_threads(task_id)
-  `;
 });

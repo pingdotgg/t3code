@@ -3505,7 +3505,9 @@ it.effect("hydrates task membership and opt-in active and archived task inventor
     }
     assert.equal((yield* query.getSnapshotSequence()).snapshotSequence, 0);
     yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
-      VALUES (${ORCHESTRATION_PROJECTOR_NAMES.tasks}, 7, ${createdAt})`;
+      VALUES (${ORCHESTRATION_PROJECTOR_NAMES.tasks}, 7, ${createdAt})
+      ON CONFLICT(projector) DO UPDATE SET last_applied_sequence = excluded.last_applied_sequence,
+        updated_at = excluded.updated_at`;
     const snapshot = yield* query.getSnapshot();
     const commandModel = yield* query.getCommandReadModel();
     assert.deepStrictEqual(commandModel.tasks, snapshot.tasks);
@@ -3665,3 +3667,59 @@ it.effect("batches task guard evidence without loading transcript or unrelated p
     ),
   ),
 );
+
+it.effect("orders representative task inventories without a temporary sort", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    const now = "2026-09-13T00:00:00.000Z";
+    yield* sql`
+      WITH RECURSIVE inventory(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM inventory WHERE n < 1000)
+      INSERT INTO projection_tasks
+        (task_id, name, primary_project_id, archived_at, deleted_at, created_at, updated_at)
+      SELECT printf('task-%04d', n), 'Task', 'project',
+        CASE WHEN n % 10 BETWEEN 6 AND 8 THEN ${now} END,
+        CASE WHEN n % 10 = 9 THEN ${now} END,
+        printf('2026-09-01T00:%02d:00.000Z', n % 60), ${now}
+      FROM inventory ORDER BY n DESC
+    `;
+    yield* sql`ANALYZE`;
+    for (const state of ["active", "archived", "all"] as const) {
+      const predicate =
+        state === "active"
+          ? sql`deleted_at IS NULL AND archived_at IS NULL`
+          : state === "archived"
+            ? sql`deleted_at IS NULL AND archived_at IS NOT NULL`
+            : sql`1 = 1 AND 1 = 1`;
+      const plan = yield* sql<{ detail: string }>`EXPLAIN QUERY PLAN
+        SELECT * FROM projection_tasks WHERE ${predicate} AND 1 = 1
+        ORDER BY created_at ASC, task_id ASC`;
+      assert.isFalse(plan.some((row) => /TEMP B-TREE/i.test(row.detail)));
+      const rows =
+        state === "active"
+          ? (yield* query.getShellSnapshot({ includeTasks: true })).tasks!
+          : state === "archived"
+            ? (yield* query.getArchivedShellSnapshot({ includeTasks: true })).tasks!
+            : (yield* query.getSnapshot()).tasks;
+      assert.equal(rows.length, state === "active" ? 600 : state === "archived" ? 300 : 1000);
+      const expected = [...rows].sort(
+        (left, right) =>
+          left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id),
+      );
+      assert.deepEqual(
+        rows.map((row) => row.id),
+        expected.map((row) => row.id),
+      );
+    }
+  }).pipe(Effect.provide(layer));
+});

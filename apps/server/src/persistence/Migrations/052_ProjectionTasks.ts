@@ -24,7 +24,18 @@ export default Effect.gen(function* () {
     )
   `;
   yield* sql`
-    CREATE INDEX IF NOT EXISTS idx_projection_tasks_primary_project_id
-    ON projection_tasks(primary_project_id)
+    CREATE INDEX IF NOT EXISTS idx_projection_tasks_created_at_task_id
+    ON projection_tasks(created_at, task_id)
+  `;
+  // Pre-task histories have nothing to rebuild. Imported task histories still need replay.
+  yield* sql`
+    INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+    SELECT 'projection.tasks', COALESCE(MAX(sequence), 0),
+           COALESCE(MAX(occurred_at), '1970-01-01T00:00:00.000Z')
+    FROM orchestration_events
+    HAVING NOT EXISTS (
+      SELECT 1 FROM orchestration_events WHERE aggregate_kind = 'task'
+    )
+    ON CONFLICT(projector) DO NOTHING
   `;
 });

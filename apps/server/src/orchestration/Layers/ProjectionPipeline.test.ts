@@ -33,6 +33,7 @@ import {
   SqlitePersistenceMemory,
 } from "../../persistence/Layers/Sqlite.ts";
 import { OrchestrationEventStore } from "../../persistence/Services/OrchestrationEventStore.ts";
+import migrateTasks from "../../persistence/Migrations/052_ProjectionTasks.ts";
 import { ProjectionTaskRepository } from "../../persistence/Services/ProjectionTasks.ts";
 import { ProjectionThreadRepository } from "../../persistence/Services/ProjectionThreads.ts";
 import { ProjectionStateRepository } from "../../persistence/Services/ProjectionState.ts";
@@ -182,6 +183,23 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection
             },
           });
           yield* pipeline.projectEvent(edited);
+          const secondTaskId = TaskId.make("task-projection-replay-second");
+          yield* pipeline.projectEvent(
+            yield* eventStore.append({
+              ...fields,
+              aggregateId: secondTaskId,
+              type: "task.created",
+              eventId: EventId.make("evt-task-projection-created-second"),
+              payload: {
+                taskId: secondTaskId,
+                name: "Second task",
+                description: null,
+                primaryProjectId: projectId,
+                createdAt,
+                updatedAt: createdAt,
+              },
+            }),
+          );
           const unrelated = yield* eventStore.append({
             ...fields,
             aggregateKind: "project",
@@ -225,11 +243,19 @@ it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-projection
             unrelated.sequence,
           );
 
+          const expectedTasks = yield* tasks.listAll();
           yield* sql`DELETE FROM projection_tasks`;
           yield* sql`DELETE FROM projection_state WHERE projector = ${ORCHESTRATION_PROJECTOR_NAMES.tasks}`;
+          yield* migrateTasks;
+          assert.isTrue(
+            Option.isNone(
+              yield* states.getByProjector({ projector: ORCHESTRATION_PROJECTOR_NAMES.tasks }),
+            ),
+          );
           yield* pipeline.bootstrap;
           yield* pipeline.bootstrap;
           assert.deepEqual(Option.getOrThrow(yield* tasks.getById({ taskId })), expected);
+          assert.deepEqual(yield* tasks.listAll(), expectedTasks);
           for (const state of yield* states.listAll()) {
             assert.strictEqual(state.lastAppliedSequence, unrelated.sequence);
           }
@@ -4947,3 +4973,77 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 });
+
+for (const cleanupLagging of [false, true]) {
+  it.layer(Layer.fresh(makeProjectionPipelinePrefixedTestLayer("t3-task-migration-bootstrap-")))(
+    `task migration bootstrap with ${cleanupLagging ? "lagging" : "current"} cleanup`,
+    (it) => {
+      it.effect("skips unrelated task replay and preserves the cleanup recovery boundary", () =>
+        Effect.gen(function* () {
+          const sql = yield* SqlClient.SqlClient;
+          const pipeline = yield* OrchestrationProjectionPipeline;
+          const eventStore = yield* OrchestrationEventStore;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig;
+          const now = "2026-09-13T00:00:00.000Z";
+          const threadId = ThreadId.make("migration-cleanup");
+          const event = yield* eventStore.append({
+            type: "thread.deleted",
+            eventId: EventId.make("migration-cleanup-deleted"),
+            aggregateKind: "thread",
+            aggregateId: threadId,
+            occurredAt: now,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            payload: { threadId, deletedAt: now },
+          });
+          yield* pipeline.projectEvent(event);
+          yield* sql`DELETE FROM projection_state WHERE projector = 'projection.tasks'`;
+          yield* sql`INSERT INTO projection_state (projector, last_applied_sequence, updated_at)
+            VALUES ('projection.attachment-cleanup', ${cleanupLagging ? 0 : event.sequence}, ${now})
+            ON CONFLICT(projector) DO UPDATE SET last_applied_sequence = excluded.last_applied_sequence`;
+          yield* migrateTasks;
+          const before = yield* sql<{ projector: string; last_applied_sequence: number }>`
+            SELECT projector, last_applied_sequence FROM projection_state`;
+          for (const state of before) {
+            assert.equal(
+              state.last_applied_sequence,
+              state.projector === "projection.attachment-cleanup" && cleanupLagging
+                ? 0
+                : event.sequence,
+            );
+          }
+          const attachment = path.join(
+            attachmentsDir,
+            "migration-cleanup-00000000-0000-4000-8000-000000000001.png",
+          );
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          yield* fs.writeFileString(attachment, "pending cleanup");
+          yield* sql`CREATE TABLE cursor_writes (projector TEXT, sequence INTEGER)`;
+          yield* sql`CREATE TRIGGER capture_cursor_updates AFTER UPDATE ON projection_state
+            BEGIN INSERT INTO cursor_writes VALUES (new.projector, new.last_applied_sequence); END`;
+          yield* pipeline.bootstrap;
+          // Each historical projector application writes its cursor, even for unrelated events.
+          assert.deepEqual(
+            yield* sql`SELECT * FROM cursor_writes WHERE projector = 'projection.tasks'`,
+            [],
+          );
+          const cleanupWrites = yield* sql<{ sequence: number }>`
+            SELECT sequence FROM cursor_writes WHERE projector = 'projection.attachment-cleanup' ORDER BY rowid`;
+          assert.deepEqual(
+            cleanupWrites.map((row) => row.sequence),
+            cleanupLagging ? [0, event.sequence] : [event.sequence],
+          );
+          assert.equal(yield* exists(attachment), !cleanupLagging);
+          const after = yield* sql<{
+            last_applied_sequence: number;
+          }>`SELECT last_applied_sequence FROM projection_state`;
+          assert.isTrue(after.every((state) => state.last_applied_sequence === event.sequence));
+        }),
+      );
+    },
+  );
+}

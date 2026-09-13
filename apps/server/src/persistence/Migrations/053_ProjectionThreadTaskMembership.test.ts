@@ -45,14 +45,9 @@ it.layer(NodeSqliteClient.layerMemory())("053_ProjectionThreadTaskMembership", (
         assert.deepEqual(yield* sql`SELECT task_id FROM projection_tasks`, [
           { task_id: "task-existing" },
         ]);
-        const indexes = yield* sql<{ name: string }>`
-        SELECT name FROM sqlite_master WHERE type = 'index'
-        AND name IN ('idx_projection_threads_task_id', 'idx_projection_tasks_primary_project_id')
-        ORDER BY name
-      `;
         assert.deepEqual(
-          indexes.map((row) => row.name),
-          ["idx_projection_tasks_primary_project_id", "idx_projection_threads_task_id"],
+          yield* sql`SELECT thread_id FROM projection_threads WHERE task_id = 'task-existing'`,
+          [{ thread_id: "thread-existing" }],
         );
       }),
   );
