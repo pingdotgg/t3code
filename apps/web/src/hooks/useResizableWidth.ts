@@ -7,7 +7,11 @@ import {
   useState,
 } from "react";
 
-import { getLocalStorageItem, setLocalStorageItem } from "./useLocalStorage";
+import {
+  getLocalStorageItem,
+  removeLocalStorageItem,
+  setLocalStorageItem,
+} from "./useLocalStorage";
 
 const WidthSchema = Schema.Finite;
 
@@ -31,6 +35,7 @@ export interface ResizableWidthHandlers {
   readonly onPointerUp: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => void;
   readonly onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => void;
+  readonly onDoubleClick: () => void;
 }
 
 /**
@@ -40,7 +45,7 @@ export interface ResizableWidthHandlers {
  *
  * The hook updates an internal `width` state during drag (so the panel
  * follows the cursor live) and only commits to localStorage when the user
- * lifts the pointer.
+ * lifts the pointer. Double-clicking the handle restores `defaultWidth`.
  */
 export function useResizableWidth(options: UseResizableWidthOptions): {
   readonly width: number;
@@ -184,6 +189,15 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
     [cancelDrag],
   );
 
+  const onDoubleClick = useCallback(() => {
+    try {
+      removeLocalStorageItem(storageKey);
+    } catch (error) {
+      console.error("Could not clear persisted panel width.", error);
+    }
+    setWidth(defaultWidth);
+  }, [defaultWidth, storageKey]);
+
   return {
     width: clampedWidth,
     handlers: {
@@ -192,6 +206,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       onPointerUp,
       onPointerCancel,
       onLostPointerCapture: onPointerCancel,
+      onDoubleClick,
     },
   };
 }

@@ -25,6 +25,7 @@ const style = {
   },
 };
 const setItem = vi.fn();
+const removeItem = vi.fn();
 const cancelAnimationFrame = vi.fn();
 let events: EventTarget;
 let frame: FrameRequestCallback | undefined;
@@ -64,7 +65,7 @@ beforeEach(async () => {
   vi.stubGlobal("window", {
     addEventListener: events.addEventListener.bind(events),
     removeEventListener: events.removeEventListener.bind(events),
-    localStorage: { getItem: () => null, setItem },
+    localStorage: { getItem: () => null, setItem, removeItem },
   });
   vi.stubGlobal("document", { body: { style } });
   vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
@@ -123,5 +124,28 @@ describe("panel resize cleanup", () => {
     expect(setItem).toHaveBeenCalledExactlyOnceWith("test-panel-width", "450");
     expect(style.cursor).toBe("");
     expect(captured).toBe(false);
+  });
+});
+
+describe("panel width reset", () => {
+  it("restores the default width on double click and forgets the stored width", async () => {
+    await act(() => {
+      result.handlers.onPointerDown(pointer());
+      result.handlers.onPointerMove(pointer(50));
+      result.handlers.onPointerUp(pointer(50));
+    });
+    expect(result.width).toBe(450);
+
+    // A double-click lands two motionless drags on the handle before
+    // `dblclick` fires, so the reset has to outlive their drag-end writes.
+    await act(() => {
+      result.handlers.onPointerDown(pointer(50));
+      result.handlers.onPointerUp(pointer(50));
+      result.handlers.onPointerDown(pointer(50));
+      result.handlers.onPointerUp(pointer(50));
+      result.handlers.onDoubleClick();
+    });
+    expect(result.width).toBe(400);
+    expect(removeItem).toHaveBeenCalledExactlyOnceWith("test-panel-width");
   });
 });
