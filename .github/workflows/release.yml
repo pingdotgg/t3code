@@ -1099,6 +1099,24 @@ jobs:
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
+      # A preview release gets a warning instead of generated notes. Generated
+      # notes would list every commit since the previous preview, which is
+      # unmerged branch history no one should read as a changelog, and would
+      # make the release look like any other build to someone browsing the
+      # releases page.
+      - name: Write preview release notes
+        if: needs.preflight.outputs.release_channel == 'preview'
+        shell: bash
+        run: |
+          cat > release-notes.md <<'EOF'
+          > [!WARNING]
+          > **This is a preview build. Do not install it unless you know exactly why you are here.**
+          >
+          > Preview builds are cut by maintainers from unreleased branches to exercise the release pipeline. They can be broken, receive no fixes, are never offered as updates, and are not supported. If you want T3 Code, install the [latest release](https://github.com/pingdotgg/t3code/releases/latest) or a nightly instead.
+
+          Built from `${{ needs.preflight.outputs.ref }}`.
+          EOF
+
       - name: Publish release
         if: needs.preflight.outputs.previous_tag != ''
         uses: softprops/action-gh-release@v3
@@ -1106,7 +1124,8 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
+          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           previous_tag: ${{ needs.preflight.outputs.previous_tag }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
@@ -1121,7 +1140,8 @@ jobs:
           tag_name: ${{ needs.preflight.outputs.tag }}
           target_commitish: ${{ needs.preflight.outputs.ref }}
           name: ${{ needs.preflight.outputs.release_name }}
-          generate_release_notes: true
+          generate_release_notes: ${{ needs.preflight.outputs.release_channel != 'preview' }}
+          body_path: ${{ needs.preflight.outputs.release_channel == 'preview' && 'release-notes.md' || '' }}
           prerelease: ${{ needs.preflight.outputs.is_prerelease }}
           make_latest: ${{ needs.preflight.outputs.make_latest }}
           files: ${{ steps.release_files.outputs.files }}
