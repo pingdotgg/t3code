@@ -3352,43 +3352,6 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
-  const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
-  const draftHeroDockRequested =
-    activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
-  const isDraftHeroState = resolveDraftHeroState({
-    isLocalDraftThread,
-    hasTimelineEntries: timelineEntries.length > 0,
-    isWorking,
-    draftHeroDockRequested,
-    backgroundSubmissionPending,
-  });
-  const [
-    attachDraftHeroTransitionGroupRef,
-    attachDraftHeroComposerAnchorRef,
-    captureDraftHeroComposerRect,
-  ] = useDraftHeroLayoutTransition(isDraftHeroState);
-
-  const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
-    : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
-  const gitStatusQuery = useEnvironmentQuery(
-    gitStatusCwd === null
-      ? null
-      : vcsEnvironment.status({
-          environmentId,
-          input: { cwd: gitStatusCwd },
-        }),
-  );
-  useWorkspaceMutationRefresh({
-    enabled: gitStatusCwd !== null,
-    mutationId: workspaceMutationId,
-    refresh: gitStatusQuery.refresh,
-    resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
-  });
   // Live stages of a bootstrap worktree setup. The subscription follows the
   // thread that was set up, not the route: a deleted bootstrap thread rotates
   // the draft's thread id, and the failed card must survive that.
@@ -3447,6 +3410,46 @@ export default function ChatView(props: ChatViewProps) {
       storeEnsureTerminal(setupThreadRef, terminalId, { open: true, active: true });
     };
   }, [activeThreadRef, storeEnsureTerminal, worktreeSetup]);
+  const [dockedDraftHeroThreadKey, setDockedDraftHeroThreadKey] = useState<string | null>(null);
+  const draftHeroDockRequested =
+    activeThreadKey !== null && dockedDraftHeroThreadKey === activeThreadKey;
+  const isDraftHeroState = resolveDraftHeroState({
+    isLocalDraftThread,
+    hasTimelineEntries: timelineEntries.length > 0,
+    isWorking,
+    draftHeroDockRequested,
+    backgroundSubmissionPending,
+    // A cancelled or failed setup card stays on the draft's timeline; the
+    // hero headline would paint over it.
+    hasWorktreeSetupCard: worktreeSetup !== null,
+  });
+  const [
+    attachDraftHeroTransitionGroupRef,
+    attachDraftHeroComposerAnchorRef,
+    captureDraftHeroComposerRect,
+  ] = useDraftHeroLayoutTransition(isDraftHeroState);
+
+  const gitCwd = activeProject
+    ? projectScriptCwd({
+        project: { cwd: activeProject.workspaceRoot },
+        worktreePath: activeThread?.worktreePath ?? null,
+      })
+    : null;
+  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusQuery = useEnvironmentQuery(
+    gitStatusCwd === null
+      ? null
+      : vcsEnvironment.status({
+          environmentId,
+          input: { cwd: gitStatusCwd },
+        }),
+  );
+  useWorkspaceMutationRefresh({
+    enabled: gitStatusCwd !== null,
+    mutationId: workspaceMutationId,
+    refresh: gitStatusQuery.refresh,
+    resourceKey: `git-status:${activeThreadKey ?? ""}:${gitStatusCwd ?? ""}`,
+  });
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const availableEditors = useAtomValue(primaryServerAvailableEditorsAtom);
   const manualCompactionProviderAvailable = useMemo(
