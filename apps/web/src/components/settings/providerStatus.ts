@@ -26,7 +26,8 @@ export type ProviderStatusKey = keyof typeof PROVIDER_STATUS_STYLES;
  * settings page. Prefers `provider.message` for server-supplied detail and
  * falls back to generic phrasing when the server has not yet reported any
  * state — which happens before the first probe or when an instance names a
- * driver this build does not ship.
+ * driver this build does not ship. A ready provider without account metadata
+ * remains available and does not imply an authentication failure.
  */
 export function getProviderSummary(provider: ServerProvider | undefined) {
   if (!provider) {
@@ -35,7 +36,7 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: "Waiting for the server to report installation and authentication details.",
     };
   }
-  if (!provider.enabled) {
+  if (!provider.enabled || provider.status === "disabled") {
     return {
       headline: "Disabled",
       detail:
@@ -46,13 +47,6 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
     return {
       headline: "Not found",
       detail: provider.message ?? "CLI not detected on PATH.",
-    };
-  }
-  if (provider.auth.status === "authenticated") {
-    const authLabel = provider.auth.label ?? provider.auth.type;
-    return {
-      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
-      detail: provider.message ?? null,
     };
   }
   if (provider.auth.status === "unauthenticated") {
@@ -74,9 +68,16 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
       detail: provider.message ?? "The provider failed its startup checks.",
     };
   }
+  if (provider.auth.status === "authenticated") {
+    const authLabel = provider.auth.label ?? provider.auth.type;
+    return {
+      headline: authLabel ? `Authenticated · ${authLabel}` : "Authenticated",
+      detail: provider.message ?? null,
+    };
+  }
   return {
     headline: "Available",
-    detail: provider.message ?? "Installed and ready, but authentication could not be verified.",
+    detail: provider.message ?? null,
   };
 }
 
@@ -87,7 +88,15 @@ export function getProviderSummary(provider: ServerProvider | undefined) {
  */
 export function getProviderVersionLabel(version: string | null | undefined) {
   if (!version) return null;
-  return version.startsWith("v") ? version : `v${version}`;
+  // Antigravity reports a release tag such as `agy_acp_server_20260818_01_RC01`.
+  // Show the date and candidate so the row title keeps room for the name.
+  const antigravity = /^agy_acp_server_(\d{4})(\d{2})(\d{2})_\d+(?:_(\w+))?$/.exec(version);
+  if (antigravity) {
+    const [, year, month, day, candidate] = antigravity;
+    return `${year}-${month}-${day}${candidate ? ` ${candidate}` : ""}`;
+  }
+  // Only bare semver-like versions get a `v` prefix. Other tags are shown as-is.
+  return /^\d/.test(version) ? `v${version}` : version;
 }
 
 export function getProviderVersionAdvisoryPresentation(

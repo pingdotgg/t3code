@@ -3,8 +3,6 @@ import type { ElementType } from "react";
 import type { SourceControlProviderInfo, SourceControlProviderKind } from "@t3tools/contracts";
 export {
   DEFAULT_CHANGE_REQUEST_TERMINOLOGY,
-  formatChangeRequestAction,
-  formatCreateChangeRequestPhrase,
   getChangeRequestTerminology,
   resolveChangeRequestPresentation,
   type ChangeRequestPresentation,
@@ -15,7 +13,13 @@ import {
   resolveChangeRequestPresentation,
   type ChangeRequestTerminology,
 } from "@t3tools/shared/sourceControl";
-import { AzureDevOpsIcon, BitbucketIcon, GitHubIcon, GitLabIcon } from "./components/Icons";
+import {
+  AzureDevOpsIcon,
+  BitbucketIcon,
+  GitHubIcon,
+  GitLabIcon,
+  ForgejoIcon,
+} from "./components/Icons";
 
 export interface SourceControlPresentation {
   readonly providerName: string;
@@ -33,6 +37,12 @@ export function getSourceControlPresentation(
         providerName: provider?.name || presentation.providerName,
         terminology: getChangeRequestTerminology(provider),
         Icon: GitHubIcon,
+      };
+    case "forgejo":
+      return {
+        providerName: provider?.name || presentation.providerName,
+        terminology: getChangeRequestTerminology(provider),
+        Icon: ForgejoIcon,
       };
     case "gitlab":
       return {

@@ -93,9 +93,8 @@ export interface VirtualCluster extends Resource<
  * includes `API`, or the legacy `aws-auth` ConfigMap). Everything except tags
  * is immutable — changes replace the virtual cluster.
  *
- * @resource
- * @section Creating Virtual Clusters
- * @example Register an EKS Namespace with EMR
+ * ### Creating Virtual Clusters
+ * **Example:** Register an EKS Namespace with EMR
  * ```typescript
  * import * as AWS from "alchemy/AWS";
  *
@@ -113,6 +112,8 @@ export interface VirtualCluster extends Resource<
  * });
  * // virtualCluster.virtualClusterId is passed to StartJobRun
  * ```
+ *
+ * @resource
  */
 export const VirtualCluster = Resource<VirtualCluster>(
   "AWS.EMRContainers.VirtualCluster",

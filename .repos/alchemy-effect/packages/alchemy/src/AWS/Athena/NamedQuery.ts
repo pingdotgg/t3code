@@ -72,9 +72,8 @@ export interface NamedQuery extends Resource<
  * server-assigned `NamedQueryId`; the `name`, `description`, and `queryString`
  * are updatable in place, while changing `database` or `workGroup` replaces it.
  *
- * @resource
- * @section Saving Queries
- * @example Save a query against a Glue database
+ * ### Saving Queries
+ * **Example:** Save a query against a Glue database
  * ```typescript
  * const query = yield* AWS.Athena.NamedQuery("TopCustomers", {
  *   database: "analytics",
@@ -83,6 +82,8 @@ export interface NamedQuery extends Resource<
  *   workGroup: wg.workGroupName,
  * });
  * ```
+ *
+ * @resource
  */
 export const NamedQuery = Resource<NamedQuery>("AWS.Athena.NamedQuery");
 

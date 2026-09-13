@@ -104,6 +104,7 @@ const BASE_THREAD: OrchestrationThread = {
   archivedAt: null,
   settledOverride: null,
   settledAt: null,
+  pullRequests: [],
   deletedAt: null,
   messages: [RECENT_MESSAGE],
   proposedPlans: [],
@@ -156,6 +157,7 @@ const makeHarness = Effect.fn("TestThreadPagination.makeHarness")(function* (opt
     initialConfig: Effect.succeed({
       threadSnapshotPagination: options?.paginationCapability !== false,
     } as never),
+    subscribeServerConfig: (input) => client.subscribeServerConfig(input),
     ready: Effect.void,
     probe: Effect.void,
     closed: Effect.never,
@@ -471,8 +473,37 @@ describe("thread pagination state", () => {
       );
 
       // A live event at sequence 11 arrives; only then does the page merge.
-      yield* Queue.offer(harness.inputs, titleEvent("Advanced past watermark", 11));
-      const state = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      yield* Queue.offerAll(harness.inputs, [
+        titleEvent("Advanced past watermark", 11),
+        {
+          kind: "event",
+          event: {
+            eventId: EventId.make("event-after-page"),
+            sequence: 12,
+            aggregateKind: "thread",
+            aggregateId: THREAD_ID,
+            occurredAt: BASE_THREAD.createdAt,
+            commandId: null,
+            causationEventId: null,
+            correlationId: null,
+            metadata: {},
+            type: "thread.message-sent",
+            payload: {
+              ...OLDER_MESSAGE,
+              threadId: THREAD_ID,
+              messageId: OLDER_MESSAGE.id,
+              text: " continued",
+              streaming: true,
+            },
+          },
+        },
+      ]);
+      const state = yield* harness.awaitState(
+        (value) => Option.getOrNull(value.data)?.messages[0]?.text.endsWith(" continued") === true,
+      );
+      expect(Option.getOrThrow(state.data).messages[0]?.text).toBe(
+        `${OLDER_MESSAGE.text} continued`,
+      );
       expect(hasMessage(state, "message-recent")).toBe(true);
       expect(Option.getOrThrow(state.page).loadingOlder).toBe(false);
     }),

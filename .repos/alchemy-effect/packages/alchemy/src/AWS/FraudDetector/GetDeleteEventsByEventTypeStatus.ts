@@ -17,15 +17,14 @@ export interface GetDeleteEventsByEventTypeStatusRequest extends Omit<
  * `DeleteEventsByEventType` on a bound Amazon Fraud Detector event type — the
  * effectful status poll made from a deployed Lambda or Task.
  *
- * @binding
- * @section Purging Stored Events
+ * ### Purging Stored Events
  * Provide the `GetDeleteEventsByEventTypeStatusHttp` implementation layer on
  * the Function effect, bind the event type in the init phase, then call the
  * returned client at runtime. The binding grants
  * `frauddetector:GetDeleteEventsByEventTypeStatus` on the event type and
  * injects its `eventTypeName` automatically.
  *
- * @example Poll from a Lambda
+ * **Example:** Poll from a Lambda
  * ```typescript
  * // init
  * const getDeleteStatus =
@@ -41,6 +40,8 @@ export interface GetDeleteEventsByEventTypeStatusRequest extends Omit<
  * // on the Function effect:
  * // .pipe(Effect.provide(FraudDetector.GetDeleteEventsByEventTypeStatusHttp))
  * ```
+ *
+ * @binding
  */
 export interface GetDeleteEventsByEventTypeStatus extends Binding.Service<
   GetDeleteEventsByEventTypeStatus,

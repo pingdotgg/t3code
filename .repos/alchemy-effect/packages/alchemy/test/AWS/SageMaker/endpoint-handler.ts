@@ -20,7 +20,7 @@ export class SageMakerEndpointTestFunction extends Lambda.Function<Lambda.Functi
 export default SageMakerEndpointTestFunction.make(
   {
     main,
-    url: true,
+    functionUrl: true,
     timeout: Duration.seconds(30),
   },
   Effect.gen(function* () {

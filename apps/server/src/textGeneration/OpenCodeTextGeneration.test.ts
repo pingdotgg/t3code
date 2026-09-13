@@ -136,6 +136,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         cause: null,
       }),
     ),
+  loadOpenCodeSkills: () => Effect.succeed([]),
   loadInventoryFromCli: () =>
     Effect.fail(
       new OpenCodeRuntime.OpenCodeRuntimeError({
@@ -144,6 +145,7 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntime.OpenCodeRuntimeShape = {
         cause: null,
       }),
     ),
+  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 const DEFAULT_TEST_MODEL_SELECTION = {

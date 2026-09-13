@@ -13,9 +13,8 @@ export interface PutNotificationChannelRequest
  *
  * Designates the SNS topic and IAM role that Firewall Manager uses to record SNS logs — the channel through which Firewall Manager notifications flow. Provide the
  * implementation with `Effect.provide(AWS.FMS.PutNotificationChannelHttp)`.
- * @binding
- * @section Notification Channel
- * @example Set the Notification Channel
+ * ### Notification Channel
+ * **Example:** Set the Notification Channel
  * ```typescript
  * // init — account-level binding takes no resource
  * const putNotificationChannel = yield* AWS.FMS.PutNotificationChannel();
@@ -26,6 +25,8 @@ export interface PutNotificationChannelRequest
  *   SnsRoleName: roleArn,
  * });
  * ```
+ *
+ * @binding
  */
 export interface PutNotificationChannel extends Binding.Service<
   PutNotificationChannel,

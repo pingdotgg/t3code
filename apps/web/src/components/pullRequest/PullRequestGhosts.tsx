@@ -3,13 +3,23 @@
  * and a detail panel opening — use bars in the geometry of the content they stand for, pulsing
  * on one composited layer. Diff loading uses the shared diff-panel skeleton instead.
  *
- * Deliberately not the app's shimmer skeleton. The sweep is a `transform` animation per bar —
- * compositor-safe, but a layer for every bar on screen — and its white highlight over the
- * near-white `muted` base all but disappears in light mode. Here one `animate-ghost-pulse` on the
- * container is a single opacity animation however many bars sit under it, and the bars take
- * their tone from `muted-foreground` at low alpha, which reads on both themes.
+ * The bars share the app-wide `Skeleton` tone (`muted-foreground` at low alpha, which reads on
+ * both themes) and the single `animate-skeleton` pulse, applied once on the container so any
+ * number of bars costs one opacity animation.
  */
+import type { PullRequestListEntry } from "@t3tools/contracts";
+import { ArrowLeftIcon } from "lucide-react";
+
 import { cn } from "~/lib/utils";
+import { formatRelativeTimeLabel } from "~/timestampFormat";
+
+import { pullRequestLabelColor } from "./pullRequestList.logic";
+import {
+  PullRequestActorLabel,
+  PullRequestDiffStat,
+  pullRequestChecksStatePresentation,
+  resolvePullRequestState,
+} from "./pullRequestPresentation";
 
 function GhostBar({ className }: { className?: string | undefined }) {
   return <div aria-hidden className={cn("h-3 rounded bg-muted-foreground/15", className)} />;
@@ -32,7 +42,7 @@ export function PullRequestListGhost({
     <div
       role="status"
       aria-label={caption ?? "Loading pull requests"}
-      className="animate-ghost-pulse space-y-0.5"
+      className="motion-safe:animate-skeleton space-y-0.5"
     >
       {caption ? (
         <p className="px-3 pb-1 text-xs font-medium text-muted-foreground/70">{caption}</p>
@@ -62,18 +72,46 @@ export function PullRequestListGhost({
  * boundaries in the ghost prevents the loaded pull request from replacing one layout with
  * another a moment later.
  */
-export function PullRequestDetailGhost() {
+export function PullRequestDetailGhost({ seed }: { seed?: PullRequestListEntry | null }) {
+  const statePresentation = seed
+    ? resolvePullRequestState({
+        state: seed.state,
+        isDraft: seed.isDraft,
+      })
+    : null;
+  const checksPresentation = seed?.checksState
+    ? pullRequestChecksStatePresentation(seed.checksState)
+    : null;
+
   return (
     <div
       role="status"
       aria-label="Loading pull request"
-      className="animate-ghost-pulse flex h-full min-h-0 flex-col overflow-hidden bg-background"
+      className={cn(
+        "flex h-full min-h-0 flex-col overflow-hidden bg-background",
+        !seed && "motion-safe:animate-skeleton",
+      )}
     >
       <div className="shrink-0 border-b border-border/60">
         <div className="flex h-7 items-center justify-between gap-3 px-4">
           <div className="flex min-w-0 flex-1 items-center gap-1.5">
-            <GhostBar className="w-24" />
-            <GhostBar className="w-9" />
+            {seed && statePresentation ? (
+              <>
+                <span className="min-w-0 truncate text-xs font-medium text-muted-foreground">
+                  {seed.repository}
+                </span>
+                <span
+                  className={cn("shrink-0 text-xs font-medium", statePresentation.toneClassName)}
+                >
+                  #{seed.number}
+                </span>
+              </>
+            ) : (
+              <>
+                <GhostBar className="w-24" />
+                <GhostBar className="w-9" />
+              </>
+            )}
           </div>
           <div className="flex shrink-0 items-center gap-1">
             <GhostBar className="h-5 w-16 rounded-md" />
@@ -82,18 +120,58 @@ export function PullRequestDetailGhost() {
         </div>
 
         <div className="px-4 pb-4 pt-1">
-          <GhostBar className="h-5 w-4/5 max-w-md" />
+          {seed ? (
+            <h1 className="truncate text-base font-semibold leading-snug">{seed.title}</h1>
+          ) : (
+            <GhostBar className="h-5 w-4/5 max-w-md" />
+          )}
           <div className="mt-2 flex items-center gap-1.5">
-            <GhostBar className="size-4 rounded-full" />
-            <GhostBar className="w-24" />
+            {seed ? (
+              <>
+                <PullRequestActorLabel
+                  actor={seed.author}
+                  className="font-medium"
+                  tooltip={false}
+                />
+                <span className="text-xs text-muted-foreground">
+                  updated {formatRelativeTimeLabel(seed.updatedAt)}
+                </span>
+              </>
+            ) : (
+              <>
+                <GhostBar className="size-4 rounded-full" />
+                <GhostBar className="w-24" />
+              </>
+            )}
           </div>
           <div className="mt-4 flex min-w-0 items-center gap-2">
-            <GhostBar className="h-6 w-24 rounded-md" />
-            <GhostBar className="size-3 rounded-full" />
-            <GhostBar className="h-6 w-32 rounded-md" />
+            {seed ? (
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 font-mono text-xs text-muted-foreground/70">
+                <code className="min-w-0 max-w-[40%] shrink-0 truncate">{seed.baseBranch}</code>
+                <ArrowLeftIcon
+                  aria-label="receives changes from"
+                  className="size-3.5 shrink-0 opacity-60"
+                />
+                <code className="min-w-0 flex-1 truncate">{seed.headBranch}</code>
+              </span>
+            ) : (
+              <>
+                <GhostBar className="h-6 w-24 rounded-md" />
+                <GhostBar className="size-3 rounded-full" />
+                <GhostBar className="h-6 w-32 rounded-md" />
+              </>
+            )}
             <div className="ml-auto flex shrink-0 items-center gap-2">
               <GhostBar className="w-10" />
-              <GhostBar className="w-20" />
+              {seed ? (
+                <PullRequestDiffStat
+                  additions={seed.additions}
+                  deletions={seed.deletions}
+                  className="font-mono text-xs"
+                />
+              ) : (
+                <GhostBar className="w-20" />
+              )}
             </div>
           </div>
         </div>
@@ -104,7 +182,19 @@ export function PullRequestDetailGhost() {
             <GhostBar className="h-6 w-16 rounded-md" />
             <GhostBar className="h-6 w-12 rounded-md" />
           </div>
-          <GhostBar className="w-20" />
+          {checksPresentation ? (
+            <span
+              className={cn(
+                "inline-flex items-center gap-1.5 text-xs",
+                checksPresentation.toneClassName,
+              )}
+            >
+              <checksPresentation.Icon aria-hidden className="size-3.5" />
+              {checksPresentation.label}
+            </span>
+          ) : (
+            <GhostBar className="w-20" />
+          )}
         </div>
       </div>
 
@@ -127,8 +217,29 @@ export function PullRequestDetailGhost() {
               <GhostBar className="w-10" />
             </div>
             <div className="flex items-center gap-1">
-              <GhostBar className="h-5 w-24 rounded-full" />
-              <GhostBar className="h-5 w-20 rounded-full" />
+              {seed ? (
+                seed.labels.slice(0, 3).map((label) => {
+                  const color = pullRequestLabelColor(label.color);
+                  return (
+                    <span
+                      key={label.name}
+                      className="inline-flex h-5 max-w-32 items-center gap-1 truncate rounded-full border border-border/70 bg-muted/40 px-2 text-[10px] text-muted-foreground"
+                    >
+                      <span
+                        aria-hidden
+                        className="size-2 shrink-0 rounded-full bg-muted-foreground"
+                        {...(color ? { style: { backgroundColor: color } } : {})}
+                      />
+                      <span className="truncate">{label.name}</span>
+                    </span>
+                  );
+                })
+              ) : (
+                <>
+                  <GhostBar className="h-5 w-24 rounded-full" />
+                  <GhostBar className="h-5 w-20 rounded-full" />
+                </>
+              )}
             </div>
           </div>
           <div className="grid min-h-8 grid-cols-[6rem_minmax(0,1fr)] items-center gap-2">
@@ -160,7 +271,11 @@ export function PullRequestDetailGhost() {
 /** People-shaped: an avatar and a name, in the reviewer picker's own row height. */
 export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
   return (
-    <div role="status" aria-label="Loading people" className="animate-ghost-pulse space-y-1 p-1">
+    <div
+      role="status"
+      aria-label="Loading people"
+      className="motion-safe:animate-skeleton space-y-1 p-1"
+    >
       {Array.from({ length: rows }, (_, index) => (
         <div key={index} className="flex h-7 items-center gap-2 rounded-md px-2">
           <GhostBar className="size-4 rounded-full" />
@@ -174,7 +289,11 @@ export function PullRequestPeopleGhost({ rows = 4 }: { rows?: number }) {
 /** The timeline's own shape: dots on the rail, a line and a date to each. */
 export function PullRequestTimelineGhost({ rows = 6 }: { rows?: number }) {
   return (
-    <div role="status" aria-label="Loading timeline" className="animate-ghost-pulse px-4 py-5">
+    <div
+      role="status"
+      aria-label="Loading timeline"
+      className="motion-safe:animate-skeleton px-4 py-5"
+    >
       <div className="relative ml-2 border-l border-border/70 pl-5">
         {Array.from({ length: rows }, (_, index) => (
           <div key={index} className="relative pb-5">
@@ -194,7 +313,7 @@ export function PullRequestConversationGhost({ rows = 3 }: { rows?: number }) {
     <div
       role="status"
       aria-label="Loading pull request conversation"
-      className="animate-ghost-pulse space-y-4 py-2"
+      className="motion-safe:animate-skeleton space-y-4 py-2"
     >
       {Array.from({ length: rows }, (_, index) => (
         <div key={index} className="flex items-start gap-2">

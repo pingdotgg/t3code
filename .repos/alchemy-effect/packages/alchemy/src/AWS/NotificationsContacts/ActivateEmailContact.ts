@@ -21,9 +21,8 @@ export interface ActivateEmailContactRequest extends Omit<
  * owner received (see {@link SendActivationCode}) — e.g. from a
  * confirmation form in your app. Provide the implementation with
  * `Effect.provide(AWS.NotificationsContacts.ActivateEmailContactHttp)`.
- * @binding
- * @section Activating a Contact
- * @example Activate with a User-Supplied Code
+ * ### Activating a Contact
+ * **Example:** Activate with a User-Supplied Code
  * ```typescript
  * // init — bind the operation to the contact
  * const activate = yield* AWS.NotificationsContacts.ActivateEmailContact(contact);
@@ -31,6 +30,8 @@ export interface ActivateEmailContactRequest extends Omit<
  * // runtime — the user pasted the code from the activation email
  * yield* activate({ code: Redacted.make(userSuppliedCode) });
  * ```
+ *
+ * @binding
  */
 export interface ActivateEmailContact extends Binding.Service<
   ActivateEmailContact,

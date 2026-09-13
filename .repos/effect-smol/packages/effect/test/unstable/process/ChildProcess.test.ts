@@ -83,21 +83,21 @@ describe("ChildProcess", () => {
         const cmd = ChildProcess.make`echo hello`
         const handle = yield* cmd
         assert.strictEqual(handle.pid, ChildProcessSpawner.ProcessId(12345))
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("should spawn a standard command", () =>
       Effect.gen(function*() {
         const cmd = ChildProcess.make("node", ["--version"])
         const handle = yield* cmd
         assert.strictEqual(handle.pid, ChildProcessSpawner.ProcessId(12345))
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("should return a process handle", () =>
       Effect.gen(function*() {
         const cmd = ChildProcess.make`long-running-process`
         const handle = yield* cmd
         assert.strictEqual(handle.pid, ChildProcessSpawner.ProcessId(12345))
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("collects stdout through Stream APIs", () =>
       Effect.gen(function*() {
@@ -105,7 +105,7 @@ describe("ChildProcess", () => {
         const handle = yield* cmd
         const chunks = yield* Stream.runCollect(handle.stdout)
         assert.isTrue(chunks.length > 0)
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("should allow waiting for exit code", () =>
       Effect.gen(function*() {
@@ -113,7 +113,7 @@ describe("ChildProcess", () => {
         const handle = yield* cmd
         const exitCode = yield* handle.exitCode
         assert.strictEqual(exitCode, ChildProcessSpawner.ExitCode(0))
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("should unref a process and return a reref effect", () =>
       Effect.gen(function*() {
@@ -122,7 +122,7 @@ describe("ChildProcess", () => {
         const reref = yield* handle.unref
         assert.isDefined(reref)
         yield* reref
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
 
     it.effect("should allow restoring the reference within acquireRelease", () =>
       Effect.gen(function*() {
@@ -148,7 +148,7 @@ describe("ChildProcess", () => {
         )
         const handle = yield* pipeline
         assert.strictEqual(handle.pid, ChildProcessSpawner.ProcessId(12345))
-      }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+      }).pipe(Effect.provide(MockExecutorLayer)))
   })
 
   describe("setCwd", () => {
@@ -346,7 +346,7 @@ describe("ChildProcess", () => {
           const handle = yield* cmd
           assert.isDefined(handle.getInputFd)
           assert.isDefined(handle.getOutputFd)
-        }).pipe(Effect.scoped, Effect.provide(MockExecutorLayer)))
+        }).pipe(Effect.provide(MockExecutorLayer)))
     })
   })
 })

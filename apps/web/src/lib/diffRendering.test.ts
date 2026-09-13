@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  buildFileDiffContentVersion,
+  buildFileDiffIdentityKey,
   buildFileDiffRenderKey,
   buildPatchCacheKey,
   getDiffLineStat,
@@ -82,8 +84,8 @@ describe("getRenderablePatch", () => {
   });
 });
 
-describe("buildFileDiffRenderKey", () => {
-  it("keeps file identity stable when Pierre hydrates a partial diff", () => {
+describe("diff file reconciliation", () => {
+  it("keeps Pierre's render key stable when a partial diff hydrates", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",
       "--- a/example.ts",
@@ -103,6 +105,48 @@ describe("buildFileDiffRenderKey", () => {
     file.cacheKey = `${file.cacheKey}:hydrated`;
 
     expect(buildFileDiffRenderKey(file)).toBe(key);
+  });
+
+  it("keeps identities stable and versions local to the changed file", () => {
+    const patch = (secondLine: string) =>
+      [
+        "diff --git a/unchanged.ts b/unchanged.ts",
+        "--- a/unchanged.ts",
+        "+++ b/unchanged.ts",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+        "diff --git a/changed.ts b/changed.ts",
+        "--- a/changed.ts",
+        "+++ b/changed.ts",
+        "@@ -1 +1 @@",
+        "-old",
+        `+${secondLine}`,
+      ].join("\n");
+    const before = getRenderablePatch(patch("new"), "before");
+    const after = getRenderablePatch(patch("newer"), "after");
+    expect(before?.kind).toBe("files");
+    expect(after?.kind).toBe("files");
+    if (before?.kind !== "files" || after?.kind !== "files") return;
+
+    const [beforeUnchanged, beforeChanged] = before.files;
+    const [afterUnchanged, afterChanged] = after.files;
+    expect(beforeUnchanged).toBeDefined();
+    expect(beforeChanged).toBeDefined();
+    expect(afterUnchanged).toBeDefined();
+    expect(afterChanged).toBeDefined();
+    if (!beforeUnchanged || !beforeChanged || !afterUnchanged || !afterChanged) return;
+
+    expect(buildFileDiffIdentityKey(afterUnchanged)).toBe(
+      buildFileDiffIdentityKey(beforeUnchanged),
+    );
+    expect(buildFileDiffIdentityKey(afterChanged)).toBe(buildFileDiffIdentityKey(beforeChanged));
+    expect(buildFileDiffContentVersion(afterUnchanged)).toBe(
+      buildFileDiffContentVersion(beforeUnchanged),
+    );
+    expect(buildFileDiffContentVersion(afterChanged)).not.toBe(
+      buildFileDiffContentVersion(beforeChanged),
+    );
   });
 });
 

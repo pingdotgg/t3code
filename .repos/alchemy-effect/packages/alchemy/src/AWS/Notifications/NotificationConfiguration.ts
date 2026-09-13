@@ -79,9 +79,8 @@ export interface NotificationConfiguration extends Resource<
  * provider pins the control-plane region automatically, so the resource
  * works from a stack deployed in any region.
  *
- * @resource
- * @section Creating a Notification Configuration
- * @example Basic configuration
+ * ### Creating a Notification Configuration
+ * **Example:** Basic configuration
  * ```typescript
  * import * as Notifications from "alchemy/AWS/Notifications";
  *
@@ -90,7 +89,7 @@ export interface NotificationConfiguration extends Resource<
  * });
  * ```
  *
- * @example Aggregate duplicate events for 5 minutes
+ * **Example:** Aggregate duplicate events for 5 minutes
  * ```typescript
  * const config = yield* Notifications.NotificationConfiguration("Alerts", {
  *   description: "Deployment alerts",
@@ -99,8 +98,8 @@ export interface NotificationConfiguration extends Resource<
  * });
  * ```
  *
- * @section Adding Event Rules
- * @example Notify on CloudWatch alarm state changes
+ * ### Adding Event Rules
+ * **Example:** Notify on CloudWatch alarm state changes
  * ```typescript
  * const rule = yield* Notifications.EventRule("AlarmRule", {
  *   notificationConfigurationArn: config.notificationConfigurationArn,
@@ -109,6 +108,8 @@ export interface NotificationConfiguration extends Resource<
  *   regions: ["us-west-2"],
  * });
  * ```
+ *
+ * @resource
  */
 export const NotificationConfiguration = Resource<NotificationConfiguration>(
   "AWS.Notifications.NotificationConfiguration",

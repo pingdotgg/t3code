@@ -1,7 +1,29 @@
-import { PROVIDER_SEND_TURN_MAX_INPUT_CHARS } from "@t3tools/contracts";
+import {
+  ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+  EnvironmentId,
+  MessageId,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  ThreadId,
+} from "@t3tools/contracts";
+import {
+  expandAssistantCitationsForProvider,
+  serializeAssistantCitation,
+} from "@t3tools/shared/assistantCitations";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import { submitComposerDraft } from "./composerSubmission";
+
+const assistantCitation = {
+  version: 1 as const,
+  environmentId: EnvironmentId.make("source-environment"),
+  threadId: ThreadId.make("source-thread"),
+  messageId: MessageId.make("source-message"),
+  text: "Keep the parser shared.",
+  start: 0,
+  end: 23,
+  prefix: "",
+  suffix: "",
+};
 
 describe("submitComposerDraft", () => {
   it("keeps an oversized draft editable and sends a corrected follow-up", () => {
@@ -116,6 +138,89 @@ describe("submitComposerDraft", () => {
     expect(onSend).toHaveBeenCalledOnce();
   });
 
+  it.each(["draft", "composed provider input"])(
+    "blocks a %s when citation expansion exceeds the shared limit",
+    (source) => {
+      const citation = serializeAssistantCitation(assistantCitation);
+      const followUp = `Explain ${citation}\n\nTerminal context`;
+      const providerInput = `${"x".repeat(
+        PROVIDER_SEND_TURN_MAX_INPUT_CHARS -
+          expandAssistantCitationsForProvider(followUp).length +
+          1,
+      )}${followUp}`;
+      const onSend = vi.fn();
+      const preventDefault = vi.fn();
+
+      expect(providerInput.length).toBeLessThan(PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
+      const result = submitComposerDraft({
+        prompt: source === "draft" ? providerInput : "Explain the quote",
+        ...(source === "composed provider input" ? { providerInput } : {}),
+        submissionTarget: "provider-turn",
+        event: { preventDefault },
+        onSend,
+      });
+
+      expect(result).toEqual({
+        validationMessage:
+          "Prompt is 1 character over the 120,000-character limit. Shorten or split it before sending.",
+        didDispatch: false,
+      });
+      expect(onSend).not.toHaveBeenCalled();
+      expect(preventDefault).toHaveBeenCalledOnce();
+    },
+  );
+
+  it("keeps the encoded-message limit when citation expansion is shorter", () => {
+    const citation = serializeAssistantCitation({
+      ...assistantCitation,
+      text: "é".repeat(ASSISTANT_CITATION_MAX_TEXT_LENGTH),
+      end: ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+    });
+    const draft = `${"x".repeat(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length + 1,
+    )}${citation}`;
+    const onSend = vi.fn();
+
+    expect(expandAssistantCitationsForProvider(draft).length).toBeLessThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const result = submitComposerDraft({
+      prompt: draft,
+      submissionTarget: "provider-turn",
+      event: undefined,
+      onSend,
+    });
+
+    expect(result).toEqual({
+      validationMessage:
+        "Prompt is 1 character over the 120,000-character limit. Shorten or split it before sending.",
+      didDispatch: false,
+    });
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("sends canonical citations when expanded input fits exactly after trimming", () => {
+    const citation = serializeAssistantCitation(assistantCitation);
+    const draft = ` ${"x".repeat(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS - expandAssistantCitationsForProvider(citation).length,
+    )}${citation} \n`;
+    const dispatchedDrafts: string[] = [];
+
+    const result = submitComposerDraft({
+      prompt: draft,
+      submissionTarget: "provider-turn",
+      event: undefined,
+      onSend: () => {
+        dispatchedDrafts.push(draft);
+      },
+    });
+
+    expect(result).toEqual({ validationMessage: null, didDispatch: true });
+    expect(dispatchedDrafts).toEqual([draft]);
+    expect(dispatchedDrafts[0]).toContain(citation);
+    expect(dispatchedDrafts[0]).not.toContain("<assistant_citations>");
+  });
+
   it("blocks a generated plan follow-up that exceeds the shared limit", () => {
     const onSend = vi.fn();
 
@@ -166,5 +271,24 @@ describe("submitComposerDraft", () => {
     expect(result).toEqual({ validationMessage: null, didDispatch: true });
     expect(onSend).toHaveBeenCalledOnce();
     expect(preventDefault).not.toHaveBeenCalled();
+  });
+
+  it("does not apply citation-expanded prompt limits to pending user input answers", () => {
+    const citation = serializeAssistantCitation(assistantCitation);
+    const answer = `${"x".repeat(PROVIDER_SEND_TURN_MAX_INPUT_CHARS - citation.length)}${citation}`;
+    const onSend = vi.fn();
+
+    expect(expandAssistantCitationsForProvider(answer).length).toBeGreaterThan(
+      PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+    );
+    const result = submitComposerDraft({
+      prompt: answer,
+      submissionTarget: "pending-user-input",
+      event: undefined,
+      onSend,
+    });
+
+    expect(result).toEqual({ validationMessage: null, didDispatch: true });
+    expect(onSend).toHaveBeenCalledOnce();
   });
 });

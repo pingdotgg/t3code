@@ -1,3 +1,4 @@
+import { BlurTargetView } from "expo-blur";
 import { DEFAULT_TERMINAL_ID, EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { type KnownTerminalSession } from "@t3tools/client-runtime/state/terminal";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -5,7 +6,12 @@ import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Alert, Platform, Pressable, View } from "react-native";
+import { AppText as Text } from "../../components/AppText";
+import { TerminalContextSheet } from "./TerminalContextSheet";
+import { hasNativeTerminalSurface } from "./nativeTerminalModule";
+import * as Clipboard from "expo-clipboard";
+import * as Schema from "effect/Schema";
 import {
   KeyboardController,
   KeyboardEvents,
@@ -27,6 +33,7 @@ import { environmentCatalog } from "../../connection/catalog";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
+import { useServerConfigs } from "../../state/entities";
 import { useWorkspaceState } from "../../state/workspace";
 import {
   MAX_TERMINAL_FONT_SIZE,
@@ -65,6 +72,13 @@ import {
   resolveTerminalSessionLabel,
   type TerminalMenuSession,
 } from "./terminalMenu";
+import {
+  hostPlatformFromOs,
+  resolveModifiedTerminalInput,
+  type HostPlatform,
+  type PendingModifier,
+} from "./terminalInput";
+import { createTerminalPasteSession } from "./terminalPaste";
 import { cacheTerminalGridSize, getCachedTerminalGridSize } from "./terminalUiState";
 
 const DEFAULT_TERMINAL_COLS = 80;
@@ -72,12 +86,19 @@ const DEFAULT_TERMINAL_ROWS = 24;
 const TERMINAL_ACCESSORY_HEIGHT = 52;
 const SHOWCASE_ENABLED = process.env.EXPO_PUBLIC_SHOWCASE === "1";
 
-type PendingModifier = "ctrl" | "meta";
-type HostPlatform = "mac" | "linux" | "windows" | "unknown";
+class TerminalClipboardReadError extends Schema.TaggedError<TerminalClipboardReadError>()(
+  "TerminalClipboardReadError",
+  { terminalId: Schema.String, cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return `Failed to read the clipboard for a paste into terminal ${this.terminalId}.`;
+  }
+}
 
 type TerminalToolbarAction =
   | { readonly kind: "send"; readonly key: string; readonly label: string; readonly data: string }
   | { readonly kind: "clear"; readonly key: string; readonly label: string }
+  | { readonly kind: "paste"; readonly key: string; readonly label: string }
   | {
       readonly kind: "modifier";
       readonly key: string;
@@ -114,28 +135,6 @@ function inferHostPlatform(environmentLabel: string | null): HostPlatform {
   return "unknown";
 }
 
-function applyCtrlModifier(input: string): string {
-  const firstCharacter = input[0];
-  if (!firstCharacter) {
-    return input;
-  }
-
-  const lowerCharacter = firstCharacter.toLowerCase();
-  if (lowerCharacter >= "a" && lowerCharacter <= "z") {
-    return String.fromCharCode(lowerCharacter.charCodeAt(0) - 96);
-  }
-
-  if (firstCharacter === "@") return "\u0000";
-  if (firstCharacter === "[") return "\u001b";
-  if (firstCharacter === "\\") return "\u001c";
-  if (firstCharacter === "]") return "\u001d";
-  if (firstCharacter === "^") return "\u001e";
-  if (firstCharacter === "_") return "\u001f";
-  if (firstCharacter === "?") return "\u007f";
-
-  return input;
-}
-
 function pickRunningTerminalSessionForBootstrap(
   sessions: ReadonlyArray<KnownTerminalSession>,
 ): KnownTerminalSession | null {
@@ -159,6 +158,7 @@ type ThreadTerminalRouteScreenProps = StaticScreenProps<{
 }>;
 
 export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps) {
+  const terminalBlurTarget = useRef<View>(null);
   const navigation = useNavigation();
   const writeTerminal = useAtomCommand(terminalEnvironment.write, "terminal write");
   const resizeTerminal = useAtomCommand(terminalEnvironment.resize, "terminal resize");
@@ -182,6 +182,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
+  const [captureRequest, setCaptureRequest] = useState(0);
+  const [capturedOutput, setCapturedOutput] = useState<string | null>(null);
   const {
     isReady: hasResolvedFontPreference,
     appearance,
@@ -462,9 +464,17 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     });
   }, [terminal.buffer, terminal.buffer.length, terminalKey]);
   const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
+  const serverConfigs = useServerConfigs();
+  const hostOs =
+    routeEnvironmentId === null
+      ? null
+      : (serverConfigs.get(routeEnvironmentId)?.environment.platform.os ?? null);
+  // The descriptor is authoritative; the label is only a hint until it arrives.
   const hostPlatform = useMemo(
-    () => inferHostPlatform(selectedEnvironmentConnection?.environmentLabel ?? null),
-    [selectedEnvironmentConnection?.environmentLabel],
+    () =>
+      hostPlatformFromOs(hostOs) ??
+      inferHostPlatform(selectedEnvironmentConnection?.environmentLabel ?? null),
+    [hostOs, selectedEnvironmentConnection?.environmentLabel],
   );
 
   const terminalTheme = getMobileTerminalTheme(themeId, appearanceScheme);
@@ -488,6 +498,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       { kind: "send", key: "esc", label: "esc", data: "\u001b" },
       ...modifierActions,
       { kind: "send", key: "tab", label: "tab", data: "\t" },
+      { kind: "paste", key: "paste", label: "paste" },
       { kind: "clear", key: "clear", label: "clear" },
       { kind: "send", key: "up", label: "↑", data: "\u001b[A" },
       { kind: "send", key: "down", label: "↓", data: "\u001b[B" },
@@ -693,13 +704,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     setHasMeasuredSurface(true);
   }, [routeEnvironmentId, routeThreadId, terminalId]);
 
+  /** Resolves true once the pty accepted the write, false if it was skipped or rejected. */
   const writeInput = useCallback(
-    (data: string) => {
+    async (data: string): Promise<boolean> => {
       if (!selectedThread || !isRunning) {
-        return;
+        return false;
       }
 
-      void writeTerminal({
+      const result = await writeTerminal({
         environmentId: selectedThread.environmentId,
         input: {
           threadId: selectedThread.id,
@@ -707,8 +719,56 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           data,
         },
       });
+      return result._tag === "Success";
     },
     [isRunning, selectedThread, terminalId, writeTerminal],
+  );
+
+  const pasteSessionRef = useRef<ReturnType<typeof createTerminalPasteSession> | null>(null);
+  if (pasteSessionRef.current === null) {
+    pasteSessionRef.current = createTerminalPasteSession();
+  }
+  const pasteSession = pasteSessionRef.current;
+
+  // Drop delayed clipboard reads whenever the route or attached pty changes.
+  useEffect(() => {
+    pasteSession.reset(isRunning);
+    return () => {
+      pasteSession.reset(false);
+    };
+  }, [isRunning, pasteSession, terminal.lifecycleVersion, terminalKey]);
+
+  const pasteFromClipboard = useCallback(async () => {
+    await pasteSession.paste({
+      readText: Clipboard.getStringAsync,
+      write: writeInput,
+      onReadError: (cause) => {
+        console.error(new TerminalClipboardReadError({ terminalId, cause }));
+      },
+    });
+  }, [pasteSession, terminalId, writeInput]);
+
+  /** Sends a key through the armed toolbar modifier, if any, and disarms it. */
+  const writeModifiedInput = useCallback(
+    (data: string) => {
+      if (pendingModifier === null) {
+        void writeInput(data);
+        return;
+      }
+
+      setPendingModifierState({ terminalId, value: null });
+      const resolved = resolveModifiedTerminalInput({
+        data,
+        modifier: pendingModifier,
+        hostPlatform,
+      });
+      if (resolved.kind === "paste") {
+        void pasteFromClipboard();
+        return;
+      }
+      void writeInput(resolved.data);
+    },
+    [hostPlatform, pasteFromClipboard, pendingModifier, terminalId, writeInput],
   );
 
   const handleInput = useCallback(
@@ -717,17 +777,9 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
-      if (pendingModifier === "ctrl") {
-        setPendingModifierState({ terminalId, value: null });
-        writeInput(applyCtrlModifier(data));
-      } else if (pendingModifier === "meta") {
-        setPendingModifierState({ terminalId, value: null });
-        writeInput(`\u001b${data}`);
-      } else {
-        writeInput(data);
-      }
+      writeModifiedInput(data);
     },
-    [pendingModifier, terminalId, writeInput],
+    [writeModifiedInput],
   );
 
   const handleResize = useCallback(
@@ -802,6 +854,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     },
     [navigation, selectedThread, terminalId],
   );
+
+  const handleCloseTerminal = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: params.environmentId,
+        threadId: params.threadId,
+      }),
+    );
+  }, [navigation, params.environmentId, params.threadId]);
 
   const navigateAwayAfterExit = useCallback(() => {
     // With other shells still live, fall through to the previous one instead
@@ -948,16 +1013,14 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           },
         ],
       },
-      ...terminalMenuSessions.map(
-        (session): MenuAction => ({
-          id: `terminal-session:${session.terminalId}`,
-          title: session.displayLabel,
-          subtitle: [getTerminalStatusLabel({ status: session.status }), basename(session.cwd)]
-            .filter(Boolean)
-            .join(" · "),
-          state: session.terminalId === terminalId ? ("on" as const) : undefined,
-        }),
-      ),
+      ...terminalMenuSessions.map((session): MenuAction => ({
+        id: `terminal-session:${session.terminalId}`,
+        title: session.displayLabel,
+        subtitle: [getTerminalStatusLabel({ status: session.status }), basename(session.cwd)]
+          .filter(Boolean)
+          .join(" · "),
+        state: session.terminalId === terminalId ? ("on" as const) : undefined,
+      })),
       {
         id: "terminal-new",
         title: "Open new terminal",
@@ -1023,16 +1086,15 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         return;
       }
 
-      setPendingModifierState({ terminalId, value: null });
-      if (pendingModifier === "ctrl") {
-        writeInput(applyCtrlModifier(action.data));
-      } else if (pendingModifier === "meta") {
-        writeInput(`\u001b${action.data}`);
-      } else {
-        writeInput(action.data);
+      if (action.kind === "paste") {
+        setPendingModifierState({ terminalId, value: null });
+        void pasteFromClipboard();
+        return;
       }
+
+      writeModifiedInput(action.data);
     },
-    [handleClearTerminal, pendingModifier, terminalId, writeInput],
+    [handleClearTerminal, pasteFromClipboard, terminalId, writeModifiedInput],
   );
 
   const handleDismissKeyboard = useCallback(() => {
@@ -1081,6 +1143,20 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   return (
     <>
+      {capturedOutput !== null && selectedThread ? (
+        <TerminalContextSheet
+          text={capturedOutput}
+          environmentId={selectedThread.environmentId}
+          threadId={selectedThread.id}
+          terminalId={terminalId}
+          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary)}
+          onClose={() => setCapturedOutput(null)}
+          onAttach={() => {
+            setCapturedOutput(null);
+            if (navigation.canGoBack()) navigation.goBack();
+          }}
+        />
+      ) : null}
       <NativeStackScreenOptions
         options={{
           // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the pty
@@ -1099,7 +1175,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         <AndroidScreenHeader
           title="Terminal"
           subtitle={headerSubtitle}
-          onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+          onBack={handleCloseTerminal}
           trailing={
             <>
               {layout.usesSplitView ? (
@@ -1135,6 +1211,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
       {layout.usesSplitView ? (
         <NativeHeaderToolbar placement="left">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Close terminal"
+            icon="xmark"
+            onPress={handleCloseTerminal}
+            separateBackground
+          />
           <NativeHeaderToolbar.Button
             accessibilityLabel={panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"}
             icon={
@@ -1218,21 +1300,52 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
           />
         ) : (
           <>
-            <View className="flex-1" style={{ paddingBottom: terminalBottomInset }}>
+            <BlurTargetView
+              ref={terminalBlurTarget}
+              style={{
+                flex: 1,
+                paddingBottom: terminalBottomInset,
+              }}
+            >
+              <View
+                pointerEvents="none"
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  backgroundColor: terminalTheme.background,
+                }}
+              />
               <TerminalSurface
                 autoFocus={!SHOWCASE_ENABLED}
                 buffer={terminalSurfaceBuffer}
                 fontSize={fontSize}
                 isRunning={isRunning}
                 keyboardFocusRequest={keyboardFocusRequest}
+                captureRequest={captureRequest}
+                onCapture={(text) => {
+                  if (text.trim()) setCapturedOutput(text);
+                  else Alert.alert("No terminal output", "There is no visible output to attach.");
+                }}
                 onInput={handleInput}
                 onResize={handleResize}
                 style={{ flex: 1 }}
                 terminalKey={terminalKey}
                 theme={terminalTheme}
               />
-            </View>
+            </BlurTargetView>
 
+            {selectedThread && hasNativeTerminalSurface() ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  KeyboardController.dismiss();
+                  setCaptureRequest((value) => value + 1);
+                }}
+                className="px-4 py-2"
+              >
+                <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+              </Pressable>
+            ) : null}
             {isAccessoryVisible ? (
               <KeyboardStickyView
                 style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
@@ -1298,6 +1411,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               >
                 <GlassSurface
                   chrome="none"
+                  blurTarget={terminalBlurTarget}
+                  fallbackColor={terminalTheme.background}
                   glassEffectStyle="regular"
                   tintColor="transparent"
                   style={{

@@ -68,6 +68,7 @@ describe.sequential("Subscription", () => {
             // account-level R2 events (e.g. this bucket's lifecycle)
             // into the queue.
             const bucket = yield* Cloudflare.R2.Bucket("SubBucket", {
+              forceDestroy: true,
               name: "alchemy-test-sub-bucket",
             });
             const subscription = yield* Cloudflare.Queues.Subscription(

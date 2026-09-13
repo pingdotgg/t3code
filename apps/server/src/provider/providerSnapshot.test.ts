@@ -52,6 +52,27 @@ describe("providerModelsFromSettings", () => {
     ]);
   });
 
+  it("keeps an entry's own name and capabilities over the driver default", () => {
+    const capabilities = createModelCapabilities({
+      optionDescriptors: [{ id: "fastMode", label: "Fast Mode", type: "boolean" }],
+    });
+    const models = providerModelsFromSettings(
+      [],
+      ["bare", { slug: "named", name: "Named", capabilities }],
+      OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+    );
+
+    expect(models).toEqual([
+      {
+        slug: "bare",
+        name: "bare",
+        isCustom: true,
+        capabilities: OPENCODE_CUSTOM_MODEL_CAPABILITIES,
+      },
+      { slug: "named", name: "Named", isCustom: true, capabilities },
+    ]);
+  });
+
   it("preserves a custom slug that collides with a provider alias", () => {
     const capabilities = createModelCapabilities({ optionDescriptors: [] });
     const models = providerModelsFromSettings(

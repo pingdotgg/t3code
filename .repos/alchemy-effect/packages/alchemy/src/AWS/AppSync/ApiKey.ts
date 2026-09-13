@@ -53,15 +53,14 @@ export interface AppSyncApiKey extends Resource<
  * The key's `id` attribute is the secret value (`da2-…`) sent in the
  * `x-api-key` request header. It is wrapped in `Redacted`; unwrap with
  * `Redacted.value(key.id)` where the raw header value is needed.
- * @resource
- * @section Creating API Keys
- * @example Key with the default 7-day expiry
+ * ### Creating API Keys
+ * **Example:** Key with the default 7-day expiry
  * ```typescript
  * const key = yield* AppSync.ApiKey("Key", { api });
  * // Redacted.value(key.id) → "da2-…" — send as the x-api-key header
  * ```
  *
- * @example Key with a managed expiry
+ * **Example:** Key with a managed expiry
  * ```typescript
  * const key = yield* AppSync.ApiKey("Key", {
  *   api,
@@ -69,6 +68,8 @@ export interface AppSyncApiKey extends Resource<
  *   expires: 1893456000, // rounded down to the hour by AWS
  * });
  * ```
+ *
+ * @resource
  */
 export const ApiKeyResource = Resource<AppSyncApiKey>("AWS.AppSync.ApiKey");
 

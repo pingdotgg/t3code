@@ -165,7 +165,7 @@ export const make = <A>(evaluate: LazyArg<A>): Effect.Effect<ScopedRef<A>, never
  * changed to the new value, with old resources released, or until the attempt
  * to acquire a new value fails.
  *
- * @category setters
+ * @category mutations
  * @since 2.0.0
  */
 export const set: {
@@ -178,10 +178,12 @@ export const set: {
       self: ScopedRef<A>,
       acquire: Effect.Effect<A, E, R>
     ) {
-      yield* Scope.close(self.backing.backing.ref.current[0], Exit.void)
       const scope = Scope.makeUnsafe()
       const value = yield* acquire.pipe(
         Scope.provide(scope),
+        Effect.tapCause((cause) => Scope.close(scope, Exit.failCause(cause)))
+      )
+      yield* Scope.close(self.backing.backing.ref.current[0], Exit.void).pipe(
         Effect.tapCause((cause) => Scope.close(scope, Exit.failCause(cause)))
       )
       self.backing.backing.ref.current = [scope, value]

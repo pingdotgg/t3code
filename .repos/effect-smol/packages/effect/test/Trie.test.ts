@@ -2,11 +2,23 @@ import { describe, it } from "@effect/vitest"
 import { assertNone, assertSome, deepStrictEqual, strictEqual, throws } from "@effect/vitest/utils"
 import * as Equal from "effect/Equal"
 import { pipe } from "effect/Function"
+import * as Hash from "effect/Hash"
 import * as Option from "effect/Option"
 import * as Result from "effect/Result"
 import * as Trie from "effect/Trie"
 
 describe("Trie", () => {
+  it("equality rejects tries with different numbers of entries after a hash collision", () => {
+    const value = {
+      [Hash.symbol]: () => Hash.hash("a") * 53
+    }
+    const empty = Trie.empty<typeof value>()
+    const nonEmpty = Trie.make(["a", value])
+
+    strictEqual(Hash.hash(empty), Hash.hash(nonEmpty))
+    strictEqual(Equal.equals(empty, nonEmpty), false, "tries with different sizes must not be equal")
+  })
+
   it("toString renders entries in iteration order", () => {
     const trie = pipe(
       Trie.empty<number>(),
@@ -66,6 +78,17 @@ describe("Trie", () => {
     deepStrictEqual(Array.from(trie2), [["call", 0], ["me", 1]])
     deepStrictEqual(Array.from(trie3), [["call", 0], ["me", 1], ["mind", 2]])
     deepStrictEqual(Array.from(trie4), [["call", 0], ["me", 1], ["mid", 3], ["mind", 2]])
+  })
+
+  it("insert replaces a key without mutating or growing the original", () => {
+    const before = Trie.make(["a", 1])
+    const after = Trie.insert(before, "a", 2)
+
+    deepStrictEqual(
+      [Array.from(before), Trie.size(before), Array.from(after), Trie.size(after)],
+      [[["a", 1]], 1, [["a", 2]], 1],
+      "replacement must be immutable and preserve size"
+    )
   })
 
   it("fromIterable preserves an empty iterable", () => {
@@ -142,6 +165,14 @@ describe("Trie", () => {
     assertNone(Trie.get(trie, "ma"))
     assertNone(Trie.get(trie, "midn"))
     assertNone(Trie.get(trie, "mea"))
+  })
+
+  it("stores undefined values", () => {
+    const trie = Trie.make(["a", undefined])
+
+    strictEqual(Trie.size(trie), 1)
+    strictEqual(Option.isSome(Trie.get(trie, "a")), true, "an inserted undefined value must remain present")
+    deepStrictEqual(Array.from(trie), [["a", undefined]])
   })
 
   it("get distinguishes complete keys from prefixes", () => {
@@ -346,6 +377,16 @@ describe("Trie", () => {
     assertSome(Trie.longestPrefixOf(trie, "sells"), ["sells", 1])
     assertSome(Trie.longestPrefixOf(trie, "shell"), ["she", 2])
     assertSome(Trie.longestPrefixOf(trie, "shellsort"), ["shells", 0])
+  })
+
+  it("longestPrefixOf ignores valued sibling nodes that do not match the input", () => {
+    const trie = Trie.make(["a", 1], ["b", 2])
+
+    strictEqual(
+      Option.isNone(Trie.longestPrefixOf(trie, "c")),
+      true,
+      "a non-matching sibling must not be reported as a prefix"
+    )
   })
 
   it("map transforms values and can use keys", () => {

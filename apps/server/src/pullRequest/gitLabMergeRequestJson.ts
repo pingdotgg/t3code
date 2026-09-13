@@ -11,6 +11,7 @@ import type {
   PullRequestLabel,
   PullRequestMergeability,
   PullRequestMergeCapabilities,
+  PullRequestMergeMethod,
   PullRequestReaction,
   PullRequestReactionContent,
   PullRequestReviewThread,
@@ -80,6 +81,9 @@ const RawMergeRequestSchema = Schema.Struct({
    */
   merge_when_pipeline_succeeds: Schema.optional(Schema.NullOr(Schema.Boolean)),
   auto_merge_enabled: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  /** The merge request's stored squash choice, including project-policy overrides. */
+  squash_on_merge: Schema.optional(Schema.NullOr(Schema.Boolean)),
+  squash: Schema.optional(Schema.NullOr(Schema.Boolean)),
   /**
    * How far the target branch has moved on since this one left it, which is the same number
    * GitLab's own "out of date" wording counts. It costs a walk of the two branches, so GitLab
@@ -228,6 +232,8 @@ export interface GitLabMergeRequestDetail extends GitLabMergeRequestListItem {
   readonly reviewerIds: ReadonlyArray<number>;
   /** Absent where GitLab named neither auto-merge field, which is not the same as off. */
   readonly autoMergeEnabled?: boolean;
+  /** GitLab only exposes the stored strategy separately when that strategy is squash. */
+  readonly autoMergeMethod?: PullRequestMergeMethod;
   /**
    * Absent where GitLab did not count, which is not the same as a branch that has nothing behind
    * it: an install too old to answer must not be read as saying the branch is current.
@@ -379,6 +385,9 @@ function toDetail(raw: Schema.Schema.Type<typeof RawMergeRequestSchema>): GitLab
       reviewer.id === undefined ? [] : [reviewer.id],
     ),
     ...(autoMerge === undefined ? {} : { autoMergeEnabled: autoMerge }),
+    ...(autoMerge === true && raw.squash_on_merge === true
+      ? { autoMergeMethod: "squash" as const }
+      : {}),
     ...(raw.diverged_commits_count == null ? {} : { divergedCommits: raw.diverged_commits_count }),
   };
 }

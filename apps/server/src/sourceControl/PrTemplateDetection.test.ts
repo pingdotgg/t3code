@@ -10,6 +10,7 @@ import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { detectPrTemplate } from "./PrTemplateDetection.ts";
+import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const SINGLE_TEMPLATE_PATHS = [
   ".github/pull_request_template.md",
@@ -139,27 +140,29 @@ it.effect.each(TEMPLATE_DIRECTORIES)("recognizes the $0 directory", (relativeDir
   ),
 );
 
-it.effect("skips unusable directory entries and uses the one valid template", () =>
-  runWithTempDirectory((cwd) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const templateDirectory = path.join(cwd, ".github", "PULL_REQUEST_TEMPLATE");
-      yield* fileSystem.makeDirectory(path.join(templateDirectory, "b-directory.md"), {
-        recursive: true,
-      });
-      yield* fileSystem.writeFileString(path.join(templateDirectory, "a-empty.md"), " \n");
-      yield* fileSystem.symlink(
-        path.join(templateDirectory, "missing.md"),
-        path.join(templateDirectory, "c-broken.md"),
-      );
-      yield* fileSystem.writeFileString(path.join(templateDirectory, "z-valid.md"), "valid");
-      yield* commitTemplates(cwd);
+it.effect.skipIf(!symlinksSupported)(
+  "skips unusable directory entries and uses the one valid template",
+  () =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const templateDirectory = path.join(cwd, ".github", "PULL_REQUEST_TEMPLATE");
+        yield* fileSystem.makeDirectory(path.join(templateDirectory, "b-directory.md"), {
+          recursive: true,
+        });
+        yield* fileSystem.writeFileString(path.join(templateDirectory, "a-empty.md"), " \n");
+        yield* fileSystem.symlink(
+          path.join(templateDirectory, "missing.md"),
+          path.join(templateDirectory, "c-broken.md"),
+        );
+        yield* fileSystem.writeFileString(path.join(templateDirectory, "z-valid.md"), "valid");
+        yield* commitTemplates(cwd);
 
-      const template = yield* detectTemplate(cwd);
-      assert.strictEqual(Option.getOrUndefined(template), "valid");
-    }),
-  ),
+        const template = yield* detectTemplate(cwd);
+        assert.strictEqual(Option.getOrUndefined(template), "valid");
+      }),
+    ),
 );
 
 it.effect("does not guess between multiple directory templates", () =>
@@ -176,60 +179,64 @@ it.effect("does not guess between multiple directory templates", () =>
   ),
 );
 
-it.effect("rejects a committed template symlink escaping the repository", () =>
-  runWithTempDirectory((cwd) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-pr-template-outside-",
-      });
-      const outsideTemplate = path.join(outsideDirectory, "secret.md");
-      yield* fileSystem.writeFileString(outsideTemplate, "LOCAL_SECRET_SENTINEL");
-      const escapedTemplatePath = path.join(cwd, ".github", "pull_request_template.md");
-      yield* fileSystem.makeDirectory(path.dirname(escapedTemplatePath), { recursive: true });
-      yield* fileSystem.symlink(outsideTemplate, escapedTemplatePath);
-      yield* writeTemplate(cwd, "pull_request_template.md", "safe template");
-      yield* commitTemplates(cwd);
+it.effect.skipIf(!symlinksSupported)(
+  "rejects a committed template symlink escaping the repository",
+  () =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-pr-template-outside-",
+        });
+        const outsideTemplate = path.join(outsideDirectory, "secret.md");
+        yield* fileSystem.writeFileString(outsideTemplate, "LOCAL_SECRET_SENTINEL");
+        const escapedTemplatePath = path.join(cwd, ".github", "pull_request_template.md");
+        yield* fileSystem.makeDirectory(path.dirname(escapedTemplatePath), { recursive: true });
+        yield* fileSystem.symlink(outsideTemplate, escapedTemplatePath);
+        yield* writeTemplate(cwd, "pull_request_template.md", "safe template");
+        yield* commitTemplates(cwd);
 
-      const template = yield* detectTemplate(cwd);
-      assert.strictEqual(Option.getOrUndefined(template), "safe template");
-      assert.notInclude(
-        Option.getOrElse(template, () => ""),
-        "LOCAL_SECRET_SENTINEL",
-      );
-    }),
-  ),
+        const template = yield* detectTemplate(cwd);
+        assert.strictEqual(Option.getOrUndefined(template), "safe template");
+        assert.notInclude(
+          Option.getOrElse(template, () => ""),
+          "LOCAL_SECRET_SENTINEL",
+        );
+      }),
+    ),
 );
 
-it.effect("reads the committed template when a worktree parent is replaced", () =>
-  runWithTempDirectory((cwd) =>
-    Effect.gen(function* () {
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
-        prefix: "t3-pr-template-outside-",
-      });
-      const templatePath = yield* writeTemplate(
-        cwd,
-        ".github/pull_request_template.md",
-        "committed template",
-      );
-      yield* commitTemplates(cwd);
-      yield* writeTemplate(outsideDirectory, "pull_request_template.md", "LOCAL_SECRET_SENTINEL");
+it.effect.skipIf(!symlinksSupported)(
+  "reads the committed template when a worktree parent is replaced",
+  () =>
+    runWithTempDirectory((cwd) =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const outsideDirectory = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-pr-template-outside-",
+        });
+        const templatePath = yield* writeTemplate(
+          cwd,
+          ".github/pull_request_template.md",
+          "committed template",
+        );
+        yield* commitTemplates(cwd);
+        yield* writeTemplate(outsideDirectory, "pull_request_template.md", "LOCAL_SECRET_SENTINEL");
 
-      const templateDirectory = path.dirname(templatePath);
-      yield* fileSystem.rename(templateDirectory, path.join(cwd, ".github-original"));
-      yield* fileSystem.symlink(outsideDirectory, templateDirectory);
+        const templateDirectory = path.dirname(templatePath);
+        yield* fileSystem.rename(templateDirectory, path.join(cwd, ".github-original"));
+        yield* fileSystem.symlink(outsideDirectory, templateDirectory);
 
-      const template = yield* detectTemplate(cwd);
-      assert.strictEqual(Option.getOrUndefined(template), "committed template");
-      assert.notInclude(
-        Option.getOrElse(template, () => ""),
-        "LOCAL_SECRET_SENTINEL",
-      );
-    }),
-  ),
+        const template = yield* detectTemplate(cwd);
+        assert.strictEqual(Option.getOrUndefined(template), "committed template");
+        assert.notInclude(
+          Option.getOrElse(template, () => ""),
+          "LOCAL_SECRET_SENTINEL",
+        );
+      }),
+    ),
 );
 
 it.effect("bounds template reads and marks truncated content", () =>

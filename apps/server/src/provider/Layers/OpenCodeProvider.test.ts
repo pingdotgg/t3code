@@ -3,8 +3,10 @@ import * as NodeAssert from "node:assert/strict";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import * as TestClock from "effect/testing/TestClock";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -34,6 +36,7 @@ const DEFAULT_VERSION_STDOUT = "opencode 1.14.19\n";
 const runtimeMock = {
   state: {
     runVersionError: null as Error | null,
+    runVersionPending: false,
     versionStdout: DEFAULT_VERSION_STDOUT,
     inventoryError: null as Error | null,
     connectionError: null as Error | null,
@@ -52,6 +55,7 @@ const runtimeMock = {
   },
   reset() {
     this.state.runVersionError = null;
+    this.state.runVersionPending = false;
     this.state.versionStdout = DEFAULT_VERSION_STDOUT;
     this.state.inventoryError = null;
     this.state.connectionError = null;
@@ -114,15 +118,17 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
       };
     }),
   runOpenCodeCommand: () =>
-    runtimeMock.state.runVersionError
-      ? Effect.fail(
-          new OpenCodeRuntimeError({
-            operation: "runOpenCodeCommand",
-            detail: runtimeMock.state.runVersionError.message,
-            cause: runtimeMock.state.runVersionError,
-          }),
-        )
-      : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
+    runtimeMock.state.runVersionPending
+      ? Effect.never
+      : runtimeMock.state.runVersionError
+        ? Effect.fail(
+            new OpenCodeRuntimeError({
+              operation: "runOpenCodeCommand",
+              detail: runtimeMock.state.runVersionError.message,
+              cause: runtimeMock.state.runVersionError,
+            }),
+          )
+        : Effect.succeed({ stdout: runtimeMock.state.versionStdout, stderr: "", code: 0 }),
   createOpenCodeSdkClient: (input) => {
     runtimeMock.state.sdkClientInputs.push(input);
     return {} as unknown as ReturnType<OpenCodeRuntimeShape["createOpenCodeSdkClient"]>;
@@ -149,6 +155,8 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
         )
       : Effect.succeed(runtimeMock.state.inventory as OpenCodeInventory);
   },
+  loadOpenCodeSkills: () => Effect.succeed([]),
+  loadSkillsFromCli: () => Effect.succeed([]),
 };
 
 beforeEach(() => {
@@ -214,6 +222,24 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
       NodeAssert.equal(snapshot.installed, true);
       NodeAssert.equal(snapshot.message, "Failed to execute OpenCode CLI health check.");
     }),
+  );
+
+  it.effect("times out a hanging local CLI version probe", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.runVersionPending = true;
+      const probeFiber = yield* checkProvider(makeOpenCodeSettings()).pipe(Effect.forkChild);
+
+      yield* Effect.yieldNow;
+      yield* TestClock.adjust("4 seconds");
+      const snapshot = yield* Fiber.join(probeFiber);
+
+      NodeAssert.equal(snapshot.status, "error");
+      NodeAssert.equal(snapshot.installed, true);
+      NodeAssert.equal(
+        snapshot.message,
+        "Failed to execute OpenCode CLI health check: OpenCode CLI version probe timed out after 4 seconds.",
+      );
+    }).pipe(Effect.provide(TestClock.layer())),
   );
 
   it.effect("emits OpenCode variant defaults so trait picker can resolve a visible selection", () =>

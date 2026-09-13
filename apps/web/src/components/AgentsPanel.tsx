@@ -1,7 +1,6 @@
 /**
- * Agents right-panel surface: the fleet view over the native subagent fold,
- * and the ONLY place the roster renders (the chat carries one CTA row per
- * spawn batch).
+ * Agents right-panel surface: the fleet view over the native subagent fold.
+ * The chat carries one expandable row per spawn batch and links here.
  *
  * Visualization rules (from live-test feedback):
  * - Spawn order is stable. Activity and completion update rows in place.
@@ -140,6 +139,8 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 /** Flat, non-interactive agent status line. No unfold. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
   const visuals = STATUS_VISUALS[agent.status];
+  const statusLabel =
+    agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
   const role =
@@ -180,12 +181,12 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
           agent.status === "failed" ? "text-destructive-foreground" : "text-muted-foreground",
         )}
       >
-        {activity ?? visuals.label}
+        {activity ?? statusLabel}
       </span>
       <span className="col-start-2 col-end-4 row-start-3 truncate font-mono text-[.7rem] tabular-nums text-muted-foreground/70">
         {metadata.join(" · ")}
       </span>
-      <span className="sr-only">{visuals.label}</span>
+      <span className="sr-only">{statusLabel}</span>
     </div>
   );
 }

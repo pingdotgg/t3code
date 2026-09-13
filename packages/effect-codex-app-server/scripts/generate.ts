@@ -61,7 +61,7 @@ interface JsonSchemaFile {
   readonly qualifiedName: string;
 }
 
-class GeneratorError extends Schema.TaggedErrorClass<GeneratorError>()("GeneratorError", {
+class GeneratorError extends Schema.TaggedError<GeneratorError>()("GeneratorError", {
   detail: Schema.String,
   cause: Schema.optional(Schema.Defect()),
 }) {
@@ -193,6 +193,63 @@ const Codex0150DefinitionSchemas: Record<string, Schema.Json> = {
     enum: ["started", "interacted", "interrupted", "completed"],
   },
 };
+
+// Pinned protocol JSON omits later CodexErrorInfo variants. Keep historical
+// thread payloads decodable; do not fold unknown values into "other".
+const CodexErrorInfoCompatibilityValues = [
+  "rateLimitExceeded",
+  "misalignmentPolicyViolation",
+] as const;
+
+const CodexErrorInfoCompatibilityExports = new Set([
+  "V2ThreadReadResponse",
+  "V2ThreadResumeResponse",
+  "V2ThreadRollbackResponse",
+  "V2ThreadForkResponse",
+  "V2TurnCompletedNotification",
+]);
+
+function applyCodex0151DefinitionCompatibility(
+  exportName: string,
+  definitionName: string,
+  definitionSchema: Schema.Json,
+): Schema.Json {
+  if (
+    !CodexErrorInfoCompatibilityExports.has(exportName) ||
+    definitionName !== "CodexErrorInfo" ||
+    typeof definitionSchema !== "object"
+  ) {
+    return definitionSchema;
+  }
+
+  const schema = definitionSchema as {
+    readonly oneOf?: ReadonlyArray<{ readonly enum?: ReadonlyArray<string> }>;
+  };
+  const [firstVariant, ...remainingVariants] = schema.oneOf ?? [];
+  const currentEnum = firstVariant?.enum;
+  if (!currentEnum) {
+    return definitionSchema;
+  }
+
+  const missingValues = CodexErrorInfoCompatibilityValues.filter(
+    (value) => !currentEnum.includes(value),
+  );
+  if (missingValues.length === 0) {
+    return definitionSchema;
+  }
+
+  const enumValues = [...currentEnum];
+  const otherIndex = enumValues.indexOf("other");
+  const nextEnum =
+    otherIndex === -1
+      ? [...enumValues, ...missingValues]
+      : [...enumValues.slice(0, otherIndex), ...missingValues, ...enumValues.slice(otherIndex)];
+
+  return {
+    ...definitionSchema,
+    oneOf: [{ ...firstVariant, enum: nextEnum }, ...remainingVariants],
+  };
+}
 
 const getGeneratedPaths = Effect.fn("getGeneratedPaths")(function* () {
   const path = yield* Path.Path;
@@ -328,6 +385,60 @@ function stripNullDefaults(value: Schema.Json): Schema.Json {
       .filter(([key, child]) => !(key === "default" && child === null))
       .map(([key, child]) => [key, stripNullDefaults(child)]),
   ) as Schema.Json;
+}
+
+// Codex 0.153 adds async questions to agent messages. Keep older protocol
+// fields until the next full refresh, including every thread history namespace.
+function addAsyncQuestionFields(value: Schema.Json): Schema.Json {
+  if (Array.isArray(value)) {
+    return value.map(addAsyncQuestionFields);
+  }
+  if (value === null || typeof value !== "object") {
+    return value;
+  }
+  const properties = "properties" in value ? value.properties : undefined;
+  const itemType =
+    properties && typeof properties === "object" && "type" in properties
+      ? properties.type
+      : undefined;
+  if (
+    properties &&
+    typeof properties === "object" &&
+    itemType &&
+    typeof itemType === "object" &&
+    "enum" in itemType &&
+    Array.isArray(itemType.enum) &&
+    itemType.enum.includes("agentMessage")
+  ) {
+    return {
+      ...value,
+      properties: {
+        ...properties,
+        delivery: { anyOf: [{ type: "string", enum: ["async"] }, { type: "null" }] },
+        questions: {
+          anyOf: [
+            {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  title: { type: "string" },
+                  options: {
+                    anyOf: [{ type: "array", items: { type: "string" } }, { type: "null" }],
+                  },
+                },
+                required: ["title"],
+              },
+            },
+            { type: "null" },
+          ],
+        },
+      },
+    };
+  }
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [key, addAsyncQuestionFields(child)]),
+  );
 }
 
 function toPascalCaseMethod(method: string) {
@@ -606,7 +717,8 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
 
     for (const [definitionName, definitionSchema] of Object.entries(parsed.definitions ?? {})) {
       const compatibleDefinitionSchema =
-        Codex0150DefinitionSchemas[definitionName] ?? definitionSchema;
+        Codex0150DefinitionSchemas[definitionName] ??
+        applyCodex0151DefinitionCompatibility(file.exportName, definitionName, definitionSchema);
       aggregateSchemas[localDefinitionNames.get(definitionName)!] = stripNullDefaults(
         normalizeNullableTypes(
           rewriteExternalRefs(
@@ -648,7 +760,7 @@ const generateFiles = Effect.fn("generateFiles")(function* () {
   for (const [name, schema] of Object.entries(aggregateSchemas).toSorted(([left], [right]) =>
     left.localeCompare(right),
   )) {
-    generator.addSchema(name, schema as never);
+    generator.addSchema(name, addAsyncQuestionFields(schema) as never);
   }
 
   const generatedEntries = new Map<string, string>();

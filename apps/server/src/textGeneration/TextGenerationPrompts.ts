@@ -16,7 +16,7 @@ const EARLIER_CONTENT_TRUNCATION_MARKER = "[Earlier content truncated]\n\n";
 
 function policyInstruction(instruction: string | undefined): ReadonlyArray<string> {
   const trimmed = instruction?.trim();
-  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 4_000)] : [];
+  return trimmed ? ["", "Additional instructions:", limitSection(trimmed, 20_000)] : [];
 }
 
 // ---------------------------------------------------------------------------
@@ -238,7 +238,9 @@ Editorial rules:
 - Do not copy and truncate the user's message.
 - Avoid project names already visible in the UI, quotes, labels, filler, and trailing punctuation.
 - Use attached images as primary context for UI issues.
-- When a URL or attachment is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.`;
+- When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
+- Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
+- If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.`;
 
 function regenerateThreadTitlePrompt(previousTitle: string): string {
   return `Regenerate the title for an existing T3 Code thread so the user can recognize it weeks later.
@@ -265,7 +267,9 @@ Editorial rules:
 - Do not copy and truncate a thread message.
 - Avoid project names already visible in the UI, PR numbers, quotes, labels, filler, and trailing punctuation.
 - Use attached images as primary context for UI issues.
-- When a URL or attachment is the only source of the subject, use available tools to inspect it. If it cannot be resolved, remain accurate rather than guessing.
+- When a URL or attachment is the only source of the subject, use available tools to inspect it directly.
+- Local git history is not evidence of what a linked PR or issue is about. Never title the thread after branch names, commit messages, or merged commits found in the checkout.
+- If a linked PR or issue cannot be read, fall back to the user's stated action plus its number, such as "Take Over PR 8588". This is the one case where a PR or issue number belongs in the title.
 - Return a meaningfully improved title, not a cosmetic paraphrase of the previous title.
 
 Examples of the distinction:

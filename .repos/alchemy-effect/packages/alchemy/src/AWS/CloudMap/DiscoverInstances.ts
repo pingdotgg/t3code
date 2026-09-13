@@ -15,9 +15,8 @@ export interface DiscoverInstancesRequest extends Omit<
  *
  * Bind this operation to a `Service` inside a function runtime to get a
  * callable that automatically injects the namespace and service names.
- * @binding
- * @section Discovering Instances
- * @example Discover Healthy Instances
+ * ### Discovering Instances
+ * **Example:** Discover Healthy Instances
  * ```typescript
  * const discover = yield* AWS.CloudMap.DiscoverInstances(service);
  *
@@ -27,10 +26,12 @@ export interface DiscoverInstancesRequest extends Omit<
  * }
  * ```
  *
- * @example Include Unhealthy Instances
+ * **Example:** Include Unhealthy Instances
  * ```typescript
  * const { Instances } = yield* discover({ HealthStatus: "ALL" });
  * ```
+ *
+ * @binding
  */
 export interface DiscoverInstances extends Binding.Service<
   DiscoverInstances,

@@ -13,13 +13,15 @@ import * as Result from "effect/Result";
  * gone, `DeleteSubnet`/`DeleteSecurityGroup` fail with `DependencyViolation`
  * — historically forcing users to run `destroy` twice, minutes apart.
  *
- * `retryWhileLingeringEnis` wraps a subnet/security-group delete call:
- * on every `DependencyViolation` it observes the ENIs still occupying the
- * resource, explicitly deletes any *detached* (status `available`) Lambda
- * ENI instead of waiting for Lambda's reaper, and — while the blockers are
- * exclusively Lambda ENIs that are provably on their way out — keeps waiting
- * on an extended budget that covers AWS's worst-case release window. Any
- * other lingering dependency keeps today's shorter budget.
+ * `retryWhileLingeringEnis` wraps a subnet/security-group delete call (or an
+ * internet-gateway detach, which `DependencyViolation`s while any ENI in the
+ * VPC still holds a mapped public address): on every `DependencyViolation`
+ * it observes the ENIs still occupying the resource, explicitly deletes any
+ * *detached* (status `available`) Lambda ENI instead of waiting for Lambda's
+ * reaper, and — while the blockers are exclusively Lambda ENIs that are
+ * provably on their way out — keeps waiting on an extended budget that
+ * covers AWS's worst-case release window. Any other lingering dependency
+ * keeps today's shorter budget.
  */
 
 /**
@@ -40,8 +42,8 @@ const isReapableEni = (eni: ec2.NetworkInterface): boolean =>
   (eni.Description?.startsWith("AWS Lambda VPC ENI") ?? false);
 
 export interface LingeringEniScope {
-  /** ENI filter naming the resource being deleted. */
-  readonly name: "subnet-id" | "group-id";
+  /** ENI filter naming the resource being deleted or detached. */
+  readonly name: "subnet-id" | "group-id" | "vpc-id";
   readonly value: string;
 }
 

@@ -43,6 +43,15 @@ describe("RPC authorization scopes", () => {
     );
   });
 
+  it("requires write access to import agent session history", () => {
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsScan)).toBe(
+      AuthOrchestrationReadScope,
+    );
+    expect(requiredScopeForRpcMethod(WS_METHODS.agentSessionsImport)).toBe(
+      AuthOrchestrationOperateScope,
+    );
+  });
+
   it("reads the reviewer menu under the same scope as the pull request it belongs to", () => {
     // The candidate list is a read like the detail beside it, and asking somebody for a review is
     // a write like every other pull request operation.

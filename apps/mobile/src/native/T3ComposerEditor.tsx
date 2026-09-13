@@ -12,10 +12,12 @@ export function ComposerEditor({
   skills: _skills,
   selection,
   onPasteImages,
+  onPasteText: _onPasteText,
   style,
   textStyle,
   contentInsetVertical = 0,
   singleLineCentered: _singleLineCentered,
+  readOnly = false,
   ...props
 }: ComposerEditorProps) {
   const inputRef = useRef<RNTextInput>(null);
@@ -39,6 +41,7 @@ export function ComposerEditor({
       <TextInput
         ref={inputRef}
         {...props}
+        editable={(props.editable ?? true) && !readOnly}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
         multiline={props.multiline ?? true}
@@ -63,4 +66,5 @@ export type {
   ComposerEditorHandle,
   ComposerEditorProps,
   ComposerEditorSelection,
+  ComposerTextPaste,
 } from "./T3ComposerEditor.types";

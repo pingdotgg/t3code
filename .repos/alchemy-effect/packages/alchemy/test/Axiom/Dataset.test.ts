@@ -51,6 +51,11 @@ test.provider.skipIf(!hasAxiomCreds)(
       expect(found).toBeDefined();
       expect(found?.name).toEqual(DATASET_NAME);
       expect(found?.kind).toEqual(deployed.kind);
+      expect(found?.edgeDeployment).toEqual(deployed.edgeDeployment);
+      expect(found?.edgeDeploymentUrl).toEqual(deployed.edgeDeploymentUrl);
+      expect(found?.otelEndpoint).toEqual(
+        deployed.edgeDeploymentUrl.replace(/\/$/, ""),
+      );
       expect(found?.otelTracesEndpoint).toEqual(deployed.otelTracesEndpoint);
 
       yield* stack.destroy();

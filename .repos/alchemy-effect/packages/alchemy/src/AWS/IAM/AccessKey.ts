@@ -51,9 +51,8 @@ export interface AccessKey extends Resource<
  * `AccessKey` manages long-lived programmatic credentials for an IAM user. The
  * secret access key is only returned during creation, so later reads preserve
  * the originally stored redacted value instead of pretending AWS can return it again.
- * @resource
- * @section Managing Programmatic Credentials
- * @example Create an Access Key
+ * ### Managing Programmatic Credentials
+ * **Example:** Create an Access Key
  * ```typescript
  * const user = yield* User("DeployUser", {
  *   userName: "deploy-user",
@@ -64,6 +63,8 @@ export interface AccessKey extends Resource<
  *   status: "Active",
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessKey = Resource<AccessKey>("AWS.IAM.AccessKey");
 

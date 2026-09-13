@@ -45,7 +45,6 @@ export {
   ExternalLauncherEditorSpawnError,
   ExternalLauncherUnknownEditorError,
   ExternalLauncherUnsupportedEditorError,
-  isExternalLauncherError,
 } from "@t3tools/contracts";
 export type { LaunchEditorInput };
 interface EditorLaunch {
@@ -609,6 +608,10 @@ function fileExplorerRevealLaunch(
   };
 }
 
+function normalizeWindowsFileManagerPath(target: string): string {
+  return target.replaceAll("/", "\\");
+}
+
 const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch")(function* (
   target: string,
   platform: NodeJS.Platform,
@@ -626,7 +629,11 @@ const resolveFileManagerRevealLaunch = Effect.fn("resolveFileManagerRevealLaunch
   }
 
   if (platform === "win32") {
-    return fileExplorerRevealLaunch(target, target, resolvePowerShellPath(env));
+    return fileExplorerRevealLaunch(
+      target,
+      normalizeWindowsFileManagerPath(target),
+      resolvePowerShellPath(env),
+    );
   }
 
   if (
@@ -745,6 +752,7 @@ const launchEditorProcess = Effect.fn("externalLauncher.launchEditorProcess")(fu
   );
 });
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const fileSystem = yield* FileSystem.FileSystem;

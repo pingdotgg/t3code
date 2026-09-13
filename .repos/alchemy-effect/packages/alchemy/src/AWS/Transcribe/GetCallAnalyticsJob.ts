@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Amazon Transcribe batch actions have no resource-level IAM; the host is
  * granted `transcribe:GetCallAnalyticsJob` on `*`.
  *
- * @binding
- * @section Call Analytics Jobs
- * @example Poll a Call Analytics Job
+ * ### Call Analytics Jobs
+ * **Example:** Poll a Call Analytics Job
  * ```typescript
  * // init
  * const getCallAnalyticsJob = yield* AWS.Transcribe.GetCallAnalyticsJob();
@@ -20,6 +19,8 @@ import * as Binding from "../../Binding.ts";
  *   CallAnalyticsJobName: "my-call",
  * });
  * ```
+ *
+ * @binding
  */
 export interface GetCallAnalyticsJob extends Binding.Service<
   GetCallAnalyticsJob,

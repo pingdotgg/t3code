@@ -43,6 +43,7 @@ import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import {
   type PersistedServerRuntimeState,
+  isProcessAlive,
   readPersistedServerRuntimeState,
 } from "../serverRuntimeState.ts";
 import {
@@ -68,7 +69,7 @@ export type PairStateVariant = "userdata" | "dev";
 // dev-vs-userdata state directory; the value itself is not used.
 const DEV_VARIANT_PLACEHOLDER_URL = new URL("http://localhost");
 
-export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServerError>()(
+export class NoRunningServerError extends Schema.TaggedError<NoRunningServerError>()(
   "NoRunningServerError",
   {
     checkedStatePaths: Schema.Array(Schema.String),
@@ -85,7 +86,7 @@ export class NoRunningServerError extends Schema.TaggedErrorClass<NoRunningServe
 
 // Each tailscale failure gets its own class (same reasoning as
 // scripts/lib/dev-share.ts): distinct caller-visible message, distinct remedy.
-export class TailscaleUnavailableError extends Schema.TaggedErrorClass<TailscaleUnavailableError>()(
+export class TailscaleUnavailableError extends Schema.TaggedError<TailscaleUnavailableError>()(
   "TailscaleUnavailableError",
   { cause: Schema.Defect() },
 ) {
@@ -94,7 +95,7 @@ export class TailscaleUnavailableError extends Schema.TaggedErrorClass<Tailscale
   }
 }
 
-export class MagicDnsNameMissingError extends Schema.TaggedErrorClass<MagicDnsNameMissingError>()(
+export class MagicDnsNameMissingError extends Schema.TaggedError<MagicDnsNameMissingError>()(
   "MagicDnsNameMissingError",
   {},
 ) {
@@ -103,7 +104,7 @@ export class MagicDnsNameMissingError extends Schema.TaggedErrorClass<MagicDnsNa
   }
 }
 
-export class ServesOtherEnvironmentError extends Schema.TaggedErrorClass<ServesOtherEnvironmentError>()(
+export class ServesOtherEnvironmentError extends Schema.TaggedError<ServesOtherEnvironmentError>()(
   "ServesOtherEnvironmentError",
   { servePort: Schema.Number },
 ) {
@@ -112,7 +113,7 @@ export class ServesOtherEnvironmentError extends Schema.TaggedErrorClass<ServesO
   }
 }
 
-export class TailscaleServeFailedError extends Schema.TaggedErrorClass<TailscaleServeFailedError>()(
+export class TailscaleServeFailedError extends Schema.TaggedError<TailscaleServeFailedError>()(
   "TailscaleServeFailedError",
   { servePort: Schema.Number, cause: Schema.Defect() },
 ) {
@@ -121,7 +122,7 @@ export class TailscaleServeFailedError extends Schema.TaggedErrorClass<Tailscale
   }
 }
 
-export class ServePortOccupiedError extends Schema.TaggedErrorClass<ServePortOccupiedError>()(
+export class ServePortOccupiedError extends Schema.TaggedError<ServePortOccupiedError>()(
   "ServePortOccupiedError",
   { servePort: Schema.Number },
 ) {
@@ -134,7 +135,7 @@ export class ServePortOccupiedError extends Schema.TaggedErrorClass<ServePortOcc
 export const resolveDirectPairingBaseUrl = (state: PersistedServerRuntimeState): string =>
   state.devUrl ?? resolveHeadlessConnectionString(state.host, state.port);
 
-export class DevServerNotProxiableError extends Schema.TaggedErrorClass<DevServerNotProxiableError>()(
+export class DevServerNotProxiableError extends Schema.TaggedError<DevServerNotProxiableError>()(
   "DevServerNotProxiableError",
   { devUrl: Schema.String },
 ) {
@@ -172,7 +173,7 @@ export const resolveTailscaleLocalTarget = (
   return { localPort: state.port };
 };
 
-export const formatPairOutput = (input: {
+const formatPairOutput = (input: {
   readonly serverLabel: string;
   readonly origin: string;
   readonly pairingUrl: string;
@@ -228,17 +229,6 @@ const probeEnvironmentDescriptor = (
     );
     return { _tag: "descriptor", descriptor } as const;
   }).pipe(Effect.catch((outcome) => Effect.succeed(outcome)));
-
-// signal 0 delivers nothing; it only reports whether the pid exists. EPERM
-// means it exists but belongs to another user, which still counts as alive.
-const isProcessAlive = (pid: number): boolean => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch (error) {
-    return error instanceof Error && "code" in error && error.code === "EPERM";
-  }
-};
 
 interface DiscoveredPairTarget {
   readonly baseDir: string;
