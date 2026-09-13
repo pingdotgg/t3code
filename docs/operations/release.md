@@ -23,7 +23,8 @@ This document covers the unified release workflow for stable and nightly desktop
     the commit to ship is not the latest nightly, such as a cherry-picked fix on a release branch.
 - Runs lint, typecheck, and tests alongside artifact builds. Publishing waits for every check.
 - Reads the shared production T3 Connect relay URL and Clerk client configuration before packaging clients.
-- Builds four artifacts in parallel for both channels:
+- Builds the platform-independent JS (server bundle, web client, Electron main) once in the `build_bundle` job and hands it to every platform job as the `js-bundle` artifact; the platform jobs only package it, so no runner rebuilds it.
+- Builds four desktop artifacts in parallel for both channels, each as its own job (`desktop_<platform>_<arch>`, one call of `release-desktop.yml`) gated only on the bundle, plus the Linux CLI archive for the Windows job:
   - macOS `arm64` DMG
   - macOS `x64` DMG
   - Linux `x64` AppImage
@@ -413,7 +414,7 @@ Checklist:
 4. Verify workflow steps:
    - preflight passes
    - release quality checks pass
-   - all matrix builds pass
+   - `build_bundle` and all platform builds pass
    - `publish_cli` publishes the exact release version before the release job
    - release job uploads expected files
 5. Smoke test downloaded artifacts.
