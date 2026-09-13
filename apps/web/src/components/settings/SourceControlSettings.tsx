@@ -463,9 +463,17 @@ function hostingCliPathField(
   kind: SourceControlProviderKind,
   label: string,
   environmentId: EnvironmentId | null,
+  supportsCliPaths: boolean,
 ) {
   const command = SOURCE_CONTROL_PROVIDER_CLI[kind];
   if (!command || environmentId === null) return undefined;
+  if (!supportsCliPaths) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Update this environment&apos;s server to configure hosting CLI paths.
+      </p>
+    );
+  }
   return <HostingCliPathSettings environmentId={environmentId} command={command} label={label} />;
 }
 
@@ -729,7 +737,13 @@ export function SourceControlSettingsPanel() {
                         : undefined
                     }
                   >
-                    {hostingCliPathField(item.kind, item.label, environmentId)}
+                    {hostingCliPathField(
+                      item.kind,
+                      item.label,
+                      environmentId,
+                      environment?.serverConfig?.environment.capabilities.sourceControlCliPaths ===
+                        true,
+                    )}
                   </DiscoveryItemRow>
                 ))}
               </SettingsSection>
