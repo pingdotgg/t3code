@@ -1380,6 +1380,19 @@ diff --git a/react.js b/react.js
 index 914d2dafaafa001c9ab6791a0a0581659295e333..a2df18d450eebe451fda42bab47d1658458edbb1 100644
 --- a/react.js
 +++ b/react.js
+@@ -4075,6 +4075,12 @@ function handleStickyRecycling(ctx, stickyArray, scroll, drawDistance, currentStickyIdx, pendingRemoval, isPinnedRenderIndex) {
+     if (arrayIdx === -1) {
+       state.stickyContainerPool.delete(containerIndex);
+       set$(ctx, `containerSticky${containerIndex}`, false);
++      // Former alwaysRender rows must leave the expanded pool when no longer buffered.
++      if (state.startBuffered === null || state.endBuffered === null ||
++          itemIndex < state.startBuffered || itemIndex > state.endBuffered) {
++        pendingRemoval.push(containerIndex);
++      }
++
+       continue;
+     }
+     const isRecentSticky = arrayIdx >= currentStickyIdx - 1 && arrayIdx <= currentStickyIdx + 1;
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);
@@ -1417,6 +1430,19 @@ diff --git a/react.mjs b/react.mjs
 index 95465f2ab89ce41a10553f58af83618f7310e83c..25cf046f2c3141ddce5a0b6e28c354b865331b4f 100644
 --- a/react.mjs
 +++ b/react.mjs
+@@ -4054,6 +4054,12 @@ function handleStickyRecycling(ctx, stickyArray, scroll, drawDistance, currentStickyIdx, pendingRemoval, isPinnedRenderIndex) {
+     if (arrayIdx === -1) {
+       state.stickyContainerPool.delete(containerIndex);
+       set$(ctx, `containerSticky${containerIndex}`, false);
++      // Former alwaysRender rows must leave the expanded pool when no longer buffered.
++      if (state.startBuffered === null || state.endBuffered === null ||
++          itemIndex < state.startBuffered || itemIndex > state.endBuffered) {
++        pendingRemoval.push(containerIndex);
++      }
++
+       continue;
+     }
+     const isRecentSticky = arrayIdx >= currentStickyIdx - 1 && arrayIdx <= currentStickyIdx + 1;
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
        contentBelowAnchor = Math.max(0, contentBelowAnchor - ctx.scrollAxisGap);
        contentBelowAnchor += (ctx.values.get("footerSize") || 0) + getStylePaddingEnd(state.props);

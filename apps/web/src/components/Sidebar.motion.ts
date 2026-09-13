@@ -16,7 +16,7 @@ function progress(animation: Animation) {
 
 /** Animate rows between their layout positions. The list must be
  * positioned so every direct child's offsetTop has the same origin. */
-export function createSidebarListMotion(parent: HTMLUListElement) {
+export function createSidebarListMotion(parent: HTMLElement, options?: { virtual: boolean }) {
   let positions: Map<HTMLElement, RowPosition> | null = null;
   let disposed = false;
   const reducedMotion = parent.ownerDocument.defaultView?.matchMedia(
@@ -28,6 +28,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
   // Visual tops at drag release, relative to the list, so the release
   // commit can glide every row from where dnd-kit left it into its slot.
   let released: Map<HTMLElement, number> | null = null;
+
+  const rows = () =>
+    Array.from(
+      options?.virtual
+        ? parent.querySelectorAll<HTMLElement>("[data-sidebar-list-key]")
+        : parent.children,
+    ).filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node));
 
   const remainingOffset = (node: HTMLElement) => {
     const current = running.get(node);
@@ -48,6 +55,7 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
         if (
           (attribute.name === "id" && element.namespaceURI !== "http://www.w3.org/2000/svg") ||
           attribute.name === "data-thread-item" ||
+          attribute.name === "data-sidebar-list-key" ||
           attribute.name === "data-thread-selection-safe" ||
           attribute.name === "data-testid"
         ) {
@@ -118,17 +126,24 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
     update(animate: boolean) {
       if (disposed) return;
       const next = new Map(
-        Array.from(parent.children)
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
-          .map((node) => [
-            node,
-            {
-              top: node.offsetTop,
-              left: node.offsetLeft,
-              width: node.offsetWidth,
-              height: node.offsetHeight,
-            },
-          ]),
+        rows().map((node) => [
+          node,
+          {
+            top: options?.virtual
+              ? node.getBoundingClientRect().top -
+                parent.getBoundingClientRect().top +
+                parent.scrollTop -
+                remainingOffset(node)
+              : node.offsetTop,
+            left: options?.virtual
+              ? node.getBoundingClientRect().left -
+                parent.getBoundingClientRect().left +
+                parent.scrollLeft
+              : node.offsetLeft,
+            width: node.offsetWidth,
+            height: node.offsetHeight,
+          },
+        ]),
       );
       let fadeCount = 0;
       if (positions !== null) {
@@ -199,11 +214,13 @@ export function createSidebarListMotion(parent: HTMLUListElement) {
      * next update glides each of them into its committed slot. */
     release() {
       suspend();
-      const origin = parent.getBoundingClientRect().top;
+      const origin = parent.getBoundingClientRect().top - (options?.virtual ? parent.scrollTop : 0);
       released = new Map(
-        Array.from(parent.children)
-          .filter((node): node is HTMLElement => node instanceof HTMLElement && !exiting.has(node))
-          .map((node) => [node, node.getBoundingClientRect().top - origin]),
+        rows().map((node) => [
+          node,
+          (options?.virtual ? (node.firstElementChild ?? node) : node).getBoundingClientRect().top -
+            origin,
+        ]),
       );
     },
     suspend,
