@@ -64,11 +64,6 @@ vi.mock("@legendapp/list/react", async () => {
             ? props.maintainScrollAtEnd.on?.dataChange
             : undefined
         }
-        data-maintain-scroll-at-end-footer-layout={
-          typeof props.maintainScrollAtEnd === "object"
-            ? props.maintainScrollAtEnd.on?.footerLayout
-            : undefined
-        }
         data-maintain-scroll-at-end-item-layout={
           typeof props.maintainScrollAtEnd === "object"
             ? props.maintainScrollAtEnd.on?.itemLayout
@@ -1006,7 +1001,6 @@ describe("MessagesTimeline", () => {
     expect(markup).toContain('data-maintain-scroll-at-end="enabled"');
     expect(markup).toContain('data-maintain-scroll-at-end-animated="false"');
     expect(markup).toContain('data-maintain-scroll-at-end-data-change="true"');
-    expect(markup).toContain('data-maintain-scroll-at-end-footer-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-item-layout="true"');
     expect(markup).toContain('data-maintain-scroll-at-end-layout="true"');
     expect(markup).toContain('data-user-message-collapsed="true"');
