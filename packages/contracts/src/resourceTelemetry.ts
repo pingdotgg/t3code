@@ -16,6 +16,36 @@ export const HostResourcesSnapshot = Schema.Struct({
 });
 export type HostResourcesSnapshot = typeof HostResourcesSnapshot.Type;
 
+export const StorageUsageInput = Schema.Struct({
+  refresh: Schema.optionalKey(Schema.Boolean),
+});
+export type StorageUsageInput = typeof StorageUsageInput.Type;
+
+const StorageUsageCategory = Schema.Struct({
+  bytes: NonNegativeInt,
+  fileCount: NonNegativeInt,
+  partial: Schema.Boolean,
+});
+
+/** Apparent regular-file bytes in T3-owned directories; symlinks are excluded. */
+export const StorageUsageSnapshot = Schema.Struct({
+  sampledAt: NonNegativeInt,
+  totalBytes: NonNegativeInt,
+  partial: Schema.Boolean,
+  categories: Schema.Struct({
+    worktrees: StorageUsageCategory,
+    browserArtifacts: StorageUsageCategory,
+    logs: StorageUsageCategory,
+    attachments: StorageUsageCategory,
+    other: StorageUsageCategory,
+  }),
+  /** Capacity of the filesystem containing T3 home, independent of the file totals. */
+  disk: Schema.NullOr(
+    Schema.Struct({ totalBytes: NonNegativeInt, availableBytes: NonNegativeInt }),
+  ),
+});
+export type StorageUsageSnapshot = typeof StorageUsageSnapshot.Type;
+
 export const ResourceTelemetryIoSemantics = Schema.Literals([
   "storage",
   "logical",

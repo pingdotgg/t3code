@@ -1026,6 +1026,13 @@ export function createServerEnvironmentAtoms<R, E>(
       execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetHostResources>) =>
         request(WS_METHODS.serverGetHostResources, input).pipe(Effect.timeout("5 seconds")),
     }),
+    storageUsage: createEnvironmentQueryAtomFamily(runtime, {
+      label: "environment-data:server:storage-usage",
+      idleTtlMs: 0,
+      staleTimeMs: 30_000,
+      execute: (input: EnvironmentRpcInput<typeof WS_METHODS.serverGetStorageUsage>) =>
+        request(WS_METHODS.serverGetStorageUsage, input).pipe(Effect.timeout("40 seconds")),
+    }),
     processResourceHistory: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:process-resource-history",
       tag: WS_METHODS.serverGetProcessResourceHistory,

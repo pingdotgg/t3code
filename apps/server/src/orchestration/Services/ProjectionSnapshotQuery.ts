@@ -122,6 +122,19 @@ export interface ProjectionSnapshotQueryShape {
     ProjectionRepositoryError
   >;
 
+  /** Durable worktree ownership retained after thread deletion, including across restarts. */
+  readonly getDeletedWorktreeThreads: () => Effect.Effect<
+    ReadonlyArray<{
+      readonly id: ThreadId;
+      readonly projectId: ProjectId;
+      readonly branch: string;
+      readonly worktreePath: string;
+      readonly workspaceRoot: string;
+      readonly deletedAt: string;
+    }>,
+    ProjectionRepositoryError
+  >;
+
   /**
    * Search active thread navigation metadata, user messages, and canonical
    * assistant outputs without hydrating thread detail snapshots.

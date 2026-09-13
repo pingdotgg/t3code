@@ -1,10 +1,13 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   ProjectId,
   ProviderInstanceId,
+  ProviderDriverKind,
   PullRequestOperationError,
   ThreadId,
   type OrchestrationCommand,
+  type OrchestrationEvent,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
   type OrchestrationThreadShell,
@@ -15,8 +18,10 @@ import {
 import { applyServerSettingsPatch } from "@t3tools/shared/serverSettings";
 import { assert, describe, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
@@ -39,6 +44,16 @@ import {
 } from "./Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "./Services/ProjectionSnapshotQuery.ts";
 import * as ThreadSettlementReactor from "./ThreadSettlementReactor.ts";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Path from "effect/Path";
+import { ChildProcessSpawner } from "effect/unstable/process";
+import { ServerConfig } from "../config.ts";
+import * as StorageCleanup from "../storageCleanup.ts";
+import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
+import { TerminalManager } from "../terminal/Manager.ts";
+import { GitVcsDriver } from "../vcs/GitVcsDriver.ts";
+import { ThreadDeletionReactor } from "./Services/ThreadDeletionReactor.ts";
+import { ProviderService } from "../provider/Services/ProviderService.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const PROJECT_ID = ProjectId.make("settlement-project");
@@ -1282,4 +1297,464 @@ describe("ThreadSettlementReactor", () => {
       }),
     ),
   );
+});
+
+describe("storage cleanup", () => {
+  it.effect("serializes users of one workspace while other workspaces can start", () =>
+    Effect.gen(function* () {
+      const releaseCleanup = yield* Deferred.make<void>();
+      const providerEntered = yield* Deferred.make<void>();
+      const cleanup = yield* withWorkspaceLease(
+        "/workspace/shared",
+        Deferred.await(releaseCleanup),
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      const provider = yield* withWorkspaceLease(
+        "/workspace/shared",
+        Deferred.succeed(providerEntered, undefined),
+      ).pipe(Effect.forkScoped({ startImmediately: true }));
+      assert.strictEqual(yield* Deferred.isDone(providerEntered), false);
+      yield* withWorkspaceLease("/workspace/other", Effect.void);
+      yield* Deferred.succeed(releaseCleanup, undefined);
+      yield* Fiber.join(cleanup);
+      yield* Fiber.join(provider);
+      assert.strictEqual(yield* Deferred.isDone(providerEntered), true);
+    }).pipe(Effect.scoped),
+  );
+
+  for (const protection of [
+    "none",
+    "dirty",
+    "ignored",
+    "ignored-directory",
+    "shared",
+    "project-root",
+    "nested-project",
+    "new-nested-project",
+    "session",
+    "terminal-cwd",
+    "terminal-worktree",
+    "recent",
+    "merged",
+    "unmerged",
+    "unchanged",
+    "unchanged-two-worktrees",
+    "diverged",
+    "head-moved",
+    "deleted",
+    "deleted-event",
+    "deleted-dirty",
+    "deleted-ignored",
+    "deleted-shared",
+    "deleted-project",
+    "deleted-owner",
+    "deleted-owner-root",
+    "deleted-owner-nested",
+    "deleted-provider",
+    "policy-disabled",
+    "policy-extended",
+    "files-disabled",
+    "files-extended",
+  ] as const) {
+    it.effect(
+      `retains protected worktrees (${protection}) and expires only old artifacts and rotated logs`,
+      () =>
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const config = yield* ServerConfig;
+          const worktreePath = path.join(config.worktreesDir, "feature");
+          yield* fs.makeDirectory(worktreePath, { recursive: true });
+          yield* fs.writeFileString(path.join(worktreePath, ".git"), "gitdir: /test/admin");
+          const secondWorktreePath = path.join(config.worktreesDir, "feature-two");
+          if (protection === "unchanged-two-worktrees") {
+            yield* fs.makeDirectory(secondWorktreePath);
+            yield* fs.writeFileString(
+              path.join(secondWorktreePath, ".git"),
+              "gitdir: /test/admin-two",
+            );
+          }
+          if (protection === "ignored" || protection === "deleted-ignored")
+            yield* fs.writeFileString(path.join(worktreePath, ".env"), "secret");
+          if (protection === "ignored-directory") {
+            yield* fs.makeDirectory(path.join(worktreePath, ".cache"));
+            yield* fs.writeFileString(path.join(worktreePath, ".cache", "local-data"), "keep");
+          }
+          yield* fs.makeDirectory(config.browserArtifactsDir, { recursive: true });
+          const oldImage = path.join(config.browserArtifactsDir, "old.png");
+          const recentImage = path.join(config.browserArtifactsDir, "recent.png");
+          const oldLog = path.join(config.logsDir, "server.log.1");
+          const activeLog = path.join(config.logsDir, "server.log");
+          const old = DateTime.toDateUtc(DateTime.makeUnsafe("2026-08-01T00:00:00.000Z"));
+          for (const file of [oldImage, oldLog, activeLog]) {
+            yield* fs.writeFileString(file, "keep or remove");
+            yield* fs.utimes(file, old, old);
+          }
+          yield* fs.writeFileString(recentImage, "recent");
+          const recent = DateTime.toDateUtc(DateTime.makeUnsafe(NOW));
+          yield* fs.utimes(recentImage, recent, recent);
+          const thread = makeThread("storage-thread", {
+            branch: "feature",
+            worktreePath,
+            latestUserMessageAt:
+              protection === "recent" ? "2026-08-26T00:00:00.000Z" : "2026-08-01T00:00:00.000Z",
+            ...(protection === "session"
+              ? {
+                  session: {
+                    threadId: ThreadId.make("storage-thread"),
+                    status: "ready",
+                    providerName: "codex",
+                    runtimeMode: "full-access",
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: NOW,
+                  },
+                }
+              : {}),
+          });
+          const snapshotRead = yield* Deferred.make<void>();
+          const deletionStarted = yield* Deferred.make<void>();
+          const deletionStopped = yield* Deferred.make<void>();
+          if (protection !== "deleted-event") yield* Deferred.succeed(deletionStopped, undefined);
+          const domainEvents = yield* PubSub.unbounded<OrchestrationEvent>();
+          const deleteRule = protection.startsWith("deleted");
+          let tombstoned = deleteRule && protection !== "deleted-event";
+          const removals: string[] = [];
+          const mergeRule = protection === "merged" || protection === "unmerged";
+          const unchangedRule =
+            protection === "unchanged" ||
+            protection === "unchanged-two-worktrees" ||
+            protection === "diverged" ||
+            protection === "head-moved";
+          let headReads = 0;
+          let snapshotReads = 0;
+          let defaultRefFetched = false;
+          let fetches = 0;
+          const settingsService = yield* ServerSettingsService.pipe(
+            Effect.provide(
+              ServerSettingsService.layerTest({
+                storageCleanup: {
+                  worktreeAfterDays: deleteRule || mergeRule || unchangedRule ? null : 8,
+                  worktreeOnDelete: deleteRule,
+                  worktreeOnMerge: mergeRule,
+                  worktreeUnchanged: unchangedRule,
+                  browserArtifactsAfterDays: 8,
+                  logsAfterDays: 8,
+                },
+              }),
+            ),
+          );
+          const cleanup = yield* StorageCleanup.make.pipe(
+            Effect.provide(
+              Layer.mergeAll(
+                Layer.succeed(ServerSettingsService, settingsService),
+                Layer.succeed(FileSystem.FileSystem, {
+                  ...fs,
+                  stat: (target) =>
+                    fs.stat(target).pipe(
+                      Effect.tap(() => {
+                        if (
+                          !protection.startsWith("files-") ||
+                          (target !== oldImage && target !== oldLog)
+                        )
+                          return Effect.void;
+                        return settingsService
+                          .updateSettings({
+                            storageCleanup: {
+                              [target === oldImage ? "browserArtifactsAfterDays" : "logsAfterDays"]:
+                                protection === "files-disabled" ? null : 60,
+                            },
+                          })
+                          .pipe(Effect.orDie);
+                      }),
+                    ),
+                }),
+                Layer.mock(ProjectionSnapshotQuery)({
+                  getDeletedWorktreeThreads: () =>
+                    Effect.succeed(
+                      tombstoned
+                        ? [
+                            {
+                              id: thread.id,
+                              projectId: thread.projectId,
+                              branch: "feature",
+                              worktreePath,
+                              workspaceRoot:
+                                protection === "deleted-owner-root"
+                                  ? worktreePath
+                                  : protection === "deleted-owner-nested"
+                                    ? path.join(worktreePath, "nested")
+                                    : config.baseDir,
+                              deletedAt: NOW,
+                            },
+                          ]
+                        : [],
+                    ),
+                  getSnapshotSequence: () => Effect.succeed({ snapshotSequence: 2 }),
+                  getShellSnapshot: () =>
+                    Deferred.succeed(snapshotRead, undefined).pipe(
+                      Effect.andThen(
+                        Effect.sync(() => {
+                          snapshotReads++;
+                          const projects = protection.startsWith("deleted-owner")
+                            ? []
+                            : [makeProject(PROJECT_ID, config.baseDir)];
+                          const threads = tombstoned ? [] : [thread];
+                          if (protection === "deleted-shared")
+                            threads.push({ ...thread, id: ThreadId.make("surviving-thread") });
+                          if (protection === "deleted-project")
+                            projects.push(makeProject(LINKED_PROJECT_ID, worktreePath));
+                          if (
+                            protection === "project-root" ||
+                            protection === "nested-project" ||
+                            (protection === "new-nested-project" && snapshotReads > 1)
+                          ) {
+                            projects.push(
+                              makeProject(
+                                LINKED_PROJECT_ID,
+                                protection === "project-root"
+                                  ? worktreePath
+                                  : path.join(worktreePath, "nested"),
+                              ),
+                            );
+                            threads.push(
+                              makeThread("local-project-thread", { projectId: LINKED_PROJECT_ID }),
+                            );
+                          }
+                          if (protection === "unchanged-two-worktrees") {
+                            threads.push({
+                              ...thread,
+                              id: ThreadId.make("second-worktree-thread"),
+                              branch: "feature-two",
+                              worktreePath: secondWorktreePath,
+                            });
+                          }
+                          return makeSnapshot(threads, projects);
+                        }),
+                      ),
+                    ),
+                  getArchivedShellSnapshot: () =>
+                    Effect.succeed(
+                      makeSnapshot(
+                        protection === "shared"
+                          ? [
+                              {
+                                ...thread,
+                                id: ThreadId.make("archived-sharing-thread"),
+                                archivedAt: NOW,
+                              },
+                            ]
+                          : [],
+                      ),
+                    ),
+                }),
+                Layer.mock(GitManager)({
+                  invalidateStatus: () => Effect.void,
+                  branchPullRequest: (_input, options) => {
+                    assert.strictEqual(options?.refresh, true);
+                    return Effect.succeed(
+                      makeBranchPullRequest(protection === "unmerged" ? "open" : "merged"),
+                    );
+                  },
+                }),
+                Layer.mock(OrchestrationEngineService)({
+                  subscribeDomainEvents: PubSub.subscribe(domainEvents).pipe(
+                    Effect.map((subscription) => Stream.fromSubscription(subscription)),
+                  ),
+                }),
+                Layer.mock(ThreadDeletionReactor)({
+                  drainThrough: (sequence) => {
+                    assert.strictEqual(sequence, 2);
+                    return Deferred.succeed(deletionStarted, undefined).pipe(
+                      Effect.andThen(Deferred.await(deletionStopped)),
+                    );
+                  },
+                }),
+                Layer.mock(ProviderService)({
+                  listSessions: () =>
+                    Effect.succeed(
+                      protection === "deleted-provider"
+                        ? [
+                            {
+                              threadId: thread.id,
+                              provider: ProviderDriverKind.make("codex"),
+                              status: "ready",
+                              runtimeMode: "full-access",
+                              cwd: worktreePath,
+                              createdAt: NOW,
+                              updatedAt: NOW,
+                            },
+                          ]
+                        : [],
+                    ),
+                }),
+                Layer.mock(GitVcsDriver)({
+                  resolvePrimaryRemoteName: () => Effect.succeed("origin"),
+                  resolveDefaultBranchName: () => Effect.succeed("main"),
+                  fetchRemoteTrackingBranch: (input) =>
+                    Effect.sync(() => {
+                      assert.deepStrictEqual(input, {
+                        cwd: config.baseDir,
+                        remoteName: "origin",
+                        remoteBranch: "main",
+                      });
+                      defaultRefFetched = true;
+                      fetches++;
+                    }),
+                  resolveCommit: ({ revision }) =>
+                    Effect.sync(() => {
+                      if (revision !== "HEAD")
+                        return { commitSha: (defaultRefFetched ? "b" : "d").repeat(40) };
+                      headReads++;
+                      return {
+                        commitSha:
+                          protection === "head-moved" && headReads > 1
+                            ? "c".repeat(40)
+                            : "a".repeat(40),
+                      };
+                    }),
+                  statusDetailsLocal: (cwd) =>
+                    Effect.succeed({
+                      isRepo: true,
+                      hasOriginRemote: false,
+                      isDefaultBranch: false,
+                      branch: cwd === secondWorktreePath ? "feature-two" : "feature",
+                      upstreamRef: null,
+                      hasWorkingTreeChanges:
+                        protection === "dirty" || protection === "deleted-dirty",
+                      workingTree: { files: [], insertions: 0, deletions: 0 },
+                      hasUpstream: false,
+                      aheadCount: 0,
+                      behindCount: 0,
+                      aheadOfDefaultCount: 0,
+                    }),
+                  execute: (input) =>
+                    Effect.succeed({
+                      exitCode: ChildProcessSpawner.ExitCode(
+                        input.operation === "StorageCleanup.integratedBranch" &&
+                          (protection === "diverged" || input.args.at(-1) !== "b".repeat(40))
+                          ? 1
+                          : 0,
+                      ),
+                      stdout:
+                        protection === "ignored" || protection === "deleted-ignored"
+                          ? ".env\0"
+                          : protection === "ignored-directory"
+                            ? ".cache/\0"
+                            : "",
+                      stderr: "",
+                      stdoutTruncated: false,
+                      stderrTruncated: false,
+                    }).pipe(
+                      Effect.tap(() =>
+                        protection.startsWith("policy-") && headReads > 1
+                          ? settingsService
+                              .updateSettings({
+                                storageCleanup: {
+                                  worktreeAfterDays: protection === "policy-disabled" ? null : 60,
+                                },
+                              })
+                              .pipe(Effect.orDie)
+                          : Effect.void,
+                      ),
+                    ),
+                  removeWorktree: (input) => {
+                    assert.strictEqual(input.force, false);
+                    removals.push(input.path);
+                    return fs.remove(input.path, { recursive: true }).pipe(Effect.orDie);
+                  },
+                }),
+                Layer.mock(TerminalManager)({
+                  subscribeMetadata: (listener) =>
+                    listener({
+                      type: "snapshot",
+                      terminals:
+                        protection === "terminal-cwd" || protection === "terminal-worktree"
+                          ? [
+                              {
+                                threadId: "terminal-thread",
+                                terminalId: "default",
+                                cwd:
+                                  protection === "terminal-cwd"
+                                    ? `${worktreePath}${path.sep}`
+                                    : config.baseDir,
+                                worktreePath:
+                                  protection === "terminal-worktree"
+                                    ? `${worktreePath}${path.sep}`
+                                    : null,
+                                status: "running",
+                                pid: 42,
+                                exitCode: null,
+                                exitSignal: null,
+                                hasRunningSubprocess: false,
+                                label: "shell",
+                                updatedAt: NOW,
+                              },
+                            ]
+                          : [],
+                    }).pipe(Effect.as(() => {})),
+                }),
+              ),
+            ),
+          );
+          yield* cleanup.start();
+          yield* Deferred.await(snapshotRead);
+          yield* cleanup.drain;
+          if (protection === "deleted-event") {
+            assert.strictEqual(yield* fs.exists(worktreePath), true);
+            tombstoned = true;
+            yield* PubSub.publish(domainEvents, {
+              type: "thread.deleted",
+              sequence: 2,
+              eventId: EventId.make("storage-thread-deleted"),
+              aggregateKind: "thread",
+              aggregateId: thread.id,
+              occurredAt: NOW,
+              commandId: null,
+              causationEventId: null,
+              correlationId: null,
+              metadata: {},
+              payload: { threadId: thread.id, deletedAt: NOW },
+            });
+            yield* Deferred.await(deletionStarted);
+            assert.strictEqual(yield* fs.exists(worktreePath), true);
+            yield* Deferred.succeed(deletionStopped, undefined);
+            yield* cleanup.drain;
+          }
+          const removed =
+            protection === "none" ||
+            protection === "deleted" ||
+            protection === "deleted-event" ||
+            protection === "deleted-owner" ||
+            protection === "files-disabled" ||
+            protection === "files-extended" ||
+            protection === "merged" ||
+            protection === "unchanged" ||
+            protection === "unchanged-two-worktrees";
+          assert.strictEqual(yield* fs.exists(worktreePath), !removed);
+          assert.deepStrictEqual(
+            removals,
+            protection === "unchanged-two-worktrees"
+              ? [worktreePath, secondWorktreePath]
+              : removed
+                ? [worktreePath]
+                : [],
+          );
+          assert.strictEqual(fetches, mergeRule || unchangedRule ? 1 : 0);
+          assert.strictEqual(thread.worktreePath, worktreePath);
+          assert.strictEqual(thread.branch, "feature");
+          assert.strictEqual(yield* fs.exists(oldImage), protection.startsWith("files-"));
+          assert.strictEqual(yield* fs.exists(recentImage), true);
+          assert.strictEqual(yield* fs.exists(oldLog), protection.startsWith("files-"));
+          assert.strictEqual(yield* fs.exists(activeLog), true);
+        }).pipe(
+          Effect.provide(
+            ServerConfig.layerTest(process.cwd(), { prefix: "t3-storage-cleanup-" }).pipe(
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ),
+          Effect.scoped,
+        ),
+    );
+  }
 });

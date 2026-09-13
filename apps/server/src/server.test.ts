@@ -176,6 +176,7 @@ import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts"
 import * as CloudCliTokenManager from "./cloud/CliTokenManager.ts";
 import * as ProcessDiagnostics from "./diagnostics/ProcessDiagnostics.ts";
 import * as HostResources from "./resourceTelemetry/HostResources.ts";
+import * as StorageUsage from "./resourceTelemetry/StorageUsage.ts";
 import * as ProcessResourceMonitor from "./diagnostics/ProcessResourceMonitor.ts";
 import * as TraceDiagnostics from "./diagnostics/TraceDiagnostics.ts";
 import * as DesktopTelemetryReceiver from "./resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -865,6 +866,7 @@ const buildAppUnderTest = (options?: {
       ),
       Layer.provide([
         HostResources.layer,
+        StorageUsage.layer,
         Layer.mock(ProcessResourceMonitor.ProcessResourceMonitor)({
           readHistory: (input) =>
             Effect.succeed({
@@ -6278,6 +6280,118 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         assert.isAtMost(first.cpuUtilization, 1);
       }
     }).pipe(Effect.provide(NodeHttpServer.layerTest), TestClock.withLive),
+  );
+
+  it.effect("measures T3 storage without following symlinks and refreshes cached samples", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      const nested = path.join(config.worktreesDir, "feature", "node_modules", "package");
+      yield* fs.makeDirectory(nested, { recursive: true });
+      yield* fs.makeDirectory(config.browserArtifactsDir);
+      for (const [file, contents] of [
+        [path.join(nested, "index.js"), "worktree"],
+        [path.join(config.browserArtifactsDir, "capture.png"), "capture"],
+        [path.join(config.logsDir, "server.log"), "log"],
+        [path.join(config.attachmentsDir, "attachment.bin"), "attachment"],
+        [path.join(config.stateDir, "state.sqlite"), "state"],
+        [path.join(config.providerStatusCacheDir, "cached.json"), "cache"],
+      ] as const) {
+        yield* fs.writeFileString(file, contents);
+      }
+      if ((yield* HostProcessPlatform) !== "win32") {
+        const outside = yield* fs.makeTempDirectoryScoped({ prefix: "t3-storage-outside-" });
+        const outsideFile = path.join(outside, "outside.txt");
+        yield* fs.writeFileString(outsideFile, "this must never be included");
+        yield* fs.symlink(outside, path.join(config.worktreesDir, "linked-directory"));
+        yield* fs.symlink(outsideFile, path.join(nested, "linked-file"));
+      }
+      const usage = yield* StorageUsage.make();
+      const [first, concurrent] = yield* Effect.all([usage.read({}), usage.read({})], {
+        concurrency: "unbounded",
+      });
+      assert.strictEqual(first, concurrent);
+      assert.deepEqual(first.categories, {
+        worktrees: { bytes: 8, fileCount: 1, partial: false },
+        browserArtifacts: { bytes: 7, fileCount: 1, partial: false },
+        logs: { bytes: 3, fileCount: 1, partial: false },
+        attachments: { bytes: 10, fileCount: 1, partial: false },
+        other: { bytes: 10, fileCount: 2, partial: false },
+      });
+      assert.equal(first.totalBytes, 38);
+      assert.isFalse(first.partial);
+      const addedFile = path.join(config.worktreesDir, "added.txt");
+      yield* fs.writeFileString(addedFile, "new");
+      assert.strictEqual(yield* usage.read({}), first);
+      const [refreshed, sharedRefresh] = yield* Effect.all(
+        [usage.read({ refresh: true }), usage.read({ refresh: true })],
+        { concurrency: "unbounded" },
+      );
+      assert.strictEqual(refreshed, sharedRefresh);
+      assert.equal(refreshed.totalBytes, 41);
+      assert.equal(refreshed.categories.worktrees.fileCount, 2);
+      yield* fs.remove(addedFile);
+      assert.equal((yield* usage.read({ refresh: true })).totalBytes, 38);
+      if (first.disk !== null) {
+        assert.isAbove(first.disk.totalBytes, 0);
+        assert.isAtMost(first.disk.availableBytes, first.disk.totalBytes);
+      }
+    }).pipe(Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-storage-usage-" }))),
+  );
+
+  it.effect("reports an unavailable storage category without losing other categories", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const config = yield* ServerConfig.ServerConfig;
+      // A file where the category directory should be is unreadable as a directory.
+      yield* fs.writeFileString(config.browserArtifactsDir, "blocked");
+      yield* fs.writeFileString(path.join(config.logsDir, "server.log"), "kept");
+      const usage = yield* StorageUsage.make();
+      const sample = yield* usage.read({});
+      assert.isTrue(sample.partial);
+      assert.deepEqual(sample.categories.browserArtifacts, {
+        bytes: 0,
+        fileCount: 0,
+        partial: true,
+      });
+      assert.deepEqual(sample.categories.logs, { bytes: 4, fileCount: 1, partial: false });
+      assert.equal(sample.totalBytes, 4);
+    }).pipe(
+      Effect.provide(ServerConfig.layerTest(process.cwd(), { prefix: "t3-storage-partial-" })),
+    ),
+  );
+
+  it.effect("returns storage usage and explicit refresh changes over websocket", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-storage-" });
+      const config = yield* ServerConfig.deriveServerPaths(baseDir, undefined);
+      yield* fs.makeDirectory(config.worktreesDir, { recursive: true });
+      yield* fs.writeFileString(path.join(config.worktreesDir, "first.txt"), "one");
+      yield* buildAppUnderTest({ config: { baseDir } });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const first = yield* client[WS_METHODS.serverGetStorageUsage]({});
+            assert.equal(first.categories.worktrees.bytes, 3);
+            yield* fs.writeFileString(path.join(config.worktreesDir, "second.txt"), "more");
+            const cached = yield* client[WS_METHODS.serverGetStorageUsage]({});
+            assert.deepEqual(cached, first);
+            const refreshed = yield* client[WS_METHODS.serverGetStorageUsage]({ refresh: true });
+            assert.equal(refreshed.categories.worktrees.bytes, 7);
+            assert.equal(refreshed.categories.worktrees.fileCount, 2);
+            assert.equal(
+              refreshed.totalBytes,
+              Object.values(refreshed.categories).reduce((total, entry) => total + entry.bytes, 0),
+            );
+          }),
+        ),
+      );
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
   it.effect("counts macOS reclaimable memory once and shares concurrent samples", () =>
