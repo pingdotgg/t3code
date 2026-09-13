@@ -1677,4 +1677,62 @@ describe("computeStableMessagesTimelineRows", () => {
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
   });
+
+  it("exposes revertTurnCount for user messages when only an interrupted turn diff exists", () => {
+    const interruptedTurnDiffSummary = {
+      turnId: "turn-interrupted" as never,
+      checkpointTurnCount: 2,
+      checkpointRef: "refs/checkpoints/thread-1/turn-2" as never,
+      status: "ready" as const,
+      files: [],
+      assistantMessageId: null,
+      completedAt: "2026-01-01T00:00:30Z",
+    };
+
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [
+        {
+          id: "user-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:00Z",
+          message: {
+            id: "user-1" as never,
+            role: "user" as const,
+            text: "Do something",
+            turnId: null,
+            createdAt: "2026-01-01T00:00:00Z",
+            updatedAt: "2026-01-01T00:00:00Z",
+            streaming: false,
+          },
+        },
+        {
+          id: "assistant-entry",
+          kind: "message" as const,
+          createdAt: "2026-01-01T00:00:10Z",
+          message: {
+            id: "assistant-1" as never,
+            role: "assistant" as const,
+            text: "Working...",
+            turnId: "turn-interrupted" as never,
+            createdAt: "2026-01-01T00:00:10Z",
+            updatedAt: "2026-01-01T00:00:20Z",
+            streaming: false,
+          },
+        },
+      ],
+      isWorking: false,
+      activeTurnStartedAt: null,
+      // No completed turn diff mapped to the assistant message — simulates
+      // an interrupted turn where only the pre-turn baseline checkpoint exists.
+      turnDiffSummaryByAssistantMessageId: new Map(),
+      revertTurnCountByUserMessageId: new Map([["user-1" as never, 1]]),
+    });
+
+    const userRow = rows.find(
+      (row): row is Extract<(typeof rows)[number], { kind: "message" }> =>
+        row.kind === "message" && row.message.role === "user",
+    );
+
+    expect(userRow?.revertTurnCount).toBe(1);
+  });
 });

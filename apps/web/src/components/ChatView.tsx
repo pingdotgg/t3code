@@ -2694,6 +2694,7 @@ function ChatViewContent(props: ChatViewProps) {
         continue;
       }
 
+      let foundCompletedDiff = false;
       for (let nextIndex = index + 1; nextIndex < timelineEntries.length; nextIndex += 1) {
         const nextEntry = timelineEntries[nextIndex];
         if (!nextEntry || nextEntry.kind !== "message") {
@@ -2712,12 +2713,33 @@ function ChatViewContent(props: ChatViewProps) {
           break;
         }
         byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+        foundCompletedDiff = true;
         break;
+      }
+
+      // Fallback: when no completed turn diff exists (e.g. interrupted or
+      // cancelled turns), use the latest available checkpoint as the pre-turn
+      // baseline so the Revert button still renders. Fixes upstream #11083.
+      if (!foundCompletedDiff && turnDiffSummaries.length > 0) {
+        const lastSummary = turnDiffSummaries[turnDiffSummaries.length - 1];
+        if (lastSummary) {
+          const turnCount =
+            lastSummary.checkpointTurnCount ??
+            inferredCheckpointTurnCountByTurnId[lastSummary.turnId];
+          if (typeof turnCount === "number") {
+            byUserMessageId.set(entry.message.id, Math.max(0, turnCount - 1));
+          }
+        }
       }
     }
 
     return byUserMessageId;
-  }, [inferredCheckpointTurnCountByTurnId, timelineEntries, turnDiffSummaryByAssistantMessageId]);
+  }, [
+    inferredCheckpointTurnCountByTurnId,
+    timelineEntries,
+    turnDiffSummaries,
+    turnDiffSummaryByAssistantMessageId,
+  ]);
 
   const gitCwd = activeProject
     ? projectScriptCwd({

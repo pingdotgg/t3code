@@ -68,7 +68,11 @@ function checkpointStatusFromRuntime(status: string | undefined): "ready" | "mis
       return "error";
     case "cancelled":
     case "interrupted":
-      return "missing";
+      // Interrupted or cancelled turns should still expose the pre-turn baseline
+      // checkpoint so users can revert to edit and restart. Marking these as
+      // "missing" prevented the Revert button from rendering for the latest
+      // user message (upstream issue #11083).
+      return "ready";
     case "completed":
     default:
       return "ready";
