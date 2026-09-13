@@ -254,6 +254,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./markdown-math": {
+      "types": "./src/markdownMath.ts",
+      "default": "./src/markdownMath.ts"
     }
   },
   "scripts": {
@@ -267,11 +271,13 @@
     "mdast-util-directive": "^3.1.0",
     "micromark-extension-directive": "^4.0.0",
     "micromark-util-character": "^2.1.1",
+    "remark-gfm": "^4.0.1",
     "remark-parse": "^11.0.0",
     "unified": "^11.0.5"
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/mdast": "^4.0.4",
     "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }

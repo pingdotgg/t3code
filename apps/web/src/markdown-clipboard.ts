@@ -384,8 +384,18 @@ export function chatMarkdownClipboardPayload(
   const texts: string[] = [];
   const htmls: string[] = [];
   for (let index = 0; index < selection.rangeCount; index += 1) {
-    const range = selection.getRangeAt(index);
+    const range = selection.getRangeAt(index).cloneRange();
     if (range.collapsed) continue;
+    // A fraction may put each endpoint several spans inside the rendered math.
+    // Copy the equation as one source token, never as flattened glyphs.
+    const mathAt = (node: Node) =>
+      (node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement)?.closest(
+        "[data-markdown-math]",
+      );
+    const startMath = mathAt(range.startContainer);
+    const endMath = mathAt(range.endContainer);
+    if (startMath) range.setStartBefore(startMath);
+    if (endMath) range.setEndAfter(endMath);
     const container = document.createElement("div");
     container.appendChild(range.cloneContents());
     const ancestor = range.commonAncestorContainer;

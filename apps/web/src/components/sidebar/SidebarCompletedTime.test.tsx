@@ -7,7 +7,10 @@ import { SidebarCompletedTime } from "./SidebarCompletedTime";
 let renderer: ReactTestRenderer | undefined;
 
 beforeEach(() => {
-  vi.useFakeTimers();
+  // React act uses setImmediate to settle work; only application clocks are fake.
+  vi.useFakeTimers({
+    toFake: ["setTimeout", "clearTimeout", "setInterval", "clearInterval", "Date"],
+  });
   vi.setSystemTime(new Date("2026-09-07T01:01:00Z"));
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", {

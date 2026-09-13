@@ -153,6 +153,13 @@
   ],
   "packageOverrides": [
     {
+      "name": "mj-context-menu",
+      "sourceUrl": "https://github.com/zorkow/context-menu",
+      "generatedNotice": {
+        "licenseId": "Apache-2.0"
+      }
+    },
+    {
       "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",

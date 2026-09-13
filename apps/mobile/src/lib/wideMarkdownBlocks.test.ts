@@ -3,6 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import { hasWideMarkdownBlock } from "./wideMarkdownBlocks";
 
 describe("hasWideMarkdownBlock", () => {
+  it("gives math a definite width without expanding currency or literal code", () => {
+    expect(hasWideMarkdownBlock("An equation $x_i$ here")).toBe(true);
+    expect(hasWideMarkdownBlock(String.raw`\[x+y\]`)).toBe(true);
+    expect(hasWideMarkdownBlock("Costs $20 or $30")).toBe(false);
+    expect(hasWideMarkdownBlock("`$x$`")).toBe(false);
+  });
   it("ignores prose, inline code, and emphasis", () => {
     expect(hasWideMarkdownBlock("just a message")).toBe(false);
     expect(hasWideMarkdownBlock("I found it in `secteurs_intervention` earlier")).toBe(false);
