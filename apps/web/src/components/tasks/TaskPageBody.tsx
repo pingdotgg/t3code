@@ -261,7 +261,7 @@ export function TaskPageBody({
           </div>
         </header>
         <section className="flex flex-col gap-2" aria-label="Task threads">
-          <div className="flex justify-end">
+          <div className="flex justify-end gap-2">
             <Button
               size="sm"
               variant="outline"
@@ -270,10 +270,19 @@ export function TaskPageBody({
             >
               Add threads…
             </Button>
+            <Button
+              size="sm"
+              disabled={disabled || task.archivedAt !== null || !primaryProject}
+              onClick={() => {
+                void actions.newThreadInTask(taskRef);
+              }}
+            >
+              New thread
+            </Button>
           </div>
           {Object.values(groups).every((members) => members.length === 0) ? (
             <p className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-              No threads yet. Add existing threads, or start a new one below.
+              No threads yet. Add existing threads, or start a new one.
             </p>
           ) : null}
           {(["live", "snoozed", "settled"] as const).map((kind) =>

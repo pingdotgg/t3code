@@ -80,7 +80,6 @@ export function useNewThreadHandler() {
         startFromOrigin?: boolean;
         replace?: boolean;
         taskId?: TaskId | null;
-        navigate?: boolean;
       },
       // Which draft the thread ended up in, so a caller that has something to put in it — a
       // prepared checkout, a task to write — addresses that one rather than looking the project
@@ -93,17 +92,13 @@ export function useNewThreadHandler() {
         return (
           readEnvironmentSupportsTasks(projectRef.environmentId) &&
           task != null &&
-          task.archivedAt === null &&
-          (options?.navigate !== false || task.primaryProjectId === projectRef.projectId)
+          task.archivedAt === null
         );
       };
       if (!taskContextAvailable()) return Promise.resolve(null);
       const finish = async (draft: { draftId: DraftId; threadId: ThreadId }) => {
         const current = getCurrentRouteTarget();
-        if (
-          options?.navigate !== false &&
-          !(current?.kind === "draft" && current.draftId === draft.draftId)
-        ) {
+        if (!(current?.kind === "draft" && current.draftId === draft.draftId)) {
           await router.navigate({
             to: "/draft/$draftId",
             params: { draftId: draft.draftId },

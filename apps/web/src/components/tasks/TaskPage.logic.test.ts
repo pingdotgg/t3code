@@ -1,10 +1,7 @@
-import { ProjectId, TaskId, type OrchestrationTaskShell } from "@t3tools/contracts";
-import { describe, expect, it, vi } from "vite-plus/test";
-import {
-  createTaskPageDraftPreparation,
-  taskPageAvailability,
-  taskPageBackgroundDraftTransition,
-} from "./TaskPage.logic";
+import { EnvironmentId, ProjectId, TaskId, type OrchestrationTaskShell } from "@t3tools/contracts";
+import { taskWorkbenchRef } from "@t3tools/client-runtime/state/task-workbench";
+import { describe, expect, it } from "vite-plus/test";
+import { buildTaskWorkbenchContext, taskPageAvailability } from "./TaskPage.logic";
 
 const task: OrchestrationTaskShell = {
   id: TaskId.make("task"),
@@ -34,6 +31,20 @@ const ready = {
 };
 
 describe("task route availability", () => {
+  it("uses the task's stable workbench and follows its primary project without a draft", () => {
+    const environmentId = EnvironmentId.make("environment");
+    const context = buildTaskWorkbenchContext({ ...task, environmentId });
+    const changed = buildTaskWorkbenchContext({
+      ...task,
+      environmentId,
+      primaryProjectId: ProjectId.make("other"),
+    });
+    expect(context.id).toBe(taskWorkbenchRef({ environmentId, taskId: task.id }).threadId);
+    expect(changed.id).toBe(context.id);
+    expect(changed.projectId).toBe("other");
+    expect(context.messages).toEqual([]);
+    expect(context.session).toBeNull();
+  });
   it("requires both live shell and completed archive inventory before reporting absence", () => {
     expect(taskPageAvailability({ ...ready, task: null, shellStatus: "synchronizing" })).toBe(
       "loading",
@@ -58,61 +69,5 @@ describe("task route availability", () => {
     ).toBe("archived");
     expect(taskPageAvailability({ ...ready, hasPrimaryProject: false })).toBe("project-missing");
     expect(taskPageAvailability({ ...ready, supportsTasks: false })).toBe("unsupported");
-  });
-});
-
-describe("task page draft preparation", () => {
-  it("shares preparation across effect replay and prepares afresh for a project or page generation change", async () => {
-    const prepare = createTaskPageDraftPreparation<string>();
-    let resolve!: (draft: string) => void;
-    const create = vi.fn(
-      () =>
-        new Promise<string>((done) => {
-          resolve = done;
-        }),
-    );
-    const first = prepare("environment/task/project/0", create);
-    expect(prepare("environment/task/project/0", create)).toBe(first);
-    expect(create).toHaveBeenCalledTimes(1);
-    resolve("draft");
-    expect(await first).toBe("draft");
-    const second = prepare("environment/task/other-project/0", async () => "new-project-draft");
-    expect(await second).toBe("new-project-draft");
-    expect(await prepare("environment/task/other-project/1", async () => "after-promotion")).toBe(
-      "after-promotion",
-    );
-  });
-});
-
-describe("task page submission transitions", () => {
-  it("retains foreground and pending background composers, and only replaces completed background work", () => {
-    expect(
-      taskPageBackgroundDraftTransition({
-        wasBackground: false,
-        backgroundPending: false,
-        threadExists: true,
-      }),
-    ).toBe("keep");
-    expect(
-      taskPageBackgroundDraftTransition({
-        wasBackground: true,
-        backgroundPending: true,
-        threadExists: true,
-      }),
-    ).toBe("keep");
-    expect(
-      taskPageBackgroundDraftTransition({
-        wasBackground: true,
-        backgroundPending: false,
-        threadExists: true,
-      }),
-    ).toBe("next-draft");
-    expect(
-      taskPageBackgroundDraftTransition({
-        wasBackground: true,
-        backgroundPending: false,
-        threadExists: false,
-      }),
-    ).toBe("failed");
   });
 });

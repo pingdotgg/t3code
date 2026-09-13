@@ -1,5 +1,9 @@
 import type { OrchestrationTaskShell } from "@t3tools/contracts";
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentTask } from "@t3tools/client-runtime/state/tasks";
+import { taskWorkbenchRef } from "@t3tools/client-runtime/state/task-workbench";
+import type { Thread } from "../../types";
+import { NO_PROVIDER_MODEL_SELECTION } from "../../providerInstances";
 
 /** Only an authoritative shell plus the archive inventory can prove a task is missing. */
 export function taskPageAvailability(input: {
@@ -23,23 +27,31 @@ export function taskPageAvailability(input: {
   return input.archiveError ? "archive-error" : "missing";
 }
 
-/** Share an in-flight preparation across effect replay without retaining completed page drafts. */
-export function createTaskPageDraftPreparation<T>() {
-  let pending: { key: string; promise: Promise<T> } | null = null;
-  return (key: string, prepare: () => Promise<T>) => {
-    if (pending?.key === key) return pending.promise;
-    const promise = prepare();
-    pending = { key, promise };
-    return promise;
+/** Adapt task context to the shared workbench layout without creating a draft or conversation. */
+export function buildTaskWorkbenchContext(task: EnvironmentTask): Thread {
+  return {
+    id: taskWorkbenchRef({ environmentId: task.environmentId, taskId: task.id }).threadId,
+    environmentId: task.environmentId,
+    projectId: task.primaryProjectId,
+    taskId: task.id,
+    title: task.name,
+    modelSelection: NO_PROVIDER_MODEL_SELECTION,
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    session: null,
+    messages: [],
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    deletedAt: null,
+    latestTurn: null,
+    branch: null,
+    worktreePath: null,
+    checkpoints: [],
+    pullRequests: [],
+    activities: [],
+    proposedPlans: [],
   };
-}
-
-/** A foreground promotion never replaces its composer before canonical navigation. */
-export function taskPageBackgroundDraftTransition(input: {
-  wasBackground: boolean;
-  backgroundPending: boolean;
-  threadExists: boolean;
-}) {
-  if (!input.wasBackground || input.backgroundPending) return "keep";
-  return input.threadExists ? "next-draft" : "failed";
 }

@@ -314,7 +314,7 @@ describe.each([
   );
 });
 
-describe("task draft preparation", () => {
+describe("task draft navigation", () => {
   const projectRef = {
     environmentId: "environment-ssh",
     projectId: "project-remote",
@@ -322,6 +322,23 @@ describe("task draft preparation", () => {
   const taskId = "task-one" as NonNullable<
     NonNullable<Parameters<ReturnType<typeof useNewThreadHandler>>[1]>["taskId"]
   >;
+  it("does not infer task membership when starting a plain thread from a task page", async () => {
+    testState.reset(null);
+    testState.router.state.matches = [
+      { params: { environmentId: projectRef.environmentId, taskId } },
+    ];
+    const pending = useNewThreadHandler()(projectRef);
+    testState.completeProjectFileRead(null);
+    await pending;
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      projectRef,
+      "draft-delayed",
+      expect.objectContaining({ taskId: null }),
+    );
+    expect(testState.router.navigate).toHaveBeenCalled();
+    testState.router.state.matches = [{ params: {} }];
+  });
   it.each([
     null,
     {
@@ -332,13 +349,15 @@ describe("task draft preparation", () => {
       taskId: "task-one",
       threadId: "thread-existing",
     },
-  ])("prepares a task draft without navigating (%j)", async (draft) => {
+  ])("opens the usual draft with its task selected (%j)", async (draft) => {
     testState.reset(draft);
-    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    const pending = useNewThreadHandler()(projectRef, { taskId });
     testState.completeProjectFileRead(null);
     const result = await pending;
     expect(result?.draftId).toBe(draft?.draftId ?? "draft-delayed");
-    expect(testState.router.navigate).not.toHaveBeenCalled();
+    expect(testState.router.navigate).toHaveBeenCalledWith(
+      expect.objectContaining({ to: "/draft/$draftId", params: { draftId: result?.draftId } }),
+    );
     expect(testState.draftStore.getDraftSessionByLogicalProjectKey).toHaveBeenCalledWith(
       "remote-project",
       { taskId, projectRef },
@@ -350,17 +369,9 @@ describe("task draft preparation", () => {
       expect.objectContaining({ taskId }),
     );
   });
-  it("discards page defaults if the primary project changes while they load", async () => {
-    testState.reset(null);
-    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
-    testState.setTaskPrimaryProjectId("new-primary");
-    testState.completeProjectFileRead(null);
-    expect(await pending).toBeNull();
-    expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
-  });
   it("does not create a draft when its task disappears during defaults resolution", async () => {
     testState.reset(null);
-    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    const pending = useNewThreadHandler()(projectRef, { taskId });
     testState.setTaskAvailable(false);
     testState.completeProjectFileRead(null);
     expect(await pending).toBeNull();
@@ -375,7 +386,7 @@ describe("task draft preparation", () => {
       taskId: "task-one",
       threadId: "thread-existing",
     });
-    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    const pending = useNewThreadHandler()(projectRef, { taskId });
     testState.setHasContent(true);
     testState.completeProjectFileRead(null);
     expect(await pending).toBeNull();
@@ -393,7 +404,7 @@ describe("task draft preparation", () => {
       threadId: "thread-invested",
     });
     testState.setHasContent(true);
-    const pending = useNewThreadHandler()(projectRef, { taskId, navigate: false });
+    const pending = useNewThreadHandler()(projectRef, { taskId });
     testState.completeProjectFileRead(null);
     expect(await pending).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.draftStore.setDraftThreadContext).not.toHaveBeenCalled();

@@ -36,9 +36,11 @@ list without changing its conversation or checkout.
 threads in a flat list, including members of tasks whose primary project is
 elsewhere. Servers without Tasks support continue to show flat thread lists.
 
-Open a task to edit its details or start a thread. Web and desktop use the task
-page's composer; mobile opens the existing new-thread sheet. New threads default
-to the primary project, and you can choose another project in the same environment.
+Open a task to edit its details or choose **New thread**. Web and desktop open the
+usual draft page; mobile opens the new-thread sheet. Creating from a task selects
+that task and its primary project. On web and desktop, the task selector beside the
+checkout controls lets you change the task or choose **No task** before sending.
+Plain new threads start without a task. Task drafts can use another project in the same environment.
 **New thread in this worktree** and **Implement in new thread** keep the source
 thread's task and checkout context.
 

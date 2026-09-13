@@ -41,6 +41,7 @@ import {
 } from "./ui/menu";
 import { Separator } from "./ui/separator";
 import { ComposerSurface } from "./chat/ComposerSurface";
+import { DraftTaskContext } from "./chat/DraftTaskContext";
 import { composerFloatingLayerProps } from "./chat/composerEventScope";
 import { measureRestingComposerControls } from "./chat/restingComposerControlsMeasurement";
 import { resolveRestingComposerControlsNaturalWidth } from "./composerFooterLayout";
@@ -51,6 +52,7 @@ interface BranchToolbarProps {
   threadId: ThreadId;
   showGitControls: boolean;
   draftId?: DraftId;
+  draftTaskLocked?: boolean;
   onEnvModeChange: (mode: EnvMode) => void;
   effectiveEnvModeOverride?: EnvMode;
   activeThreadBranchOverride?: string | null;
@@ -442,6 +444,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   threadId,
   showGitControls,
   draftId,
+  draftTaskLocked = false,
   onEnvModeChange,
   effectiveEnvModeOverride,
   activeThreadBranchOverride,
@@ -544,6 +547,11 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
+      {draftId ? (
+        <div className={showGitControls ? "contents @3xl/composer-surface:hidden" : "contents"}>
+          <DraftTaskContext draftId={draftId} disabled={envLocked || draftTaskLocked} />
+        </div>
+      ) : null}
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
           <MobileRunContextSelector
@@ -592,14 +600,19 @@ export const BranchToolbar = memo(function BranchToolbar({
             </>
           )}
           {showGitControls ? (
-            <BranchToolbarEnvModeSelector
-              envLocked={envModeLocked}
-              effectiveEnvMode={effectiveEnvMode}
-              activeWorktreePath={activeWorktreePath}
-              onEnvModeChange={onEnvModeChange}
-              previousWorktreeLabel={previousWorktreeLabel}
-              onUsePreviousWorktree={onUsePreviousWorktree}
-            />
+            <>
+              {draftId ? (
+                <DraftTaskContext draftId={draftId} disabled={envLocked || draftTaskLocked} />
+              ) : null}
+              <BranchToolbarEnvModeSelector
+                envLocked={envModeLocked}
+                effectiveEnvMode={effectiveEnvMode}
+                activeWorktreePath={activeWorktreePath}
+                onEnvModeChange={onEnvModeChange}
+                previousWorktreeLabel={previousWorktreeLabel}
+                onUsePreviousWorktree={onUsePreviousWorktree}
+              />
+            </>
           ) : null}
         </div>
       ) : null}
