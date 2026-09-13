@@ -1,10 +1,10 @@
 import type { ScopedProjectRef, ScopedTaskRef } from "@t3tools/contracts";
+import { Dialog } from "@base-ui/react/dialog";
 import { create } from "zustand";
 
 type TaskDialogRequest =
   | { kind: "create"; projectRef: ScopedProjectRef | null }
-  | { kind: "rename" | "delete"; taskRef: ScopedTaskRef }
-  | { kind: "add-threads"; taskRef: ScopedTaskRef };
+  | { kind: "rename" | "delete"; taskRef: ScopedTaskRef };
 
 export const useTaskDialogStore = create<{
   request: TaskDialogRequest | null;
@@ -25,6 +25,8 @@ export function requestRenameTask(taskRef: ScopedTaskRef) {
 export function requestDeleteTask(taskRef: ScopedTaskRef) {
   useTaskDialogStore.getState().open({ kind: "delete", taskRef });
 }
+export const addThreadsToTaskDialog = Dialog.createHandle<ScopedTaskRef>();
+
 export function requestAddThreadsToTask(taskRef: ScopedTaskRef) {
-  useTaskDialogStore.getState().open({ kind: "add-threads", taskRef });
+  addThreadsToTaskDialog.openWithPayload(taskRef);
 }

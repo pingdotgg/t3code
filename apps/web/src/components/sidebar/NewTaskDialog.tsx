@@ -20,21 +20,11 @@ import {
 import { Input } from "../ui/input";
 import { Label } from "../ui/label";
 import { Textarea } from "../ui/textarea";
-import { AddThreadsToTaskDialog } from "../tasks/AddThreadsToTaskDialog";
 
 /** Task dialogs share one layout-owned request so sidebar actions work on any route. */
 export function NewTaskDialog() {
   const request = useTaskDialogStore((state) => state.request);
   const close = useTaskDialogStore((state) => state.close);
-  if (request?.kind === "add-threads") {
-    return (
-      <AddThreadsToTaskDialog
-        key={`${request.taskRef.environmentId}:${request.taskRef.taskId}`}
-        taskRef={request.taskRef}
-        close={close}
-      />
-    );
-  }
   return request ? (
     <TaskDialogForm
       key={request.kind + ("taskRef" in request ? request.taskRef.taskId : "")}
@@ -48,10 +38,7 @@ function TaskDialogForm({
   request,
   close,
 }: {
-  request: Exclude<
-    NonNullable<ReturnType<typeof useTaskDialogStore.getState>["request"]>,
-    { kind: "add-threads" }
-  >;
+  request: NonNullable<ReturnType<typeof useTaskDialogStore.getState>["request"]>;
   close: () => void;
 }) {
   const projects = useProjects();

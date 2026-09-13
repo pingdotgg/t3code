@@ -21,9 +21,9 @@ type CandidateThread = Pick<
 >;
 
 /** Search shell metadata only; picking members must not subscribe to conversation contents. */
-export function taskThreadCandidates(
+export function taskThreadCandidates<T extends CandidateThread>(
   taskRef: ScopedTaskRef,
-  threads: readonly CandidateThread[],
+  threads: readonly T[],
   projects: readonly Pick<EnvironmentProject, "environmentId" | "id" | "title">[],
   tasks: readonly Pick<EnvironmentTask, "environmentId" | "id" | "name">[],
 ) {
@@ -49,6 +49,7 @@ export function taskThreadCandidates(
     const projectName = projectNames.get(thread.projectId) ?? "Project unavailable";
     const taskName = thread.taskId ? (taskNames.get(thread.taskId) ?? "Another task") : null;
     return {
+      thread,
       id: thread.id,
       title: thread.title,
       projectName,
