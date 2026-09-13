@@ -1471,6 +1471,24 @@ const WsOrchestrationV2GetThreadProjectionRpc = Rpc.make(
   },
 );
 
+const WsOrchestrationV2GetThreadHistoryPageRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadHistoryPage,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadHistoryPage.input,
+    success: OrchestrationV2RpcSchemas.getThreadHistoryPage.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
+const WsOrchestrationV2GetThreadCheckpointContextRpc = Rpc.make(
+  ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext,
+  {
+    payload: OrchestrationV2RpcSchemas.getThreadCheckpointContext.input,
+    success: OrchestrationV2RpcSchemas.getThreadCheckpointContext.output,
+    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+  },
+);
+
 const WsOrchestrationV2GetWorkflowScriptRpc = Rpc.make(
   ORCHESTRATION_V2_WS_METHODS.getWorkflowScript,
   {
@@ -1777,6 +1795,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2SearchThreadsRpc,
   WsOrchestrationV2GetArchivedShellSnapshotRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
+  WsOrchestrationV2GetThreadHistoryPageRpc,
+  WsOrchestrationV2GetThreadCheckpointContextRpc,
   WsOrchestrationV2LaunchThreadRpc,
   WsOrchestrationV2SubscribeArchivedShellRpc,
   WsOrchestrationV2SubscribeShellRpc,

@@ -1,5 +1,11 @@
 import { assert, it, vi } from "@effect/vitest";
-import { CheckpointRef, CheckpointScopeId, RunId, ThreadId } from "@t3tools/contracts";
+import {
+  CheckpointId,
+  CheckpointRef,
+  CheckpointScopeId,
+  RunId,
+  ThreadId,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
@@ -34,8 +40,10 @@ function makeProjection(): ProjectionCheckpointContext {
     ],
     checkpoints: [
       {
+        id: CheckpointId.make("checkpoint:checkpoint-diff-v2:2"),
         scopeId: secondScopeId,
         runId: secondRunId,
+        ordinalWithinScope: 1,
         appRunOrdinal: 2,
         status: "ready",
         ref: secondRef,

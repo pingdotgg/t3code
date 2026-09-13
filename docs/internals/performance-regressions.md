@@ -20,6 +20,11 @@ The v2 checks pin these invariants:
 - Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
   bounded recent-history window and carry the cursor needed to fetch older history. Older clients
   and WebSocket-only starts retain the compatible full-snapshot fallback.
+- The compatibility `getThreadProjection` RPC serves the same bounded window with paging metadata
+  spread flat over the projection fields, so clients decoding the historical schema still get a
+  valid projection. Older rows page through `getThreadHistoryPage` or the HTTP history endpoint
+  with the same opaque cursor. Never restore an unbounded read here: on long-lived threads that
+  path decoded the entire history into memory per call.
 - Snapshot queries bound timeline reads per fork ancestor, not total rows: dependency and
   control records still accompany the window. Smaller socket frames alone do not establish a
   whole-server memory reduction.

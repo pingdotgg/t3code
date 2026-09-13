@@ -253,15 +253,14 @@ function findCursorIndex(
   const byIdentity = items.findIndex(
     (row) => String(row.sourceThreadId) === cursor.st && String(row.sourceItemId) === cursor.si,
   );
-  if (byIdentity !== -1) {
-    return byIdentity;
+  // A resolvable anchor is always inside the fetched window, and positions are
+  // renumbered per window so `p` cannot order rows across windows. Guessing an
+  // index from it would silently skip history, so a miss is a typed error;
+  // the client refetches the bounded snapshot and repaginates.
+  if (byIdentity === -1) {
+    throw new InvalidThreadHistoryCursorError();
   }
-  // Identity miss can happen if the cursor item was deleted; fall back to the
-  // recorded position clamped into the current timeline so pagination can
-  // continue from a stable-ish anchor rather than failing hard. Clamp to
-  // items.length (exclusive end) so a shrunken timeline never 400s forever.
-  // decodeThreadHistoryCursor already guarantees p is a non-negative integer.
-  return Math.min(cursor.p, items.length);
+  return byIdentity;
 }
 
 export function selectHistoryPageFromCursor(input: {
@@ -528,5 +527,58 @@ export function buildBoundedThreadProjection(input: {
     // watermark for partial live reducers.
     latestLocalTurnOrdinal,
     payloadBudgetExceeded: bytesOfJson(projection) > policy.maxEncodedBytes,
+  };
+}
+
+/**
+ * Result of `selectHistoryPageFromCursor` split by failure class so transport
+ * handlers can surface invalid cursors as typed client errors instead of
+ * internal failures. Shared by the HTTP history endpoint and the WS
+ * `getThreadHistoryPage` RPC.
+ */
+export function selectHistoryPageFromCursorOrError(
+  input: Parameters<typeof selectHistoryPageFromCursor>[0],
+):
+  | { readonly _tag: "ok"; readonly page: SelectTimelinePageResult }
+  | { readonly _tag: "invalid_cursor" }
+  | { readonly _tag: "error"; readonly cause: unknown } {
+  try {
+    return { _tag: "ok", page: selectHistoryPageFromCursor(input) };
+  } catch (cause) {
+    if (cause instanceof InvalidThreadHistoryCursorError) {
+      return { _tag: "invalid_cursor" };
+    }
+    return { _tag: "error", cause };
+  }
+}
+
+export type GetThreadProjectionCompatResult = OrchestrationV2ThreadProjection & {
+  readonly snapshotSequence: number;
+  readonly historyCursor: string | null;
+  readonly hasMoreHistory: boolean;
+  readonly latestLocalTurnOrdinal: number | null;
+  readonly payloadBudgetExceeded: boolean;
+};
+
+/**
+ * Shapes a bounded snapshot window for the legacy `getThreadProjection` RPC.
+ * The timeline fields carry the bounded recent window while the metadata is
+ * spread flat over the projection fields, so clients decoding the historical
+ * `OrchestrationV2ThreadProjection` schema still get a valid projection and
+ * newer clients receive the cursor to page older history.
+ */
+export function buildGetThreadProjectionResult(input: {
+  readonly projection: OrchestrationV2ThreadProjection;
+  readonly snapshotSequence: number;
+  readonly policy?: ThreadHistoryPagePolicy | undefined;
+}): GetThreadProjectionCompatResult {
+  const bounded = buildBoundedThreadProjection(input);
+  return {
+    ...bounded.projection,
+    snapshotSequence: input.snapshotSequence,
+    historyCursor: bounded.historyCursor,
+    hasMoreHistory: bounded.hasMoreHistory,
+    latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
   };
 }
