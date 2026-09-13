@@ -103,6 +103,7 @@ export function createSidebarSortingStrategy(input: {
   snoozedThreadCount?: number;
   cardHeight?: number;
   slimHeight?: number;
+  compact?: boolean;
   /** Space each pinned boundary opens for its label while dragging. The
    * markers stay zero height at rest, so nothing is reserved until pickup. */
   boundaryLabelHeight?: number;
@@ -140,11 +141,14 @@ export function createSidebarSortingStrategy(input: {
       else slimHeight ??= rects[index]?.height;
       if (item.key !== active.key) groups[item.section].push(item);
     }
-    // Cards are 4.875rem + 0.25rem padding; slim rows/placeholders are h-9.
-    const scale =
-      slimHeight !== undefined ? slimHeight / 36 : (headerScale ?? (cardHeight ?? 82) / 82);
-    cardHeight ??= 82 * scale;
-    slimHeight ??= 36 * scale;
+    // Compact icons use h-7; expanded cards include their vertical padding.
+    const scale = input.compact
+      ? (cardHeight ?? slimHeight ?? 28) / 28
+      : slimHeight !== undefined
+        ? slimHeight / 36
+        : (headerScale ?? (cardHeight ?? 82) / 82);
+    cardHeight ??= (input.compact ? 28 : 82) * scale;
+    slimHeight ??= (input.compact ? 28 : 36) * scale;
     const labelHeight = (input.boundaryLabelHeight ?? 0) * scale;
     const group = groups[target.section];
     const order =
