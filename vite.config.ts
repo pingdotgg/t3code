@@ -136,6 +136,19 @@ export default defineConfig({
         rules: { "t3code/no-mobile-uniwind-theme-escape-hatches": "error" },
       },
       {
+        // Code that runs on Hermes. It has no ES2023 change-array-by-copy methods, and
+        // tsconfig targets ESNext, so only lint stands between a call and a fatal launch.
+        // Tests run on Node and are exempt.
+        files: [
+          "apps/mobile/src/**",
+          "packages/client-runtime/src/**",
+          "packages/contracts/src/**",
+          "packages/shared/src/**",
+        ],
+        excludeFiles: ["**/*.test.ts", "**/*.test.tsx"],
+        rules: { "t3code/no-hermes-unsupported-array-methods": "error" },
+      },
+      {
         // Reviewed native and third-party interop boundaries that cannot consume a className.
         files: [
           "apps/mobile/src/features/archive/ArchivedThreadsScreen.tsx",

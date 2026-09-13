@@ -178,15 +178,15 @@ export function DraftHeroHeadline({
                 ? undefined
                 : { runtimeMode: currentDraft.runtimeMode },
             );
+            const targetServerConfig = serverConfigs.get(project.environmentId);
+            const projectSettings = targetServerConfig
+              ? resolveProjectSettings(targetServerConfig.settings, project.id, project).settings
+              : undefined;
+            const defaultModelSelection = projectSettings
+              ? projectSettings.defaultModelSelection
+              : project.defaultModelSelection;
             if (!hasExplicitComposerModelSelection(currentDraft)) {
               applyStickyState(draftId);
-              const environmentSettings = environments.find(
-                (environment) => environment.environmentId === project.environmentId,
-              )?.serverConfig?.settings;
-              const defaultModelSelection = environmentSettings
-                ? resolveProjectSettings(environmentSettings, project.id, project).settings
-                    .defaultModelSelection
-                : project.defaultModelSelection;
               if (defaultModelSelection) {
                 setModelSelection(draftId, defaultModelSelection, {
                   replaceOptions: true,
@@ -194,12 +194,11 @@ export function DraftHeroHeadline({
               }
             }
             if (currentDraft?.runtimeMode == null) {
-              const targetServerConfig = serverConfigs.get(project.environmentId);
               setDraftThreadContext(draftId, {
                 runtimeMode: resolveNewThreadRuntimeMode(
-                  targetServerConfig?.settings,
+                  projectSettings,
                   getComposerDraft(draftId)?.activeProvider ??
-                    project.defaultModelSelection?.instanceId ??
+                    defaultModelSelection?.instanceId ??
                     resolveDefaultProviderModelSelection(targetServerConfig?.providers ?? [], null)
                       ?.instanceId,
                 ),

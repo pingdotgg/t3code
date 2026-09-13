@@ -14,7 +14,7 @@ export function readDefaultMobileThemeVariables(
   return Object.fromEntries(
     Array.from(variant.matchAll(/(--color-[a-z0-9-]+):\s*([^;]+);/gu), ([, name, value]) => [
       name,
-      value.trim(),
+      (value ?? "").trim(),
     ]),
   ) as MobileThemeVariables;
 }

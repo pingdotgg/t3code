@@ -1455,6 +1455,16 @@ function UserVideoAttachment({ file }: { readonly file: ChatFileAttachment }) {
   );
 }
 
+// Screen readers skim a transcript by heading, so every message announces its
+// author as one. The thread title in ChatHeader is an <h2>; headings written
+// inside a message are exposed below this level. Visually hidden and excluded
+// from selection so sighted users and copied text are unaffected.
+const MESSAGE_HEADING_LEVEL = 3;
+
+function MessageAuthorHeading({ children }: { children: string }) {
+  return <h3 className="sr-only select-none">{children}</h3>;
+}
+
 function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" }> }) {
   const ctx = use(TimelineRowCtx);
   const { onImageExpand, onFileOpen } = ctx;
@@ -1614,6 +1624,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
   return (
     <div className="group flex flex-col items-end gap-1">
       <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+        <MessageAuthorHeading>You</MessageAuthorHeading>
         {(regularImages.length > 0 || userVideos.length > 0) && (
           <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
             {regularImages.map((image) => (
@@ -1845,6 +1856,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
   return (
     <>
       <div className="relative min-w-0 px-1 py-0.5">
+        <MessageAuthorHeading>T3 Code</MessageAuthorHeading>
         <AssistantCitationSource
           messageId={row.message.id}
           {...(ctx.threadRef ? { threadRef: ctx.threadRef } : {})}
@@ -1859,6 +1871,7 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
             isStreaming={Boolean(row.message.streaming)}
             lineBreaks={shouldPreserveAssistantLineBreaks(messageText)}
             skills={ctx.skills}
+            headingLevelOffset={MESSAGE_HEADING_LEVEL}
             onUseArtifactTemplate={ctx.onUseArtifactTemplate}
             onImageExpand={ctx.onImageExpand}
           />
@@ -3214,6 +3227,7 @@ const UserMessageBody = memo(function UserMessageBody(props: {
       lineBreaks
       parseRawHtml={false}
       renderContextReference={props.renderContextReference}
+      headingLevelOffset={MESSAGE_HEADING_LEVEL}
     />
   );
 });
