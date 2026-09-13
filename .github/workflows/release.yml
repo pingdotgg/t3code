@@ -359,13 +359,25 @@ jobs:
   # the Windows desktop entry embeds it as the WSL runtime. Building it once
   # here means the WSL backend runs the exact bytes a Linux user downloads.
   build_linux_cli:
-    name: Build CLI archive (linux-x64)
+    name: Build CLI archive (linux-${{ matrix.arch }})
     # Same gating as relay_public_config: only the release commit is needed, so
     # this runs alongside preflight. See the condition comment there.
     needs: [resolve_commit, preflight, relay_public_config]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
-    runs-on: blacksmith-32vcpu-ubuntu-2404
-    timeout-minutes: 20
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x64
+            runner: blacksmith-32vcpu-ubuntu-2404
+            rust_target: x86_64-unknown-linux-gnu
+          # node-pty has no Linux prebuild and compiles from source, so the
+          # arm64 archive is built on arm64 hardware rather than cross-built.
+          - arch: arm64
+            runner: ubuntu-24.04-arm
+            rust_target: aarch64-unknown-linux-gnu
     env:
       T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
       T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
@@ -396,18 +408,18 @@ jobs:
         id: resource_monitor_cache
         uses: actions/cache@v6
         with:
-          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
-          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+          path: native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor
+          key: resource-monitor-${{ matrix.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu
+          targets: ${{ matrix.rust_target }}
 
       - name: Build resource monitor
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
-        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target ${{ matrix.rust_target }}
 
       - name: Download relay client tracing config
         uses: actions/download-artifact@v8
@@ -442,15 +454,15 @@ jobs:
       - name: Stage resource monitor for the CLI archive
         run: |
           set -euo pipefail
-          target_dir="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/linux-${{ matrix.arch }}"
           mkdir -p "$target_dir"
-          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$target_dir/"
+          cp native/resource-monitor/target/${{ matrix.rust_target }}/release/t3-resource-monitor "$target_dir/"
 
       - name: Build CLI archive
         run: |
           node scripts/build-cli-archive.ts \
             --platform linux \
-            --arch x64 \
+            --arch ${{ matrix.arch }} \
             --version "${{ needs.preflight.outputs.version }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
             --output-dir release-cli
@@ -461,7 +473,183 @@ jobs:
       - name: Upload CLI archive
         uses: actions/upload-artifact@v7
         with:
-          name: cli-linux-x64
+          name: cli-linux-${{ matrix.arch }}
+          path: release-cli/*
+          if-no-files-found: error
+
+  # Windows arm64 has no desktop build yet (the NSIS arm64 row is still off),
+  # but the CLI archive is built here on arm64 hardware so it is signed and
+  # smoke-tested on the architecture it targets, like every other archive.
+  build_windows_arm64_cli:
+    name: Build CLI archive (win32-arm64)
+    needs: [resolve_commit, preflight, relay_public_config]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    runs-on: windows-11-arm
+    timeout-minutes: 30
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ needs.preflight.outputs.ref }}
+          sparse-checkout: |
+            /*
+            !/.repos/
+          sparse-checkout-cone-mode: false
+
+      - name: Setup Vite+
+        uses: voidzero-dev/setup-vp@v1
+        with:
+          node-version-file: package.json
+          cache: false
+          run-install: false
+
+      - name: Download dependency verification
+        continue-on-error: true
+        uses: actions/download-artifact@v8
+        with:
+          name: release-dependency-verification
+          path: ${{ runner.temp }}/pnpm-metadata
+
+      - name: Install dependencies
+        env:
+          pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+        run: vp install --filter=t3... --filter=@t3tools/web... --filter=@t3tools/scripts...
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-pc-windows-msvc
+
+      - name: Build resource monitor
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target aarch64-pc-windows-msvc
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
+        shell: bash
+        run: |
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          echo "::add-mask::$tracing_token"
+          cat "$config_path" >> "$GITHUB_ENV"
+
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      # The t3 build task depends on @t3tools/web#build, so the web client is
+      # built as part of this step.
+      - name: Build CLI package
+        run: vp run --filter t3 build
+
+      - name: Build CLI single-executable
+        shell: bash
+        env:
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Prepare Azure Trusted Signing
+        shell: pwsh
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+          AZURE_TRUSTED_SIGNING_PUBLISHER_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_PUBLISHER_NAME }}
+        run: |
+          $ErrorActionPreference = "Stop"
+
+          $requiredSecrets = @(
+            $env:AZURE_TENANT_ID,
+            $env:AZURE_CLIENT_ID,
+            $env:AZURE_CLIENT_SECRET,
+            $env:AZURE_TRUSTED_SIGNING_ENDPOINT,
+            $env:AZURE_TRUSTED_SIGNING_ACCOUNT_NAME,
+            $env:AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME,
+            $env:AZURE_TRUSTED_SIGNING_PUBLISHER_NAME
+          )
+          if ($requiredSecrets | Where-Object { [string]::IsNullOrWhiteSpace($_) }) {
+            Write-Host "Azure Trusted Signing disabled; skipping TrustedSigning module preparation."
+            exit 0
+          }
+
+          try {
+            Install-PackageProvider `
+              -Name NuGet `
+              -MinimumVersion 2.8.5.201 `
+              -Force `
+              -Scope CurrentUser `
+              -ErrorAction Stop
+          } catch {
+            Write-Warning "Could not bootstrap NuGet package provider. Continuing because the runner may already have a usable provider. $($_.Exception.Message)"
+          }
+
+          Install-Module `
+            -Name TrustedSigning `
+            -MinimumVersion 0.5.0 `
+            -Force `
+            -AllowClobber `
+            -Repository PSGallery `
+            -Scope CurrentUser `
+            -ErrorAction Stop
+
+          Import-Module TrustedSigning -MinimumVersion 0.5.0 -Force
+          Get-Command Invoke-TrustedSigning -ErrorAction Stop
+
+          $moduleRoots = @(
+            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "PowerShell", "Modules"),
+            [System.IO.Path]::Combine([Environment]::GetFolderPath("MyDocuments"), "WindowsPowerShell", "Modules"),
+            [System.IO.Path]::Combine($env:ProgramFiles, "PowerShell", "Modules"),
+            [System.IO.Path]::Combine($env:ProgramFiles, "WindowsPowerShell", "Modules")
+          )
+          $modulePathEntries = @($moduleRoots + ($env:PSModulePath -split ";")) |
+            Where-Object { $_ -and (Test-Path $_) } |
+            Select-Object -Unique
+          "PSModulePath=$($modulePathEntries -join ';')" >> $env:GITHUB_ENV
+
+      - name: Stage resource monitor for the CLI archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/win32-arm64"
+          mkdir -p "$target_dir"
+          cp native/resource-monitor/target/aarch64-pc-windows-msvc/release/t3-resource-monitor.exe "$target_dir/"
+
+      - name: Build CLI archive
+        shell: bash
+        env:
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TRUSTED_SIGNING_ENDPOINT: ${{ secrets.AZURE_TRUSTED_SIGNING_ENDPOINT }}
+          AZURE_TRUSTED_SIGNING_ACCOUNT_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_ACCOUNT_NAME }}
+          AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME: ${{ secrets.AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME }}
+        run: |
+          node scripts/build-cli-archive.ts \
+            --platform win \
+            --arch arm64 \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        shell: bash
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Upload CLI archive
+        uses: actions/upload-artifact@v7
+        with:
+          name: cli-win-arm64
           path: release-cli/*
           if-no-files-found: error
 
@@ -488,11 +676,9 @@ jobs:
       matrix:
         include:
           # cli_archive: whether the job also builds the self-contained CLI
-          # archive. The executable is built on the runner's own Node, so only
-          # native runners qualify. macOS x64 has no native runner: a
-          # cross-built executable crashed under Rosetta in the smoke test and
-          # cannot be verified on real x64 hardware in CI, so it is skipped
-          # until it can be.
+          # archive for its own platform/arch, on this runner, and smoke-tests
+          # it here. Every archive is built on hardware of its own
+          # architecture: Linux and Windows arm64 have their own jobs below.
           - label: macOS arm64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -501,6 +687,9 @@ jobs:
             rust_target: aarch64-apple-darwin
             resource_key: darwin-arm64
             cli_archive: true
+          # No CLI archive: Node single-executables are unsupported on x64
+          # macOS (the SEA docs list macOS as arm64 only) and the built binary
+          # segfaults on start. The x64 desktop app is Electron and unaffected.
           - label: macOS x64
             runner: blacksmith-12vcpu-macos-26
             platform: mac
@@ -1058,8 +1247,8 @@ jobs:
 
   release:
     name: Publish GitHub Release
-    needs: [preflight, build, publish_cli]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && (needs.publish_cli.result == 'success' || (needs.preflight.outputs.release_channel == 'preview' && needs.publish_cli.result == 'skipped')) }}
+    needs: [preflight, build, build_windows_arm64_cli, publish_cli]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.build.result == 'success' && needs.build_windows_arm64_cli.result == 'success' && (needs.publish_cli.result == 'success' || (needs.preflight.outputs.release_channel == 'preview' && needs.publish_cli.result == 'skipped')) }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
