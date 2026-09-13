@@ -179,7 +179,24 @@ async function proxyRequest(
     request.method === "GET" || request.method === "HEAD"
       ? await fetchWithTransientRetry(targetUrl.toString(), init)
       : await Electron.net.fetch(targetUrl.toString(), init);
-  return withContentSecurityPolicy(response, contentSecurityPolicy);
+
+  // Buffer the full response body before re-wrapping. Electron's net.fetch
+  // returns a ReadableStream that can be truncated when forwarded directly
+  // into a new Response inside a protocol.handle callback, which causes
+  // large JS bundles to arrive incomplete and fail with SyntaxError.
+  const body =
+    response.body && (request.method === "GET" || request.method === "HEAD")
+      ? await response.arrayBuffer()
+      : response.body;
+
+  return withContentSecurityPolicy(
+    new Response(body, {
+      status: response.status,
+      statusText: response.statusText,
+      headers: response.headers,
+    }),
+    contentSecurityPolicy,
+  );
 }
 
 const TRANSIENT_FETCH_RETRY_DELAYS_MS = [0, 50, 150] as const;

@@ -141,6 +141,43 @@ describe("ElectronProtocol", () => {
     }).pipe(Effect.provide(ElectronProtocol.layer)),
   );
 
+  it.effect("buffers large GET responses to prevent stream truncation", () =>
+    Effect.gen(function* () {
+      let handler: ((request: Request) => Promise<Response>) | undefined;
+      handleMock.mockImplementation((_scheme, nextHandler) => {
+        handler = nextHandler;
+      });
+
+      // Simulate a large JS bundle (1 MiB) that would be truncated if the
+      // ReadableStream from net.fetch were forwarded without buffering.
+      const largePayload = "x".repeat(1024 * 1024);
+      netFetchMock.mockResolvedValue(
+        new Response(largePayload, {
+          headers: { "content-type": "application/javascript" },
+        }),
+      );
+
+      const response = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const protocol = yield* ElectronProtocol.ElectronProtocol;
+          yield* protocol.registerDesktopProtocol({
+            scheme: "t3code-dev",
+            targetOrigin: new URL("http://127.0.0.1:3773/"),
+            backendOrigin: new URL("http://127.0.0.1:3774/"),
+            clerkFrontendApiHostname: undefined,
+          });
+          return yield* Effect.promise(() =>
+            handler!(new Request("t3code-dev://app/assets/bundle.js")),
+          );
+        }),
+      );
+
+      const text = yield* Effect.promise(() => response.text());
+      assert.equal(text.length, largePayload.length);
+      assert.equal(text, largePayload);
+    }).pipe(Effect.provide(ElectronProtocol.layer)),
+  );
+
   it.effect("preserves protocol registration failures", () =>
     Effect.gen(function* () {
       const cause = new Error("protocol registration failed");
