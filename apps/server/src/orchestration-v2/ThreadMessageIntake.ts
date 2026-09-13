@@ -54,27 +54,47 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
   const threads = yield* ThreadManagement.ThreadManagementService;
   if (command.type === "runtime-request.respond" && command.attachmentsByQuestionId) {
     const config = yield* ServerConfig.ServerConfig;
-    const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
-    for (const [questionId, attachments] of Object.entries(command.attachmentsByQuestionId)) {
-      const claimed = yield* AttachmentClaims.claimPendingAttachments({
-        threadId: command.threadId,
-        attachments,
-      });
-      Object.defineProperty(attachmentsByQuestionId, questionId, {
-        value: claimed.attachments,
-        enumerable: true,
-      });
-    }
-    const answers = yield* appendUserInputAttachmentPaths({
-      answers: command.answers ?? {},
-      attachmentsByQuestionId,
-      attachmentsDir: config.attachmentsDir,
-    }).pipe(
-      Effect.mapError(
-        (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
-      ),
-    );
-    return yield* threads.dispatch({ ...command, answers, attachmentsByQuestionId });
+    const incomingByQuestionId = command.attachmentsByQuestionId;
+    // Claims accumulate across questions, so all of preparation shares one
+    // rollback boundary: any failure before dispatch removes every new copy.
+    const claimedPaths: string[] = [];
+    const prepared = yield* Effect.gen(function* () {
+      const attachmentsByQuestionId: import("@t3tools/contracts").UserInputAttachments = {};
+      for (const [questionId, attachments] of Object.entries(incomingByQuestionId)) {
+        const claimed = yield* AttachmentClaims.claimPendingAttachments({
+          threadId: command.threadId,
+          attachments,
+        });
+        claimedPaths.push(...claimed.claimedPaths);
+        Object.defineProperty(attachmentsByQuestionId, questionId, {
+          value: claimed.attachments,
+          enumerable: true,
+        });
+      }
+      const answers = yield* appendUserInputAttachmentPaths({
+        answers: command.answers ?? {},
+        attachmentsByQuestionId,
+        attachmentsDir: config.attachmentsDir,
+      }).pipe(
+        Effect.mapError(
+          (cause) => new AttachmentClaims.AttachmentClaimError({ message: cause.issue }),
+        ),
+      );
+      return { answers, attachmentsByQuestionId };
+    }).pipe(Effect.tapError(() => AttachmentClaims.releaseClaimedAttachments(claimedPaths)));
+    return yield* threads
+      .dispatch({
+        ...command,
+        answers: prepared.answers,
+        attachmentsByQuestionId: prepared.attachmentsByQuestionId,
+      })
+      .pipe(
+        Effect.tapError((error) =>
+          dispatchWasNotAccepted(error)
+            ? AttachmentClaims.releaseClaimedAttachments(claimedPaths)
+            : Effect.void,
+        ),
+      );
   }
   if (
     command.type !== "message.dispatch" &&

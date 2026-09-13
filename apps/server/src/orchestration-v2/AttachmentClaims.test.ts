@@ -143,6 +143,38 @@ describe("AttachmentClaims", () => {
     }).pipe(Effect.provide(testLayer)),
   );
 
+  it.effect("rejects duplicate attachment ids before copying anything", () =>
+    Effect.gen(function* () {
+      const pending = yield* stagePendingUpload({
+        name: "dupe.png",
+        bytes: new Uint8Array([5, 5, 5]),
+        mimeType: "image/png",
+      });
+      const config = yield* ServerConfig.ServerConfig;
+
+      const result = yield* Effect.exit(
+        claimPendingAttachments({
+          threadId: "thread-claims-dupe",
+          attachments: [pending, pending],
+        }),
+      );
+
+      expect(result._tag).toBe("Failure");
+      if (result._tag === "Failure") {
+        expect(String(result.cause)).toContain("Duplicate attachment ids");
+      }
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+          entry.startsWith("thread-claims-dupe-"),
+        ),
+      ).toHaveLength(0);
+      // The pending source survives for a corrected retry.
+      expect(
+        NodeFS.readdirSync(config.attachmentsDir).filter((entry) => entry.startsWith("pending-")),
+      ).toHaveLength(1);
+    }).pipe(Effect.provide(testLayer)),
+  );
+
   it.effect("releaseClaimedAttachments removes claimed copies best-effort", () =>
     Effect.gen(function* () {
       const pending = yield* stagePendingUpload({
