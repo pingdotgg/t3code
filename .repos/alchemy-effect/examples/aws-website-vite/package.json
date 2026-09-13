@@ -19,7 +19,7 @@
     "@effect/platform-node": "catalog:effect",
     "@tailwindcss/vite": "catalog:frontend",
     "@types/react": "catalog:frontend",
-    "@types/react-dom": "^19.2.3",
+    "@types/react-dom": "catalog:frontend",
     "@vitejs/plugin-react": "catalog:frontend",
     "alchemy": "workspace:*",
     "effect": "catalog:effect",

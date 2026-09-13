@@ -96,6 +96,26 @@ test.provider(
                 protocol: "tcp",
                 internalPort: 80,
                 ports: [{ port: 80, handlers: ["http"] }],
+                checks: [
+                  {
+                    type: "http",
+                    port: 80,
+                    interval: "20s",
+                    timeout: "3s",
+                    gracePeriod: "6s",
+                    method: "HEAD",
+                    path: "/",
+                    protocol: "https",
+                    headers: [
+                      {
+                        name: "X-Alchemy-Check",
+                        values: ["ready", "routing"],
+                      },
+                    ],
+                    tlsServerName: "example.com",
+                    tlsSkipVerify: true,
+                  },
+                ],
               },
             ],
           });
@@ -123,6 +143,19 @@ test.provider(
       expect(refetched.config?.restart?.max_retries).toEqual(3);
       expect(refetched.config?.services?.[0]?.internal_port).toEqual(80);
       expect(refetched.config?.services?.[0]?.ports?.[0]?.port).toEqual(80);
+      const check = refetched.config?.services?.[0]?.checks?.[0];
+      expect(check?.type).toEqual("http");
+      expect(check?.port).toEqual(80);
+      expect(check?.interval).toEqual("20s");
+      expect(check?.timeout).toEqual("3s");
+      expect(check?.grace_period).toEqual("6s");
+      expect(check?.method).toEqual("HEAD");
+      expect(check?.path).toEqual("/");
+      expect(check?.protocol).toEqual("https");
+      expect(check?.headers?.[0]?.name).toEqual("X-Alchemy-Check");
+      expect(check?.headers?.[0]?.values).toEqual(["ready", "routing"]);
+      expect(check?.tls_server_name).toEqual("example.com");
+      expect(check?.tls_skip_verify).toEqual(true);
 
       yield* stack.destroy();
 

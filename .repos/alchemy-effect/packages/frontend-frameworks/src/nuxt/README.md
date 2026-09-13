@@ -303,3 +303,9 @@ the Worker's binding hooks (`ctx.worker.bindings`) serve on
   layout for the covered surface (SSR routes, `server/` API routes,
   prerendered pages, `event.context.cloudflare.env` with real bindings and
   literal overrides, and the custom `worker-entry.ts` seam).
+
+## Upstream references
+
+- Nuxt: [`17119f8ee6f753faf2e61564bba3211871e16e2c`](https://github.com/nuxt/nuxt/tree/17119f8ee6f753faf2e61564bba3211871e16e2c)
+- Nitro: [`52abde8aa9d85215bc0e8dc3b007f29fc6112ac3`](https://github.com/nitrojs/nitro/tree/52abde8aa9d85215bc0e8dc3b007f29fc6112ac3)
+- Nitro Cloudflare dev: [`a22a83b7151b314d70a01089c352ca6007161051`](https://github.com/nitrojs/nitro-cloudflare-dev/tree/a22a83b7151b314d70a01089c352ca6007161051)

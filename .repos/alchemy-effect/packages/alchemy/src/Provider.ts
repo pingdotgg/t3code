@@ -3,9 +3,10 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import type * as Stream from "effect/Stream";
 import type { Artifacts } from "./Artifacts.ts";
-import type { ScopedPlanStatusSession } from "./Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "./Report.ts";
 import type { Diff } from "./Diff.ts";
 import type { Input } from "./Input.ts";
 import type { InstanceId } from "./InstanceId.ts";
@@ -220,7 +221,7 @@ export interface ProviderService<
   list(): Effect.Effect<Res["Attributes"][], any, ListReq>;
   /**
    * Returns a stream of log lines for a deployed resource.
-   * Used by `alchemy tail` to stream real-time logs.
+   * Used by `alchemy logs --tail` to stream real-time logs.
    */
   tail?(input: {
     id: string;
@@ -575,13 +576,12 @@ export const collection = <
     };
   }) as any;
 
-const isProviderCollectionService = (
+export const isProviderCollectionService = (
   value: unknown,
 ): value is ProviderCollectionService => {
   return (
-    typeof value === "object" &&
-    value !== null &&
-    "kind" in value &&
+    Predicate.isObject(value) &&
+    Predicate.hasProperty(value, "kind") &&
     value.kind === "ProviderCollection"
   );
 };
@@ -592,13 +592,12 @@ const isProviderCollectionService = (
  * searching for a legacy alias, the tag key won't match, so lookup has to
  * recognize provider services by shape.
  */
-const isProviderService = (value: unknown): value is ProviderService =>
-  typeof value === "object" &&
-  value !== null &&
-  "reconcile" in value &&
-  typeof (value as ProviderService).reconcile === "function" &&
-  "delete" in value &&
-  typeof (value as ProviderService).delete === "function";
+export const isProviderService = (value: unknown): value is ProviderService =>
+  Predicate.isObject(value) &&
+  Predicate.hasProperty(value, "reconcile") &&
+  Predicate.isFunction(value.reconcile) &&
+  Predicate.hasProperty(value, "delete") &&
+  Predicate.isFunction(value.delete);
 
 /**
  * Resolve the concrete service for `mode` from a provider found in context.

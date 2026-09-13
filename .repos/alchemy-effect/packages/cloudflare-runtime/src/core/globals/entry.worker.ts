@@ -22,7 +22,14 @@ import {
   PATH_SCHEDULED_LEGACY,
 } from "./ScheduledOptions.shared.ts";
 
+import {
+  BINDING_PROXY_SHARED_SECRET,
+  HEADER_ORIGINAL_URL,
+  HEADER_PROXY_SHARED_SECRET,
+} from "../proxy/ProxyHeaders.shared.ts";
+
 interface Env {
+  [BINDING_PROXY_SHARED_SECRET]: string;
   /**
    * Head of the fetch middleware chain (the next middleware after the entry,
    * or the raw user worker when no downstream middleware exists). Fetch-only.
@@ -420,7 +427,19 @@ async function handleEmail(
 
 export default <ExportedHandler<Env>>{
   async fetch(request, env) {
-    const url = new URL(request.url);
+    // The proxy connects to a private runtime address. Only a trusted proxy
+    // may restore the client-facing URL and Host (matching Miniflare).
+    let url = new URL(request.url);
+    const secret = request.headers.get(HEADER_PROXY_SHARED_SECRET);
+    if (secret !== null) {
+      if (!secret || secret !== env[BINDING_PROXY_SHARED_SECRET]) {
+        return new Response("Invalid proxy shared secret", { status: 400 });
+      }
+      const originalUrl = request.headers.get(HEADER_ORIGINAL_URL);
+      if (originalUrl !== null) {
+        url = new URL(originalUrl);
+      }
+    }
     if (url.pathname === "/cdn-cgi/handler/queue") {
       try {
         const json = await request.json<EntryQueuePayload>();
@@ -528,6 +547,9 @@ export default <ExportedHandler<Env>>{
 
     const headers = new Headers(request.headers);
     headers.delete(HEADER_CF_BLOB);
+    headers.delete(HEADER_ORIGINAL_URL);
+    headers.delete(HEADER_PROXY_SHARED_SECRET);
+    if (secret !== null) headers.set("Host", url.host);
     if (clientIp && !headers.get("CF-Connecting-IP")) {
       // `clientIp` includes the port, e.g. `127.0.0.1:52621` or `[::1]:52621`
       const ipv4Regex = /(?<ip>.*?):\d+/;
@@ -542,10 +564,13 @@ export default <ExportedHandler<Env>>{
 
     // The experimental and standard workers-types `Request` generics
     // disagree; at runtime these are the same class.
-    const userRequest = new Request(request as unknown as Request, {
-      headers,
-      cf,
-    });
+    const userRequest = new Request(
+      new Request(url, request as unknown as Request),
+      {
+        headers,
+        cf,
+      },
+    );
     return await env.USER_WORKER.fetch(
       userRequest as unknown as typeof request,
     );

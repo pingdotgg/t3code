@@ -1,6 +1,6 @@
 import type {
   EnvironmentResponseVolumeInstancesEdgesItemNode,
-  VolumeInstanceBackupListResultItem,
+  ListVolumeInstanceBackupResultItem,
   VolumeInstanceBackupScheduleKind,
   VolumeInstanceResponse,
   VolumeState,
@@ -289,7 +289,7 @@ class VolumeBackupPending extends Data.TaggedError(
   state: string;
 }> {}
 
-type CloudBackup = VolumeInstanceBackupListResultItem;
+type CloudBackup = ListVolumeInstanceBackupResultItem;
 type CloudInstance =
   | EnvironmentResponseVolumeInstancesEdgesItemNode
   | VolumeInstanceResponse;
@@ -366,15 +366,15 @@ const resolveName = (id: string, existing?: string) =>
 
 const listBackups = (volumeInstanceId: string) =>
   railway
-    .volumeInstanceBackupList({ volumeInstanceId })
+    .listVolumeInstanceBackup({ volumeInstanceId })
     .pipe(
       Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
-        Effect.succeed([] as VolumeInstanceBackupListResultItem[]),
+        Effect.succeed([] as ListVolumeInstanceBackupResultItem[]),
       ),
     );
 
 const listSchedules = (volumeInstanceId: string) =>
-  railway.volumeInstanceBackupScheduleList({ volumeInstanceId }).pipe(
+  railway.listVolumeInstanceBackupSchedule({ volumeInstanceId }).pipe(
     Effect.map((items) => uniqueKinds(items.map((item) => item.kind))),
     Effect.catchTag(["RailwayNotFound", "NotFound"], () =>
       Effect.succeed([] as VolumeBackupScheduleKind[]),
@@ -625,7 +625,7 @@ export const restoreVolumeBackup = Effect.fn(function* (input: {
   volumeInstanceId: string;
   volumeInstanceBackupId: string;
 }) {
-  const result = yield* railway.volumeInstanceBackupRestore({
+  const result = yield* railway.restoreVolumeInstanceBackup({
     volumeInstanceBackupId: input.volumeInstanceBackupId,
     volumeInstanceId: input.volumeInstanceId,
   });
@@ -646,7 +646,7 @@ export const restoreVolumePITR = Effect.fn(function* (input: {
   newServiceName?: string;
   sourceRepoPath?: string;
 }) {
-  const result = yield* railway.volumeInstancePITRRestore({
+  const result = yield* railway.restoreVolumeInstancePITR({
     volumeInstanceId: input.volumeInstanceId,
     targetTimestamp: input.targetTimestamp,
     ...(input.newServiceName !== undefined
@@ -839,7 +839,7 @@ export const VolumeBackupProvider = () =>
           });
         }
         const previousIds = new Set(existing.map((backup) => backup.id));
-        const created = yield* railway.volumeInstanceBackupCreate({
+        const created = yield* railway.createVolumeInstanceBackup({
           volumeInstanceId,
           name,
         });
@@ -865,7 +865,7 @@ export const VolumeBackupProvider = () =>
       }
 
       if (props.lock === true && current.expiresAt != null) {
-        yield* railway.volumeInstanceBackupLock({
+        yield* railway.lockVolumeInstanceBackup({
           volumeInstanceBackupId: current.id,
           volumeInstanceId,
         });
@@ -881,7 +881,7 @@ export const VolumeBackupProvider = () =>
       if (props.schedules !== undefined) {
         const desired = uniqueKinds(props.schedules);
         if (kindsKey(desired) !== kindsKey(schedules)) {
-          yield* railway.volumeInstanceBackupScheduleUpdate({
+          yield* railway.updateVolumeInstanceBackupSchedule({
             volumeInstanceId,
             kinds: desired,
           });
@@ -908,7 +908,7 @@ export const VolumeBackupProvider = () =>
         return;
       }
       const deleted = yield* railway
-        .volumeInstanceBackupDelete({
+        .deleteVolumeInstanceBackup({
           volumeInstanceBackupId,
           volumeInstanceId,
         })

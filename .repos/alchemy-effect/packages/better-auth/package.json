@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/better-auth",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.77",
   "description": "Better Auth integration for Alchemy.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -82,9 +82,9 @@
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:cloudflare-runtime",
     "@distilled.cloud/aws": "workspace:*",
-    "@distilled.cloud/cloudflare": "workspace:*",
     "@effect/platform-bun": "catalog:effect",
     "@neondatabase/serverless": "catalog:database",
+    "@types/bun": "catalog:tooling",
     "@types/pg": "catalog:database",
     "alchemy": "workspace:*",
     "alchemy-test": "workspace:*",
@@ -93,7 +93,9 @@
     "effect": "catalog:effect",
     "kysely": "catalog:database",
     "mysql2": "catalog:database",
-    "pg": "catalog:database"
+    "pathe": "catalog:tooling",
+    "pg": "catalog:database",
+    "typescript": "catalog:build"
   },
   "publishConfig": {
     "access": "public"

@@ -1,7 +1,7 @@
 import type {
-  ProjectCreateResponse,
+  CreateProjectResponse,
   ProjectResponse,
-  ProjectUpdateResponse,
+  UpdateProjectResponse,
   ProjectsResponseEdgesItemNode,
 } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
@@ -157,8 +157,8 @@ export class ProjectNotCreated extends Data.TaggedError(
 
 type CloudProject =
   | ProjectResponse
-  | ProjectCreateResponse
-  | ProjectUpdateResponse
+  | CreateProjectResponse
+  | UpdateProjectResponse
   | ProjectsResponseEdgesItemNode;
 
 /** Workspace id from a get-by-id or list-node Project payload. */
@@ -244,7 +244,7 @@ export const createProject = (input: {
   defaultEnvironmentName?: string;
 }) =>
   waitOutCreateRateLimit(
-    railway.projectCreate({
+    railway.createProject({
       input: {
         name: input.name,
         workspaceId: input.workspaceId,
@@ -398,7 +398,7 @@ export const ProjectProvider = () =>
         props.description !== undefined &&
         props.description !== observedDescription;
       if (nameChanged || descriptionChanged) {
-        current = yield* railway.projectUpdate({
+        current = yield* railway.updateProject({
           id: current.id,
           input: {
             ...(nameChanged ? { name } : {}),
@@ -420,7 +420,7 @@ export const ProjectProvider = () =>
       const projectId = output.projectId;
       if (projectId.length === 0) return;
       yield* railway
-        .projectDelete({ id: projectId })
+        .deleteProject({ id: projectId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

@@ -3,7 +3,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { AuthProviders } from "../Auth/AuthProvider.ts";
 import { CredentialsStoreLive } from "../Auth/Credentials.ts";
-import { AlchemyProfile, ProfileLive } from "../Auth/Profile.ts";
+import { ProfileStore, ProfileStoreLive } from "../Auth/Profile.ts";
 import * as Provider from "../Provider.ts";
 import { PlatformServices } from "../Util/PlatformServices.ts";
 import { proxyChain } from "../Util/proxy-chain.ts";
@@ -60,7 +60,7 @@ const standaloneManagementApiLayer = () =>
         // The Prisma-scoped upload client (node transport) rides the
         // providers' output so artifact uploads can reach it at op time.
         PrismaUploadClientLive,
-        Layer.provide(ProfileLive, PlatformServices),
+        Layer.provide(ProfileStoreLive, PlatformServices),
         Layer.provide(CredentialsStoreLive, PlatformServices),
       ),
     ),
@@ -76,8 +76,8 @@ const standaloneManagementApiLayer = () =>
 /**
  * Stack provider discovery must register auth without requiring credentials.
  * The management client is resolved on its first API operation, after
- * `alchemy login` has had a chance to configure the registered Prisma auth
- * provider. The nested client layer shares the provider layer's lifetime.
+ * `alchemy profile edit` has had a chance to configure the registered Prisma
+ * auth provider. The nested client layer shares the provider layer's lifetime.
  */
 const stackManagementApiLayer = () =>
   Layer.effect(
@@ -85,7 +85,7 @@ const stackManagementApiLayer = () =>
     Effect.gen(function* () {
       const scope = yield* Effect.scope;
       const authProviders = yield* AuthProviders;
-      const profile = yield* AlchemyProfile;
+      const profileStore = yield* ProfileStore;
       const client = Layer.buildWithScope(
         PrismaClientLive.pipe(
           Layer.provideMerge(
@@ -93,7 +93,7 @@ const stackManagementApiLayer = () =>
               Layer.provide(
                 Layer.mergeAll(
                   Layer.succeed(AuthProviders, authProviders),
-                  Layer.succeed(AlchemyProfile, profile),
+                  Layer.succeed(ProfileStore, profileStore),
                 ),
               ),
             ),
@@ -112,7 +112,7 @@ const stackManagementApiLayer = () =>
         // The Prisma-scoped upload client (node transport) rides the
         // providers' output so artifact uploads can reach it at op time.
         PrismaUploadClientLive,
-        Layer.provide(ProfileLive, PlatformServices),
+        Layer.provide(ProfileStoreLive, PlatformServices),
         Layer.provide(CredentialsStoreLive, PlatformServices),
       ),
     ),

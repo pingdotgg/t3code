@@ -1,36 +1,33 @@
 {
   "files": [],
-  "exclude": [
-    "node_modules",
-    "dist"
-  ],
+  "exclude": ["node_modules", "dist"],
   "references": [
     // distilled (dependencies first so `tsc -b` emits their `lib/` before the
     // packages that consume them — otherwise a clean build races the not-yet-emitted
     // declarations and fails to resolve `@distilled.cloud/*`).
     {
-      "path": "./distilled/packages/core/tsconfig.json"
+      "path": "./submodules/distilled/packages/core/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/aws/tsconfig.json"
+      "path": "./submodules/distilled/packages/aws/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/cloudflare/tsconfig.json"
+      "path": "./submodules/distilled/packages/cloudflare/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/planetscale/tsconfig.json"
+      "path": "./submodules/distilled/packages/planetscale/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/axiom/tsconfig.json"
+      "path": "./submodules/distilled/packages/axiom/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/neon/tsconfig.json"
+      "path": "./submodules/distilled/packages/neon/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/hetzner/tsconfig.json"
+      "path": "./submodules/distilled/packages/hetzner/tsconfig.json"
     },
     {
-      "path": "./distilled/packages/fly-io/tsconfig.json"
+      "path": "./submodules/distilled/packages/fly-io/tsconfig.json"
     },
     // Consolidated Cloudflare runtime, framework, and test-tool projects.
     {

@@ -142,7 +142,7 @@ export type Connection = Resource<
  *     port: 5432,
  *     database: "app",
  *     user: "app",
- *     password: yield* Config.redacted("DB_PASSWORD"),
+ *     password: yield* Config.Redacted("DB_PASSWORD"),
  *   },
  * });
  * ```

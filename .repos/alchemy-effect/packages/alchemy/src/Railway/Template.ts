@@ -1,13 +1,13 @@
 import type {
-  ProjectCreateResponse,
+  CreateProjectResponse,
   ProjectResponse,
   ProjectResponseServicesEdgesItemNode,
-  ProjectUpdateResponse,
+  UpdateProjectResponse,
   ProjectsResponseEdgesItemNode,
   ServiceResponse,
-  TemplateCloneResponse,
-  TemplateGenerateResponse,
-  TemplatePublishResponse,
+  CloneTemplateResponse,
+  GenerateTemplateResponse,
+  PublishTemplateResponse,
   TemplateResponse,
   TemplatesResponseEdgesItemNode,
   TemplateSourceForProjectResponse,
@@ -273,16 +273,16 @@ class TemplatePending extends Data.TaggedError("Railway.TemplatePending")<{
 
 type CloudTemplate =
   | TemplateResponse
-  | TemplateCloneResponse
-  | TemplateGenerateResponse
-  | TemplatePublishResponse
+  | CloneTemplateResponse
+  | GenerateTemplateResponse
+  | PublishTemplateResponse
   | TemplateSourceForProjectResponse
   | TemplatesResponseEdgesItemNode;
 
 type CloudProject =
   | ProjectResponse
-  | ProjectCreateResponse
-  | ProjectUpdateResponse
+  | CreateProjectResponse
+  | UpdateProjectResponse
   | ProjectsResponseEdgesItemNode;
 
 type CloudService = ProjectResponseServicesEdgesItemNode | ServiceResponse;
@@ -868,7 +868,7 @@ export const TemplateProvider = () =>
       for (const serviceId of serviceIds) {
         if (serviceId.length === 0) continue;
         yield* railway
-          .serviceDelete({
+          .deleteService({
             id: serviceId,
             ...(output.environmentId.length > 0
               ? { environmentId: output.environmentId }
@@ -883,7 +883,7 @@ export const TemplateProvider = () =>
       const projectId = output.projectId;
       if (projectId.length === 0) return;
       yield* railway
-        .projectDelete({ id: projectId })
+        .deleteProject({ id: projectId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

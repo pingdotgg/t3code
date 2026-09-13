@@ -116,6 +116,12 @@ type WorkerWiring = Omit<
 export interface DevContext extends SourceContext {
   readonly worker: {
     readonly name: string;
+    /**
+     * Shared secret the host's WorkerProxy signs forwarded requests with.
+     * The preview workerd runs directly behind that proxy, so it must be
+     * started with the same secret (see `Nextjs.ts` `dev`).
+     */
+    readonly proxySharedSecret?: string | undefined;
     readonly bindings: NonNullable<WorkerWiring["bindings"]>;
     readonly durableObjectNamespaces: NonNullable<
       WorkerWiring["durableObjectNamespaces"]
@@ -687,6 +693,10 @@ const makeProvider = (options: NextjsSourceOptions): SourceProvider => {
           compatibilityFlags: ctx.compatibility.flags,
           worker: {
             name: ctx.worker.name,
+            // The preview workerd is served straight through the host's
+            // WorkerProxy; it must hold the proxy's secret to accept the
+            // signed original-URL headers.
+            proxySharedSecret: ctx.worker.proxySharedSecret,
             bindings: ctx.worker.bindings,
             durableObjectNamespaces: ctx.worker.durableObjectNamespaces,
             hyperdrives: ctx.worker.hyperdrives,

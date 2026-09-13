@@ -80,7 +80,7 @@ export type TelemetryLayer = Layer.Layer<never, any, any>;
  * Redacted marker, and a raw string set directly in the environment).
  */
 const readBoundValue = (key: string): Effect.Effect<unknown> =>
-  Config.string(key).pipe(
+  Config.String(key).pipe(
     Config.withDefault(undefined),
     Effect.orElseSucceed(() => undefined),
     Effect.map((raw) => {
@@ -427,6 +427,11 @@ const reference = Telemetry;
  * other: loggers and metric exporters merge; a custom `Tracer` (a single
  * Effect service) replaces the built-in one.
  *
+ * The isolate {@link Telemetry} reference stays the bound OTLP reader.
+ * The custom Layer is stored on `ctx.telemetry` and merged per event as
+ * the override, so `Layer.mergeAll` order with {@link layerOtlp} does not
+ * drop logs/metrics.
+ *
  * Provide it on the Function/Worker's init Effect (merged into the single
  * `Effect.provide`): building the returned Layer registers the exporter
  * Layer on the current runtime context, where the runtime bridges pick it
@@ -446,7 +451,7 @@ export const layer = (exporter: TelemetryLayer): Layer.Layer<never> =>
             ? exporter
             : Layer.mergeAll(ctx.telemetry, exporter);
       }
-      return exporter;
+      return fromBoundConfig;
     }),
   );
 

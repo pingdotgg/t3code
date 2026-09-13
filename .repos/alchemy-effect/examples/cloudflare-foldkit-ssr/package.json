@@ -16,7 +16,7 @@
   },
   "devDependencies": {
     "@foldkit/vite-plugin": "catalog:frontend",
-    "@types/node": "^24.12.0",
+    "@types/node": "catalog:node24",
     "alchemy": "workspace:*",
     "typescript": "catalog:build",
     "vite": "catalog:build"

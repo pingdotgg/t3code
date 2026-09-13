@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/cloudflare-runtime",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.77",
   "description": "Cloudflare Workers local runtime and build plugins for Alchemy.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -53,24 +53,26 @@
     "yauzl": "catalog:cloudflare-runtime"
   },
   "devDependencies": {
+    "@cloudflare/vitest-plugin": "catalog:cloudflare-runtime",
     "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@cloudflare/vitest-pool-workers": "catalog:cloudflare-runtime",
     "@effect/platform-bun": "catalog:effect",
     "@effect/platform-node": "catalog:effect",
     "@effect/vitest": "catalog:effect",
+    "@types/bun": "catalog:tooling",
     "@types/http-cache-semantics": "catalog:cloudflare-runtime",
     "@types/node": "catalog:tooling",
     "@types/ws": "catalog:cloudflare-runtime",
     "capnweb": "catalog:cloudflare-runtime",
-    "http-cache-semantics": "catalog:cloudflare-runtime",
     "heap-js": "catalog:cloudflare-runtime",
+    "http-cache-semantics": "catalog:cloudflare-runtime",
     "itty-time": "catalog:cloudflare-runtime",
     "mime": "catalog:cloudflare-runtime",
     "mysql2": "catalog:cloudflare-runtime",
     "postal-mime": "catalog:cloudflare-runtime",
     "rolldown": "catalog:build",
-    "tsdown": "catalog:build",
     "toucan-js": "catalog:cloudflare-runtime",
+    "tsdown": "catalog:build",
+    "typescript": "catalog:build",
     "vite": "catalog:build",
     "vitest": "catalog:testing",
     "ws": "catalog:cloudflare-runtime"
@@ -575,6 +577,12 @@
       "bun": "./src/core/globals/Storage.ts",
       "worker": "./src/core/globals/Storage.ts",
       "import": "./dist/core/node/globals/Storage.mjs"
+    },
+    "./core/internal/constants": {
+      "types": "./dist/core/node/internal/constants.d.mts",
+      "bun": "./src/core/internal/constants.ts",
+      "worker": "./src/core/internal/constants.ts",
+      "import": "./dist/core/node/internal/constants.mjs"
     },
     "./core/internal/internal-worker": {
       "types": "./dist/core/node/internal/internal-worker.d.mts",

@@ -114,7 +114,7 @@ export default class Api extends Fly.Service<Api>()(
 Flat `Fly.*` namespace. Resource-valued props accept the resource or
 an Effect producing it (module-scope `const Site = Fly.App("Site")`).
 No `Input<T>` in Props. No `export * as Services`. No Attach API.
-No `Config.redacted` as the postgres binding.
+No `Config.Redacted` as the postgres binding.
 
 Distilled (Railway):
 
@@ -243,7 +243,7 @@ groups, and volumes.
 | `ReadRedis` / `WriteRedis` / `ReadWriteRedis` | implemented | Service | RESP over `REDIS_URL`, same shape as Fly. |
 | `PutObject` / `GetObject` / `DeleteObject` / `HeadObject` / `ListObjectsV2` | implemented | Service | S3 against bucket credentials. |
 | `MountVolume` | implemented | Service | `{ path, volumeId }` into `ServiceBinding.mounts`; reconcile attaches via `volumeCreate`/`volumeInstanceUpdate`. |
-| `GetVariable` (optional) | missing | Service | Read a Variable by name from env. Prefer `Config.redacted` for `.env`. |
+| `GetVariable` (optional) | missing | Service | Read a Variable by name from env. Prefer `Config.Redacted` for `.env`. |
 
 Shared scaffolding (`RedisBinding.ts`, `RedisHttp.ts`, `BucketBinding.ts`)
 is **not** exported from `index.ts`. Keep it that way.

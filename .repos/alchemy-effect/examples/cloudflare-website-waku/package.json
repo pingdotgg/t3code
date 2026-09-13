@@ -13,17 +13,17 @@
     "alchemy": "workspace:*",
     "effect": "catalog:effect",
     "hono": "catalog:frontend",
-    "react": "~19.2.6",
-    "react-dom": "~19.2.6",
+    "react": "catalog:frontend-rsc",
+    "react-dom": "catalog:frontend-rsc",
     "react-server-dom-webpack": "catalog:frontend",
     "waku": "catalog:frontend"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@tailwindcss/vite": "catalog:frontend",
-    "@types/node": "^24.12.0",
-    "@types/react": "^19.2.17",
-    "@types/react-dom": "^19.2.3",
+    "@types/node": "catalog:node24",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
     "tailwindcss": "catalog:frontend",
     "typescript": "catalog:build",
     "vite": "catalog:build"

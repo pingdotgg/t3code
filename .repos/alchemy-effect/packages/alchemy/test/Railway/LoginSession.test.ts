@@ -21,7 +21,7 @@ test.provider(
       yield* stack.destroy();
 
       const code = yield* Railway.provideAnonymousRailway(
-        railway.loginSessionCreate({}),
+        railway.createLoginSession({}),
       );
       expect(code).toEqual(expect.any(String));
       expect(code.length).toBeGreaterThan(0);
@@ -38,7 +38,7 @@ test.provider(
 
       const verified = yield* Railway.provideAnonymousRailway(
         railway
-          .loginSessionVerify({ code })
+          .verifyLoginSession({ code })
           .pipe(Effect.catchTag(missingSession, () => Effect.succeed(false))),
       );
       // Verify is a liveness check: true while the pairing session exists,
@@ -53,20 +53,20 @@ test.provider(
       expect(beforeAuth).toBeNull();
 
       const cancelled = yield* Railway.provideAnonymousRailway(
-        railway.loginSessionCancel({ code }),
+        railway.cancelLoginSession({ code }),
       );
       expect(cancelled).toBe(true);
 
       const cancelledAgain = yield* Railway.provideAnonymousRailway(
         railway
-          .loginSessionCancel({ code })
+          .cancelLoginSession({ code })
           .pipe(Effect.catchTag(missingSession, () => Effect.succeed(false))),
       );
       expect(typeof cancelledAgain).toBe("boolean");
 
       const verifiedAfter = yield* Railway.provideAnonymousRailway(
         railway
-          .loginSessionVerify({ code })
+          .verifyLoginSession({ code })
           .pipe(Effect.catchTag(missingSession, () => Effect.succeed(false))),
       );
       expect(verifiedAfter).toBe(false);

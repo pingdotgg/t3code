@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import type {
   ProjectResponseServicesEdgesItemNode,
-  ServiceCreateResponse,
+  CreateServiceResponse,
   ServiceInstanceResponse,
   ServiceInstanceUpdateInput,
   ServiceResponse,
-  ServiceUpdateResponse,
+  UpdateServiceResponse,
 } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
@@ -33,6 +33,7 @@ import {
   type MountSpec,
   type ServiceBinding,
 } from "./MountVolume.ts";
+import { attachVolumeToService } from "./Volume.ts";
 import {
   ownedProjects,
   projectEnvironmentIds,
@@ -554,8 +555,8 @@ class FunctionDeployPending extends Data.TaggedError(
 
 type CloudService =
   | ServiceResponse
-  | ServiceCreateResponse
-  | ServiceUpdateResponse
+  | CreateServiceResponse
+  | UpdateServiceResponse
   | ProjectResponseServicesEdgesItemNode;
 
 const projectIdOf = (value: unknown): string | undefined => {
@@ -795,7 +796,7 @@ const upsertVariable = (input: {
   name: string;
   value: string;
 }) =>
-  railway.variableUpsert({
+  railway.upsertVariable({
     input: {
       projectId: input.projectId,
       environmentId: input.environmentId,
@@ -851,23 +852,18 @@ const syncEnv = Effect.fn(function* (input: {
 
 const syncMounts = Effect.fn(function* (input: {
   environmentId: string;
+  projectId: string;
   serviceId: string;
   mounts: MountSpec[];
 }) {
   for (const mount of input.mounts) {
-    if (mount.volumeId.length === 0) continue;
-    yield* railway
-      .volumeInstanceUpdate({
-        volumeId: mount.volumeId,
-        environmentId: input.environmentId,
-        input: {
-          serviceId: input.serviceId,
-          mountPath: mount.path,
-        },
-      })
-      .pipe(
-        Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
-      );
+    yield* attachVolumeToService({
+      environmentId: input.environmentId,
+      projectId: input.projectId,
+      serviceId: input.serviceId,
+      volumeId: mount.volumeId,
+      mountPath: mount.path,
+    });
   }
 });
 
@@ -1179,7 +1175,7 @@ export const FunctionProvider = () =>
 
           if (current === undefined) {
             const created = yield* railway
-              .serviceCreate({
+              .createService({
                 input: {
                   projectId,
                   environmentId,
@@ -1203,7 +1199,7 @@ export const FunctionProvider = () =>
           }
 
           if (current.name !== name) {
-            current = yield* railway.serviceUpdate({
+            current = yield* railway.updateService({
               id: current.id,
               input: { name },
             });
@@ -1231,7 +1227,7 @@ export const FunctionProvider = () =>
             props,
           });
           if (instanceDelta !== undefined) {
-            yield* railway.serviceInstanceUpdate({
+            yield* railway.updateServiceInstance({
               environmentId,
               serviceId: current.id,
               input: instanceDelta,
@@ -1260,6 +1256,7 @@ export const FunctionProvider = () =>
 
           yield* syncMounts({
             environmentId,
+            projectId,
             serviceId: current.id,
             mounts: bound.mounts,
           });
@@ -1316,7 +1313,7 @@ export const FunctionProvider = () =>
           const serviceId = output.serviceId;
           if (serviceId.length === 0) return;
           yield* railway
-            .serviceDelete({
+            .deleteService({
               id: serviceId,
               ...(output.environmentId.length > 0
                 ? { environmentId: output.environmentId }

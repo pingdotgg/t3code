@@ -82,7 +82,7 @@ export default class TestTask extends AWS.ECS.Task<TestTask>()(
     Effect.provide(
       Layer.unwrap(
         Effect.gen(function* () {
-          const url = yield* Config.string("COLLECTOR_URL");
+          const url = yield* Config.String("COLLECTOR_URL");
           return Telemetry.layerOtlp({ url, serviceName: "otel-ecs-e2e" });
         }),
       ),

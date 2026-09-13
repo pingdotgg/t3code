@@ -13,6 +13,7 @@ import {
 import { AuthToken } from "./AuthToken.ts";
 import { Bucket } from "./Bucket.ts";
 import PackageStore from "./PackageStore.ts";
+import { formatPullRequest, parsePullRequest } from "./PullRequest.ts";
 import { TagIndex } from "./TagIndex.ts";
 import {
   tarballId,
@@ -67,6 +68,10 @@ const parseTags = (raw: string | undefined) => {
  *
  * The user's stack file must be the worker entry (`main: import.meta.url`)
  * because `parseAliasUrl` is a closure that has to live in the bundle.
+ *
+ * Tag assignment accepts an optional `Alchemy-Pull-Request` header
+ * (`owner/repo#123`). When a tarball is tied to a pull request, TTL expiry
+ * checks GitHub and renews while the PR is open instead of deleting.
  */
 export const handler = (options: HandlerOptions = {}) =>
   Effect.gen(function* () {
@@ -242,6 +247,19 @@ export const handler = (options: HandlerOptions = {}) =>
             }
             const expiresAt = Date.now() + ttlMillis;
 
+            const pullRequest = parsePullRequest(
+              request.headers["alchemy-pull-request"],
+            );
+            if (pullRequest === "invalid") {
+              return yield* HttpServerResponse.json(
+                {
+                  error:
+                    "Alchemy-Pull-Request must be owner/repo#number or a GitHub pull URL",
+                },
+                { status: 400 },
+              );
+            }
+
             for (const tag of tags) {
               const oldId = yield* kv.get(`tag:${project}:${tag}`);
               if (oldId && oldId !== id) {
@@ -262,7 +280,10 @@ export const handler = (options: HandlerOptions = {}) =>
 
             const store = packages.getByName(id);
             yield* store
-              .init(project, hash, tags, expiresAt)
+              .init(project, hash, tags, expiresAt, {
+                ttlMillis,
+                ...(pullRequest ? { pullRequest } : {}),
+              })
               .pipe(Effect.orDie);
 
             return yield* HttpServerResponse.json({
@@ -272,6 +293,9 @@ export const handler = (options: HandlerOptions = {}) =>
               tags,
               ttl: ttlStr,
               expiresAt,
+              pullRequest: pullRequest
+                ? formatPullRequest(pullRequest)
+                : undefined,
             });
           }).pipe(
             Effect.catchTag("Unauthorized", () =>
@@ -302,7 +326,12 @@ export const handler = (options: HandlerOptions = {}) =>
           }
 
           const store = packages.getByName(id);
-          yield* store.recordDownload(tag).pipe(Effect.orDie);
+          if (!(yield* store.recordDownload(tag).pipe(Effect.orDie))) {
+            return yield* HttpServerResponse.json(
+              { error: "tag not found" },
+              { status: 404 },
+            );
+          }
 
           return HttpServerResponse.fromWeb(
             new Response(null, {
@@ -335,6 +364,39 @@ export const handler = (options: HandlerOptions = {}) =>
                 "cache-control": "public, max-age=31536000, immutable",
               },
             }),
+          );
+        }
+
+        const pullRequestMatch = subPath.match(/^\/pull-requests\/(\d+)$/);
+        if (method === "DELETE" && pullRequestMatch) {
+          return yield* Effect.gen(function* () {
+            yield* requireAuth;
+
+            const number = Number(pullRequestMatch[1]);
+            const tag = `pr-${number}`;
+            const id = yield* kv.get(`tag:${project}:${tag}`);
+            if (!id) {
+              return yield* HttpServerResponse.json(
+                { error: "pull request preview not found" },
+                { status: 404 },
+              );
+            }
+
+            const store = packages.getByName(id);
+            yield* store.expirePullRequest(number).pipe(Effect.orDie);
+
+            if ((yield* kv.get(`tag:${project}:${tag}`)) === id) {
+              yield* kv.delete(`tag:${project}:${tag}`);
+            }
+
+            return yield* HttpServerResponse.json({ ok: true });
+          }).pipe(
+            Effect.catchTag("Unauthorized", () =>
+              HttpServerResponse.json(
+                { error: "unauthorized" },
+                { status: 401 },
+              ),
+            ),
           );
         }
 

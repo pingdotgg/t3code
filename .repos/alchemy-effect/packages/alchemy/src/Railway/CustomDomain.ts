@@ -1,5 +1,5 @@
 import type {
-  CustomDomainCreateResponse,
+  CreateCustomDomainResponse,
   CustomDomainResponse,
   DomainsResponseCustomDomainsItem,
 } from "@distilled.cloud/railway";
@@ -181,7 +181,7 @@ export class CustomDomainServiceMissing extends Data.TaggedError(
 
 type CloudDomain =
   | CustomDomainResponse
-  | CustomDomainCreateResponse
+  | CreateCustomDomainResponse
   | DomainsResponseCustomDomainsItem;
 
 const serviceIdOf = (value: unknown): string | undefined => {
@@ -462,7 +462,7 @@ export const CustomDomainProvider = () =>
 
       if (current === undefined) {
         const created = yield* railway
-          .customDomainCreate({
+          .createCustomDomain({
             input: {
               domain,
               environmentId,
@@ -498,7 +498,7 @@ export const CustomDomainProvider = () =>
       const observedPort = current.targetPort ?? undefined;
       const desiredPort = props.targetPort;
       if (desiredPort !== undefined && desiredPort !== observedPort) {
-        yield* railway.customDomainUpdate({
+        yield* railway.updateCustomDomain({
           environmentId: current.environmentId,
           id: current.id,
           targetPort: desiredPort,
@@ -516,7 +516,7 @@ export const CustomDomainProvider = () =>
       const projectId = output.projectId;
       if (customDomainId.length === 0) return;
       yield* railway
-        .customDomainDelete({ id: customDomainId })
+        .deleteCustomDomain({ id: customDomainId })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

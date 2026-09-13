@@ -12,16 +12,16 @@
   },
   "dependencies": {
     "next": "catalog:frontend",
-    "react": "^19.2.0",
-    "react-dom": "^19.2.0"
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
   },
   "devDependencies": {
     "@alchemy.run/frontend-frameworks": "workspace:*",
     "@distilled.cloud/fly-io": "workspace:*",
     "@effect/platform-node": "catalog:effect",
     "@tailwindcss/postcss": "catalog:frontend",
-    "@types/react": "^19.2.2",
-    "@types/react-dom": "^19.2.2",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
     "alchemy": "workspace:*",
     "effect": "catalog:effect",
     "tailwindcss": "catalog:frontend",

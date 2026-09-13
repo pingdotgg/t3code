@@ -378,7 +378,7 @@ export const makeDevWatchProvider = <
         diff: Effect.fn(function* ({
           id,
           olds,
-          news,
+          news: rawNews,
           output,
         }: {
           id: string;
@@ -386,6 +386,15 @@ export const makeDevWatchProvider = <
           news: Props;
           output: Attrs | undefined;
         }) {
+          // Runtime props (an Effect-native Function's handler, a Layer)
+          // arrive as Effects, which `isResolved` classifies as unresolved.
+          // They are irrelevant to the dev diff, so strip them BEFORE the
+          // resolved check — otherwise this diff bails to the engine default
+          // (`havePropsChanged` → noop) and the "fresh session with a state
+          // row but no watcher" branch below never runs: `alchemy dev`
+          // resumed over an existing stage would start no watch loop and
+          // hot reload would silently be dead.
+          const news = stripEffects(rawNews);
           if (!isResolved(news)) return;
           if (!output) return undefined;
           if (spec.replaceOn !== undefined) {

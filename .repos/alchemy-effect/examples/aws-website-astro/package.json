@@ -18,6 +18,7 @@
     "@effect/platform-node": "catalog:effect",
     "@tailwindcss/vite": "catalog:frontend",
     "alchemy": "workspace:*",
+    "alchemy-test": "workspace:*",
     "effect": "catalog:effect",
     "tailwindcss": "catalog:frontend",
     "typescript": "catalog:build"

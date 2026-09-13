@@ -21,6 +21,7 @@ import type * as Bundle from "../../Bundle/Bundle.ts";
 import type { WorkflowExport } from "../Workflows/Workflow.ts";
 import type { AssetReadResult, ValidationError } from "./Assets.ts";
 import type { DurableObjectExport } from "./DurableObject.ts";
+import { getToolingCompatibility } from "./Compatibility.ts";
 import { makeInlineScriptSource } from "./Sources/InlineScript.ts";
 import { makePrebuiltSource } from "./Sources/Prebuilt.ts";
 import { isPythonMain, makePythonSource } from "./Sources/Python.ts";
@@ -78,6 +79,8 @@ export interface SourceBuildOutput {
 export interface SourceContext {
   /** Logical id of the Worker resource. */
   readonly id: string;
+  /** Namespace-qualified id (`ns/Worker`) — the display prefix for log lines. */
+  readonly fqn: string;
   /** Physical script name. */
   readonly workerName: string;
   readonly compatibility: {
@@ -118,6 +121,16 @@ export interface SourceContext {
  */
 export interface DevContext extends SourceContext {
   readonly worker: {
+    /**
+     * Shared secret the host's WorkerProxy signs forwarded requests with
+     * (original URL / Host restoration). A server-mode source that exposes
+     * a workerd DIRECTLY behind the proxy must start it with this secret —
+     * the entry worker answers 400 "Invalid proxy shared secret" to a
+     * signed request whose secret it doesn't hold. Sources that front their
+     * workerd with their own server (the vite plugin) re-sign with their
+     * own secret and can ignore this.
+     */
+    readonly proxySharedSecret: string;
     readonly bindings: BindingHook<BindingServices>[];
     readonly durableObjectNamespaces: (RuntimeDurableObject & {
       uniqueKey: string;
@@ -385,14 +398,19 @@ export const resolveSource = (
  */
 export const makeSourceContext = (params: {
   id: string;
+  fqn: string;
   workerName: string;
   props: WorkerProps;
   compatibility: { date: string; flags: string[] };
   stack: { name: string; stage: string };
 }): SourceContext => ({
   id: params.id,
+  fqn: params.fqn,
   workerName: params.workerName,
-  compatibility: params.compatibility,
+  compatibility: getToolingCompatibility(
+    params.compatibility,
+    params.props.main,
+  ),
   entry: params.props.isExternal
     ? { kind: "external" }
     : { kind: "effect", exports: params.props.exports ?? {} },

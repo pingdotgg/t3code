@@ -1,6 +1,6 @@
 import type {
   TcpProxiesResultItem,
-  TcpProxyCreateResponse,
+  CreateTcpProxyResponse,
 } from "@distilled.cloud/railway";
 import * as railway from "@distilled.cloud/railway";
 import * as Data from "effect/Data";
@@ -187,7 +187,7 @@ export class TcpProxyTargetMissing extends Data.TaggedError(
   message: string;
 }> {}
 
-type CloudProxy = TcpProxiesResultItem | TcpProxyCreateResponse;
+type CloudProxy = TcpProxiesResultItem | CreateTcpProxyResponse;
 
 const isGone = (proxy: CloudProxy | undefined) =>
   proxy === undefined ||
@@ -386,7 +386,7 @@ export const TcpProxyProvider = () =>
 
       if (current === undefined) {
         const created = yield* railway
-          .tcpProxyCreate({
+          .createTcpProxy({
             input: {
               applicationPort,
               environmentId,
@@ -422,7 +422,7 @@ export const TcpProxyProvider = () =>
     delete: Effect.fn(function* ({ output }) {
       const id = output.id;
       if (id.length === 0) return;
-      yield* railway.tcpProxyDelete({ id }).pipe(
+      yield* railway.deleteTcpProxy({ id }).pipe(
         // Railway serializes proxy mutations per environment: a delete
         // racing an in-flight deploy fails with "Cannot delete TCP proxy:
         // an operation is already in progress".

@@ -4,7 +4,7 @@ description: Every Function and Server returns { fetch, ...rpcs } — schemaless
 ---
 
 Every Function and Server in alchemy returns `{ fetch, ...rpcs }` from its
-[Effectful Constructor](/infrastructure-as-effects/functions-and-servers#the-effectful-constructor-pattern) —
+[Effectful Constructor](/infrastructure-as-effects/runtime#the-effectful-constructor-pattern) —
 you already saw the "return what you expose" half. The `rpcs` are the other
 half: plain functions returning `Effect` or `Stream`, no schema, no
 decorators:

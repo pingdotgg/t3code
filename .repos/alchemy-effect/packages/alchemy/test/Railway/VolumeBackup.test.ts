@@ -40,7 +40,7 @@ const VolumeStack = Effect.gen(function* () {
 
 const listLive = (volumeInstanceId: string) =>
   railway
-    .volumeInstanceBackupList({ volumeInstanceId })
+    .listVolumeInstanceBackup({ volumeInstanceId })
     .pipe(
       Effect.catchTag(["RailwayNotFound", "NotFound", "RailwayForbidden"], () =>
         Effect.succeed([]),
@@ -98,7 +98,7 @@ test.provider(
       yield* waitUntilReady(created.volume.volumeInstanceId);
 
       const result = yield* Effect.result(
-        railway.volumeInstanceBackupCreate({
+        railway.createVolumeInstanceBackup({
           volumeInstanceId: created.volume.volumeInstanceId,
         }),
       );
@@ -119,7 +119,7 @@ test.provider(
         const extras = yield* listLive(created.volume.volumeInstanceId);
         for (const extra of extras) {
           yield* railway
-            .volumeInstanceBackupDelete({
+            .deleteVolumeInstanceBackup({
               volumeInstanceBackupId: extra.id,
               volumeInstanceId: created.volume.volumeInstanceId,
             })

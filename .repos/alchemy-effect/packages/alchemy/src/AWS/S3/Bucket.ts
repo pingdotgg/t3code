@@ -8,7 +8,7 @@ import * as Order from "effect/Order";
 import * as Schedule from "effect/Schedule";
 import * as Stream from "effect/Stream";
 import type { HttpClient } from "effect/unstable/http";
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { isResolved } from "../../Diff.ts";
 import { createPhysicalName } from "../../PhysicalName.ts";
 import * as Provider from "../../Provider.ts";

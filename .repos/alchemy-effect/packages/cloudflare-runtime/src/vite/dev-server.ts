@@ -1,3 +1,4 @@
+import { DEFAULT_COMPATIBILITY_DATE } from "../core/internal/constants.ts";
 import { loadInternalWorker } from "../core/internal/internal-worker.ts";
 import type { ExportTypes } from "../rolldown/export-types.ts";
 import { EXPORT_TYPES_MODULE_ID } from "../rolldown/export-types.ts";
@@ -52,11 +53,13 @@ export const startServer = async <B extends BindingHooks = BindingHooks>(
   exportTypes: ExportTypes,
 ) => {
   const scope = Scope.makeUnsafe();
+  const proxySharedSecret = crypto.randomUUID();
   const address = await serve(
     options,
     entryEnvironment,
     server,
     exportTypes,
+    proxySharedSecret,
   ).pipe(
     // `provideMerge`: the assets layer's construction reads `Loopback` (and
     // friends) from the runtime context, so the context must feed the layer,
@@ -71,6 +74,7 @@ export const startServer = async <B extends BindingHooks = BindingHooks>(
   );
   return {
     address,
+    proxySharedSecret,
     close: () => closeScope(scope),
   };
 };
@@ -194,6 +198,7 @@ const serve = Effect.fn(function* <B extends BindingHooks = BindingHooks>(
   entryEnvironment: Omit<EntryEnvironment, "exportTypesId">,
   server: vite.ViteDevServer,
   exportTypes: ExportTypes,
+  proxySharedSecret: string,
 ) {
   const runtime = yield* Runtime.Runtime;
   const moduleFallback = yield* makeModuleFallbackService;
@@ -201,8 +206,9 @@ const serve = Effect.fn(function* <B extends BindingHooks = BindingHooks>(
   const name = options.worker?.name ?? `vite-dev-${crypto.randomUUID()}`;
   return yield* runtime.start({
     name,
+    proxySharedSecret,
     modules: yield* Effect.promise(() => makeWorkerModules(exportTypes)),
-    compatibilityDate: options.compatibilityDate ?? "2026-05-12",
+    compatibilityDate: options.compatibilityDate ?? DEFAULT_COMPATIBILITY_DATE,
     compatibilityFlags: options.compatibilityFlags ?? [],
     bindings: [
       UnsafeEval.local("__DISTILLED_UNSAFE_EVAL__"),

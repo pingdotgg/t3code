@@ -4,7 +4,7 @@ on:
   push:
     branches: [main]
     paths:
-      - "distilled"
+      - "submodules/distilled"
       - "packages/**"
       - "scripts/**"
       - "package.json"
@@ -14,12 +14,13 @@ on:
       - "tsconfig.json"
       - ".github/workflows/pr-package.yml"
   pull_request:
-    # `labeled` so adding the `force-ci` label re-triggers the run. We
-    # intentionally do NOT listen to `closed` — pr-package tags persist
-    # past PR close so existing install URLs keep resolving.
-    types: [opened, synchronize, reopened, labeled]
+    # `labeled` so adding the `force-ci` label re-triggers the run.
+    # `closed` tears down PR-tied preview tags and updates the sticky
+    # install comment. While a PR is open, pkg.ing renews TTL instead
+    # of deleting.
+    types: [opened, synchronize, reopened, labeled, closed]
     paths:
-      - "distilled"
+      - "submodules/distilled"
       - "packages/**"
       - "scripts/**"
       - "package.json"
@@ -30,7 +31,7 @@ on:
       - ".github/workflows/pr-package.yml"
 
 # The action can't widen permissions, so the job must grant write access for
-# the sticky install-instructions comment.
+# the sticky install-instructions comment and the teardown comment on close.
 permissions:
   contents: read
   pull-requests: write
@@ -47,7 +48,9 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'pull_request' && github.event.action != 'closed' &&
-       github.event.pull_request.head.repo.full_name == github.repository)
+       github.event.pull_request.head.repo.full_name == github.repository &&
+       (github.event.action != 'labeled' ||
+        github.event.label.name == 'force-ci'))
     runs-on: blacksmith-8vcpu-ubuntu-2404
     steps:
       - name: Checkout repository
@@ -56,7 +59,7 @@ jobs:
           fetch-depth: 0
 
       - name: Checkout distilled
-        run: git submodule update --init --depth=1 --checkout -- distilled
+        run: git submodule update --init --depth=1 --checkout -- submodules/distilled
 
       - name: Restore Turbo cache
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
@@ -81,25 +84,25 @@ jobs:
 
       - name: Publish packages
         id: publish
-        uses: alchemy-run/actions/actions/pr-package@098beeda4d3c2ce8850638c4466783893b8f0c23 # actions#11
+        uses: alchemy-run/actions/actions/pr-package@148b694161fe91bf90767385ad34667145593394 # actions#12
         with:
-          rebuild-all-paths: distilled
+          rebuild-all-paths: submodules/distilled/**
           packages: >-
             [
-              { "dir": "packages/alchemy",               "name": "alchemy",                            "group": "Alchemy" },
-              { "dir": "packages/better-auth",           "name": "@alchemy.run/better-auth",           "group": "Alchemy" },
-              { "dir": "packages/cloudflare-runtime",    "name": "@alchemy.run/cloudflare-runtime",    "group": "Alchemy" },
-              { "dir": "packages/frontend-frameworks",   "name": "@alchemy.run/frontend-frameworks",   "group": "Alchemy" },
-              { "dir": "packages/node-utils",            "name": "@alchemy.run/node-utils",            "group": "Alchemy" },
-              { "dir": "packages/pr-package",            "name": "@alchemy.run/pr-package",            "group": "Alchemy" },
-              { "dir": "packages/floci",                 "name": "@alchemy.run/floci",                 "group": "Alchemy" },
-              { "dir": "distilled/packages/core",        "name": "@distilled.cloud/core",              "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/aws",         "name": "@distilled.cloud/aws",               "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/axiom",       "name": "@distilled.cloud/axiom",             "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/cloudflare",  "name": "@distilled.cloud/cloudflare",        "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/hetzner",     "name": "@distilled.cloud/hetzner",           "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/neon",        "name": "@distilled.cloud/neon",              "group": "Distilled", "submodule": true },
-              { "dir": "distilled/packages/planetscale", "name": "@distilled.cloud/planetscale",       "group": "Distilled", "submodule": true }
+              { "dir": "packages/alchemy",                          "name": "alchemy",                            "group": "Alchemy" },
+              { "dir": "packages/better-auth",                      "name": "@alchemy.run/better-auth",           "group": "Alchemy" },
+              { "dir": "packages/cloudflare-runtime",               "name": "@alchemy.run/cloudflare-runtime",    "group": "Alchemy" },
+              { "dir": "packages/frontend-frameworks",              "name": "@alchemy.run/frontend-frameworks",   "group": "Alchemy" },
+              { "dir": "packages/node-utils",                       "name": "@alchemy.run/node-utils",            "group": "Alchemy" },
+              { "dir": "packages/pr-package",                       "name": "@alchemy.run/pr-package",            "group": "Alchemy" },
+              { "dir": "packages/floci",                            "name": "@alchemy.run/floci",                 "group": "Alchemy" },
+              { "dir": "submodules/distilled/packages/core",        "name": "@distilled.cloud/core",              "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/aws",         "name": "@distilled.cloud/aws",               "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/axiom",       "name": "@distilled.cloud/axiom",             "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/cloudflare",  "name": "@distilled.cloud/cloudflare",        "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/hetzner",     "name": "@distilled.cloud/hetzner",           "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/neon",        "name": "@distilled.cloud/neon",              "group": "Distilled", "submodule": true },
+              { "dir": "submodules/distilled/packages/planetscale", "name": "@distilled.cloud/planetscale",       "group": "Distilled", "submodule": true }
             ]
           pr-package-token: ${{ secrets.PR_PACKAGE_TOKEN }}
 
@@ -117,7 +120,153 @@ jobs:
         if: >-
           github.event_name == 'pull_request' &&
           fromJson(steps.publish.outputs.plan).packages[0] != null
-        uses: alchemy-run/actions/actions/pr-package-comment@098beeda4d3c2ce8850638c4466783893b8f0c23 # actions#11
+        uses: alchemy-run/actions/actions/pr-package-comment@148b694161fe91bf90767385ad34667145593394 # actions#12
         with:
           plan: ${{ steps.publish.outputs.plan }}
           token: ${{ steps.bot-token.outputs.token }}
+
+  pr-package-teardown:
+    name: Tear down PR preview packages
+    if: >-
+      github.event_name == 'pull_request' && github.event.action == 'closed' &&
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    steps:
+      - name: Remove preview packages
+        env:
+          PR_PACKAGE_TOKEN: ${{ secrets.PR_PACKAGE_TOKEN }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          host=pkg.ing
+          packages=(
+            alchemy
+            @alchemy.run/better-auth
+            @alchemy.run/cloudflare-runtime
+            @alchemy.run/frontend-frameworks
+            @alchemy.run/node-utils
+            @alchemy.run/pr-package
+            @alchemy.run/floci
+            @distilled.cloud/core
+            @distilled.cloud/aws
+            @distilled.cloud/axiom
+            @distilled.cloud/cloudflare
+            @distilled.cloud/hetzner
+            @distilled.cloud/neon
+            @distilled.cloud/planetscale
+          )
+          encode_project() {
+            python3 -c 'import urllib.parse,sys; print("/".join(urllib.parse.quote(p, safe="") for p in sys.argv[1].split("/")))' "$1"
+          }
+          encode_tag() {
+            python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1], safe=""))' "$1"
+          }
+          delete() {
+            local url="$1"
+            local code
+            code=$(curl -sS -o /tmp/pr-pkg-body -w "%{http_code}" -X DELETE \
+              -H "Authorization: Bearer ${PR_PACKAGE_TOKEN}" \
+              "$url")
+            if [[ "$code" != "200" && "$code" != "404" ]]; then
+              echo "Failed DELETE $url ($code): $(cat /tmp/pr-pkg-body)"
+              return 1
+            fi
+            echo "DELETE $url ($code)"
+          }
+          failed=0
+          short="${SHA:0:7}"
+          for pkg in "${packages[@]}"; do
+            path=$(encode_project "$pkg")
+            base="https://${host}/projects/${path}"
+            delete "${base}/pull-requests/${PR_NUMBER}" || failed=1
+            delete "${base}/tags/$(encode_tag "pr-${PR_NUMBER}")" || failed=1
+            if [[ "$BRANCH" != "main" && "$BRANCH" != "master" ]]; then
+              delete "${base}/tags/$(encode_tag "$BRANCH")" || failed=1
+            fi
+            delete "${base}/tags/$(encode_tag "$SHA")" || failed=1
+            delete "${base}/tags/$(encode_tag "$short")" || failed=1
+          done
+          exit "$failed"
+
+      - name: Generate bot token
+        id: bot-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          app-id: ${{ secrets.ALCHEMY_VERSION_BOT_ID }}
+          private-key: ${{ secrets.ALCHEMY_VERSION_BOT_PRIVATE_KEY }}
+
+      - name: Comment that preview packages were removed
+        env:
+          GH_TOKEN: ${{ steps.bot-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          python3 <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          token = os.environ["GH_TOKEN"]
+          repo = os.environ["REPO"]
+          pr = os.environ["PR_NUMBER"]
+          marker = "<!-- pr-package-comment -->"
+          body = "\n".join(
+              [
+                  marker,
+                  "",
+                  "Preview packages for this PR have been removed.",
+                  "",
+                  "The install URLs from this comment no longer resolve. "
+                  "Older per-commit URLs expire with their TTL.",
+                  "",
+              ]
+          )
+
+          def api(path, method="GET", payload=None):
+              headers = {
+                  "Accept": "application/vnd.github+json",
+                  "Authorization": f"Bearer {token}",
+                  "User-Agent": "alchemy-pr-package-teardown",
+                  "X-GitHub-Api-Version": "2022-11-28",
+              }
+              data = None
+              if payload is not None:
+                  headers["Content-Type"] = "application/json"
+                  data = json.dumps(payload).encode()
+              req = urllib.request.Request(
+                  f"https://api.github.com{path}",
+                  data=data,
+                  method=method,
+                  headers=headers,
+              )
+              with urllib.request.urlopen(req) as res:
+                  if res.status == 204:
+                      return None
+                  return json.load(res)
+
+          existing = None
+          page = 1
+          while True:
+              comments = api(
+                  f"/repos/{repo}/issues/{pr}/comments?per_page=100&page={page}"
+              )
+              existing = next(
+                  (c for c in comments if str(c.get("body", "")).startswith(marker)),
+                  None,
+              )
+              if existing or len(comments) < 100:
+                  break
+              page += 1
+
+          if existing is None:
+              print("No PR-package comment to update")
+          else:
+              api(
+                  f"/repos/{repo}/issues/comments/{existing['id']}",
+                  "PATCH",
+                  {"body": body},
+              )
+              print("Updated PR-package comment")
+          PY

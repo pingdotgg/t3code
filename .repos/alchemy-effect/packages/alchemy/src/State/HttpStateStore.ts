@@ -4,6 +4,7 @@ import * as Schedule from "effect/Schedule";
 import * as HttpClient from "effect/unstable/http/HttpClient";
 import * as HttpClientRequest from "effect/unstable/http/HttpClientRequest";
 import * as HttpApiClient from "effect/unstable/httpapi/HttpApiClient";
+import { profileCommandHint } from "../Util/interactive.ts";
 import { StateApi } from "./HttpStateApi.ts";
 
 import type { ReplacedResourceState, ResourceState } from "./ResourceState.ts";
@@ -242,7 +243,10 @@ const retryTransient = <A, Err, Req>(eff: Effect.Effect<A, Err, Req>) =>
  * `_tag`/name, and append the HTTP status and any distinct `cause`
  * message when available.
  */
-export const describeStateStoreFailure = (e: unknown): string => {
+export const describeStateStoreFailure = (
+  e: unknown,
+  profileCommand = "alchemy profile edit",
+): string => {
   if (!(e instanceof Error)) return String(e);
   const tag = (e as { _tag?: unknown })._tag;
   let message =
@@ -253,7 +257,7 @@ export const describeStateStoreFailure = (e: unknown): string => {
   if (typeof tag === "string" && tag.startsWith("Unauthorized")) {
     message =
       "State store rejected the request as unauthorized. " +
-      "The stored state-store credentials may be stale — run 'alchemy login' to refresh them.";
+      `The stored state-store credentials may be stale. Run \`${profileCommand}\` to reconfigure them.`;
   }
   const status = (e as { response?: { status?: unknown } }).response?.status;
   if (typeof status === "number" && !message.includes(String(status))) {
@@ -274,11 +278,14 @@ const mapStateStoreError = <A, E, R>(eff: Effect.Effect<A, E, R>) =>
     retryTransient,
     Effect.tapError(Effect.log),
     Effect.catch((e: E) =>
-      Effect.fail(
-        new StateStoreError({
-          message: describeStateStoreFailure(e),
-          cause: e instanceof Error ? e : undefined,
-        }),
-      ),
+      Effect.gen(function* () {
+        const command = yield* profileCommandHint("alchemy profile edit");
+        return yield* Effect.fail(
+          new StateStoreError({
+            message: describeStateStoreFailure(e, command),
+            cause: e instanceof Error ? e : undefined,
+          }),
+        );
+      }),
     ),
   ) as Effect.Effect<A, StateStoreError, R>;

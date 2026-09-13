@@ -88,7 +88,8 @@ export interface BuildChildOptions {
   /**
    * Extra process env for the child only. Merged over the parent's env
    * at spawn time so Vite/nitro/`import.meta.env` see site `env` without
-   * the parent mutating `process.env` (plugins in the child may still
+   * the parent mutating `process.env`. NODE_ENV defaults to production;
+   * an explicit value here overrides that default (plugins in the child may still
    * mutate theirs — that is why this is a child).
    */
   readonly env?: Record<string, string> | undefined;
@@ -175,9 +176,9 @@ export const runBuildChild = (
           stdin: "ignore",
           stdout: "pipe",
           stderr: "pipe",
-          ...(options.env !== undefined
-            ? { env: { ...process.env, ...options.env } }
-            : {}),
+          // Default builds to production rather than inheriting the CLI/test
+          // runner's mode, while preserving deliberate build-env overrides.
+          env: { ...process.env, NODE_ENV: "production", ...options.env },
         }).pipe(
           Effect.mapError(
             fail(

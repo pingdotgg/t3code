@@ -49,7 +49,7 @@ const waitUntilDomainGone = (customDomainId: string, projectId: string) =>
   );
 
 const createTargetService = (projectId: string, environmentId: string) =>
-  railway.serviceCreate({
+  railway.createService({
     input: {
       projectId,
       environmentId,
@@ -71,7 +71,7 @@ test.provider(
       );
 
       const rejected = yield* Effect.result(
-        railway.customDomainCreate({
+        railway.createCustomDomain({
           input: {
             domain: "not a hostname",
             environmentId: environment.environmentId,

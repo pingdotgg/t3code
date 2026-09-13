@@ -22,15 +22,15 @@
     "@tanstack/react-start": "catalog:frontend",
     "alchemy": "workspace:*",
     "effect": "catalog:effect",
-    "react": "^19.2.4",
-    "react-dom": "^19.2.4"
+    "react": "catalog:frontend",
+    "react-dom": "catalog:frontend"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "catalog:cloudflare-runtime",
     "@tailwindcss/vite": "catalog:frontend",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "@vitejs/plugin-react": "^6.0.1",
+    "@types/react": "catalog:frontend",
+    "@types/react-dom": "catalog:frontend",
+    "@vitejs/plugin-react": "catalog:frontend",
     "tailwindcss": "catalog:frontend",
     "typescript": "catalog:build",
     "vite": "catalog:build"

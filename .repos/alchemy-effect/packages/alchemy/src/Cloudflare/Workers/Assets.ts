@@ -1,12 +1,15 @@
 import * as workers from "@distilled.cloud/cloudflare/workers";
 import * as wfp from "@distilled.cloud/cloudflare/workers-for-platforms";
+import { Retry } from "@distilled.cloud/cloudflare";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Predicate from "effect/Predicate";
 import * as Schedule from "effect/Schedule";
+import * as Semaphore from "effect/Semaphore";
 import type { PlatformError } from "effect/PlatformError";
-import type { ScopedPlanStatusSession } from "../../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../../Report.ts";
 import { sha256, sha256Object } from "../../Util/index.ts";
 import { initialCwd } from "../../Util/Node.ts";
 import createIgnore from "@alchemy.run/node-utils/ignore";
@@ -424,6 +427,36 @@ export const readAssets = Effect.fn(function* ({
   };
 });
 
+/**
+ * Bulk buckets (up to ~50 MiB of base64 each) go up this many at a time —
+ * the same number wrangler uses.
+ */
+const BULK_UPLOAD_CONCURRENCY = 3;
+/**
+ * Per-bucket retries after a gateway error (502/503/504), with concurrency
+ * already dropped to one. Mirrors wrangler's `MAX_UPLOAD_GATEWAY_ERRORS`.
+ */
+const MAX_UPLOAD_GATEWAY_RETRIES = 5;
+
+const isGatewayError = (error: unknown) =>
+  Predicate.isTagged(error, "BadGateway") ||
+  Predicate.isTagged(error, "ServiceUnavailable") ||
+  Predicate.isTagged(error, "GatewayTimeout");
+
+/**
+ * The SDK's default policy retries gateway errors internally (~20s of
+ * backoff) before the caller ever sees one, so the concurrency fallback
+ * below could never kick in. Let those surface to the bucket loop; every
+ * other transient error keeps the default handling.
+ */
+const surfaceGatewayErrors: Retry.Factory = (lastError) => {
+  const base = Retry.makeDefault(lastError);
+  return {
+    ...base,
+    while: (error) => !isGatewayError(error) && (base.while?.(error) ?? false),
+  };
+};
+
 export const uploadAssets = Effect.fn(function* (
   accountId: string,
   workerName: string,
@@ -453,6 +486,71 @@ export const uploadAssets = Effect.fn(function* (
   // concurrent tool's transient chdir (framework source builds).
   const directory = path.resolve(initialCwd, assets.directory);
 
+  // Bucket concurrency, wrangler-style: three in flight, and the first
+  // gateway error resizes it to one for the rest of the deploy. Hoisted out
+  // of the session so a JWT-expiry retry stays degraded instead of bursting
+  // back to three against a gateway that just told us to back off.
+  const semaphore = yield* Semaphore.make(BULK_UPLOAD_CONCURRENCY);
+
+  const uploadBucket = Effect.fn(function* (
+    bucket: readonly string[],
+    uploadJwt: string,
+  ) {
+    const body: Record<string, File> = {};
+    yield* Effect.forEach(
+      bucket,
+      Effect.fn(function* (hash) {
+        const name = assetsByHash.get(hash);
+        if (!name) {
+          return yield* new AssetNotFoundError({
+            message: `Asset ${hash} not found in manifest`,
+            hash,
+          });
+        }
+        const file = yield* fs.readFile(path.join(directory, name)).pipe(
+          Effect.mapError(
+            (error) =>
+              new FailedToReadAssetError({
+                message: `Failed to read asset ${name}: ${error.message}`,
+                name,
+                cause: error,
+              }),
+          ),
+        );
+        body[hash] = new File([Buffer.from(file).toString("base64")], hash, {
+          type: getContentType(name),
+        });
+      }),
+    );
+    return yield* createAssetUpload({
+      accountId,
+      base64: true,
+      body,
+      jwtToken: uploadJwt,
+    }).pipe(
+      Retry.policy(surfaceGatewayErrors),
+      Effect.tapError((error) =>
+        isGatewayError(error)
+          ? semaphore
+              .resize(1)
+              .pipe(
+                Effect.andThen(
+                  note(
+                    "Asset upload hit a gateway error, retrying one bucket at a time...",
+                    { kind: "status" },
+                  ),
+                ),
+              )
+          : Effect.void,
+      ),
+      Effect.retry({
+        while: isGatewayError,
+        schedule: Schedule.exponential("2 seconds"),
+        times: MAX_UPLOAD_GATEWAY_RETRIES,
+      }),
+    );
+  });
+
   // One full upload session: ask Cloudflare which assets are missing,
   // upload each bucket, and return the completion JWT that putWorker
   // must redeem. The session JWT can expire mid-upload on very large
@@ -463,7 +561,7 @@ export const uploadAssets = Effect.fn(function* (
   // stopped, and a fresh session with nothing left to upload returns
   // the completion JWT directly.
   const runSession = Effect.fn(function* () {
-    yield* note("Checking assets...");
+    yield* note("Checking assets...", { kind: "status" });
     const session = dispatchNamespace
       ? yield* wfp.createDispatchNamespaceScriptAssetUpload({
           accountId,
@@ -495,53 +593,23 @@ export const uploadAssets = Effect.fn(function* (
     let uploaded = 0;
     const total = session.buckets.flat().length;
     yield* note(`Uploaded ${uploaded} of ${total} assets...`);
+    // Cloudflare only returns the completion JWT on the last bucket it
+    // receives, which under concurrency is not necessarily the last one
+    // in the list — so every response is checked.
     let jwt: string | undefined | null;
     yield* Effect.forEach(
       session.buckets,
       Effect.fn(function* (bucket) {
-        const body: Record<string, File> = {};
-        yield* Effect.forEach(
-          bucket,
-          Effect.fn(function* (hash) {
-            const name = assetsByHash.get(hash);
-            if (!name) {
-              return yield* new AssetNotFoundError({
-                message: `Asset ${hash} not found in manifest`,
-                hash,
-              });
-            }
-            const file = yield* fs.readFile(path.join(directory, name)).pipe(
-              Effect.mapError(
-                (error) =>
-                  new FailedToReadAssetError({
-                    message: `Failed to read asset ${name}: ${error.message}`,
-                    name,
-                    cause: error,
-                  }),
-              ),
-            );
-            body[hash] = new File(
-              [Buffer.from(file).toString("base64")],
-              hash,
-              {
-                type: getContentType(name),
-              },
-            );
-          }),
+        const result = yield* uploadBucket(bucket, uploadJwt).pipe(
+          semaphore.withPermits(1),
         );
-        const result = yield* createAssetUpload({
-          accountId,
-          base64: true,
-          body,
-          jwtToken: uploadJwt,
-        });
-
         uploaded += bucket.length;
         yield* note(`Uploaded ${uploaded} of ${total} assets...`);
         if (result.jwt) {
           jwt = result.jwt;
         }
       }),
+      { concurrency: BULK_UPLOAD_CONCURRENCY },
     );
     if (!jwt) {
       return yield* new AssetUploadSessionError({

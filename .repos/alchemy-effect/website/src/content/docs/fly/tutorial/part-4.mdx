@@ -9,7 +9,7 @@ import Terminal from "../../../../components/Terminal.astro";
 import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
 
 A secret only this Service needs from `.env` is
-`Config.redacted`. See [Secrets](/fly/data/secrets).
+`Config.Redacted`. See [Secrets](/fly/data/secrets).
 
 This part is for a value Fly should own: an App **Secret** Fly
 injects into every Machine. You will read it with `GetSecret`, then
@@ -41,7 +41,7 @@ it and Alchemy generates an ownership-stamped name instead.
 
 ## Bind `GetSecret`
 
-Inside the Service's init, bind the Secret — pass the declaration
+Inside the Service's constructor, bind the Secret — pass the declaration
 directly, no yielding required:
 
 ```diff lang="typescript"

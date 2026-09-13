@@ -1,6 +1,6 @@
 {
   "name": "@alchemy.run/frontend-frameworks",
-  "version": "2.0.0-beta.76",
+  "version": "2.0.0-beta.77",
   "description": "Framework build and development integrations for Alchemy.",
   "homepage": "https://alchemy.run",
   "license": "Apache-2.0",
@@ -57,13 +57,14 @@
     "rolldown": "catalog:build"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
-    "@effect/platform-bun": "catalog:effect",
     "@astrojs/internal-helpers": "catalog:frontend",
     "@astrojs/underscore-redirects": "catalog:frontend",
+    "@cloudflare/workers-types": "catalog:cloudflare-runtime",
+    "@effect/platform-bun": "catalog:effect",
     "@octanejs/vite-plugin": "catalog:frontend",
     "@opennextjs/cloudflare": "catalog:frontend",
     "@sveltejs/kit": "catalog:frontend",
+    "@types/node": "catalog:tooling",
     "@vitejs/plugin-react": "catalog:frontend",
     "astro": "catalog:frontend",
     "effect": "catalog:effect",
@@ -71,10 +72,11 @@
     "nitropack": "catalog:frontend",
     "nuxt": "catalog:frontend",
     "tsdown": "catalog:build",
+    "typescript": "catalog:build",
     "vite": "catalog:build",
     "vitest": "catalog:testing",
-    "waku": "catalog:frontend",
-    "vocs": "catalog:frontend"
+    "vocs": "catalog:frontend",
+    "waku": "catalog:frontend"
   },
   "peerDependencies": {
     "@effect/platform-bun": "catalog:effect",

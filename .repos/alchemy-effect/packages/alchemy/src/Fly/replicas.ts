@@ -2,6 +2,7 @@ import type {
   FlyMachineConfig,
   FlyMachineMount,
   FlyMachineService,
+  FlyMachineServiceCheck,
   ImageRef as FlyImageRef,
   Machine as FlyMachine,
   Volume as FlyVolume,
@@ -11,7 +12,12 @@ import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 import { listOwnedApps } from "./App.ts";
-import type { MachineGuest, MachineImageRef } from "./Machine.ts";
+import type {
+  MachineGuest,
+  MachineImageRef,
+  MachineService,
+  MachineServiceCheck,
+} from "./Machine.ts";
 import {
   alchemyMetadataKeys,
   createMachineMetadata,
@@ -164,6 +170,46 @@ export const toGuestAttrs = (
     gpus: guest.gpus,
   };
 };
+
+export const toFlyServiceCheck = (
+  check: MachineServiceCheck,
+): FlyMachineServiceCheck => ({
+  type: check.type,
+  port: check.port,
+  interval: check.interval,
+  timeout: check.timeout,
+  grace_period: check.gracePeriod,
+  method: check.method,
+  path: check.path,
+  protocol: check.protocol,
+  headers: check.headers?.map((header) => ({
+    name: header.name,
+    values: header.values,
+  })),
+  tls_server_name: check.tlsServerName,
+  tls_skip_verify: check.tlsSkipVerify,
+});
+
+export const toFlyService = (service: MachineService): FlyMachineService => ({
+  protocol: service.protocol,
+  internal_port: service.internalPort,
+  autostart: service.autostart,
+  autostop:
+    typeof service.autostop === "boolean"
+      ? service.autostop
+        ? "stop"
+        : "off"
+      : service.autostop,
+  min_machines_running: service.minMachinesRunning,
+  ports: service.ports?.map((port) => ({
+    port: port.port,
+    handlers: port.handlers,
+    force_https: port.forceHttps,
+    start_port: port.startPort,
+    end_port: port.endPort,
+  })),
+  checks: service.checks?.map(toFlyServiceCheck),
+});
 
 export const hasPublishedService = (
   services: FlyMachineService[] | undefined,

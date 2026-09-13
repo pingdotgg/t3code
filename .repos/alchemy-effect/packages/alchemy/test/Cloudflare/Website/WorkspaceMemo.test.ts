@@ -219,6 +219,7 @@ describe("workspace-aware input-hash memo", () => {
           const props: WorkerProps = { vite };
           const ctx = makeSourceContext({
             id: "MonorepoApp",
+            fqn: "MonorepoApp",
             workerName: "stack-monorepoapp-test-abc123",
             props,
             compatibility: { date: "2024-09-23", flags: [] },

@@ -4,55 +4,148 @@ description: A Binding connects a Resource to a Worker or Lambda. One line decla
 ---
 
 A **Binding** connects a [Resource](/infrastructure-as-code/resource)
-to a Worker, Lambda Function, or Container. You yield the resource and
+to a Worker, Lambda Function, Container, or Server. You yield the resource and
 get back a typed client:
 
 ```typescript
-const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+import * as AWS from "alchemy/AWS";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+
+export const Jobs = AWS.DynamoDB.Table("Jobs", { partitionKey: "pk" });
+
+export default AWS.Lambda.Function(
+  "Api",
+  { main: import.meta.url, functionUrl: true },
+  Effect.gen(function* () {
+    const getItem = yield* AWS.DynamoDB.GetItem(Jobs);
+
+    return {
+      fetch: Effect.gen(function* () {
+        const job = yield* getItem({ Key: { pk: { S: "job-1" } } });
+        return HttpServerResponse.json(job.Item);
+      }),
+    };
+  }).pipe(Effect.provide(AWS.DynamoDB.GetItemHttp)),
+);
 ```
 
-Everything else the connection needs is derived from this line:
+`yield* GetItem(Jobs)` is the binding. `getItem` is the client.
+`GetItemHttp` is the implementation.
 
-1. **permission grant** — least-privilege IAM on AWS, a native binding
-   on Cloudflare
-2. **environment configuration** — points the client at the deployed
-   resource: a table ARN, a queue URL, a sensitive API key
-
-## A binding in one line
+A Function that reads a table needs three things: permission to call
+the API, the table's name at runtime, and a client to call it with. In
+traditional IaC those live in three places. A policy in the
+infrastructure code, an environment variable wired between the two, and
+an SDK call in the handler that reads it back:
 
 ```typescript
+// infrastructure: grant access and pass the name
+policy: { Action: ["dynamodb:GetItem"], Resource: [table.arn] },
+environment: { JOBS_TABLE: table.name },
+```
+
+```typescript
+// handler: hope the two above agree
+const client = new DynamoDBClient();
+await client.send(
+  new GetItemCommand({ TableName: process.env.JOBS_TABLE, Key }),
+);
+```
+
+Nothing checks that they agree. Rename the table, widen the policy,
+forget the env var, and you find out at runtime. The binding is all
+three. Let's follow what that one line produces.
+
+## Permissions
+
+At deploy time the binding attaches an IAM statement to the Function's
+role. It grants the one action the client can make, on the one table
+it was bound to:
+
+```json
+{
+  "Effect": "Allow",
+  "Action": ["dynamodb:GetItem"],
+  "Resource": ["arn:aws:dynamodb:us-east-1:123456789012:table/Jobs-a1b2c3"]
+}
+```
+
+Least privilege falls out of the shape. Bind `PutItem` as well and the
+role gains a second statement for `dynamodb:PutItem`, nothing more:
+
+```typescript
+const getItem = yield* AWS.DynamoDB.GetItem(Jobs);
+const putItem = yield* AWS.DynamoDB.PutItem(Jobs);
+```
+
+Bind several tables at once and the statement lists each of their ARNs:
+
+```typescript
+const batchGet = yield* AWS.DynamoDB.BatchGetItem(Jobs, Audit);
+```
+
+## Configuration
+
+The client needs the table's physical name. The binding serializes the
+`Jobs.tableName` [Output](/infrastructure-as-code/outputs) into the
+Function's environment:
+
+```sh
+Jobs_tableName=Jobs-a1b2c3
+```
+
+`getItem` reads it back and fills in `TableName` on every request. You
+never touch `process.env`, and the name can't drift from the policy.
+Both come from the same `Jobs` declaration.
+
+## The client
+
+`getItem` is the DynamoDB operation with the table already filled in.
+It returns an `Effect` with a typed error channel, so retries, timeouts,
+and error handling compose onto it:
+
+```typescript
+const job = yield* getItem({ Key: { pk: { S: "job-1" } } }).pipe(
+  Effect.retry({ times: 3, schedule: Schedule.exponential("100 millis") }),
+  Effect.timeout("5 seconds"),
+  Effect.catchTag("ResourceNotFoundException", () => Effect.succeed(undefined)),
+);
+```
+
+## A contract and a Layer
+
+`GetItem` names the capability. `GetItemHttp` decides how it's
+satisfied. Cloudflare shows why that split matters. A Worker binds an
+R2 bucket with the same shape:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+
+export const Uploads = Cloudflare.R2.Bucket("Uploads");
+
 export default Cloudflare.Worker(
   "Api",
   { main: import.meta.url },
   Effect.gen(function* () {
-    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
+    const bucket = yield* Cloudflare.R2.ReadWriteBucket(Uploads);
 
     return {
       fetch: Effect.gen(function* () {
         yield* bucket.put("hello.txt", "world");
-        // ...
+        return HttpServerResponse.text("ok");
       }),
     };
   }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 );
 ```
 
-`yield* ReadWriteBucket(Bucket)` declares the binding — `bucket` is the
-resource itself, presented as a typed client. The binding is the SDK.
+There is no IAM on Cloudflare. `ReadWriteBucketBinding` registers a
+native `r2_bucket` binding on the Worker instead, and the access level
+is in the name: `ReadBucket`, `WriteBucket`, or `ReadWriteBucket`.
 
-`Effect.provide(ReadWriteBucketBinding)` on the last line chooses how
-the binding is implemented.
-
-## A contract and a Layer
-
-A binding has two halves. The declaration is a contract:
-
-```typescript
-const bucket = yield* Cloudflare.R2.ReadWriteBucket(Bucket);
-```
-
-`ReadWriteBucket` is a `Binding.Service` — a callable Context tag. It
-names the capability and says nothing about how it's satisfied:
+The contract is a `Binding.Service`. It names the capability and the
+client it returns, and nothing about the platform:
 
 ```typescript
 export interface ReadWriteBucket extends Binding.Service<
@@ -62,24 +155,17 @@ export interface ReadWriteBucket extends Binding.Service<
 > {}
 ```
 
-The implementation is a Layer, and any Layer that satisfies the
-contract can be provided. Cloudflare ships two interchangeable ones for
-R2:
+So the same contract can be satisfied a different way. Swap the Layer
+and `bucket` calls R2 over HTTP with a scoped API token minted at deploy
+time:
 
 ```diff lang="typescript"
 -  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketBinding)),
 +  }).pipe(Effect.provide(Cloudflare.R2.ReadWriteBucketHttp)),
 ```
 
-`ReadWriteBucketBinding` registers a native `r2_bucket` binding on the
-Worker and reads it off the Worker env at runtime.
-`ReadWriteBucketHttp` mints a scoped `AccountApiToken` at deploy time
-and calls R2 over HTTP at runtime. Same contract, same handler code.
-
-## The Layer is where the platform lives
-
-`ReadWriteBucketBinding` requires `WorkerEnvironment` and `Worker`, so
-only a Cloudflare Worker can provide it:
+The handler doesn't change. And a Layer that needs a platform the host
+can't supply is a compile error:
 
 ```typescript
 export default AWS.Lambda.Function(
@@ -91,125 +177,123 @@ export default AWS.Lambda.Function(
 );
 ```
 
-On AWS, each capability is a single Layer — `DynamoDB.GetItemHttp`,
-`S3.GetObjectHttp` — that attaches least-privilege IAM statements at
-deploy time and calls the service over HTTP at runtime.
+[Layers](/infrastructure-as-effects/layers) takes this split one level
+up, so your own services can carry their bindings with them.
 
-[Layers](/infrastructure-as-effects/layers) builds on this same
-tag/Layer split, one level up.
+## Plan-time invokes
 
-## What one binding call does at deploy time
-
-The implementation Layer records three things on the plan:
-
-1. **Permissions** — IAM policies (AWS) or native bindings (Cloudflare)
-2. **Configuration** — physical names, ARNs, URLs, serialized into the
-   Function's environment
-3. **A typed SDK client** — bundled into the handler
-
-### Automatic IAM (AWS)
-
-Each binding maps to specific IAM actions on the exact resource ARNs:
-
-| Binding                   | IAM Actions        | Resource                     |
-| ------------------------- | ------------------ | ---------------------------- |
-| `S3.GetObject(bucket)`    | `s3:GetObject`     | `arn:aws:s3:::bucket-name/*` |
-| `S3.PutObject(bucket)`    | `s3:PutObject`     | `arn:aws:s3:::bucket-name/*` |
-| `SQS.SendMessage(queue)`  | `sqs:SendMessage`  | Queue ARN                    |
-| `DynamoDB.GetItem(table)` | `dynamodb:GetItem` | Table ARN                    |
-| `DynamoDB.PutItem(table)` | `dynamodb:PutItem` | Table ARN                    |
-
-Multi-resource bindings enumerate every ARN they touch:
+A binding can also run before anything is deployed. Terraform calls
+this a data source, Pulumi an invoke. Call it directly and you get back
+an [Output](/infrastructure-as-code/outputs) to pass into resource
+props:
 
 ```typescript
-const batchGet = yield* DynamoDB.BatchGetItem(JobsTable, AuditTable);
-// → policy enumerates both table ARNs explicitly
-```
-
-### Automatic environment variables
-
-Bindings serialize the resolved Outputs the client needs — the queue
-URL, the bucket name, the table name — into the Function's environment.
-The typed client resolves them for you.
-
-## Data sources: `execute`
-
-Every binding is also invocable at **plan time** — the shape Terraform
-calls a data source and Pulumi an invoke. `Capability.execute(...)`
-runs the operation during plan/deploy resolution (with the stack's
-services, not a deployed host) and returns an
-[`Output`](/infrastructure-as-code/outputs) you can feed straight into
-resource props:
-
-```typescript
-// the raw invoke — Output<ec2.Image | undefined>
+// Output<ec2.Image | undefined>
 const image = AWS.EC2.getAmi({ owners: ["amazon"], name: ["al2023-ami-2023.*"] });
 
-// helpers built on it — Output<string>, dies when nothing matches
+// a helper built on it. Output<string>, fails when nothing matches
 imageId: AWS.EC2.amazonLinux2023(),
 ```
 
-Constructing the Output is inert, so `execute` is safe in composition
-code that re-executes inside a deployed bundle. The same capability
-bound inside a Function (`yield* AWS.EC2.GetAmi(...)`) still grants its
-IAM and runs at runtime — one contract, both phases. The capability's
-implementation layer must be registered on the stack; the cloud
-`providers()` layers include their plan-executable capabilities.
+The same capability bound inside a Function with
+`yield* AWS.EC2.GetAmi(...)` still grants its IAM and runs at runtime.
+One contract, both phases.
 
 ## Event Sources and Sinks
 
-An **[Event Source](/infrastructure-as-effects/event-sources)** runs
-your Function when something happens on a resource — the records arrive
-as an Effect `Stream`. A **[Sink](/infrastructure-as-effects/sinks)**
-is the write side — the resource exposed as an Effect `Sink`. Both wire
-their own permissions, like every other binding:
+An [Event Source](/infrastructure-as-effects/event-sources) is a
+Binding that runs an Effect or `Stream` in the background, whenever
+something happens on the resource:
 
 ```typescript
-// Event Source: run this Function on queue messages.
-yield* SQS.consumeQueueMessages(InboundQueue, (records) => /* Stream */);
-
-// Sink: write to a queue by running a Stream into it.
-const sink = yield* SQS.QueueSink(OutboundQueue);
+yield* AWS.SQS.consumeQueueMessages(Inbound, (records) =>
+  Stream.runForEach(records, (record) => Effect.log(record.body)),
+);
 ```
+
+A [Sink](/infrastructure-as-effects/sinks) is the converse, a Binding
+you sink a `Stream` into:
+
+```typescript
+const sink = yield* AWS.SQS.QueueSink(Outbound);
+```
+
+Both generate their permissions and configuration the same way.
 
 ## How it works under the hood
 
-The deploy-time wiring lives in the binding's setup Effect, fenced
-behind a guard:
+A binding declaration says nothing about how it is implemented. The
+Layer you provide decides that:
+
+```typescript
+Effect.provide(Cloudflare.R2.ReadWriteBucketHttp)
+```
+
+Inside that Layer, the deploy-time work sits behind a guard. The
+**Construction phase** runs twice, and the guard is what tells the two
+runs apart:
 
 ```typescript
 if (!globalThis.__ALCHEMY_RUNTIME__) {
-  // deploy-time only: register IAM / native bindings / env on the host
+  // deploy time only: register IAM / native bindings / env on the host
   yield* host.bind`${resource}`(/* … */);
 }
 // always: return the typed runtime client
 ```
 
-[Phases](/infrastructure-as-effects/phases#the-__alchemy_runtime__-guard)
-covers the guard in depth.
-
-## All of Effect, on every binding
-
-Bindings return `Effect` values, so `Effect.retry`, `timeout`, and
-`catchTag` work with typed error channels:
+When Alchemy bundles the Runtime it defines that global as `true`, so
+the bundler drops the whole branch. Only the client ships:
 
 ```typescript
-const sendWithRetry = enqueue({ MessageBody: msg }).pipe(
-  Effect.retry({ times: 3, schedule: Schedule.exponential("100 millis") }),
-  Effect.timeout("5 seconds"),
-  Effect.catchTag("ThrottlingException", () => Effect.succeed(undefined)),
+// folded into every bundle as a rolldown define
+"globalThis.__ALCHEMY_RUNTIME__": "true"
+```
+
+The Resource Provider, the code that actually creates the bucket or
+the table, is never imported by the binding at all. Declaring a
+resource only records a requirement for its Provider, and that
+requirement is satisfied once, at the Stack:
+
+```typescript
+export default Alchemy.Stack(
+  "MyApp",
+  { providers: Cloudflare.providers(), state: Cloudflare.state() },
+  Effect.gen(function* () {
+    yield* Api;
+  }),
 );
 ```
 
-And because every binding has the same shape, you can hide one behind a
-service interface and swap implementations without touching handler
-code — that's [Layers](/infrastructure-as-effects/layers). Two Functions
-can even bind each other —
-[Circular Bindings](/infrastructure-as-effects/circular-bindings).
+This is what lets you declare resources and bindings inside runtime
+code with little to no effect on bundle size. The heavy infrastructure
+code stays at the Stack, and the guard erases the rest.
+[Phases](/infrastructure-as-effects/phases#the-__alchemy_runtime__-guard)
+covers the guard in depth.
+
+The granularity pays off twice. Every binding has its own Layer, and
+each Layer carries exactly one client and registers exactly one grant.
+Provide the two you use and you get two clients in the bundle and two
+statements on the role, nothing more:
+
+```typescript
+Effect.provide(
+  Layer.mergeAll(
+    AWS.DynamoDB.GetItemHttp, // ships getItem, grants dynamodb:GetItem
+    AWS.DynamoDB.PutItemHttp, // ships putItem, grants dynamodb:PutItem
+  ),
+)
+```
+
+The same choice that keeps the bundle small keeps the permissions and
+environment minimal.
 
 ## Where next
 
-- [Event Sources](/infrastructure-as-effects/event-sources) — bindings that trigger your Function. Next page.
-- [Sinks](/infrastructure-as-effects/sinks) — bindings you write Streams into.
-- [Phases](/infrastructure-as-effects/phases) — when the deploy-time wiring runs vs the runtime client.
-- [Layers](/infrastructure-as-effects/layers) — hide bindings behind a service interface.
+- [Layers](/infrastructure-as-effects/layers) — hide bindings behind a
+  service interface. Next page.
+- [Event Sources](/infrastructure-as-effects/event-sources) — bindings
+  that trigger your Function.
+- [Sinks](/infrastructure-as-effects/sinks) — bindings you write
+  Streams into.
+- [Circular Bindings](/infrastructure-as-effects/circular-bindings) —
+  two Functions that bind each other.

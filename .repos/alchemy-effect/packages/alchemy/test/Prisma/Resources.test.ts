@@ -3513,91 +3513,82 @@ describe("Prisma resource providers", () => {
     },
   );
 
-  it.effect("detaches an observed branch when branch props are omitted", () => {
-    const calls: Call[] = [];
-    const database = {
-      id: "database-1",
-      type: "database" as const,
-      url: "https://api.prisma.test/v1/databases/database-1",
-      name: "main",
-      status: "ready" as const,
-      createdAt,
-      isDefault: false,
-      defaultConnectionId: "connection-1",
-      connections: [],
-      project: resourceRef("projects", "project-1", "app"),
-      region: { id: "us-east-1", name: "US East" },
-      source: { type: "empty" as const },
-      branchId: "branch-1",
-    };
-    const client = {
-      getDatabase: (id: string) =>
-        Effect.sync(() => {
-          calls.push(["getDatabase", id]);
-          return database;
-        }),
-      updateDatabase: (id: string, input: unknown) =>
-        Effect.sync(() => {
-          calls.push(["updateDatabase", { id, input }]);
-          return { ...database, branchId: null };
-        }),
-      rotateConnection: () =>
-        Effect.die("persisted credentials must prevent an unrelated rotation"),
-    } as unknown as PrismaManagementClient;
+  it.effect(
+    "leaves the observed branch alone when branch props are omitted",
+    () => {
+      const calls: Call[] = [];
+      const database = {
+        id: "database-1",
+        type: "database" as const,
+        url: "https://api.prisma.test/v1/databases/database-1",
+        name: "main",
+        status: "ready" as const,
+        createdAt,
+        isDefault: false,
+        defaultConnectionId: "connection-1",
+        connections: [],
+        project: resourceRef("projects", "project-1", "app"),
+        region: { id: "us-east-1", name: "US East" },
+        source: { type: "empty" as const },
+        branchId: "branch-1",
+      };
+      const client = {
+        getDatabase: (id: string) =>
+          Effect.sync(() => {
+            calls.push(["getDatabase", id]);
+            return database;
+          }),
+        updateDatabase: () =>
+          Effect.die(
+            "every database belongs to a Branch; omitted branch props must not detach",
+          ),
+        rotateConnection: () =>
+          Effect.die(
+            "persisted credentials must prevent an unrelated rotation",
+          ),
+      } as unknown as PrismaManagementClient;
 
-    return Effect.gen(function* () {
-      const provider = yield* PrismaDatabase.Provider;
-      const result = yield* provider.reconcile(
-        reconcileInput(
-          "Database",
-          {
-            project: "project-1",
-            name: "main",
-            region: "us-east-1",
-          },
-          {
-            databaseId: "database-1",
-            databaseName: "main",
-            projectId: "project-1",
-            status: "ready" as const,
-            region: "us-east-1",
-            isDefault: false,
-            branchId: "branch-1",
-            defaultConnectionId: "connection-1",
-            createdAt,
-            directConnectionString: Redacted.make("postgres://persisted"),
-            pooledConnectionString: undefined,
-            accelerateConnectionString: undefined,
-            host: "db.prisma.test",
-            user: "user",
-            password: undefined,
-          },
-          {
-            project: "project-1",
-            name: "main",
-            region: "us-east-1",
-            branchId: "branch-1",
-          },
-        ),
-      );
-
-      expect(result.branchId).toBeNull();
-      expect(calls).toEqual([
-        ["getDatabase", "database-1"],
-        [
-          "updateDatabase",
-          {
-            id: "database-1",
-            input: {
+      return Effect.gen(function* () {
+        const provider = yield* PrismaDatabase.Provider;
+        const result = yield* provider.reconcile(
+          reconcileInput(
+            "Database",
+            {
+              project: "project-1",
               name: "main",
-              branchId: null,
-              branchGitName: undefined,
+              region: "us-east-1",
             },
-          },
-        ],
-      ]);
-    }).pipe(Effect.provide(providerLayer(client)));
-  });
+            {
+              databaseId: "database-1",
+              databaseName: "main",
+              projectId: "project-1",
+              status: "ready" as const,
+              region: "us-east-1",
+              isDefault: false,
+              branchId: "branch-1",
+              defaultConnectionId: "connection-1",
+              createdAt,
+              directConnectionString: Redacted.make("postgres://persisted"),
+              pooledConnectionString: undefined,
+              accelerateConnectionString: undefined,
+              host: "db.prisma.test",
+              user: "user",
+              password: undefined,
+            },
+            {
+              project: "project-1",
+              name: "main",
+              region: "us-east-1",
+              branchId: "branch-1",
+            },
+          ),
+        );
+
+        expect(result.branchId).toBe("branch-1");
+        expect(calls).toEqual([["getDatabase", "database-1"]]);
+      }).pipe(Effect.provide(providerLayer(client)));
+    },
+  );
 
   it.effect(
     "forces Project and Database reconcile when adoption rotation is enabled",

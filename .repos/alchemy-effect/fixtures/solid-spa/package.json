@@ -15,7 +15,7 @@
   },
   "dependencies": {
     "@solidjs/router": "^0.15.1",
-    "solid-js": "^1.9.5"
+    "solid-js": "catalog:frontend"
   },
   "devDependencies": {
     "@alchemy.run/cloudflare-test-tools": "workspace:*",
@@ -25,6 +25,6 @@
     "solid-devtools": "catalog:frontend",
     "tailwindcss": "catalog:frontend",
     "vite": "^7.1.4",
-    "vite-plugin-solid": "^2.11.8"
+    "vite-plugin-solid": "catalog:frontend"
   }
 }

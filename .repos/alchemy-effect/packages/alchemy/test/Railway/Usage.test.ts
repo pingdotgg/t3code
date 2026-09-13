@@ -76,7 +76,7 @@ test.provider(
       expect(customerId.length).toBeGreaterThan(0);
 
       const probe = yield* Effect.result(
-        railway.usageLimitSet({
+        railway.setUsageLimit({
           input: {
             customerId,
             softLimitDollars: SOFT_V1,
@@ -94,7 +94,7 @@ test.provider(
       }
 
       yield* railway
-        .usageLimitRemove({ input: { customerId } })
+        .removeUsageLimit({ input: { customerId } })
         .pipe(
           Effect.catchTag(["RailwayNotFound", "NotFound"], () => Effect.void),
         );

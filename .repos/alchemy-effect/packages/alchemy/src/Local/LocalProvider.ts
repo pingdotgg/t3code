@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Redacted from "effect/Redacted";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
-import type { ScopedPlanStatusSession } from "../Cli/Cli.ts";
+import type { ScopedPlanStatusSession } from "../Report.ts";
 import { isResolved, stripEffects, type Diff } from "../Diff.ts";
 import type { Platform } from "../Platform.ts";
 import type { ProviderService } from "../Provider.ts";
@@ -456,7 +456,7 @@ export const make = <
               if (existing) {
                 if (existing.configHash === configHash) {
                   yield* Effect.log(
-                    `[${id}] No changes, using existing instance`,
+                    `[${fqn}] No changes, using existing instance`,
                   );
                   // Adopt the newest instanceId so a later replacement's
                   // old-generation delete cannot tear this instance down.
@@ -464,7 +464,7 @@ export const make = <
                   return yield* Fiber.join(existing.fiber);
                 }
                 yield* Effect.log(
-                  `[${id}] Changes detected, restarting instance`,
+                  `[${fqn}] Changes detected, restarting instance`,
                 );
                 yield* teardown(existing);
                 instances.delete(fqn);

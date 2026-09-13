@@ -88,6 +88,8 @@ const MANAGED_SDK_PACKAGE = "workers-runtime-sdk";
 
 export interface PythonWorkerBundleOptions {
   id: string;
+  /** Namespace-qualified id — the display prefix for log lines. */
+  fqn: string;
   /** Path (or `file://` URL) to the Worker's `.py` entry module. */
   main: string;
   compatibility: {
@@ -138,15 +140,18 @@ const runUv = Effect.fn(function* (
  * - If the Worker's directory already contains `python_modules/` (the
  *   user vendored it themselves, e.g. with `pywrangler sync` or any other
  *   tool that produces Wrangler's vendored layout), it is used as-is.
- * - Otherwise, if `pyproject.toml` exists, its `[project.dependencies]`
- *   are vendored with uv into a staging directory under `.alchemy/`:
+ * - Otherwise, the managed Workers runtime SDK and any dependencies from an
+ *   optional `pyproject.toml` are vendored with uv into a staging directory
+ *   under `.alchemy/`:
  *   resolve against the Pyodide wheel index for the runtime's Python
  *   version (`uv pip compile` → `pylock.toml`), install the prebuilt
  *   wheels into an emscripten cross-venv (`uv venv` + `uv pip install
  *   --no-build`), and copy the venv's `site-packages` out. Re-vendoring
  *   is skipped while the `pyproject.toml` hash is unchanged.
- * - With neither, the Worker has no vendored dependencies (the `workers`
- *   SDK module built into the runtime is still importable).
+ *
+ * workerd no longer bundles the `workers` Python module at current
+ * compatibility dates, so even a dependency-free Worker needs the managed
+ * SDK under `python_modules/`.
  */
 const resolvePythonModulesDir = Effect.fn(function* (
   options: PythonWorkerBundleOptions & { root: string },
@@ -159,15 +164,15 @@ const resolvePythonModulesDir = Effect.fn(function* (
   }
 
   const pyproject = path.join(options.root, "pyproject.toml");
-  if (!(yield* orDefault(fs.exists(pyproject), false))) {
-    return undefined;
-  }
+  const hasPyproject = yield* orDefault(fs.exists(pyproject), false);
 
   const pythonVersion = pythonVersionForCompatibility(options.compatibility);
   const target = PYODIDE_TARGETS[pythonVersion];
-  const pyprojectContent = yield* fs
-    .readFileString(pyproject)
-    .pipe(Effect.mapError(uvError(`Failed to read "${pyproject}"`)));
+  const pyprojectContent = hasPyproject
+    ? yield* fs
+        .readFileString(pyproject)
+        .pipe(Effect.mapError(uvError(`Failed to read "${pyproject}"`)))
+    : "";
   const inputHash = yield* sha256(
     `${pythonVersion}\0${target.index}\0${pyprojectContent}`,
   );
@@ -182,7 +187,7 @@ const resolvePythonModulesDir = Effect.fn(function* (
   }
 
   yield* Effect.logDebug(
-    `[${options.id}] Vendoring Python dependencies for ${pythonVersion} (emscripten-wasm32) with uv`,
+    `[${options.fqn}] Vendoring Python dependencies for ${pythonVersion} (emscripten-wasm32) with uv`,
   );
   yield* fs
     .makeDirectory(staging, { recursive: true })
@@ -204,7 +209,7 @@ const resolvePythonModulesDir = Effect.fn(function* (
     [
       "pip",
       "compile",
-      pyproject,
+      ...(hasPyproject ? [pyproject] : []),
       extraRequirements,
       "--python",
       target.interpreter,
@@ -410,6 +415,7 @@ export const watchPythonWorkerBundle = (options: PythonWorkerBundleOptions) =>
 export const makePythonSource = (main: string): SourceProvider => {
   const pythonOptions = (ctx: SourceContext) => ({
     id: ctx.id,
+    fqn: ctx.fqn,
     main,
     compatibility: ctx.compatibility,
   });

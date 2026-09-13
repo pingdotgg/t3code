@@ -150,5 +150,5 @@ export const layer = (url: string) => Layer.effect(RpcProviderProxy, make(url));
 export const fromEnv = () =>
   Layer.effect(
     RpcProviderProxy,
-    Config.string(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap(make)),
+    Config.String(SPAWNER_URL_ENV_KEY).pipe(Effect.flatMap(make)),
   );

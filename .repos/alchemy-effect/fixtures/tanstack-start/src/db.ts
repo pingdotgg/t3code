@@ -13,7 +13,7 @@ const services = Layer.mergeAll(
 
 export const fetchSql = () =>
   Effect.gen(function* () {
-    const url = yield* Config.redacted("TEST_POSTGRES_URL");
+    const url = yield* Config.Redacted("TEST_POSTGRES_URL");
     const client = yield* PgClient.make({ url });
     const result = yield* client`SELECT 1`;
     return result;

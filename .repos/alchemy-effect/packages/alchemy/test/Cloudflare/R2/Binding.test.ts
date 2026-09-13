@@ -238,7 +238,7 @@ const exercise = (
  * - round-trip a key through the ReadWrite worker by itself.
  *
  * The stack lives in `fixtures/stack.ts` so it can also be inspected
- * directly, e.g. `alchemy tail --stage test ./test/Cloudflare/R2/fixtures/stack.ts`.
+ * directly, e.g. `alchemy logs --tail --stage test --config ./test/Cloudflare/R2/fixtures/stack.ts`.
  */
 const stack = beforeAll(deploy(Stack), { timeout: HOOK_TIMEOUT });
 afterAll.skipIf(!!process.env.NO_DESTROY)(destroy(Stack), {

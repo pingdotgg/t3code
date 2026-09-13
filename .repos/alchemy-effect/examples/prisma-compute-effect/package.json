@@ -13,7 +13,7 @@
     "build": "tsc -b",
     "deploy": "alchemy deploy",
     "destroy": "alchemy destroy",
-    "tail": "alchemy tail"
+    "tail": "alchemy logs --tail"
   },
   "dependencies": {
     "@effect/platform-bun": "catalog:effect",

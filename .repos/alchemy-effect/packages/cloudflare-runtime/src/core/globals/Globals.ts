@@ -12,6 +12,7 @@ const EntryWorker = {
     loadInternalWorker("#cloudflare-runtime-core-worker/globals/entry.worker"),
 };
 import {
+  DEFAULT_COMPATIBILITY_DATE,
   SERVICE_USER_WORKER,
   SOCKET_USER_ENTRY,
 } from "../internal/constants.ts";
@@ -20,6 +21,7 @@ import * as Plugin from "../Plugin.ts";
 import { PluginContext } from "../PluginContext.ts";
 import { ConfigError } from "../RuntimeError.shared.ts";
 import type * as WorkerdConfig from "../workerd/Config.ts";
+import { BINDING_PROXY_SHARED_SECRET } from "../proxy/ProxyHeaders.shared.ts";
 import * as Cf from "./Cf.ts";
 import {
   BINDING_EMAIL_DIRECTORY,
@@ -155,7 +157,7 @@ export const GlobalsLive = Layer.effect(
             {
               name: "plugin:entry",
               worker: {
-                compatibilityDate: "2026-03-10",
+                compatibilityDate: DEFAULT_COMPATIBILITY_DATE,
                 compatibilityFlags: [
                   "experimental",
                   "enable_request_signal",
@@ -164,6 +166,10 @@ export const GlobalsLive = Layer.effect(
                 modules,
                 bindings: [
                   { name: "CF_BLOB", json: JSON.stringify(blob) },
+                  {
+                    name: BINDING_PROXY_SHARED_SECRET,
+                    text: worker.proxySharedSecret ?? "",
+                  },
                   // Non-fetch dispatch (queue/scheduled/email JSRPC) goes
                   // straight to the raw user worker: the `USER_WORKER`
                   // upstream binding points at the next middleware in the

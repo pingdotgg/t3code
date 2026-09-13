@@ -1,4 +1,4 @@
-import { validateAccountId } from "@/Cloudflare/Auth/AuthProvider.ts";
+import { validateAccountId } from "@/Cloudflare/Auth/AuthConfig.ts";
 import { describe, expect, it } from "alchemy-test";
 import * as Effect from "effect/Effect";
 
@@ -34,7 +34,7 @@ describe("validateAccountId", () => {
       );
       expect(error._tag).toBe("AuthError");
       expect(error.message).toContain("missing");
-      expect(error.message).toContain("CLOUDFLARE_ACCOUNT_ID");
+      expect(error.message).toContain("--reconfigure Cloudflare");
     }),
   );
 

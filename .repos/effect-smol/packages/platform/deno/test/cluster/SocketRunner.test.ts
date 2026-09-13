@@ -56,7 +56,7 @@ const makeRunnerLayer = (port: number, entities: Layer.Layer<never, never, Shard
       entityMessagePollInterval: 5000,
       sendRetryInterval: 100
     })),
-    Layer.provide(RpcSerialization.layerMsgPack)
+    Layer.provide(RpcSerialization.layerSchemaBinary())
   )
 
 const makeClientLayer = (port: number) =>
@@ -69,7 +69,7 @@ const makeClientLayer = (port: number) =>
       entityMessagePollInterval: 5000,
       sendRetryInterval: 100
     })),
-    Layer.provide(RpcSerialization.layerMsgPack)
+    Layer.provide(RpcSerialization.layerSchemaBinary())
   )
 
 const IsolationEntity = Entity
@@ -84,18 +84,11 @@ const IsolationEntity = Entity
   ])
   .annotateRpcs(ClusterSchema.Persisted, false)
 
-const IsolationEntityLayer = IsolationEntity.toLayer(
-  Effect.succeed({
-    BadReply: () => Effect.succeed(1.5),
-    Slow: () => Effect.as(Effect.sleep("2 seconds"), "done")
-  })
-)
-
 const ISOLATION_PORT = 50_126
 
 // BigDecimal.normalize creates a circular `normalized` self-reference.
 // When a persisted message is sent with discard: true, the notify path in Runners.makeRpc
-// passes the raw envelope (with circular BigDecimal payload) to the runner via msgpack,
+// passes the raw envelope (with circular BigDecimal payload) to the runner,
 // causing RangeError: Maximum call stack size exceeded.
 //
 // Volatile discard should complete after the request is sent, without waiting for the
@@ -157,6 +150,17 @@ describe("SocketRunner", () => {
     "a reply serialization failure fails only its own request",
     () =>
       Effect.gen(function*() {
+        const slowStarted = yield* Deferred.make<void>()
+        const IsolationEntityLayer = IsolationEntity.toLayer(
+          Effect.succeed({
+            BadReply: () => Effect.succeed(1.5),
+            Slow: () =>
+              Deferred.succeed(slowStarted, void 0).pipe(
+                Effect.andThen(Effect.as(Effect.sleep("2 seconds"), "done"))
+              )
+          })
+        )
+
         yield* Layer.launch(makeRunnerLayer(ISOLATION_PORT, IsolationEntityLayer)).pipe(Effect.forkScoped)
         yield* Effect.sleep("2 seconds")
 
@@ -165,7 +169,7 @@ describe("SocketRunner", () => {
           yield* Effect.sleep("3 seconds")
 
           const slowFiber = yield* makeClient("slow-entity").Slow().pipe(Effect.forkChild)
-          yield* Effect.sleep("300 millis")
+          yield* Deferred.await(slowStarted)
 
           const badExit = yield* makeClient("bad-entity").BadReply({ id: 1 }).pipe(Effect.exit)
           assert.isTrue(Exit.isFailure(badExit), "the unencodable reply must fail the request")
