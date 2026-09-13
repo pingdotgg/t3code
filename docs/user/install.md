@@ -5,8 +5,10 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
-Command-line use, SSH hosts, and WSL backends need Node.js 22.16+ (22.x), 23.11+
-(23.x), or 24.10 and later. The native desktop app includes its server runtime.
+`npx t3` needs Node.js only to run npm itself; the CLI it installs is a
+self-contained executable. SSH hosts and WSL backends need Node.js 22.16+
+(22.x), 23.11+ (23.x), or 24.10 and later. The native desktop app includes its
+server runtime.
 
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.

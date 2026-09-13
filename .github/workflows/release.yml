@@ -150,10 +150,11 @@ jobs:
             # Manual-only test train: exercises the whole release flow for a
             # commit end users must never receive. Never scheduled.
             # Same versioning as nightly under its own prerelease identifier.
-            # A preview release is reachable only by downloading it by hand:
-            # it is never published to npm, its desktop builds carry no update
-            # feed, and no updater manifest is attached to the release, so
-            # neither stable nor nightly installs can ever be offered one.
+            # A preview release is reachable only by asking for it: npm gets it
+            # under the `preview` dist-tag, which nothing resolves by default,
+            # its desktop builds carry no update feed, and no updater manifest
+            # is attached to the release, so neither stable nor nightly
+            # installs can ever be offered one.
             nightly_date="$(date -u -d "$NIGHTLY_DATE" +%Y%m%d)"
 
             node scripts/resolve-nightly-release.ts \
@@ -164,7 +165,7 @@ jobs:
               --github-output
 
             echo "release_channel=preview" >> "$GITHUB_OUTPUT"
-            echo "cli_dist_tag=" >> "$GITHUB_OUTPUT"
+            echo "cli_dist_tag=preview" >> "$GITHUB_OUTPUT"
             echo "is_prerelease=true" >> "$GITHUB_OUTPUT"
             echo "make_latest=false" >> "$GITHUB_OUTPUT"
           else
@@ -591,22 +592,28 @@ jobs:
       resource_key: win32-arm64
       cli_archive: true
 
-  # Preview releases never reach npm: the archive on the GitHub Release is the
-  # only way to obtain one, so no dist-tag can ever resolve to a preview build.
+  # npm gets the same bytes as the GitHub Release: the launcher plus one
+  # package per CLI archive. Preview publishes too, under the `preview`
+  # dist-tag, which nothing resolves unless asked for by name.
   publish_cli:
     name: Publish CLI to npm
-    needs: [preflight, relay_public_config, quality, build_bundle]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.build_bundle.result == 'success' && needs.preflight.outputs.release_channel != 'preview' }}
+    needs:
+      [
+        preflight,
+        relay_public_config,
+        quality,
+        desktop_mac_arm64,
+        desktop_linux_x64,
+        desktop_linux_arm64,
+        desktop_win_x64,
+        desktop_win_arm64,
+      ]
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' && needs.quality.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' }}
     runs-on: ubuntu-24.04 # blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: read
       id-token: write
-    env:
-      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
-      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
-      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
-      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -627,38 +634,28 @@ jobs:
               - --filter=t3...
               - --filter=@t3tools/scripts...
 
-      - name: Align package versions to release version
-        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
-
-      # The artifact root is `apps/` (upload-artifact keeps the least common
-      # ancestor of its paths), so extracting into `apps` restores
-      # apps/server/dist and apps/desktop/dist-electron at their build paths.
-      - name: Download JS bundle
+      - name: Download all CLI archives
         uses: actions/download-artifact@v8
         with:
-          name: js-bundle
-          path: apps
+          pattern: cli-*
+          merge-multiple: true
+          path: release-cli
 
-      - name: Download resource monitors
-        uses: actions/download-artifact@v8
-        with:
-          pattern: resource-monitor-*
-          path: ${{ runner.temp }}/resource-monitors
+      - name: Build npm packages from CLI archives
+        run: node scripts/build-npm-platform-packages.ts --archives-dir release-cli --version "${{ needs.preflight.outputs.version }}" --output-dir npm-packages
 
-      - name: Bundle resource monitors into CLI package
-        shell: bash
+      # A dry run of every package first: an auth or scope error here (the
+      # @t3tools org missing, a package without a trusted publisher) fails
+      # before anything is live, instead of after some platforms already are.
+      - name: Check npm publish access (dry run)
         run: |
-          set -euo pipefail
-          for artifact_dir in "$RUNNER_TEMP"/resource-monitors/resource-monitor-*; do
-            resource_key="${artifact_dir##*/resource-monitor-}"
-            target_dir="apps/server/dist/resource-monitor/${resource_key}"
-            mkdir -p "$target_dir"
-            cp "$artifact_dir"/t3-resource-monitor* "$target_dir/"
-            chmod +x "$target_dir"/t3-resource-monitor 2>/dev/null || true
-          done
+          if ! node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --dry-run --verbose; then
+            echo "::error::npm publish --dry-run failed. Make sure the @t3tools npm org exists and that t3 and every @t3tools/t3-<platform> package has a trusted publisher registered for .github/workflows/release.yml (see docs/operations/release.md)." >&2
+            exit 1
+          fi
 
-      - name: Publish CLI package
-        run: node apps/server/scripts/cli.ts publish --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --app-version "${{ needs.preflight.outputs.version }}" --verbose
+      - name: Publish CLI packages
+        run: node apps/server/scripts/cli.ts publish --packages-dir npm-packages --tag "${{ needs.preflight.outputs.cli_dist_tag }}" --provenance --verbose
 
   release:
     name: Publish GitHub Release
@@ -673,7 +670,7 @@ jobs:
         desktop_win_arm64,
         publish_cli,
       ]
-    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && (needs.publish_cli.result == 'success' || (needs.preflight.outputs.release_channel == 'preview' && needs.publish_cli.result == 'skipped')) }}
+    if: ${{ !failure() && !cancelled() && needs.preflight.result == 'success' && needs.desktop_mac_arm64.result == 'success' && needs.desktop_mac_x64.result == 'success' && needs.desktop_linux_x64.result == 'success' && needs.desktop_linux_arm64.result == 'success' && needs.desktop_win_x64.result == 'success' && needs.desktop_win_arm64.result == 'success' && needs.publish_cli.result == 'success' }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 30
     permissions:
