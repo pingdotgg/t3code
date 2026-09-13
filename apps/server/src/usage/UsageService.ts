@@ -338,7 +338,10 @@ export const make = Effect.gen(function* () {
     size: number,
     mtimeMs: number,
     provider: UsageProviderKind,
-  ): Effect.Effect<readonly UsageRecord[] | null> =>
+  ): Effect.Effect<{
+    readonly records: readonly UsageRecord[];
+    readonly malformedRecords: number;
+  } | null> =>
     Effect.gen(function* () {
       const cached = fileCache.get(filePath);
       // Provider is part of the identity: if both providers were ever pointed
@@ -349,9 +352,13 @@ export const make = Effect.gen(function* () {
         cached.mtimeMs === mtimeMs &&
         cached.provider === provider
       ) {
-        return cached.tailRecords.length === 0
-          ? cached.records
-          : [...cached.records, ...cached.tailRecords];
+        return {
+          records:
+            cached.tailRecords.length === 0
+              ? cached.records
+              : [...cached.records, ...cached.tailRecords],
+          malformedRecords: cached.malformedRecords,
+        };
       }
 
       // Only a strictly grown file may resume. Same size with a new mtime, or
@@ -383,10 +390,14 @@ export const make = Effect.gen(function* () {
         provider,
         records,
         tailRecords,
+        malformedRecords: parsed.malformedRecords,
         position: parsed.position,
       });
       cacheDirty = true;
-      return tailRecords.length === 0 ? records : [...records, ...tailRecords];
+      return {
+        records: tailRecords.length === 0 ? records : [...records, ...tailRecords],
+        malformedRecords: parsed.malformedRecords,
+      };
     });
 
   /** One provider directory's walk and parse, before rates are involved. */
@@ -396,6 +407,7 @@ export const make = Effect.gen(function* () {
     readonly volumeId: string;
     readonly status: "ok" | "partial" | "missing" | "failed";
     readonly failedEntries: number;
+    readonly malformedRecords: number;
     readonly files: readonly {
       readonly path: string;
       readonly records: readonly UsageRecord[] | null;
@@ -417,10 +429,12 @@ export const make = Effect.gen(function* () {
       );
       const parsedFiles: { path: string; records: readonly UsageRecord[] | null }[] = [];
       let failedEntries = listing.failedEntries;
+      let malformedRecords = 0;
       for (const file of listing.files) {
-        const records = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
-        if (records === null) failedEntries += 1;
-        parsedFiles.push({ path: file.path, records });
+        const parsed = yield* readFileRecords(file.path, file.size, file.mtimeMs, provider);
+        if (parsed === null) failedEntries += 1;
+        malformedRecords += parsed?.malformedRecords ?? 0;
+        parsedFiles.push({ path: file.path, records: parsed?.records ?? null });
       }
       scanned.push({
         provider,
@@ -428,6 +442,7 @@ export const make = Effect.gen(function* () {
         volumeId,
         files: parsedFiles,
         failedEntries,
+        malformedRecords,
         status: listing.status === "ok" && failedEntries > 0 ? "partial" : listing.status,
       });
     }
@@ -505,7 +520,15 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files, status, failedEntries } of scannedDirs) {
+    for (const {
+      provider,
+      dir,
+      volumeId,
+      files,
+      status,
+      failedEntries,
+      malformedRecords,
+    } of scannedDirs) {
       if (status === "missing" || status === "failed") {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -548,14 +571,14 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status,
+        status: malformedRecords > 0 ? "partial" : status,
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords,
         distinctSessions: sessionIds.size,
         message:
-          status === "partial"
-            ? `Usage is incomplete: ${failedEntries} transcript files or directory entries could not be read.`
+          failedEntries > 0 || malformedRecords > 0
+            ? `Usage is incomplete. Unreadable transcript files or directory entries: ${failedEntries}. Inconsistent usage records: ${malformedRecords}.`
             : null,
       });
     }

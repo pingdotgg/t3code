@@ -20,13 +20,14 @@ import * as NodePath from "node:path";
 import type { UsageProviderKind } from "@t3tools/contracts";
 
 import { GUARD_LENGTH, type TranscriptParsePosition } from "./usageTranscriptReader.ts";
-import type { CodexScanState, UsageRecord } from "./usageTranscripts.ts";
+import { readCodexTokenUsage, type CodexScanState, type UsageRecord } from "./usageTranscripts.ts";
 
 // v2: Codex fork-copy suppression changed what a file parses to, so v1
 // entries would keep serving double-counted records forever.
 // v3: entries carry the parse position and reducer state so a grown file
 // re-parses only its appended bytes instead of starting over.
-const USAGE_SCAN_CACHE_VERSION = 3 as const;
+// v4: reconcile Codex cumulative counters and retain malformed-record counts.
+const USAGE_SCAN_CACHE_VERSION = 4 as const;
 
 export interface CachedFile {
   readonly size: number;
@@ -40,6 +41,7 @@ export interface CachedFile {
    * re-reads that segment and would otherwise double count it.
    */
   readonly tailRecords: readonly UsageRecord[];
+  readonly malformedRecords: number;
   readonly position: TranscriptParsePosition;
 }
 
@@ -70,6 +72,7 @@ interface SerializedFile {
   readonly r: readonly SerializedRecord[];
   /** Tail records; see `CachedFile.tailRecords`. */
   readonly t: readonly SerializedRecord[];
+  readonly mc: number;
   /** Parse position: resume offset, guard length, guard hash. */
   readonly o: number;
   readonly gl: number;
@@ -122,6 +125,7 @@ export function encodeScanCache(cache: ScanCache): SerializedCache {
       p: entry.provider,
       r: entry.records.map(serializeRecord),
       t: entry.tailRecords.map(serializeRecord),
+      mc: entry.malformedRecords,
       o: entry.position.resumeOffset,
       gl: entry.position.guardLength,
       gh: entry.position.guardHash,
@@ -239,6 +243,7 @@ export function decodeScanCache(document: unknown): ScanCache {
     ) {
       continue;
     }
+    if (typeof entry.mc !== "number" || !Number.isSafeInteger(entry.mc) || entry.mc < 0) continue;
     const codexState = decodeCodexState(entry.cs);
     if (codexState === undefined) continue;
 
@@ -253,6 +258,7 @@ export function decodeScanCache(document: unknown): ScanCache {
       provider,
       records,
       tailRecords,
+      malformedRecords: entry.mc,
       position: {
         resumeOffset: entry.o,
         guardLength: entry.gl,
@@ -281,11 +287,25 @@ function decodeCodexState(value: unknown): CodexScanState | null | undefined {
     typeof state.sawSessionMeta !== "boolean" ||
     typeof state.suppressingForkCopies !== "boolean" ||
     typeof state.forkCopyAnchorMs !== "number" ||
-    !Number.isFinite(state.forkCopyAnchorMs)
+    !Number.isFinite(state.forkCopyAnchorMs) ||
+    typeof state.malformedRecords !== "number" ||
+    !Number.isSafeInteger(state.malformedRecords) ||
+    state.malformedRecords < 0
   ) {
     return undefined;
   }
+  const cumulative = readCodexTokenUsage(state.lastCumulativeUsage);
+  if (
+    state.lastCumulativeUsage !== null &&
+    (cumulative === null ||
+      Object.entries(cumulative).some(
+        ([key, count]) => (state.lastCumulativeUsage as Record<string, unknown>)[key] !== count,
+      ))
+  )
+    return undefined;
   return {
+    lastCumulativeUsage: cumulative,
+    malformedRecords: state.malformedRecords,
     model: state.model,
     sessionId: state.sessionId,
     lastUsageSignature: state.lastUsageSignature ?? null,

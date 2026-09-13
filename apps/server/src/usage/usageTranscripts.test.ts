@@ -137,6 +137,183 @@ describe("parseCodexLine", () => {
     expect(parseCodexLine(tokenCount(100, 0, 10, 0), state)).not.toBeNull();
   });
 
+  const counters = (input: number, output: number) => ({
+    input_tokens: input,
+    cached_input_tokens: 0,
+    cache_write_input_tokens: 0,
+    output_tokens: output,
+    reasoning_output_tokens: 0,
+    total_tokens: input + output,
+  });
+  const counted = (last: unknown, total: unknown, extra = {}) =>
+    JSON.stringify({
+      type: "event_msg",
+      timestamp: "2026-08-01T05:17:49.919Z",
+      payload: {
+        type: "token_count",
+        info: { last_token_usage: last, total_token_usage: total, ...extra },
+      },
+    });
+  const ready = () => {
+    const state = initialCodexScanState();
+    parseCodexLine(turnContext, state);
+    return state;
+  };
+
+  it("ignores changed request counters when cumulative usage stays unchanged", () => {
+    const state = ready();
+    expect(parseCodexLine(counted(counters(100, 20), counters(100, 20)), state)).not.toBeNull();
+    expect(parseCodexLine(counted(counters(20, 5), counters(100, 20)), state)).toBeNull();
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it("counts identical requests when cumulative counters advance, including across models", () => {
+    const state = ready();
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    parseCodexLine(JSON.stringify({ type: "turn_context", payload: { model: "gpt-5.4" } }), state);
+    const next = parseCodexLine(counted(counters(100, 20), counters(200, 40)), state);
+    expect(next?.totals.outputTokens).toBe(20);
+    expect(next?.model).toBe("gpt-5.4");
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it("retains cumulative progress across a duplicate legacy event", () => {
+    const state = ready();
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    expect(parseCodexLine(tokenCount(100, 0, 20, 0), state)).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(100, 20), counters(200, 40)), state)?.totals.outputTokens,
+    ).toBe(20);
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it.each([false, true])(
+    "reconciles counted legacy requests without billing them again, initial cumulative=%s",
+    (initialCumulative) => {
+      const state = ready();
+      parseCodexLine(
+        initialCumulative
+          ? counted(counters(100, 20), counters(100, 20))
+          : tokenCount(100, 0, 20, 0),
+        state,
+      );
+      expect(parseCodexLine(tokenCount(20, 0, 5, 0), state)?.totals.outputTokens).toBe(5);
+      // The same request is later re-emitted with cumulative counters.
+      expect(parseCodexLine(counted(counters(20, 5), counters(120, 25)), state)).toBeNull();
+      expect(
+        parseCodexLine(counted(counters(10, 2), counters(130, 27)), state)?.totals.outputTokens,
+      ).toBe(2);
+      expect(state.malformedRecords).toBe(0);
+    },
+  );
+
+  it.each([counters(130, 28), counters(50, 10)])(
+    "reports inconsistent deltas and recovers from the next valid counter pair %#",
+    (total) => {
+      const state = ready();
+      parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+      expect(parseCodexLine(counted(counters(20, 5), total), state)).toBeNull();
+      expect(state.malformedRecords).toBe(1);
+      const next = parseCodexLine(
+        counted(counters(10, 2), counters(total.input_tokens + 10, total.output_tokens + 2)),
+        state,
+      );
+      expect(next?.totals.outputTokens).toBe(2);
+      expect(state.malformedRecords).toBe(1);
+    },
+  );
+
+  it.each([
+    { input_tokens: -1 },
+    { input_tokens: 1.5 },
+    { cached_input_tokens: null },
+    { input_tokens: "100" },
+    { cached_input_tokens: 101 },
+    { reasoning_output_tokens: 21 },
+    { total_tokens: 121 },
+    { output_tokens: Number.MAX_SAFE_INTEGER + 1 },
+  ])("rejects malformed request counters without clamping them %#", (overrides) => {
+    const state = ready();
+    expect(
+      parseCodexLine(counted({ ...counters(100, 20), ...overrides }, counters(100, 20)), state),
+    ).toBeNull();
+    expect(state.malformedRecords).toBe(1);
+  });
+
+  it("reports a malformed cumulative counter rather than falling back to request usage", () => {
+    const state = ready();
+    expect(
+      parseCodexLine(
+        counted(counters(100, 20), { ...counters(100, 20), input_tokens: "100" }),
+        state,
+      ),
+    ).toBeNull();
+    expect(state.malformedRecords).toBe(1);
+    expect(parseCodexLine(counted(counters(100, 20), counters(100, 20)), state)).not.toBeNull();
+  });
+
+  it("keeps reasoning inside output while reconciling every component", () => {
+    const state = ready();
+    const usage = {
+      ...counters(100, 20),
+      cached_input_tokens: 30,
+      cache_write_input_tokens: 10,
+      reasoning_output_tokens: 5,
+    };
+    expect(parseCodexLine(counted(usage, usage), state)?.totals).toEqual({
+      uncachedInputTokens: 60,
+      cachedInputTokens: 30,
+      cacheCreationTokens: 10,
+      outputTokens: 20,
+      reasoningTokens: 5,
+    });
+    const total = {
+      ...counters(200, 40),
+      cached_input_tokens: 60,
+      cache_write_input_tokens: 20,
+      reasoning_output_tokens: 9,
+    };
+    expect(parseCodexLine(counted(usage, total), state)).toBeNull();
+    expect(state.malformedRecords).toBe(1);
+  });
+
+  it("ignores context-window estimates and reconciles the following real request", () => {
+    const state = ready();
+    parseCodexLine(counted(counters(100, 20), counters(100, 20)), state);
+    const estimate = { ...counters(0, 0), total_tokens: 1000 };
+    expect(
+      parseCodexLine(
+        counted({ ...estimate, total_tokens: 880 }, estimate, { model_context_window: 1000 }),
+        state,
+      ),
+    ).toBeNull();
+    expect(
+      parseCodexLine(counted(counters(10, 2), { ...counters(10, 2), total_tokens: 1012 }), state)
+        ?.totals.outputTokens,
+    ).toBe(2);
+    expect(state.malformedRecords).toBe(0);
+  });
+
+  it("uses suppressed fork history as the baseline for real child usage", () => {
+    const state = initialCodexScanState();
+    parseCodexLine(
+      JSON.stringify({
+        type: "session_meta",
+        timestamp: "2026-08-01T05:17:49.900Z",
+        payload: { id: "child", forked_from_id: "parent" },
+      }),
+      state,
+    );
+    parseCodexLine(turnContext, state);
+    expect(parseCodexLine(counted(counters(100, 20), counters(100, 20)), state)).toBeNull();
+    const child = JSON.parse(counted(counters(100, 20), counters(200, 40)));
+    child.timestamp = "2026-08-01T05:17:55.000Z";
+    const record = parseCodexLine(JSON.stringify(child), state);
+    expect(record?.sessionId).toBe("child");
+    expect(record?.totals.outputTokens).toBe(20);
+    expect(state.malformedRecords).toBe(0);
+  });
+
   // A forked/subagent rollout opens with the parent's history copied in and
   // every line re-stamped to the fork instant, then the ancestors' session
   // metas. Counting those again multiplied usage ~1.85x on real data (#5758).

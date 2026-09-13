@@ -8,7 +8,7 @@ import {
   type CachedFile,
   type ScanCache,
 } from "./usageScanCache.ts";
-import type { UsageRecord } from "./usageTranscripts.ts";
+import { initialCodexScanState, type UsageRecord } from "./usageTranscripts.ts";
 
 function record(overrides: Partial<UsageRecord> = {}): UsageRecord {
   return {
@@ -47,6 +47,7 @@ function cacheWith(entries: readonly [string, number, readonly UsageRecord[]][])
       mtimeMs,
       provider: "claude",
       records,
+      malformedRecords: 0,
       tailRecords: [],
       position: position(),
     });
@@ -67,6 +68,7 @@ describe("scan cache round trip", () => {
       records: [
         record({ provider: "grok", model: "grok-4.5-build", dedupeKey: "s:p:grok-4.5-build" }),
       ],
+      malformedRecords: 0,
       tailRecords: [record({ provider: "grok", model: "grok-4.5-build", dedupeKey: null })],
       position: position({ resumeOffset: 30, guardLength: 30, guardHash: 123 }),
     });
@@ -75,11 +77,21 @@ describe("scan cache round trip", () => {
       mtimeMs: 400,
       provider: "codex",
       records: [record({ provider: "codex", model: "gpt-5.2-codex", dedupeKey: null })],
+      malformedRecords: 2,
       tailRecords: [],
       position: position({
         codexState: {
           model: "gpt-5.2-codex",
           sessionId: "session-c",
+          malformedRecords: 2,
+          lastCumulativeUsage: {
+            input_tokens: 10,
+            cached_input_tokens: 0,
+            cache_write_input_tokens: 0,
+            output_tokens: 5,
+            reasoning_output_tokens: 0,
+            total_tokens: 15,
+          },
           lastUsageSignature: '{"input_tokens":1}',
           sawSessionMeta: true,
           suppressingForkCopies: false,
@@ -111,6 +123,33 @@ describe("scan cache round trip", () => {
     expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).has("/a.jsonl")).toBe(false);
   });
 
+  it.each([
+    { malformedRecords: -1 },
+    { lastCumulativeUsage: { input_tokens: 10, output_tokens: 5 } },
+    {
+      lastCumulativeUsage: {
+        input_tokens: 10,
+        output_tokens: 5,
+        cached_input_tokens: 0,
+        cache_write_input_tokens: 0,
+        reasoning_output_tokens: 6,
+        total_tokens: 15,
+      },
+    },
+  ])("discards corrupt counter state so the transcript is read again %#", (overrides) => {
+    const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
+    const poisoned = {
+      ...encoded,
+      files: {
+        "/a.jsonl": {
+          ...encoded.files["/a.jsonl"]!,
+          cs: { ...initialCodexScanState(), ...overrides },
+        },
+      },
+    };
+    expect(decodeScanCache(JSON.parse(JSON.stringify(poisoned))).size).toBe(0);
+  });
+
   it("drops an entry whose guard length is outside the supported range", () => {
     // The guard length sizes a Buffer in the reader; a bogus value would make
     // every parse of that file fail and silently drop its usage.
@@ -125,7 +164,7 @@ describe("scan cache round trip", () => {
 
   it("rejects a document from the previous cache version", () => {
     const encoded = encodeScanCache(cacheWith([["/a.jsonl", 100, [record()]]]));
-    const previous = { ...encoded, version: 2 };
+    const previous = { ...encoded, version: 3 };
 
     expect(decodeScanCache(JSON.parse(JSON.stringify(previous))).size).toBe(0);
   });
