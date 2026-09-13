@@ -1,5 +1,3 @@
-import { connectionStatusText } from "@t3tools/client-runtime/connection";
-
 import {
   useClientSettings,
   useClientSettingsHydrated,
@@ -51,51 +49,54 @@ export function LoadBalancingSettings({
           />
         }
       />
-      {environments.map((environment) => {
-        const weight = settings.loadBalancingWeights[environment.environmentId] ?? 50;
-        // Keep saved slider weights until the user chooses a different preference.
-        const preference = weight === 0 ? 0 : weight < 50 ? 25 : weight === 50 ? 50 : 100;
-
-        return (
-          <SettingsRow
-            key={environment.environmentId}
-            title={environment.label}
-            description={connectionStatusText(environment.connection)}
-            control={
-              <Select
-                items={preferences}
-                value={preference}
-                disabled={!settingsHydrated || !settings.loadBalancingEnabled}
-                onValueChange={(value) => {
-                  if (value !== null) {
-                    updateSettings({
-                      loadBalancingWeights: {
-                        ...settings.loadBalancingWeights,
-                        [environment.environmentId]: value,
-                      },
-                    });
-                  }
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label={`${environment.label} load preference`}
-                >
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {preferences.map(({ value, label }) => (
-                    <SelectItem key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
-        );
-      })}
     </SettingsSection>
+  );
+}
+
+export function LoadBalancingPreference({ environment }: { environment: EnvironmentPresentation }) {
+  const settings = useClientSettings();
+  const settingsHydrated = useClientSettingsHydrated();
+  const updateSettings = useUpdateClientSettings();
+  const weight = settings.loadBalancingWeights[environment.environmentId] ?? 50;
+  // Keep saved slider weights until the user chooses a different preference.
+  const preference = weight === 0 ? 0 : weight < 50 ? 25 : weight === 50 ? 50 : 100;
+
+  return (
+    <SettingsRow
+      title="Load preference"
+      description="How often this machine receives new threads when load balancing is on."
+      control={
+        <Select
+          items={preferences}
+          value={preference}
+          disabled={!settingsHydrated || !settings.loadBalancingEnabled}
+          onValueChange={(value) => {
+            if (value !== null) {
+              updateSettings({
+                loadBalancingWeights: {
+                  ...settings.loadBalancingWeights,
+                  [environment.environmentId]: value,
+                },
+              });
+            }
+          }}
+        >
+          <SelectTrigger
+            size="sm"
+            className="w-full sm:w-40"
+            aria-label={`${environment.label} load preference`}
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            {preferences.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      }
+    />
   );
 }

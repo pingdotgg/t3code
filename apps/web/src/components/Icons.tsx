@@ -2,6 +2,34 @@ import React, { type SVGProps, useId } from "react";
 import { cn } from "~/lib/utils";
 export type Icon = React.FC<SVGProps<SVGSVGElement>>;
 
+export const FinderIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <rect x="2" y="2" width="20" height="20" rx="4" fill="#36A9F5" />
+    <path
+      d="M13 2h5a4 4 0 0 1 4 4v12a4 4 0 0 1-4 4h-6c-1-4-1-7 0-10H9c0-4 2-8 4-10Z"
+      fill="#D9F1FF"
+    />
+    <path
+      d="M7 7v2m10-2v2M6 15c3 3 9 3 12 0"
+      stroke="#163A59"
+      strokeWidth="1.5"
+      strokeLinecap="round"
+    />
+  </svg>
+);
+
+export const FileExplorerIcon: Icon = (props) => (
+  <svg viewBox="0 0 24 24" fill="none" {...props}>
+    <path
+      d="M2 5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2v11a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z"
+      fill="#D99A16"
+    />
+    <path d="M2 9h20v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2Z" fill="#FFCE45" />
+    <path d="M8 14h8v7H8Z" fill="#58B8E8" />
+    <path d="M10 16h4v2h-4Z" fill="#1879B9" />
+  </svg>
+);
+
 // Apple brand mark from Simple Icons (CC0).
 export const AppleIcon: Icon = (props) => (
   <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" {...props}>
@@ -738,5 +766,18 @@ export const PiAgentIcon: Icon = ({ className, ...props }) => (
       d="M165.29 165.29H517.36V400H400V517.36H282.65V634.72H165.29ZM282.65 282.65V400H400V282.65Z"
     />
     <path fill="#fff" d="M517.36 400H634.72V634.72H517.36Z" />
+  </svg>
+);
+
+// Official two-color mark from https://forgejo.org/favicon.svg.
+export const ForgejoIcon: Icon = (props) => (
+  <svg viewBox="0 0 212 212" aria-hidden="true" {...props}>
+    <g transform="translate(6 6)" fill="none">
+      <path d="M58 168 v-98 a50 50 0 0 1 50-50 h20" stroke="#ff6600" strokeWidth="25" />
+      <path d="M58 168 v-30 a50 50 0 0 1 50-50 h20" stroke="#d40000" strokeWidth="25" />
+      <circle cx="142" cy="20" r="18" stroke="#ff6600" strokeWidth="15" />
+      <circle cx="142" cy="88" r="18" stroke="#d40000" strokeWidth="15" />
+      <circle cx="58" cy="180" r="18" stroke="#d40000" strokeWidth="15" />
+    </g>
   </svg>
 );

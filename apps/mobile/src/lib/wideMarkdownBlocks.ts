@@ -81,7 +81,11 @@ function hasOrderedListItem(text: string): boolean {
     const nestedMatch = INDENTED_ORDERED_LIST_ITEM.exec(line);
     const parentMatch =
       previousNonEmptyLine === null ? null : ANY_LIST_ITEM.exec(previousNonEmptyLine);
-    if (nestedMatch && parentMatch && parentMatch[1].length < nestedMatch[1].length) {
+    if (
+      nestedMatch?.[1] !== undefined &&
+      parentMatch?.[1] !== undefined &&
+      parentMatch[1].length < nestedMatch[1].length
+    ) {
       return true;
     }
 

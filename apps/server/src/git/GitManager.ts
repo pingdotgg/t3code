@@ -29,9 +29,16 @@ import {
   type VcsStatusRemoteResult,
   VcsStatusResult,
   ModelSelection,
+  type ProjectId,
   SourceControlProviderError,
   type SourceControlWritingStyleSettings,
+  type ThreadId,
 } from "@t3tools/contracts";
+import {
+  hasProjectSettingsOverrides,
+  resolveProjectSettings,
+} from "@t3tools/shared/projectSettings";
+import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import {
   detectSourceControlProviderFromGitRemoteUrl,
   mergeGitStatusParts,
@@ -270,7 +277,10 @@ function resolvePullRequestWorktreeLocalBranchName(
   return `t3code/pr-${pullRequest.number}/${suffix}`;
 }
 
-function parseRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string | null {
+export function parseRepositoryNameWithOwnerFromRemoteUrl(
+  url: string | null,
+  providerKind?: ChangeRequest["provider"],
+): string | null {
   const trimmed = url?.trim() ?? "";
   if (trimmed.length === 0) {
     return null;
@@ -281,6 +291,12 @@ function parseRepositoryNameWithOwnerFromRemoteUrl(url: string | null): string |
       trimmed,
     );
   const repositoryNameWithOwner = match?.[1]?.trim() ?? "";
+  // Forgejo HTTP paths can include an installation mount; its API always names owner/repo.
+  if (providerKind === "forgejo" && /^https?:\/\//iu.test(trimmed)) {
+    return repositoryNameWithOwner.length > 0
+      ? repositoryNameWithOwner.split("/").slice(-2).join("/")
+      : null;
+  }
   return repositoryNameWithOwner.length > 0 ? repositoryNameWithOwner : null;
 }
 
@@ -661,6 +677,28 @@ export const make = Effect.gen(function* () {
 
   const sourceControlProvider = (cwd: string) => sourceControlProviders.resolve({ cwd });
   const serverSettingsService = yield* ServerSettings.ServerSettingsService;
+  // Optional: git actions also run from the CLI and tests without orchestration.
+  const projectionQuery = yield* Effect.serviceOption(
+    ProjectionSnapshotQuery.ProjectionSnapshotQuery,
+  );
+  /** Environment settings with the acting project's overrides applied. */
+  const projectSettingsFor = Effect.fnUntraced(function* (input: {
+    readonly cwd: string;
+    readonly threadId?: ThreadId | undefined;
+  }) {
+    const settings = yield* serverSettingsService.getSettings;
+    if (!hasProjectSettingsOverrides(settings) || Option.isNone(projectionQuery)) return settings;
+    const projectId = yield* (
+      input.threadId !== undefined
+        ? projectionQuery.value
+            .getThreadShellById(input.threadId)
+            .pipe(Effect.map(Option.map((thread) => thread.projectId)))
+        : projectionQuery.value
+            .getActiveProjectByWorkspaceRoot(input.cwd)
+            .pipe(Effect.map(Option.map((project) => project.id)))
+    ).pipe(Effect.orElseSucceed(() => Option.none<ProjectId>()));
+    return resolveProjectSettings(settings, Option.getOrNull(projectId)).settings;
+  });
   const readRepositoryInstructions = (cwd: string, fileName: string) =>
     Effect.gen(function* () {
       const root = yield* fileSystem.realPath(cwd);
@@ -1262,7 +1300,15 @@ export const make = Effect.gen(function* () {
       (yield* readConfigValueNullable(cwd, `remote.${preferredRemoteName}.url`)) ??
       (yield* readConfigValueNullable(cwd, "remote.origin.url"));
 
-    return remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    const provider = remoteUrl ? detectSourceControlProviderFromGitRemoteUrl(remoteUrl) : null;
+    if (!remoteUrl || provider?.kind !== "unknown") return provider;
+    const handle = yield* sourceControlProviders
+      .resolveHandle({
+        cwd,
+        context: { provider, remoteName: preferredRemoteName, remoteUrl },
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    return handle?.context?.provider ?? provider;
   });
 
   const resolveRemoteRepositoryContext = Effect.fn("resolveRemoteRepositoryContext")(function* (
@@ -1278,7 +1324,22 @@ export const make = Effect.gen(function* () {
     }
 
     const remoteUrl = yield* readConfigValueNullable(cwd, `remote.${remoteName}.url`);
-    const repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    let repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl);
+    if (
+      remoteUrl !== null &&
+      /^https?:\/\//iu.test(remoteUrl) &&
+      (repositoryNameWithOwner?.split("/").length ?? 0) > 2
+    ) {
+      const detected = detectSourceControlProviderFromGitRemoteUrl(remoteUrl);
+      const kind =
+        detected?.kind === "unknown"
+          ? yield* sourceControlProvider(cwd).pipe(
+              Effect.map((provider) => provider.kind),
+              Effect.orElseSucceed(() => undefined),
+            )
+          : detected?.kind;
+      repositoryNameWithOwner = parseRepositoryNameWithOwnerFromRemoteUrl(remoteUrl, kind);
+    }
     return {
       remoteUrlKey: remoteUrl ? normalizeGitRemoteUrl(remoteUrl) : null,
       repositoryNameWithOwner,
@@ -2600,7 +2661,7 @@ export const make = Effect.gen(function* () {
         let commitMessageForStep = input.commitMessage;
         let preResolvedCommitSuggestion: CommitAndBranchSuggestion | undefined = undefined;
 
-        const textGenerationSettings = yield* serverSettingsService.getSettings.pipe(
+        const textGenerationSettings = yield* projectSettingsFor(input).pipe(
           Effect.flatMap((settings) =>
             settings.sourceControlWriterModelSelection === null
               ? Effect.succeed({

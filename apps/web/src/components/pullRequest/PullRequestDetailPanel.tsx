@@ -5,6 +5,7 @@ import { scopedThreadKey, scopeProjectRef } from "@t3tools/client-runtime/enviro
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   type EnvironmentId,
+  DEFAULT_SERVER_SETTINGS,
   type PullRequestAction,
   type PullRequestMergeMethod,
   type PullRequestListEntry,
@@ -13,6 +14,7 @@ import {
   resolveEnvironmentMachineKind,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   ArrowDownUpIcon,
   ArrowLeftIcon,
@@ -55,8 +57,8 @@ import {
 
 import { type DraftId, useComposerDraftStore } from "~/composerDraftStore";
 import { useNewThreadHandler } from "~/hooks/useHandleNewThread";
-import { useClientSettings } from "~/hooks/useSettings";
 import { useCopyToClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { useClientSettings } from "~/hooks/useSettings";
 import {
   deriveLogicalProjectKeyFromSettings,
   derivePhysicalProjectKey,
@@ -114,6 +116,7 @@ import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import type { PullRequestAgentSelectionInput } from "./PullRequestCodeTab";
 import { openOnHostLabel, showPullRequestLinkContextMenu } from "./pullRequestLinkContextMenu";
 import { PullRequestMarkdownContext } from "./PullRequestMarkdown";
+import { PullRequestCommentComposer } from "./PullRequestCommentComposer";
 import { PullRequestSummaryTab } from "./PullRequestSummaryTab";
 import { PullRequestTimelineTab } from "./PullRequestTimelineTab";
 import {
@@ -143,6 +146,7 @@ import {
   resolvePullRequestMergeMethod,
   type PullRequestFinding,
   shouldRefreshPullRequestActivity,
+  stripPullRequestHandoffReferences,
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import { canEditPullRequestChangeRequest } from "./pullRequestEditing.logic";
@@ -585,10 +589,19 @@ export function PullRequestDetailPanel({
   }, [condensed]);
   const lastSelectedMergeMethod = useUiStateStore((state) => state.pullRequestMergeMethod);
   const setLastSelectedMergeMethod = useUiStateStore((state) => state.setPullRequestMergeMethod);
-  const mergeMethodOverrides = useClientSettings(
+  // Server-side and per project, like every other project setting. The
+  // client-local per-project map from before still answers when the server
+  // has no value, so a choice made on an older release keeps applying until
+  // it is set (or reset) in Settings.
+  const legacyMergeMethodOverrides = useClientSettings(
     (settings) => settings.pullRequestMergeMethodOverrides,
   );
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
+  const projectDefaultMergeMethod =
+    resolveProjectSettings(
+      environmentConfigs.get(environmentId)?.settings ?? DEFAULT_SERVER_SETTINGS,
+      reference.projectId,
+    ).settings.pullRequestMergeMethod ?? undefined;
   const [mergeMethodSelection, setMergeMethodSelection] = useState<{
     readonly pullRequestKey: string;
     readonly method: PullRequestMergeMethod;
@@ -715,6 +728,7 @@ export function PullRequestDetailPanel({
         detail.number,
         detail.headBranch,
         detail.headRepositoryNameWithOwner,
+        repositoryUrl,
       )
     : null;
   const branchRefsQuery = useEnvironmentQuery(
@@ -772,11 +786,14 @@ export function PullRequestDetailPanel({
     if (!coreDetail) return;
     const next = { key: tabScopeKey, updatedAt: coreDetail.updatedAt };
     if (shouldRefreshPullRequestActivity(activityRevision.current, next)) {
+      // Let an existing read settle before revalidating the new revision. Interrupting a
+      // mutation's activity refresh can leave SWR displaying its previous value.
+      if (activityQuery.isPending) return;
       activityQuery.refresh();
       setRefreshToken((token) => token + 1);
     }
     activityRevision.current = next;
-  }, [activityQuery.refresh, coreDetail, tabScopeKey]);
+  }, [activityQuery.isPending, activityQuery.refresh, coreDetail, tabScopeKey]);
   // Reuse activity and diff until core detail reports a changed revision. Keyed by
   // the pull request rather than by the panel, because this one panel shows a different pull
   // request every time it is opened.
@@ -834,9 +851,10 @@ export function PullRequestDetailPanel({
     )?.repositoryIdentity;
     return gitHubPullRequestBrowserUrl(identity, reference.repository, reference.number);
   }, [environmentId, projects, reference.number, reference.projectId, reference.repository]);
-  // Project settings store the override under the sidebar group's key, which a duplicate row
+  // Project settings stored the override under the sidebar group's key, which a duplicate row
   // borrows from its siblings, so the project alone does not always name the same key.
-  const projectDefaultMergeMethod = useMemo(() => {
+  const legacyProjectDefaultMergeMethod = useMemo(() => {
+    if (projectDefaultMergeMethod !== undefined) return undefined;
     const project = projects.find(
       (candidate) =>
         candidate.environmentId === environmentId && candidate.id === reference.projectId,
@@ -849,11 +867,12 @@ export function PullRequestDetailPanel({
         primaryEnvironmentId,
       }).get(derivePhysicalProjectKey(project)) ??
       deriveLogicalProjectKeyFromSettings(project, projectGroupingSettings);
-    return mergeMethodOverrides[projectKey];
+    return legacyMergeMethodOverrides[projectKey];
   }, [
     environmentId,
-    mergeMethodOverrides,
+    legacyMergeMethodOverrides,
     primaryEnvironmentId,
+    projectDefaultMergeMethod,
     projectGroupingSettings,
     projects,
     reference.projectId,
@@ -1013,8 +1032,22 @@ export function PullRequestDetailPanel({
     const store = useComposerDraftStore.getState();
     const draft = store.getComposerDraft(target);
     const key = composerTargetKey(target);
+    const previousCommentIds = new Set((draft?.reviewComments ?? []).map((comment) => comment.id));
+    const repeatedCommentIds = new Set(
+      (task.reviewComments ?? [])
+        .filter((comment) => previousCommentIds.has(comment.id))
+        .map((comment) => comment.id),
+    );
+    const promptWithoutPreviousHandoff = stripPullRequestHandoffReferences(
+      draft?.prompt ?? "",
+      draft?.reviewComments ?? [],
+      repeatedCommentIds,
+    );
     const prompt = handoffPrompt(
-      { prompt: draft?.prompt ?? "", lastHandoffPrompt: lastHandoffPromptByDraft.get(key) },
+      {
+        prompt: promptWithoutPreviousHandoff,
+        lastHandoffPrompt: lastHandoffPromptByDraft.get(key),
+      },
       task.prompt,
     );
     lastHandoffPromptByDraft.set(key, task.prompt);
@@ -1023,6 +1056,13 @@ export function PullRequestDetailPanel({
       target,
       handoffReviewComments(draft?.reviewComments ?? [], task.reviewComments ?? []),
     );
+    for (const comment of task.reviewComments ?? []) {
+      if (!repeatedCommentIds.has(comment.id)) continue;
+      store.addReviewComment(target, comment, {
+        allowDuplicateReference: true,
+        insertAtCaret: false,
+      });
+    }
   };
 
   /**
@@ -1233,6 +1273,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1246,6 +1288,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
       }),
     });
   };
@@ -1260,6 +1304,8 @@ export function PullRequestDetailPanel({
         url: detail.url,
         headBranch: detail.headBranch,
         baseBranch: detail.baseBranch,
+        state: detail.state,
+        isDraft: detail.isDraft,
         comment: selection.comment,
         request: selection.request,
       }),
@@ -1327,7 +1373,7 @@ export function PullRequestDetailPanel({
   const selectedMergeMethod = resolvePullRequestMergeMethod(
     allowedMergeMethods,
     currentMergeMethod,
-    projectDefaultMergeMethod,
+    projectDefaultMergeMethod ?? legacyProjectDefaultMergeMethod,
     lastSelectedMergeMethod,
   );
   const selectedMergeMethodLabel = PULL_REQUEST_MERGE_METHOD_LABELS[selectedMergeMethod];
@@ -1435,7 +1481,7 @@ export function PullRequestDetailPanel({
   }
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-background">
+    <div className="relative flex h-full min-h-0 w-full flex-col bg-background">
       {threadPickerOpen && detail ? (
         <PullRequestThreadLinks
           key={`${environmentId}:${detail.url}`}
@@ -2567,8 +2613,6 @@ export function PullRequestDetailPanel({
                   fixFindingLabel={handoffLabels.fixFinding}
                   fixCheckLabel={handoffLabels.fixCheck}
                   onFixFinding={startFixFinding}
-                  actionPending={actionPending}
-                  onCommentAction={performCommentAction}
                   onRefresh={refreshDetail}
                 />
               </div>
@@ -2599,7 +2643,7 @@ export function PullRequestDetailPanel({
               <div className={cn("absolute inset-0", tab !== "code" && "invisible")}>
                 <Suspense fallback={<DiffPanelLoadingState label="Loading pull request diff..." />}>
                   <PullRequestCodeTab
-                    {...(attachTarget ? { onAddToAgentSelection: addSelectionToAgent } : {})}
+                    onAddToAgentSelection={addSelectionToAgent}
                     environmentId={environmentId}
                     reference={reference}
                     detail={detail}
@@ -2617,6 +2661,27 @@ export function PullRequestDetailPanel({
           </PullRequestMarkdownContext>
         ) : null}
       </div>
+
+      {/* Float over the content; do not reserve a footer or padding in the PR tabs. */}
+      {detail?.capabilities.comment && detail.viewerPermissions.comment ? (
+        <div className="absolute right-4 bottom-3 z-20">
+          <PullRequestCommentComposer
+            key={JSON.stringify([
+              environmentId,
+              reference.projectId,
+              reference.host,
+              reference.repository,
+              reference.number,
+            ])}
+            environmentId={environmentId}
+            reference={reference}
+            detail={detail}
+            actionPending={actionPending}
+            onCommentAction={performCommentAction}
+            onCommented={refreshDetail}
+          />
+        </div>
+      ) : null}
 
       <AlertDialog
         open={confirmation.open}
