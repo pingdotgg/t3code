@@ -10,6 +10,71 @@ struct HomeThreadSwipeActionTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
     @Test
+    func draggingAboveTheListScrollsWithoutNeedingAnEarlierScrollGesture() {
+        let initial = threadList(
+            client: SwipeSettlementClientStub(),
+            snapshot: snapshot(threads: (0..<70).map { thread(id: "\($0)") })
+        )
+        let coordinator = initial.makeCoordinator()
+        let collectionView = testCollectionView()
+        coordinator.configure(collectionView)
+        let controller = UIViewController()
+        let window = UIWindow(frame: CGRect(x: 0, y: 0, width: 800, height: 900))
+        window.rootViewController = controller
+        controller.view.addSubview(collectionView)
+        collectionView.frame = CGRect(x: 20, y: 150, width: 300, height: 600)
+        collectionView.contentInset.top = 4
+        window.isHidden = false
+        collectionView.layoutIfNeeded()
+        defer {
+            HomeThreadCollectionView.dismantleUIView(collectionView, coordinator: coordinator)
+            window.isHidden = true
+        }
+
+        let session = HomeDragSessionStub(point: CGPoint(x: 170, y: 130))
+        collectionView.contentOffset.y = 600
+        coordinator.collectionView(collectionView, dragSessionWillBegin: session)
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y < 600)
+
+        // A stationary finger stays in the header as content coordinates move.
+        let previous = collectionView.contentOffset.y
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y < previous)
+
+        // Leave in-list and downward scrolling to UIKit. A drag over another
+        // iPad pane or outside the window must not scroll this sidebar.
+        for point in [
+            CGPoint(x: 170, y: 160), CGPoint(x: 170, y: 740),
+            CGPoint(x: 500, y: 130), CGPoint(x: 10, y: 130),
+            CGPoint(x: 170, y: -10),
+        ] {
+            session.point = point
+            let offset = collectionView.contentOffset
+            coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+            #expect(collectionView.contentOffset == offset)
+        }
+
+        session.point = CGPoint(x: 170, y: 130)
+        let top = -collectionView.adjustedContentInset.top
+        collectionView.contentOffset.y = top + 1
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y == top)
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y == top)
+
+        coordinator.collectionView(collectionView, dragSessionDidEnd: session)
+        collectionView.contentOffset.y = 600
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y == 600)
+
+        coordinator.collectionView(collectionView, dragSessionWillBegin: session)
+        HomeThreadCollectionView.dismantleUIView(collectionView, coordinator: coordinator)
+        coordinator.advanceDragAutoScroll(by: 1.0 / 60)
+        #expect(collectionView.contentOffset.y == 600)
+    }
+
+    @Test
     func backKeepsTheMostRecentlyOpenedThreadHighlighted() {
         var selection = WorkspaceThreadSelection()
         selection.open("first")
@@ -1215,6 +1280,20 @@ struct HomeThreadSwipeActionTests {
             supportsPinning: true
         )
     }
+}
+
+@MainActor
+private final class HomeDragSessionStub: NSObject, UIDragSession {
+    var point: CGPoint
+    var localContext: Any?
+    let items: [UIDragItem] = []
+    let allowsMoveOperation = true
+    let isRestrictedToDraggingApplication = true
+
+    init(point: CGPoint) { self.point = point }
+    func location(in view: UIView) -> CGPoint { point }
+    func hasItemsConforming(toTypeIdentifiers typeIdentifiers: [String]) -> Bool { false }
+    func canLoadObjects(ofClass aClass: NSItemProviderReading.Type) -> Bool { false }
 }
 
 enum PendingSettlementEvent: CaseIterable {

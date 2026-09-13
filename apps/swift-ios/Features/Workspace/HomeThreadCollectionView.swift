@@ -79,6 +79,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
     static func dismantleUIView(_ collectionView: UICollectionView, coordinator: Coordinator) {
         coordinator.invalidateTimer()
+        coordinator.stopDragAutoScroll()
         coordinator.cancelPendingSwipeActions()
         collectionView.delegate = nil
         collectionView.dragDelegate = nil
@@ -121,6 +122,8 @@ struct HomeThreadCollectionView: UIViewRepresentable {
         private var timerInterval: TimeInterval = 0
         private var pendingSwipeCompletions: [String: PendingSwipeCompletion] = [:]
         private var draggedThread: (id: String, section: FeatureThreadOrderSection)?
+        private weak var dragSession: UIDragSession?
+        private var dragDisplayLink: CADisplayLink?
         private var pendingReorder: PendingReorder?
         private var isApplyingSnapshot = false
         private var hasQueuedUpdate = false
@@ -479,7 +482,7 @@ struct HomeThreadCollectionView: UIViewRepresentable {
 
         func collectionView(
             _ collectionView: UICollectionView,
-            dragSessionIsRestrictedToDraggingBounds session: UIDragSession
+            dragSessionIsRestrictedToDraggingApplication session: UIDragSession
         ) -> Bool {
             true
         }
@@ -489,12 +492,49 @@ struct HomeThreadCollectionView: UIViewRepresentable {
             dragSessionWillBegin session: UIDragSession
         ) {
             PlatformHapticEngine.shared.selection(enabled: parent.hapticsEnabled)
+            stopDragAutoScroll()
+            dragSession = session
+            let displayLink = CADisplayLink(target: self, selector: #selector(advanceDragAutoScroll(_:)))
+            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 30, maximum: 60, preferred: 60)
+            displayLink.add(to: .main, forMode: .common)
+            dragDisplayLink = displayLink
+        }
+
+        func stopDragAutoScroll() {
+            dragDisplayLink?.invalidate()
+            dragDisplayLink = nil
+            dragSession = nil
+        }
+
+        @objc private func advanceDragAutoScroll(_ displayLink: CADisplayLink) {
+            advanceDragAutoScroll(by: displayLink.targetTimestamp - displayLink.timestamp)
+        }
+
+        /// UIKit stops autoscrolling when a drag leaves the collection for the
+        /// Home header. Track the source session there so overshooting the top
+        /// edge keeps scrolling, even while the finger is stationary. UIKit
+        /// continues to own scrolling and drop destinations inside the list.
+        func advanceDragAutoScroll(by elapsed: TimeInterval) {
+            guard let dragSession, let collectionView, let window = collectionView.window else { return }
+            let point = dragSession.location(in: window)
+            let viewport = collectionView.convert(collectionView.bounds, to: window)
+            guard window.bounds.contains(point),
+                  point.x >= viewport.minX, point.x < viewport.maxX,
+                  point.y < viewport.minY else { return }
+            let top = -collectionView.adjustedContentInset.top
+            let offset = collectionView.contentOffset
+            guard offset.y > top else { return }
+            collectionView.contentOffset = CGPoint(
+                x: offset.x,
+                y: max(top, offset.y - 600 * min(max(elapsed, 0), 1.0 / 15))
+            )
         }
 
         func collectionView(
             _ collectionView: UICollectionView,
             dragSessionDidEnd session: UIDragSession
         ) {
+            stopDragAutoScroll()
             draggedThread = nil
             // Flush any update deferred while the row was lifted.
             applyLatestSnapshot(in: collectionView)
