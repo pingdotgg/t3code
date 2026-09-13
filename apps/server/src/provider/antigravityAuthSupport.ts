@@ -214,7 +214,10 @@ function antigravityEnvironment(
       : auth.authMethod === "agent-platform" && auth.apiKey
         ? { GOOGLE_API_KEY: auth.apiKey }
         : {};
-  const tempDirectory = NodePath.join(profile.acpDirectory, "tmp");
+  const tempDirectory =
+    profile.platform === "win32"
+      ? NodePath.win32.join(profile.acpDirectory, "tmp")
+      : NodePath.join(profile.acpDirectory, "tmp");
   return {
     ...environment,
     ...credential,
