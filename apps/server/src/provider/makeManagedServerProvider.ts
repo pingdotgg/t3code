@@ -152,12 +152,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider.pipe(
-      Effect.ensuring(Deferred.succeed(firstProbe, undefined)),
-    );
-    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
-      snapshotStateRef,
-      (state) => {
+    // `firstProbe` settles only once the probed snapshot is readable through
+    // `getSnapshot`, so a waiter never observes the boot placeholder. The
+    // finalizer still releases waiters if the probe fails or is interrupted.
+    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Effect.gen(function* () {
+      const probedSnapshot = yield* input.checkProvider;
+      const probed = yield* Ref.modify(snapshotStateRef, (state) => {
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
@@ -172,10 +172,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation },
         ] as const;
-      },
-    );
-    yield* Ref.set(settingsRef, nextSettings);
-    yield* PubSub.publish(changesPubSub, nextSnapshot);
+      });
+      yield* Ref.set(settingsRef, nextSettings);
+      yield* PubSub.publish(changesPubSub, probed.snapshot);
+      return probed;
+    }).pipe(Effect.ensuring(Deferred.succeed(firstProbe, undefined)));
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
   });

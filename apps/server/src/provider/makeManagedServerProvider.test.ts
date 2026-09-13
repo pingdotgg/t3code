@@ -208,17 +208,20 @@ describe("makeManagedServerProvider", () => {
         });
 
         const settled = yield* Ref.make(false);
+        // Read the snapshot at the moment the latch settles: it must already
+        // be the probed one, not the placeholder.
         const waiter = yield* provider.awaitFirstProbe.pipe(
           Effect.andThen(Ref.set(settled, true)),
+          Effect.andThen(provider.getSnapshot),
           Effect.forkChild,
         );
         yield* Effect.yieldNow;
         assert.strictEqual(yield* Ref.get(settled), false);
 
         yield* Deferred.succeed(releaseCheck, undefined);
-        yield* Fiber.join(waiter);
+        const snapshotAtSettle = yield* Fiber.join(waiter);
         assert.strictEqual(yield* Ref.get(settled), true);
-        assert.deepStrictEqual(yield* provider.getSnapshot, refreshedSnapshot);
+        assert.deepStrictEqual(snapshotAtSettle, refreshedSnapshot);
       }),
     ).pipe(Effect.provide(AlwaysRunTestLayer)),
   );
