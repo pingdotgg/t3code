@@ -11,6 +11,31 @@ import { SqlitePersistenceMemory } from "./Sqlite.ts";
 it.layer(
   ProjectionThreadProposedPlanRepositoryLive.pipe(Layer.provideMerge(SqlitePersistenceMemory)),
 )("plan status after clock rollback", (it) => {
+  it.effect.each([undefined, 42])(
+    "reads plans with an optional persisted creation key: %s",
+    (createdSequence) =>
+      Effect.gen(function* () {
+        const repository = yield* ProjectionThreadProposedPlanRepository;
+        const row = {
+          planId: `lookup-${createdSequence ?? "legacy"}`,
+          threadId: ThreadId.make("plan-lookup"),
+          turnId: null,
+          planMarkdown: "Do the work",
+          implementedAt: null,
+          implementationThreadId: null,
+          createdAt: "2026-03-01T00:00:00Z",
+          updatedAt: "2026-03-01T00:00:00Z",
+          ...(createdSequence === undefined ? {} : { createdSequence }),
+        };
+        yield* repository.upsert(row);
+        const result = yield* repository.getByPlanId({
+          threadId: row.threadId,
+          planId: row.planId,
+        });
+        assert.equal(result._tag, "Some");
+        if (result._tag === "Some") assert.deepEqual(result.value, row);
+      }),
+  );
   it.effect("uses the newest persisted plan even when an older plan has a later update time", () =>
     Effect.gen(function* () {
       const repository = yield* ProjectionThreadProposedPlanRepository;

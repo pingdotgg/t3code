@@ -1,5 +1,6 @@
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as SqlSchema from "effect/unstable/sql/SqlSchema";
 import { NonNegativeInt } from "@t3tools/contracts";
@@ -16,6 +17,14 @@ import {
   ProjectionThreadProposedPlanRepository,
   type ProjectionThreadProposedPlanRepositoryShape,
 } from "../Services/ProjectionThreadProposedPlans.ts";
+
+const ProjectionThreadProposedPlanDbRow = ProjectionThreadProposedPlan.mapFields(
+  Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
+);
+
+function toPlan({ createdSequence, ...row }: typeof ProjectionThreadProposedPlanDbRow.Type) {
+  return { ...row, ...(createdSequence !== null ? { createdSequence } : {}) };
+}
 
 const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
@@ -60,7 +69,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const getProjectionThreadProposedPlanRow = SqlSchema.findOneOption({
     Request: GetProjectionThreadProposedPlanInput,
-    Result: ProjectionThreadProposedPlan,
+    Result: ProjectionThreadProposedPlanDbRow,
     execute: ({ threadId, planId }) => sql`
       SELECT
         plan_id AS "planId",
@@ -79,9 +88,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const listProjectionThreadProposedPlanRows = SqlSchema.findAll({
     Request: ListProjectionThreadProposedPlansInput,
-    Result: ProjectionThreadProposedPlan.mapFields(
-      Struct.assign({ createdSequence: Schema.NullOr(NonNegativeInt) }),
-    ),
+    Result: ProjectionThreadProposedPlanDbRow,
     execute: ({ threadId }) => sql`
       SELECT
         plan_id AS "planId",
@@ -92,8 +99,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
         implementation_thread_id AS "implementationThreadId",
         created_at AS "createdAt",
         created_sequence AS "createdSequence",
-        updated_at AS "updatedAt",
-        created_sequence AS "createdSequence"
+        updated_at AS "updatedAt"
       FROM projection_thread_proposed_plans
       WHERE thread_id = ${threadId}
       ORDER BY COALESCE(created_sequence, 0) ASC, created_at ASC, plan_id ASC
@@ -167,6 +173,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const getByPlanId: ProjectionThreadProposedPlanRepositoryShape["getByPlanId"] = (input) =>
     getProjectionThreadProposedPlanRow(input).pipe(
+      Effect.map(Option.map(toPlan)),
       Effect.mapError(
         toPersistenceSqlError("ProjectionThreadProposedPlanRepository.getByPlanId:query"),
       ),
@@ -174,12 +181,7 @@ const makeProjectionThreadProposedPlanRepository = Effect.gen(function* () {
 
   const listByThreadId: ProjectionThreadProposedPlanRepositoryShape["listByThreadId"] = (input) =>
     listProjectionThreadProposedPlanRows(input).pipe(
-      Effect.map((rows) =>
-        rows.map(({ createdSequence, ...row }) => ({
-          ...row,
-          ...(createdSequence !== null ? { createdSequence } : {}),
-        })),
-      ),
+      Effect.map((rows) => rows.map(toPlan)),
       Effect.mapError(
         toPersistenceSqlError("ProjectionThreadProposedPlanRepository.listByThreadId:query"),
       ),
