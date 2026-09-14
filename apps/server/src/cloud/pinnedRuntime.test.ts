@@ -1,3 +1,4 @@
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -94,6 +95,19 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.isFalse(yield* fs.exists(path.join(paths.versionDir, "t3-runtime-archive")));
+      if ((yield* HostProcessPlatform) !== "win32") {
+        // The old launcher must still be able to start this archive after the
+        // first npm-to-executable update, including from the final directory.
+        yield* fs.writeFileString(paths.entryPath, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
+        yield* fs.chmod(paths.entryPath, 0o755);
+        const runner = yield* ProcessRunner.make();
+        const legacyStart = yield* runner.run({
+          command: process.execPath,
+          args: [path.join(paths.versionDir, "node_modules/t3/dist/bin.mjs"), "serve"],
+        });
+        assert.equal(Number(legacyStart.code), 0, legacyStart.stderr);
+        assert.equal(legacyStart.stdout.trim(), "serve");
+      }
     }),
   );
 

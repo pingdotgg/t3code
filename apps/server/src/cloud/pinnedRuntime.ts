@@ -8,6 +8,7 @@ import * as Option from "effect/Option";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
+import { legacyCliLauncherScript } from "@t3tools/shared/legacyCliLauncher";
 import {
   CLI_RELEASE_CHECKSUMS_FILE,
   cliArchiveFileName,
@@ -289,6 +290,22 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
 
   return yield* Effect.gen(function* () {
     yield* installFromArchive(input, stagingDir);
+
+    // A launcher already running the old npm layout cannot discover the
+    // archive entry point. Keep its path working on subsequent updates too.
+    const legacyDir = input.path.join(stagingDir, "node_modules", "t3", "dist");
+    yield* fs.makeDirectory(legacyDir, { recursive: true }).pipe(
+      Effect.andThen(
+        fs.writeFileString(
+          input.path.join(legacyDir, "bin.mjs"),
+          legacyCliLauncherScript("archive"),
+        ),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new PinnedRuntimeInstallError({ step: "writing the legacy service entry point", cause }),
+      ),
+    );
 
     yield* input.validate(stagingPaths);
     yield* fs

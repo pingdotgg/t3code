@@ -1,3 +1,4 @@
+import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -151,7 +152,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.equal(launcherManifest.name, "t3");
       assert.equal(launcherManifest.version, VERSION);
       assert.deepStrictEqual(launcherManifest.bin, { t3: "./bin/t3.js" });
-      assert.deepStrictEqual(launcherManifest.files, ["bin"]);
+      assert.deepStrictEqual(launcherManifest.files, ["bin", "dist"]);
       assert.deepStrictEqual(launcherManifest.optionalDependencies, {
         "@t3code/t3-darwin-arm64": VERSION,
         "@t3code/t3-linux-x64": VERSION,
@@ -182,13 +183,45 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
 
       // NODE_PATH stands in for node_modules: require.resolve finds the
       // platform package there exactly as it would after `npm install`.
+      const hostPlatform = yield* HostProcessPlatform;
+      const hostArch = yield* HostProcessArchitecture;
       const env = { ...process.env, NODE_PATH: fixture.outputDir } as Record<string, string>;
       const passthrough = yield* run(process.execPath, ["bin/t3.js", "serve", "--port", "1234"], {
         cwd: launcherDir,
         env,
       });
-      assert.equal(passthrough.stdout.trim(), "stub linux-x64 serve --port 1234");
+      assert.equal(passthrough.stdout.trim(), `stub ${hostPlatform}-${hostArch} serve --port 1234`);
       assert.equal(passthrough.exitCode, 7);
+
+      // Run the entry point used by already-installed service updaters from
+      // the published tarball, including their preflight arguments.
+      const installedLauncher = path.join(fixture.root, "installed-launcher");
+      yield* fs.makeDirectory(installedLauncher);
+      const unpack = yield* run(
+        "tar",
+        ["-xf", path.join(fixture.outputDir, "t3.tgz"), "-C", installedLauncher],
+        {
+          cwd: fixture.root,
+        },
+      );
+      assert.equal(unpack.exitCode, 0, unpack.stderr);
+      const legacy = yield* run(
+        process.execPath,
+        [
+          "dist/bin.mjs",
+          "__service-preflight",
+          "--database-path",
+          "a database.sqlite",
+          "--launcher-protocol",
+          "2",
+        ],
+        { cwd: path.join(installedLauncher, "package"), env },
+      );
+      assert.equal(
+        legacy.stdout.trim(),
+        `stub ${hostPlatform}-${hostArch} __service-preflight --database-path a database.sqlite --launcher-protocol 2`,
+      );
+      assert.equal(legacy.exitCode, 7);
 
       const unsupported = yield* run(process.execPath, ["bin/t3.js", "--version"], {
         cwd: launcherDir,
