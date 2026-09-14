@@ -244,6 +244,11 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
             dragSessionIsRestrictedToDraggingApplication session: UIDragSession
         ) -> Bool { true }
 
+        func collectionView(
+            _ collectionView: UICollectionView,
+            dragSessionAllowsMoveOperation session: UIDragSession
+        ) -> Bool { true }
+
         func collectionView(_ collectionView: UICollectionView, dragSessionDidEnd session: UIDragSession) {
             draggedID = nil
             parent.onAction(nil)
@@ -274,7 +279,10 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
             if let source = rows.first(where: { $0.thread?.id == id }) {
                 parent.onAction(action(source: source.section, destination: destination.section))
             }
-            return UICollectionViewDropProposal(operation: .move, intent: .insertAtDestinationIndexPath)
+            return UICollectionViewDropProposal(
+                operation: .move,
+                intent: destination.targetID == nil ? .insertIntoDestinationIndexPath : .insertAtDestinationIndexPath
+            )
         }
 
         func collectionView(_ collectionView: UICollectionView, performDropWith coordinator: UICollectionViewDropCoordinator) {

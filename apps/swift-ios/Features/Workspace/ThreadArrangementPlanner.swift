@@ -61,12 +61,12 @@ enum ThreadArrangementPlanner {
         guard !thread.isArchived, ThreadOrderPlanner.isWritable(thread, section: section) else {
             return false
         }
+        if thread.isEffectivelySettled(), thread.supportsSettlement != true { return false }
         let source = self.section(of: thread, now: now)
         if source.orderSection == section { return true }
         if (section == .pinned || thread.pinnedAt != nil), thread.supportsPinning != true {
             return false
         }
-        if thread.isEffectivelySettled(), thread.supportsSettlement != true { return false }
         if thread.isEffectivelySnoozed(at: now), thread.supportsSnooze != true { return false }
         return true
     }

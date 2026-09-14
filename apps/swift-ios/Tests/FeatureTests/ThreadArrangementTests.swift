@@ -66,6 +66,7 @@ struct ThreadArrangementTests {
         source.isSettled = true
         source.supportsSettlement = nil
         #expect(plan(source, destination: .pinned) == nil)
+        #expect(plan(source, destination: .active) == nil)
         source.supportsSettlement = true
         source.snoozedUntil = now.addingTimeInterval(100)
         source.supportsSnooze = nil
