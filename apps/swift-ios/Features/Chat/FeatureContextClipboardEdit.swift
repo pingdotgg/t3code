@@ -34,6 +34,12 @@ enum FeatureContextClipboardEdit {
         }
         let remainingContext = ComposerContextReferences.referenced(context, text: remainingText)
         let merged = try FeatureComposerContext.merge(remainingContext, imported.context)
+        if let merged {
+            let encoded = try JSONEncoder.t3.encode(merged)
+            guard String(decoding: encoded, as: UTF8.self).utf16.count <= ComposerContextClipboard.maximumCharacters else {
+                throw ComposerContextClipboardError.tooLarge
+            }
+        }
         let removedIDs = unlinkedAttachmentIDs(context: context, previousText: text, text: remainingText)
         let updatedAttachments = attachments.filter { !removedIDs.contains($0.id.uuidString.lowercased()) } + imported.attachments
         guard updatedAttachments.count <= FeatureImageAttachmentLimits.maximumCount else {

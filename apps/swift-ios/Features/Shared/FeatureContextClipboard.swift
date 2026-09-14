@@ -41,15 +41,20 @@ enum FeatureContextClipboard {
             if let data = pasteboard.data(forPasteboardType: type) { return String(data: data, encoding: .utf8) }
             return pasteboard.value(forPasteboardType: type) as? String
         }
-        let fragment: ComposerContextClipboardFragment?
+        var fragment: ComposerContextClipboardFragment?
+        var decodingError: (any Error)?
         if let raw = string(for: ComposerContextClipboard.mimeType) {
-            fragment = try ComposerContextClipboard.decode(raw)
-        } else if let html = string(for: UTType.html.identifier) {
-            fragment = try ComposerContextClipboard.decodeHTML(html)
-        } else {
+            do { fragment = try ComposerContextClipboard.decode(raw) }
+            catch { decodingError = error }
+        }
+        if fragment == nil, let html = string(for: UTType.html.identifier) {
+            do { fragment = try ComposerContextClipboard.decodeHTML(html) }
+            catch { decodingError = error }
+        }
+        guard let fragment else {
+            if let decodingError { throw decodingError }
             return nil
         }
-        guard let fragment else { return nil }
         guard let text = pasteboard.string else { throw ComposerContextClipboardError.invalidFragment }
         let content = try ComposerContextClipboard.selected(text: text, fragment: fragment)
         return content.fragment.records.isEmpty ? nil : content

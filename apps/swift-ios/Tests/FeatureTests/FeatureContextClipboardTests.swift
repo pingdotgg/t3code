@@ -49,6 +49,21 @@ struct FeatureContextClipboardTests {
         #expect(error != nil)
     }
 
+    @Test func HTMLFallbackRecoversWhenTheCustomMIMEIsUnavailableOrInvalid() throws {
+        let pasteboard = UIPasteboard.withUniqueName()
+        let record = mention("selected")
+        let text = ComposerContextReferences.format(record)
+        let fragment = ComposerContextClipboardFragment(source: .init(environmentId: "source"), records: [record])
+        let html = ComposerContextClipboard.html(text: text, fragment: try ComposerContextClipboard.encode(fragment))
+        pasteboard.items = [[UTType.utf8PlainText.identifier: text, UTType.html.identifier: Data(html.utf8)]]
+        #expect(try FeatureContextClipboard.read(from: pasteboard)?.fragment == fragment)
+        pasteboard.items = [[
+            UTType.utf8PlainText.identifier: text, UTType.html.identifier: Data(html.utf8),
+            ComposerContextClipboard.mimeType: Data("invalid JSON".utf8),
+        ]]
+        #expect(try FeatureContextClipboard.read(from: pasteboard)?.fragment == fragment)
+    }
+
     @Test func historySelectionUsesTheOriginalImageReferenceAndKeepsPartialLabels() {
         let source = "Before ![screenshot](t3-context://v1/image/shot) after"
         let selected = NSAttributedString(string: "screenshot", attributes: [.link: URL(string: "t3-context://v1/image/shot")!])
@@ -157,6 +172,23 @@ struct FeatureContextClipboardTests {
         #expect(edit.attachments == [independent])
         #expect(edit.context?.records == [newRecord])
         #expect(FeatureContextClipboardEdit.unlinkedAttachmentIDs(context: .init(records: [oldRecord]), previousText: link + link, text: link).isEmpty)
+    }
+
+    @Test func replacingContextAtTheLimitUsesOnlyTheRemainingRecords() throws {
+        let records = (0 ..< 200).map { mention("item_\($0)") }
+        let text = records.map(ComposerContextReferences.format).joined(separator: " ")
+        let incoming = mention("incoming")
+        let imported = FeatureContextClipboardImporter.Result(text: ComposerContextReferences.format(incoming), context: .init(records: [incoming]), attachments: [])
+        let replaced = try FeatureContextClipboardEdit.apply(
+            text: text, selection: NSRange(location: 0, length: ComposerContextReferences.format(records[0]).utf16.count),
+            context: .init(records: records), attachments: [], imported: imported
+        )
+        #expect(replaced.context?.records.count == 200)
+        #expect(replaced.context?.records.contains(records[0]) == false)
+        #expect(replaced.context?.records.contains(incoming) == true)
+        #expect(throws: FeatureComposerContext.MergeError.self) {
+            try FeatureContextClipboardEdit.apply(text: text, selection: NSRange(location: text.utf16.count, length: 0), context: .init(records: records), attachments: [], imported: imported)
+        }
     }
 
     private func mention(_ id: String) -> ComposerContextRecord {
