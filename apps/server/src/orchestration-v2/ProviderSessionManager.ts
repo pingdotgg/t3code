@@ -380,6 +380,7 @@ export const layerWithOptions = (
       );
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
+
       // Keep ownership after removal from the live map until cleanup actually finishes.
       const releasing = new Map<string, PendingSessionRelease>();
       // Adapter operations that may create native resources (ensureThread,
@@ -1243,33 +1244,33 @@ export const layerWithOptions = (
                 yield* Scope.close(entry.scope, Exit.void);
               }).pipe(Effect.ensuring(releaseCredentials));
               // Drain in-flight opens, then release their locks before closing the scope.
-              // The adapter-op drain runs inside sessionOpen: an admitted
+              // The adapter-op drain is lock-free: an admitted
               // runtime.ensureThread/resumeThread registers in
               // inflightAdapterOps before invoking the adapter, so it either
               // settles before the scope closes or is refused by its ownership
               // recheck — a provider resource created mid-close must never
               // outlive the finalizer that would have closed it. The set is
               // closed at claim time (registration requires the live entry),
-              // and the await is lock-free because an adapter call never joins
-              // this release — no drain deadlock.
+              // and an adapter call never joins this release — no drain
+              // deadlock. The alreadyLocked caller holds the open/lifecycle
+              // locks (skip reacquiring them) but its session is still
+              // reachable through `get`, so the op drain still applies.
+              const drainAdapterOps = Effect.gen(function* () {
+                const ops = inflightAdapterOps.get(key);
+                if (ops === undefined) return;
+                yield* Effect.forEach(ops, (done) => Deferred.await(done), {
+                  discard: true,
+                });
+                inflightAdapterOps.delete(key);
+              });
               const waitForOpens =
                 input.alreadyLocked === true
-                  ? Effect.void
+                  ? drainAdapterOps
                   : Array.from(release.threadIds)
                       .sort()
                       .reduceRight(
                         (effect, threadId) => threadLifecycle.withLock(threadId, effect),
-                        sessionOpen.withLock(
-                          input.providerSessionId,
-                          Effect.gen(function* () {
-                            const ops = inflightAdapterOps.get(key);
-                            if (ops === undefined) return;
-                            yield* Effect.forEach(ops, (done) => Deferred.await(done), {
-                              discard: true,
-                            });
-                            inflightAdapterOps.delete(key);
-                          }),
-                        ),
+                        sessionOpen.withLock(input.providerSessionId, drainAdapterOps),
                       );
               const completeRelease = (exit: Exit.Exit<void, ProviderSessionReleaseError>) =>
                 releaseStatus.withLock(
@@ -2168,7 +2169,7 @@ export const layerWithOptions = (
         readonly driver: ProviderDriverKind;
         readonly operation: Effect.Effect<A, E>;
       }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
-        Effect.uninterruptibleMask((restore) =>
+        Effect.uninterruptibleMask((_restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
             const done = Deferred.makeUnsafe<void, never>();
@@ -2190,10 +2191,21 @@ export const layerWithOptions = (
                   : "The provider session is no longer running.",
               });
             }
-            return yield* restore(input.operation).pipe(
+            // The operation runs uninterruptibly inside the mask: adapters
+            // acquire native resources through Effect.tryPromise (Cursor's
+            // Agent.create/resume), whose interruption detaches the promise
+            // rather than cancelling it. Signalling `done` at interrupt time
+            // would let the drain complete while a late result still lands
+            // with no cleanup owner — an interruptible caller instead waits
+            // for the acquisition to settle into tracked ownership.
+            return yield* input.operation.pipe(
               Effect.ensuring(
                 Effect.sync(() => {
-                  inflightAdapterOps.get(key)?.delete(done);
+                  const ops = inflightAdapterOps.get(key);
+                  if (ops !== undefined) {
+                    ops.delete(done);
+                    if (ops.size === 0) inflightAdapterOps.delete(key);
+                  }
                 }).pipe(Effect.andThen(Deferred.done(done, Exit.void))),
               ),
             );
@@ -2367,7 +2379,21 @@ export const layerWithOptions = (
               driver: runtime.driver,
               expectedRuntime: runtime,
             }).pipe(
-              Effect.andThen(runtime.forkThread(input)),
+              // Fork acquires provider-side state for the target thread
+              // (ACP session/fork may restart the runtime) — the same
+              // acquire-then-return shape as ensure/resume, so it drains
+              // under the same admission record.
+              Effect.andThen(
+                threadAttach.withLock(
+                  threadAttachKey(providerSessionId, input.targetThreadId),
+                  runResourceCreatingAdapterOp({
+                    providerSessionId,
+                    expectedRuntime: runtime,
+                    driver: runtime.driver,
+                    operation: runtime.forkThread(input),
+                  }),
+                ),
+              ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -2405,6 +2431,10 @@ export const layerWithOptions = (
                     driver: runtime.driver,
                   }),
                 ),
+                // A turn runs for its whole duration; a release cannot drain
+                // it without deadlocking the scope close that would kill it.
+                // Its openAgent acquisition window is the adapter's own
+                // cleanup obligation, not a drainable operation.
                 Effect.andThen(runtime.startTurn(input)),
                 Effect.catch((error) =>
                   observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
@@ -2494,6 +2524,9 @@ export const layerWithOptions = (
                           driver: runtime.driver,
                         }),
                       ),
+                      // Like startTurn, compaction runs a full turn: a
+                      // release cannot drain it. Its openAgent acquisition
+                      // window is the adapter's own cleanup obligation.
                       Effect.andThen(runtime.compactThread!(input)),
                       Effect.catch((error) =>
                         observeActivity(
@@ -2520,7 +2553,14 @@ export const layerWithOptions = (
                   driver: runtime.driver,
                 }),
               ),
-              Effect.andThen(runtime.readThreadSnapshot(input)),
+              Effect.andThen(
+                runResourceCreatingAdapterOp({
+                  providerSessionId,
+                  expectedRuntime: runtime,
+                  driver: runtime.driver,
+                  operation: runtime.readThreadSnapshot(input),
+                }),
+              ),
             ),
           rollbackThread: (input) =>
             requireLiveRuntime({
@@ -2538,7 +2578,14 @@ export const layerWithOptions = (
                   driver: runtime.driver,
                 }),
               ),
-              Effect.andThen(runtime.rollbackThread(input)),
+              Effect.andThen(
+                runResourceCreatingAdapterOp({
+                  providerSessionId,
+                  expectedRuntime: runtime,
+                  driver: runtime.driver,
+                  operation: runtime.rollbackThread(input),
+                }),
+              ),
             ),
           ...(runtime.uploadFeedback === undefined
             ? {}

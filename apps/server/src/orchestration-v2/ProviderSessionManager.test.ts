@@ -6695,84 +6695,106 @@ it.effect(
   "ProviderSessionManagerV2 does not let a late resume completion mark a replacement's thread loaded",
   () =>
     Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const aResumeEntered = yield* Deferred.make<void>();
-      const aResumeGate = yield* Deferred.make<void>();
-      const resumeCalls = yield* Ref.make(0);
-      const threadId = ThreadId.make("thread-late-resume-replacement");
-      yield* Effect.gen(function* () {
-        const manager = yield* ProviderSessionManagerV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const now = yield* DateTime.now;
-        const first = yield* makeThreadSessionFixture(threadId);
-        const providerSessionId = yield* first.allocate;
-        const firstRuntime = yield* first.open(providerSessionId);
-        yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
-        // A provider thread distinct from the one recorded at open, so the
-        // resume below actually reaches the adapter instead of hitting the
-        // loaded-thread cache.
-        const resumeProviderThread = makeProviderThread({
-          idAllocator,
-          threadId,
-          providerSessionId,
-          now,
-        });
-
-        // A's resume parks inside the adapter after the loaded-cache miss.
-        const aResume = yield* firstRuntime
-          .resumeThread({ providerThread: resumeProviderThread, threadId })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(aResumeEntered);
-
-        // A closes while the resume is in flight; the release drains the
-        // admitted adapter op before the session scope can close.
-        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
-        for (let round = 0; round < 64 && closing.pollUnsafe() === undefined; round++) {
-          yield* Effect.yieldNow;
-        }
-
-        // A's resume completes late; its loaded-thread bookkeeping belongs to
-        // the dead session and must not land in the replacement's cache.
-        yield* Deferred.succeed(aResumeGate, undefined);
-        yield* Fiber.join(aResume);
-        yield* Fiber.join(closing);
-
-        const replacementRuntime = yield* first.open(providerSessionId);
-        yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
-
-        yield* replacementRuntime.resumeThread({
-          providerThread: resumeProviderThread,
-          threadId,
-        });
-        assert.equal((yield* Ref.get(state)).resumeCount, 2);
-      }).pipe(
-        Effect.ensuring(Deferred.succeed(aResumeGate, undefined)),
-        Effect.provide(
-          makeTestLayer({
-            state,
-            idleTimeoutMs: 3_600_000,
-            resumeThread: (input) =>
-              Ref.getAndUpdate(resumeCalls, (n) => n + 1).pipe(
-                Effect.flatMap((n) =>
-                  n === 0
-                    ? Deferred.succeed(aResumeEntered, undefined).pipe(
-                        Effect.andThen(Deferred.await(aResumeGate)),
-                        Effect.andThen(
-                          Ref.update(state, (current) => ({
-                            ...current,
-                            resumeCount: current.resumeCount + 1,
-                          })),
-                        ),
-                        Effect.as(input.providerThread),
-                      )
-                    : Ref.update(state, (current) => ({
-                        ...current,
-                        resumeCount: current.resumeCount + 1,
-                      })).pipe(Effect.as(input.providerThread)),
+      const discriminated = yield* Ref.make(false);
+      // Sweep scheduler suspension points: the discriminating window is the
+      // boundary where the stale runtime's adapter op has settled (so the
+      // release drain does not wait on it) but its loaded-thread bookkeeping
+      // has not yet run — the mark then lands against the replacement's
+      // entry, where the runtime-identity guard rejects it.
+      for (let ops = 60; ops < 95; ops += 1) {
+        const state = yield* Ref.make(emptyState);
+        const resumeCalls = yield* Ref.make(0);
+        yield* Effect.gen(function* () {
+          const manager = yield* ProviderSessionManagerV2;
+          const stepper = makeSteppingScheduler();
+          const idAllocator = yield* IdAllocatorV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make(`thread-late-resume-replacement-${ops}`);
+          const first = yield* makeThreadSessionFixture(threadId);
+          const providerSessionId = yield* first.allocate;
+          const firstRuntime = yield* first.open(providerSessionId);
+          yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          const resumeProviderThread = makeProviderThread({
+            idAllocator,
+            threadId,
+            providerSessionId,
+            now,
+          });
+          const aResume = yield* firstRuntime
+            .resumeThread({ providerThread: resumeProviderThread, threadId })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          const stepped = yield* stepper.step(aResume, ops);
+          if (!stepped) {
+            yield* stepper.drain;
+            yield* Fiber.await(aResume);
+            return;
+          }
+          const closing = yield* manager
+            .close(providerSessionId)
+            .pipe(Effect.exit, Effect.forkChild);
+          for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+          const closeExit = closing.pollUnsafe();
+          if (closeExit === undefined || !Exit.isSuccess(closeExit)) {
+            // The suspended resume is still inside its admitted operation —
+            // the release drain is correctly waiting on it.
+            yield* stepper.drain;
+            yield* Fiber.await(closing);
+            yield* Fiber.await(aResume);
+            return;
+          }
+          // The op settled and the release finished while the resume's mark
+          // is still suspended: open the replacement, then let the stale
+          // bookkeeping land against it.
+          const replacementRuntime = yield* first.open(providerSessionId);
+          yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          yield* stepper.drain;
+          assert.isDefined(
+            aResume.pollUnsafe(),
+            `resume fiber still suspended after drain (op ${ops})`,
+          );
+          // The stale resume ends honestly either way: admitted before the
+          // claim it completes with a mark the replacement's entry rejects,
+          // or the admission fence refuses it with a protocol error once the
+          // entry is gone. What must not happen is its bookkeeping landing in
+          // the replacement's loaded-thread cache.
+          yield* Fiber.await(aResume);
+          yield* Ref.set(discriminated, true);
+          const beforeReplacement = yield* Ref.get(state);
+          yield* replacementRuntime.resumeThread({
+            providerThread: resumeProviderThread,
+            threadId,
+          });
+          assert.equal(
+            (yield* Ref.get(state)).resumeCount,
+            beforeReplacement.resumeCount + 1,
+            `stale resume marked the replacement's thread loaded (op ${ops})`,
+          );
+        }).pipe(
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 3_600_000,
+              resumeThread: (input) =>
+                Ref.getAndUpdate(resumeCalls, (n) => n + 1).pipe(
+                  Effect.andThen(
+                    Ref.update(state, (current) => ({
+                      ...current,
+                      resumeCount: current.resumeCount + 1,
+                    })),
+                  ),
+                  Effect.as(input.providerThread),
                 ),
-              ),
-          }),
-        ),
+            }),
+          ),
+        );
+      }
+      assert.isTrue(
+        yield* Ref.get(discriminated),
+        "sweep found no boundary where the release finished before the mark ran",
       );
     }),
 );
