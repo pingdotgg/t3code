@@ -151,6 +151,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["transparent transparency solid menus dialogs composer"],
   },
   {
+    id: "compact-thread-rows",
+    title: "Compact thread rows",
+    to: "/settings/appearance",
+    searchTerms: ["sidebar shorter dense density two line cards threads compact"],
+  },
+  {
     id: "diff-color-scheme",
     title: "Diff colors",
     to: "/settings/appearance",

@@ -530,6 +530,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
+      ...(settings.compactSidebarThreadRows !== DEFAULT_UNIFIED_SETTINGS.compactSidebarThreadRows
+        ? ["Compact thread rows"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -636,6 +639,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
+      settings.compactSidebarThreadRows,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -752,6 +756,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
+      compactSidebarThreadRows: DEFAULT_UNIFIED_SETTINGS.compactSidebarThreadRows,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
@@ -1318,6 +1323,19 @@ export function AppearanceSettingsPanel() {
             }
           />
         ) : null}
+        <SettingsRow
+          {...searchableSetting("compact-thread-rows")}
+          description="Use shorter two-line cards for active and pinned threads."
+          control={
+            <Switch
+              checked={settings.compactSidebarThreadRows}
+              onCheckedChange={(checked) =>
+                updateSettings({ compactSidebarThreadRows: Boolean(checked) })
+              }
+              aria-label="Compact thread rows"
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("diff-color-scheme")}
           description="Choose colors for additions and deletions, including change counts."

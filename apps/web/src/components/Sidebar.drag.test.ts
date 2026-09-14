@@ -62,7 +62,7 @@ function preview(
   scale = 1,
 ) {
   const strategy = createSidebarSortingStrategy(input);
-  const args = layout(input.items, active, over, scale);
+  const args = layout(input.items, active, over, scale, input.compactThreadRows ? 64 : 82);
   return new Map(
     input.items.map((item, index) => [sidebarListItemId(item), strategy({ ...args, index })]),
   );
@@ -638,6 +638,41 @@ describe("sidebar drag projection", () => {
     expect(result.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
     expect(result.get(sidebarMarkerId("pinned-divider"))?.y).toBe(62.5);
     expect(result.get(sidebarMarkerId("active-placeholder"))?.y).toBe(62.5);
+  });
+
+  it.each([1, 0.75])("reserves compact cards in empty sections at scale %s", (scale) => {
+    const items = [
+      pinnedHeader,
+      divider,
+      marker("active-placeholder"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const input = { items, settledOrder: [], settledExpanded: true, compactThreadRows: true };
+    const pinned = preview(input, "s", sidebarMarkerId("pinned-header"), scale);
+    expect(pinned.get(sidebarMarkerId("pinned-header"))).toEqual(stationary);
+    expect(pinned.get(sidebarMarkerId("pinned-divider"))?.y).toBe(64 * scale + 1);
+    const active = preview(input, "s", sidebarMarkerId("active-placeholder"), scale);
+    expect(active.get(sidebarMarkerId("active-placeholder"))?.scaleY).toBe(0);
+    expect(active.get(sidebarMarkerId("settled-header"))?.y).toBe(64 * scale);
+  });
+
+  it.each([1, 0.75])("shrinks a compact card when moved to Settled at scale %s", (scale) => {
+    const items = [
+      pinnedHeader,
+      divider,
+      thread("a", "active"),
+      settledHeader,
+      thread("s", "settled"),
+    ];
+    const result = preview(
+      { items, settledOrder: ["s", "a"], settledExpanded: true, compactThreadRows: true },
+      "a",
+      "s",
+      scale,
+    );
+    expect(result.get(sidebarMarkerId("settled-header"))?.y).toBe(-28 * scale);
+    expect(result.get("s")?.y).toBe(-28 * scale);
   });
 
   it("updates the projection when the target or measured geometry changes", () => {
