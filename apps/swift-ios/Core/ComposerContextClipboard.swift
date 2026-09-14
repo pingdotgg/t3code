@@ -82,6 +82,10 @@ public enum ComposerContextClipboard {
             throw ComposerContextClipboardError.invalidFragment
         }
         guard fragment.records.count <= maximumRecords else { throw ComposerContextClipboardError.contextLimit }
+        guard fragment.records.allSatisfy({ record in
+            record.label.utf16.count <= 200
+                && ComposerContextReferences.parseHref("t3-context://v1/\(record.kind)/\(record.contextId)") != nil
+        }) else { throw ComposerContextClipboardError.invalidFragment }
     }
 
     public static func html(text: String, fragment: String) -> String {

@@ -61,7 +61,8 @@ struct FeatureContextClipboardImporter {
                     maximum = min(maximumFileBytes, ManagedAttachmentFileStore.maximumBytes)
                 }
                 if let previous = imported[binding.attachmentId] {
-                    guard previous.filename == binding.name, previous.mimeType == binding.mimeType else {
+                    guard previous.filename == binding.name,
+                          previous.mimeType == binding.mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() else {
                         throw ComposerContextClipboardError.invalidFragment
                     }
                     continue
@@ -92,6 +93,10 @@ struct FeatureContextClipboardImporter {
         environmentID: String,
         maximumBytes: Int
     ) async throws -> FeatureDraftAttachment {
+        let binding = ComposerContextRecord.Attachment(
+            attachmentId: binding.attachmentId, name: binding.name,
+            mimeType: binding.mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(), sizeBytes: binding.sizeBytes
+        )
         let retained = FeatureContextClipboard.retainedAttachment(environmentID: environmentID, attachmentID: binding.attachmentId)
         var local = if let retained { retained } else {
             try await draftStore.clipboardAttachment(environmentID: environmentID, attachmentID: binding.attachmentId)
@@ -114,7 +119,7 @@ struct FeatureContextClipboardImporter {
         try Task.checkCancellation()
         if let local {
             guard local.filename == binding.name,
-                  local.mimeType.caseInsensitiveCompare(binding.mimeType) == .orderedSame else {
+                  local.mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == binding.mimeType else {
                 throw ComposerContextClipboardError.invalidFragment
             }
             if let file = local.ownedFile, FileManager.default.fileExists(atPath: file.url.path) {

@@ -35,6 +35,7 @@ public struct NewThreadView: View {
     @State private var draftRestoreContext: NewTaskDraftRestoreContext?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var draftSaveError: String?
+    @State private var missingFileRecoverySnapshot: FeatureComposerDraft?
     @State private var immediateDraftSaveTasks: [String: Task<Void, Never>] = [:]
     @State private var submittedSuccessfully = false
     @State private var restoresPromptAfterPickerDismissal = false
@@ -121,13 +122,13 @@ public struct NewThreadView: View {
                         onDismissKeyboard: { promptFocused = false },
                         onRefreshModels: refreshSelectedEnvironmentModels,
                         draftSaveError: draftSaveError,
-                        onRetryDraftSave: {
+                        onRetryDraftSave: missingFileRecoverySnapshot == nil ? {
                             if restoredDraftProjectID == projectID {
                                 persistCurrentDraftImmediately()
                             } else {
                                 Task { await restoreDraftAndLoadBranches() }
                             }
-                        },
+                        } : nil,
                         context: contextBinding,
                         contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
                     )
@@ -959,6 +960,7 @@ public struct NewThreadView: View {
 
         restoredDraftProjectID = nil
         draftSaveError = nil
+        missingFileRecoverySnapshot = nil
         draftSaveTask?.cancel()
         draftSaveTask = nil
         prompt = carryingContent?.text ?? ""
@@ -1108,6 +1110,7 @@ public struct NewThreadView: View {
         let liveSelectionIsExplicit = selectionIsExplicit
         let liveWorkspaceSelectionIsExplicit = workspaceSelectionIsExplicit
         let restored: FeatureComposerDraft
+        var recoveredMissingFiles = false
         do {
             restored = try context.merging(
                 saved: saved,
@@ -1118,7 +1121,8 @@ public struct NewThreadView: View {
                     branch: nil,
                     worktreePath: nil,
                     startFromOrigin: environmentPreferences.newWorktreesStartFromOrigin
-                )
+                ),
+                onMissingAttachments: { recoveredMissingFiles = true }
             )
         } catch {
             draftSaveError = error.localizedDescription
@@ -1146,7 +1150,8 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
-        draftSaveError = nil
+        missingFileRecoverySnapshot = recoveredMissingFiles ? composerDraft : nil
+        draftSaveError = recoveredMissingFiles ? FeatureComposerDraftRestoration.missingFilesWarning : nil
         if context.shouldCarryContent(into: saved) {
             persistCurrentDraftImmediately()
         } else if liveDraft != context.baseline {
@@ -1220,6 +1225,8 @@ public struct NewThreadView: View {
               let key = currentDraftKey else {
             return
         }
+        guard !FeatureComposerDraftRestoration.keepsSavedRecovery(missingFileRecoverySnapshot, current: composerDraft) else { return }
+        missingFileRecoverySnapshot = nil
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
@@ -1256,6 +1263,8 @@ public struct NewThreadView: View {
               let key = currentDraftKey else {
             return
         }
+        guard !FeatureComposerDraftRestoration.keepsSavedRecovery(missingFileRecoverySnapshot, current: composerDraft) else { return }
+        missingFileRecoverySnapshot = nil
         let pendingDraftSaveTask = draftSaveTask
         pendingDraftSaveTask?.cancel()
         draftSaveTask = nil
@@ -1276,7 +1285,13 @@ public struct NewThreadView: View {
                 let saved = try? await draftStore.draft(for: key)
                 guard !Task.isCancelled else { return }
                 do {
-                    let merged = try restoreContext.merging(saved: saved, current: snapshot)
+                    var hasMissingAttachments = false
+                    let merged = try restoreContext.merging(saved: saved, current: snapshot,
+                        onMissingAttachments: { hasMissingAttachments = true })
+                    guard !hasMissingAttachments else {
+                        if currentDraftKey == key { draftSaveError = FeatureComposerDraftRestoration.missingFilesWarning }
+                        return
+                    }
                     try await draftStore.setDraft(merged, for: key)
                     guard !Task.isCancelled else { return }
                     if currentDraftKey == key { draftSaveError = nil }
@@ -1385,7 +1400,8 @@ struct NewTaskDraftRestoreContext: Equatable {
         saved: FeatureComposerDraft?,
         current: FeatureComposerDraft,
         fallbackSelection: FeatureSelection? = nil,
-        fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil
+        fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil,
+        onMissingAttachments: () -> Void = {}
     ) throws -> FeatureComposerDraft {
         var target = saved
         if shouldCarryContent(into: saved) {
@@ -1399,7 +1415,8 @@ struct NewTaskDraftRestoreContext: Equatable {
             baseline: baseline,
             current: current,
             fallbackSelection: fallbackSelection,
-            fallbackWorkspace: fallbackWorkspace
+            fallbackWorkspace: fallbackWorkspace,
+            onMissingAttachments: onMissingAttachments
         )
         if let environmentID {
             restored.attachments = Self.content(

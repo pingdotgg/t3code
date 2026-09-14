@@ -32,6 +32,7 @@ public struct ThreadDetailView: View {
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
     @State private var draftRestoreBaseline: FeatureComposerDraft?
+    @State private var missingFileRecoverySnapshot: FeatureComposerDraft?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var draftSaveError: String?
     @State private var toolSurface: FeatureThreadToolSurface?
@@ -867,13 +868,13 @@ public struct ThreadDetailView: View {
                     },
                     onRefreshModels: refreshThreadEnvironmentModels,
                     draftSaveError: draftSaveError,
-                    onRetryDraftSave: {
+                    onRetryDraftSave: missingFileRecoverySnapshot == nil ? {
                         if didRestoreDraft {
                             persistDraftImmediately()
                         } else {
                             Task { await restoreDraft(from: draftRestoreBaseline ?? composerDraft, key: draftKey) }
                         }
-                    },
+                    } : nil,
                     context: contextBinding,
                     onInputPreparationChange: { isPreparingInput = $0 },
                     contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
@@ -1242,8 +1243,10 @@ public struct ThreadDetailView: View {
 
         let liveDraft = composerDraft
         var restored: FeatureComposerDraft
+        var recoveredMissingFiles = false
         do {
-            restored = try FeatureComposerDraftRestoration.merge(saved: saved, baseline: baseline, current: liveDraft)
+            restored = try FeatureComposerDraftRestoration.merge(saved: saved, baseline: baseline, current: liveDraft,
+                onMissingAttachments: { recoveredMissingFiles = true })
         } catch {
             draftSaveError = error.localizedDescription
             return
@@ -1258,7 +1261,8 @@ public struct ThreadDetailView: View {
         attachments = restored.attachments
         selection = restored.selection
         didRestoreDraft = true
-        draftSaveError = nil
+        missingFileRecoverySnapshot = recoveredMissingFiles ? composerDraft : nil
+        draftSaveError = recoveredMissingFiles ? FeatureComposerDraftRestoration.missingFilesWarning : nil
 
         // Changes made while the file read or thread refresh was in flight did
         // not pass the didRestoreDraft gate, so enqueue their first save now.
@@ -1275,6 +1279,8 @@ public struct ThreadDetailView: View {
 
     private func scheduleDraftSave() {
         guard didRestoreDraft, !isRewinding else { return }
+        guard !FeatureComposerDraftRestoration.keepsSavedRecovery(missingFileRecoverySnapshot, current: composerDraft) else { return }
+        missingFileRecoverySnapshot = nil
         let previousSave = draftSaveTask
         previousSave?.cancel()
         let snapshot = composerDraft
@@ -1306,6 +1312,8 @@ public struct ThreadDetailView: View {
 
     private func persistDraftImmediately() {
         guard didRestoreDraft, !isRewinding else { return }
+        guard !FeatureComposerDraftRestoration.keepsSavedRecovery(missingFileRecoverySnapshot, current: composerDraft) else { return }
+        missingFileRecoverySnapshot = nil
         let previousSave = draftSaveTask
         previousSave?.cancel()
         let snapshot = composerDraft
@@ -1515,16 +1523,28 @@ struct ThreadPullRequestDestination: Equatable {
 
 /// Keep live edits, but restore file context only with the attachments it needs.
 enum FeatureComposerDraftRestoration {
+    static let missingFilesWarning = "Some saved files are missing. Their metadata is shown in the draft. The saved draft stays unchanged until you edit or send."
+
+    static func keepsSavedRecovery(_ snapshot: FeatureComposerDraft?, current: FeatureComposerDraft) -> Bool {
+        guard let snapshot else { return false }
+        return snapshot.text == current.text && snapshot.context == current.context
+            && snapshot.attachments.count == current.attachments.count
+            && zip(snapshot.attachments, current.attachments).allSatisfy { saved, live in
+                var saved = saved
+                var live = live
+                saved.uploadedReference = nil
+                live.uploadedReference = nil
+                return saved == live
+            }
+    }
+
     enum RestorationError: LocalizedError {
         case attachmentLimit
-        case missingAttachment
 
         var errorDescription: String? {
             switch self {
             case .attachmentLimit:
                 "Remove an attachment, then retry restoring the draft. The saved draft has not changed."
-            case .missingAttachment:
-                "The saved draft has a context link without its file. The saved draft has not changed."
             }
         }
     }
@@ -1534,7 +1554,8 @@ enum FeatureComposerDraftRestoration {
         baseline: FeatureComposerDraft,
         current: FeatureComposerDraft,
         fallbackSelection: FeatureSelection? = nil,
-        fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil
+        fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil,
+        onMissingAttachments: () -> Void = {}
     ) throws -> FeatureComposerDraft {
         var restored = FeatureComposerDraft(
             text: current.text == baseline.text
@@ -1554,16 +1575,18 @@ enum FeatureComposerDraftRestoration {
             context: current.context == baseline.context ? saved?.context : current.context
         )
         restored.context = ComposerContextReferences.referenced(restored.context, text: restored.text)
-        if current.text == baseline.text {
+        var missing: [ComposerContextRecord] = []
+        if let context = restored.context {
             func matches(_ attachment: FeatureDraftAttachment, id: String) -> Bool {
                 attachment.id.uuidString.caseInsensitiveCompare(id) == .orderedSame
                     || attachment.uploadedReference?.attachmentID == id
             }
-            for record in restored.context?.records ?? [] {
+            for record in context.records {
                 guard let binding = record.attachment,
                       !restored.attachments.contains(where: { matches($0, id: binding.attachmentId) }) else { continue }
                 guard let attachment = saved?.attachments.first(where: { matches($0, id: binding.attachmentId) }) else {
-                    throw RestorationError.missingAttachment
+                    missing.append(record)
+                    continue
                 }
                 guard restored.attachments.count < FeatureImageAttachmentLimits.maximumCount else {
                     throw RestorationError.attachmentLimit
@@ -1571,6 +1594,36 @@ enum FeatureComposerDraftRestoration {
                 restored.attachments.append(attachment)
             }
         }
+        let missingIDs = Set(missing.map(\.contextId))
+        let directIDs = Set(ComposerContextReferences.collect(restored.text).map(\.contextId))
+        func missingText(_ record: ComposerContextRecord) -> String {
+            "[Missing attachment: \(record.label)]\n" + ComposerContextReferences.providerPayload(record)
+        }
+        let originalText = restored.text
+        restored.text = ComposerContextReferences.replace(originalText) { reference in
+            missing.first(where: { $0.contextId == reference.contextId }).map(missingText)
+                ?? (originalText as NSString).substring(with: reference.range)
+        }
+        for record in missing where !directIDs.contains(record.contextId) {
+            restored.text += "\n\n" + missingText(record)
+        }
+        var repairedScreenshot = false
+        let records = (restored.context?.records ?? []).filter { !missingIDs.contains($0.contextId) }.map { record in
+            var record = record
+            if case var .previewAnnotation(annotation) = record.payload,
+               let screenshot = annotation.screenshotContextId,
+               missingIDs.contains(screenshot) || !(restored.context?.records.contains { $0.contextId == screenshot && $0.kind == "image" } ?? false) {
+                if !missingIDs.contains(screenshot) {
+                    restored.text += "\n\n[Missing screenshot: \(record.label)]\ncontextId: \(screenshot)"
+                }
+                annotation.screenshotContextId = nil
+                record.payload = .previewAnnotation(annotation)
+                repairedScreenshot = true
+            }
+            return record
+        }
+        restored.context = records.isEmpty ? nil : .init(records: records)
+        if !missing.isEmpty || repairedScreenshot { onMissingAttachments() }
         return restored
     }
 

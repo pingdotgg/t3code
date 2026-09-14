@@ -143,6 +143,24 @@ struct FeatureContextClipboardTests {
         #expect(try await store.draft(for: "environment:local-source:thread:one")?.attachments == [local])
     }
 
+    @Test func imageMIMENormalizationDoesNotRequireFileAttachmentSupport() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        var importer = importer(directory: directory)
+        importer.resolver = Resolver()
+        importer.download = { url in
+            let temporary = directory.appendingPathComponent(UUID().uuidString)
+            try Data([1, 2, 3, 4]).write(to: temporary)
+            return (temporary, HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: nil)!)
+        }
+        let image = ComposerContextRecord(contextId: "image", label: "Image", payload: .image(.init(
+            attachmentId: "source-image", name: "image.png", mimeType: " IMAGE/PNG ", sizeBytes: 4
+        )))
+        let imported = try await importer.importContent(content(image), attachmentCount: 0, contextCount: 0, imagesAllowed: true, maximumFileBytes: nil)
+        #expect(imported.attachments.first?.mimeType == "image/png")
+        #expect(imported.attachments.first?.ownedFile != nil)
+    }
+
     @Test(arguments: [false, true])
     func failedOrCancelledImportsRollBackEarlierFiles(cancelled: Bool) async throws {
         let directory = try temporaryDirectory()
@@ -265,6 +283,38 @@ struct FeatureContextClipboardTests {
             #expect(live == edited)
             #expect(try await store.draft(for: key) == saved)
         }
+    }
+
+    @Test func missingSavedFilesBecomeVisibleTextWithoutDroppingInstructionsOrOverwritingRecovery() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let missing = file("missing", attachmentID: UUID().uuidString, size: 123)
+        let terminal = ComposerContextRecord(contextId: "terminal", label: "Logs", payload: .terminal(.init(
+            terminalId: "shell", terminalLabel: "Shell", lineStart: 0, lineEnd: 0, text: "Keep these exact captured instructions."
+        )))
+        let saved = FeatureComposerDraft(
+            text: "Keep my instructions. \(ComposerContextReferences.format(missing)) Then read \(ComposerContextReferences.format(terminal)).",
+            context: .init(records: [missing, terminal])
+        )
+        let key = "environment:source:thread:one"
+        try await store.setDraft(saved, for: key)
+        var warned = false
+        let restored = try FeatureComposerDraftRestoration.merge(saved: saved, baseline: .init(), current: .init(), onMissingAttachments: { warned = true })
+        #expect(warned)
+        #expect(restored.text.contains("[Missing attachment: File]"))
+        #expect(restored.text.contains("Keep my instructions."))
+        #expect(restored.text.contains("attachmentId: \(missing.attachment!.attachmentId)"))
+        #expect(restored.context?.records == [terminal])
+        #expect(ComposerContextReferences.collect(restored.text).map(\.contextId) == [terminal.contextId])
+        #expect(FeatureComposerDraftRestoration.keepsSavedRecovery(restored, current: restored))
+        var modelRefresh = restored
+        modelRefresh.selection = .init(providerID: "test", modelID: "updated")
+        #expect(FeatureComposerDraftRestoration.keepsSavedRecovery(restored, current: modelRefresh))
+        var edited = restored
+        edited.text += " I will send without the missing file."
+        #expect(!FeatureComposerDraftRestoration.keepsSavedRecovery(restored, current: edited))
+        #expect(try await store.draft(for: key) == saved)
     }
 
     private func mention(_ id: String) -> ComposerContextRecord {

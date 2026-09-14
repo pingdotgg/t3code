@@ -62,6 +62,16 @@ struct ComposerContextClipboardTests {
         }
     }
 
+    @Test func encodingRejectsIdentitiesThatTheDecoderCannotRead() {
+        let badID = ComposerContextRecord(contextId: "bad id", label: "bad", payload: .mention(.init(path: "file.swift")))
+        let badKind = ComposerContextRecord(contextId: "valid_id", label: "bad", payload: .unknown(kind: "Bad Kind", payload: .null))
+        for record in [badID, badKind] {
+            #expect(throws: ComposerContextClipboardError.invalidFragment) {
+                try ComposerContextClipboard.encode(.init(source: .init(environmentId: "source"), records: [record]))
+            }
+        }
+    }
+
     private func fixture() throws -> ComposerContextClipboardFragment {
         try ComposerContextClipboard.decode(#"{"version":1,"source":{"environmentId":"source"},"records":[{"version":1,"kind":"preview-annotation","contextId":"annotation","label":"Annotation","annotationId":"original","pageUrl":"https://example.com","pageTitle":null,"comment":"Keep this exact comment","targetSummary":"one target","styleChanges":[],"screenshotContextId":"shot"},{"version":1,"kind":"image","contextId":"shot","label":"Screenshot","attachmentId":"source-attachment","name":"shot.png","mimeType":"image/png","sizeBytes":4},{"version":1,"kind":"mention","contextId":"not-selected","label":"not selected","path":"src/unselected.swift"}]}"#)
     }
