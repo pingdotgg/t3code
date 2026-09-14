@@ -708,6 +708,8 @@ struct DailyUXSidebarIndex {
             guard !thread.isArchived else { return false }
             return projectID == nil || thread.projectID == projectID
         }
+        let available = visible.filter { !$0.isEffectivelySnoozed(at: now) }
+
         pinned = Self.orderedSection(visible, section: .pinned, now: now)
 
         active = Self.orderedSection(visible, section: .active, now: now)
