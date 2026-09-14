@@ -1,4 +1,4 @@
-import type { ProjectIconColor } from "@t3tools/contracts";
+import { isChatProject, type ProjectIconColor } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
@@ -19,6 +19,7 @@ import {
   ImageIcon,
   Layers3Icon,
   MonitorIcon,
+  MessageCircleIcon,
   MusicIcon,
   PackageIcon,
   ServerIcon,
@@ -102,7 +103,7 @@ const PROJECT_ICON_COLOR_BY_NAME: Record<ProjectIconName, ProjectIconColor> = {
 export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
->;
+> & { readonly id?: string };
 
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
@@ -117,6 +118,9 @@ export function ProjectFavicon(input: {
       faviconPath: project.faviconPath,
     }),
   );
+  if (project.id !== undefined && isChatProject({ id: project.id })) {
+    return <ProjectFaviconFallback className={input.className} icon={MessageCircleIcon} />;
+  }
   if (project.projectIcon?.kind === "emoji") {
     return <ProjectFaviconFallback className={input.className} emoji={project.projectIcon.emoji} />;
   }

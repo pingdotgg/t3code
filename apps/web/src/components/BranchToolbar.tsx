@@ -1,5 +1,5 @@
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { isChatProject, type EnvironmentId, type ThreadId } from "@t3tools/contracts";
 import {
   ChevronDownIcon,
   FolderGit2Icon,
@@ -567,10 +567,12 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
-  const showEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: showEnvironmentPicker,
-  });
+  const showEnvironmentIndicator =
+    (activeProject !== null && isChatProject(activeProject)) ||
+    shouldShowEnvironmentIndicator({
+      activeEnvironment: activeEnvironmentOption,
+      canPickEnvironment: showEnvironmentPicker,
+    });
   const [stripElement, setStripElement] = useState<HTMLDivElement | null>(null);
   const labelsOverflow = useLabelsOverflow(stripElement);
 

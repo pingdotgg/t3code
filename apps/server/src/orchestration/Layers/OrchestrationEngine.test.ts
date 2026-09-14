@@ -4,6 +4,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  CHAT_PROJECT_ID,
+  chatThreadWorkspacePath,
   ApprovalRequestId,
   EventId,
   CheckpointRef,
@@ -29,6 +31,7 @@ import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { describe, expect, it, vi } from "vite-plus/test";
 
+import { resolveThreadWorkspaceCwd } from "../../checkpointing/Utils.ts";
 import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import * as OrchestrationCommandReceipts from "../../persistence/Services/OrchestrationCommandReceipts.ts";
@@ -130,6 +133,67 @@ const hasMetricSnapshot = (
   );
 
 describe("OrchestrationEngine", () => {
+  it("creates separate chat folders before acknowledging threads and protects their project", async () => {
+    const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-chats-"));
+    const system = await createOrchestrationSystem();
+    try {
+      await system.run(
+        system.engine.dispatch({
+          type: "project.create",
+          commandId: CommandId.make("chat-project"),
+          projectId: CHAT_PROJECT_ID,
+          title: "Chats",
+          workspaceRoot: directory,
+          createdAt: now(),
+        }),
+      );
+      for (const id of ["chat-one", "../chat-two"]) {
+        await system.run(
+          system.engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(id),
+            threadId: ThreadId.make(id),
+            projectId: CHAT_PROJECT_ID,
+            title: "Question",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt: now(),
+          }),
+        );
+        const cwd = chatThreadWorkspacePath(directory, id);
+        expect(NodePath.dirname(cwd)).toBe(directory);
+        expect((await NodeFSP.stat(cwd)).isDirectory()).toBe(true);
+        const snapshot = await system.readModel();
+        const thread = snapshot.threads.find((thread) => thread.id === id)!;
+        expect(resolveThreadWorkspaceCwd({ thread, projects: snapshot.projects })).toBe(cwd);
+        expect(
+          resolveThreadWorkspaceCwd({
+            thread: { ...thread, worktreePath: "/unrelated-project" },
+            projects: snapshot.projects,
+          }),
+        ).toBe(cwd);
+      }
+      expect((await NodeFSP.readdir(directory)).length).toBe(2);
+      await expect(
+        system.run(
+          system.engine.dispatch({
+            type: "project.delete",
+            commandId: CommandId.make("delete-chats"),
+            projectId: CHAT_PROJECT_ID,
+            force: true,
+          }),
+        ),
+      ).rejects.toThrow("cannot be deleted");
+      expect((await system.readModel()).threads).toHaveLength(2);
+    } finally {
+      await system.dispose();
+      await NodeFSP.rm(directory, { recursive: true, force: true });
+    }
+  });
+
   it.each(["running", "stopped"] as const)(
     "sends async answers with a %s session and rejects old duplicate replies",
     async (status) => {

@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -293,15 +294,19 @@ export function NewTaskRouteScreen({ route }: StaticScreenProps<NewTaskRoutePara
                       />
                     </View>
                     <View className="min-w-0 flex-1">
-                      <Text className="text-base leading-snug font-t3-bold">{scope.title}</Text>
+                      <Text className="text-base leading-snug font-t3-bold">
+                        {isChatProject(selectionTarget) ? "No project" : scope.title}
+                      </Text>
                       <Text
                         className="text-xs leading-snug text-foreground-muted"
                         ellipsizeMode="middle"
                         numberOfLines={1}
                       >
-                        {hasMultipleProjects
-                          ? `${scope.projects.length} workspaces`
-                          : selectionTarget.workspaceRoot}
+                        {isChatProject(selectionTarget)
+                          ? "Chat without a project"
+                          : hasMultipleProjects
+                            ? `${scope.projects.length} workspaces`
+                            : selectionTarget.workspaceRoot}
                       </Text>
                     </View>
                     <SymbolView

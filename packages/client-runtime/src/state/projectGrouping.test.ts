@@ -117,6 +117,14 @@ function settings(
 }
 
 describe("buildProjectGroups", () => {
+  it("keeps managed chats separate from a repository even with inherited identity", () => {
+    const groups = buildProjectGroups({
+      projects: [makeProject("t3-chat", "/home/.t3/chat"), makeProject("project", "/work/t3code")],
+      settings: settings("repository"),
+    });
+    expect(groups).toHaveLength(2);
+  });
+
   it("preserves every physical clone as a selectable member in repository modes", () => {
     const projects = [
       makeProject("t3code", "/work/t3code"),

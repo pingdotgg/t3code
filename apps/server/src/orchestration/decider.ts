@@ -1,4 +1,5 @@
 import {
+  CHAT_PROJECT_ID,
   EventId,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
@@ -259,6 +260,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.meta.update": {
+      if (command.projectId === CHAT_PROJECT_ID) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The Chats project is managed by T3 Code.",
+        });
+      }
       const project = yield* requireProject({
         readModel,
         command,
@@ -314,6 +321,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "project.delete": {
+      if (command.projectId === CHAT_PROJECT_ID) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The Chats project cannot be deleted. Delete individual chats instead.",
+        });
+      }
       yield* requireProject({
         readModel,
         command,
@@ -365,6 +378,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.create": {
+      if (command.projectId === CHAT_PROJECT_ID && (command.branch || command.worktreePath)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Chats do not use branches or worktrees.",
+        });
+      }
       yield* requireProject({
         readModel,
         command,
@@ -891,6 +910,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (thread.projectId === CHAT_PROJECT_ID && (command.branch || command.worktreePath)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Chats do not use branches or worktrees.",
+        });
+      }
       // Old clients only see the derived single link. Unlink that request through
       // the same command path as modern clients, including stack dismissal, while
       // retaining other links they cannot see. Historical metadata events still replay unchanged.

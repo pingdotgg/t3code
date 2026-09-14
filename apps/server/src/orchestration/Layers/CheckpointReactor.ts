@@ -1,4 +1,5 @@
 import {
+  CHAT_PROJECT_ID,
   CommandId,
   type CheckpointRef,
   EventId,
@@ -190,9 +191,11 @@ const make = Effect.gen(function* () {
     readonly projects: ReadonlyArray<{ readonly id: ProjectId; readonly workspaceRoot: string }>;
     readonly preferSessionRuntime: boolean;
   }): Effect.fn.Return<string | undefined, CheckpointStoreError> {
+    // Chat folders can live inside a development checkout. Never checkpoint its parent repo.
+    if (input.thread.projectId === CHAT_PROJECT_ID) return undefined;
     const fromSession = yield* resolveSessionRuntimeForThread(input.threadId);
     const fromThread = resolveThreadWorkspaceCwd({
-      thread: input.thread,
+      thread: { ...input.thread, id: input.threadId },
       projects: input.projects,
     });
 

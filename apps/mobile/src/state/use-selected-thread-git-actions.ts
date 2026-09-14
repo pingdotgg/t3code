@@ -7,7 +7,7 @@ import {
   type VcsActionOperation,
   type VcsRef,
 } from "@t3tools/client-runtime/state/vcs";
-import type { GitRunStackedActionResult } from "@t3tools/contracts";
+import { isChatProject, type GitRunStackedActionResult } from "@t3tools/contracts";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   sanitizeFeatureBranchName,
@@ -45,7 +45,10 @@ export function useSelectedThreadGitActions() {
     { reportFailure: false },
   );
 
-  const selectedThreadGitRootCwd = selectedThreadProject?.workspaceRoot ?? null;
+  const selectedThreadGitRootCwd =
+    selectedThreadProject && !isChatProject(selectedThreadProject)
+      ? selectedThreadProject.workspaceRoot
+      : null;
   const branchTarget = useMemo(
     () => ({
       environmentId: selectedThread?.environmentId ?? null,
@@ -77,7 +80,7 @@ export function useSelectedThreadGitActions() {
 
   const refreshSelectedThreadGitStatus = useCallback(
     async (options?: { readonly quiet?: boolean; readonly cwd?: string | null }) => {
-      if (!selectedThread || !selectedThreadProject) {
+      if (!selectedThread || !selectedThreadProject || isChatProject(selectedThreadProject)) {
         return null;
       }
 
@@ -116,7 +119,7 @@ export function useSelectedThreadGitActions() {
   );
 
   useEffect(() => {
-    if (!selectedThread || !selectedThreadProject) {
+    if (!selectedThread || !selectedThreadProject || isChatProject(selectedThreadProject)) {
       return;
     }
     void refreshSelectedThreadGitStatus({ quiet: true });
@@ -133,7 +136,12 @@ export function useSelectedThreadGitActions() {
       }) => Promise<AtomCommandResult<T, E>>,
       options?: { readonly managedExternally?: boolean },
     ): Promise<T | null> => {
-      if (!selectedThread || !selectedThreadProject || !selectedThreadCwd) {
+      if (
+        !selectedThread ||
+        !selectedThreadProject ||
+        isChatProject(selectedThreadProject) ||
+        !selectedThreadCwd
+      ) {
         return null;
       }
 

@@ -1,3 +1,4 @@
+import { chatThreadWorkspacePath, isChatProject } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { useSelectedThreadDetail } from "./use-thread-detail";
@@ -19,6 +20,9 @@ export function useSelectedThreadWorktree() {
 
   return {
     selectedThreadWorktreePath,
-    selectedThreadCwd: selectedThreadWorktreePath ?? selectedThreadProject?.workspaceRoot ?? null,
+    selectedThreadCwd:
+      selectedThread && selectedThreadProject && isChatProject(selectedThreadProject)
+        ? chatThreadWorkspacePath(selectedThreadProject.workspaceRoot, selectedThread.id)
+        : (selectedThreadWorktreePath ?? selectedThreadProject?.workspaceRoot ?? null),
   };
 }

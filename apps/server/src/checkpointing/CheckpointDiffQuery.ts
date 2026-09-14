@@ -30,7 +30,7 @@ import {
   CheckpointWorkspacePathMissingError,
 } from "./Errors.ts";
 import type { CheckpointServiceError } from "./Errors.ts";
-import { checkpointRefForThreadTurn } from "./Utils.ts";
+import { checkpointRefForThreadTurn, resolveThreadWorkspaceCwd } from "./Utils.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 
 /** Service tag for checkpoint diff queries. */
@@ -130,7 +130,12 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
+      const workspaceCwd = resolveThreadWorkspaceCwd({
+        thread: { ...threadContext.value, id: input.threadId },
+        projects: [
+          { id: threadContext.value.projectId, workspaceRoot: threadContext.value.workspaceRoot },
+        ],
+      });
       if (!workspaceCwd) {
         return yield* new CheckpointWorkspacePathMissingError({
           operation,
@@ -238,7 +243,12 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    const workspaceCwd = threadContext.value.worktreePath ?? threadContext.value.workspaceRoot;
+    const workspaceCwd = resolveThreadWorkspaceCwd({
+      thread: { ...threadContext.value, id: input.threadId },
+      projects: [
+        { id: threadContext.value.projectId, workspaceRoot: threadContext.value.workspaceRoot },
+      ],
+    });
     if (!workspaceCwd) {
       return yield* new CheckpointWorkspacePathMissingError({
         operation,

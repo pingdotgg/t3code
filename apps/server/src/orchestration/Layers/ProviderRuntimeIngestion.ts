@@ -1,4 +1,5 @@
 import {
+  CHAT_PROJECT_ID,
   ApprovalRequestId,
   CommandId,
   MessageId,
@@ -2063,7 +2064,7 @@ const make = Effect.gen(function* () {
         }
       }
 
-      if (event.type === "turn.diff.updated") {
+      if (event.type === "turn.diff.updated" && thread.projectId !== CHAT_PROJECT_ID) {
         const turnId = toTurnId(event.turnId);
         const checkpointContext = turnId
           ? yield* projectionSnapshotQuery

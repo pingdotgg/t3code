@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { normalizeProjectPathForComparison } from "@t3tools/shared/path";
 
 export type FirstRunDecision = "pending" | "app" | "wizard";
@@ -87,11 +88,12 @@ export function transitionFirstRunGateState(
 
 /** Only a project and thread created by this startup count as a fresh nonempty workspace. */
 export function isFreshFirstRunWorkspace(input: FirstRunWorkspaceInput): boolean {
-  if (input.projects.length > 1 || input.threads.length > 1) {
+  const projects = input.projects.filter((project) => !isChatProject(project));
+  if (projects.length > 1 || input.threads.length > 1) {
     return false;
   }
 
-  const bootstrapProject = input.projects[0];
+  const bootstrapProject = projects[0];
   if (bootstrapProject !== undefined) {
     if (
       input.bootstrapProjectCreated !== true ||

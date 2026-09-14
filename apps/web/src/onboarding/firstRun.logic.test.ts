@@ -373,6 +373,22 @@ const bootstrapThread = {
 };
 
 describe("isFreshFirstRunWorkspace", () => {
+  it("ignores the managed chats collection but counts its conversations", () => {
+    const input = {
+      primaryEnvironmentId,
+      serverCwd: "/projects/current",
+      projects: [{ ...bootstrapProject, id: "t3-chat", workspaceRoot: "/home/.t3/chat" }],
+      threads: [],
+    };
+    expect(isFreshFirstRunWorkspace(input)).toBe(true);
+    expect(
+      isFreshFirstRunWorkspace({
+        ...input,
+        threads: [{ ...bootstrapThread, projectId: "t3-chat" }],
+      }),
+    ).toBe(false);
+  });
+
   it("accepts an empty workspace", () => {
     expect(
       isFreshFirstRunWorkspace({

@@ -1,5 +1,7 @@
 "use client";
 
+import { isChatProject } from "@t3tools/contracts";
+
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
@@ -1150,7 +1152,7 @@ function OpenCommandPaletteDialog(props: {
               environmentLabels={metadata.environmentLabels}
               grouped={members.length > 1}
               location={location}
-              workspaceRoot={project.workspaceRoot}
+              workspaceRoot={isChatProject(project) ? "No project" : project.workspaceRoot}
             />
           );
         },
@@ -1199,7 +1201,9 @@ function OpenCommandPaletteDialog(props: {
                   <span className="truncate">{location.label}</span>
                 </span>
                 <CommandPaletteMetaDot />
-                <span className="truncate">{project.workspaceRoot}</span>
+                <span className="truncate">
+                  {isChatProject(project) ? "No project" : project.workspaceRoot}
+                </span>
               </span>
             );
           },
@@ -1836,7 +1840,7 @@ function OpenCommandPaletteDialog(props: {
       : null) ??
     projectGroups[0] ??
     null;
-  if (contextualProjectGroup) {
+  if (contextualProjectGroup && !isChatProject(contextualProjectGroup)) {
     actionItems.push({
       kind: "action",
       value: "action:project-settings",

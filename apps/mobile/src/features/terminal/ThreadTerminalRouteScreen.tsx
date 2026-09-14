@@ -47,6 +47,7 @@ import {
   useKnownTerminalSessions,
 } from "../../state/use-terminal-session";
 import { useThreadSelection } from "../../state/use-thread-selection";
+import { useSelectedThreadWorktree } from "../../state/use-selected-thread-worktree";
 import { useSelectedThreadDetail } from "../../state/use-thread-detail";
 import { EnvironmentConnectionNotice } from "../connection/EnvironmentConnectionNotice";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
@@ -171,6 +172,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
+  const { selectedThreadCwd } = useSelectedThreadWorktree();
   const selectedThreadDetail = useSelectedThreadDetail();
   const routeEnvironmentIdRaw = firstRouteParam(params.environmentId);
   const routeThreadIdRaw = firstRouteParam(params.threadId);
@@ -272,7 +274,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     runningSession !== null &&
     runningSession.target.terminalId !== terminalId;
   const launchLocationCandidate = useMemo(() => {
-    if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (!selectedThread || !selectedThreadCwd) {
       return null;
     }
     if (pendingLaunch) {
@@ -284,7 +286,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     return resolveTerminalOpenLocation({
       terminalLocation: activeKnownSession?.state.summary ?? null,
       activeSessionLocation: activeKnownSession?.state.summary ?? null,
-      workspaceRoot: selectedThreadProject.workspaceRoot,
+      workspaceRoot: selectedThreadCwd,
       threadShellWorktreePath: selectedThread.worktreePath ?? null,
       threadDetailWorktreePath: selectedThreadDetail?.worktreePath ?? null,
     });
@@ -293,7 +295,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     pendingLaunch,
     selectedThread,
     selectedThreadDetail?.worktreePath,
-    selectedThreadProject?.workspaceRoot,
+    selectedThreadCwd,
   ]);
   const [initialLaunchLocationEntry, setInitialLaunchLocationEntry] = useState(() => ({
     key: launchTargetKey,
@@ -463,7 +465,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
       preview: terminal.buffer.slice(0, 160),
     });
   }, [terminal.buffer, terminal.buffer.length, terminalKey]);
-  const cwd = terminal.summary?.cwd ?? selectedThreadProject?.workspaceRoot ?? null;
+  const cwd = terminal.summary?.cwd ?? selectedThreadCwd;
   const serverConfigs = useServerConfigs();
   const hostOs =
     routeEnvironmentId === null
@@ -537,7 +539,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     () =>
       buildTerminalMenuSessions({
         knownSessions,
-        workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+        workspaceRoot: selectedThreadCwd,
         currentSession: {
           terminalId,
           cwd: cwd ?? null,
@@ -550,7 +552,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [
       cwd,
       knownSessions,
-      selectedThreadProject?.workspaceRoot,
+      selectedThreadCwd,
       terminal.hasRunningSubprocess,
       terminal.summary,
       terminal.status,
@@ -1025,10 +1027,10 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         id: "terminal-new",
         title: "Open new terminal",
         image: "plus",
-        subtitle: `Start another shell in ${basename(selectedThreadProject?.workspaceRoot ?? null) ?? "this workspace"}`,
+        subtitle: `Start another shell in ${basename(selectedThreadCwd) ?? "this workspace"}`,
       },
     ],
-    [fontSize, selectedThreadProject?.workspaceRoot, terminalId, terminalMenuSessions],
+    [fontSize, selectedThreadCwd, terminalId, terminalMenuSessions],
   );
 
   const handleAndroidTerminalMenuAction = useCallback(
@@ -1126,7 +1128,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     );
   }
 
-  if (!selectedThreadProject?.workspaceRoot) {
+  if (!selectedThreadCwd) {
     return (
       <View className="flex-1 bg-screen">
         <EmptyState
@@ -1272,7 +1274,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
             <NativeHeaderToolbar.MenuAction
               icon="plus"
               onPress={handleOpenNewTerminal}
-              subtitle={`Start another shell in ${basename(selectedThreadProject.workspaceRoot) ?? "this workspace"}`}
+              subtitle={`Start another shell in ${basename(selectedThreadCwd) ?? "this workspace"}`}
             >
               <NativeHeaderToolbar.Label>Open new terminal</NativeHeaderToolbar.Label>
             </NativeHeaderToolbar.MenuAction>

@@ -1,4 +1,5 @@
 import {
+  CHAT_PROJECT_ID,
   type ChatAttachment,
   CommandId,
   EventId,
@@ -587,6 +588,19 @@ const make = Effect.gen(function* () {
     readonly branch: string | null;
     readonly worktreePath: string | null;
   }) {
+    if (thread.projectId === CHAT_PROJECT_ID) {
+      const project = yield* resolveProject(thread.projectId);
+      const cwd = resolveThreadWorkspaceCwd({ thread, projects: project ? [project] : [] });
+      if (!cwd) {
+        return yield* new ProviderWorkspaceMissingError({ threadId: thread.id, cwd: "chat" });
+      }
+      yield* fileSystem
+        .makeDirectory(cwd, { recursive: true })
+        .pipe(
+          Effect.mapError(() => new ProviderWorkspaceMissingError({ threadId: thread.id, cwd })),
+        );
+      return;
+    }
     const { worktreePath, branch } = thread;
     if (!worktreePath || !branch) {
       return;
@@ -803,6 +817,7 @@ const make = Effect.gen(function* () {
       thread,
       projects: project ? [project] : [],
     });
+    if (thread.projectId === CHAT_PROJECT_ID) yield* ensureThreadWorktree(thread);
     const refreshWorkspaceSnapshot = effectiveCwd
       ? providerRegistry
           .refreshWorkspaceSnapshot({ instanceId: desiredInstanceId, cwd: effectiveCwd })
@@ -1124,6 +1139,7 @@ const make = Effect.gen(function* () {
     if (thread.title !== previousTitle) {
       return { _tag: "Superseded" } as const;
     }
+    if (thread.projectId === CHAT_PROJECT_ID) yield* ensureThreadWorktree(thread);
     const project = yield* resolveProject(thread.projectId);
     const cwd =
       resolveThreadWorkspaceCwd({
@@ -1401,7 +1417,11 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    yield* ensureThreadWorktree(thread);
+    const workspaceReady = yield* ensureThreadWorktree(thread).pipe(
+      Effect.as(true),
+      Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(false))),
+    );
+    if (!workspaceReady) return;
 
     const isCompactCommand = isCompactCommandMessage(message);
     if (!hasOtherUserMessages && !isCompactCommand) {

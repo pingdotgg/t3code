@@ -10,6 +10,7 @@ import type {
   ServerProvider,
 } from "@t3tools/contracts";
 import {
+  isChatProject,
   CommandId,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_RUNTIME_MODE,
@@ -345,6 +346,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // workspaceRoot, and an "" basename would reject every real host below.
   const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
   const selectedProjectTitle = selectedProject?.title ?? null;
+  const selectedProjectIsChat = selectedProject !== null && isChatProject(selectedProject);
   const environments = useMemo(() => {
     const seen = new Set<EnvironmentId>();
     const result: Array<{
@@ -352,6 +354,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       readonly environmentLabel: string;
     }> = [];
     const hostsSelectedRepository = (project: EnvironmentProject) => {
+      if (selectedProjectIsChat) {
+        return isChatProject(project);
+      }
       if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
         return true;
       }
@@ -388,6 +393,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedRepositoryKey,
     selectedWorkspaceBasename,
     selectedProjectTitle,
+    selectedProjectIsChat,
   ]);
 
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
@@ -423,7 +429,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // uses for new draft threads: per-project setting, then the repo's
   // checked-in t3.json, then the server's configured default.
   const t3ProjectFileQuery = useEnvironmentQuery(
-    selectedProject !== null && selectedProject.workspaceRoot !== ""
+    selectedProject !== null &&
+      !isChatProject(selectedProject) &&
+      selectedProject.workspaceRoot !== ""
       ? projectEnvironment.readFile({
           environmentId: selectedProject.environmentId,
           input: { cwd: selectedProject.workspaceRoot, relativePath: T3_PROJECT_FILE_NAME },
@@ -463,9 +471,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     projectSetting: projectThreadEnvMode,
     projectFilePending: t3ProjectFileQuery.isPending,
   });
-  const workspaceMode = selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode;
-  const selectedBranchName = selectedProjectDraft.workspaceSelection?.branch ?? null;
-  const selectedWorktreePath = selectedProjectDraft.workspaceSelection?.worktreePath ?? null;
+  const isChat = selectedProject !== null && isChatProject(selectedProject);
+  const workspaceMode = isChat
+    ? "local"
+    : (selectedProjectDraft.workspaceSelection?.mode ?? defaultWorkspaceMode);
+  const selectedBranchName = isChat
+    ? null
+    : (selectedProjectDraft.workspaceSelection?.branch ?? null);
+  const selectedWorktreePath = isChat
+    ? null
+    : (selectedProjectDraft.workspaceSelection?.worktreePath ?? null);
   // Keep the user's explicit choice separate from the resolved display value:
   // only the explicit flag is ever written back to the draft, so the resolved
   // value keeps tracking the server setting when the config loads late.
@@ -638,10 +653,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () => ({
       environmentId: selectedProject?.environmentId ?? null,
       // `|| null` also skips the stand-in project's empty workspaceRoot.
-      cwd: selectedProject?.workspaceRoot || null,
+      cwd: isChat ? null : selectedProject?.workspaceRoot || null,
       query: debouncedBranchQuery,
     }),
-    [debouncedBranchQuery, selectedProject?.environmentId, selectedProject?.workspaceRoot],
+    [debouncedBranchQuery, isChat, selectedProject?.environmentId, selectedProject?.workspaceRoot],
   );
   const branchState = usePaginatedBranches(branchTarget);
   const branchSearchIsDebouncing = branchQuery.trim() !== debouncedBranchQuery.trim();
@@ -864,7 +879,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const refreshBranches = branchState.refresh;
   const loadMoreBranches = branchState.loadNext;
   const loadBranches = useCallback(() => {
-    if (!selectedProject) {
+    if (!selectedProject || isChatProject(selectedProject)) {
       return;
     }
     setPendingConnectionError(null);
@@ -973,7 +988,9 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       const workspaceSelection = draft.workspaceSelection;
       // Fall back to the resolved mode (server default) so queued tasks drain
       // with the same mode the composer displayed.
-      const mode = workspaceSelection?.mode ?? workspaceMode;
+      const mode = isChatProject(selectedProject)
+        ? "local"
+        : (workspaceSelection?.mode ?? workspaceMode);
       // When the selection is the stand-in built from the queued snapshot,
       // persist the original (possibly absent) snapshot values — the
       // stand-in's placeholder title/workspaceRoot must never be written back
@@ -1015,10 +1032,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
           // guess would pin a stale label to a thread that ran somewhere else.
           branch: resolveProjectThreadCreationBranch({
             workspaceMode: mode,
-            selectedBranch: workspaceSelection?.branch ?? null,
-            currentCheckoutBranch: options?.currentCheckoutBranch ?? null,
+            selectedBranch: isChatProject(selectedProject)
+              ? null
+              : (workspaceSelection?.branch ?? null),
+            currentCheckoutBranch: isChatProject(selectedProject)
+              ? null
+              : (options?.currentCheckoutBranch ?? null),
           }),
-          worktreePath: mode === "worktree" ? null : (workspaceSelection?.worktreePath ?? null),
+          worktreePath:
+            isChatProject(selectedProject) || mode === "worktree"
+              ? null
+              : (workspaceSelection?.worktreePath ?? null),
           // The draft only carries the flag when the user touched it; fall
           // back to the resolved default (server settings) so queued tasks
           // drain with the same origin mode the composer displayed.

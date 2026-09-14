@@ -1,3 +1,4 @@
+import { chatThreadWorkspacePath, isChatProject } from "@t3tools/contracts";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
 import { useAtomValue } from "@effect/atom-react";
@@ -2446,6 +2447,7 @@ export default function Sidebar() {
 
   const openProjectSettings = useCallback(
     (projectGroup: SidebarProjectSnapshot) => {
+      if (isChatProject(projectGroup)) return;
       if (isMobile) {
         setOpenMobile(false);
       }
@@ -2469,6 +2471,7 @@ export default function Sidebar() {
     ) => {
       event.preventDefault();
       event.stopPropagation();
+      if (isChatProject(projectGroup)) return;
       suppressNextScopeChangeRef.current = true;
       dispatchProjectScopeMenu({ type: "project-settings-opened" });
       openProjectSettings(projectGroup);
@@ -3972,10 +3975,11 @@ export default function Sidebar() {
         }
         const thread = threadByKeyRef.current.get(threadKey);
         if (!thread) return;
+        const threadProject = projectByKey.get(`${thread.environmentId}:${thread.projectId}`);
         const threadWorkspacePath =
-          thread.worktreePath ??
-          projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
-          null;
+          threadProject && isChatProject(threadProject)
+            ? chatThreadWorkspacePath(threadProject.workspaceRoot, thread.id)
+            : (thread.worktreePath ?? threadProject?.workspaceRoot ?? null);
         // Un-settle pins the thread active until real activity clears the pin.
         // Environments without
         // the settlement capability get no lifecycle items at all.
@@ -3999,6 +4003,7 @@ export default function Sidebar() {
           api.contextMenu.show(
             buildThreadActionMenuItems({
               branch: thread.branch ?? null,
+              isChat: isChatProject({ id: thread.projectId }),
               isPinned,
               isSettled,
               isSnoozed,
@@ -4441,7 +4446,7 @@ export default function Sidebar() {
                                 machineByEnvironmentId={environmentMachineById}
                               />
                             ) : null}
-                            {project ? (
+                            {project && !isChatProject(project) ? (
                               <Button
                                 size="icon-xs"
                                 variant="ghost-muted"

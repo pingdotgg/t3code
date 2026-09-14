@@ -27,6 +27,13 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("keeps chat lifecycle actions without project or branch actions", () => {
+    const actions = ids({ ...baseState, isChat: true, branch: "main" });
+    expect(actions).not.toContain("project-settings");
+    expect(actions).not.toContain("new-thread-on-branch");
+    expect(actions).toEqual(expect.arrayContaining(["rename", "archive", "delete"]));
+  });
+
   it("hides lifecycle items when the environment lacks the capabilities", () => {
     expect(
       ids({

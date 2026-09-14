@@ -81,6 +81,7 @@ import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/uns
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
+import { resolveThreadWorkspaceCwd } from "./checkpointing/Utils.ts";
 import * as ServerConfig from "./config.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
@@ -2878,10 +2879,14 @@ const makeWsRpcLayer = (
                   resource: input.resource,
                 });
               }
-              return yield* issueAssetUrl({
-                resource: input.resource,
-                workspaceRoot: thread.value.worktreePath ?? project.value.workspaceRoot,
+              const workspaceRoot = resolveThreadWorkspaceCwd({
+                thread: thread.value,
+                projects: [project.value],
               });
+              if (!workspaceRoot) {
+                return yield* new AssetWorkspaceContextNotFoundError({ resource: input.resource });
+              }
+              return yield* issueAssetUrl({ resource: input.resource, workspaceRoot });
             }),
             { "rpc.aggregate": "workspace" },
           ),

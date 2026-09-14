@@ -1,5 +1,10 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
+import {
+  chatThreadWorkspacePath,
+  isChatProject,
+  type EnvironmentId,
+  type ScopedThreadRef,
+} from "@t3tools/contracts";
 
 import { useProjects } from "~/state/entities";
 
@@ -28,7 +33,12 @@ export function useActiveProjectTarget(): ActiveProjectTarget | null {
           candidate.environmentId === thread.environmentId && candidate.id === thread.projectId,
       )
     : null;
-  const cwd = thread?.worktreePath ?? project?.workspaceRoot;
+  const cwd =
+    project && isChatProject(project)
+      ? activeThread
+        ? chatThreadWorkspacePath(project.workspaceRoot, activeThread.id)
+        : null
+      : (thread?.worktreePath ?? project?.workspaceRoot);
 
   if (!thread || !threadId || !project || !cwd) return null;
 

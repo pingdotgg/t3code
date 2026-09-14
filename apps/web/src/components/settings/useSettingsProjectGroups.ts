@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { useMemo } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -15,7 +16,7 @@ export function useSettingsProjectGroups() {
   return useMemo(() => {
     const labels = new Map(environments.map((entry) => [entry.environmentId, entry.label]));
     return buildSidebarProjectSnapshots({
-      projects,
+      projects: projects.filter((project) => !isChatProject(project)),
       settings,
       primaryEnvironmentId,
       resolveEnvironmentLabel: (id) => labels.get(id) ?? null,

@@ -1,5 +1,5 @@
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { isChatProject, type EnvironmentId } from "@t3tools/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
@@ -39,6 +39,9 @@ export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
   selectedProject: EnvironmentProject | null,
 ): EnvironmentProject | null {
+  if (selectedProject && isChatProject(selectedProject)) {
+    return projectsOnTarget.find(isChatProject) ?? null;
+  }
   const repositoryKey = selectedProject?.repositoryIdentity?.canonicalKey ?? null;
   // `|| null` (not `??`): a pending-task placeholder project can have an empty
   // workspaceRoot, and an "" basename would match nothing meaningful.

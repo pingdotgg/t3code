@@ -32,6 +32,19 @@ import {
   PullRequestState,
 } from "./pullRequest.ts";
 
+/** Server-managed home for conversations without a user-selected project. */
+export const CHAT_PROJECT_ID = ProjectId.make("t3-chat");
+
+export function isChatProject(project: { readonly id: string }): boolean {
+  return project.id === CHAT_PROJECT_ID;
+}
+
+export function chatThreadWorkspacePath(chatRoot: string, threadId: string): string {
+  const separator = chatRoot.includes("\\") ? "\\" : "/";
+  const directory = encodeURIComponent(threadId).replaceAll(".", "%2E");
+  return `${chatRoot.replace(/[\\/]+$/, "")}${separator}${directory}`;
+}
+
 export const ORCHESTRATION_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
   getWorkflowScript: "orchestration.getWorkflowScript",

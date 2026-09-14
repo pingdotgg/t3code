@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { createFileRoute, Link } from "@tanstack/react-router";
@@ -47,13 +48,24 @@ function IndexDraftLanding() {
   const startingRef = useRef(false);
   const [startState, setStartState] = useState({ failed: false, retryRequest: 0 });
 
-  const mostRecentProject = useMemo(
-    () =>
-      bootstrapped
-        ? (sortScopedProjectsForSidebar(projects, threads, "updated_at")[0] ?? null)
-        : null,
-    [bootstrapped, projects, threads],
-  );
+  const mostRecentProject = useMemo(() => {
+    if (!bootstrapped) return null;
+    const candidates = projects.filter(
+      (project) =>
+        !isChatProject(project) ||
+        threads.some(
+          (thread) =>
+            thread.environmentId === project.environmentId && thread.projectId === project.id,
+        ),
+    );
+    return (
+      sortScopedProjectsForSidebar(
+        candidates.length > 0 ? candidates : projects,
+        threads,
+        "updated_at",
+      )[0] ?? null
+    );
+  }, [bootstrapped, projects, threads]);
 
   useEffect(() => {
     if (mostRecentProject === null || startingRef.current) {

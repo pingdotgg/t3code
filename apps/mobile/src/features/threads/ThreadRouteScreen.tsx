@@ -8,6 +8,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import * as Option from "effect/Option";
 import {
+  isChatProject,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   ThreadId,
@@ -229,6 +230,7 @@ function ThreadRouteContent(
     };
   }, [selectedThread, selectedThreadDetailState]);
   const { selectedThreadCwd } = useSelectedThreadWorktree();
+  const isChat = selectedThreadProject !== null && isChatProject(selectedThreadProject);
   const composer = useThreadComposerState();
   const gitState = useSelectedThreadGitState();
   const gitActions = useSelectedThreadGitActions();
@@ -326,7 +328,7 @@ function ThreadRouteContent(
     .join(" · ");
   /* ─── Git status for native header trigger ───────────────────────── */
   const gitStatus = useEnvironmentQuery(
-    selectedThread !== null && selectedThreadCwd !== null
+    !isChat && selectedThread !== null && selectedThreadCwd !== null
       ? vcsEnvironment.status({
           environmentId: selectedThread.environmentId,
           input: { cwd: selectedThreadCwd },
@@ -341,9 +343,9 @@ function ThreadRouteContent(
     () =>
       buildTerminalMenuSessions({
         knownSessions: knownTerminalSessions,
-        workspaceRoot: selectedThreadProject?.workspaceRoot ?? null,
+        workspaceRoot: selectedThreadCwd,
       }),
-    [knownTerminalSessions, selectedThreadProject?.workspaceRoot],
+    [knownTerminalSessions, selectedThreadCwd],
   );
   const selectedThreadDetailWorktreePath = selectedThreadDetail?.worktreePath ?? null;
   const handleReconnectEnvironment = useCallback(() => {
@@ -444,14 +446,15 @@ function ThreadRouteContent(
   const safeAreaInsets = useSafeAreaInsets();
   const inspectorHeaderInset = Platform.OS === "ios" ? 0 : safeAreaInsets.top;
   const GitInspector = useCallback(
-    () => (
-      <GitOverviewSheet
-        headerInset={inspectorHeaderInset}
-        presentation="inspector"
-        route={{ params: props.route.params }}
-      />
-    ),
-    [inspectorHeaderInset, props.route.params],
+    () =>
+      isChat ? null : (
+        <GitOverviewSheet
+          headerInset={inspectorHeaderInset}
+          presentation="inspector"
+          route={{ params: props.route.params }}
+        />
+      ),
+    [inspectorHeaderInset, isChat, props.route.params],
   );
   const FilesInspector = useCallback(
     () =>
@@ -522,10 +525,10 @@ function ThreadRouteContent(
       terminalDebugLog("terminal-menu:open-existing", {
         terminalId: nextTerminalId ?? null,
         hasThread: Boolean(selectedThread),
-        hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
+        hasWorkspaceRoot: Boolean(selectedThreadCwd),
       });
 
-      if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+      if (!selectedThread || !selectedThreadCwd) {
         return;
       }
 
@@ -535,17 +538,17 @@ function ThreadRouteContent(
         ...(nextTerminalId ? { terminalId: nextTerminalId } : {}),
       });
     },
-    [navigation, selectedThread, selectedThreadProject?.workspaceRoot],
+    [navigation, selectedThread, selectedThreadCwd],
   );
 
   const handleOpenNewTerminal = useCallback(() => {
     terminalDebugLog("terminal-menu:open-new", {
       hasThread: Boolean(selectedThread),
-      hasWorkspaceRoot: Boolean(selectedThreadProject?.workspaceRoot),
+      hasWorkspaceRoot: Boolean(selectedThreadCwd),
       listedTerminalIds: terminalMenuSessions.map((session) => session.terminalId),
     });
 
-    if (!selectedThread || !selectedThreadProject?.workspaceRoot) {
+    if (!selectedThread || !selectedThreadCwd) {
       return;
     }
 
@@ -557,7 +560,7 @@ function ThreadRouteContent(
       threadId: String(selectedThread.id),
       terminalId: nextId,
     });
-  }, [navigation, selectedThread, selectedThreadProject?.workspaceRoot, terminalMenuSessions]);
+  }, [navigation, selectedThread, selectedThreadCwd, terminalMenuSessions]);
 
   const handleRunProjectScript = useCallback(
     async (script: ProjectScript) => {
@@ -631,6 +634,7 @@ function ThreadRouteContent(
   const threadGitControlProps = {
     environmentId: environmentIdRaw ?? "",
     threadId: threadId ?? "",
+    hideGitControls: isChat,
     auxiliaryPaneControl:
       !layout.usesSplitView && fileInspector.supported && selectedThreadCwd !== null
         ? {
@@ -640,18 +644,19 @@ function ThreadRouteContent(
         : undefined,
     onOpenFilesInspector:
       fileInspector.supported && selectedThreadCwd !== null ? handleOpenFilesInspector : undefined,
-    onOpenGitInspector: fileInspector.supported ? handleOpenGitInspector : undefined,
+    onOpenGitInspector: !isChat && fileInspector.supported ? handleOpenGitInspector : undefined,
     currentBranch: selectedThread?.branch ?? null,
     gitStatus: gitStatus.data,
     gitOperationLabel: gitState.gitOperationLabel,
-    canOpenTerminal: Boolean(selectedThreadProject?.workspaceRoot),
+    canOpenTerminal: Boolean(selectedThreadCwd),
     canOpenFiles: Boolean(selectedThreadProject?.workspaceRoot),
-    projectScripts: selectedThreadProject
-      ? resolveProjectScripts(
-          routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
-          selectedThreadProject,
-        )
-      : [],
+    projectScripts:
+      selectedThreadProject && !isChat
+        ? resolveProjectScripts(
+            routeEnvironmentRuntime?.serverConfig?.settings ?? DEFAULT_SERVER_SETTINGS,
+            selectedThreadProject,
+          )
+        : [],
     terminalSessions: terminalMenuSessions,
     showDirectFileControl: layout.usesSplitView,
     onOpenTerminal: handleOpenTerminal,
@@ -721,18 +726,19 @@ function ThreadRouteContent(
         onPress: handleOpenFilesInspector,
       });
     }
-    if (selectedThreadProject?.workspaceRoot) {
+    if (selectedThreadCwd) {
       actions.push({
         accessibilityLabel: "Open terminal",
         icon: "terminal",
         onPress: () => handleOpenTerminal(null),
       });
     }
-    actions.push({
-      accessibilityLabel: "Open git controls",
-      icon: "point.topleft.down.curvedto.point.bottomright.up",
-      onPress: handleOpenGitInspector,
-    });
+    if (!isChat)
+      actions.push({
+        accessibilityLabel: "Open git controls",
+        icon: "point.topleft.down.curvedto.point.bottomright.up",
+        onPress: handleOpenGitInspector,
+      });
     if (fileInspector.supported && selectedThreadCwd !== null) {
       actions.push({
         accessibilityLabel: "Toggle inspector",
@@ -742,6 +748,7 @@ function ThreadRouteContent(
     }
     return actions;
   }, [
+    isChat,
     fileInspector.supported,
     handleOpenFilesInspector,
     handleOpenTerminal,
@@ -749,7 +756,6 @@ function ThreadRouteContent(
     handleToggleInspector,
     props.onReturnToThread,
     selectedThreadCwd,
-    selectedThreadProject?.workspaceRoot,
   ]);
 
   const handleEditFailedCreation = useCallback(async () => {

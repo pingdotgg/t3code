@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { scopeProjectRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   type AtomCommandResult,
@@ -139,6 +140,7 @@ export function useThreadActionMenu(input: {
         const snoozePresets = resolveSnoozePresets(now, timestampFormat);
         const items = buildThreadActionMenuItems({
           branch: thread.branch ?? null,
+          isChat: isChatProject({ id: thread.projectId }),
           isPinned: thread.pinnedAt != null,
           isSettled: supports.settlement && thread.settledOverride === "settled",
           isSnoozed: supports.snooze && effectiveSnoozed(thread, { now: now.toISOString() }),

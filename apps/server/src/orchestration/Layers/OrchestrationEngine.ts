@@ -5,7 +5,7 @@ import type {
   ProjectId,
   ThreadId,
 } from "@t3tools/contracts";
-import { OrchestrationCommand } from "@t3tools/contracts";
+import { CHAT_PROJECT_ID, chatThreadWorkspacePath, OrchestrationCommand } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
@@ -14,6 +14,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Metric from "effect/Metric";
 import * as Option from "effect/Option";
@@ -89,6 +90,7 @@ const makeOrchestrationEngine = Effect.gen(function* () {
   const projectionSnapshotQuery = yield* ProjectionSnapshotQuery;
   const threadBackgroundLiveness = yield* ThreadBackgroundLivenessService;
   const crypto = yield* Crypto.Crypto;
+  const fileSystem = yield* FileSystem.FileSystem;
 
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
   let commandReadModel = createEmptyReadModel(yield* nowIso);
@@ -261,6 +263,28 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           ),
         );
         const plannedEvents = Array.isArray(eventBase) ? eventBase : [eventBase];
+        for (const event of plannedEvents) {
+          if (event.type !== "thread.created" || event.payload.projectId !== CHAT_PROJECT_ID)
+            continue;
+          const project = commandReadModel.projects.find(
+            (project) => project.id === CHAT_PROJECT_ID,
+          );
+          if (!project) continue;
+          yield* fileSystem
+            .makeDirectory(chatThreadWorkspacePath(project.workspaceRoot, event.payload.threadId), {
+              recursive: true,
+            })
+            .pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestrationCommandInvariantError({
+                    commandType: envelope.command.type,
+                    detail: "Could not create this chat's folder.",
+                    cause,
+                  }),
+              ),
+            );
+        }
         // Stamp the dispatching client's origin onto every event the command
         // produced. The decider stays pure; attribution is an engine concern.
         const eventBases =

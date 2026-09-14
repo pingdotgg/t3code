@@ -1,5 +1,6 @@
 import {
   type AgentSessionImportSource,
+  CHAT_PROJECT_ID,
   ChatAttachment,
   ComposerContextId,
   CheckpointRef,
@@ -2452,6 +2453,17 @@ it.effect(
       assert.deepStrictEqual(resolveCalls.toSorted(), ["/tmp/deleted-root", "/tmp/shared-root"]);
       assert.equal(fullSnapshot.projects.length, 3);
       assert.equal(fullSnapshot.projects[2]?.repositoryIdentity?.rootPath, "/tmp/deleted-root");
+
+      yield* sql`INSERT INTO projection_projects
+        (project_id, title, workspace_root, scripts_json, created_at, updated_at)
+        VALUES (${CHAT_PROJECT_ID}, 'Chats', '/tmp/deleted-root', '[]',
+          '2026-04-04T00:00:07.000Z', '2026-04-04T00:00:07.000Z')`;
+      const snapshotWithChats = yield* snapshotQuery.getSnapshot();
+      assert.strictEqual(
+        snapshotWithChats.projects.find((project) => project.id === CHAT_PROJECT_ID)
+          ?.repositoryIdentity,
+        null,
+      );
     }).pipe(Effect.provide(layer));
   },
 );

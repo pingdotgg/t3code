@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { scopedProjectKey, scopeProjectRef } from "../environment/scoped.ts";
 import type {
   EnvironmentId,
@@ -129,7 +130,7 @@ export function deriveLogicalProjectKey(
   },
 ): string {
   const groupingMode = options?.groupingMode ?? "repository";
-  if (groupingMode === "separate") {
+  if (isChatProject(project) || groupingMode === "separate") {
     return derivePhysicalProjectKey(project);
   }
 

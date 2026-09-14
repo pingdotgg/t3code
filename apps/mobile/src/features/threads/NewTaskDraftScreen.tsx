@@ -27,6 +27,7 @@ import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { useFontFamily } from "../../lib/useFontFamily";
 
 import {
+  isChatProject,
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
   resolveEnvironmentMachineKind,
@@ -61,6 +62,7 @@ import {
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProjectFavicon } from "../../components/ProjectFavicon";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { hasProviderUsageLimits, isUsageLimitsCommand } from "@t3tools/shared/usageLimits";
@@ -364,9 +366,11 @@ export function NewTaskDraftScreen(props: {
       selectedEnvironmentServerConfig?.usageLimitSources ?? [],
     );
   const composerWorkspaceCwd =
-    (flow.workspaceMode === "worktree"
-      ? selectedProject?.workspaceRoot
-      : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
+    selectedProject && isChatProject(selectedProject)
+      ? null
+      : (flow.workspaceMode === "worktree"
+          ? selectedProject?.workspaceRoot
+          : (flow.selectedWorktreePath ?? selectedProject?.workspaceRoot)) || null;
   // Media needs its thumbnail; every other file already reads as its inline chip.
   const stripAttachments = useMemo(
     () => composerStripAttachments(flow.attachments),
@@ -1114,7 +1118,9 @@ export function NewTaskDraftScreen(props: {
         selectedEnvironmentServerConfig,
         draft.modelSelection ?? null,
       ) ?? flow.selectedModel;
-    const workspaceMode = draft.workspaceSelection?.mode ?? flow.workspaceMode;
+    const workspaceMode = isChatProject(selectedProject)
+      ? "local"
+      : (draft.workspaceSelection?.mode ?? flow.workspaceMode);
     const selectedBranchName = draft.workspaceSelection?.branch ?? flow.selectedBranchName;
     const initialMessageText = draft.text.trim();
 
@@ -1366,30 +1372,72 @@ export function NewTaskDraftScreen(props: {
     navigation.dispatch(StackActions.push(routeName));
   };
 
+  const chatProject = projects.find(
+    (project) => project.environmentId === selectedProject.environmentId && isChatProject(project),
+  );
   const hero = (
     <View className="items-center gap-6 px-6" testID="new-task-hero">
       <View className="w-full items-center gap-1.5">
         <Text className="text-center text-2xl font-t3-medium tracking-tight text-foreground">
-          What should we build
+          {isChatProject(selectedProject) ? "What should we work on?" : "What should we build"}
         </Text>
         <View className="max-w-full flex-row items-center justify-center">
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
-          <Pressable
-            accessibilityHint="Opens the project picker"
-            accessibilityLabel={`Change project from ${selectedProject.title}`}
-            accessibilityRole="button"
-            disabled={isComposerInteractionLocked}
-            onPress={chooseProject}
-            className="min-w-0 max-w-[250px] border-b border-foreground-muted active:opacity-65"
+          {!isChatProject(selectedProject) ? (
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">in </Text>
+          ) : null}
+          <View
+            className={
+              isChatProject(selectedProject)
+                ? ""
+                : "min-w-0 flex-row items-center rounded-xl bg-subtle"
+            }
           >
-            <Text
-              className="text-2xl font-t3-medium tracking-tight text-foreground"
-              numberOfLines={1}
-            >
-              {selectedProject.title}
-            </Text>
-          </Pressable>
-          <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
+            <ComposerInlineControl
+              accessibilityHint="Opens the project picker"
+              accessibilityLabel={
+                isChatProject(selectedProject)
+                  ? "Add project"
+                  : `Change project from ${selectedProject.title}`
+              }
+              disabled={isComposerInteractionLocked}
+              icon={isChatProject(selectedProject) ? "plus" : undefined}
+              iconNode={
+                isChatProject(selectedProject) ? undefined : (
+                  <ProjectFavicon
+                    environmentId={selectedProject.environmentId}
+                    projectTitle={selectedProject.title}
+                    workspaceRoot={selectedProject.workspaceRoot}
+                    faviconPath={selectedProject.faviconPath}
+                    size={16}
+                  />
+                )
+              }
+              label={isChatProject(selectedProject) ? "Add project" : selectedProject.title}
+              maxWidth={200}
+              onPress={chooseProject}
+              showChevron={!isChatProject(selectedProject)}
+            />
+            {!isChatProject(selectedProject) && chatProject ? (
+              <Pressable
+                accessibilityLabel="Don't work in a project"
+                accessibilityRole="button"
+                disabled={isComposerInteractionLocked}
+                onPress={() => setProject(chatProject)}
+                className="size-11 items-center justify-center rounded-xl active:bg-subtle"
+                style={{ opacity: isComposerInteractionLocked ? 0.45 : 1 }}
+              >
+                <SymbolView
+                  name="xmark"
+                  size={14}
+                  tintColorClassName="accent-icon-muted"
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : null}
+          </View>
+          {!isChatProject(selectedProject) ? (
+            <Text className="text-2xl font-t3-medium tracking-tight text-foreground">?</Text>
+          ) : null}
         </View>
       </View>
 
@@ -1432,7 +1480,7 @@ export function NewTaskDraftScreen(props: {
     </View>
   );
 
-  const workspaceControls = (
+  const workspaceControls = isChatProject(selectedProject) ? null : (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
         accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}

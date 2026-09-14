@@ -4,6 +4,8 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  CHAT_PROJECT_ID,
+  chatThreadWorkspacePath,
   ModelSelection,
   ProviderRuntimeEvent,
   ProviderSession,
@@ -1505,6 +1507,72 @@ describe("ProviderCommandReactor", () => {
       expect(harness.runtimeSessions).toEqual([]);
       expect(harness.sendTurn).not.toHaveBeenCalled();
       expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+    }),
+  );
+
+  effectIt.effect("settles a chat folder creation failure before starting its provider", () =>
+    Effect.gen(function* () {
+      const attempted = yield* Deferred.make<void>();
+      const harness = yield* Effect.promise(() =>
+        createHarness({
+          tryHandlePromptCommandEffect: () =>
+            Deferred.succeed(attempted, undefined).pipe(Effect.as(false)),
+        }),
+      );
+      const chatRoot = NodePath.join(harness.stateDir, "chat");
+      const threadId = ThreadId.make("chat-folder-failure");
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      yield* harness.engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-chats"),
+        projectId: CHAT_PROJECT_ID,
+        title: "Chats",
+        workspaceRoot: chatRoot,
+        createdAt,
+      });
+      yield* harness.engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("create-chat-folder-failure"),
+        threadId,
+        projectId: CHAT_PROJECT_ID,
+        title: "New thread",
+        modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      });
+      const cwd = chatThreadWorkspacePath(chatRoot, threadId);
+      NodeFS.rmdirSync(cwd);
+      NodeFS.writeFileSync(cwd, "blocks the chat directory");
+      yield* harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("send-chat-folder-failure"),
+        threadId,
+        message: {
+          messageId: asMessageId("chat-folder-message"),
+          role: "user",
+          text: "hello",
+          attachments: [],
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt,
+      });
+      yield* Deferred.await(attempted);
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (thread) => thread.id === threadId,
+      );
+      expect(thread?.session).toMatchObject({ status: "error", activeTurnId: null });
+      expect(thread?.session?.lastError).toContain(cwd);
+      expect(
+        thread?.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+      ).toBe(true);
+      expect(yield* Effect.promise(() => harness.readPendingTurnStarts())).toEqual([]);
+      expect(harness.startSession).not.toHaveBeenCalled();
+      expect(harness.sendTurn).not.toHaveBeenCalled();
     }),
   );
 

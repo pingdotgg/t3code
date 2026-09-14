@@ -1300,6 +1300,29 @@ describe("composerDraftStore project draft thread mapping", () => {
     expect(store.getComposerDraft(draftId)?.prompt).toBe("keep this prompt");
   });
 
+  it("clears workspace choices when switching to no project and preserves the prompt", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "feature/test",
+      worktreePath: "/tmp/worktree",
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+    store.setPrompt(draftId, "why is the sky blue?");
+    const chatRef = scopeProjectRef(TEST_ENVIRONMENT_ID, ProjectId.make("t3-chat"));
+    store.setProjectDraftThreadId(chatRef, draftId, { threadId });
+    expect(store.getDraftThreadByProjectRef(chatRef)).toMatchObject({
+      branch: null,
+      worktreePath: null,
+      envMode: "local",
+      startFromOrigin: false,
+    });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("why is the sky blue?");
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("why is the sky blue?");
+  });
+
   it("rotates a failed bootstrap thread id without losing its draft", () => {
     const store = useComposerDraftStore.getState();
     const retryThreadId = ThreadId.make("thread-retry");

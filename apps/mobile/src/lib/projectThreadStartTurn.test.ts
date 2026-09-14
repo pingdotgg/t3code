@@ -1,4 +1,5 @@
 import {
+  CHAT_PROJECT_ID,
   EnvironmentId,
   MessageId,
   ProjectId,
@@ -100,4 +101,36 @@ describe("new thread on an existing branch", () => {
       expect(input.threadId).toBe("new-thread");
     },
   );
+});
+
+describe("threads without a project", () => {
+  it("ignores stale worktree settings when creating a chat", () => {
+    const input = buildProjectThreadStartTurnInput({
+      projectId: CHAT_PROJECT_ID,
+      projectCwd: "/t3/chat",
+      threadId: "new-chat",
+      commandId: "command",
+      messageId: "message",
+      createdAt: "2026-09-12T00:00:00Z",
+      text: "Why is the sky blue?",
+      uploadedAttachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.6-sol" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      workspaceMode: "worktree",
+      branch: "feature/existing",
+      worktreePath: "/worktrees/existing",
+      startFromOrigin: true,
+      worktreeBranchName: "feature/new-worktree",
+    });
+
+    expect(input.bootstrap.createThread).toMatchObject({
+      projectId: CHAT_PROJECT_ID,
+      branch: null,
+      worktreePath: null,
+    });
+    expect(input.bootstrap).not.toHaveProperty("prepareWorktree");
+    expect(input.bootstrap).not.toHaveProperty("runSetupScript");
+    expect(input.message.text).toBe("Why is the sky blue?");
+  });
 });

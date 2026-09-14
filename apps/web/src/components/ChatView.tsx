@@ -17,6 +17,8 @@ import {
 } from "../questionAttachments";
 import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
 import {
+  chatThreadWorkspacePath,
+  isChatProject,
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -339,7 +341,7 @@ import {
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
-import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { DraftProjectPicker } from "./chat/DraftProjectPicker";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
@@ -883,7 +885,17 @@ const PersistentThreadTerminalDrawer = memo(function PersistentThreadTerminalDra
     : draftThread
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
-  const project = useProject(projectRef);
+  const storedProject = useProject(projectRef);
+  const serverThreadId = serverThread?.id;
+  const project = useMemo(() => {
+    if (!storedProject || !isChatProject(storedProject)) return storedProject;
+    return serverThreadId
+      ? {
+          ...storedProject,
+          workspaceRoot: chatThreadWorkspacePath(storedProject.workspaceRoot, serverThreadId),
+        }
+      : null;
+  }, [storedProject, serverThreadId]);
   const terminalUiState = useTerminalUiStateStore((state) =>
     selectThreadTerminalUiState(state.terminalUiStateByThreadKey, threadRef),
   );
@@ -1265,7 +1277,17 @@ const PersistentThreadTerminalPanel = memo(function PersistentThreadTerminalPane
     : draftThread
       ? scopeProjectRef(draftThread.environmentId, draftThread.projectId)
       : null;
-  const project = useProject(projectRef);
+  const storedProject = useProject(projectRef);
+  const serverThreadId = serverThread?.id;
+  const project = useMemo(() => {
+    if (!storedProject || !isChatProject(storedProject)) return storedProject;
+    return serverThreadId
+      ? {
+          ...storedProject,
+          workspaceRoot: chatThreadWorkspacePath(storedProject.workspaceRoot, serverThreadId),
+        }
+      : null;
+  }, [storedProject, serverThreadId]);
   const knownTerminalSessions = useKnownTerminalSessions({
     environmentId: threadRef.environmentId,
     threadId: threadRef.threadId,
@@ -2085,13 +2107,17 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  const isChat = activeProject !== null && isChatProject(activeProject);
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
     [activeProject, settings],
   );
   const activeProjectScripts = useMemo(
-    () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
+    () =>
+      activeProject && !isChatProject(activeProject)
+        ? resolveProjectScripts(settings, activeProject)
+        : [],
     [activeProject, settings],
   );
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
@@ -2270,8 +2296,10 @@ export default function ChatView(props: ChatViewProps) {
   const logicalProjectEnvironments = useMemo(() => {
     if (!activeProject) return [];
     const logicalKey = deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings);
-    const memberProjects = allProjects.filter(
-      (p) => deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
+    const memberProjects = allProjects.filter((p) =>
+      isChatProject(activeProject)
+        ? isChatProject(p)
+        : deriveLogicalProjectKeyFromSettings(p, projectGroupingSettings) === logicalKey,
     );
     const seen = new Set<string>();
     const envs: EnvironmentOption[] = [];
@@ -2300,10 +2328,12 @@ export default function ChatView(props: ChatViewProps) {
     logicalProjectEnvironments.find(
       (environment) => environment.environmentId === activeThread?.environmentId,
     ) ?? null;
-  const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
-    activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
-  });
+  const showComposerEnvironmentIndicator =
+    (activeProject !== null && isChatProject(activeProject)) ||
+    shouldShowEnvironmentIndicator({
+      activeEnvironment: activeEnvironmentOption,
+      canPickEnvironment: hasMultipleEnvironments,
+    });
 
   const openPullRequestDialog = useCallback(
     (reference?: string) => {
@@ -3438,12 +3468,16 @@ export default function ChatView(props: ChatViewProps) {
   ] = useDraftHeroLayoutTransition(isDraftHeroState);
 
   const gitCwd = activeProject
-    ? projectScriptCwd({
-        project: { cwd: activeProject.workspaceRoot },
-        worktreePath: activeThread?.worktreePath ?? null,
-      })
+    ? isChat
+      ? isServerThread && activeThread
+        ? chatThreadWorkspacePath(activeProject.workspaceRoot, activeThread.id)
+        : null
+      : projectScriptCwd({
+          project: { cwd: activeProject.workspaceRoot },
+          worktreePath: activeThread?.worktreePath ?? null,
+        })
     : null;
-  const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
+  const gitStatusCwd = isChat ? null : (activeThread?.worktreePath ?? gitCwd);
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
       ? null
@@ -3516,7 +3550,7 @@ export default function ChatView(props: ChatViewProps) {
     ? activeProviderStatus
     : null;
   const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
-  const activeProjectCwd = activeProject?.workspaceRoot ?? null;
+  const activeProjectCwd = isChat ? gitCwd : (activeProject?.workspaceRoot ?? null);
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
   useLayoutEffect(() => {
@@ -3549,7 +3583,8 @@ export default function ChatView(props: ChatViewProps) {
       rememberCheckoutIsRepo(environmentId, gitStatusCwd, liveIsGitRepo);
     }
   }, [environmentId, gitStatusCwd, liveIsGitRepo]);
-  const isGitRepo = liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true;
+  const isGitRepo =
+    !isChat && (liveIsGitRepo ?? recallCheckoutIsRepo(environmentId, gitStatusCwd) ?? true);
   // Keep a hidden, off-flow strip mounted for existing threads so the composer
   // can measure whether its relocated controls fit. The visible chrome remains
   // content-driven: Git/environment context or controls that actually fit.
@@ -3595,7 +3630,7 @@ export default function ChatView(props: ChatViewProps) {
     [keybindings, terminalShortcutLabelOptions],
   );
   const onToggleDiff = useCallback(() => {
-    if (!isServerThread) {
+    if (!isServerThread || (isChat && !diffOpen)) {
       return;
     }
     if (!diffOpen) {
@@ -3604,7 +3639,7 @@ export default function ChatView(props: ChatViewProps) {
     if (activeThreadRef) {
       useRightPanelStore.getState().toggle(activeThreadRef, "diff");
     }
-  }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
+  }, [activeThreadRef, diffOpen, isChat, isServerThread, onDiffPanelOpen]);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
   const loadBalancingCandidates = useMemo(
@@ -3650,6 +3685,16 @@ export default function ChatView(props: ChatViewProps) {
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
     if (!target) return;
+    const targetProject = allProjects.find(
+      (p) => p.environmentId === target.environmentId && p.id === target.projectId,
+    );
+    if (targetProject && isChatProject(targetProject)) {
+      setLogicalProjectDraftThreadId(
+        deriveLogicalProjectKeyFromSettings(targetProject, projectGroupingSettings),
+        scopeProjectRef(target.environmentId, target.projectId),
+        draftId,
+      );
+    }
     setDraftThreadContext(draftId, {
       projectRef: scopeProjectRef(target.environmentId, target.projectId),
       environmentSelection: "auto",
@@ -3662,6 +3707,9 @@ export default function ChatView(props: ChatViewProps) {
     draftId,
     logicalProjectEnvironments,
     setDraftThreadContext,
+    allProjects,
+    projectGroupingSettings,
+    setLogicalProjectDraftThreadId,
   ]);
   const onAutoEnvironment = useCallback(() => {
     if (envLocked || !draftId) return;
@@ -3712,13 +3760,31 @@ export default function ChatView(props: ChatViewProps) {
         (env) => env.environmentId === nextEnvironmentId,
       );
       if (!target) return;
+      const targetProject = allProjects.find(
+        (p) => p.environmentId === target.environmentId && p.id === target.projectId,
+      );
+      if (targetProject && isChatProject(targetProject)) {
+        setLogicalProjectDraftThreadId(
+          deriveLogicalProjectKeyFromSettings(targetProject, projectGroupingSettings),
+          scopeProjectRef(target.environmentId, target.projectId),
+          draftId,
+        );
+      }
       setDraftThreadContext(draftId, {
         projectRef: scopeProjectRef(target.environmentId, target.projectId),
         environmentSelection: "manual",
         loadBalancedEnvironmentId: null,
       });
     },
-    [draftId, envLocked, logicalProjectEnvironments, setDraftThreadContext],
+    [
+      draftId,
+      envLocked,
+      logicalProjectEnvironments,
+      setDraftThreadContext,
+      allProjects,
+      projectGroupingSettings,
+      setLogicalProjectDraftThreadId,
+    ],
   );
 
   const activeTerminalGroup =
@@ -3837,7 +3903,8 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || !activeProject) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen =
+        gitCwd ?? (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
       if (!cwdForOpen) {
         return;
       }
@@ -3851,7 +3918,9 @@ export default function ChatView(props: ChatViewProps) {
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: {
+              cwd: isChatProject(activeProject) ? cwdForOpen : activeProject.workspaceRoot,
+            },
             worktreePath: activeThreadWorktreePath,
           }),
         },
@@ -3878,7 +3947,8 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadRef || hasReachedSplitLimit || !activeThreadId || !activeProject) {
         return;
       }
-      const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+      const cwdForOpen =
+        gitCwd ?? (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
       if (!cwdForOpen) {
         return;
       }
@@ -3897,7 +3967,9 @@ export default function ChatView(props: ChatViewProps) {
           cwd: cwdForOpen,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: {
+              cwd: isChatProject(activeProject) ? cwdForOpen : activeProject.workspaceRoot,
+            },
             worktreePath: activeThreadWorktreePath,
           }),
         },
@@ -3921,7 +3993,8 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !activeThreadId || !activeProject) {
       return;
     }
-    const cwdForOpen = gitCwd ?? activeProject.workspaceRoot;
+    const cwdForOpen =
+      gitCwd ?? (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
     if (!cwdForOpen) {
       return;
     }
@@ -3936,7 +4009,7 @@ export default function ChatView(props: ChatViewProps) {
         cwd: cwdForOpen,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
+          project: { cwd: isChatProject(activeProject) ? cwdForOpen : activeProject.workspaceRoot },
           worktreePath: activeThreadWorktreePath,
         }),
       },
@@ -4003,7 +4076,11 @@ export default function ChatView(props: ChatViewProps) {
           return { ...current, [activeProject.id]: script.id };
         });
       }
-      const targetCwd = options?.cwd ?? gitCwd ?? activeProject.workspaceRoot;
+      const targetCwd =
+        options?.cwd ??
+        gitCwd ??
+        (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
+      if (!targetCwd) return;
       const baseTerminalId =
         terminalUiState.activeTerminalId || activeKnownTerminalIds[0] || DEFAULT_THREAD_TERMINAL_ID;
       const isBaseTerminalBusy = runningTerminalIds.includes(baseTerminalId);
@@ -4024,7 +4101,7 @@ export default function ChatView(props: ChatViewProps) {
 
       const runtimeEnv = projectScriptRuntimeEnv({
         project: {
-          cwd: activeProject.workspaceRoot,
+          cwd: isChatProject(activeProject) ? targetCwd : activeProject.workspaceRoot,
         },
         worktreePath: targetWorktreePath,
         ...(options?.env ? { extraEnv: options.env } : {}),
@@ -4646,7 +4723,8 @@ export default function ChatView(props: ChatViewProps) {
   ]);
   const addTerminalSurface = useCallback(() => {
     if (!activeThreadRef || !activeThreadId || !activeProject) return;
-    const cwd = gitCwd ?? activeProject.workspaceRoot;
+    const cwd = gitCwd ?? (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
+    if (!cwd) return;
     const terminalId = nextTerminalId(allocatableActiveTerminalIds);
     useRightPanelStore.getState().openTerminal(activeThreadRef, terminalId);
     setTerminalFocusRequestId((value) => value + 1);
@@ -4658,7 +4736,7 @@ export default function ChatView(props: ChatViewProps) {
         cwd,
         ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
         env: projectScriptRuntimeEnv({
-          project: { cwd: activeProject.workspaceRoot },
+          project: { cwd: isChatProject(activeProject) ? cwd : activeProject.workspaceRoot },
           worktreePath: activeThreadWorktreePath,
         }),
       },
@@ -4684,7 +4762,8 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       const terminalId = nextTerminalId(allocatableActiveTerminalIds);
-      const cwd = gitCwd ?? activeProject.workspaceRoot;
+      const cwd = gitCwd ?? (isChatProject(activeProject) ? null : activeProject.workspaceRoot);
+      if (!cwd) return;
       useRightPanelStore
         .getState()
         .splitTerminal(activeThreadRef, activeRightPanelSurface.id, terminalId, direction);
@@ -4697,7 +4776,7 @@ export default function ChatView(props: ChatViewProps) {
           cwd,
           ...(activeThreadWorktreePath != null ? { worktreePath: activeThreadWorktreePath } : {}),
           env: projectScriptRuntimeEnv({
-            project: { cwd: activeProject.workspaceRoot },
+            project: { cwd: isChatProject(activeProject) ? cwd : activeProject.workspaceRoot },
             worktreePath: activeThreadWorktreePath,
           }),
         },
@@ -5590,15 +5669,18 @@ export default function ChatView(props: ChatViewProps) {
     draftThreadEnvMode: isLocalDraftThread ? draftThread?.envMode : undefined,
   });
   const canOverrideServerThreadEnvMode = Boolean(
+    !isChat &&
     isServerThread &&
     activeThread &&
     activeThread.messages.length === 0 &&
     activeThread.worktreePath === null &&
     !envLocked,
   );
-  const envMode: DraftThreadEnvMode = canOverrideServerThreadEnvMode
-    ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
-    : derivedEnvMode;
+  const envMode: DraftThreadEnvMode = isChat
+    ? "local"
+    : canOverrideServerThreadEnvMode
+      ? (pendingServerThreadEnvMode ?? draftThread?.envMode ?? derivedEnvMode)
+      : derivedEnvMode;
   const activeThreadBranch =
     canOverrideServerThreadEnvMode && pendingServerThreadBranch !== undefined
       ? pendingServerThreadBranch
@@ -8639,10 +8721,10 @@ export default function ChatView(props: ChatViewProps) {
 
   const panelToggleControls = (
     <PanelLayoutControls
-      terminalAvailable={activeProject !== null}
+      terminalAvailable={activeProject !== null && (!isChat || isServerThread)}
       terminalOpen={terminalUiState.terminalOpen}
       terminalShortcutLabel={shortcutLabelForCommand(keybindings, "terminal.toggle")}
-      rightPanelAvailable={activeProject !== null}
+      rightPanelAvailable={activeProject !== null && (!isChat || isServerThread)}
       rightPanelOpen={rightPanelOpen}
       rightPanelShortcutLabel={shortcutLabelForCommand(keybindings, "rightPanel.toggle")}
       // Suppressed while the Agents surface is visible: the roster itself is
@@ -8717,15 +8799,17 @@ export default function ChatView(props: ChatViewProps) {
         closeShortcutLabel={closeTerminalShortcutLabel ?? undefined}
       />
     ) : renderedRightPanelSurface?.kind === "diff" ? (
-      <Suspense fallback={null}>
-        <DiffPanel
-          key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
-          mode="embedded"
-          composerDraftTarget={composerDraftTarget}
-          initialGitScope={initialDiffPanelGitScope}
-          workspaceMutationId={workspaceMutationId}
-        />
-      </Suspense>
+      isChat ? null : (
+        <Suspense fallback={null}>
+          <DiffPanel
+            key={`${activeThreadKey}:${diffPanelGitStatusResolutionKey}`}
+            mode="embedded"
+            composerDraftTarget={composerDraftTarget}
+            initialGitScope={initialDiffPanelGitScope}
+            workspaceMutationId={workspaceMutationId}
+          />
+        </Suspense>
+      )
     ) : renderedRightPanelSurface?.kind === "pull-request" && !pullRequestsCapabilityKnown ? (
       <PullRequestDetailGhost />
     ) : renderedRightPanelSurface?.kind === "pull-request" && !supportsPullRequests ? (
@@ -8918,7 +9002,7 @@ export default function ChatView(props: ChatViewProps) {
             isServerThread={isServerThread}
             activeProject={activeProject}
             openInCwd={gitCwd}
-            activeProjectScripts={activeProjectScripts}
+            activeProjectScripts={isChat ? undefined : activeProjectScripts}
             preferredScriptId={
               activeProject ? (lastInvokedScriptByProjectId[activeProject.id] ?? null) : null
             }
@@ -8927,7 +9011,7 @@ export default function ChatView(props: ChatViewProps) {
             rightPanelOpen={rightPanelOpen}
             gitCwd={gitCwd}
             onNewThreadInProject={handleNewThreadInActiveProject}
-            {...(activeDraftLogicalProjectKey
+            {...(activeDraftLogicalProjectKey && !isChat
               ? { onOpenProjectSettings: handleOpenDraftProjectSettings }
               : {})}
             onRunProjectScript={runProjectScript}
@@ -9112,7 +9196,7 @@ export default function ChatView(props: ChatViewProps) {
                             : undefined
                         }
                       >
-                        <DraftHeroHeadline
+                        <DraftProjectPicker
                           draftId={draftId}
                           activeProjectRef={activeProjectRef}
                           activeProjectTitle={activeProject?.title ?? null}
@@ -9363,7 +9447,7 @@ export default function ChatView(props: ChatViewProps) {
                 open
                 environmentId={activeThread.environmentId}
                 threadId={activeThread.id}
-                cwd={activeProject?.workspaceRoot ?? null}
+                cwd={activeProjectCwd}
                 initialReference={pullRequestDialogState.initialReference}
                 onOpenChange={(open) => {
                   if (!open) {

@@ -1,4 +1,6 @@
 import {
+  CHAT_PROJECT_ID,
+  isChatProject,
   CommandId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
@@ -20,6 +22,7 @@ import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -756,6 +759,7 @@ export const autoPullProjects = Effect.fn("autoPullProjects")(function* (
   const workspaceRoots = [
     ...new Set(
       projects
+        .filter((project) => !isChatProject(project))
         .filter((project) => resolveProjectSettings(settings, project.id).settings.defaultAutoPull)
         .map((project) => project.workspaceRoot),
     ),
@@ -819,6 +823,9 @@ export const make = (options?: StartupOptions) =>
     const serverSettings = yield* ServerSettings.ServerSettingsService;
     const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
     const projectionSnapshotQuery = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+    const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+    const path = yield* Path.Path;
+    const fileSystem = yield* FileSystem.FileSystem;
     const providerSessionDirectory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
     const crypto = yield* Crypto.Crypto;
     const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
@@ -881,6 +888,26 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+
+      yield* runStartupPhase(
+        "chats.bootstrap",
+        Effect.gen(function* () {
+          yield* fileSystem.makeDirectory(path.join(serverConfig.baseDir, "chat"), {
+            recursive: true,
+          });
+          const existing = yield* projectionSnapshotQuery.getProjectShellById(CHAT_PROJECT_ID);
+          if (Option.isSome(existing)) return;
+          yield* orchestrationEngine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make(yield* crypto.randomUUIDv4),
+            projectId: CHAT_PROJECT_ID,
+            title: "Chats",
+            workspaceRoot: path.join(serverConfig.baseDir, "chat"),
+            createWorkspaceRootIfMissing: true,
+            createdAt: DateTime.formatIso(yield* DateTime.now),
+          });
+        }),
+      );
 
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);

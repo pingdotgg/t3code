@@ -28,6 +28,7 @@ export type ThreadActionMenuId =
 
 export interface ThreadActionMenuState {
   readonly branch: string | null;
+  readonly isChat?: boolean;
   readonly isPinned: boolean;
   readonly isSettled: boolean;
   readonly isSnoozed: boolean;
@@ -53,7 +54,7 @@ export function buildThreadActionMenuItems(
   state: ThreadActionMenuState,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   return [
-    ...(state.branch
+    ...(!state.isChat && state.branch
       ? [
           {
             id: "new-thread-on-branch" as const,
@@ -120,7 +121,9 @@ export function buildThreadActionMenuItems(
         { id: "copy-thread-id", label: "Thread ID", icon: "hash" },
       ],
     },
-    { id: "project-settings", label: "Project settings", icon: "settings" },
+    ...(!state.isChat
+      ? [{ id: "project-settings" as const, label: "Project settings", icon: "settings" }]
+      : []),
     // Archive removes the thread from the sidebar while keeping its
     // conversation under Settings > Archived threads — distinct from Settle
     // (stays visible in the Settled shelf) and Delete (clears history for

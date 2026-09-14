@@ -4,7 +4,12 @@ import {
   scopeProjectRef,
   scopeThreadRef,
 } from "@t3tools/client-runtime/environment";
-import { DEFAULT_SERVER_SETTINGS, type ScopedProjectRef, type ThreadId } from "@t3tools/contracts";
+import {
+  isChatProject,
+  DEFAULT_SERVER_SETTINGS,
+  type ScopedProjectRef,
+  type ThreadId,
+} from "@t3tools/contracts";
 import { useParams, useRouter } from "@tanstack/react-router";
 import { useCallback, useMemo } from "react";
 import {
@@ -154,6 +159,7 @@ export function useNewThreadHandler() {
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
+        if (isChatProject({ id: projectRef.projectId })) return "local";
         const consultProjectFile = project !== undefined && projectThreadEnvMode == null;
         return resolveDefaultThreadEnvMode({
           projectSetting: projectThreadEnvMode,

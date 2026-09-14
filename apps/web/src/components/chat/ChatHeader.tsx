@@ -1,4 +1,6 @@
 import {
+  chatThreadWorkspacePath,
+  isChatProject,
   type EnvironmentId,
   type EditorId,
   type ProjectScript,
@@ -156,11 +158,12 @@ export const ChatHeader = memo(function ChatHeader({
     });
   }, [panelAnimationDurationMs, panelAnimationsActive]);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const isChat = activeProject !== null && isChatProject(activeProject);
   const activeProjectName = activeProject?.title;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const fileScripts = useT3ProjectFileScripts(
     activeThreadEnvironmentId,
-    activeProjectScripts ? activeProjectCwd : null,
+    !isChat && activeProjectScripts ? activeProjectCwd : null,
   );
   const remoteOpenState = useRemoteOpenState(activeThreadEnvironmentId);
   const showOpenInPicker = shouldShowOpenInPicker({
@@ -216,7 +219,10 @@ export const ChatHeader = memo(function ChatHeader({
   );
   const { openMenu, closeMenu } = useThreadActionMenu({
     threadRef: isServerThread ? activeThreadRef : null,
-    projectCwd: activeProjectCwd,
+    projectCwd:
+      isChat && activeProjectCwd
+        ? chatThreadWorkspacePath(activeProjectCwd, activeThreadId)
+        : activeProjectCwd,
     onStartRename: startRename,
   });
   const titleButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -279,7 +285,7 @@ export const ChatHeader = memo(function ChatHeader({
       // The right-side controls (git, scripts, open-in) keep their own
       // behavior; only the breadcrumb area opens the thread menu.
       if ((event.target as HTMLElement).closest("[data-chat-header-actions]")) return;
-      if (!isServerThread && onOpenProjectSettings === undefined) return;
+      if (!isServerThread && (isChat || onOpenProjectSettings === undefined)) return;
       cancelPendingTitleMenu();
       event.preventDefault();
       if (!isServerThread) {
@@ -297,7 +303,14 @@ export const ChatHeader = memo(function ChatHeader({
       }
       openMenu({ x: event.clientX, y: event.clientY });
     },
-    [cancelPendingTitleMenu, isServerThread, onOpenProjectSettings, openMenu, renamingTitle],
+    [
+      cancelPendingTitleMenu,
+      isChat,
+      isServerThread,
+      onOpenProjectSettings,
+      openMenu,
+      renamingTitle,
+    ],
   );
   const handleRenameKeyDown = useCallback(
     (event: ReactKeyboardEvent<HTMLInputElement>) => {
@@ -409,7 +422,7 @@ export const ChatHeader = memo(function ChatHeader({
           "[[data-panel-animations=true]_&]:motion-safe:transition-[padding-right] [[data-panel-animations=true]_&]:motion-safe:[transition-duration:var(--panel-animation-duration)] [[data-panel-animations=true]_&]:motion-safe:ease-out",
         )}
       >
-        {activeProjectScripts && (
+        {!isChat && activeProjectScripts && (
           <ProjectScriptsControl
             scripts={activeProjectScripts}
             fileScripts={fileScripts}
@@ -421,7 +434,7 @@ export const ChatHeader = memo(function ChatHeader({
             onDeleteScript={onDeleteProjectScript}
           />
         )}
-        {showOpenInPicker && (
+        {!isChat && showOpenInPicker && (
           <OpenInPicker
             environmentId={activeThreadEnvironmentId}
             keybindings={keybindings}
@@ -429,7 +442,7 @@ export const ChatHeader = memo(function ChatHeader({
             openInCwd={openInCwd}
           />
         )}
-        {activeProjectName && (
+        {!isChat && activeProjectName && (
           <GitActionsControl
             gitCwd={gitCwd}
             activeThreadRef={scopeThreadRef(activeThreadEnvironmentId, activeThreadId)}

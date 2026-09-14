@@ -1,5 +1,6 @@
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
+  CHAT_PROJECT_ID,
   ElementContextDetails,
   DEFAULT_MODEL,
   DEFAULT_MODEL_BY_PROVIDER,
@@ -1553,11 +1554,14 @@ function createDraftThreadState(
     runtimeMode: options?.runtimeMode ?? existingThread?.runtimeMode ?? DEFAULT_RUNTIME_MODE,
     interactionMode:
       options?.interactionMode ?? existingThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
-    branch: nextBranch,
-    worktreePath: nextWorktreePath,
+    branch: projectRef.projectId === CHAT_PROJECT_ID ? null : nextBranch,
+    worktreePath: projectRef.projectId === CHAT_PROJECT_ID ? null : nextWorktreePath,
     envMode:
-      options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
-    startFromOrigin: nextStartFromOrigin,
+      projectRef.projectId === CHAT_PROJECT_ID
+        ? "local"
+        : (options?.envMode ??
+          (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local"))),
+    startFromOrigin: projectRef.projectId === CHAT_PROJECT_ID ? false : nextStartFromOrigin,
     promotedTo: null,
   };
 }

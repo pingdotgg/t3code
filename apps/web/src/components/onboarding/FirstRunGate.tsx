@@ -1,3 +1,4 @@
+import { isChatProject } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -147,7 +148,7 @@ export function FirstRunGate({
         catalogReady: environmentCatalogReady,
         serverConfigAvailable: serverConfig !== null,
         workspaceFresh,
-        projectCount: projects.length,
+        projectCount: projects.filter((project) => !isChatProject(project)).length,
         threadCount: threads.length,
       });
 
