@@ -632,7 +632,7 @@ export function ThreadSearchPullRequestNumber({
 }) {
   const matches = createThreadPullRequestMatcher(query);
   const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
-    matches({ linkedPullRequest: { ...pr, projectId: thread.projectId } }),
+    matches({ pullRequests: [pr] }),
   );
   const fallbackCandidates =
     thread.pullRequests.length === 0

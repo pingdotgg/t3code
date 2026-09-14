@@ -2069,6 +2069,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
               tabIndex={-1}
               aria-selected={props.isHighlighted}
               aria-current={props.isRouteActive ? "page" : undefined}
+              aria-describedby={`${props.resultId}-pr`}
               aria-label={
                 props.projectDisplayName
                   ? `${thread.title}, ${props.projectDisplayName}`
@@ -2111,12 +2112,14 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
           >
             {thread.title}
           </span>
-          <ThreadSearchPullRequestNumber
-            thread={thread}
-            query={props.searchQuery}
-            enabled={leaseLiveStatus}
-            settled={props.isSettled}
-          />
+          <span id={`${props.resultId}-pr`} className="contents">
+            <ThreadSearchPullRequestNumber
+              thread={thread}
+              query={props.searchQuery}
+              enabled={leaseLiveStatus}
+              settled={props.isSettled}
+            />
+          </span>
           <span className="w-8 shrink-0 text-right text-xs text-muted-foreground/55 tabular-nums">
             {threadTimeLabel(thread)}
           </span>

@@ -69,3 +69,20 @@ it("matches a branch PR alongside a different manually linked PR", () => {
   expect(createThreadPullRequestMatcher("#456")(thread)).toBe(true);
   expect(createThreadPullRequestMatcher("45")(thread)).toBe(false);
 });
+
+it("matches a candidate by its saved title without a legacy projection", () => {
+  const candidate = {
+    ...link,
+    snapshot: {
+      state: "merged" as const,
+      title: "Improve rendering speed",
+      headBranch: "feature",
+      baseBranch: "main",
+      isDraft: false,
+      updatedAt: null,
+      syncedAt: "2026-09-14T00:00:00Z",
+    },
+  };
+  expect(createThreadPullRequestMatcher("rendering")({ pullRequests: [candidate] })).toBe(true);
+  expect(createThreadPullRequestMatcher("unrelated")({ pullRequests: [candidate] })).toBe(false);
+});
