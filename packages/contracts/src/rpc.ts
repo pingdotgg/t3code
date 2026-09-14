@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import * as Rpc from "effect/unstable/rpc/Rpc";
 import * as RpcGroup from "effect/unstable/rpc/RpcGroup";
+import { VoiceError, VoiceStartInput, VoiceStartResult, VoiceStopInput } from "./voice.ts";
 import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import {
   ProviderAuthCancelInput,
@@ -342,6 +343,8 @@ export const WS_METHODS = {
 
   // Server meta
   serverProbe: "server.probe",
+  voiceStart: "voice.start",
+  voiceStop: "voice.stop",
   serverGetConfig: "server.getConfig",
   serverRefreshProviders: "server.refreshProviders",
   serverUpdateProvider: "server.updateProvider",
@@ -1294,6 +1297,16 @@ const WsSubscribeResourceTelemetryRpc = Rpc.make(WS_METHODS.subscribeResourceTel
 });
 
 export const WsRpcGroup = RpcGroup.make(
+  Rpc.make(WS_METHODS.voiceStart, {
+    payload: VoiceStartInput,
+    success: VoiceStartResult,
+    error: Schema.Union([VoiceError, EnvironmentAuthorizationError]),
+  }),
+  Rpc.make(WS_METHODS.voiceStop, {
+    payload: VoiceStopInput,
+    success: Schema.Void,
+    error: Schema.Union([VoiceError, EnvironmentAuthorizationError]),
+  }),
   WsServerProbeRpc,
   WsServerGetConfigRpc,
   WsServerRefreshProvidersRpc,

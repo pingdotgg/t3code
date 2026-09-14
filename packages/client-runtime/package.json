@@ -87,6 +87,10 @@
       "types": "./src/voice-input/index.ts",
       "default": "./src/voice-input/index.ts"
     },
+    "./live-voice": {
+      "types": "./src/live-voice/index.ts",
+      "default": "./src/live-voice/index.ts"
+    },
     "./relay": {
       "types": "./src/relay/index.ts",
       "default": "./src/relay/index.ts"

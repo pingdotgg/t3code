@@ -154,6 +154,15 @@
   "packageOverrides": [
     {
       "license": "MIT",
+      "name": "@config-plugins/react-native-webrtc",
+      "version": "15.0.2",
+      "sourceUrl": "https://github.com/expo/config-plugins/tree/main/packages/react-native-webrtc",
+      "generatedNotice": {
+        "licenseId": "MIT"
+      }
+    },
+    {
+      "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",
       "generatedNotice": {

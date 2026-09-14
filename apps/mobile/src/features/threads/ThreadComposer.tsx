@@ -100,6 +100,8 @@ import {
 } from "../voice-input/ComposerDictationControl";
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
+import { LiveVoiceCall, LiveVoiceStartButton } from "../live-voice/LiveVoiceCall";
+import { useLiveVoice } from "../live-voice/useLiveVoice";
 import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
@@ -399,13 +401,33 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     onUsageLimits:
       usageLimitsOffered && props.draftAttachments.length === 0 ? openUsageLimits : undefined,
   });
+  const [liveVoicePresentationOwner, setLiveVoicePresentationOwner] = useState<string | null>(null);
+  const liveVoice = useLiveVoice({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+    connected: props.connectionState === "connected",
+  });
   const voiceInput = useVoiceInputController({
     ownerKey: composerOwnerKey,
+    disabled: liveVoice.ownsMicrophone,
     draftMessage: props.draftMessage,
     selection: composerMenu.selection,
     onChangeDraftMessage: props.onChangeDraftMessage,
     onChangeSelection: composerMenu.onSelectionChange,
   });
+  const startLiveVoice = () => {
+    if (voiceInput.isBusy || liveVoice.ownsMicrophone || props.connectionState !== "connected")
+      return;
+    Keyboard.dismiss();
+    setLiveVoicePresentationOwner(composerOwnerKey);
+    liveVoice.start();
+  };
+  const closeLiveVoice = () => {
+    liveVoice.stop();
+    setLiveVoicePresentationOwner(null);
+  };
+  const liveVoiceDisabled =
+    voiceInput.isBusy || liveVoice.ownsMicrophone || props.connectionState !== "connected";
   const voicePresentation = resolveVoiceComposerPresentation(
     voiceInput.state,
     voiceInput.elapsedSeconds,
@@ -876,10 +898,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               <View className="flex-row items-center">
                 <ComposerDictationStartAction
                   state={voiceInput.state}
-                  isAvailable={voiceInput.isAvailable}
+                  isAvailable={voiceInput.isAvailable && !liveVoice.ownsMicrophone}
                   onStart={voiceInput.start}
                   onCancel={voiceInput.cancel}
                 />
+                <LiveVoiceStartButton disabled={liveVoiceDisabled} onPress={startLiveVoice} />
                 {showStopAction ? (
                   <ComposerActionButton
                     accessibilityLabel="Stop agent"
@@ -966,11 +989,12 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                   <ComposerDictationPrimaryAction
                     state={voiceInput.state}
                     presentation={voicePresentation}
-                    isAvailable={voiceInput.isAvailable}
+                    isAvailable={voiceInput.isAvailable && !liveVoice.ownsMicrophone}
                     onStart={voiceInput.start}
                     onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}
                   />
+                  <LiveVoiceStartButton disabled={liveVoiceDisabled} onPress={startLiveVoice} />
                   {showStopAction ? (
                     <ComposerActionButton
                       accessibilityLabel="Stop agent"
@@ -995,6 +1019,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       </Animated.View>
 
       <VideoPreviewModal source={previewVideo} onRequestClose={closePreview} />
+      <LiveVoiceCall
+        visible={liveVoicePresentationOwner === composerOwnerKey}
+        state={liveVoice.state}
+        threadTitle={props.selectedThread.title}
+        onClose={closeLiveVoice}
+        onMute={liveVoice.setMuted}
+      />
       <FilePreviewModal source={previewFile} onRequestClose={closePreview} />
     </Animated.View>
   );
