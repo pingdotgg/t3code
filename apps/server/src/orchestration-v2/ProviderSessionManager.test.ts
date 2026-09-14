@@ -131,10 +131,11 @@ function makeProviderSession(input: {
   readonly now: DateTime.Utc;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly providerInstanceId?: ProviderInstanceId;
+  readonly driver?: ProviderDriverKind;
 }): OrchestrationV2ProviderSession {
   return {
     id: input.providerSessionId,
-    driver: CODEX_DRIVER,
+    driver: input.driver ?? CODEX_DRIVER,
     providerInstanceId: input.providerInstanceId ?? modelSelection.instanceId,
     status: "ready",
     cwd: process.cwd(),
@@ -244,6 +245,7 @@ function makeProviderAdapter(
   state: Ref.Ref<TestProviderRuntimeState>,
   options: {
     readonly instanceId?: ProviderInstanceId;
+    readonly driver?: ProviderDriverKind;
     readonly failEventStream?: boolean;
     readonly capabilities?: OrchestrationV2ProviderCapabilities;
     readonly mcpConfigs?: Ref.Ref<
@@ -270,9 +272,10 @@ function makeProviderAdapter(
   } = {},
 ): ProviderAdapterV2Shape {
   const instanceId = options.instanceId ?? ProviderInstanceId.make("codex");
+  const driver = options.driver ?? CODEX_DRIVER;
   return {
     instanceId,
-    driver: CODEX_DRIVER,
+    driver,
     getCapabilities: () => Effect.succeed(options.capabilities ?? CodexCapabilities),
     planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
     openSession: (input) =>
@@ -292,6 +295,7 @@ function makeProviderAdapter(
           providerSessionId: input.providerSessionId,
           now,
           providerInstanceId: instanceId,
+          driver,
           ...(options.capabilities === undefined ? {} : { capabilities: options.capabilities }),
         });
         yield* Ref.update(state, (current) => {
@@ -328,13 +332,13 @@ function makeProviderAdapter(
 
         return {
           instanceId,
-          driver: CODEX_DRIVER,
+          driver,
           providerSessionId: input.providerSessionId,
           providerSession: session,
           events: options.failEventStream
             ? Stream.fail(
                 new ProviderAdapterEventStreamError({
-                  driver: CODEX_DRIVER,
+                  driver,
                   providerSessionId: input.providerSessionId,
                   cause: "process exited",
                 }),
@@ -379,6 +383,7 @@ function makeTestLayer(input: {
   readonly state: Ref.Ref<TestProviderRuntimeState>;
   readonly idleTimeoutMs: number;
   readonly maxIdlePinMs?: number;
+  readonly driver?: ProviderDriverKind;
   readonly failEventStream?: boolean;
   readonly capabilities?: OrchestrationV2ProviderCapabilities;
   readonly mcpConfigs?: Ref.Ref<
@@ -416,6 +421,7 @@ function makeTestLayer(input: {
     (input.failReleaseEventWrites ? FailingReleaseEventSinkLayer : TestEventSinkLayer);
   const adapters = [
     makeProviderAdapter(input.state, {
+      ...(input.driver === undefined ? {} : { driver: input.driver }),
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
       ...(input.mcpConfigs === undefined ? {} : { mcpConfigs: input.mcpConfigs }),
@@ -4126,7 +4132,8 @@ it.effect("ProviderSessionManagerV2 bounds the adapter-op drain for a long-lived
       const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
       // The admitted turn op parks inside the adapter call — the OpenCode
       // shape where the whole operation (session.summarize) runs inside the
-      // call rather than being forked into the session scope.
+      // call rather than being forked into the session scope. The fixture
+      // reports the opencode driver so the in-band drain bound applies.
       const turn = yield* firstRuntime
         .startTurn({
           appThread,
@@ -4177,6 +4184,7 @@ it.effect("ProviderSessionManagerV2 bounds the adapter-op drain for a long-lived
         makeTestLayer({
           state,
           idleTimeoutMs: 3_600_000,
+          driver: ProviderDriverKind.make("opencode"),
           beforeClose: Ref.getAndUpdate(closes, (n) => n + 1),
           startTurn: () =>
             Deferred.succeed(turnEntered, undefined).pipe(Effect.andThen(Deferred.await(turnGate))),
@@ -4184,6 +4192,105 @@ it.effect("ProviderSessionManagerV2 bounds the adapter-op drain for a long-lived
       ),
     );
   }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 does not abandon an acquire-then-return turn call at the drain bound",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const turnEntered = yield* Deferred.make<void>();
+      const turnGate = yield* Deferred.make<void>();
+      const closes = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-drain-acquire");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* first.allocate;
+        const firstRuntime = yield* first.open(providerSessionId);
+        yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        // Same parked-call shape as the bounded test, but on a driver whose
+        // turn call is acquire-then-return (Cursor's runner.open window):
+        // abandoning it would let the acquisition install a resource after
+        // the scope close has finished checking for one.
+        const turn = yield* firstRuntime
+          .startTurn({
+            appThread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread,
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "acquiring",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(turnEntered);
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+        assert.isUndefined(closing.pollUnsafe());
+        // Past the in-band drain bound: an acquire-then-return call is never
+        // abandoned, so the release is still holding the scope open.
+        yield* TestClock.adjust("25 seconds");
+        for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+        assert.isUndefined(closing.pollUnsafe());
+        assert.equal(yield* Ref.get(closes), 0);
+        // The caller's own wait is bounded — close reports the cleanup
+        // timeout — but the detached worker still owns the session: the
+        // scope close has not run and a same-id replacement is refused.
+        yield* TestClock.adjust("40 seconds");
+        for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+        const closeExit = closing.pollUnsafe();
+        assert.isDefined(closeExit);
+        assert.isTrue(
+          closeExit !== undefined && Exit.isSuccess(closeExit) && Exit.isFailure(closeExit.value),
+        );
+        assert.equal(yield* Ref.get(closes), 0);
+        assert.isTrue(Exit.isFailure(yield* first.open(providerSessionId).pipe(Effect.exit)));
+        // Once the acquisition settles, the drain completes and cleanup
+        // finishes honestly after the caller's bounded wait — the scope
+        // close runs and a same-id replacement can open.
+        yield* Deferred.succeed(turnGate, undefined);
+        yield* Fiber.await(turn);
+        for (let i = 0; i < 24; i += 1) yield* Effect.yieldNow;
+        assert.equal(yield* Ref.get(closes), 1);
+        const replacement = yield* first.open(providerSessionId);
+        yield* replacement.events.pipe(Stream.runDrain, Effect.forkScoped);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(turnGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            beforeClose: Ref.getAndUpdate(closes, (n) => n + 1),
+            startTurn: () =>
+              Deferred.succeed(turnEntered, undefined).pipe(
+                Effect.andThen(Deferred.await(turnGate)),
+              ),
+          }),
+        ),
+      );
+    }),
 );
 
 it.effect(
