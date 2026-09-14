@@ -7,7 +7,6 @@
 import * as NodeSqlite from "node:sqlite";
 
 import * as Cache from "effect/Cache";
-import * as Config from "effect/Config";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -25,10 +24,6 @@ import { SqlError, classifySqliteError } from "effect/unstable/sql/SqlError";
 import * as Statement from "effect/unstable/sql/Statement";
 
 const ATTR_DB_SYSTEM_NAME = "db.system.name";
-
-export const TypeId: TypeId = "~local/sqlite-node/SqliteClient";
-
-export type TypeId = "~local/sqlite-node/SqliteClient";
 
 export interface SqliteClientConfig {
   readonly filename: string;
@@ -313,13 +308,6 @@ const makeMemory = (
       });
       return database;
     },
-  );
-
-export const layerConfig = (
-  config: Config.Wrap<SqliteClientConfig>,
-): Layer.Layer<Client.SqlClient, Config.ConfigError | SqlError> =>
-  Layer.effect(Client.SqlClient, Config.unwrap(config).pipe(Effect.flatMap(make))).pipe(
-    Layer.provide(Reactivity.layer),
   );
 
 export const layer = (config: SqliteClientConfig): Layer.Layer<Client.SqlClient, SqlError> =>

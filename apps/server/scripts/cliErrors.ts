@@ -68,3 +68,15 @@ export class ServerCliBuildAssetMissingError extends Schema.TaggedError<ServerCl
     return `Missing build asset: ${this.assetPath}. Run the build subcommand first.`;
   }
 }
+
+export class ServerCliExecutableImportError extends Schema.TaggedError<ServerCliExecutableImportError>()(
+  "ServerCliExecutableImportError",
+  {
+    bundlePath: Schema.String,
+    specifiers: Schema.Array(Schema.String),
+  },
+) {
+  override get message(): string {
+    return `${this.bundlePath} imports file-backed packages that a single-executable cannot resolve: ${this.specifiers.join(", ")}. Load them through createRequire instead.`;
+  }
+}
