@@ -1733,6 +1733,27 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect("does not read static bytes for an unchanged conditional request", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const staticDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-static-304-" });
+      yield* fileSystem.writeFileString(path.join(staticDir, "app.js"), "export const build = 1;");
+      // A handle-less platform: open fails, and a 304 must not read the file either.
+      const handlelessFileSystem = FileSystem.FileSystem.of({
+        ...fileSystem,
+        open: () => fileSystem.open(path.join(staticDir, "missing-handle-target"), { flag: "r" }),
+        readFile: () => fileSystem.readFile(path.join(staticDir, "missing-read-target")),
+      });
+      yield* buildAppUnderTest({ config: { staticDir } }).pipe(
+        Effect.provideService(FileSystem.FileSystem, handlelessFileSystem),
+      );
+
+      const response = yield* HttpClient.get("/app.js", { headers: { "if-none-match": "*" } });
+      assert.equal(response.status, 304);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   it.effect("revalidates static files without sending unchanged bodies", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
