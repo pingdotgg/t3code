@@ -52,6 +52,12 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
+// Turn-shaped adapter calls may legitimately outlive a close: OpenCode
+// awaits the whole session.summarize inside compactThread/startTurn. The
+// release drain bounds their wait — the scope close is what aborts them.
+// Acquisition-only ops stay unbounded: a hang there is a provider pathology
+// the pending release keeps honest ownership of.
+const ADAPTER_OP_DRAIN_TIMEOUT_MS = 20 * 1000;
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -388,7 +394,13 @@ export const layerWithOptions = (
       // deferred when they exit. A release drains the set before closing the
       // session scope so a late adapter result can never be installed after
       // the finalizer that would have closed it.
-      const inflightAdapterOps = new Map<string, Set<Deferred.Deferred<void, never>>>();
+      const inflightAdapterOps = new Map<
+        string,
+        Set<{
+          readonly done: Deferred.Deferred<void, never>;
+          readonly drainTimeout: Duration.Duration | undefined;
+        }>
+      >();
       // Startup ownership before a session entry exists: the open registers
       // here before any adapter work so a racing close/detach can mark it and
       // join its unwind instead of reporting success over a spawning provider
@@ -1258,9 +1270,37 @@ export const layerWithOptions = (
               const drainAdapterOps = Effect.gen(function* () {
                 const ops = inflightAdapterOps.get(key);
                 if (ops === undefined) return;
-                yield* Effect.forEach(ops, (done) => Deferred.await(done), {
-                  discard: true,
-                });
+                let abandoned = 0;
+                yield* Effect.forEach(
+                  ops,
+                  (op) =>
+                    op.drainTimeout === undefined
+                      ? Deferred.await(op.done)
+                      : Deferred.await(op.done).pipe(
+                          Effect.timeoutOption(op.drainTimeout),
+                          Effect.tap((settled) =>
+                            Option.isNone(settled)
+                              ? Effect.sync(() => {
+                                  abandoned += 1;
+                                })
+                              : Effect.void,
+                          ),
+                        ),
+                  { discard: true, concurrency: "unbounded" },
+                );
+                // An op that outlives its drain bound is left to the scope
+                // close — the finalizer aborts the work it was doing. This is
+                // the long-lived turn shape (e.g. OpenCode summarize), not an
+                // acquisition, so proceeding does not strand a late install.
+                if (abandoned > 0) {
+                  yield* Effect.logWarning(
+                    "orchestration-v2.driver-session.adapter-op-drain-timeout",
+                    {
+                      providerSessionId: input.providerSessionId,
+                      abandoned,
+                    },
+                  );
+                }
                 inflightAdapterOps.delete(key);
               });
               const waitForOpens =
@@ -2168,18 +2208,22 @@ export const layerWithOptions = (
         readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
         readonly driver: ProviderDriverKind;
         readonly operation: Effect.Effect<A, E>;
+        readonly drainTimeout?: Duration.Duration;
       }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
         Effect.uninterruptibleMask((_restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
-            const done = Deferred.makeUnsafe<void, never>();
+            const record = {
+              done: Deferred.makeUnsafe<void, never>(),
+              drainTimeout: input.drainTimeout,
+            };
             const admitted = yield* Ref.modify(sessions, (current) => {
               const entry = current.get(key);
               if (entry === undefined || entry.runtime !== input.expectedRuntime) {
                 return [false, current] as const;
               }
               const ops = inflightAdapterOps.get(key) ?? new Set();
-              ops.add(done);
+              ops.add(record);
               inflightAdapterOps.set(key, ops);
               return [true, current] as const;
             });
@@ -2203,10 +2247,10 @@ export const layerWithOptions = (
                 Effect.sync(() => {
                   const ops = inflightAdapterOps.get(key);
                   if (ops !== undefined) {
-                    ops.delete(done);
+                    ops.delete(record);
                     if (ops.size === 0) inflightAdapterOps.delete(key);
                   }
-                }).pipe(Effect.andThen(Deferred.done(done, Exit.void))),
+                }).pipe(Effect.andThen(Deferred.done(record.done, Exit.void))),
               ),
             );
           }),
@@ -2431,11 +2475,13 @@ export const layerWithOptions = (
                     driver: runtime.driver,
                   }),
                 ),
-                // The adapter call returns once the turn is started — every
-                // adapter forks the turn's lifetime into the session scope —
+                // The adapter call returns once the turn is started — most
+                // adapters fork the turn's lifetime into the session scope —
                 // so the admission record spans only the acquisition window
                 // (Cursor's openAgent/runner.open, ACP session activate+prompt
-                // submit), never the turn itself.
+                // submit). The exception is OpenCode's /compact path, which
+                // awaits the whole summarize inside the call, hence the
+                // bounded drain: the scope close is what aborts it.
                 Effect.andThen(
                   threadAttach.withLock(
                     threadAttachKey(providerSessionId, input.threadId),
@@ -2444,6 +2490,7 @@ export const layerWithOptions = (
                       expectedRuntime: runtime,
                       driver: runtime.driver,
                       operation: runtime.startTurn(input),
+                      drainTimeout: Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS),
                     }),
                   ),
                 ),
@@ -2535,9 +2582,10 @@ export const layerWithOptions = (
                           driver: runtime.driver,
                         }),
                       ),
-                      // Compaction delegates to the same bounded
-                      // acquire-then-start path as startTurn, so it shares the
-                      // admission record for its acquisition window.
+                      // Compaction delegates to the same acquire-then-start
+                      // path as startTurn, so it shares the admission record;
+                      // the bounded drain covers adapters (OpenCode) whose
+                      // summarize runs inside the call.
                       Effect.andThen(
                         threadAttach.withLock(
                           threadAttachKey(providerSessionId, input.threadId),
@@ -2546,6 +2594,7 @@ export const layerWithOptions = (
                             expectedRuntime: runtime,
                             driver: runtime.driver,
                             operation: runtime.compactThread!(input),
+                            drainTimeout: Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS),
                           }),
                         ),
                       ),

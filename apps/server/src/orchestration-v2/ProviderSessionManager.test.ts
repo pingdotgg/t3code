@@ -4100,6 +4100,92 @@ it.effect(
     }),
 );
 
+it.effect("ProviderSessionManagerV2 bounds the adapter-op drain for a long-lived turn call", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const turnEntered = yield* Deferred.make<void>();
+    const turnGate = yield* Deferred.make<void>();
+    const closes = yield* Ref.make(0);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-drain-bound");
+      const first = yield* makeThreadSessionFixture(threadId);
+      const providerSessionId = yield* first.allocate;
+      const firstRuntime = yield* first.open(providerSessionId);
+      yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+      const providerThread = makeProviderThread({
+        idAllocator,
+        threadId,
+        providerSessionId,
+        now,
+      });
+      const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+      const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+      // The admitted turn op parks inside the adapter call — the OpenCode
+      // shape where the whole operation (session.summarize) runs inside the
+      // call rather than being forked into the session scope.
+      const turn = yield* firstRuntime
+        .startTurn({
+          appThread,
+          threadId,
+          runId,
+          runOrdinal: 1,
+          providerTurnOrdinal: 1,
+          attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+          rootNodeId: idAllocator.derive.rootNode({ runId }),
+          providerThread,
+          message: {
+            createdBy: "user",
+            creationSource: "web",
+            messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+            text: "long lived",
+            attachments: [],
+          },
+          modelSelection,
+          runtimePolicy,
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(turnEntered);
+      const closing = yield* manager.close(providerSessionId).pipe(Effect.exit, Effect.forkChild);
+      for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+      // The drain waits on the admitted op, but only up to its bound: a
+      // long-lived turn call must not wedge the release.
+      assert.isUndefined(closing.pollUnsafe());
+      yield* TestClock.adjust("19 seconds");
+      for (let i = 0; i < 8; i += 1) yield* Effect.yieldNow;
+      assert.isUndefined(closing.pollUnsafe());
+      yield* TestClock.adjust("2 seconds");
+      for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+      const closeExit = closing.pollUnsafe();
+      assert.isDefined(closeExit);
+      assert.isTrue(
+        closeExit !== undefined && Exit.isSuccess(closeExit) && Exit.isSuccess(closeExit.value),
+      );
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+      assert.equal(yield* Ref.get(closes), 1);
+      // The abandoned op is still parked — its uninterruptible acquisition
+      // outlives the scope close and settles honestly when released.
+      assert.isUndefined(turn.pollUnsafe());
+      yield* Deferred.succeed(turnGate, undefined);
+      yield* Fiber.await(turn);
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(turnGate, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          beforeClose: Ref.getAndUpdate(closes, (n) => n + 1),
+          startTurn: () =>
+            Deferred.succeed(turnEntered, undefined).pipe(Effect.andThen(Deferred.await(turnGate))),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect(
   "ProviderSessionManagerV2 rejects a runtime attachment when its session is replaced mid-prepare",
   () =>
