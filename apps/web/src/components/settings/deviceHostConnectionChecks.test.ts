@@ -1,7 +1,9 @@
+import * as Option from "effect/Option";
 import { describe, expect, it } from "vite-plus/test";
 import { EnvironmentId, type DeviceHostSummary } from "@t3tools/contracts";
 import {
   checkDeviceHostConnections,
+  parseDeviceHostDraft,
   deviceHostConnectionKey,
   type DeviceHostCheck,
 } from "./deviceHostConnectionChecks";
@@ -65,5 +67,19 @@ describe("device host connection checks", () => {
     expect(
       deviceHostConnectionKey({ ...host, id: "another-environment-id", label: "Renamed" }),
     ).toBe(key);
+  });
+  it("validates SSH targets and normalizes optional identity files through the host contract", () => {
+    for (const target of ["-invalid", "user@bad host", "  "]) {
+      expect(parseDeviceHostDraft({ ...host, target })._tag).toBe("None");
+    }
+    for (const port of [0, 65536, 1.5]) {
+      expect(parseDeviceHostDraft({ ...host, port })._tag).toBe("None");
+    }
+    expect(parseDeviceHostDraft({ ...host, target: " user@mac ", identityFile: "  " })).toEqual(
+      Option.some(host),
+    );
+    expect(parseDeviceHostDraft({ ...host, identityFile: " ~/.ssh/device " })).toEqual(
+      Option.some({ ...host, identityFile: "~/.ssh/device" }),
+    );
   });
 });

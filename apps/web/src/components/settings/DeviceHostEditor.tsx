@@ -1,4 +1,5 @@
 import { useState } from "react";
+import * as Option from "effect/Option";
 import type { SshDeviceHostConfig } from "@t3tools/contracts";
 import { CheckIcon, MonitorIcon, XIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -15,7 +16,11 @@ import {
 } from "../ui/dialog";
 import { DeviceHostAvailability } from "../device/DeviceHostAvailability";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
-import { deviceHostConnectionKey, type DeviceHostCheckTarget } from "./deviceHostConnectionChecks";
+import {
+  deviceHostConnectionKey,
+  parseDeviceHostDraft,
+  type DeviceHostCheckTarget,
+} from "./deviceHostConnectionChecks";
 
 export function DeviceHostEditor({
   host,
@@ -36,10 +41,8 @@ export function DeviceHostEditor({
   const { checks, testConnection } = useHostConnectionChecks(targets);
   const results = checks[deviceHostConnectionKey(draft)];
   const checking = Object.values(results ?? {}).some((check) => check.status === "pending");
-  const valid =
-    draft.target.trim().length > 0 &&
-    (draft.port === undefined ||
-      (Number.isInteger(draft.port) && draft.port >= 1 && draft.port <= 65535));
+  const input = parseDeviceHostDraft({ ...draft, label: draft.label.trim() || draft.target });
+  const valid = Option.isSome(input);
   const failed = Object.values(results ?? {}).filter((check) => check.status === "failed").length;
   return (
     <Dialog
@@ -54,8 +57,8 @@ export function DeviceHostEditor({
           <form
             onSubmit={(event) => {
               event.preventDefault();
-              if (valid && !busy && !checking)
-                onSave({ ...draft, label: draft.label.trim(), target: draft.target.trim() });
+              if (Option.isSome(input) && draft.label.trim() && !busy && !checking)
+                onSave(input.value);
             }}
           />
         }
@@ -149,13 +152,9 @@ export function DeviceHostEditor({
                 size="sm"
                 variant="outline"
                 disabled={busy || checking || !valid}
-                onClick={() =>
-                  void testConnection({
-                    ...draft,
-                    label: draft.label.trim() || draft.target,
-                    target: draft.target.trim(),
-                  })
-                }
+                onClick={() => {
+                  if (Option.isSome(input)) void testConnection(input.value);
+                }}
               >
                 {checking ? <Spinner className="size-3" /> : null} Test connection
               </Button>

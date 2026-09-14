@@ -1,9 +1,10 @@
-import type {
-  DeviceHostSummary,
-  DevicePlatformAvailability,
-  EnvironmentId,
+import {
+  type DeviceHostSummary,
+  type DevicePlatformAvailability,
+  type EnvironmentId,
   SshDeviceHostConfig,
 } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 
 export interface DeviceHostCheckTarget {
   environmentId: EnvironmentId;
@@ -16,8 +17,16 @@ export type DeviceHostCheck =
   | { status: "connected"; platforms: ReadonlyArray<DevicePlatformAvailability> }
   | { status: "failed"; error: string };
 
+export function parseDeviceHostDraft(host: SshDeviceHostConfig) {
+  const { identityFile, ...rest } = host;
+  return Schema.decodeUnknownOption(SshDeviceHostConfig)({
+    ...rest,
+    ...(identityFile?.trim() ? { identityFile: identityFile.trim() } : {}),
+  });
+}
+
 export function deviceHostConnectionKey(host: SshDeviceHostConfig) {
-  return JSON.stringify([host.target.trim(), host.port, host.identityFile]);
+  return JSON.stringify([host.target.trim(), host.port, host.identityFile?.trim() || undefined]);
 }
 
 /** Each environment settles independently so one failure cannot hide the other results. */
