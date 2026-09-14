@@ -223,6 +223,40 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
+  it.effect("backfills a cached archive without downloading or replacing it", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-legacy-cache-" });
+      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
+      const legacyEntry = path.join(cached.versionDir, "node_modules/t3/dist/bin.mjs");
+      yield* fs.makeDirectory(cached.versionDir, { recursive: true });
+      yield* fs.writeFileString(cached.entryPath, "cached executable\n");
+      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
+      const requests: string[] = [];
+      const commands: string[] = [];
+      yield* ensurePinnedRuntimeInstalled({
+        baseDir,
+        version,
+        fs,
+        path,
+        platform: "linux",
+        arch: "x64",
+        httpClient: releaseHttpClient(yield* validChecksums, requests),
+        runner: extractingRunner(fs, path, commands),
+        validate: () =>
+          fs.exists(legacyEntry).pipe(
+            Effect.flatMap((exists) => (exists ? Effect.void : Effect.die("missing legacy entry"))),
+            Effect.orDie,
+          ),
+      });
+      assert.deepEqual(requests, []);
+      assert.deepEqual(commands, []);
+      assert.equal(yield* fs.readFileString(cached.entryPath), "cached executable\n");
+      assert.equal(yield* fs.readFileString(cached.sentinelPath), `${version}\n`);
+    }),
+  );
+
   it.effect("preserves a completed runtime when validation fails", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
