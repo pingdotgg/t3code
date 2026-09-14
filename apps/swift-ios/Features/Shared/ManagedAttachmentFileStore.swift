@@ -68,6 +68,27 @@ public struct ManagedAttachmentFileStore: Sendable {
         }
     }
 
+    public func writeOwnedFile(
+        data: Data,
+        attachmentID: UUID,
+        originalFileName: String,
+        maximumBytes: Int = Self.maximumBytes
+    ) throws -> FeatureOwnedAttachmentFile {
+        guard !data.isEmpty else { throw ManagedAttachmentFileError.empty }
+        let limit = min(Self.maximumBytes, max(0, maximumBytes))
+        guard data.count <= limit else {
+            throw ManagedAttachmentFileError.tooLarge(actualBytes: data.count, maximumBytes: limit)
+        }
+        let fileName = try Self.ownedFileName(attachmentID: attachmentID, originalFileName: originalFileName)
+        let destination = try resolvedFile(fileName: fileName, byteCount: data.count).url
+        try FileManager.default.createDirectory(at: rootURL, withIntermediateDirectories: true)
+        guard !FileManager.default.fileExists(atPath: destination.path) else {
+            throw ManagedAttachmentFileError.alreadyExists
+        }
+        try data.write(to: destination, options: .atomic)
+        return FeatureOwnedAttachmentFile(fileName: fileName, url: destination, byteCount: data.count)
+    }
+
     public func copyOwnedFile(
         from sourceURL: URL,
         attachmentID: UUID,

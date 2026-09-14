@@ -90,9 +90,8 @@ struct FeaturePastedTextTests {
         editor.text = "Before selected after"
         editor.selectedRange = NSRange(location: 7, length: 8)
         editor.maximumPastedTextBytes = 50 * 1024 * 1024
-        editor.onPasteTextAttachment = { _ in
+        editor.onPasteTextAttachment = { _, _ in
             Issue.record("Paste as Text must keep the text inline")
-            return false
         }
         let command = try #require(editor.keyCommands?.first {
             $0.input == "v" && $0.modifierFlags == [.command, .shift]
@@ -117,6 +116,7 @@ struct FeaturePastedTextTests {
     func foldingReplacesTheSelectionOnlyAfterTheAttachmentIsAccepted() {
         var draft = "Before $review after"
         var attachedText: String?
+        var commitSelection: (@MainActor () -> Bool)?
         let input = FeatureComposerTextInput(
             text: Binding(get: { draft }, set: { draft = $0 }),
             focused: .constant(false), placeholder: "", acceptsImages: false,
@@ -133,15 +133,17 @@ struct FeaturePastedTextTests {
             selection: NSRange(location: 7, length: 7)
         )
         editor.maximumPastedTextBytes = 50 * 1024 * 1024
-        editor.onPasteTextAttachment = { text in
+        editor.onPasteTextAttachment = { text, commit in
             #expect(draft == "Before $review after")
             attachedText = text
-            return true
+            commitSelection = commit
         }
 
         let pastedText = String(repeating: "🙂", count: 8 * 1024)
         #expect(editor.foldPastedText(pastedText))
         #expect(attachedText == pastedText)
+        #expect(draft == "Before $review after")
+        #expect(commitSelection?() == true)
         #expect(FeatureInlineSkillProjection.plainText(from: editor.attributedText) == "Before  after")
         #expect(editor.selectedRange == NSRange(location: 7, length: 0))
         #expect(coordinator.parent.text == "Before  after")
@@ -153,7 +155,6 @@ struct FeaturePastedTextTests {
         editor.text = "Before selected after"
         editor.selectedRange = NSRange(location: 7, length: 8)
         editor.maximumPastedTextBytes = 50 * 1024 * 1024
-        editor.onPasteTextAttachment = { _ in false }
         var errorMessage: String?
         editor.onPasteTextError = { errorMessage = $0 }
 
@@ -161,6 +162,64 @@ struct FeaturePastedTextTests {
         #expect(editor.text == "Before selected after")
         #expect(editor.selectedRange == NSRange(location: 7, length: 8))
         #expect(errorMessage != nil)
+    }
+
+    @Test @MainActor
+    func preparedPasteDoesNotReplaceANewerDraftSelection() {
+        let editor = FeatureComposerUITextView()
+        editor.text = "Before selected after"
+        editor.selectedRange = NSRange(location: 7, length: 8)
+        editor.maximumPastedTextBytes = 50 * 1024 * 1024
+        var commitSelection: (@MainActor () -> Bool)?
+        editor.onPasteTextAttachment = { _, commit in commitSelection = commit }
+        #expect(editor.foldPastedText(String(repeating: "x", count: 32 * 1024)))
+        editor.text = "New draft"
+        editor.selectedRange = NSRange(location: 3, length: 0)
+        #expect(commitSelection?() == false)
+        #expect(editor.text == "New draft")
+        #expect(editor.selectedRange == NSRange(location: 3, length: 0))
+    }
+
+    @Test @MainActor
+    func preparedPasteDoesNotCrossDraftOwners() {
+        let editor = FeatureComposerUITextView()
+        editor.draftOwnerID = "environment:a:thread:one"
+        editor.text = "Same text"
+        editor.selectedRange = NSRange(location: 0, length: 4)
+        editor.maximumPastedTextBytes = 50 * 1024 * 1024
+        var commitSelection: (@MainActor () -> Bool)?
+        editor.onPasteTextAttachment = { _, commit in commitSelection = commit }
+        #expect(editor.foldPastedText(String(repeating: "x", count: 32 * 1024)))
+        editor.draftOwnerID = "environment:b:thread:two"
+        #expect(commitSelection?() == false)
+        #expect(editor.text == "Same text")
+    }
+
+    @Test
+    func largePasteUsesOwnedFilesInDraftAndOutboxJSON() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let files = directory.appendingPathComponent("files")
+        let value = String(repeating: "large paste\n", count: 100_000)
+        let attachment = try await Task.detached {
+            try FeaturePastedText.attachment(text: value, fileName: "pasted-text.txt", maximumBytes: 50 * 1024 * 1024,
+                fileStore: ManagedAttachmentFileStore(rootURL: files))
+        }.value
+        let file = try #require(attachment.ownedFile)
+        #expect(attachment.data.isEmpty)
+        #expect(try Data(contentsOf: file.url) == Data(value.utf8))
+        let draftsURL = directory.appendingPathComponent("drafts.json")
+        let drafts = FeatureComposerDraftStore(fileURL: draftsURL, attachmentStorageRootURL: files)
+        try await drafts.setDraft(.init(attachments: [attachment]), for: "environment:a:thread:one")
+        let outboxURL = directory.appendingPathComponent("outbox.json")
+        let outbox = FeatureOutboxStore(fileURL: outboxURL, attachmentStorageRootURL: files)
+        try await outbox.enqueue(.init(environmentID: "a", identity: .init(), threadID: "one", text: "Inspect", selection: nil,
+            runtimeMode: .fullAccess, interactionMode: .standard, attachments: [FeatureUploadAttachment(attachment)]))
+        #expect(try Data(contentsOf: draftsURL).count < 2_000)
+        #expect(try Data(contentsOf: outboxURL).count < 2_000)
+        let restored = try #require(await FeatureOutboxStore(fileURL: outboxURL, attachmentStorageRootURL: files).submissions().first)
+        #expect(restored.uploads.first?.ownedFile == file)
+        #expect(restored.uploads.first?.source == .pastedText)
     }
 
     @Test @MainActor

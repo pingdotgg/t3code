@@ -11,6 +11,19 @@ enum FeaturePastedText {
         case rejected
     }
 
+    /// Call off the main actor. Drafts and outbox entries retain the owned file,
+    /// so a large clipboard value is never copied into their JSON documents.
+    static func attachment(
+        text: String, fileName: String, maximumBytes: Int,
+        fileStore: ManagedAttachmentFileStore = .init()
+    ) throws -> FeatureDraftAttachment {
+        let id = UUID()
+        let file = try fileStore.writeOwnedFile(
+            data: Data(text.utf8), attachmentID: id, originalFileName: fileName, maximumBytes: maximumBytes
+        )
+        return FeatureDraftAttachment(id: id, ownedFile: file, filename: fileName, mimeType: "text/plain", source: .pastedText)
+    }
+
     static func maximumAttachmentBytes(
         advertisedMaximum: Int?,
         attachmentCount: Int,

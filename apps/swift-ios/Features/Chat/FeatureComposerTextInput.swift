@@ -23,8 +23,9 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     let onPasteImages: ([NSItemProvider]) -> Void
     let onDismissKeyboard: (() -> Void)?
     var maximumPastedTextBytes: Int? = nil
-    var onPasteTextAttachment: ((String) -> Bool)? = nil
+    var onPasteTextAttachment: ((String, @escaping @MainActor () -> Bool) -> Void)? = nil
     var onPasteTextError: ((String) -> Void)? = nil
+    var draftOwnerID: String = ""
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -39,6 +40,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.onDismissKeyboard = onDismissKeyboard
         textView.maximumPastedTextBytes = maximumPastedTextBytes
         textView.onPasteTextAttachment = onPasteTextAttachment
+        textView.draftOwnerID = draftOwnerID
         textView.onPasteTextError = onPasteTextError
         if onDismissKeyboard != nil {
             textView.installDismissPanRecognizer()
@@ -72,6 +74,7 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.onDismissKeyboard = onDismissKeyboard
         textView.maximumPastedTextBytes = maximumPastedTextBytes
         textView.onPasteTextAttachment = onPasteTextAttachment
+        textView.draftOwnerID = draftOwnerID
         textView.onPasteTextError = onPasteTextError
         textView.isReadOnly = isReadOnly
 
@@ -481,7 +484,9 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
     var onPasteImages: (([NSItemProvider]) -> Void)?
     var onDismissKeyboard: (() -> Void)?
     var maximumPastedTextBytes: Int?
-    var onPasteTextAttachment: ((String) -> Bool)?
+    var onPasteTextAttachment: ((String, @escaping @MainActor () -> Bool) -> Void)?
+    var draftOwnerID = ""
+    private var pastedTextRequestID = UUID()
     var onPasteTextError: ((String) -> Void)?
     private var wantsFirstResponderOnAttach = false
 
@@ -667,14 +672,25 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
                 "Pasted text is too large for this message. Remove some text or an attachment, then paste again."
             )
         case .attachment:
-            guard markedTextRange == nil, onPasteTextAttachment?(pastedText) == true else {
+            guard markedTextRange == nil, let onPasteTextAttachment else {
                 onPasteTextError?("Could not attach pasted text. Your draft has not changed.")
                 return true
             }
-            if selectedRange.length > 0 {
-                insertText("")
+            let requestID = UUID()
+            pastedTextRequestID = requestID
+            let ownerID = draftOwnerID
+            onPasteTextAttachment(pastedText) { [weak self] in
+                guard let self, self.pastedTextRequestID == requestID,
+                      self.draftOwnerID == ownerID, !self.isReadOnly, self.markedTextRange == nil,
+                      FeatureInlineSkillProjection.plainText(from: self.attributedText) == source,
+                      FeatureInlineSkillProjection.plainRange(for: self.selectedRange, in: self.attributedText) == selection else {
+                    return false
+                }
+                if self.selectedRange.length > 0 { self.insertText("") }
+                self.scrollSelectionIntoView()
+                self.pastedTextRequestID = UUID()
+                return true
             }
-            scrollSelectionIntoView()
         }
         return true
     }

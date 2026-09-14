@@ -41,6 +41,8 @@ struct FeatureComposerView: View {
     @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @State private var imageIntakeErrorMessage: String?
     @State private var pastedTextErrorMessage: String?
+    @State private var pastedTextTask: Task<Void, Never>?
+    @State private var pastedTextGeneration = UUID()
     @State private var textRevision: UInt64 = 0
     @State private var textObservation = FeatureComposerTextObservation()
     @State private var voiceInputController = FeatureVoiceInputController()
@@ -206,6 +208,8 @@ struct FeatureComposerView: View {
             }
             .onDisappear {
                 voiceInputController.cancel()
+                pastedTextTask?.cancel()
+                pastedTextGeneration = UUID()
             }
             .onChange(of: text) {
                 textRevision &+= 1
@@ -213,6 +217,8 @@ struct FeatureComposerView: View {
             }
             .onChange(of: draftOwnerID) {
                 synchronizeVoiceDraft(ownerChanged: true)
+                pastedTextTask?.cancel()
+                pastedTextGeneration = UUID()
             }
             .onChange(of: voiceInputController.pendingCommit?.id) {
                 applyPendingVoiceCommit()
@@ -367,7 +373,8 @@ struct FeatureComposerView: View {
                     onDismissKeyboard: onDismissKeyboard,
                     maximumPastedTextBytes: maximumPastedTextBytes,
                     onPasteTextAttachment: attachPastedText,
-                    onPasteTextError: { pastedTextErrorMessage = $0 }
+                    onPasteTextError: { pastedTextErrorMessage = $0 },
+                    draftOwnerID: draftOwnerID
                 )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -1063,17 +1070,48 @@ struct FeatureComposerView: View {
         )
     }
 
-    private func attachPastedText(_ pastedText: String) -> Bool {
+    private func attachPastedText(_ pastedText: String, commitSelection: @escaping @MainActor () -> Bool) {
         guard !voiceInputController.isBusy, !pastedText.isEmpty,
               let maximumPastedTextBytes,
-              pastedText.utf8.count <= maximumPastedTextBytes else { return false }
-        attachments.append(FeatureDraftAttachment(
-            data: Data(pastedText.utf8),
-            filename: FeaturePastedText.nextFileName(existingNames: attachments.map(\.filename)),
-            mimeType: "text/plain",
-            source: .pastedText
-        ))
-        return true
+              pastedText.utf8.count <= maximumPastedTextBytes else {
+            pastedTextErrorMessage = "Could not attach pasted text. Your draft has not changed."
+            return
+        }
+        pastedTextTask?.cancel()
+        let generation = UUID()
+        pastedTextGeneration = generation
+        let fileName = FeaturePastedText.nextFileName(existingNames: attachments.map(\.filename))
+        let fileStore = ManagedAttachmentFileStore()
+        let operation = attachmentPreparation.begin(itemCount: 1)
+        pastedTextTask = Task { @MainActor in
+            defer {
+                attachmentPreparation.finish(operation)
+                if pastedTextGeneration == generation { pastedTextTask = nil }
+            }
+            do {
+                try Task.checkCancellation()
+                let attachment = try await Task.detached(priority: .userInitiated) {
+                    try FeaturePastedText.attachment(text: pastedText, fileName: fileName, maximumBytes: maximumPastedTextBytes, fileStore: fileStore)
+                }.value
+                var adopted = false
+                defer {
+                    if !adopted, let file = attachment.ownedFile {
+                        try? fileStore.removeOwnedFile(fileName: file.fileName)
+                    }
+                }
+                guard !Task.isCancelled, pastedTextGeneration == generation else { return }
+                guard attachments.count + attachmentPreparation.pendingItemCount <= FeatureImageAttachmentLimits.maximumCount,
+                      commitSelection() else {
+                    pastedTextErrorMessage = "The draft changed while the file was prepared. Paste again to add it."
+                    return
+                }
+                attachments.append(attachment)
+                adopted = true
+            } catch {
+                guard !Task.isCancelled, pastedTextGeneration == generation else { return }
+                pastedTextErrorMessage = error.localizedDescription
+            }
+        }
     }
 
     /// A drop is refused outright when images are not accepted, so the drag
