@@ -247,6 +247,47 @@ async function encodeCanvas(
   return { dataUrl: await blobToDataUrl(blob, mimeType), mimeType };
 }
 
+const composerThumbnails = new WeakMap<File, Promise<string | null>>();
+
+/** Cache a centered square crop for the composer's object-cover image tiles. */
+export function createComposerImageThumbnail(file: File): Promise<string | null> {
+  const cached = composerThumbnails.get(file);
+  if (cached) return cached;
+  const thumbnail = (async () => {
+    if (!canRecompress()) return null;
+    let bitmap: ImageBitmap | undefined;
+    try {
+      bitmap = await createImageBitmap(file);
+      const side = Math.min(bitmap.width, bitmap.height);
+      if (side <= 0) return null;
+      const dimension = Math.min(256, side);
+      const surface = createCanvas(dimension, dimension);
+      if (!surface) return null;
+      surface.context.drawImage(
+        bitmap,
+        (bitmap.width - side) / 2,
+        (bitmap.height - side) / 2,
+        side,
+        side,
+        0,
+        0,
+        dimension,
+        dimension,
+      );
+      return (
+        (await encodeCanvas(surface.canvas, 1, "image/png", Number.POSITIVE_INFINITY))?.dataUrl ??
+        null
+      );
+    } catch {
+      return null;
+    } finally {
+      bitmap?.close();
+    }
+  })();
+  composerThumbnails.set(file, thumbnail);
+  return thumbnail;
+}
+
 /**
  * Draws `bitmap` scaled to fit `maxDimension` and encodes it, stepping
  * quality down until the data URL fits `budgetChars`.
