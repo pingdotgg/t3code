@@ -583,8 +583,8 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
   );
 }
 
-/** Shared number presentation for inbox rows and compact thread search results. */
-export function ThreadPullRequestNumber({
+/** Number presentation for compact thread search results. */
+function ThreadPullRequestNumber({
   number,
   className,
   ...props
