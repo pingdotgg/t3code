@@ -12,13 +12,15 @@ import { cn } from "~/lib/utils";
 /**
  * One tappable action behind a thread row, revealed by swiping. `onPress`
  * receives the tap position so callers can anchor menus (snooze presets) to
- * the button.
+ * the button. `primary` marks the lifecycle action a full swipe commits;
+ * secondary actions (snooze) are reachable only by tapping their button.
  */
 export interface ThreadSwipeAction {
   readonly id: string;
   readonly label: string;
   readonly icon: ReactNode;
   readonly className: string;
+  readonly primary?: boolean;
   readonly onPress: (position: { x: number; y: number }) => void;
 }
 
@@ -89,6 +91,54 @@ export function resolveSwipeRelease(input: {
   if (distance >= swipeCommitThreshold(input.actionsWidth, input.contentWidth)) return "commit";
   if (distance >= OPEN_THRESHOLD) return "open";
   return "close";
+}
+
+export interface SwipeGestureState {
+  readonly pointerId: number;
+  readonly startX: number;
+  readonly startY: number;
+  readonly offset: number;
+  readonly decided: boolean;
+  readonly direction: "start" | "end";
+}
+
+/**
+ * Pure drag update so the direction and offset math stays testable. The
+ * direction follows the finger until release: a drag that crosses back over
+ * the origin flips sides rather than committing the action it left behind.
+ * The drag cap stretches to the commit threshold so a full swipe is always
+ * reachable, even on short rows where the width bound is binding.
+ */
+export function updateSwipeGesture(
+  gesture: Omit<SwipeGestureState, "pointerId">,
+  dx: number,
+  dy: number,
+  widths: { readonly start: number; readonly end: number },
+  contentWidth: number,
+):
+  | { readonly _tag: "cancel" }
+  | { readonly _tag: "move"; readonly state: Omit<SwipeGestureState, "pointerId"> } {
+  if (!gesture.decided) {
+    if (Math.abs(dy) > VERTICAL_CANCEL_PX && Math.abs(dy) > Math.abs(dx)) {
+      return { _tag: "cancel" };
+    }
+    if (Math.abs(dx) < DECIDE_PX) {
+      return { _tag: "move", state: gesture };
+    }
+  }
+  const direction = dx > 0 ? "start" : "end";
+  const width = widths[direction];
+  const limit = Math.max(width + MAX_OVERDRAG, swipeCommitThreshold(width, contentWidth));
+  return {
+    _tag: "move",
+    state: {
+      decided: true,
+      direction,
+      offset: Math.max(-limit, Math.min(limit, dx)),
+      startX: gesture.startX,
+      startY: gesture.startY,
+    },
+  };
 }
 
 // Only one row's actions stay open at a time; the newest open row closes the
@@ -178,9 +228,13 @@ export function ThreadSwipeable(props: {
   const handlePointerDown = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
       // Touch-only by design: mouse keeps hover buttons, clicks, and the
-      // pinned-row drag sensor untouched.
-      if (event.pointerType === "mouse" || event.button !== 0) return;
+      // pinned-row drag sensor untouched. Secondary contacts (a second
+      // finger) never steal an in-flight gesture.
+      if (event.pointerType === "mouse" || event.button !== 0 || !event.isPrimary) return;
       if ((event.target as HTMLElement).closest("button, a, input, textarea")) return;
+      // A stale swallow flag must not eat the click this contact may
+      // legitimately produce.
+      swallowClickRef.current = false;
       if (openSideRef.current !== null) {
         // The first tap after opening dismisses the actions instead of
         // activating the row underneath them.
@@ -199,7 +253,7 @@ export function ThreadSwipeable(props: {
         decided: false,
         direction: "end",
       };
-      event.currentTarget.setPointerCapture(event.pointerId);
+      event.currentTarget.setPointerCapture?.(event.pointerId);
     },
     [close],
   );
@@ -217,42 +271,30 @@ export function ThreadSwipeable(props: {
     (event: ReactPointerEvent<HTMLDivElement>) => {
       const gesture = gestureRef.current;
       if (!gesture || event.pointerId !== gesture.pointerId) return;
-      const dx = event.clientX - gesture.startX;
-      const dy = event.clientY - gesture.startY;
-      if (!gesture.decided) {
-        if (Math.abs(dy) > VERTICAL_CANCEL_PX && Math.abs(dy) > Math.abs(dx)) {
-          gestureRef.current = null;
-          return;
-        }
-        if (Math.abs(dx) < DECIDE_PX) return;
-        gesture.decided = true;
-      }
-      // The direction follows the finger until release: a drag that crosses
-      // back over the origin must not commit the action it left behind.
-      const direction = dx > 0 ? "start" : "end";
-      if (direction !== gesture.direction) {
-        gesture.direction = direction;
-      }
-      const width = actionsWidthFor(gesture.direction);
-      // The drag must be able to reach the commit threshold, so the cap
-      // stretches past it on short rows instead of pinning at the actions.
-      const limit = Math.max(
-        width + MAX_OVERDRAG,
-        swipeCommitThreshold(width, contentRef.current?.offsetWidth ?? 0),
+      const result = updateSwipeGesture(
+        gesture,
+        event.clientX - gesture.startX,
+        event.clientY - gesture.startY,
+        { start: actionsWidthFor("start"), end: actionsWidthFor("end") },
+        contentRef.current?.offsetWidth ?? 0,
       );
-      gesture.offset = Math.max(-limit, Math.min(limit, dx));
+      if (result._tag === "cancel") {
+        gestureRef.current = null;
+        return;
+      }
+      gestureRef.current = { ...result.state, pointerId: gesture.pointerId };
+      const next = gestureRef.current;
       const content = contentRef.current;
       if (content) {
         content.style.transition = "none";
-        content.style.transform = `translateX(${gesture.offset}px)`;
-        content.classList.toggle("bg-sidebar", gesture.offset !== 0);
+        content.style.transform = `translateX(${next.offset}px)`;
+        content.classList.toggle("bg-sidebar", next.offset !== 0);
       }
       if (startLayerRef.current) {
-        startLayerRef.current.style.visibility =
-          gesture.direction === "start" ? "visible" : "hidden";
+        startLayerRef.current.style.visibility = next.direction === "start" ? "visible" : "hidden";
       }
       if (endLayerRef.current) {
-        endLayerRef.current.style.visibility = gesture.direction === "end" ? "visible" : "hidden";
+        endLayerRef.current.style.visibility = next.direction === "end" ? "visible" : "hidden";
       }
     },
     [actionsWidthFor],
@@ -264,6 +306,9 @@ export function ThreadSwipeable(props: {
       if (!gesture || event.pointerId !== gesture.pointerId) return;
       gestureRef.current = null;
       if (!gesture.decided) return;
+      // A completed drag still emits a compatibility click on this element;
+      // it must not fall through to the row's activate handler.
+      swallowClickRef.current = true;
       const width = actionsWidthFor(gesture.direction);
       const content = contentRef.current;
       const release = resolveSwipeRelease({
@@ -273,11 +318,20 @@ export function ThreadSwipeable(props: {
       });
       if (release === "commit") {
         closeRef.current();
-        const action = gesture.direction === "end" ? (props.end[0] ?? null) : props.start;
-        action?.onPress({ x: event.clientX, y: event.clientY });
-        return;
+        // Full swipes commit only the direction's primary action: snooze is
+        // never triggered by distance, matching the mobile list.
+        const action =
+          gesture.direction === "end"
+            ? props.end[0]?.primary === true
+              ? props.end[0]
+              : null
+            : props.start;
+        if (action) {
+          action.onPress({ x: event.clientX, y: event.clientY });
+          return;
+        }
       }
-      if (release === "open") {
+      if (release === "open" || release === "commit") {
         open(gesture.direction);
       } else {
         closeRef.current();

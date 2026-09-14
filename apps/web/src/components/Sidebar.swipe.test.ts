@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveSwipeRelease, resolveThreadSwipeActions } from "./Sidebar.swipe";
+import {
+  resolveSwipeRelease,
+  resolveThreadSwipeActions,
+  updateSwipeGesture,
+  type SwipeGestureState,
+} from "./Sidebar.swipe";
 
 describe("resolveThreadSwipeActions", () => {
   it("cards settle, settled rows un-settle, snoozed rows wake", () => {
@@ -136,5 +141,71 @@ describe("resolveSwipeRelease", () => {
 
   it("never opens or commits rows without actions", () => {
     expect(resolveSwipeRelease({ offset: -500, actionsWidth: 0, contentWidth })).toBe("close");
+  });
+});
+
+describe("updateSwipeGesture", () => {
+  const widths = { start: 72, end: 144 };
+  const contentWidth = 260;
+
+  it("flips direction when a decided drag crosses back over the origin", () => {
+    let gesture: Omit<SwipeGestureState, "pointerId"> = {
+      startX: 200,
+      startY: 100,
+      offset: 0,
+      decided: false,
+      direction: "end",
+    };
+    const move = (dx: number, dy = 0) => {
+      const result = updateSwipeGesture(gesture, dx, dy, widths, contentWidth);
+      if (result._tag === "cancel") return "cancel";
+      gesture = { ...gesture, ...result.state };
+      return gesture;
+    };
+    // Decide leftward, then drag back across the origin and past the commit
+    // threshold on the right: the release must belong to the start action.
+    move(-30);
+    const final = move(160);
+    if (final === "cancel") throw new Error("expected move");
+    expect(final.decided).toBe(true);
+    expect(final.direction).toBe("start");
+    expect(final.offset).toBeGreaterThanOrEqual(143);
+  });
+
+  it("caps the drag so a one-action row can still reach its commit threshold", () => {
+    const result = updateSwipeGesture(
+      { startX: 0, startY: 0, offset: 0, decided: true, direction: "end" },
+      -500,
+      0,
+      { start: 0, end: 72 },
+      260,
+    );
+    if (result._tag !== "move") throw new Error("expected move");
+    // Commit threshold for one action on a 260px row is max(120, 143) = 143.
+    expect(result.state.offset).toBeLessThanOrEqual(-143);
+  });
+
+  it("cancels a vertically dominant undecided drag", () => {
+    const result = updateSwipeGesture(
+      { startX: 0, startY: 0, offset: 0, decided: false, direction: "end" },
+      2,
+      20,
+      widths,
+      contentWidth,
+    );
+    expect(result._tag).toBe("cancel");
+  });
+
+  it("leaves an undecided micro-drag untouched", () => {
+    const result = updateSwipeGesture(
+      { startX: 0, startY: 0, offset: 0, decided: false, direction: "end" },
+      3,
+      0,
+      widths,
+      contentWidth,
+    );
+    if (result._tag !== "move") throw new Error("expected move");
+    expect(result.state.decided).toBe(false);
+    expect(result.state.offset).toBe(0);
   });
 });
