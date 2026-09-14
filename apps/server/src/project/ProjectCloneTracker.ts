@@ -306,20 +306,24 @@ export const make = Effect.gen(function* () {
           detail: "A clone into this destination is already in progress.",
         });
       }
-      yield* clearRetention(input.projectId);
-      // The entry is registered before the project exists so a thread.create
-      // or project.delete racing this call already sees the clone. If the
-      // project cannot be created the entry goes away again.
-      yield* hooks
-        .createProject({
-          projectId: input.projectId,
-          title: input.title,
-          workspaceRoot: prepared.destinationPath,
-          createdAt: input.createdAt,
-        })
-        .pipe(Effect.tapError(() => remove(input.projectId)));
-      yield* publish;
-      yield* launch(input.projectId);
+      // Everything after the claim runs to completion even if the requesting
+      // connection drops: a claimed entry with no fiber could neither be
+      // cancelled nor retried. Any failure in here releases the claim.
+      yield* Effect.uninterruptible(
+        Effect.gen(function* () {
+          yield* clearRetention(input.projectId);
+          // The entry is registered before the project exists so a
+          // thread.create or project.delete racing this call already sees it.
+          yield* hooks.createProject({
+            projectId: input.projectId,
+            title: input.title,
+            workspaceRoot: prepared.destinationPath,
+            createdAt: input.createdAt,
+          });
+          yield* publish;
+          yield* launch(input.projectId);
+        }).pipe(Effect.tapError(() => remove(input.projectId))),
+      );
       return {
         projectId: input.projectId,
         cwd: prepared.destinationPath,

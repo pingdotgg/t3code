@@ -213,7 +213,7 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       "Receiving objects:  40% (4/10), 1.00 MiB | 2.00 MiB/s",
       "Receiving objects: 100% (10/10), 2.50 MiB | 2.00 MiB/s, done.",
       "fatal: early EOF",
-      "fatal: fetch-pack: invalid index-pack output",
+      "fatal: unable to access 'https://user:s3cret@github.com/octocat/t3code.git/': could not resolve host",
     ];
     const error = yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -250,9 +250,10 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       { stage: "receiving", percent: 40, detail: "1.00 MiB | 2.00 MiB/s" },
       { stage: "receiving", percent: 100, detail: "2.50 MiB | 2.00 MiB/s" },
     ]);
+    // Git echoes the remote in some failures; the credentials must not follow.
     assert.strictEqual(
       error.detail,
-      "fatal: early EOF fatal: fetch-pack: invalid index-pack output",
+      "fatal: early EOF fatal: unable to access 'https://github.com/octocat/t3code.git/': could not resolve host",
     );
   }).pipe(Effect.provide(NodeServices.layer)),
 );

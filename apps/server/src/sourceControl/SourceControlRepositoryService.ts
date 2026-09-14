@@ -127,6 +127,13 @@ function redactRemoteUrl(remoteUrl: string): string {
   }
 }
 
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi;
+
+/** Drops `user:token@` from any URL embedded in free text. */
+function redactUrlCredentials(text: string): string {
+  return text.replace(URL_WITH_USERINFO, "$1");
+}
+
 function selectRemoteUrl(
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
@@ -281,7 +288,8 @@ export const make = Effect.gen(function* () {
       return Effect.sync(() => {
         const trimmed = line.trim();
         if (trimmed.length === 0 || trimmed.startsWith("Cloning into")) return;
-        stderrTail.push(trimmed);
+        // Git echoes the remote in some failures; the tail becomes user-facing text.
+        stderrTail.push(redactUrlCredentials(trimmed));
         if (stderrTail.length > 4) stderrTail.shift();
       });
     };

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ProjectId, SourceControlRepositoryError } from "@t3tools/contracts";
+import {
+  OrchestrationDispatchCommandError,
+  ProjectId,
+  SourceControlRepositoryError,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -220,6 +224,25 @@ describe("ProjectCloneTracker", () => {
       yield* tracker.discard(projectId);
       expect(yield* tracker.get(projectId)).toBeNull();
       expect(harness.discarded).toEqual(["/workspace/t3code"]);
+    }).pipe(Effect.provide(harness.layer));
+  });
+
+  it.effect("releases the claim when project creation fails", () => {
+    const harness = makeHarness();
+    const hooks: ProjectCloneTracker.ProjectCloneHooks = {
+      ...harness.hooks,
+      createProject: () =>
+        Effect.fail(new OrchestrationDispatchCommandError({ message: "workspace root exists" })),
+    };
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const error = yield* Effect.flip(tracker.start(startInput, hooks));
+      expect(error.message).toContain("workspace root exists");
+      expect(yield* tracker.get(projectId)).toBeNull();
+      // The destination is free again for a corrected attempt.
+      yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect((yield* tracker.get(projectId))?.phase).toBe("done");
     }).pipe(Effect.provide(harness.layer));
   });
 
