@@ -401,72 +401,79 @@ export const layerWithOptions = (
       // tracked sweep owns the credentials its caller pruned, so a retry
       // joins this record (bounded like any cleanup wait) and queues its own
       // captured set behind it instead of discarding or duplicating work.
-      const pendingRevocations = new Map<
-        ThreadId,
-        {
-          // Attribution is a set because the tail stands in for every sweep
-          // still running in the chain: a successor's caller may belong to a
-          // different instance than the predecessor it waits on. undefined in
-          // the set means some sweep in the chain could not be attributed and
-          // must be joined by every closeInstance.
-          readonly instanceIds: ReadonlySet<ProviderInstanceId | undefined>;
-          readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
-        }
-      >();
+      interface PendingRevocation {
+        // Attribution reflects only sweeps still running: each record carries
+        // its own caller's instance and a link to the sweep it waits behind,
+        // and `settled` marks a record whose own sweep finished — a completed
+        // predecessor must not keep its caller's teardown waiting on a
+        // successor it does not own. undefined means the sweep could not be
+        // attributed and must be joined by every closeInstance.
+        readonly instanceId: ProviderInstanceId | undefined;
+        readonly predecessor: PendingRevocation | undefined;
+        settled: boolean;
+        readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
+      }
+      const pendingRevocations = new Map<ThreadId, PendingRevocation>();
       const forkTrackedRevocation = <E>(
         providerSessionId: ProviderSessionId,
         threadId: ThreadId,
         revoke: Effect.Effect<void, E>,
         instanceId: ProviderInstanceId | undefined,
       ) =>
-        Effect.gen(function* () {
-          // A tracked sweep captures only the credentials its caller pruned;
-          // joining it must not discard this caller's own set. Every call
-          // registers its own completion and chains its sweep behind the
-          // previous one, so a later retry always joins the newest tail.
-          const predecessor = pendingRevocations.get(threadId);
-          const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
-          const record = {
-            instanceIds: new Set<ProviderInstanceId | undefined>([
-              ...(predecessor?.instanceIds ?? []),
+        // Registration and the worker fork are one uninterruptible handoff:
+        // an interrupt landing between them would leave a tail whose `done`
+        // never settles, parking every later join and chaining every retry
+        // behind it. The forked worker is a separate fiber and is unaffected.
+        Effect.uninterruptible(
+          Effect.gen(function* () {
+            // A tracked sweep captures only the credentials its caller pruned;
+            // joining it must not discard this caller's own set. Every call
+            // registers its own completion and chains its sweep behind the
+            // previous one, so a later retry always joins the newest tail.
+            const predecessor = pendingRevocations.get(threadId);
+            const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
+            const record: PendingRevocation = {
               instanceId,
-            ]),
-            done,
-          };
-          pendingRevocations.set(threadId, record);
-          yield* Effect.gen(function* () {
-            if (predecessor !== undefined) {
-              // A failed predecessor reports on its own deferred; this
-              // caller's captured credentials still need their sweep.
-              yield* Effect.ignore(Deferred.await(predecessor.done));
-            }
-            const exit = yield* Effect.exit(revoke);
-            // The record must come down with its completion: a stale entry
-            // would let a later retry join a finished sweep and skip
-            // revoking a freshly configured binding. A chained successor
-            // may already have replaced the map entry — only delete our own.
-            yield* Effect.uninterruptible(
-              Effect.gen(function* () {
-                if (pendingRevocations.get(threadId) === record) {
-                  pendingRevocations.delete(threadId);
-                }
-                yield* Deferred.done(
-                  done,
-                  Exit.isSuccess(exit)
-                    ? Exit.void
-                    : Exit.fail(
-                        new ProviderSessionReleaseError({
-                          providerSessionId,
-                          reason: "runtime_error",
-                          cause: exit.cause,
-                        }),
-                      ),
-                );
-              }),
-            );
-          }).pipe(Effect.forkDetach({ startImmediately: true }));
-          return done;
-        });
+              predecessor,
+              settled: false,
+              done,
+            };
+            pendingRevocations.set(threadId, record);
+            yield* Effect.gen(function* () {
+              if (predecessor !== undefined) {
+                // A failed predecessor reports on its own deferred; this
+                // caller's captured credentials still need their sweep.
+                yield* Effect.ignore(Deferred.await(predecessor.done));
+              }
+              const exit = yield* Effect.exit(revoke);
+              // The record must come down with its completion: a stale entry
+              // would let a later retry join a finished sweep and skip
+              // revoking a freshly configured binding. A chained successor
+              // may already have replaced the map entry — only delete our own.
+              yield* Effect.uninterruptible(
+                Effect.gen(function* () {
+                  record.settled = true;
+                  if (pendingRevocations.get(threadId) === record) {
+                    pendingRevocations.delete(threadId);
+                  }
+                  yield* Deferred.done(
+                    done,
+                    Exit.isSuccess(exit)
+                      ? Exit.void
+                      : Exit.fail(
+                          new ProviderSessionReleaseError({
+                            providerSessionId,
+                            reason: "runtime_error",
+                            cause: exit.cause,
+                          }),
+                        ),
+                  );
+                }),
+              );
+            }).pipe(Effect.forkDetach({ startImmediately: true }));
+            return done;
+          }),
+        );
       const findPendingRelease = (
         providerSessionId: ProviderSessionId,
         threadId: ThreadId,
@@ -3076,11 +3083,26 @@ export const layerWithOptions = (
             // Tracked credential sweeps outlive their detach callers; the
             // ones owned by this instance's sessions (or unattributed, where
             // the owning entry was already gone) still run under teardown.
+            // Only unfinished records count: a tail is joined when its own
+            // sweep or any still-running sweep it waits behind belongs to
+            // this instance — a completed predecessor's caller is done and
+            // must not be kept waiting on a successor it does not own.
             const revocationOutcomes = yield* Effect.forEach(
-              [...pendingRevocations].filter(
-                ([, record]) =>
-                  record.instanceIds.has(undefined) || record.instanceIds.has(instanceId),
-              ),
+              [...pendingRevocations].filter(([, record]) => {
+                for (
+                  let current: PendingRevocation | undefined = record;
+                  current !== undefined;
+                  current = current.predecessor
+                ) {
+                  if (
+                    !current.settled &&
+                    (current.instanceId === undefined || current.instanceId === instanceId)
+                  ) {
+                    return true;
+                  }
+                }
+                return false;
+              }),
               ([threadId, record]) =>
                 Deferred.await(record.done).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
