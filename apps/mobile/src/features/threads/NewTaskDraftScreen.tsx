@@ -207,23 +207,39 @@ export function NewTaskDraftScreen(props: {
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
   // A project added by cloning exists before its files do: the prompt can be
   // written meanwhile, but Start waits for the clone.
-  const projectClone = useProjectClone(
+  const projectCloneState = useProjectClone(
     selectedProject
       ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
       : null,
   );
-  const cloneBlocksStart = projectClone !== null && projectClone.phase !== "done";
+  const projectClone = projectCloneState === "pending" ? null : projectCloneState;
+  const cloneBlocksStart =
+    projectCloneState === "pending" || (projectClone !== null && projectClone.phase !== "done");
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
   });
   const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
     reportFailure: false,
   });
+  // The banner only reflects the server's state, so a request that never got
+  // there needs its own feedback.
+  const runCloneAction = async (
+    title: string,
+    action: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
+  ) => {
+    const result = await action();
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(title, error instanceof Error ? error.message : "An error occurred.");
+    }
+  };
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
   // The delete is awaited; by then the picker may point somewhere else, and
   // only the removed project's draft should leave the screen.
   const selectedProjectRef = useRef(selectedProject);
-  selectedProjectRef.current = selectedProject;
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
   const removeClonedProject = async () => {
     if (!selectedProject) return;
     const removed = selectedProject;
@@ -1531,16 +1547,20 @@ export function NewTaskDraftScreen(props: {
           <ProjectCloneBanner
             clone={projectClone}
             onCancel={() =>
-              void cancelProjectClone({
-                environmentId: selectedProject.environmentId,
-                input: { projectId: selectedProject.id },
-              })
+              void runCloneAction("Failed to cancel clone", () =>
+                cancelProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
             }
             onRetry={() =>
-              void retryProjectClone({
-                environmentId: selectedProject.environmentId,
-                input: { projectId: selectedProject.id },
-              })
+              void runCloneAction("Failed to retry clone", () =>
+                retryProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
             }
             onRemove={() => void removeClonedProject()}
           />
@@ -1687,7 +1707,7 @@ export function NewTaskDraftScreen(props: {
                   accessibilityLabel={
                     attachmentBlockReason ??
                     (cloneBlocksStart
-                      ? projectClone.phase === "running"
+                      ? projectClone === null || projectClone.phase === "running"
                         ? "Cloning repository"
                         : "Repository not cloned"
                       : pendingPastedTextAttachmentCount > 0
