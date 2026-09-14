@@ -1524,9 +1524,20 @@ export const makeCodexSessionRuntime = (
           }),
         ),
         Effect.catch((cause) =>
-          Effect.logWarning("Failed to read Codex child model metadata after retries", {
-            agentThreadId,
-            cause,
+          Effect.gen(function* () {
+            yield* Ref.update(collabChildMetadataRef, (current) => {
+              const previous = current.get(agentThreadId);
+              if (!previous) {
+                return current;
+              }
+              const next = new Map(current);
+              next.set(agentThreadId, { ...previous, lookupStarted: false });
+              return next;
+            });
+            yield* Effect.logWarning("Failed to read Codex child model metadata after retries", {
+              agentThreadId,
+              cause,
+            });
           }),
         ),
         Effect.forkIn(runtimeScope),
@@ -1735,6 +1746,7 @@ export const makeCodexSessionRuntime = (
         switch (notification.method) {
           case "turn/started": {
             yield* markCollabChildOpen(child.agentThreadId);
+            yield* startCollabChildMetadataLookup(child.agentThreadId);
             const childTurnId =
               typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
                 ? ((notification.params as { turn: { id: string } }).turn.id as string)

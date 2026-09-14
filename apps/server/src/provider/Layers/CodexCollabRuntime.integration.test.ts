@@ -393,45 +393,79 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.live("stops after three failed metadata attempts and logs the failure", () =>
-    Effect.gen(function* () {
-      const failed = yield* Deferred.make<void>();
-      const logger = Logger.make<unknown, void>(({ message }) => {
-        const messages = Array.isArray(message) ? message : [message];
-        if (messages.includes("Failed to read Codex child model metadata after retries")) {
-          Deferred.doneUnsafe(failed, Effect.void);
-        }
-      });
-      yield* Effect.gen(function* () {
-        const script = {
-          rootThreadId: ROOT,
-          recordRequests: true,
-          notifications: [capturedStartedActivity(), capturedStartedActivity()],
-          childResumeSnapshots: { [CHILD_A]: { error: "child unavailable" } },
-        };
-        // @effect-diagnostics-next-line preferSchemaOverJson:off
-        NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
-        NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-        yield* Effect.addFinalizer(() =>
-          Effect.sync(() => {
-            NodeFS.rmSync(scriptPath, { force: true });
-            NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-          }),
-        );
-        const runtime = yield* makeCodexSessionRuntime({
-          threadId: ThreadId.make("thread-collab-metadata-exhausted"),
-          binaryPath: peerPath,
-          cwd: NodeOS.tmpdir(),
-          runtimeMode: "full-access",
-          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+  it.live.each([false, true])(
+    "logs exhausted retries and recovers on a later turn: %s",
+    (recover) =>
+      Effect.gen(function* () {
+        const failed = yield* Deferred.make<void>();
+        const logger = Logger.make<unknown, void>(({ message }) => {
+          const messages = Array.isArray(message) ? message : [message];
+          if (messages.includes("Failed to read Codex child model metadata after retries")) {
+            Deferred.doneUnsafe(failed, Effect.void);
+          }
         });
-        yield* runtime.start();
-        yield* runtime.sendTurn({ input: "complete while metadata is unavailable" });
-        yield* Deferred.await(failed);
-        assert.equal(readRecordedRequests().length, 3);
-        yield* runtime.close;
-      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+        yield* Effect.gen(function* () {
+          const script = {
+            rootThreadId: ROOT,
+            recordRequests: true,
+            notifications: [capturedStartedActivity(), capturedStartedActivity()],
+            notificationsByTurn: [
+              [capturedStartedActivity(), capturedStartedActivity()],
+              Array.from({ length: 2 }, () => ({
+                method: "turn/started",
+                params: {
+                  threadId: CHILD_A,
+                  turn: { id: "child-ready-turn", status: "inProgress", items: [] },
+                },
+              })),
+            ],
+            childResumeSnapshots: {
+              [CHILD_A]: {
+                failuresBeforeSuccess: 3,
+                model: "gpt-6-astra",
+                reasoningEffort: "medium",
+              },
+            },
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              NodeFS.rmSync(scriptPath, { force: true });
+              NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+            }),
+          );
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make("thread-collab-metadata-exhausted"),
+            binaryPath: peerPath,
+            cwd: NodeOS.tmpdir(),
+            runtimeMode: "full-access",
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+          yield* runtime.start();
+          yield* runtime.sendTurn({ input: "complete while metadata is unavailable" });
+          yield* Deferred.await(failed);
+          assert.equal(readRecordedRequests().length, 3);
+          if (recover) {
+            const metadata = yield* runtime.events.pipe(
+              Stream.filter((event) => event.method === "collabAgent/metadataUpdated"),
+              Stream.take(1),
+              Stream.runCollect,
+              Effect.forkScoped,
+            );
+            yield* runtime.sendTurn({ input: "child is now ready" });
+            const events = Array.from(yield* Fiber.join(metadata));
+            assert.deepInclude(events[0]?.payload, {
+              agentThreadId: CHILD_A,
+              model: "gpt-6-astra",
+              effort: "medium",
+            });
+            assert.equal(readRecordedRequests().length, 4);
+          }
+          yield* runtime.close;
+        }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("does not delay the parent turn when the child lookup fails", () =>
