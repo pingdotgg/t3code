@@ -160,7 +160,7 @@ function CustomSnoozeDialog() {
                     <NumberField
                       id={`${id}-amount`}
                       min={0}
-                      step={1}
+                      step="any"
                       value={amount === "" ? null : Number(amount)}
                       onValueChange={(value) => {
                         setAmount(value === null ? "" : String(value));
