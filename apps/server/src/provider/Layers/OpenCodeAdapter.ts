@@ -70,6 +70,16 @@ const PROVIDER = ProviderDriverKind.make("opencode");
 const OPENCODE_RESUME_VERSION = 1 as const;
 
 /**
+ * How long the prompt-admission recovery keeps waiting for OpenCode to start
+ * a prompt it accepted. Booting the per-run instance (config load, skill
+ * scan) can lag `prompt_async` by seconds on a loaded machine, during which
+ * the status map simply lacks the session. Expiry is the honest terminal
+ * state: the admission fails and the queued prompt is aborted instead of
+ * being reported as a completed turn. Exported for testing.
+ */
+export const OPENCODE_PROMPT_ADMISSION_TIMEOUT_MS = 60_000;
+
+/**
  * Decode a persisted resume cursor into the upstream `ses_…` id. Anything
  * that isn't a current-version cursor with a non-empty id means "no resume"
  * rather than an error. Re-adopting the session id IS the resume mechanism —
@@ -1351,7 +1361,15 @@ export function makeOpenCodeAdapter(
       }
       const recover = Effect.gen(function* () {
         yield* Deferred.await(promptAdmission.acceptance);
-        for (let retryCount = 0; retryCount < 5; retryCount += 1) {
+        // A prompt OpenCode accepted but has not started yet (instance boot,
+        // provider warm-up) leaves the status map without this session for
+        // seconds. Keep polling for a generous window so a slow start
+        // resolves through the busy signal instead of being misread as a
+        // finished turn, and so a prompt OpenCode truly dropped fails
+        // loudly rather than being settled as a success.
+        const startedAtMs = DateTime.toEpochMillis(yield* DateTime.now);
+        let retryCount = 0;
+        while (true) {
           if (
             context.promptAdmission !== promptAdmission ||
             context.activeTurnId !== promptAdmission.turnId ||
@@ -1409,7 +1427,14 @@ export function makeOpenCodeAdapter(
             ? Option.getOrUndefined(decodeOpenCodeSessionStatusMap(statusResponse.value.data))
             : undefined;
           const status = statusData?.[context.openCodeSessionId];
-          const isIdle =
+          // A missing entry means OpenCode is not running the session right
+          // now. Without positive evidence that OpenCode started this prompt
+          // (a busy observation), that reads "not started yet", never "turn
+          // finished": settling a queued-but-unstarted prompt marked live
+          // threads done, and automation then stopped them before the work
+          // ran. A busy observation pins the turn, so a subsequent missing
+          // entry can only mean the work genuinely finished between polls.
+          const reportsIdle =
             statusData !== undefined && (status === undefined || status.type === "idle");
           const isBusy = status?.type === "busy" || status?.type === "retry";
           if (isBusy) {
@@ -1422,7 +1447,7 @@ export function makeOpenCodeAdapter(
 
           const idle = promptAdmission.idleDuringAdmission ?? promptAdmission.priorIdle;
           if (
-            isIdle &&
+            reportsIdle &&
             idle !== undefined &&
             (promptAdmission.messageObserved || promptAdmission.busyObserved)
           ) {
@@ -1431,7 +1456,7 @@ export function makeOpenCodeAdapter(
             yield* scheduleIdleReconciliation(context, promptAdmission.turnId, idle.raw);
             return;
           }
-          if (isIdle && promptAdmission.messageObserved) {
+          if (reportsIdle && promptAdmission.busyObserved && promptAdmission.messageObserved) {
             promptAdmission.idleStatusConfirmations += 1;
             if (promptAdmission.idleStatusConfirmations >= 2) {
               context.promptAdmission = undefined;
@@ -1447,11 +1472,11 @@ export function makeOpenCodeAdapter(
               );
               return;
             }
-          } else if (!isIdle) {
+          } else if (!reportsIdle) {
             promptAdmission.idleStatusConfirmations = 0;
           }
           if (
-            isIdle &&
+            reportsIdle &&
             promptAdmission.messageObserved &&
             promptAdmission.recoveryRaw !== undefined
           ) {
@@ -1465,10 +1490,17 @@ export function makeOpenCodeAdapter(
             return;
           }
 
+          if (
+            DateTime.toEpochMillis(yield* DateTime.now) - startedAtMs >=
+            OPENCODE_PROMPT_ADMISSION_TIMEOUT_MS
+          ) {
+            yield* failPromptAdmissionRecovery(context, promptAdmission);
+            return;
+          }
           const delayMs = Math.min(250 * 2 ** retryCount, 2_000);
+          retryCount += 1;
           yield* Effect.sleep(`${delayMs} millis`);
         }
-        yield* failPromptAdmissionRecovery(context, promptAdmission);
       }).pipe(
         Effect.catchCause(() => Effect.void),
         Effect.ensuring(

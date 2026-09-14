@@ -47,6 +47,7 @@ import {
   isSameOpenCodeDirectory,
   makeOpenCodeAdapter,
   mergeOpenCodeAssistantText,
+  OPENCODE_PROMPT_ADMISSION_TIMEOUT_MS,
 } from "./OpenCodeAdapter.ts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
@@ -2018,6 +2019,156 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
       NodeAssert.equal(turn.turnId !== undefined, true);
 
       yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("keeps a queued prompt running while OpenCode has not started it yet", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-queued-prompt-not-started");
+      const busyEvent = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      // OpenCode accepted the prompt (the message exists over HTTP) but its
+      // status map has no entry yet: the per-run instance is still booting.
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.subscribedEvents = [busyEvent.promise, idleEvent.promise];
+      runtimeMock.state.sessionStatusImplementation = async () => ({ data: {} });
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID?: string } | undefined;
+        if (prompt?.messageID) {
+          runtimeMock.state.messages.push({
+            info: { id: prompt.messageID, role: "user" },
+            parts: [],
+          });
+        }
+      };
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Run while OpenCode is still booting",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      // Recovery polls confirm the message landed and the status map is
+      // empty. A missing entry is not evidence the turn finished, so the
+      // turn must stay running through the admission window.
+      yield* advanceTestClock(5_000);
+      NodeAssert.equal(runtimeMock.state.sessionStatusCalls > 0, true);
+      NodeAssert.equal(completedFiber.pollUnsafe(), undefined);
+      const runningSession = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(runningSession?.status, "running");
+      NodeAssert.equal(runningSession?.activeTurnId, turn.turnId);
+      NodeAssert.deepEqual(runtimeMock.state.abortCalls, []);
+
+      // OpenCode starts the queued prompt: the busy event lands and the
+      // status map reports busy, which resolves the admission normally.
+      busyEvent.resolve({
+        id: "evt-queued-prompt-busy",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "busy" },
+        },
+      });
+      runtimeMock.state.sessionStatusImplementation = async () => ({
+        data: { "http://127.0.0.1:9999/session": { type: "busy" as const } },
+      });
+      yield* advanceTestClock(2_000);
+
+      // The turn ends when OpenCode actually goes idle.
+      runtimeMock.state.sessionStatusImplementation = async () => ({ data: {} });
+      idleEvent.resolve({
+        id: "evt-queued-prompt-idle",
+        type: "session.status",
+        properties: {
+          sessionID: "http://127.0.0.1:9999/session",
+          status: { type: "idle" },
+        },
+      });
+      const completed = Option.getOrUndefined(
+        yield* Fiber.join(completedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completed?.turnId, turn.turnId);
+      const settledSession = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(settledSession?.status, "ready");
+      NodeAssert.equal(settledSession?.activeTurnId, undefined);
+
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("fails a prompt OpenCode accepted but never started instead of settling it", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-dropped-prompt-fails");
+      // OpenCode records the user message but never starts processing it
+      // and never reports busy: the status map stays empty.
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.subscribedEvents = [];
+      runtimeMock.state.sessionStatusImplementation = async () => ({ data: {} });
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID?: string } | undefined;
+        if (prompt?.messageID) {
+          runtimeMock.state.messages.push({
+            info: { id: prompt.messageID, role: "user" },
+            parts: [],
+          });
+        }
+      };
+
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId,
+        input: "Run against a server that never starts the prompt",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      // The admission window keeps the turn running, then the recovery
+      // reports the failure instead of a completed turn.
+      yield* advanceTestClock(OPENCODE_PROMPT_ADMISSION_TIMEOUT_MS + 5_000);
+      const completed = Option.getOrUndefined(
+        yield* Fiber.join(completedFiber).pipe(Effect.timeout("1 second")),
+      );
+      NodeAssert.equal(completed?.type, "turn.completed");
+      if (completed?.type === "turn.completed") {
+        NodeAssert.equal(completed.payload.state, "failed");
+      }
+      const session = (yield* adapter.listSessions()).find(
+        (candidate) => candidate.threadId === threadId,
+      );
+      NodeAssert.equal(session?.status, "error");
+      NodeAssert.equal(session?.activeTurnId, undefined);
+      // The failed admission aborts the queued prompt so it cannot start later.
+      NodeAssert.equal(runtimeMock.state.abortCalls.length > 0, true);
     }),
   );
 
