@@ -154,15 +154,25 @@ public struct SettingsView: View {
 
     private var aboutSection: some View {
         SettingsSection(title: "About", footer: "Version \(appVersionLabel)") {
-            Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
-                SettingsNavigationRow(
-                    title: "Source code",
-                    systemImage: "chevron.left.forwardslash.chevron.right",
-                    trailingSystemImage: "arrow.up.right"
-                )
+            VStack(spacing: 0) {
+                Link(destination: URL(string: "https://github.com/pingdotgg/t3code")!) {
+                    SettingsNavigationRow(
+                        title: "Source code",
+                        systemImage: "chevron.left.forwardslash.chevron.right",
+                        trailingSystemImage: "arrow.up.right"
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityHint("Opens GitHub in your browser")
+                settingsDivider
+                NavigationLink {
+                    SettingsLicensesView()
+                } label: {
+                    SettingsNavigationRow(title: "Open source licenses", systemImage: "doc.text")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-licenses")
             }
-            .buttonStyle(.plain)
-            .accessibilityHint("Opens GitHub in your browser")
         }
     }
 
