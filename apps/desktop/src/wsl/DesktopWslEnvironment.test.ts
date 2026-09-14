@@ -15,6 +15,7 @@ import {
   buildWslRuntimeInstallScript,
   buildWslRuntimeInvalidateScript,
   buildWslRuntimePruneScript,
+  buildWslRuntimeProbeScript,
   DesktopWslDistroListError,
   formatMissingToolsReason,
   parseNodePath,
@@ -445,6 +446,75 @@ describe.skipIf(posixShellRunner === null)("WSL runtime install script (executed
       install: (archive?: string, sha?: string) => runShell(installScript(archive, sha)),
     };
   };
+
+  const probeFixture = (fixture: ReturnType<typeof createFixture>) =>
+    runShell(
+      [
+        `export HOME=${sh(`${fixture.work}/home`)}`,
+        'export NVM_DIR="$HOME/.nvm" FNM_DIR="$HOME/.fnm" VOLTA_HOME="$HOME/.volta"',
+        // Isolate login profiles and hide the host's Node/version managers.
+        // The resolver must discover the fixture's installation itself.
+        "bash() { (",
+        "  command() {",
+        '    case "$*" in',
+        '      "-v node"|"-v mise"|"-v fnm"|"-v nodenv") return 1 ;;',
+        '      *) builtin command "$@" ;;',
+        "    esac",
+        "  }",
+        '  eval "$2"',
+        "); }",
+        buildWslRuntimeProbeScript(fixture.runtimeRoot),
+      ].join("\n"),
+    );
+
+  it("discovers version-managed Node for providers with a standalone runtime", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const nodeBin = `${fixture.work}/home/.nvm/versions/node/v24.15.0/bin`;
+    const setup = runShell(
+      [
+        "set -eu",
+        `mkdir -p ${sh(nodeBin)}`,
+        `printf '%s' ${sh('#!/bin/sh\nprintf "linux-node-provider\\n"\n')} > ${sh(`${nodeBin}/node`)}`,
+        `chmod +x ${sh(`${nodeBin}/node`)}`,
+      ].join("\n"),
+    );
+    expect(setup.status, setup.stderr).toBe(0);
+
+    const probe = probeFixture(fixture);
+
+    expect(probe.status, probe.stderr).toBe(0);
+    const resolvedPath = parseResolvedPath(probe.stdout);
+    expect(resolvedPath?.split(":")).toContain(nodeBin);
+    const provider = runShell(`export PATH=${sh(resolvedPath ?? "")}\nnode provider.js`);
+    expect(provider.status, provider.stderr).toBe(0);
+    expect(provider.stdout).toBe("linux-node-provider\n");
+  });
+
+  it("keeps standalone runtime readiness independent of Node availability", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+
+    const probe = probeFixture(fixture);
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(parseResolvedPath(probe.stdout)).not.toBeNull();
+  });
+
+  it("keeps the inherited PATH when bash is unavailable", () => {
+    const fixture = createFixture();
+    expect(fixture.install().status).toBe(0);
+    const probe = runShell(
+      [
+        "bash() { return 127; }",
+        'export PATH="/fixture/bin:/usr/bin:/bin"',
+        buildWslRuntimeProbeScript(fixture.runtimeRoot),
+      ].join("\n"),
+    );
+
+    expect(probe.status, probe.stderr).toBe(0);
+    expect(parseResolvedPath(probe.stdout)).toBe("/fixture/bin:/usr/bin:/bin");
+  });
 
   it("reuses a warm cache without touching the archive", () => {
     const fixture = createFixture();
