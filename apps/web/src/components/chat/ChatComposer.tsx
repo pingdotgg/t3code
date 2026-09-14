@@ -4962,6 +4962,18 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       onSubmit={submitComposer}
       onPointerDownCapture={(event) => {
         const target = event.target;
+        if (target instanceof Element && target.closest('[data-testid="composer-editor"]')) {
+          // Lexical can briefly hold newer DOM text than the controlled draft
+          // when focus returns after an async renderer update. Commit that
+          // live snapshot before the focus event can reconcile from stale
+          // controlled state and erase what the user already typed.
+          const snapshot = composerEditorRef.current?.readSnapshot();
+          if (snapshot && snapshot.value !== promptRef.current) {
+            promptRef.current = snapshot.value;
+            setComposerDraftPrompt(composerDraftTarget, snapshot.value);
+            setComposerCursor(snapshot.cursor);
+          }
+        }
         if (isInsideRestingComposerControlScope(target)) return;
         if (isInsideCollapsedComposerControls(target)) return;
         if (!(target instanceof Element)) return;

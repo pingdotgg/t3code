@@ -62,6 +62,7 @@ import {
   type NativeAgentFeedItem,
 } from "../agentDashboardPages";
 import { buildDashboardNeedsYouItems, type DashboardNeedsYouItem } from "../agentDashboardNeedsYou";
+import { isElectron } from "../env";
 import { usePrimarySettings } from "../hooks/useSettings";
 import { newMessageId, newThreadId } from "../lib/utils";
 import { resolveAppModelSelectionState } from "../modelSelection";
@@ -88,6 +89,7 @@ import {
   type AgentDashboardQuestionTarget,
 } from "./AgentDashboardQuestionComposer";
 import { AgentDashboardUpdates } from "./AgentDashboardUpdates";
+import { WorkspacePageHeader } from "./WorkspacePageHeader";
 import { Button } from "./ui/button";
 import { Card, CardDescription, CardHeader, CardPanel, CardTitle } from "./ui/card";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "./ui/collapsible";
@@ -1060,7 +1062,10 @@ export function AgentDashboard() {
   return (
     <SidebarInset className="h-dvh min-h-0 overflow-hidden bg-background text-foreground">
       <div className="flex min-h-0 flex-1 flex-col bg-background">
-        <header className="flex shrink-0 items-center justify-between gap-4 border-b border-border/70 bg-background px-4 py-3 sm:px-6">
+        <WorkspacePageHeader
+          electron={isElectron}
+          className="justify-between border-b border-border/70 bg-background"
+        >
           <div className="flex min-w-0 items-center gap-3">
             <div className="flex size-8 shrink-0 items-center justify-center rounded-lg border border-border/70 bg-card text-muted-foreground">
               <FolderGit2Icon className="size-4" />
@@ -1112,7 +1117,7 @@ export function AgentDashboard() {
               <ExternalLinkIcon />
             </Button>
           </div>
-        </header>
+        </WorkspacePageHeader>
 
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-7xl flex-col gap-4 px-4 py-4 sm:px-6 lg:px-8">
