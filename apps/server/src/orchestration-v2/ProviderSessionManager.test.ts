@@ -8964,9 +8964,23 @@ it.effect(
         }
         const skippedTail = closing.pollUnsafe();
 
+        // The resumed detach registered its revocation tail and is parked on
+        // its join while the tail queues behind the held prepare lock.
+        // Interrupting the detach exits it while its tail is still running —
+        // teardown may only stay pending here by joining the tail itself. The
+        // interrupt is delivered through the stepping dispatcher the fiber is
+        // suspended on, so drain is what lands it at the parked join.
+        yield* Effect.sync(() => detaching.interruptUnsafe());
+        yield* stepper.drain;
+        for (let i = 0; i < 16; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        const detachExitEarly = detaching.pollUnsafe();
+        const skippedLateTail = closing.pollUnsafe();
+
         yield* Deferred.succeed(issueGate, undefined);
         const closeExit = yield* Fiber.join(closing);
-        const detachExit = yield* Fiber.join(detaching);
+        const detachExit = yield* Fiber.await(detaching);
         yield* Fiber.join(holding);
 
         // The marker attributes the in-flight detach to this instance even
@@ -8983,13 +8997,23 @@ it.effect(
           skippedTail,
           `closeInstance returned while the detached thread's revocation tail was still running (${skippedTail?._tag})`,
         );
+        // The detach exited while its tail was still parked — teardown must
+        // still be waiting on that tail rather than reporting over it.
+        assert.isDefined(
+          detachExitEarly,
+          "the interrupted in-flight detach did not exit while its tail was parked",
+        );
+        assert.isTrue(
+          detachExitEarly !== undefined && Exit.isFailure(detachExit),
+          `in-flight detach returned ${detachExit._tag} instead of the interrupt Failure`,
+        );
+        assert.isUndefined(
+          skippedLateTail,
+          `closeInstance returned while the detached thread's revocation tail was still running after the detach exited (${skippedLateTail?._tag})`,
+        );
         assert.isTrue(
           Exit.isSuccess(closeExit),
           `closeInstance returned ${closeExit._tag} instead of Success`,
-        );
-        assert.isTrue(
-          Exit.isSuccess(detachExit),
-          `in-flight detach returned ${detachExit._tag} instead of Success`,
         );
       }).pipe(
         Effect.ensuring(Deferred.succeed(issueGate, undefined)),
@@ -8999,6 +9023,103 @@ it.effect(
             idleTimeoutMs: 3_600_000,
             mcpConfigs,
             mcpRegistryLayer,
+            extraAdapters: [
+              makeProviderAdapter(state, {
+                instanceId: ProviderInstanceId.make("codex_other"),
+              }),
+            ],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance waits for an in-flight detach that captured no owner",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const stepper = makeSteppingScheduler();
+        const otherSelection = {
+          ...modelSelection,
+          instanceId: ProviderInstanceId.make("codex_other"),
+        };
+        const detachedThread = ThreadId.make("thread-ownerless-detach");
+        const first = yield* makeThreadSessionFixture(detachedThread);
+        const providerSessionId = yield* first.allocate;
+        yield* first.open(providerSessionId);
+
+        // Suspend before the detach resolves which instance owns the session
+        // id (the capture lands around op 10), then close the session while
+        // it is suspended: the resumed capture finds no entry, so the marker
+        // records resolved-but-unknown ownership — not "not captured yet".
+        const detaching = yield* manager
+          .detach({
+            providerSessionId,
+            threadId: detachedThread,
+            revokeMcpCredential: true,
+          })
+          .pipe(
+            Effect.exit,
+            Effect.forkDetach,
+            Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+          );
+        yield* stepper.step(detaching, 8);
+        yield* manager.close(providerSessionId);
+        yield* stepper.step(detaching, 12);
+
+        // The same session id now belongs to another instance. A marker that
+        // conflated "captured no owner" with "not captured" would resolve the
+        // id through the maps here and skip this detach as foreign-owned.
+        const replacementThread = ThreadId.make("thread-ownerless-replacement");
+        yield* makeThreadSessionFixture(replacementThread);
+        yield* manager.open({
+          threadId: replacementThread,
+          providerSessionId,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+
+        const closing = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 16; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        // Captured rather than asserted here: a premature teardown exit must
+        // still be followed by draining the suspended detach, or the layer's
+        // own shutdown waits on it forever and masks the real failure.
+        const skippedDetach = closing.pollUnsafe();
+
+        yield* stepper.drain;
+        for (let i = 0; i < 16; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        const closeExit = yield* Fiber.join(closing);
+        const detachExit = yield* Fiber.await(detaching);
+
+        assert.isUndefined(
+          skippedDetach,
+          `closeInstance skipped an in-flight detach that had resolved no owner for its session id (${skippedDetach?._tag})`,
+        );
+        assert.isTrue(
+          Exit.isSuccess(closeExit),
+          `closeInstance returned ${closeExit._tag} instead of Success`,
+        );
+        assert.isTrue(
+          Exit.isSuccess(detachExit),
+          `in-flight detach returned ${detachExit._tag} instead of Success`,
+        );
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            mcpConfigs,
             extraAdapters: [
               makeProviderAdapter(state, {
                 instanceId: ProviderInstanceId.make("codex_other"),
