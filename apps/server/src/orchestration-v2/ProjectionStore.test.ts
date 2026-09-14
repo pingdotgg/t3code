@@ -488,6 +488,36 @@ it.effect("memory snapshot windows bound every payload collection, not just turn
         updatedAt: now,
       },
     });
+    // The window hydrates only collections the retained items reference, so the
+    // message needs a turn item pointing at it to stay in the cohort.
+    yield* projectionStore.apply({
+      id: EventId.make("event:memory-bounded-collections:item"),
+      type: "turn-item.updated",
+      threadId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:memory-bounded-collections"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "assistant_message",
+        messageId: MessageId.make("message:memory-bounded-collections"),
+        text: "see message",
+        attachments: [],
+        streaming: false,
+      },
+    });
 
     const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
       rowLimit: 75,
@@ -634,6 +664,393 @@ it.effect("memory snapshot windows retain the newest stored row as the watermark
       hasOlderHistory: windowed.hasOlderHistory,
     });
     assert.strictEqual(bounded.latestLocalTurnOrdinal, 4);
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
+it.effect("memory snapshot windows filter collections to the retained cohort", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:memory-cohort");
+    yield* projectionStore.apply({
+      id: EventId.make("event:memory-cohort:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:memory-cohort"),
+        title: "memory cohort window",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    for (const suffix of ["a", "b"] as const) {
+      const runId = RunId.make(`run:memory-cohort:${suffix}`);
+      const rootNodeId = NodeId.make(`node:memory-cohort:${suffix}:root`);
+      const messageId = MessageId.make(`message:memory-cohort:${suffix}`);
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-cohort:${suffix}:run`),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: suffix === "a" ? 1 : 2,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: messageId,
+          rootNodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-cohort:${suffix}:message`),
+        type: "message.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: messageId,
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          role: "assistant",
+          text: `answer ${suffix}`,
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-cohort:${suffix}:node:root`),
+        type: "node.updated",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: rootNodeId,
+          threadId,
+          runId,
+          parentNodeId: null,
+          rootNodeId,
+          kind: "root_turn",
+          status: "completed",
+          countsForRun: true,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          runtimeRequestId: null,
+          checkpointScopeId: null,
+          startedAt: now,
+          completedAt: now,
+        },
+      });
+      for (let index = 0; index < 5; index += 1) {
+        const nodeId = NodeId.make(`node:memory-cohort:${suffix}:${index}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:memory-cohort:${suffix}:node:${index}`),
+          type: "node.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: nodeId,
+            threadId,
+            runId,
+            parentNodeId: rootNodeId,
+            rootNodeId,
+            kind: "tool_call",
+            status: "completed",
+            countsForRun: false,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: now,
+          },
+        });
+        const ordinal = (suffix === "a" ? 0 : 5) + index + 1;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:memory-cohort:${suffix}:item:${index}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:memory-cohort:${suffix}:${index}`),
+            threadId,
+            runId,
+            nodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: `command ${suffix}:${index}`,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            ...(index === 0
+              ? {
+                  type: "assistant_message",
+                  messageId,
+                  text: `answer ${suffix}`,
+                  attachments: [],
+                  streaming: false,
+                }
+              : {
+                  type: "command_execution",
+                  input: `echo ${suffix}:${index}`,
+                  output: "ok",
+                  exitCode: 0,
+                }),
+          },
+        });
+      }
+    }
+
+    const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+      rowLimit: 5,
+    });
+    assert.lengthOf(windowed.projection.visibleTurnItems, 5);
+    assert.isTrue(windowed.hasOlderHistory);
+    // The retained window is run b's five items: only run b, its nodes (plus
+    // the root ancestor), and the message its items reference may hydrate —
+    // run a's history stays in storage but not in this response.
+    assert.deepEqual(
+      windowed.projection.runs.map((run) => String(run.id)),
+      ["run:memory-cohort:b"],
+    );
+    const nodeIds = new Set(windowed.projection.nodes.map((node) => String(node.id)));
+    assert.isTrue(nodeIds.has("node:memory-cohort:b:root"));
+    assert.isTrue(nodeIds.has("node:memory-cohort:b:4"));
+    assert.isFalse([...nodeIds].some((id) => id.startsWith("node:memory-cohort:a")));
+    assert.deepEqual(
+      windowed.projection.messages.map((message) => String(message.id)),
+      ["message:memory-cohort:b"],
+    );
+
+    const full = yield* projectionStore.getThreadProjection(threadId);
+    assert.lengthOf(full.runs, 2);
+    assert.lengthOf(full.messages, 2);
+    assert.isTrue(full.nodes.some((node) => String(node.id).startsWith("node:memory-cohort:a")));
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
+it.effect("memory snapshot windows retain sessions behind foreign-owned provider threads", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    // Projection insertion order must not decide which provider-thread copy the
+    // global view keeps: run the fixture with the owning thread created both
+    // after and before the reading thread.
+    for (const order of ["ab", "ba"] as const) {
+      const threadId = ThreadId.make(`thread:memory-shared-session:${order}:a`);
+      const otherThreadId = ThreadId.make(`thread:memory-shared-session:${order}:b`);
+      const created = order === "ab" ? [threadId, otherThreadId] : [otherThreadId, threadId];
+      for (const id of created) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:memory-shared-session:${id}:thread`),
+          type: "thread.created",
+          threadId: id,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id,
+            projectId: ProjectId.make(`project:memory-shared-session:${id}`),
+            title: "memory shared session",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: id,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        });
+      }
+      const sessionId = ProviderSessionId.make(`provider-session:memory-shared-session:${order}`);
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-shared-session:${order}:session`),
+        type: "provider-session.attached",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: sessionId,
+          driver,
+          providerInstanceId,
+          status: "ready",
+          cwd: "/workspace",
+          model: modelSelection.model,
+          capabilities: CodexProviderCapabilitiesV2,
+          createdAt: now,
+          updatedAt: now,
+          lastError: null,
+        },
+      });
+      const providerThreadId = ProviderThreadId.make(
+        `provider-thread:memory-shared-session:${order}`,
+      );
+      // The retained item points at a provider thread owned by another app
+      // thread: SQL joins provider_threads globally, so the session behind it
+      // must still hydrate into this thread's windowed snapshot.
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-shared-session:${order}:provider-thread`),
+        type: "provider-thread.updated",
+        threadId: otherThreadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: sessionId,
+          appThreadId: otherThreadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-shared-session:${order}:item`),
+        type: "turn-item.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:memory-shared-session:${order}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "echo hi",
+          output: "hi",
+          exitCode: 0,
+        },
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 5,
+      });
+      assert.deepEqual(
+        windowed.projection.providerThreads.map((thread) => String(thread.id)),
+        [String(providerThreadId)],
+      );
+      assert.deepEqual(
+        windowed.projection.providerSessions.map((session) => String(session.id)),
+        [String(sessionId)],
+      );
+
+      // A provider-thread event routed through this thread stream replaces the
+      // global row (ON CONFLICT(provider_thread_id) in SQL): the windowed read
+      // must serve the latest version, not the stale copy left in the other
+      // thread's projection.
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-shared-session:${order}:provider-thread-update`),
+        type: "provider-thread.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: providerThreadId,
+          driver,
+          providerInstanceId,
+          providerSessionId: null,
+          appThreadId: otherThreadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "active",
+          firstRunOrdinal: null,
+          lastRunOrdinal: null,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      const updated = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 5,
+      });
+      assert.strictEqual(updated.projection.providerThreads[0]?.status, "active");
+      assert.lengthOf(updated.projection.providerSessions, 0);
+    }
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
 
