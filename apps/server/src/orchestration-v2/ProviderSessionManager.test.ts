@@ -6542,151 +6542,215 @@ it.effect(
   "ProviderSessionManagerV2 does not let a stale turn failure idle a same-id replacement",
   () =>
     Effect.gen(function* () {
-      const state = yield* Ref.make(emptyState);
-      const aTurnEntered = yield* Deferred.make<void>();
-      const aTurnGate = yield* Deferred.make<void>();
-      const bTurnBusy = yield* Deferred.make<void>();
-      const bClosed = yield* Deferred.make<void>();
-      const closes = yield* Ref.make(0);
-      const firstThreadId = ThreadId.make("thread-stale-idle-first");
-      const replacementThreadId = ThreadId.make("thread-stale-idle-replacement");
-      yield* Effect.gen(function* () {
-        const manager = yield* ProviderSessionManagerV2;
-        const idAllocator = yield* IdAllocatorV2;
-        const projectionStore = yield* ProjectionStoreV2;
-        const now = yield* DateTime.now;
-        const first = yield* makeThreadSessionFixture(firstThreadId);
-        const replacement = yield* makeThreadSessionFixture(replacementThreadId);
-        const providerSessionId = yield* first.allocate;
-        const firstRuntime = yield* first.open(providerSessionId);
-        yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
-        const firstProviderThread = makeProviderThread({
-          idAllocator,
-          threadId: firstThreadId,
-          providerSessionId,
-          now,
-        });
-        const firstAppThread = (yield* projectionStore.getThreadProjection(firstThreadId)).thread;
-        const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
-
-        // A's turn parks inside the adapter with the session marked busy.
-        const aTurn = yield* firstRuntime
-          .startTurn({
-            appThread: firstAppThread,
+      const discriminated = yield* Ref.make(false);
+      // Sweep scheduler suspension points on the stale turn fiber: the
+      // discriminating window is anywhere the fiber is suspended before its
+      // failure bookkeeping (markIdle) runs — resuming it after the
+      // replacement opened makes the stale mark land on the replacement's
+      // entry, where the runtime-identity guard must reject it. Points
+      // inside the admitted adapter op keep `done` unfired, so the release
+      // drain correctly waits on them instead.
+      for (let ops = 30; ops < 110; ops += 1) {
+        const state = yield* Ref.make(emptyState);
+        const aTurnEntered = yield* Deferred.make<void>();
+        const bTurnBusy = yield* Deferred.make<void>();
+        const bTurnGate = yield* Deferred.make<void>();
+        const bClosed = yield* Deferred.make<void>();
+        const closes = yield* Ref.make(0);
+        const firstThreadId = ThreadId.make(`thread-stale-idle-first-${ops}`);
+        const replacementThreadId = ThreadId.make(`thread-stale-idle-replacement-${ops}`);
+        yield* Effect.gen(function* () {
+          const manager = yield* ProviderSessionManagerV2;
+          const stepper = makeSteppingScheduler();
+          const idAllocator = yield* IdAllocatorV2;
+          const projectionStore = yield* ProjectionStoreV2;
+          const now = yield* DateTime.now;
+          const first = yield* makeThreadSessionFixture(firstThreadId);
+          const replacement = yield* makeThreadSessionFixture(replacementThreadId);
+          const providerSessionId = yield* first.allocate;
+          const firstRuntime = yield* first.open(providerSessionId);
+          yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          const firstProviderThread = makeProviderThread({
+            idAllocator,
             threadId: firstThreadId,
-            runId: firstRunId,
-            runOrdinal: 1,
-            providerTurnOrdinal: 1,
-            attemptId: idAllocator.derive.runAttempt({ runId: firstRunId, attemptOrdinal: 1 }),
-            rootNodeId: idAllocator.derive.rootNode({ runId: firstRunId }),
-            providerThread: firstProviderThread,
-            message: {
-              createdBy: "user",
-              creationSource: "web",
-              messageId: yield* idAllocator.allocate.message({
-                threadId: firstThreadId,
-                ordinal: 1,
-              }),
-              text: "park me",
-              attachments: [],
-            },
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(aTurnEntered);
+            providerSessionId,
+            now,
+          });
+          const firstAppThread = (yield* projectionStore.getThreadProjection(firstThreadId)).thread;
+          const firstRunId = idAllocator.derive.run({ threadId: firstThreadId, ordinal: 1 });
 
-        // A closes while its turn is still in flight; a same-id replacement
-        // opens and starts a turn that stays busy inside the adapter.
-        yield* manager.close(providerSessionId);
-        const replacementRuntime = yield* replacement.open(providerSessionId);
-        yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
-        const replacementProviderThread = makeProviderThread({
-          idAllocator,
-          threadId: replacementThreadId,
-          providerSessionId,
-          now,
-        });
-        const replacementAppThread = (yield* projectionStore.getThreadProjection(
-          replacementThreadId,
-        )).thread;
-        const replacementRunId = idAllocator.derive.run({
-          threadId: replacementThreadId,
-          ordinal: 1,
-        });
-        yield* replacementRuntime
-          .startTurn({
-            appThread: replacementAppThread,
+          // A's turn runs on the stepping scheduler; the adapter operation
+          // fails as soon as it is invoked so every suspension point after it
+          // still has its failure bookkeeping outstanding.
+          const aTurn = yield* firstRuntime
+            .startTurn({
+              appThread: firstAppThread,
+              threadId: firstThreadId,
+              runId: firstRunId,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({ runId: firstRunId, attemptOrdinal: 1 }),
+              rootNodeId: idAllocator.derive.rootNode({ runId: firstRunId }),
+              providerThread: firstProviderThread,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({
+                  threadId: firstThreadId,
+                  ordinal: 1,
+                }),
+                text: "park me",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          const stepped = yield* stepper.step(aTurn, ops);
+          if (!stepped) {
+            yield* stepper.drain;
+            yield* Fiber.await(aTurn);
+            return;
+          }
+
+          // A closes while its turn is still in flight. When the turn is
+          // parked inside its admitted adapter op the drain waits on it; when
+          // it is parked before admission or after the op settled, the close
+          // completes and the stale bookkeeping is left outstanding.
+          const closing = yield* manager
+            .close(providerSessionId)
+            .pipe(Effect.exit, Effect.forkChild);
+          for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+          const closePolled = closing.pollUnsafe();
+          const closeSucceeded =
+            closePolled !== undefined &&
+            Exit.isSuccess(closePolled) &&
+            Exit.isSuccess(closePolled.value);
+          if (!closeSucceeded) {
+            yield* stepper.drain;
+            yield* Fiber.await(closing);
+            yield* Fiber.await(aTurn);
+            return;
+          }
+
+          // The release finished while the stale turn's bookkeeping is still
+          // suspended: open the same-id replacement and park its own turn
+          // busy inside the adapter.
+          const replacementRuntime = yield* replacement.open(providerSessionId);
+          yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          const replacementProviderThread = makeProviderThread({
+            idAllocator,
             threadId: replacementThreadId,
-            runId: replacementRunId,
-            runOrdinal: 1,
-            providerTurnOrdinal: 1,
-            attemptId: idAllocator.derive.runAttempt({
+            providerSessionId,
+            now,
+          });
+          const replacementAppThread = (yield* projectionStore.getThreadProjection(
+            replacementThreadId,
+          )).thread;
+          const replacementRunId = idAllocator.derive.run({
+            threadId: replacementThreadId,
+            ordinal: 1,
+          });
+          yield* replacementRuntime
+            .startTurn({
+              appThread: replacementAppThread,
+              threadId: replacementThreadId,
               runId: replacementRunId,
-              attemptOrdinal: 1,
-            }),
-            rootNodeId: idAllocator.derive.rootNode({ runId: replacementRunId }),
-            providerThread: replacementProviderThread,
-            message: {
-              createdBy: "user",
-              creationSource: "web",
-              messageId: yield* idAllocator.allocate.message({
-                threadId: replacementThreadId,
-                ordinal: 1,
+              runOrdinal: 1,
+              providerTurnOrdinal: 1,
+              attemptId: idAllocator.derive.runAttempt({
+                runId: replacementRunId,
+                attemptOrdinal: 1,
               }),
-              text: "keep me busy",
-              attachments: [],
-            },
-            modelSelection,
-            runtimePolicy,
-          })
-          .pipe(Effect.forkChild);
-        yield* Deferred.await(bTurnBusy);
+              rootNodeId: idAllocator.derive.rootNode({ runId: replacementRunId }),
+              providerThread: replacementProviderThread,
+              message: {
+                createdBy: "user",
+                creationSource: "web",
+                messageId: yield* idAllocator.allocate.message({
+                  threadId: replacementThreadId,
+                  ordinal: 1,
+                }),
+                text: "keep me busy",
+                attachments: [],
+              },
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(bTurnBusy);
 
-        // A's parked turn now fails; the failure bookkeeping belongs to the
-        // dead session and must not decrement the replacement's busy count.
-        yield* Deferred.succeed(aTurnGate, undefined);
-        const aExit = yield* aTurn.pipe(Fiber.join, Effect.exit);
-        assert.isTrue(Exit.isFailure(aExit));
+          // Now let the stale fiber finish: its markIdle lands on the
+          // replacement's entry and must be rejected by the runtime-identity
+          // guard instead of decrementing the replacement's busy count.
+          const aStillParked = aTurn.pollUnsafe() === undefined;
+          yield* stepper.drain;
+          const aExit = yield* Fiber.await(aTurn);
+          assert.isTrue(
+            Exit.isSuccess(aExit) && Exit.isFailure(aExit.value),
+            `stale turn should end with its own failure (op ${ops})`,
+          );
+          if (aStillParked) {
+            yield* Ref.set(discriminated, true);
+          }
 
-        // If the stale failure idled the replacement, its idle probe releases
-        // it within one idle window.
-        yield* TestClock.adjust("2 seconds");
-        for (let i = 0; i < 12; i += 1) {
-          yield* Effect.yieldNow;
-        }
-        assert.isFalse(yield* Deferred.isDone(bClosed));
-        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
-        assert.equal((yield* Ref.get(state)).closeCount, 1);
-      }).pipe(
-        Effect.ensuring(Deferred.succeed(aTurnGate, undefined)),
-        Effect.provide(
-          makeTestLayer({
-            state,
-            idleTimeoutMs: 1_000,
-            beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
-              Effect.flatMap((n) =>
-                n + 1 === 2 ? Deferred.succeed(bClosed, undefined) : Effect.void,
+          // A stale markIdle that decremented the replacement's busy count
+          // leaves it releasable while its own turn is still parked: any
+          // activity on the replacement installs an idle probe that then
+          // releases it within one idle window.
+          yield* replacementRuntime.interruptTurn({
+            providerThread: replacementProviderThread,
+            providerTurnId: idAllocator.derive.providerTurn({
+              driver: CODEX_DRIVER,
+              nativeTurnId: `replacement-turn-${ops}`,
+            }),
+          });
+          yield* TestClock.adjust("2 seconds");
+          for (let i = 0; i < 12; i += 1) {
+            yield* Effect.yieldNow;
+          }
+          assert.isFalse(yield* Deferred.isDone(bClosed));
+          assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+          assert.equal((yield* Ref.get(state)).closeCount, 1);
+        }).pipe(
+          Effect.ensuring(Deferred.succeed(bTurnGate, undefined)),
+          Effect.provide(
+            makeTestLayer({
+              state,
+              idleTimeoutMs: 1_000,
+              beforeClose: Ref.getAndUpdate(closes, (n) => n + 1).pipe(
+                Effect.flatMap((n) =>
+                  n + 1 === 2 ? Deferred.succeed(bClosed, undefined) : Effect.void,
+                ),
               ),
-            ),
-            startTurn: (input) =>
-              input.threadId === firstThreadId
-                ? Deferred.succeed(aTurnEntered, undefined).pipe(
-                    Effect.andThen(Deferred.await(aTurnGate)),
-                    Effect.andThen(
-                      Effect.fail(
-                        new ProviderAdapterTurnStartError({
-                          driver: CODEX_DRIVER,
-                          threadId: input.threadId,
-                          providerThreadId: input.providerThread.id,
-                          runId: input.runId,
-                        }),
+              startTurn: (input) =>
+                input.threadId === firstThreadId
+                  ? Deferred.succeed(aTurnEntered, undefined).pipe(
+                      Effect.andThen(
+                        Effect.fail(
+                          new ProviderAdapterTurnStartError({
+                            driver: CODEX_DRIVER,
+                            threadId: input.threadId,
+                            providerThreadId: input.providerThread.id,
+                            runId: input.runId,
+                          }),
+                        ),
                       ),
+                    )
+                  : Deferred.succeed(bTurnBusy, undefined).pipe(
+                      Effect.andThen(Deferred.await(bTurnGate)),
                     ),
-                  )
-                : Deferred.succeed(bTurnBusy, undefined).pipe(Effect.andThen(Effect.never)),
-          }),
-        ),
+            }),
+          ),
+        );
+      }
+      assert.isTrue(
+        yield* Ref.get(discriminated),
+        "sweep never observed the stale turn parked through the replacement open",
       );
     }),
 );
@@ -6737,8 +6801,12 @@ it.effect(
             .close(providerSessionId)
             .pipe(Effect.exit, Effect.forkChild);
           for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
-          const closeExit = closing.pollUnsafe();
-          if (closeExit === undefined || !Exit.isSuccess(closeExit)) {
+          const closePolled = closing.pollUnsafe();
+          const closeSucceeded =
+            closePolled !== undefined &&
+            Exit.isSuccess(closePolled) &&
+            Exit.isSuccess(closePolled.value);
+          if (!closeSucceeded) {
             // The suspended resume is still inside its admitted operation —
             // the release drain is correctly waiting on it.
             yield* stepper.drain;
@@ -6751,6 +6819,7 @@ it.effect(
           // bookkeeping land against it.
           const replacementRuntime = yield* first.open(providerSessionId);
           yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+          const resumeStillParked = aResume.pollUnsafe() === undefined;
           yield* stepper.drain;
           assert.isDefined(
             aResume.pollUnsafe(),
@@ -6761,8 +6830,16 @@ it.effect(
           // or the admission fence refuses it with a protocol error once the
           // entry is gone. What must not happen is its bookkeeping landing in
           // the replacement's loaded-thread cache.
-          yield* Fiber.await(aResume);
-          yield* Ref.set(discriminated, true);
+          const resumeExit = yield* Fiber.await(aResume);
+          // The discriminating iteration is the one where the stale resume
+          // was still suspended when the drain ran — so its mark lands after
+          // the replacement opened — and its adapter op had actually
+          // completed. A refused admission (inner Failure) never reaches the
+          // mark, and a resume that finished during `step` marked the dead
+          // entry; neither exercises the runtime-identity guard.
+          if (resumeStillParked && Exit.isSuccess(resumeExit) && Exit.isSuccess(resumeExit.value)) {
+            yield* Ref.set(discriminated, true);
+          }
           const beforeReplacement = yield* Ref.get(state);
           yield* replacementRuntime.resumeThread({
             providerThread: resumeProviderThread,
