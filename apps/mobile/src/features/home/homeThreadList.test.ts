@@ -73,6 +73,30 @@ function buildGroups(
 }
 
 describe("buildHomeThreadGroups", () => {
+  it.each(["123", "#123"])("finds PR threads with %s", (searchQuery) => {
+    const environmentId = EnvironmentId.make("environment-1");
+    const project = makeProject({
+      environmentId,
+      id: ProjectId.make("project"),
+      title: "Project",
+    });
+    const pr = {
+      projectId: project.id,
+      repository: "owner/repo",
+      number: 123,
+      url: "https://github.com/owner/repo/pull/123",
+    };
+    const thread = makeThread({
+      environmentId,
+      id: ThreadId.make("thread"),
+      projectId: project.id,
+      title: "Unrelated title",
+      branchPullRequest: pr,
+    });
+    const groups = buildGroups([project], [thread], { searchQuery });
+    expect(groups.flatMap((group) => group.threads)).toHaveLength(1);
+  });
+
   it("builds one v2 scope for the same repository across environments", () => {
     const localEnvironmentId = EnvironmentId.make("environment-local");
     const remoteEnvironmentId = EnvironmentId.make("environment-remote");
