@@ -1,3 +1,5 @@
+import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import { ScopedSwitch } from "./ScopedSwitch";
 import { DeviceHostsSettings } from "./DeviceHostsSettings";
 /**
  * Integrations settings - preferences for surfaces T3 Code embeds rather than
@@ -13,7 +15,6 @@ import {
   type BrowserLinkTarget,
   type BrowserProfile,
   type EnvironmentId,
-  type SshDeviceHostConfig,
   BROWSER_PROFILE_NAME_MAX_LENGTH,
   BROWSER_RECORDING_FRAME_RATES,
   DEFAULT_BROWSER_AUTO_SHOW_FLOATING_PREVIEW,
@@ -565,28 +566,19 @@ function BrowserLinkTargetSetting({ disabled }: { readonly disabled: boolean }) 
   );
 }
 
-/**
- * Device support installs helper processes and hosts on one machine, so it
- * follows the environment crumb. With several environments selected it shows
- * the representative, named in the section title.
- */
 function DeviceIntegrationSettings() {
-  const { scope, environment: selected, connectedEnvironments } = useSettingsScope();
+  const { search, environment: selected } = useSettingsScope();
+  const settings = useScopedSettings();
   const connected = selected?.connection.phase === "connected" && selected.serverConfig !== null;
   const environmentId = connected ? selected.environmentId : null;
-  const aggregate = scope.environmentIds.length !== 1 && connectedEnvironments.length > 1;
 
   return (
-    <SettingsSection
-      id="devices"
-      title={aggregate && selected ? `Devices · ${selected.label}` : "Devices"}
-    >
+    <SettingsSection id="devices" title="Devices">
       <DeviceIntegrationControls
-        key={selected?.environmentId ?? "none"}
+        key={`${environmentId}:${JSON.stringify(search)}`}
         environmentId={environmentId}
-        hosts={selected?.serverConfig?.settings.deviceHosts ?? []}
-        enabled={selected?.serverConfig?.settings.enableDeviceSupport ?? false}
-        agentAccessEnabled={selected?.serverConfig?.settings.enableAgentDeviceAccess ?? false}
+        enabled={settings.enableDeviceSupport}
+        agentAccessEnabled={settings.enableAgentDeviceAccess}
       />
     </SettingsSection>
   );
@@ -594,17 +586,21 @@ function DeviceIntegrationSettings() {
 
 function DeviceIntegrationControls({
   environmentId,
-  hosts,
   enabled,
   agentAccessEnabled,
 }: {
   environmentId: EnvironmentId | null;
-  hosts: ReadonlyArray<SshDeviceHostConfig>;
   enabled: boolean;
   agentAccessEnabled: boolean;
 }) {
   const { state, loaded } = useDeviceState(environmentId);
-  const configure = useAtomCommand(deviceEnvironment.configure);
+  const { scope, environments, connectedEnvironments } = useSettingsScope();
+  const updateSettings = useUpdateScopedSettings();
+  const projectScope = scope.kind === "project" || scope.kind === "checkout";
+  const anyHubEnabled = connectedEnvironments.some(
+    (environment) => environment.serverConfig?.settings.enableDeviceSupport,
+  );
+  const configure = useAtomCommand(deviceEnvironment.configure, { reportFailure: false });
   const list = useAtomCommand(deviceEnvironment.list, { reportFailure: false });
   const [pending, setPending] = useState<"hub" | "check" | "agent" | null>(null);
   const busy = state.hostStatus === "installing" || state.hostStatus === "starting";
@@ -622,9 +618,27 @@ function DeviceIntegrationControls({
     if (!environmentId) return;
     setPending(kind);
     try {
-      const result = await configure({ environmentId, input });
-      if (result._tag === "Success" && input.enabled === true && !state.onboardingCompleted) {
-        await configure({ environmentId, input: { onboardingCompleted: true } });
+      const results = await Promise.allSettled(
+        environments.map(async (environment) => {
+          if (environment.connection.phase !== "connected" || !environment.serverConfig) {
+            throw new Error("Environment disconnected");
+          }
+          return configure({
+            environmentId: environment.environmentId,
+            input: { ...input, ...(input.enabled ? { onboardingCompleted: true } : {}) },
+          });
+        }),
+      );
+      const failed = environments.filter((_, index) => {
+        const result = results[index];
+        return result?.status !== "fulfilled" || result.value._tag === "Failure";
+      });
+      if (failed.length > 0) {
+        toastManager.add({
+          type: "error",
+          title: "Device settings not saved on all environments",
+          description: `Could not update ${failed.map((environment) => environment.label).join(", ")}.`,
+        });
       }
     } finally {
       setPending(null);
@@ -635,13 +649,16 @@ function DeviceIntegrationControls({
     <>
       <SettingsRow
         {...searchableSetting("device-hub")}
+        serverScoped
+        settingKeys={["enableDeviceSupport"]}
         description={deviceHubDescription}
         control={
           <>
             {pending === "hub" ? <DeviceHubSetupStatus state={state} pending compact /> : null}
-            <Switch
+            <ScopedSwitch
+              settingKeys={["enableDeviceSupport"]}
               checked={enabled}
-              disabled={!loaded || !environmentId || busy || pending !== null}
+              disabled={projectScope || !loaded || !environmentId || busy || pending !== null}
               aria-label="Device hub"
               onCheckedChange={(checked) =>
                 void update("hub", {
@@ -657,6 +674,11 @@ function DeviceIntegrationControls({
         {platformsRevealed ? (
           <SettingsRow
             {...searchableSetting("device-platform-support")}
+            description={
+              connectedEnvironments.length > 1
+                ? `Status for ${connectedEnvironments.find((environment) => environment.environmentId === environmentId)?.label}. Select an environment to inspect its simulator support.`
+                : undefined
+            }
             status={
               <div className="flex flex-wrap gap-x-5 gap-y-2">
                 <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
@@ -686,16 +708,25 @@ function DeviceIntegrationControls({
       </AnimatedHeight>
       <SettingsRow
         {...searchableSetting("agent-device-access")}
+        serverScoped
+        settingKeys={["enableAgentDeviceAccess"]}
         description={agentDeviceDescription}
         control={
           <>
             {pending === "agent" ? <AgentDeviceSetupStatus state={state} pending compact /> : null}
-            <Switch
+            <ScopedSwitch
+              settingKeys={["enableAgentDeviceAccess"]}
               checked={agentAccessEnabled}
-              disabled={!loaded || !environmentId || !enabled || busy || pending !== null}
+              disabled={
+                connectedEnvironments.length === 0 ||
+                (!projectScope && (!loaded || !anyHubEnabled || busy)) ||
+                pending !== null
+              }
               aria-label="Agent device access"
               onCheckedChange={(checked) =>
-                void update("agent", { agentAccessEnabled: Boolean(checked) })
+                projectScope
+                  ? updateSettings({ enableAgentDeviceAccess: Boolean(checked) })
+                  : void update("agent", { agentAccessEnabled: Boolean(checked) })
               }
             />
           </>
@@ -706,7 +737,7 @@ function DeviceIntegrationControls({
           {state.hostStatusDetail}
         </p>
       ) : null}
-      <DeviceHostsSettings environmentId={environmentId} hosts={hosts} />
+      <DeviceHostsSettings environmentId={environmentId} />
     </>
   );
 }
@@ -1260,10 +1291,15 @@ function BrowserProfilesSetting({ disabled }: { readonly disabled: boolean }) {
             runWizardImport(importSession.source, importSession.environmentId, input)
           }
           onRefreshSource={() => refreshImportSource(importSession.source.id)}
-          onOpenFullDiskAccessSettings={() => {
+          onCheckFullDiskAccess={
+            window.desktopBridge?.checkSystemPermission
+              ? () => window.desktopBridge!.checkSystemPermission!("full-disk-access")
+              : undefined
+          }
+          onOpenFullDiskAccessSettings={async () => {
             // Rejects outside the desktop shell (and on shells that predate the
             // method), so the one toast covers every way the link can fail.
-            void readLocalApi()
+            await readLocalApi()
               ?.shell.openSystemSettings("full-disk-access")
               .catch(() => {
                 toastManager.add({

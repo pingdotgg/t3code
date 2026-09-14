@@ -40,3 +40,6 @@ node_modules/
 .env*
 !.env.example
 _arcwright-output/
+
+# pnpm content-addressable store; never belongs in the repo.
+.pnpm-store/

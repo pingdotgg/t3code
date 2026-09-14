@@ -91,6 +91,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server exposes the pull-request list, detail, activity, diff, and mutation APIs. Absent on
       servers from before the pull-request workspace shipped, so clients must not probe them. */
   pullRequests: Schema.optionalKey(Schema.Boolean),
+  /** Server understands canonical inline context links plus their message context records.
+      Absent on servers from before inline context shipped, which drop the records and forward
+      the links as literal text -- so a client must serialize context the legacy way for them. */
+  inlineMessageContext: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.settle / thread.unsettle commands. Absent on
       pre-settlement servers, so clients treat missing as unsupported and
       never send the commands under version skew. */
@@ -188,6 +192,8 @@ export type RepositoryIdentityLocator = typeof RepositoryIdentityLocator.Type;
 export const RepositoryIdentity = Schema.Struct({
   canonicalKey: TrimmedNonEmptyString,
   locator: RepositoryIdentityLocator,
+  /** Repository browser URL resolved from the server's configured hosting account. */
+  webUrl: Schema.optionalKey(TrimmedNonEmptyString),
   rootPath: Schema.optionalKey(TrimmedNonEmptyString),
   displayName: Schema.optionalKey(TrimmedNonEmptyString),
   provider: Schema.optionalKey(TrimmedNonEmptyString),

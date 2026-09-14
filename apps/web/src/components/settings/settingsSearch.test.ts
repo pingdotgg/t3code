@@ -173,6 +173,28 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
+  it("keeps the local toggle searchable without offering hidden host publishing controls", () => {
+    const availability = {
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const remoteOnly = filterAvailableSettingsSearchItems({
+      ...availability,
+      localEnvironmentDisabled: true,
+    }).map((item) => item.id);
+    expect(remoteOnly).toContain("local-environment");
+    expect(remoteOnly).not.toContain("t3-connect");
+    expect(remoteOnly).not.toContain("publish-agent-activity");
+    expect(remoteOnly).not.toContain("wsl-backend");
+    // Browsers without access:write still render CloudLinkRow for their host.
+    const browser = filterAvailableSettingsSearchItems(availability).map((item) => item.id);
+    expect(browser).toContain("publish-agent-activity");
+  });
+
   it("shows automatic settlement settings when the server supports them", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
@@ -386,7 +408,7 @@ describe("settings search targets", () => {
     expect(isSettingsSearchScopeAvailable(updates.scope, "environment")).toBe(true);
     expect(isSettingsSearchScopeAvailable(updates.scope, "all")).toBe(true);
     expect(isSettingsSearchScopeAvailable(updates.scope, "project")).toBe(false);
-    const streaming = getSettingsSearchTargetScope("legacy-token-streaming")!;
+    const streaming = getSettingsSearchTargetScope("response-streaming")!;
     expect(streaming.scope).toBe("project-defaults");
     expect(isSettingsSearchScopeAvailable(streaming.scope, "project")).toBe(true);
     for (const id of ["legacy-plan-mode", "legacy-context-window-indicator", "legacy-sidebar"]) {

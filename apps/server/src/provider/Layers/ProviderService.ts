@@ -1134,6 +1134,35 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         canonicalEvent.type === "turn.aborted"
       ) {
         yield* recordTurnCompletedAnalytics(source, canonicalEvent);
+        if (source.provider === "claudeAgent") {
+          // Background Claude turns have no sendTurn response to persist their
+          // new native boundary. Save it before clients can checkpoint the turn.
+          yield* Effect.gen(function* () {
+            const adapter = yield* registry.getByInstance(source.instanceId);
+            const session = (yield* adapter.listSessions()).find(
+              (session) => session.threadId === canonicalEvent.threadId,
+            );
+            if (session?.resumeCursor !== undefined) {
+              const binding = yield* directory.getBinding(session.threadId);
+              if (
+                Option.isNone(binding) ||
+                binding.value.providerInstanceId !== source.instanceId
+              ) {
+                return;
+              }
+              yield* directory.upsert({
+                threadId: session.threadId,
+                provider: source.provider,
+                providerInstanceId: source.instanceId,
+                resumeCursor: session.resumeCursor,
+              });
+            }
+          }).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("failed to persist Claude turn resume state", { cause }),
+            ),
+          );
+        }
       } else if (canonicalEvent.type === "session.exited") {
         yield* clearTurnAnalyticsSession(source.instanceId, canonicalEvent.threadId);
       }
@@ -1624,30 +1653,45 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
     // Every attachment gets an on-disk path in the prompt so the model's tools
     // can dereference the actual file. All attachments then go to the adapter,
-    // and each adapter decides what its provider ingests natively: OpenCode
-    // sends generic files as file parts, the others send images only and rely
-    // on the path line for everything else. Unresolvable ids are skipped here
-    // and surface as adapter errors when the file is read.
+    // and each adapter decides what its provider ingests natively. Folded
+    // clipboard text remains path-only everywhere: eagerly embedding it would
+    // spend the same context the client deliberately preserved by folding it.
+    // Unresolvable ids are skipped here and surface as adapter errors when the
+    // file is read.
     let inputTextWithAttachmentContext = inputTextWithCitations;
     const appendAttachmentContext = (context: string | undefined) => {
-      if (context === undefined) return;
+      if (context === undefined) return true;
       const candidate = inputTextWithAttachmentContext
         ? `${inputTextWithAttachmentContext}\n\n${context}`
         : context;
       if (candidate.length <= PROVIDER_SEND_TURN_MAX_INPUT_CHARS) {
         inputTextWithAttachmentContext = candidate;
+        return true;
       }
+      return false;
     };
     for (const attachment of attachments) {
       const attachmentPath = resolveAttachmentPath({
         attachmentsDir: serverConfig.attachmentsDir,
         attachment,
       });
-      appendAttachmentContext(
+      const isPastedText =
+        attachment.type === "file" &&
+        "source" in attachment &&
+        attachment.source?._tag === "pasted-text";
+      const appended = appendAttachmentContext(
         attachmentPath === null
           ? undefined
-          : `[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`,
+          : isPastedText
+            ? `[Pasted text "${attachment.name}" is saved at: ${attachmentPath}. Inspect it as needed.]`
+            : `[Attached ${attachment.type} "${attachment.name}" is saved at: ${attachmentPath}]`,
       );
+      if (isPastedText && !appended) {
+        return yield* toValidationError(
+          "ProviderService.sendTurn",
+          `Input plus pasted-text attachment context exceeds the ${PROVIDER_SEND_TURN_MAX_INPUT_CHARS} character limit`,
+        );
+      }
     }
     for (const attachment of attachments) {
       const source =
@@ -2069,6 +2113,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
           "provider.thread_id": input.threadId,
         });
         if (routed.isActive) {
+          const session = (yield* routed.adapter.listSessions()).find(
+            (session) => session.threadId === routed.threadId,
+          );
+          if (session) {
+            yield* upsertSessionBinding(
+              { ...session, providerInstanceId: routed.instanceId },
+              input.threadId,
+            );
+          }
           yield* routed.adapter.stopSession(routed.threadId);
         }
         const pendingCompaction = pendingCompactions.get(input.threadId);
@@ -2239,6 +2292,15 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         "provider.rollback_turns": input.numTurns,
       });
       yield* routed.adapter.rollbackThread(routed.threadId, input.numTurns);
+      const session = (yield* routed.adapter.listSessions()).find(
+        (session) => session.threadId === routed.threadId,
+      );
+      if (session) {
+        yield* upsertSessionBinding(
+          { ...session, providerInstanceId: routed.instanceId },
+          input.threadId,
+        );
+      }
       yield* analytics.record("provider.conversation.rolled_back", {
         provider: routed.adapter.provider,
         turns: input.numTurns,

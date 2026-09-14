@@ -37,6 +37,7 @@ export type GitHubAccountPatch = typeof GitHubAccountPatch.Type;
 export const SourceControlProviderKind = Schema.Literals([
   "github",
   "gitlab",
+  "forgejo",
   "azure-devops",
   "bitbucket",
   "unknown",
