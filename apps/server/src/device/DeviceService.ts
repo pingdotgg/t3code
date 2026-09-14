@@ -31,7 +31,6 @@ import {
   type DeviceShutdownInput,
   type DeviceSummary,
   type SshDeviceHostConfig,
-  SshDeviceHostConfigs,
   type DeviceHostSummary,
   LOCAL_DEVICE_HOST_ID,
   type ThreadId,
@@ -919,11 +918,8 @@ export const make = Effect.gen(function* () {
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
   const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
-  const hostsEqual = Schema.toEquivalence(SshDeviceHostConfigs);
-  let lastHostsConfig: ReadonlyArray<SshDeviceHostConfig> | undefined;
   const reconcile = (configuredHosts: ReadonlyArray<SshDeviceHostConfig>) =>
     Effect.gen(function* () {
-      if (lastHostsConfig && hostsEqual(configuredHosts, lastHostsConfig)) return;
       const next = yield* remoteSshDeviceHosts(configuredHosts).pipe(
         Effect.provide(localTargetContext),
       );
@@ -992,7 +988,6 @@ export const make = Effect.gen(function* () {
           yield* service.refreshHosts;
         }),
       );
-      lastHostsConfig = configuredHosts;
     });
   const changes = yield* settings.subscribeChanges;
   yield* reconcile((yield* settings.getSettings).deviceHosts);
