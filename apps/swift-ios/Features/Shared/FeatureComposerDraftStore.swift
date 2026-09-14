@@ -353,8 +353,17 @@ public actor FeatureComposerDraftStore {
         guard let savedRecovery = drafts[recoveryKey] else { return nil }
         let recovery = savedRecovery.featureValue(fileStore: attachmentFileStore)
         let current = drafts[threadKey]?.featureValue(fileStore: attachmentFileStore) ?? FeatureComposerDraft()
+        let files = (recovery.attachments + current.attachments).compactMap(\.ownedFile)
+        let filesAreReadable = files.allSatisfy { file in
+            guard FileManager.default.isReadableFile(atPath: file.url.path),
+                  let attributes = try? file.url.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]) else {
+                return false
+            }
+            return attributes.isRegularFile == true && attributes.fileSize == file.byteCount
+        }
         guard recovery.attachments.count == savedRecovery.attachments.count,
-              current.attachments.count == (drafts[threadKey]?.attachments.count ?? 0) else {
+              current.attachments.count == (drafts[threadKey]?.attachments.count ?? 0),
+              filesAreReadable else {
             throw FeatureConversationRewindError(message: "Some saved attachments could not be read. The recovery copy is kept.")
         }
         guard current.attachments.count + recovery.attachments.count <= 8 else {

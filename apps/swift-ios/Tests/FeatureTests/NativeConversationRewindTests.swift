@@ -75,27 +75,36 @@ struct NativeConversationRewindTests {
         #expect(result.text == message.text)
     }
 
-    @Test
-    func missingRecoveryFilesAreNotSilentlyConsumed() async throws {
+    @Test(arguments: [0, 2, 3])
+    func recoveryRequiresReadableFilesWithTheSavedSize(actualBytes: Int) async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
+        let attachmentRoot = directory.appendingPathComponent("owned")
+        let fileName = UUID().uuidString + ".txt"
+        let fileURL = attachmentRoot.appendingPathComponent(fileName)
+        if actualBytes > 0 {
+            try FileManager.default.createDirectory(at: attachmentRoot, withIntermediateDirectories: true)
+            try Data(repeating: 1, count: actualBytes).write(to: fileURL)
+        }
         let store = FeatureComposerDraftStore(
             fileURL: directory.appendingPathComponent("drafts.json"),
-            attachmentStorageRootURL: directory.appendingPathComponent("owned")
+            attachmentStorageRootURL: attachmentRoot
         )
         let recoveryKey = FeatureComposerDraftStore.rewindRecoveryKey(for: "thread")
         try await store.setDraft(.init(attachments: [.init(
-            ownedFile: .init(fileName: "missing.txt", url: directory.appendingPathComponent("missing.txt"), byteCount: 3),
+            ownedFile: .init(fileName: fileName, url: fileURL, byteCount: 3),
             filename: "input.txt", mimeType: "text/plain"
         )]), for: recoveryKey)
         do {
-            _ = try await store.consumeRewindRecovery(for: "thread")
-            Issue.record("Missing files must keep their recovery record")
+            let recovered = try await store.consumeRewindRecovery(for: "thread")
+            #expect(actualBytes == 3)
+            #expect(recovered?.attachments.first?.ownedFile?.url == fileURL)
         } catch {
+            #expect(actualBytes != 3)
             #expect(error.localizedDescription.contains("recovery copy is kept"))
         }
-        #expect(try await store.hasRewindRecovery(for: "thread"))
-        #expect(try await store.draft(for: "thread") == nil)
+        #expect(try await store.hasRewindRecovery(for: "thread") == (actualBytes != 3))
+        #expect(try await (store.draft(for: "thread") == nil) == (actualBytes != 3))
     }
 
     @Test
