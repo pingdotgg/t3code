@@ -32,11 +32,9 @@ catalog:
   "@clerk/shared": 4.30.1
   "@effect/atom-react": 4.0.0-rc.112
   "@effect/openapi-generator": 4.0.0-rc.112
-  "@effect/platform-bun": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/platform-node-shared": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112
-  "@effect/sql-sqlite-bun": 4.0.0-rc.112
   "@effect/tsgo": 0.41.0
   "@effect/vitest": 4.0.0-rc.112
   "@legendapp/list": 3.3.5
@@ -71,11 +69,9 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/planetscale@0.30.2"
   - "@effect/atom-react@4.0.0-rc.112"
   - "@effect/openapi-generator@4.0.0-rc.112"
-  - "@effect/platform-bun@4.0.0-rc.112"
   - "@effect/platform-node-shared@4.0.0-rc.112"
   - "@effect/platform-node@4.0.0-rc.112"
   - "@effect/sql-pg@4.0.0-rc.112"
-  - "@effect/sql-sqlite-bun@4.0.0-rc.112"
   - "@effect/vitest@4.0.0-rc.112"
   - alchemy@2.0.0-beta.76
   - effect@4.0.0-rc.112
@@ -121,11 +117,9 @@ overrides:
   "@clerk/react": "catalog:"
   "@clerk/shared": "catalog:"
   "@effect/atom-react": "catalog:"
-  "@effect/platform-bun": "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/platform-node-shared": "catalog:"
   "@effect/sql-pg": "catalog:"
-  "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/dom-webview": 57.0.1
@@ -176,6 +170,7 @@ patchedDependencies:
   effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
+  expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
