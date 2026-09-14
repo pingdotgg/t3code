@@ -1,5 +1,6 @@
 import {
   ENVIRONMENT_MACHINE_KINDS,
+  isEnvironmentMachineKind,
   resolveEnvironmentMachineKind,
   type EnvironmentId,
   type ServerConfig,
@@ -108,7 +109,7 @@ export function EnvironmentIconMenu({
         <MenuRadioGroup
           value={resolved}
           onValueChange={(next) => {
-            if (lock !== null) return;
+            if (lock !== null || !isEnvironmentMachineKind(next)) return;
             updateSettings({ environmentIcon: next === detected ? null : next });
           }}
         >
