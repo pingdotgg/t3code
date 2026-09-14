@@ -83,15 +83,21 @@ interface HorizontalSpan {
 }
 
 /**
- * The composer stack docked to the bottom edge, in container coordinates. It
- * only reserves the columns it covers, so the margins beside it stay open all
- * the way down.
+ * What the player keeps clear of, in container coordinates. Both are docked
+ * to an edge, so each only reserves the columns it covers: the margins beside
+ * the composer and the column left of the details card stay open all the way.
  */
 export interface PreviewMiniPlayerObstacles {
+  /** The composer stack docked to the bottom edge. */
   readonly composer: (HorizontalSpan & { readonly height: number }) | null;
+  /** The inline thread-details card docked to the top-right corner. */
+  readonly detailsCard: (HorizontalSpan & { readonly bottom: number }) | null;
 }
 
-export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = { composer: null };
+export const NO_PREVIEW_MINI_PLAYER_OBSTACLES: PreviewMiniPlayerObstacles = {
+  composer: null,
+  detailsCard: null,
+};
 
 const spanOf = (x: number, width: number): HorizontalSpan => ({ left: x, right: x + width });
 
@@ -109,6 +115,12 @@ function floorFor(
     : container.height;
 }
 
+/** The highest row (before the edge gap) open to a player covering these columns. */
+function ceilingFor(span: HorizontalSpan, obstacles: PreviewMiniPlayerObstacles): number {
+  const { detailsCard } = obstacles;
+  return detailsCard && spansOverlap(span, detailsCard) ? Math.max(0, detailsCard.bottom) : 0;
+}
+
 /**
  * The box a stored size is fitted into. A player with a position keeps the
  * rows its own columns have, so a tall frame parked beside the composer
@@ -123,7 +135,7 @@ const availableArea = (
   width: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
   height:
     (span
-      ? floorFor(span, container, obstacles)
+      ? floorFor(span, container, obstacles) - ceilingFor(span, obstacles)
       : container.height - Math.max(0, obstacles.composer?.height ?? 0)) -
     PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
 });
@@ -160,20 +172,6 @@ function defaultPreviewMiniPlayerWidth(source: PreviewMiniPlayerSize): number {
   );
 }
 
-/** Place a new player below the inline details card when it owns the top-right corner. */
-export function defaultPreviewMiniPlayerPosition(input: {
-  readonly fallback: PreviewMiniPlayerPosition;
-  readonly parentRect: { readonly left: number; readonly top: number };
-  readonly playerWidth: number;
-  readonly detailsCardRect: { readonly right: number; readonly bottom: number } | null;
-}): PreviewMiniPlayerPosition {
-  if (input.detailsCardRect === null) return input.fallback;
-  return {
-    x: input.detailsCardRect.right - input.parentRect.left - input.playerWidth,
-    y: input.detailsCardRect.bottom - input.parentRect.top + PREVIEW_MINI_PLAYER_EDGE_GAP,
-  };
-}
-
 const clampToContainer = (
   position: PreviewMiniPlayerPosition,
   container: PreviewMiniPlayerSize,
@@ -198,14 +196,22 @@ const overlapsObstacle = (
   player: PreviewMiniPlayerSize,
   container: PreviewMiniPlayerSize,
   obstacles: PreviewMiniPlayerObstacles,
-): boolean =>
-  position.y + player.height > floorFor(spanOf(position.x, player.width), container, obstacles);
+): boolean => {
+  const span = spanOf(position.x, player.width);
+  return (
+    position.y + player.height > floorFor(span, container, obstacles) ||
+    position.y < ceilingFor(span, obstacles)
+  );
+};
 
 /**
- * Keeps the player inside the container and off the composer. An overlapping
- * player is pushed out along whichever side needs the smaller move, so a drag
- * slides along the composer into the margin beside it instead of stopping at
- * its top edge; when no side leaves it fully clear it sits above the composer.
+ * Keeps the player inside the container and off the composer and details
+ * card. An overlapping player is moved the shortest distance that leaves it
+ * clear: vertically into the rows its own columns have open, or sideways to
+ * the space beside an obstacle, so a drag slides along the composer into a
+ * margin instead of stopping at its edge. When nothing leaves it clear it
+ * keeps its columns and sits below the card; the composer is where the user
+ * is typing, but a player under the card cannot be reached at all.
  */
 export function clampPreviewMiniPlayerPosition(
   position: PreviewMiniPlayerPosition,
@@ -214,22 +220,42 @@ export function clampPreviewMiniPlayerPosition(
   obstacles: PreviewMiniPlayerObstacles = NO_PREVIEW_MINI_PLAYER_OBSTACLES,
 ): PreviewMiniPlayerPosition {
   const inside = clampToContainer(position, container, player);
-  const { composer } = obstacles;
-  if (!composer || !overlapsObstacle(inside, player, container, obstacles)) return inside;
+  if (!overlapsObstacle(inside, player, container, obstacles)) return inside;
   const gap = PREVIEW_MINI_PLAYER_EDGE_GAP;
-  const above = { x: inside.x, y: container.height - composer.height - gap - player.height };
-  const beside = [
-    { x: composer.left - gap - player.width, y: inside.y },
-    { x: composer.right + gap, y: inside.y },
-  ];
-  let best = clampToContainer(above, container, player);
-  let bestDistance = Math.abs(best.y - inside.y);
-  for (const candidate of beside) {
-    const clamped = clampToContainer(candidate, container, player);
-    if (clamped.x !== candidate.x || overlapsObstacle(candidate, player, container, obstacles)) {
+  // The rows open to a player at this x, holding y as close to the drag as they allow.
+  const fitRows = (x: number): PreviewMiniPlayerPosition => {
+    const span = spanOf(x, player.width);
+    return {
+      x,
+      y: Math.max(
+        Math.min(inside.y, floorFor(span, container, obstacles) - gap - player.height),
+        ceilingFor(span, obstacles) + gap,
+        gap,
+      ),
+    };
+  };
+  const fallback = fitRows(inside.x);
+  const { composer, detailsCard } = obstacles;
+  const span = spanOf(inside.x, player.width);
+  const beside = [composer, detailsCard]
+    .filter(
+      (obstacle): obstacle is NonNullable<typeof obstacle> =>
+        obstacle !== null && spansOverlap(span, obstacle),
+    )
+    .flatMap((obstacle) => [obstacle.left - gap - player.width, obstacle.right + gap]);
+  let best = fallback;
+  let bestDistance = overlapsObstacle(fallback, player, container, obstacles)
+    ? Number.POSITIVE_INFINITY
+    : Math.abs(fallback.y - inside.y);
+  for (const x of beside) {
+    const candidate = fitRows(x);
+    if (
+      clampToContainer(candidate, container, player).x !== x ||
+      overlapsObstacle(candidate, player, container, obstacles)
+    ) {
       continue;
     }
-    const distance = Math.abs(candidate.x - inside.x);
+    const distance = Math.abs(x - inside.x) + Math.abs(candidate.y - inside.y);
     if (distance < bestDistance) {
       best = candidate;
       bestDistance = distance;
@@ -242,7 +268,8 @@ export function clampPreviewMiniPlayerPosition(
  * Resolves the on-screen frame from the stored width and position. Clamping
  * happens here on every layout pass instead of being written back to the
  * store, so a temporarily narrow container never destroys the user's chosen
- * width. A player without a position sits in the top-right corner.
+ * width. A player without a position sits in the top-right corner, or tucks
+ * under the details card with right edges aligned when the card owns it.
  */
 export function resolvePreviewMiniPlayerFrame(input: {
   readonly width: number | null;
@@ -263,10 +290,15 @@ export function resolvePreviewMiniPlayerFrame(input: {
     source,
     availableArea(container, obstacles, position && width ? spanOf(position.x, width) : null),
   );
-  const anchored = position ?? {
-    x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
-    y: PREVIEW_MINI_PLAYER_EDGE_GAP,
-  };
+  const { detailsCard } = obstacles;
+  const anchored =
+    position ??
+    (detailsCard
+      ? { x: detailsCard.right - size.width, y: detailsCard.bottom + PREVIEW_MINI_PLAYER_EDGE_GAP }
+      : {
+          x: container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - size.width,
+          y: PREVIEW_MINI_PLAYER_EDGE_GAP,
+        });
   return { ...clampPreviewMiniPlayerPosition(anchored, container, size, obstacles), ...size };
 }
 
@@ -299,10 +331,12 @@ export function resizePreviewMiniPlayer(input: {
   const south = direction.includes("south");
   const right = start.x + start.width;
   const bottom = start.y + start.height;
-  // Growth stops where the player's current columns meet the composer, and a
+  // Growth stops where the player's current columns meet an obstacle, and a
   // plain edge drag lets the free axis use everything those columns have. A
   // wider player may reach new columns; the clamp below slides it clear.
-  const floor = floorFor(spanOf(start.x, start.width), container, obstacles);
+  const span = spanOf(start.x, start.width);
+  const floor = floorFor(span, container, obstacles);
+  const ceiling = ceilingFor(span, obstacles);
   const max = {
     width: west
       ? right - PREVIEW_MINI_PLAYER_EDGE_GAP
@@ -310,10 +344,10 @@ export function resizePreviewMiniPlayer(input: {
         ? container.width - PREVIEW_MINI_PLAYER_EDGE_GAP - start.x
         : container.width - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
     height: north
-      ? bottom - PREVIEW_MINI_PLAYER_EDGE_GAP
+      ? bottom - ceiling - PREVIEW_MINI_PLAYER_EDGE_GAP
       : south
         ? floor - PREVIEW_MINI_PLAYER_EDGE_GAP - start.y
-        : floor - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
+        : floor - ceiling - PREVIEW_MINI_PLAYER_EDGE_GAP * 2,
   };
   const desiredWidth = start.width + (east ? delta.x : west ? -delta.x : 0);
   const desiredHeight = start.height + (south ? delta.y : north ? -delta.y : 0);
