@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type {
@@ -163,6 +164,7 @@ export interface ThreadDetailScreenProps {
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
@@ -1135,6 +1137,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     onPickDraftMedia={props.onPickDraftMedia}
                     onPickDraftFiles={props.onPickDraftFiles}
                     onNativePasteImages={props.onNativePasteImages}
+                    onNativePasteText={props.onNativePasteText}
                     onRemoveDraftImage={props.onRemoveDraftImage}
                     onStopThread={props.onStopThread}
                     onSendMessage={handleSendMessage}

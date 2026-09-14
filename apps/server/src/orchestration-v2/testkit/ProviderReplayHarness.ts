@@ -108,6 +108,8 @@ export function makeReplayServerConfig(
       traceMaxBytes: 10 * 1024 * 1024,
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
+      otlpProtocol: "http/json",
+      otlpHeaders: undefined,
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",
@@ -262,7 +264,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         );
   const databaseLayer = options.databaseLayer ?? SqlitePersistenceMemory;
   const serverSettingsLayer = ServerSettingsService.layerTest({
-    enableLegacyTokenStreaming: options.enableLegacyTokenStreaming ?? false,
+    responseStreamingMode: options.enableLegacyTokenStreaming ? "token" : "turn",
   }).pipe(Layer.orDie);
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,
