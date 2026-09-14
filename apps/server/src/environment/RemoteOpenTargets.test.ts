@@ -1,3 +1,4 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import { HostProcessHostname } from "@t3tools/shared/hostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -8,6 +9,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect } from "vite-plus/test";
 
+import * as ServerConfig from "../config.ts";
 import * as RemoteOpenTargets from "./RemoteOpenTargets.ts";
 
 const encoder = new TextEncoder();
@@ -48,16 +50,33 @@ const netLayer = (input: { readonly ipv4: boolean; readonly ipv6: boolean }) =>
     findAvailablePort: (preferred) => Effect.succeed(preferred),
   });
 
+/** Test server config with the remote-open alias applied on top. */
+const serverConfigLayer = (remoteOpenHost: string | undefined) =>
+  Layer.effect(
+    ServerConfig.ServerConfig,
+    Effect.map(ServerConfig.ServerConfig, (base) => ServerConfig.make({ ...base, remoteOpenHost })),
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "remote-open-targets-" })),
+    Layer.provide(NodeServices.layer),
+  );
+
 const resolveTargets = (input: {
   readonly sshd: { readonly ipv4: boolean; readonly ipv6: boolean };
   readonly tailscale: { readonly exitCode: number; readonly stdout: string };
   readonly hostname: string;
+  readonly remoteOpenHost?: string;
 }) =>
   Effect.flatMap(RemoteOpenTargets.RemoteOpenTargets, (service) => service.resolveTargets()).pipe(
     Effect.provideService(HostProcessHostname, input.hostname),
     Effect.provide(
       RemoteOpenTargets.layer.pipe(
-        Layer.provide(Layer.mergeAll(netLayer(input.sshd), spawnerLayer(input.tailscale))),
+        Layer.provide(
+          Layer.mergeAll(
+            netLayer(input.sshd),
+            spawnerLayer(input.tailscale),
+            serverConfigLayer(input.remoteOpenHost),
+          ),
+        ),
       ),
     ),
   );
@@ -74,6 +93,34 @@ describe("RemoteOpenTargets", () => {
         hostname: "bb-1",
       });
       expect(targets).toEqual([]);
+    }),
+  );
+
+  it.effect("advertises the configured host ahead of probed names", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: true, ipv6: true },
+        tailscale: TAILSCALE_UP,
+        hostname: "bb-1",
+        remoteOpenHost: "bb-1",
+      });
+      expect(targets).toEqual([
+        { kind: "configured", host: "bb-1" },
+        { kind: "tailscale", host: "bb-1.tail1234.ts.net" },
+        { kind: "mdns", host: "bb-1.local" },
+      ]);
+    }),
+  );
+
+  it.effect("advertises the configured host even when nothing can be probed", () =>
+    Effect.gen(function* () {
+      const targets = yield* resolveTargets({
+        sshd: { ipv4: false, ipv6: false },
+        tailscale: TAILSCALE_UP,
+        hostname: "bb-1",
+        remoteOpenHost: "bb-1",
+      });
+      expect(targets).toEqual([{ kind: "configured", host: "bb-1" }]);
     }),
   );
 
