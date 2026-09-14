@@ -8285,6 +8285,7 @@ it.effect("ProviderSessionManagerV2 shutdown releases wedged sessions concurrent
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
     const hangClose = yield* Deferred.make<void>();
+    const closeEntered = yield* Ref.make(0);
     yield* Effect.gen(function* () {
       const manager = yield* ProviderSessionManagerV2;
       const a = yield* makeThreadSessionFixture(ThreadId.make("thread-shutdown-concurrent-a"));
@@ -8295,10 +8296,25 @@ it.effect("ProviderSessionManagerV2 shutdown releases wedged sessions concurrent
       yield* b.open(bId);
 
       const stopping = yield* manager.shutdown.pipe(Effect.exit, Effect.forkChild);
-      // Both scope closes park on the shared gate; each release is bounded
-      // at 30s. Sequential release would stack the bounds (60s+ here);
-      // concurrent release settles at the single bound.
-      yield* TestClock.adjust("30 seconds");
+      // Both releases must START concurrently: beforeClose runs first on
+      // each scope close, so under a sequential loop only the first
+      // session's close has entered before the first bound elapses.
+      yield* Effect.forEach(
+        Array.from({ length: 200 }, () => undefined),
+        () =>
+          Ref.get(closeEntered).pipe(
+            Effect.flatMap((n) => (n < 2 ? Effect.yieldNow : Effect.void)),
+          ),
+        { discard: true },
+      );
+      assert.equal(yield* Ref.get(closeEntered), 2);
+      // Both scope closes now park on the shared gate; each release is
+      // bounded at 30s. Sequential release would stack the bounds (60s+
+      // here); concurrent release settles at the single bound.
+      yield* TestClock.adjust("29 seconds");
+      yield* Effect.yieldNow;
+      assert.isUndefined(stopping.pollUnsafe());
+      yield* TestClock.adjust("2 seconds");
       yield* Effect.yieldNow;
       const exit = stopping.pollUnsafe();
       assert.isTrue(exit !== undefined && Exit.isSuccess(exit));
@@ -8309,6 +8325,7 @@ it.effect("ProviderSessionManagerV2 shutdown releases wedged sessions concurrent
           state,
           idleTimeoutMs: 3_600_000,
           hangSessionScopeClose: hangClose,
+          beforeClose: Ref.update(closeEntered, (n) => n + 1),
         }),
       ),
     );
