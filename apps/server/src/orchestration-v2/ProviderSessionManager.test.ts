@@ -251,7 +251,7 @@ function makeProviderAdapter(
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-    readonly hangSessionScopeClose?: boolean;
+    readonly hangSessionScopeClose?: Deferred.Deferred<void>;
     readonly beforeClose?: Effect.Effect<void>;
     readonly beforeInterrupt?: Effect.Effect<void>;
     readonly afterOpen?: Effect.Effect<void>;
@@ -301,11 +301,14 @@ function makeProviderAdapter(
             closeCount: current.closeCount + 1,
           })),
         );
-        if (options.hangSessionScopeClose === true) {
+        const hangSessionScopeClose = options.hangSessionScopeClose;
+        if (hangSessionScopeClose !== undefined) {
           // Registered last so it runs first on scope close, wedging the
           // close before the closeCount finalizer, like a provider process
-          // that never yields its message stream.
-          yield* Effect.addFinalizer(() => Effect.never);
+          // that never yields its message stream. The gate exists so a test
+          // can let teardown finish: layer shutdown joins pending releases
+          // and would otherwise park on this finalizer forever.
+          yield* Effect.addFinalizer(() => Deferred.await(hangSessionScopeClose));
         }
         const beforeClose = options.beforeClose;
         if (beforeClose !== undefined) {
@@ -378,7 +381,7 @@ function makeTestLayer(input: {
   readonly eventSinkLayer?: typeof TestEventSinkLayer;
   readonly mcpRegistryLayer?: typeof TestMcpRegistryLayer;
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
-  readonly hangSessionScopeClose?: boolean;
+  readonly hangSessionScopeClose?: Deferred.Deferred<void>;
   readonly beforeClose?: Effect.Effect<void>;
   readonly beforeInterrupt?: Effect.Effect<void>;
   readonly afterOpen?: Effect.Effect<void>;
@@ -1705,6 +1708,7 @@ it.effect("ProviderSessionManagerV2 releases idle sessions without sweeping all 
 it.effect("ProviderSessionManagerV2 reports an error when session scope close hangs", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const hangClose = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
@@ -1745,7 +1749,10 @@ it.effect("ProviderSessionManagerV2 reports an error when session scope close ha
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
+      Effect.ensuring(Deferred.succeed(hangClose, undefined)),
+      Effect.provide(
+        makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: hangClose }),
+      ),
     );
   }),
 );
@@ -6062,6 +6069,7 @@ it.effect(
 it.effect("ProviderSessionManagerV2 marks pending runtime work failed when cleanup times out", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
+    const hangClose = yield* Deferred.make<void>();
     const effect = Effect.gen(function* () {
       const eventSink = yield* EventSinkV2;
       const idAllocator = yield* IdAllocatorV2;
@@ -6125,7 +6133,10 @@ it.effect("ProviderSessionManagerV2 marks pending runtime work failed when clean
     });
 
     yield* effect.pipe(
-      Effect.provide(makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: true })),
+      Effect.ensuring(Deferred.succeed(hangClose, undefined)),
+      Effect.provide(
+        makeTestLayer({ state, idleTimeoutMs: 1000, hangSessionScopeClose: hangClose }),
+      ),
     );
   }),
 );
@@ -8150,4 +8161,114 @@ it.effect(
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 shutdown joins a session release already in progress", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const closing = yield* Deferred.make<void>();
+    const closeGate = yield* Deferred.make<void>();
+    const closeCalls = yield* Ref.make(0);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-shutdown-joins-release");
+      const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+      const providerSessionId = yield* allocate;
+      yield* open(providerSessionId);
+
+      const closingSession = yield* manager
+        .close(providerSessionId)
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(closing);
+
+      const shuttingDown = yield* manager.shutdown.pipe(Effect.exit, Effect.forkChild);
+      // The release is claimed and parked; shutdown must be waiting on it,
+      // not reporting teardown over running cleanup.
+      yield* TestClock.adjust("15 seconds");
+      assert.isUndefined(shuttingDown.pollUnsafe());
+
+      yield* Deferred.succeed(closeGate, undefined);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(shuttingDown)));
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          beforeClose: Ref.modify(closeCalls, (n) => [n === 0, n + 1] as const).pipe(
+            Effect.andThen((first) =>
+              first
+                ? Deferred.succeed(closing, undefined).pipe(
+                    Effect.andThen(Deferred.await(closeGate)),
+                  )
+                : Effect.void,
+            ),
+          ),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 bounds the detach wait on a stalled in-flight attach", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const issuing = yield* Deferred.make<void>();
+    const issueGate = yield* Deferred.make<void>();
+    const attachThreadId = ThreadId.make("thread-detach-attach-lock");
+    const mcpRegistryLayer = Layer.effect(
+      McpSessionRegistry.McpSessionRegistry,
+      Effect.gen(function* () {
+        const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+        return McpSessionRegistry.McpSessionRegistry.of({
+          ...delegate,
+          issue: (input) =>
+            (input.threadId === attachThreadId
+              ? Deferred.succeed(issuing, undefined).pipe(Effect.andThen(Deferred.await(issueGate)))
+              : Effect.void
+            ).pipe(Effect.andThen(delegate.issue(input))),
+        });
+      }),
+    ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-detach-attach-lock-peer");
+      const first = yield* makeThreadSessionFixture(threadId);
+      const second = yield* makeThreadSessionFixture(attachThreadId);
+      const providerSessionId = yield* first.allocate;
+      yield* first.open(providerSessionId);
+
+      // The second thread's attach parks inside MCP issuance while holding
+      // the [session, thread] attach lock.
+      const attaching = yield* second
+        .open(providerSessionId, attachThreadId)
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(issuing);
+
+      const detaching = yield* manager
+        .detach({ providerSessionId, threadId: attachThreadId, revokeMcpCredential: true })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* TestClock.adjust("30 seconds");
+      const detachExit = yield* Fiber.join(detaching);
+      assert.equal(detachExit._tag, "Failure");
+
+      yield* Deferred.succeed(issueGate, undefined);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(attaching)));
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(issueGate, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          mcpConfigs,
+          mcpRegistryLayer,
+        }),
+      ),
+    );
+  }),
 );
