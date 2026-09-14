@@ -1309,6 +1309,7 @@ struct NativeGitHubRoutingTests {
         #expect(activity.author?.login == expectedHost)
         #expect(requests.first?.input["expectedAccountId"] == .string("account-one"))
         #expect(requests.first?.input["host"] == .string("github.com"))
+        #expect(requests.first?.input["allowStale"] == .bool(false))
         await fixture.client.disconnect()
     }
 
@@ -1357,6 +1358,7 @@ struct NativeGitHubRoutingTests {
         #expect(requests.first?.input["expectedAccountId"] == .string("account"))
         #expect(requests.first?.input["host"] == .string("github.com"))
         #expect(requests.first?.input["cursor"] == .string("next"))
+        #expect(requests.first?.input["allowStale"] == .bool(false))
         await fixture.client.disconnect()
     }
 

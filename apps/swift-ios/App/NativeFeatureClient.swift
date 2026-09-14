@@ -751,7 +751,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
     /// Only verified GitHub accounts can route. A dispatched write is never retried elsewhere.
     private func withPullRequestRoute<Result>(
-        _ target: FeaturePullRequestTarget, write: Bool = false,
+        _ target: FeaturePullRequestTarget, write: Bool = false, allowStaleFallback: Bool = false,
         operation: (T3Client, PullRequestRef, PullRequestRoutingIdentity?) async throws -> Result
     ) async throws -> Result {
         let client = try await projectCreationClient(environmentID: target.environmentID)
@@ -774,7 +774,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         let reference = PullRequestRef(projectId: target.reference.projectId,
                                        repository: target.reference.repository, number: target.reference.number,
-                                       host: identity.host, expectedAccountId: identity.accountId)
+                                       host: identity.host, expectedAccountId: identity.accountId,
+                                       allowStale: write ? target.reference.allowStale : false)
         for environment in alternatives {
             try Task.checkCancellation()
             guard await routingAllowed(origin: origin, destination: environment, write: write) else { continue }
@@ -795,13 +796,19 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             }
         }
         try Task.checkCancellation()
-        let result = try await operation(client, reference, identity)
-        if write { try? await invalidatePullRequests(target) }
-        return result
+        do {
+            let result = try await operation(client, reference, identity)
+            if write { try? await invalidatePullRequests(target) }
+            return result
+        } catch {
+            try Task.checkCancellation()
+            guard allowStaleFallback, !write, target.reference.allowStale != false else { throw error }
+            return try await operation(client, target.reference, nil)
+        }
     }
 
     func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
-        try await withPullRequestRoute(target) { client, reference, identity in
+        try await withPullRequestRoute(target, allowStaleFallback: true) { client, reference, identity in
             var detail = try await client.pullRequestDetail(reference)
             detail.projectId = target.reference.projectId
             if let title = identity?.projectTitle { detail.projectTitle = title }
@@ -829,7 +836,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 cursor: cursor,
                 commit: nil,
                 host: reference.host,
-                expectedAccountId: reference.expectedAccountId
+                expectedAccountId: reference.expectedAccountId,
+                allowStale: reference.allowStale
             ))
         }
     }

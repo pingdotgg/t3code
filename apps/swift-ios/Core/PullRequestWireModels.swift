@@ -438,6 +438,7 @@ public struct PullRequestDiffInput: Codable, Equatable, Sendable {
     public let commit: String?
     public var host: String? = nil
     public var expectedAccountId: String? = nil
+    public var allowStale: Bool? = nil
 }
 
 public struct PullRequestOmittedFileStat: Codable, Equatable, Sendable {
