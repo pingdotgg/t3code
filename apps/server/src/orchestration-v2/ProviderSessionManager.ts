@@ -964,7 +964,6 @@ export const layerWithOptions = (
         readonly cancelIdleFiber?: boolean;
         readonly onlyIfIdleGeneration?: number;
         readonly gracefulSubscribers?: boolean;
-        readonly detachedThreadId?: ThreadId;
         readonly alreadyLocked?: boolean;
         // A caller that already observed a pending release must join that exact
         // cleanup. If it finished meanwhile, the old session is gone and a
@@ -978,101 +977,93 @@ export const layerWithOptions = (
         // Only act on the session instance that owns this runtime: a stale
         // caller must not release a same-id replacement opened meanwhile.
         readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
-        // Credentials the caller already removed from the entry's records
-        // still belong to this cleanup: merging them into the release record
-        // keeps them claimed and lets the bounded sweep revoke them.
-        readonly extraMcpCredentials?: Iterable<readonly [ThreadId, string]>;
+        // A release record the caller already registered atomically with its
+        // own state mutation (detach moves the last exclusive attachment into
+        // `releasing` inside its Ref.modify): skip selection and run the
+        // cleanup worker plus the bounded join for that exact record.
+        readonly preclaimed?: PendingSessionRelease;
       }) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
-            const selected = yield* Ref.modify(
-              sessions,
-              (
-                current,
-              ): readonly [
-                Option.Option<
-                  | { readonly release: PendingSessionRelease; readonly start: boolean }
-                  | { readonly opening: OpeningSessionRecord }
-                >,
-                Map<string, LiveSessionEntry>,
-              ] => {
-                const pending = releasing.get(key);
-                if (input.joinRelease !== undefined) {
-                  return [
-                    pending !== undefined && pending.done === input.joinRelease.done
-                      ? Option.some({ release: pending, start: false })
-                      : Option.none(),
-                    current,
-                  ] as const;
-                }
-                if (pending !== undefined) {
-                  return [
-                    input.expectedRuntime === undefined ||
-                    pending.entry.runtime === input.expectedRuntime
-                      ? Option.some({ release: pending, start: false })
-                      : Option.none(),
-                    current,
-                  ] as const;
-                }
-                if (input.joinOnly === true) {
-                  return [Option.none(), current] as const;
-                }
-                const existing = current.get(key);
-                if (
-                  existing === undefined ||
-                  (input.expectedRuntime !== undefined &&
-                    existing.runtime !== input.expectedRuntime)
-                ) {
-                  // An in-flight startup has no entry to claim but can already
-                  // own resources (a spawning process, a held credential
-                  // reservation). A pinned-runtime caller targets a different
-                  // instance and must not touch it; everyone else marks it so
-                  // registration fences, then joins its unwind below.
-                  const openingRecord =
-                    input.expectedRuntime === undefined ? opening.get(key) : undefined;
-                  if (openingRecord !== undefined) {
-                    if (openingRecord.failed === undefined) {
-                      openingRecord.closeRequested = true;
-                    }
-                    return [Option.some({ opening: openingRecord }), current] as const;
-                  }
-                  return [Option.none(), current] as const;
-                }
-                if (
-                  input.onlyIfIdleGeneration !== undefined &&
-                  (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-                ) {
-                  return [Option.none(), current] as const;
-                }
-                const release = {
-                  entry:
-                    input.detachedThreadId === undefined
-                      ? existing
-                      : {
-                          ...existing,
-                          attachedThreadIds: new Set([
-                            ...existing.attachedThreadIds,
-                            input.detachedThreadId,
-                          ]),
-                        },
-                  threadIds: new Set([
-                    ...existing.attachedThreadIds,
-                    ...existing.mcpCredentialIdByThread.keys(),
-                    ...(input.detachedThreadId === undefined ? [] : [input.detachedThreadId]),
-                  ]),
-                  mcpCredentialIdByThread: new Map([
-                    ...existing.mcpCredentialIdByThread,
-                    ...(input.extraMcpCredentials === undefined ? [] : input.extraMcpCredentials),
-                  ]),
-                  done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
-                };
-                releasing.set(key, release);
-                const updated = new Map(current);
-                updated.delete(key);
-                return [Option.some({ release, start: true }), updated] as const;
-              },
-            );
+            const selected =
+              input.preclaimed !== undefined
+                ? Option.some({ release: input.preclaimed, start: true } as const)
+                : yield* Ref.modify(
+                    sessions,
+                    (
+                      current,
+                    ): readonly [
+                      Option.Option<
+                        | { readonly release: PendingSessionRelease; readonly start: boolean }
+                        | { readonly opening: OpeningSessionRecord }
+                      >,
+                      Map<string, LiveSessionEntry>,
+                    ] => {
+                      const pending = releasing.get(key);
+                      if (input.joinRelease !== undefined) {
+                        return [
+                          pending !== undefined && pending.done === input.joinRelease.done
+                            ? Option.some({ release: pending, start: false })
+                            : Option.none(),
+                          current,
+                        ] as const;
+                      }
+                      if (pending !== undefined) {
+                        return [
+                          input.expectedRuntime === undefined ||
+                          pending.entry.runtime === input.expectedRuntime
+                            ? Option.some({ release: pending, start: false })
+                            : Option.none(),
+                          current,
+                        ] as const;
+                      }
+                      if (input.joinOnly === true) {
+                        return [Option.none(), current] as const;
+                      }
+                      const existing = current.get(key);
+                      if (
+                        existing === undefined ||
+                        (input.expectedRuntime !== undefined &&
+                          existing.runtime !== input.expectedRuntime)
+                      ) {
+                        // An in-flight startup has no entry to claim but can already
+                        // own resources (a spawning process, a held credential
+                        // reservation). A pinned-runtime caller targets a different
+                        // instance and must not touch it; everyone else marks it so
+                        // registration fences, then joins its unwind below.
+                        const openingRecord =
+                          input.expectedRuntime === undefined ? opening.get(key) : undefined;
+                        if (openingRecord !== undefined) {
+                          if (openingRecord.failed === undefined) {
+                            openingRecord.closeRequested = true;
+                          }
+                          return [Option.some({ opening: openingRecord }), current] as const;
+                        }
+                        return [Option.none(), current] as const;
+                      }
+                      if (
+                        input.onlyIfIdleGeneration !== undefined &&
+                        (existing.busyCount > 0 ||
+                          existing.idleGeneration !== input.onlyIfIdleGeneration)
+                      ) {
+                        return [Option.none(), current] as const;
+                      }
+                      const release = {
+                        entry: existing,
+                        threadIds: new Set([
+                          ...existing.attachedThreadIds,
+                          ...existing.mcpCredentialIdByThread.keys(),
+                        ]),
+                        mcpCredentialIdByThread: new Map(existing.mcpCredentialIdByThread),
+                        done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                      };
+                      releasing.set(key, release);
+                      const updated = new Map(current);
+                      updated.delete(key);
+                      return [Option.some({ release, start: true }), updated] as const;
+                    },
+                  );
             if (Option.isNone(selected)) return;
             if ("opening" in selected.value) {
               const openingRecord = selected.value.opening;
@@ -3343,6 +3334,7 @@ export const layerWithOptions = (
                           Option.none<{
                             readonly entry: LiveSessionEntry;
                             readonly priorMcpCredentialId: string | undefined;
+                            readonly release: PendingSessionRelease | undefined;
                           }>(),
                           current,
                         ] as const;
@@ -3372,54 +3364,61 @@ export const layerWithOptions = (
                         loadedProviderThreadKeyByThread,
                         mcpCredentialIdByThread,
                       };
+                      // An exclusive session whose last attachment just
+                      // detached must move into `releasing` in this same
+                      // atomic step: a close landing between the mutation and
+                      // a later claim would otherwise register the emptied
+                      // entry — a release record with no thread or credential
+                      // ownership — and the thread-scoped cleanup gate would
+                      // let this thread's replacement open while the provider
+                      // process still runs. The record keeps the detached
+                      // thread and its pruned credential so the release's own
+                      // bounded sweep and its joiners cover them.
+                      const release: PendingSessionRelease | undefined =
+                        attachedThreadIds.size === 0 && !entry.supportsMultipleProviderThreads
+                          ? {
+                              entry: {
+                                ...updatedEntry,
+                                attachedThreadIds: new Set([input.threadId]),
+                              },
+                              threadIds: new Set([
+                                input.threadId,
+                                ...entry.mcpCredentialIdByThread.keys(),
+                              ]),
+                              mcpCredentialIdByThread: new Map(entry.mcpCredentialIdByThread),
+                              done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                            }
+                          : undefined;
                       const updated = new Map(current);
-                      updated.set(key, updatedEntry);
+                      if (release === undefined) {
+                        updated.set(key, updatedEntry);
+                      } else {
+                        releasing.set(key, release);
+                        updated.delete(key);
+                      }
                       return [
                         Option.some({
                           entry: updatedEntry,
                           priorMcpCredentialId: entry.mcpCredentialIdByThread.get(input.threadId),
+                          release,
                         }),
                         updated,
                       ] as const;
                     });
-                    // An exclusive session whose last attachment just detached
-                    // must still reach releaseEntry even if this fiber is
-                    // interrupted during the revocation wait below: the entry
-                    // would otherwise stay live with no thread left to carry
-                    // terminal status and nothing for a retry to join. Forked
-                    // while masked so the handoff cannot be skipped, and joined
-                    // by the caller after the lock is released.
-                    const autoReleaseEntry =
-                      Option.isSome(detached) &&
-                      detached.value.entry.attachedThreadIds.size === 0 &&
-                      !detached.value.entry.supportsMultipleProviderThreads
-                        ? detached.value.entry
-                        : undefined;
-                    // The terminal detach already pruned this thread's
-                    // credential record; hand it to the release's own bounded
-                    // sweep so the credential revocation is covered by the
-                    // completion this detach joins below.
-                    const detachedMcpCredentialId = Option.isSome(detached)
-                      ? detached.value.priorMcpCredentialId
-                      : undefined;
+                    // Forked while masked so the handoff cannot be skipped by
+                    // an interruption delivered during the revocation wait
+                    // below, and joined by the caller after the lock is
+                    // released. The record was already claimed atomically
+                    // above, so this only starts the cleanup worker.
                     const releaseFiber =
-                      autoReleaseEntry === undefined
-                        ? undefined
-                        : yield* releaseEntry({
+                      Option.isSome(detached) && detached.value.release !== undefined
+                        ? yield* releaseEntry({
                             providerSessionId: input.providerSessionId,
                             reason: "manual_shutdown",
-                            detachedThreadId: input.threadId,
-                            expectedRuntime: autoReleaseEntry.runtime,
-                            ...(input.revokeMcpCredential === true &&
-                            detachedMcpCredentialId !== undefined
-                              ? {
-                                  extraMcpCredentials: [
-                                    [input.threadId, detachedMcpCredentialId],
-                                  ] as const,
-                                }
-                              : {}),
+                            preclaimed: detached.value.release,
                             ...(input.detail === undefined ? {} : { detail: input.detail }),
-                          }).pipe(Effect.forkDetach({ startImmediately: true }));
+                          }).pipe(Effect.forkDetach({ startImmediately: true }))
+                        : undefined;
                     // Plain detaches deliberately do not revoke: a detached thread's
                     // provider process may still be alive (shared multi-thread codex
                     // session across a workspace handoff) and holds its MCP client's
