@@ -264,6 +264,9 @@ function makeProviderAdapter(
     readonly resumeThread?: (
       input: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
     ) => ReturnType<ProviderAdapterV2SessionRuntime["resumeThread"]>;
+    readonly ensureThread?: (
+      input: Parameters<ProviderAdapterV2SessionRuntime["ensureThread"]>[0],
+    ) => ReturnType<ProviderAdapterV2SessionRuntime["ensureThread"]>;
   } = {},
 ): ProviderAdapterV2Shape {
   const instanceId = options.instanceId ?? ProviderInstanceId.make("codex");
@@ -340,7 +343,10 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
-          ensureThread: () => unimplemented("ensureThread unused in test"),
+          ensureThread: (threadInput) =>
+            options.ensureThread === undefined
+              ? unimplemented("ensureThread unused in test")
+              : options.ensureThread(threadInput),
           resumeThread: (threadInput) =>
             options.resumeThread === undefined
               ? Ref.update(state, (current) => ({
@@ -396,6 +402,9 @@ function makeTestLayer(input: {
   readonly resumeThread?: (
     input: Parameters<ProviderAdapterV2SessionRuntime["resumeThread"]>[0],
   ) => ReturnType<ProviderAdapterV2SessionRuntime["resumeThread"]>;
+  readonly ensureThread?: (
+    input: Parameters<ProviderAdapterV2SessionRuntime["ensureThread"]>[0],
+  ) => ReturnType<ProviderAdapterV2SessionRuntime["ensureThread"]>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
@@ -422,6 +431,7 @@ function makeTestLayer(input: {
       ...(input.afterOpen === undefined ? {} : { afterOpen: input.afterOpen }),
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.resumeThread === undefined ? {} : { resumeThread: input.resumeThread }),
+      ...(input.ensureThread === undefined ? {} : { ensureThread: input.ensureThread }),
     }),
     ...(input.extraAdapters ?? []),
   ];
@@ -4023,6 +4033,74 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 waits for an in-flight runtime ensureThread before closing the session scope",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const adapterEntered = yield* Deferred.make<void>();
+      const adapterRelease = yield* Deferred.make<void>();
+      const sessionIdSlot = yield* Ref.make<ProviderSessionId | undefined>(undefined);
+      const allocatorSlot = yield* Ref.make<IdAllocatorV2Shape | undefined>(undefined);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        yield* Ref.set(allocatorSlot, yield* IdAllocatorV2);
+        const threadId = ThreadId.make("thread-ensure-drain-owner");
+        const attachingThreadId = ThreadId.make("thread-ensure-drain");
+        const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        yield* makeThreadSessionFixture(attachingThreadId);
+        const providerSessionId = yield* allocate;
+        yield* Ref.set(sessionIdSlot, providerSessionId);
+        const runtime = yield* open(providerSessionId);
+        // The adapter call is parked mid-flight after passing the ownership
+        // recheck — the window where a resource-creating operation (Cursor's
+        // awaited runner.open) has not yet installed its result.
+        const ensuring = yield* runtime
+          .ensureThread({ threadId: attachingThreadId, modelSelection, runtimePolicy })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(adapterEntered);
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        // The release must drain the admitted adapter operation before the
+        // session scope closes: no resource may be installed after the
+        // finalizer that would have closed it. Give the close fiber enough
+        // turns to reach its park point — under the fix it stays parked on
+        // the attach lock the in-flight ensureThread holds.
+        for (let round = 0; round < 64 && closing.pollUnsafe() === undefined; round++) {
+          yield* Effect.yieldNow;
+        }
+        const closedEarly = closing.pollUnsafe();
+        const closesWhileParked = (yield* Ref.get(state)).closeCount;
+        yield* Deferred.succeed(adapterRelease, undefined);
+        const ensuredExit = yield* Fiber.await(ensuring);
+        const closingExit = yield* Fiber.join(closing);
+        assert.isUndefined(closedEarly);
+        assert.equal(closesWhileParked, 0);
+        assert.isTrue(Exit.isSuccess(ensuredExit));
+        assert.equal(closingExit, undefined);
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(adapterRelease, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            ensureThread: (threadInput) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(adapterEntered, undefined);
+                yield* Deferred.await(adapterRelease);
+                return makeProviderThread({
+                  idAllocator: (yield* Ref.get(allocatorSlot))!,
+                  threadId: threadInput.threadId,
+                  providerSessionId: (yield* Ref.get(sessionIdSlot))!,
+                  now: yield* DateTime.now,
+                });
+              }),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 rejects a runtime attachment when its session is replaced mid-prepare",
   () =>
     Effect.gen(function* () {
@@ -6646,16 +6724,21 @@ it.effect(
           .pipe(Effect.forkChild);
         yield* Deferred.await(aResumeEntered);
 
-        // A closes while the resume is in flight; a same-id replacement opens
-        // for the same thread.
-        yield* manager.close(providerSessionId);
-        const replacementRuntime = yield* first.open(providerSessionId);
-        yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+        // A closes while the resume is in flight; the release drains the
+        // admitted adapter op before the session scope can close.
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.forkChild);
+        for (let round = 0; round < 64 && closing.pollUnsafe() === undefined; round++) {
+          yield* Effect.yieldNow;
+        }
 
         // A's resume completes late; its loaded-thread bookkeeping belongs to
         // the dead session and must not land in the replacement's cache.
         yield* Deferred.succeed(aResumeGate, undefined);
         yield* Fiber.join(aResume);
+        yield* Fiber.join(closing);
+
+        const replacementRuntime = yield* first.open(providerSessionId);
+        yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
 
         yield* replacementRuntime.resumeThread({
           providerThread: resumeProviderThread,
