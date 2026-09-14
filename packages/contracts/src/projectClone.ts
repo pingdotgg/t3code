@@ -87,7 +87,7 @@ export const ProjectCloneActionResult = Schema.Struct({
 });
 export type ProjectCloneActionResult = typeof ProjectCloneActionResult.Type;
 
-export function projectCloneStageLabel(stage: ProjectCloneStage): string {
+function projectCloneStageLabel(stage: ProjectCloneStage): string {
   switch (stage) {
     case "connecting":
       return "Connecting";
