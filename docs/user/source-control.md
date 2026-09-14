@@ -115,8 +115,22 @@ for ten minutes during a GitHub outage; new credentials must be verified first. 
 an uncertain result is never automatically retried elsewhere. Listings, diffs, and checkout or
 PR creation from Git actions continue to use the project's environment.
 
-For Azure DevOps, use the host website to view diffs or change comments. Bitbucket does not support
-reopening a declined pull request.
+For Azure DevOps, use the host website to change comments. Bitbucket does not support reopening a
+declined pull request.
+
+### Mark files as viewed
+
+Tick a file off in the **Code** tab once you have read it and it collapses; the toolbar keeps a
+running count. A tick belongs to the pull request rather than to a commit, so scoping the tab to a
+single commit keeps them. A file pushed to after you cleared it comes back marked **Changed**.
+
+On GitHub these are GitHub's own viewed marks, so a review carries between T3 Code and github.com
+in either direction. GitLab, Bitbucket, and Azure DevOps expose no record T3 Code can read, so the
+server you are connected to keeps them instead: they follow you across the apps connected to that
+server, but the host's own site will not show them, and the count reads **viewed in T3 Code**.
+
+The **Code** tab is a web and desktop surface. The mobile app reports a pull request's status but
+does not show its diff, so marks are made and read on web and desktop.
 
 ## Troubleshooting
 

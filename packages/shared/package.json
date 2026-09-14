@@ -330,6 +330,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./gitPatchPath": {
+      "types": "./src/gitPatchPath.ts",
+      "import": "./src/gitPatchPath.ts"
     }
   },
   "scripts": {

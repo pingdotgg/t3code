@@ -6,6 +6,8 @@ import {
   buildPatchCacheKey,
   getDiffLineStat,
   getRenderablePatch,
+  resolveFileDiffPath,
+  resolveFileDiffPreviousPath,
 } from "./diffRendering";
 
 describe("buildPatchCacheKey", () => {
@@ -177,5 +179,64 @@ describe("getDiffLineStat", () => {
     if (parsed?.kind !== "files") return;
 
     expect(getDiffLineStat(parsed.files)).toEqual({ additions: 3, deletions: 2 });
+  });
+});
+
+describe("a file whose name a patch header cannot carry plainly", () => {
+  /** How git writes such a name, and so how every provider's patch arrives here. */
+  const quotedPatch = (written: string) =>
+    [
+      `diff --git "a/${written}" "b/${written}"`,
+      "index 1111111..2222222 100644",
+      `--- "a/${written}"`,
+      `+++ "b/${written}"`,
+      "@@ -1 +1 @@",
+      "-before",
+      "+after",
+      "",
+    ].join("\n");
+
+  const pathOf = (patch: string) => {
+    const parsed = getRenderablePatch(patch, "review");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") throw new Error("patch did not parse as files");
+    const file = parsed.files[0];
+    expect(file).toBeDefined();
+    if (!file) throw new Error("patch carried no file");
+    return resolveFileDiffPath(file);
+  };
+
+  it("is the name the host knows, not the part of it before the tab", () => {
+    // The path is what a viewed mark, a review comment and a file read are all asked for by, so a
+    // name read short is a mark put on a path the host has never heard of.
+    expect(pathOf(quotedPatch("tab\\tfile.txt"))).toBe("tab\tfile.txt");
+  });
+
+  it("is the name the host knows, not the part of it before the newline", () => {
+    expect(pathOf(quotedPatch("line\\nfile.txt"))).toBe("line\nfile.txt");
+  });
+
+  it("reads the octal a host with core.quotePath on writes for a name outside ASCII", () => {
+    expect(pathOf(quotedPatch("caf\\303\\251/r\\303\\251sum\\303\\251.ts"))).toBe("café/résumé.ts");
+  });
+
+  it("reads both sides of a rename under the names they really have", () => {
+    const patch = [
+      'diff --git "a/old\\tname.ts" "b/new\\tname.ts"',
+      "similarity index 90%",
+      'rename from "old\\tname.ts"',
+      'rename to "new\\tname.ts"',
+      "",
+    ].join("\n");
+
+    const parsed = getRenderablePatch(patch, "review");
+    expect(parsed?.kind).toBe("files");
+    if (parsed?.kind !== "files") return;
+    const file = parsed.files[0];
+    expect(file).toBeDefined();
+    if (!file) return;
+
+    expect(resolveFileDiffPath(file)).toBe("new\tname.ts");
+    expect(resolveFileDiffPreviousPath(file)).toBe("old\tname.ts");
   });
 });
