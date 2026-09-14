@@ -1,4 +1,5 @@
 import { useEffect, useId, useState } from "react";
+import { Tabs } from "@base-ui/react/tabs";
 import { create } from "zustand";
 import {
   localSnoozeDate,
@@ -8,6 +9,16 @@ import {
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
+import { Label } from "./ui/label";
+import { toggleVariants } from "./ui/toggle";
+import { Select, SelectTrigger, SelectValue, SelectPopup, SelectItem } from "./ui/select";
+import {
+  NumberField,
+  NumberFieldGroup,
+  NumberFieldInput,
+  NumberFieldDecrement,
+  NumberFieldIncrement,
+} from "./ui/number-field";
 import {
   Dialog,
   DialogPopup,
@@ -78,99 +89,124 @@ function CustomSnoozeDialog() {
             <DialogDescription>Choose when snoozed threads return to your inbox.</DialogDescription>
           </DialogHeader>
           <DialogPanel className="flex flex-col gap-4 text-base sm:text-sm">
-            <fieldset className="flex gap-4">
-              <legend className="sr-only">Schedule type</legend>
-              {(["date", "duration"] as const).map((value) => (
-                <label key={value} className="flex items-center gap-2">
-                  <input
-                    type="radio"
-                    name={`${id}-mode`}
+            <Tabs.Root
+              value={mode}
+              onValueChange={(value) => {
+                if (value === "date" || value === "duration") setMode(value);
+                setError(null);
+              }}
+              className="flex flex-col gap-4"
+            >
+              <Tabs.List
+                aria-label="Schedule type"
+                className="flex gap-0.5 rounded-lg bg-input/40 p-0.5"
+              >
+                {(["date", "duration"] as const).map((value) => (
+                  <Tabs.Tab
+                    key={value}
                     value={value}
-                    checked={mode === value}
-                    onChange={() => {
-                      setMode(value);
-                      setError(null);
-                    }}
-                  />
-                  {value === "date" ? "Date and time" : "Duration"}
-                </label>
-              ))}
-            </fieldset>
-            {mode === "date" ? (
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <label className="flex min-w-0 flex-col gap-1.5" htmlFor={`${id}-date`}>
-                  Date
-                  <Input
-                    nativeInput
-                    id={`${id}-date`}
-                    type="date"
-                    required
-                    value={date}
-                    min={localSnoozeDate(new Date())}
-                    onChange={(event) => {
-                      setDate(event.target.value);
-                      setError(null);
-                    }}
-                  />
-                </label>
-                <label className="flex min-w-0 flex-col gap-1.5" htmlFor={`${id}-time`}>
-                  Time
-                  <Input
-                    nativeInput
-                    id={`${id}-time`}
-                    type="time"
-                    required
-                    value={time}
-                    onChange={(event) => {
-                      setTime(event.target.value);
-                      setError(null);
-                    }}
-                  />
-                </label>
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-3">
-                <label className="flex min-w-0 flex-col gap-1.5" htmlFor={`${id}-amount`}>
-                  Snooze for
-                  <Input
-                    nativeInput
-                    id={`${id}-amount`}
-                    type="number"
-                    min="0"
-                    step="any"
-                    required
-                    value={amount}
-                    onChange={(event) => {
-                      setAmount(event.target.value);
-                      setError(null);
-                    }}
-                  />
-                </label>
-                <label className="flex min-w-0 flex-col gap-1.5" htmlFor={`${id}-unit`}>
-                  Unit
-                  <select
-                    id={`${id}-unit`}
-                    className="h-8.5 rounded-md border border-input bg-background px-2 sm:h-7.5"
-                    value={unit}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (value === "minutes" || value === "hours" || value === "days")
-                        setUnit(value);
-                      setError(null);
-                    }}
+                    data-pressed={mode === value ? "" : undefined}
+                    className={toggleVariants({
+                      variant: "segmented",
+                      size: "sm",
+                      className: "flex-1",
+                    })}
                   >
-                    <option value="minutes">Minutes</option>
-                    <option value="hours">Hours</option>
-                    <option value="days">Days</option>
-                  </select>
-                </label>
-              </div>
-            )}
-            <p className="text-pretty text-muted-foreground">
-              {mode === "date"
-                ? `Your time zone: ${new Intl.DateTimeFormat().resolvedOptions().timeZone}.`
-                : "Starts when you press Snooze. One day is 24 hours."}
-            </p>
+                    {value === "date" ? "Date and time" : "Duration"}
+                  </Tabs.Tab>
+                ))}
+              </Tabs.List>
+              <Tabs.Panel value={mode} className="flex flex-col gap-4">
+                {mode === "date" ? (
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <Label
+                      className="flex min-w-0 flex-col items-stretch gap-1.5"
+                      htmlFor={`${id}-date`}
+                    >
+                      Date
+                      <Input
+                        nativeInput
+                        id={`${id}-date`}
+                        type="date"
+                        required
+                        value={date}
+                        min={localSnoozeDate(new Date())}
+                        onChange={(event) => {
+                          setDate(event.target.value);
+                          setError(null);
+                        }}
+                      />
+                    </Label>
+                    <Label
+                      className="flex min-w-0 flex-col items-stretch gap-1.5"
+                      htmlFor={`${id}-time`}
+                    >
+                      Time
+                      <Input
+                        nativeInput
+                        id={`${id}-time`}
+                        type="time"
+                        required
+                        value={time}
+                        onChange={(event) => {
+                          setTime(event.target.value);
+                          setError(null);
+                        }}
+                      />
+                    </Label>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 gap-3">
+                    <NumberField
+                      id={`${id}-amount`}
+                      min={0}
+                      step={1}
+                      value={amount === "" ? null : Number(amount)}
+                      onValueChange={(value) => {
+                        setAmount(value === null ? "" : String(value));
+                        setError(null);
+                      }}
+                    >
+                      <Label htmlFor={`${id}-amount`}>Snooze for</Label>
+                      <NumberFieldGroup>
+                        <NumberFieldDecrement aria-label="Decrease duration" />
+                        <NumberFieldInput required />
+                        <NumberFieldIncrement aria-label="Increase duration" />
+                      </NumberFieldGroup>
+                    </NumberField>
+                    <Label
+                      className="flex min-w-0 flex-col items-stretch gap-1.5"
+                      htmlFor={`${id}-unit`}
+                    >
+                      Unit
+                      <Select
+                        value={unit}
+                        items={{ minutes: "Minutes", hours: "Hours", days: "Days" }}
+                        onValueChange={(value) => {
+                          if (value === "minutes" || value === "hours" || value === "days")
+                            setUnit(value);
+                          setError(null);
+                        }}
+                      >
+                        <SelectTrigger id={`${id}-unit`} className="min-w-0">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectPopup>
+                          <SelectItem value="minutes">Minutes</SelectItem>
+                          <SelectItem value="hours">Hours</SelectItem>
+                          <SelectItem value="days">Days</SelectItem>
+                        </SelectPopup>
+                      </Select>
+                    </Label>
+                  </div>
+                )}
+                <p className="text-pretty text-muted-foreground">
+                  {mode === "date"
+                    ? `Your time zone: ${new Intl.DateTimeFormat().resolvedOptions().timeZone}.`
+                    : "Starts when you press Snooze. One day is 24 hours."}
+                </p>
+              </Tabs.Panel>
+            </Tabs.Root>
             {error && (
               <p role="alert" className="text-destructive">
                 {error}

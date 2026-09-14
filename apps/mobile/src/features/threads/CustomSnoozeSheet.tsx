@@ -51,12 +51,12 @@ export function CustomSnoozeSheet(props: {
           <AppText className="text-base text-foreground-secondary">
             Choose when snoozed threads return to your inbox.
           </AppText>
-          <View className="flex-row gap-2">
+          <View accessibilityRole="tablist" className="flex-row gap-2">
             {(["date", "duration"] as const).map((value) => (
               <Pressable
                 key={value}
-                accessibilityRole="radio"
-                accessibilityState={{ checked: mode === value }}
+                accessibilityRole="tab"
+                accessibilityState={{ selected: mode === value }}
                 className={
                   mode === value
                     ? "min-h-12 flex-1 items-center justify-center rounded-xl bg-subtle px-3"
