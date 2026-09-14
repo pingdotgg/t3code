@@ -74,7 +74,7 @@ const MAX_OVERDRAG = 60;
 export type SwipeRelease = "commit" | "open" | "close";
 
 /** Drag distance that commits the direction's first action outright. */
-export function swipeCommitThreshold(actionsWidth: number, contentWidth: number): number {
+function swipeCommitThreshold(actionsWidth: number, contentWidth: number): number {
   return Math.max(actionsWidth + FULL_SWIPE_EXTRA, contentWidth * 0.55);
 }
 
