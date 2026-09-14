@@ -205,13 +205,7 @@ function SubscriptionUsage(
             </HStack>
             <ProgressView value={window.remaining / 100} modifiers={barModifiers} />
             {!compact ? (
-              <Text
-                modifiers={[
-                  font({ textStyle: "caption2" }),
-                  foregroundStyle("secondary"),
-                  lineLimit(1),
-                ]}
-              >
+              <Text modifiers={[font({ size: 10 }), foregroundStyle("secondary"), lineLimit(1)]}>
                 {window.reset}
               </Text>
             ) : null}
