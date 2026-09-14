@@ -10,6 +10,78 @@ import XCTest
 @Suite("Feature root model")
 struct FeatureRootModelTests {
     @Test
+    func rewindLocksSendingAndSavesRecoveredInputAfterLeavingTheThread() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let outbox = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(id: "rewind-thread", projectID: "project", environmentID: "environment", title: "Task")
+        let message = FeatureMessage(id: "original", role: .user, text: "Original prompt")
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [.init(id: "environment", name: "Computer", endpoint: "https://example.test", connectionState: .connected)],
+            threads: [thread]
+        )
+        client.threadDetail = .init(thread: thread, messages: [message])
+        let model = FeatureRootModel(client: client, outboxStore: outbox, draftStore: drafts)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        let selection = FeatureSelection(providerID: "chosen-provider", modelID: "chosen-model")
+        let draft = FeatureComposerDraft(text: "Existing draft", selection: selection)
+        client.rewindHandler = { threadID, messageID in
+            #expect(threadID == thread.id)
+            #expect(messageID == message.id)
+            #expect(model.rewindingThreadIDs.contains(thread.id))
+            #expect(try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread)) == draft)
+            #expect(!(await model.sendMessage(.init(threadID: thread.id, text: "Do not send", selection: nil, attachments: []))))
+            #expect(client.sendMessageCallCount == 0)
+            model.releaseThread(thread.id)
+            return FeatureRevertedMessage(message: message, attachments: [])
+        }
+
+        await model.rewindConversation(threadID: thread.id, messageID: message.id, draft: draft)
+
+        let saved = try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread))
+        #expect(saved?.text == "Existing draft\n\nOriginal prompt")
+        #expect(saved?.selection == selection)
+        #expect(model.recoveredRewindDrafts[thread.id] == saved)
+        #expect(model.rewindingThreadIDs.isEmpty)
+        #expect(try await outbox.submissions().isEmpty)
+        #expect(model.rewindErrors[thread.id] == nil)
+    }
+
+    @Test
+    func rejectedRewindKeepsTheDraftAndReportsTheServerError() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let thread = FeatureThread(id: "thread", projectID: "project", environmentID: "environment", title: "Task")
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [.init(id: "environment", name: "Computer", endpoint: "https://example.test", connectionState: .connected)],
+            threads: [thread]
+        )
+        client.threadDetail = .init(thread: thread, messages: [.init(id: "user", role: .user, text: "Original")])
+        client.rewindHandler = { _, _ in
+            throw FeatureConversationRewindError(message: "Unknown command thread.conversation.revert")
+        }
+        let model = FeatureRootModel(
+            client: client, outboxStore: .init(fileURL: directory.appendingPathComponent("outbox.json")), draftStore: drafts
+        )
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        let draft = FeatureComposerDraft(text: "Keep this draft")
+
+        await model.rewindConversation(threadID: thread.id, messageID: "user", draft: draft)
+
+        #expect(try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread)) == draft)
+        #expect(model.details[thread.id]?.messages.map(\.id) == ["user"])
+        #expect(model.rewindErrors[thread.id] == "Unknown command thread.conversation.revert")
+        #expect(model.recoveredRewindDrafts.isEmpty)
+        #expect(model.rewindingThreadIDs.isEmpty)
+    }
+
+    @Test
     func transcriptSkillPillsUseTheThreadWorkspaceCatalog() async {
         let skill = FeatureProviderSkill(name: "project-only", displayName: "Project only")
         var provider = FeatureProvider(
@@ -3552,6 +3624,12 @@ private func orchestrationThread(
 
 @MainActor
 private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
+    var rewindHandler: ((String, String) async throws -> FeatureRevertedMessage)?
+    func canRewindConversation(threadID: String, messageID: String) -> Bool { rewindHandler != nil }
+    func rewindConversation(threadID: String, messageID: String) async throws -> FeatureRevertedMessage {
+        guard let rewindHandler else { throw FeatureCapabilityUnavailable("Conversation rewind") }
+        return try await rewindHandler(threadID, messageID)
+    }
     var foregroundReconnects: [Bool] = []
     func resumeAfterBackground(reconnect: Bool) async { foregroundReconnects.append(reconnect) }
     private let eventStream: AsyncStream<FeatureEvent>

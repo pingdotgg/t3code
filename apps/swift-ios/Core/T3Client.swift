@@ -2065,6 +2065,22 @@ public enum RPCMethod: String, Sendable {
 }
 
 public enum OrchestrationCommands {
+    /// A distinct command makes older servers reject this action without restoring files.
+    public static func revertConversation(
+        threadID: String,
+        turnCount: Int,
+        commandID: String = UUID().uuidString,
+        createdAt: String = now()
+    ) -> JSONValue {
+        .object([
+            "type": .string("thread.conversation.revert"),
+            "commandId": .string(commandID),
+            "threadId": .string(threadID),
+            "turnCount": .number(Double(turnCount)),
+            "createdAt": .string(createdAt),
+        ])
+    }
+
     public static func createThread(
         threadID: String = UUID().uuidString,
         projectID: String,

@@ -2317,6 +2317,103 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
+    func canRewindConversation(threadID: String, messageID: String) -> Bool {
+        guard let route = try? threadRoute(for: threadID),
+              let thread = activeThreadID == route.uiID
+                ? activeRawThread : threadResumeStates[route.uiID]?.thread,
+              let provider = serverConfigsByEnvironmentID[route.environmentID]?.providers.first(where: {
+                  $0.instanceId == (thread.session?.providerInstanceId ?? thread.modelSelection.instanceId)
+              }),
+              provider.supportsConversationRollback != false,
+              provider.driver != "cursor", provider.driver != "grok" else { return false }
+        return NativeConversationRewind.turnCount(before: messageID, in: thread) != nil
+    }
+
+    func rewindConversation(threadID: String, messageID: String) async throws -> FeatureRevertedMessage {
+        let route = try threadRoute(for: threadID)
+        let generation = environmentGeneration
+        // The visible page can omit checkpoints. Validate against the whole thread.
+        let snapshot = try await route.client.threadSnapshot(id: route.wireID)
+        guard let provider = serverConfigsByEnvironmentID[route.environmentID]?.providers.first(where: {
+            $0.instanceId == (snapshot.thread.session?.providerInstanceId ?? snapshot.thread.modelSelection.instanceId)
+        }), provider.supportsConversationRollback != false,
+              provider.driver != "cursor", provider.driver != "grok" else {
+            throw FeatureCapabilityUnavailable("Conversation rewind for this provider")
+        }
+        guard snapshot.thread.session?.status != "running",
+              snapshot.thread.session?.status != "starting",
+              let turnCount = NativeConversationRewind.turnCount(before: messageID, in: snapshot.thread),
+              let original = snapshot.thread.messages.first(where: { $0.id == messageID }) else {
+            throw FeatureConversationRewindError(message: "Wait for this turn to finish before rewinding.")
+        }
+        let message = mapMessage(original, environmentID: route.environmentID)
+        let fileStore = ManagedAttachmentFileStore()
+        var attachments: [FeatureDraftAttachment] = []
+        var completed = false
+        defer {
+            if !completed {
+                for attachment in attachments {
+                    if let file = attachment.ownedFile {
+                        try? fileStore.removeOwnedFile(fileName: file.fileName)
+                    }
+                }
+            }
+        }
+        // Rewind removes the old server assets, even when workspace files are kept.
+        for attachment in message.attachments {
+            let url = try await attachmentAssetURL(threadID: route.uiID, attachment: attachment)
+            let (temporaryURL, response) = try await URLSession.shared.download(from: url)
+            defer { try? FileManager.default.removeItem(at: temporaryURL) }
+            guard let response = response as? HTTPURLResponse,
+                  (200..<300).contains(response.statusCode) else {
+                throw FeatureConversationRewindError(message: "Could not save \(attachment.name) before rewind.")
+            }
+            let id = UUID()
+            let file = try await Task.detached {
+                try fileStore.copyOwnedFile(
+                    from: temporaryURL, attachmentID: id, originalFileName: attachment.name
+                )
+            }.value
+            attachments.append(FeatureDraftAttachment(
+                id: id, ownedFile: file, filename: attachment.name, mimeType: attachment.mimeType
+            ))
+        }
+        try Task.checkCancellation()
+        guard isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        let subscription = try await route.client.threadEvents(
+            threadID: route.wireID, after: snapshot.snapshotSequence
+        )
+        let completion = Task {
+            try await NativeConversationRewind.waitForCompletion(
+                events: subscription.events,
+                threadID: route.wireID,
+                messageID: messageID,
+                turnCount: turnCount,
+                afterSequence: snapshot.snapshotSequence,
+                previousFailureIDs: Set(snapshot.thread.activities.filter {
+                    $0.kind == "checkpoint.revert.failed"
+                }.map(\.id))
+            )
+        }
+        defer { completion.cancel() }
+        _ = try await route.client.dispatch(OrchestrationCommands.revertConversation(
+            threadID: route.wireID, turnCount: turnCount
+        ))
+        try await completion.value
+        completed = true
+        // Do not turn a failed refresh into a failed rewind. The receipt confirms
+        // that history changed, so the recovered prompt must still reach the draft.
+        threadResumeStates[route.uiID] = nil
+        do {
+            try await refreshThread(id: route.uiID, client: route.client)
+        } catch {
+            continuation.yield(.threadSync(id: route.uiID, state: .failed(error.localizedDescription)))
+        }
+        return FeatureRevertedMessage(message: message, attachments: attachments)
+    }
+
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {
         guard let request = approvalRoutes[id] else {
             throw NativeFeatureClientError.approvalNotFound

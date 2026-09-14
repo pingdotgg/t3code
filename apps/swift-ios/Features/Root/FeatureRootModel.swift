@@ -70,6 +70,9 @@ public final class FeatureRootModel {
     public private(set) var isLoading = true
     public private(set) var isPerformingAction = false
     private(set) var isArrangingThreads = false
+    public private(set) var rewindingThreadIDs: Set<String> = []
+    public private(set) var recoveredRewindDrafts: [String: FeatureComposerDraft] = [:]
+    public private(set) var rewindErrors: [String: String] = [:]
     /// Approval and question IDs with a response in flight. Views disable
     /// only that request, not every request in every thread.
     public private(set) var resolvingRequestIDs: Set<String> = []
@@ -800,6 +803,7 @@ public final class FeatureRootModel {
     }
 
     public func sendMessage(_ submission: FeatureMessageSubmission) async -> Bool {
+        guard !rewindingThreadIDs.contains(submission.threadID) else { return false }
         let trimmed = submission.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !submission.attachments.isEmpty else { return false }
 
@@ -882,6 +886,55 @@ public final class FeatureRootModel {
             }
             return false
         }
+    }
+
+    public func canRewindConversation(threadID: String, messageID: String) -> Bool {
+        guard !rewindingThreadIDs.contains(threadID),
+              let detail = details[threadID],
+              FeatureConversationRewind.canStart(in: detail),
+              let environmentID = detail.thread.environmentID,
+              isEnvironmentConnected(environmentID),
+              !pendingSubmissionsByID.values.contains(where: { $0.threadID == threadID }),
+              detail.messages.contains(where: {
+                  $0.id == messageID && $0.role == .user && $0.state == .complete
+              }) else { return false }
+        return client.canRewindConversation(threadID: threadID, messageID: messageID)
+    }
+
+    /// The lock and saved recovery live outside the view so navigation cannot
+    /// enable sends or lose a restored prompt while provider rollback is pending.
+    public func rewindConversation(
+        threadID: String, messageID: String, draft: FeatureComposerDraft
+    ) async {
+        guard canRewindConversation(threadID: threadID, messageID: messageID),
+              let detail = details[threadID],
+              let message = detail.messages.first(where: { $0.id == messageID }) else { return }
+        guard draft.attachments.count + message.attachments.count <= 8 else {
+            rewindErrors[threadID] = "Make room for this message's attachments before rewinding."
+            return
+        }
+        rewindingThreadIDs.insert(threadID)
+        rewindErrors[threadID] = nil
+        recoveredRewindDrafts[threadID] = nil
+        defer { rewindingThreadIDs.remove(threadID) }
+        do {
+            let key = FeatureComposerDraftStore.threadKey(detail.thread)
+            try await draftStore.setDraft(draft, for: key)
+            let reverted = try await client.rewindConversation(threadID: threadID, messageID: messageID)
+            let recovered = FeatureConversationRewind.recover(reverted, draft: draft)
+            recoveredRewindDrafts[threadID] = recovered
+            do {
+                try await draftStore.setDraft(recovered, for: key)
+            } catch {
+                rewindErrors[threadID] = "Rewind finished, but the draft could not be saved. \(error.localizedDescription)"
+            }
+        } catch {
+            rewindErrors[threadID] = error.localizedDescription
+        }
+    }
+
+    public func consumeRewindDraft(threadID: String) -> FeatureComposerDraft? {
+        recoveredRewindDrafts.removeValue(forKey: threadID)
     }
 
     public func cancelTurn(threadID: String) async {

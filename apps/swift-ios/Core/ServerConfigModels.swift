@@ -137,6 +137,7 @@ public struct ServerProviderSnapshot: Codable, Identifiable, Equatable, Sendable
     public var workspaceSnapshots: [ServerProviderWorkspaceSnapshot]? = nil
     public var setup: ProviderSetupCapabilities? = nil
     public var usageLimits: ServerProviderUsageLimits? = nil
+    public var supportsConversationRollback: Bool? = nil
 }
 
 public enum ServerThreadEnvironmentMode: String, Codable, Equatable, Sendable {
