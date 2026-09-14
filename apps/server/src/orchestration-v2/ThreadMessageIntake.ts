@@ -91,20 +91,25 @@ export const dispatchCommand = Effect.fn("ThreadMessageIntake.dispatchCommand")(
       .pipe(
         Effect.tap((result) => {
           // A replayed receipt reports the first attempt's answer, so this
-          // attempt's copies go unreferenced and are released. With no
-          // recorded answer the outcome is ambiguous and everything stays.
-          const questionAnswers = result.storedEvents.flatMap(({ event }) =>
+          // attempt's copies go unreferenced and are released. The resolved
+          // turn item proves the respond was applied; questionAnswer is only
+          // recorded when the accepted command carried attachments, so its
+          // absence means the accepted answer referenced no copies. With no
+          // resolved item at all the outcome is ambiguous and everything stays.
+          const answeredItems = result.storedEvents.flatMap(({ event }) =>
             event.type === "turn-item.updated" &&
             event.payload.type === "user_input_request" &&
-            event.payload.questionAnswer !== undefined
-              ? [event.payload.questionAnswer]
+            event.payload.requestId === command.requestId
+              ? [event.payload]
               : [],
           );
-          return questionAnswers.length > 0
+          return answeredItems.length > 0
             ? releaseUnusedClaims(
                 claimedPaths,
-                questionAnswers.flatMap((answer) =>
-                  Object.values(answer.attachmentsByQuestionId).flat(),
+                answeredItems.flatMap((item) =>
+                  item.questionAnswer === undefined
+                    ? []
+                    : Object.values(item.questionAnswer.attachmentsByQuestionId).flat(),
                 ),
               )
             : Effect.void;

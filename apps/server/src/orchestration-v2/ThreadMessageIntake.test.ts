@@ -87,6 +87,43 @@ const answeredRespondEvents = (input: {
   },
 ];
 
+// The first attempt answered with text only: clients omit attachmentsByQuestionId
+// entirely, so the recorded turn item resolves the request without a questionAnswer.
+const textOnlyRespondEvents = (input: {
+  readonly threadId: ThreadId;
+  readonly requestId: string;
+}): OrchestrationV2StoredEvent[] => [
+  {
+    sequence: 1,
+    commandId: null,
+    event: {
+      id: EventId.make("evt-recorded-answer"),
+      type: "turn-item.updated",
+      threadId: input.threadId,
+      occurredAt: NOW,
+      payload: {
+        id: TurnItemId.make("item-recorded-answer"),
+        type: "user_input_request",
+        threadId: input.threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: null,
+        completedAt: NOW,
+        updatedAt: NOW,
+        requestId: RuntimeRequestId.make(input.requestId),
+        questions: [],
+      },
+    },
+  },
+];
+
 it.effect("claims question uploads and passes readable paths through the V2 request command", () =>
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
@@ -448,6 +485,57 @@ it.effect("releases claimed copies when the recorded answer has no attachments",
     expect(
       NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
         entry.startsWith("thread-empty-answer-"),
+      ),
+    ).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
+  }).pipe(Effect.provide(intakeTestLayer)),
+);
+
+it.effect("releases claimed copies when the recorded answer was text-only", () =>
+  Effect.gen(function* () {
+    const config = yield* ServerConfig.ServerConfig;
+    const threadId = ThreadId.make("thread-text-only-answer");
+    const pendingId = ChatAttachmentId.make(createPendingAttachmentId()!);
+    NodeFS.writeFileSync(
+      NodePath.join(config.attachmentsDir, `${pendingId}.png`),
+      new Uint8Array([1, 2, 3]),
+    );
+    // The first attempt accepted a text-only response, so its recorded turn
+    // item has no questionAnswer at all. The retried command id uploads an
+    // attachment whose fresh copy is unreferenced by that answer.
+    const storedEvents = textOnlyRespondEvents({
+      threadId,
+      requestId: "request-text-only",
+    });
+    const result = yield* dispatchCommand({
+      type: "runtime-request.respond",
+      commandId: CommandId.make("answer-text-only"),
+      threadId,
+      requestId: RuntimeRequestId.make("request-text-only"),
+      answers: { q: ["one"] },
+      attachmentsByQuestionId: {
+        q: [
+          {
+            type: "image",
+            id: pendingId,
+            name: "screen.png",
+            mimeType: "image/png",
+            sizeBytes: 3,
+          },
+        ],
+      },
+    }).pipe(
+      Effect.provide(
+        Layer.mock(ThreadManagementService)({
+          dispatch: () => Effect.succeed({ sequence: 1, storedEvents }),
+        }),
+      ),
+      Effect.result,
+    );
+    expect(result._tag).toBe("Success");
+    expect(
+      NodeFS.readdirSync(config.attachmentsDir).filter((entry) =>
+        entry.startsWith("thread-text-only-answer-"),
       ),
     ).toEqual([]);
     expect(NodeFS.existsSync(NodePath.join(config.attachmentsDir, `${pendingId}.png`))).toBe(true);
