@@ -7333,7 +7333,7 @@ it.effect(
 );
 
 it.effect(
-  "ProviderSessionManagerV2 bounds an exclusive terminal detach when the release's credential sweep stalls",
+  "ProviderSessionManagerV2 bounds an exclusive terminal detach when the forked release stalls",
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
@@ -7371,8 +7371,9 @@ it.effect(
         yield* open(providerSessionId);
 
         // A peer open for the same thread parks inside prepareMcpSession
-        // holding mcpPrepareLock[threadId] — the lock the release's
-        // credential sweep must acquire.
+        // holding threadLifecycle[threadId] and mcpPrepareLock[threadId] —
+        // the release's open drain and its credential sweep both wait behind
+        // it, so the release can never reach its scope close.
         yield* Ref.set(pauseSettings, true);
         const peerId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
@@ -7384,9 +7385,9 @@ it.effect(
         yield* Deferred.await(preparing);
 
         // The exclusive session's last detach forks the release and joins it;
-        // the release's sweep parks behind the stalled peer prepare. The
-        // detach must report the unfinished cleanup within the 30-second
-        // bound — the release keeps running and keeps ownership.
+        // the release is parked behind the stalled peer. The detach must
+        // report the unfinished cleanup within the 30-second bound — the
+        // release keeps running and keeps ownership.
         const detaching = yield* manager
           .detach({ providerSessionId, threadId, revokeMcpCredential: true })
           .pipe(Effect.exit, Effect.forkChild);
@@ -7407,6 +7408,88 @@ it.effect(
             capabilities: ExclusiveCapabilities,
             mcpConfigs,
             serverSettingsLayer: settingsLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps the detached thread's ownership when close races the last detach",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const hangClose = yield* Deferred.make<void>();
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const stepper = makeSteppingScheduler();
+        // The window is the scheduler boundary between the detach's
+        // attachment mutation and the release claim it used to fork: a close
+        // landing inside it claimed the emptied entry, producing a release
+        // record with no thread ownership — this thread's replacement then
+        // passed the cleanup gate while the provider process still ran.
+        for (let ops = 0; ops < 160; ops++) {
+          const threadId = ThreadId.make(`thread-detach-close-claim-${ops}`);
+          const fixture = yield* makeThreadSessionFixture(threadId);
+          const providerSessionId = yield* fixture.allocate;
+          const replacementId = yield* fixture.allocate;
+          yield* fixture.open(providerSessionId);
+
+          const detaching = yield* manager
+            .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          const reached = yield* stepper.step(detaching, ops);
+
+          // Interleave a close while the detach is suspended; it claims the
+          // entry or joins the pending release — either way the parked scope
+          // close keeps the record alive for the gate check below.
+          const closing = yield* manager
+            .close(providerSessionId)
+            .pipe(Effect.exit, Effect.forkChild);
+          for (let i = 0; i < 8; i += 1) {
+            yield* Effect.yieldNow;
+          }
+          yield* stepper.drain;
+          for (let i = 0; i < 8; i += 1) {
+            yield* Effect.yieldNow;
+          }
+
+          const replacing = yield* manager
+            .open({
+              providerSessionId: replacementId,
+              threadId,
+              modelSelection,
+              runtimePolicy,
+            })
+            .pipe(Effect.exit, Effect.forkChild);
+          for (let i = 0; i < 12; i += 1) {
+            yield* Effect.yieldNow;
+          }
+          const openExit = yield* Fiber.join(replacing);
+          assert.equal(
+            openExit._tag,
+            "Failure",
+            `close interleaved at op ${ops} let a same-thread replacement open during cleanup`,
+          );
+
+          yield* TestClock.adjust("30 seconds");
+          yield* stepper.drain;
+          yield* Fiber.join(detaching);
+          yield* Fiber.join(closing);
+          if (!reached) break;
+        }
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(hangClose, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            capabilities: ExclusiveCapabilities,
+            hangSessionScopeClose: hangClose,
           }),
         ),
       );
