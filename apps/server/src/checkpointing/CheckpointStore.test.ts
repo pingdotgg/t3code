@@ -6,6 +6,7 @@ import { it } from "@effect/vitest";
 import {
   ThreadId,
   VcsProcessExitError,
+  VcsProcessSpawnError,
   VcsUnsupportedOperationError,
   type VcsError,
 } from "@t3tools/contracts";
@@ -546,6 +547,34 @@ describe("captureCheckpoint retry", () => {
           operation: "CheckpointStore.captureCheckpoint",
           kind: "unknown",
           detail: "unknown driver does not implement checkpoint operations.",
+        });
+        const checkpointStore = yield* makeStoreWithCapture(() => {
+          attempts += 1;
+          return Effect.fail(error);
+        });
+
+        const failure = yield* Effect.flip(
+          checkpointStore.captureCheckpoint({
+            cwd: RetryCwd,
+            checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-capture-retry"), 0),
+          }),
+        );
+
+        expect(attempts).toBe(1);
+        expect(failure).toBe(error);
+      }),
+    ),
+  );
+
+  it.live("does not retry spawn failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const error = new VcsProcessSpawnError({
+          operation: "CheckpointStore.captureCheckpoint",
+          command: "git",
+          cwd: RetryCwd,
+          cause: new Error("spawn EAGAIN"),
         });
         const checkpointStore = yield* makeStoreWithCapture(() => {
           attempts += 1;
