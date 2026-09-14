@@ -194,17 +194,27 @@ export function createBrowserVoiceInputPlatform(input: {
             getEnvironmentSpeechStreamUrl(input.prepared),
             options,
           );
-          live = await openSpeechStream({
+          const session = openSpeechStream({
             url,
             signal: options.signal,
             onText: input.onText,
             onError: (error) => input.onError(error.message),
+          }).then((prepared) => {
+            live = prepared;
+            for (const chunk of chunks) prepared.feed(chunk);
+            chunks = [];
+            return prepared;
           });
-          const session = live;
+          void session.catch((error: unknown) => {
+            if (!options.signal.aborted)
+              input.onError(
+                error instanceof Error ? error.message : "Could not prepare voice input.",
+              );
+          });
           return {
             locale: "en",
             transcribe: transcribeRecording,
-            streaming: { finish: () => session.finish() },
+            streaming: { finish: async () => (await session).finish() },
           };
         }
         return {

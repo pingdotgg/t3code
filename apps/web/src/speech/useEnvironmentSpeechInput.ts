@@ -166,20 +166,11 @@ export function useEnvironmentSpeechInput(input: HookInput) {
   const start = useCallback(async () => {
     const expectedController = controllerRef.current;
     const expectedOwner = latestInputRef.current.ownerKey;
-    if (!expectedController || !prepared) return;
-    const freshStatus = await runtime
-      .runPromise(getEnvironmentSpeechStatus(prepared))
-      .catch(() => null);
-    if (controllerRef.current !== expectedController) return;
-    if (!freshStatus) {
-      setStatus(null);
-      return;
-    }
-    setStatus({ prepared, value: freshStatus });
-    if (!freshStatus.supported || freshStatus.state === "transcribing") return;
-    if (freshStatus.state === "missing-model") {
+    if (!expectedController || !prepared || !currentStatus?.supported) return;
+    if (currentStatus.state === "transcribing") return;
+    if (currentStatus.state === "missing-model") {
       const confirmed = await ensureLocalApi().dialogs.confirm(
-        `Download ${freshStatus.model} (${Math.round(freshStatus.size / 1024 / 1024)} MB) to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.`,
+        `Download ${currentStatus.model} (${Math.round(currentStatus.size / 1024 / 1024)} MB) to this T3 environment? Recordings will be sent to this environment for transcription and deleted after use.`,
       );
       if (!confirmed) return;
     }
@@ -188,7 +179,7 @@ export function useEnvironmentSpeechInput(input: HookInput) {
       return;
     setLevel(0);
     await controller.start();
-  }, [prepared]);
+  }, [currentStatus, prepared]);
 
   return {
     available:

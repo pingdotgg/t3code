@@ -102,8 +102,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 it("does not capture audio while the environment is transcribing", async () => {
-  await mountProbe();
   mocks.busy = true;
+  await mountProbe();
   await act(() => voice.start());
   expect(voice.state.phase).toBe("idle");
 });
