@@ -51,7 +51,7 @@ export type ThreadHistoryPagePolicy = {
  * Fixed-length thread identity for cursors — sha256 as base64url is exactly 43
  * chars no matter how long the stored thread id is.
  */
-export const THREAD_HISTORY_CURSOR_THREAD_TAG_LENGTH = 43;
+const THREAD_HISTORY_CURSOR_THREAD_TAG_LENGTH = 43;
 
 export function threadHistoryCursorThreadTag(threadId: ThreadId | string): string {
   // utf16le keeps lone surrogates lossless — utf8 folds them to U+FFFD, which
