@@ -7657,3 +7657,219 @@ it.effect(
       );
     }),
 );
+
+it.effect(
+  "ProviderSessionManagerV2 queues a retry's pruned credential behind the pending revocation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const revoking = yield* Deferred.make<void>();
+      const revokeGate = yield* Deferred.make<void>();
+      const pauseRevoke = yield* Ref.make(false);
+      const failResolve = yield* Ref.make(false);
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            resolve: (token) =>
+              Ref.get(failResolve).pipe(
+                Effect.flatMap((fail) =>
+                  fail ? Effect.succeed(undefined) : delegate.resolve(token),
+                ),
+              ),
+            revokeProviderSession: (providerSessionId) =>
+              Ref.get(pauseRevoke).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(revoking, undefined).pipe(
+                        Effect.andThen(Deferred.await(revokeGate)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const threadId = ThreadId.make("thread-detach-revoke-chained");
+        const peerThreadId = ThreadId.make("thread-detach-revoke-chained-peer");
+        const session = yield* makeThreadSessionFixture(threadId);
+        const peer = yield* makeThreadSessionFixture(peerThreadId);
+        // Three sessions on one thread; a failing resolve forces a fresh
+        // credential per open so each session records a distinct credential
+        // and the configured binding ends on the third.
+        const sessionA = yield* session.allocate;
+        yield* session.open(sessionA);
+        yield* Ref.set(failResolve, true);
+        const sessionB = yield* session.allocate;
+        yield* session.open(sessionB);
+        yield* peer.open(sessionB, peerThreadId);
+        const sessionC = yield* session.allocate;
+        yield* session.open(sessionC);
+        yield* Ref.set(failResolve, false);
+        const configs = yield* Ref.get(mcpConfigs);
+        const tokenOf = (index: number) =>
+          configs[index]?.authorizationHeader.replace(/^Bearer\s+/, "");
+        const tokenA = tokenOf(0);
+        const tokenB = tokenOf(1);
+        const tokenC = tokenOf(2);
+        assert.isDefined(tokenA);
+        assert.isDefined(tokenB);
+        assert.isDefined(tokenC);
+
+        // Detach A terminally; its tracked sweep captures {cA, cC} and parks
+        // inside the gated revocation.
+        yield* Ref.set(pauseRevoke, true);
+        const detachA = yield* manager
+          .detach({ providerSessionId: sessionA, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(revoking);
+        // Detach B's attachment while the sweep is parked: B stays live for
+        // its peer thread, so no release record owns cB — only this caller's
+        // captured set does. Joining the pending sweep must not discard it.
+        const detachB = yield* manager
+          .detach({ providerSessionId: sessionB, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 8; i += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        yield* Deferred.succeed(revokeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(detachA)));
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(detachB)));
+        for (let i = 0; i < 8; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        // The chained sweep released B's pruned credential; C's claim on the
+        // configured credential survives.
+        assert.isUndefined(yield* registry.resolve(tokenA!));
+        assert.isUndefined(yield* registry.resolve(tokenB!));
+        assert.isDefined(yield* registry.resolve(tokenC!));
+        assert.isTrue(Option.isSome(yield* manager.get(sessionB)));
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(revokeGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a terminal-detach retry waiting on the pending revocation past a session release",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const revoking = yield* Deferred.make<void>();
+      const revokeGate = yield* Deferred.make<void>();
+      const pauseRevoke = yield* Ref.make(false);
+      const closing = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            revokeProviderSession: (providerSessionId) =>
+              Ref.getAndSet(pauseRevoke, false).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(revoking, undefined).pipe(
+                        Effect.andThen(Deferred.await(revokeGate)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const threadId = ThreadId.make("thread-detach-revoke-release-join");
+        const peerThreadId = ThreadId.make("thread-detach-revoke-release-join-peer");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const peer = yield* makeThreadSessionFixture(peerThreadId);
+        const providerSessionId = yield* first.allocate;
+        yield* first.open(providerSessionId);
+        yield* peer.open(providerSessionId, peerThreadId);
+        const issued = (yield* Ref.get(mcpConfigs)).find((config) => config?.threadId === threadId);
+        const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+
+        // The first terminal detach prunes the thread's credential and parks
+        // inside the tracked revocation sweep.
+        yield* Ref.set(pauseRevoke, true);
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(revoking);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(detaching))._tag, "Failure");
+
+        // A close claims the session; its record never contained the pruned
+        // credential, so the parked sweep remains its only owner.
+        const closingSession = yield* manager
+          .close(providerSessionId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(closing);
+        const retry = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 8; i += 1) {
+          yield* Effect.yieldNow;
+        }
+
+        // The release finishes while the revocation is still parked; the
+        // retry must not report success over cleanup it does not own.
+        yield* Deferred.succeed(closeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(retry))._tag, "Failure");
+
+        // Once the revocation actually drains, the retry's own bounded wait
+        // completes and the binding is gone.
+        yield* Deferred.succeed(revokeGate, undefined);
+        yield* manager.detach({ providerSessionId, threadId, revokeMcpCredential: true });
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* registry.resolve(token!));
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(revokeGate, undefined).pipe(
+            Effect.andThen(Deferred.succeed(closeGate, undefined)),
+          ),
+        ),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+            beforeClose: Deferred.succeed(closing, undefined).pipe(
+              Effect.andThen(Deferred.await(closeGate)),
+            ),
+          }),
+        ),
+      );
+    }),
+);
