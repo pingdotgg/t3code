@@ -479,9 +479,17 @@ const openStaticFile = Effect.fn("openStaticFile")(function* (filePath: string) 
   // Reject directories and special files before opening. Response metadata comes from the handle.
   const pathInfo = yield* fileSystem.stat(filePath).pipe(Effect.orElseSucceed(() => null));
   if (pathInfo?.type !== "File") return null;
-  const file = yield* fileSystem.open(filePath, { flag: "r" });
-  const info = yield* file.stat;
-  return info.type === "File" ? { file, info } : null;
+  const file = yield* fileSystem
+    .open(filePath, { flag: "r" })
+    .pipe(Effect.orElseSucceed(() => null));
+  if (file !== null) {
+    const info = yield* file.stat;
+    return info.type === "File" ? { _tag: "Handle" as const, file, info } : null;
+  }
+  // The Electron asar layer implements stat and readFile but not open, so files inside
+  // app.asar have no file handle. Read those in one pass instead of streaming.
+  const bytes = yield* fileSystem.readFile(filePath).pipe(Effect.orElseSucceed(() => null));
+  return bytes === null ? null : { _tag: "Bytes" as const, bytes, info: pathInfo };
 });
 
 const streamStaticFile = (file: FileSystem.File, size: bigint) =>
@@ -614,6 +622,9 @@ const handleStaticAndDevRequest = Effect.fn("handleStaticAndDevRequest")(
     const contentType = isHtml ? "text/html; charset=utf-8" : mimeType;
     // The request scope closes the handle for GET, HEAD, 304, errors, and cancellation.
     // HEAD still passes through compression, which selects headers without reading the stream.
+    if (opened._tag === "Bytes") {
+      return HttpServerResponse.uint8Array(opened.bytes, { headers, contentType });
+    }
     return HttpServerResponse.stream(streamStaticFile(opened.file, fileInfo.size), {
       headers,
       contentType,
