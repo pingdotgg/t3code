@@ -400,3 +400,49 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
     /2\.81\.0/,
   );
 });
+
+it.effect("lists repositories through the GitHub adapter and preserves truncation", () =>
+  Effect.gen(function* () {
+    const input = { cwd: "/repo", owner: "octocat" };
+    const result = {
+      repositories: [
+        {
+          nameWithOwner: "octocat/repo",
+          url: "https://github.com/octocat/repo",
+          sshUrl: "git@github.com:octocat/repo.git",
+        },
+      ],
+      isTruncated: true,
+    };
+    const provider = yield* makeProvider({
+      listRepositories: (received) => {
+        assert.deepStrictEqual(received, input);
+        return Effect.succeed(result);
+      },
+    });
+    assert.ok(provider.listRepositories);
+    assert.deepStrictEqual(yield* provider.listRepositories(input), result);
+  }),
+);
+
+it.effect("maps repository listing failures to provider errors", () =>
+  Effect.gen(function* () {
+    const cause = new GitHubCli.GitHubCliAuthenticationError({
+      command: "gh",
+      cwd: "/repo",
+      cause: new Error("authentication failed"),
+    });
+    const provider = yield* makeProvider({ listRepositories: () => Effect.fail(cause) });
+    assert.ok(provider.listRepositories);
+    const error = yield* provider
+      .listRepositories({ cwd: "/repo", owner: "octocat" })
+      .pipe(Effect.flip);
+    assert.strictEqual(error.provider, "github");
+    assert.strictEqual(error.operation, "listRepositories");
+    assert.strictEqual(error.repository, "octocat");
+    assert.strictEqual(error.cwd, "/repo");
+    assert.strictEqual(error.command, "gh");
+    assert.strictEqual(error.detail, cause.detail);
+    assert.strictEqual(error.cause, cause);
+  }),
+);
