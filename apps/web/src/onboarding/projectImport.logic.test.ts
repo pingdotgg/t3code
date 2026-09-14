@@ -1,20 +1,12 @@
-import {
-  EnvironmentId,
-  ProjectId,
-  ProviderInstanceId,
-  type AgentSessionProjectCandidate,
-} from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, type AgentSessionProjectCandidate } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   groupOnboardingProjects,
-  onboardingHistorySessionKey,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
-  selectedOnboardingHistorySessions,
-  summarizeOnboardingHistoryImport,
 } from "./projectImport.logic";
 
 const now = Date.parse("2026-08-22T12:00:00.000Z");
@@ -41,7 +33,7 @@ const github = (repository: string) => ({
 });
 
 describe("partitionOnboardingProjects", () => {
-  it("keeps existing projects available for setup and optional history review", () => {
+  it("keeps existing projects available for thread history import", () => {
     const imported = candidate("/projects/current", { alreadyImported: true });
     const available = candidate("/projects/other");
 
@@ -355,63 +347,5 @@ describe("projects on multiple computers", () => {
     const first = { ...candidate("/code/app"), environmentId: "first" };
     const second = { ...candidate("/code/app"), environmentId: "second" };
     expect(partitionOnboardingProjects([first, second], now).recent).toEqual([first, second]);
-  });
-});
-
-describe("reviewed conversation selection", () => {
-  const projectKey = onboardingProjectKey(EnvironmentId.make("first"), "/code/app");
-  const first = {
-    providerInstanceId: ProviderInstanceId.make("codex"),
-    providerSessionId: "session-1",
-    revision: "revision-1",
-  };
-  const second = {
-    providerInstanceId: ProviderInstanceId.make("claude"),
-    providerSessionId: "session-2",
-    revision: "revision-2",
-  };
-
-  it("sends only the exact individually selected transcript revisions", () => {
-    const selected = new Set([onboardingHistorySessionKey(projectKey, second)]);
-
-    expect(selectedOnboardingHistorySessions(projectKey, [first, second], selected)).toEqual([
-      second,
-    ]);
-    expect(selectedOnboardingHistorySessions(projectKey, [first, second], new Set())).toEqual([]);
-  });
-});
-
-describe("conversation import accounting", () => {
-  it("does not treat already-imported or excluded sessions as failures", () => {
-    expect(
-      summarizeOnboardingHistoryImport({
-        importedCount: 2,
-        skippedCount: 0,
-        alreadyImportedCount: 3,
-        excludedCount: 4,
-        failedCount: 0,
-        deferredCount: 0,
-      }),
-    ).toEqual({ importedCount: 2, failedCount: 0, deferredCount: 0, incompleteCount: 0 });
-  });
-
-  it("keeps failed and deferred selections visible as incomplete work", () => {
-    expect(
-      summarizeOnboardingHistoryImport({
-        importedCount: 1,
-        skippedCount: 3,
-        failedCount: 2,
-        deferredCount: 1,
-      }),
-    ).toEqual({ importedCount: 1, failedCount: 2, deferredCount: 1, incompleteCount: 3 });
-  });
-
-  it("understands legacy skipped-count results", () => {
-    expect(summarizeOnboardingHistoryImport({ importedCount: 1, skippedCount: 2 })).toEqual({
-      importedCount: 1,
-      failedCount: 2,
-      deferredCount: 0,
-      incompleteCount: 2,
-    });
   });
 });

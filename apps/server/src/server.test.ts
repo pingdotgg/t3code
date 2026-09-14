@@ -5598,14 +5598,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.deepEqual(result, {
-        importedCount: 0,
-        skippedCount: 1,
-        alreadyImportedCount: 0,
-        excludedCount: 0,
-        failedCount: 1,
-        deferredCount: 0,
-      });
+      assert.deepEqual(result, { importedCount: 0, skippedCount: 1 });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

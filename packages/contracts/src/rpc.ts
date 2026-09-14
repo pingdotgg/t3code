@@ -33,8 +33,6 @@ import {
   AgentSessionImportProjectChangedError,
   AgentSessionImportProjectNotFoundError,
   AgentSessionImportResult,
-  AgentSessionPreviewInput,
-  AgentSessionPreviewResult,
   AgentSessionScanInput,
   AgentSessionScanResult,
   AgentSessionScanError,
@@ -288,7 +286,6 @@ export const WS_METHODS = {
   // Filesystem methods
   filesystemBrowse: "filesystem.browse",
   agentSessionsScan: "agentSessions.scan",
-  agentSessionsPreview: "agentSessions.preview",
   agentSessionsImport: "agentSessions.import",
   assetsCreateUrl: "assets.createUrl",
   attachmentsCreateUploadUrl: "attachments.createUploadUrl",
@@ -952,12 +949,6 @@ const WsAgentSessionsImportRpc = Rpc.make(WS_METHODS.agentSessionsImport, {
   ]),
 });
 
-const WsAgentSessionsPreviewRpc = Rpc.make(WS_METHODS.agentSessionsPreview, {
-  payload: AgentSessionPreviewInput,
-  success: AgentSessionPreviewResult,
-  error: Schema.Union([AgentSessionScanError, EnvironmentAuthorizationError]),
-});
-
 const WsAssetsCreateUrlRpc = Rpc.make(WS_METHODS.assetsCreateUrl, {
   payload: AssetCreateUrlInput,
   success: AssetCreateUrlResult,
@@ -1443,7 +1434,6 @@ export const WsRpcGroup = RpcGroup.make(
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,
   WsAgentSessionsScanRpc,
-  WsAgentSessionsPreviewRpc,
   WsAgentSessionsImportRpc,
   WsAssetsCreateUrlRpc,
   WsAttachmentsCreateUploadUrlRpc,

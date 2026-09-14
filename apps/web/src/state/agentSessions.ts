@@ -19,12 +19,6 @@ export const agentSessionScan = createEnvironmentRpcQueryAtomFamily(connectionAt
   idleTtlMs: 5 * 60_000,
 });
 
-/** Read-only, user-triggered preview used before onboarding imports any history. */
-export const agentSessionPreview = createEnvironmentRpcCommand(connectionAtomRuntime, {
-  label: "environment-data:agent-sessions:preview",
-  tag: WS_METHODS.agentSessionsPreview,
-});
-
 export const agentSessionImport = createEnvironmentRpcCommand(connectionAtomRuntime, {
   label: "environment-data:agent-sessions:import",
   tag: WS_METHODS.agentSessionsImport,

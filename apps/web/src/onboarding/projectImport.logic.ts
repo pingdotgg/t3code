@@ -1,21 +1,14 @@
 import { findProjectByPath } from "@t3tools/client-runtime/state/projects";
-import type {
-  AgentSessionImportResult,
-  AgentSessionImportSelection,
-  AgentSessionProjectCandidate,
-  EnvironmentId,
-  ProjectId,
-} from "@t3tools/contracts";
+import type { AgentSessionProjectCandidate, EnvironmentId, ProjectId } from "@t3tools/contracts";
 
 const RECENT_PROJECT_WINDOW_MS = 30 * 24 * 60 * 60 * 1000;
 /** One or two threads in a directory is usually a one-off question, not a project. */
 const DEFAULT_SELECTION_MIN_THREADS = 3;
 
 /**
- * Existing projects remain available for setup and optional history review, so
- * every scan candidate is offered. The default project selection is narrower:
- * git repositories active in the last 30 days with enough threads to look like
- * real work.
+ * Existing projects still need their agent history imported, so every scan
+ * candidate is offered. The default selection is narrower: git repositories
+ * active in the last 30 days with enough threads to look like real work.
  * Servers that predate the git scan omit `git`; their candidates are treated
  * as repositories so old computers still get a useful default selection.
  */
@@ -145,45 +138,4 @@ export function resolveOnboardingLandingProject<T>(
 /** Paths identify projects only within the computer that owns them. */
 export function onboardingProjectKey(environmentId: EnvironmentId, path: string): string {
   return JSON.stringify([environmentId, path]);
-}
-
-/** Session identities are only unique inside their environment-scoped project preview. */
-export function onboardingHistorySessionKey(
-  projectKey: string,
-  session: AgentSessionImportSelection,
-): string {
-  return JSON.stringify([
-    projectKey,
-    session.providerInstanceId,
-    session.providerSessionId,
-    session.revision,
-  ]);
-}
-
-export function selectedOnboardingHistorySessions<T extends AgentSessionImportSelection>(
-  projectKey: string,
-  sessions: ReadonlyArray<T>,
-  selectedKeys: ReadonlySet<string>,
-): ReadonlyArray<AgentSessionImportSelection> {
-  return sessions
-    .filter((session) => selectedKeys.has(onboardingHistorySessionKey(projectKey, session)))
-    .map(({ providerInstanceId, providerSessionId, revision }) => ({
-      providerInstanceId,
-      providerSessionId,
-      revision,
-    }));
-}
-
-/** Prefer precise modern accounting, while keeping old result shapes understandable. */
-export function summarizeOnboardingHistoryImport(result: AgentSessionImportResult) {
-  const hasPreciseAccounting =
-    result.failedCount !== undefined || result.deferredCount !== undefined;
-  const failedCount = result.failedCount ?? (hasPreciseAccounting ? 0 : result.skippedCount);
-  const deferredCount = result.deferredCount ?? 0;
-  return {
-    importedCount: result.importedCount,
-    failedCount,
-    deferredCount,
-    incompleteCount: failedCount + deferredCount,
-  };
 }
