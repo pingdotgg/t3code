@@ -18,8 +18,10 @@ import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as Logger from "effect/Logger";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { assert, describe } from "vite-plus/test";
 
 import wireFixture from "../testFixtures/codexMultiAgentWire.json" with { type: "json" };
@@ -166,75 +168,80 @@ const peerPath = NodePath.join(
 );
 
 describe("CodexSessionRuntime collab integration", () => {
-  it.effect("looks up child model metadata once after activity registration", () =>
-    Effect.gen(function* () {
-      const script = {
-        rootThreadId: ROOT,
-        recordRequests: true,
-        notifications: [
-          capturedStartedActivity(),
-          capturedStartedActivity(),
-          {
-            ...capturedStartedActivity(CHILD_B),
-            params: {
-              ...capturedStartedActivity(CHILD_B).params,
-              item: { ...capturedStartedActivity(CHILD_B).params.item, kind: "interacted" },
+  for (const failuresBeforeSuccess of [0, 2]) {
+    it.live(
+      `reads child metadata after ${failuresBeforeSuccess} failures without duplicate lookups`,
+      () =>
+        Effect.gen(function* () {
+          const script = {
+            rootThreadId: ROOT,
+            recordRequests: true,
+            notifications: [
+              capturedStartedActivity(),
+              capturedStartedActivity(),
+              {
+                ...capturedStartedActivity(CHILD_B),
+                params: {
+                  ...capturedStartedActivity(CHILD_B).params,
+                  item: { ...capturedStartedActivity(CHILD_B).params.item, kind: "interacted" },
+                },
+              },
+              { method: "thread/closed", params: { threadId: CHILD_B } },
+              capturedSpawnedThread(ROOT),
+            ],
+            childResumeSnapshots: {
+              [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low", failuresBeforeSuccess },
             },
-          },
-          { method: "thread/closed", params: { threadId: CHILD_B } },
-          capturedSpawnedThread(ROOT),
-        ],
-        childResumeSnapshots: {
-          [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low" },
-        },
-      };
-      // @effect-diagnostics-next-line preferSchemaOverJson:off
-      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
-      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-      yield* Effect.addFinalizer(() =>
-        Effect.sync(() => {
-          NodeFS.rmSync(scriptPath, { force: true });
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
           NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-        }),
-      );
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              NodeFS.rmSync(scriptPath, { force: true });
+              NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+            }),
+          );
 
-      const runtime = yield* makeCodexSessionRuntime({
-        threadId: ThreadId.make("thread-collab-model-activity"),
-        binaryPath: peerPath,
-        cwd: NodeOS.tmpdir(),
-        runtimeMode: "full-access",
-        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
-      });
-      const metadataFiber = yield* runtime.events.pipe(
-        Stream.filter(
-          (event) =>
-            event.method === "collabAgent/metadataUpdated" &&
-            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
-        ),
-        Stream.take(1),
-        Stream.runCollect,
-        Effect.forkScoped,
-      );
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make("thread-collab-model-activity"),
+            binaryPath: peerPath,
+            cwd: NodeOS.tmpdir(),
+            runtimeMode: "full-access",
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+          const metadataFiber = yield* runtime.events.pipe(
+            Stream.filter(
+              (event) =>
+                event.method === "collabAgent/metadataUpdated" &&
+                (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+            ),
+            Stream.take(1),
+            Stream.runCollect,
+            Effect.forkScoped,
+          );
 
-      const session = yield* runtime.start();
-      assert.equal(session.model, "gpt-5.6-sol");
-      yield* runtime.sendTurn({ input: "start one child" });
-      const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
-      assert.deepInclude(metadataEvents[0]?.payload, {
-        agentThreadId: CHILD_A,
-        model: "gpt-5.6-luna",
-        effort: "low",
-      });
-      assert.deepEqual(readRecordedRequests(), [
-        {
-          method: "thread/resume",
-          params: { threadId: CHILD_A, excludeTurns: true },
-        },
-      ]);
+          const session = yield* runtime.start();
+          assert.equal(session.model, "gpt-5.6-sol");
+          yield* runtime.sendTurn({ input: "start one child" });
+          const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
+          assert.deepInclude(metadataEvents[0]?.payload, {
+            agentThreadId: CHILD_A,
+            model: "gpt-5.6-luna",
+            effort: "low",
+          });
+          assert.deepEqual(
+            readRecordedRequests(),
+            Array.from({ length: failuresBeforeSuccess + 1 }, () => ({
+              method: "thread/resume",
+              params: { threadId: CHILD_A, excludeTurns: true },
+            })),
+          );
 
-      yield* runtime.close;
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  );
+          yield* runtime.close;
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 
   it.effect("keeps child settings and reroutes newer than the resume snapshot", () =>
     Effect.gen(function* () {
@@ -341,6 +348,93 @@ describe("CodexSessionRuntime collab integration", () => {
       assert.equal(readRecordedRequests().length, 1);
 
       yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("does not retry metadata for a child that closed after the first failure", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        notifications: [capturedStartedActivity()],
+        childResumeSnapshots: {
+          [CHILD_A]: {
+            failuresBeforeSuccess: 1,
+            model: "gpt-6-astra",
+            reasoningEffort: "medium",
+            failureNotifications: [{ method: "thread/closed", params: { threadId: CHILD_A } }],
+          },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        }),
+      );
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-metadata-closed"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const closed = yield* runtime.events.pipe(
+        Stream.filter((event) => event.method === "collabAgent/closed"),
+        Stream.take(1),
+        Stream.runDrain,
+        Effect.forkScoped,
+      );
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "close before retry" });
+      yield* Fiber.join(closed);
+      yield* TestClock.adjust("1 second");
+      assert.equal(readRecordedRequests().length, 1);
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("stops after three failed metadata attempts and logs the failure", () =>
+    Effect.gen(function* () {
+      const failed = yield* Deferred.make<void>();
+      const logger = Logger.make<unknown, void>(({ message }) => {
+        const messages = Array.isArray(message) ? message : [message];
+        if (messages.includes("Failed to read Codex child model metadata after retries")) {
+          Deferred.doneUnsafe(failed, Effect.void);
+        }
+      });
+      yield* Effect.gen(function* () {
+        const script = {
+          rootThreadId: ROOT,
+          recordRequests: true,
+          notifications: [capturedStartedActivity(), capturedStartedActivity()],
+          childResumeSnapshots: { [CHILD_A]: { error: "child unavailable" } },
+        };
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+        NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => {
+            NodeFS.rmSync(scriptPath, { force: true });
+            NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+          }),
+        );
+        const runtime = yield* makeCodexSessionRuntime({
+          threadId: ThreadId.make("thread-collab-metadata-exhausted"),
+          binaryPath: peerPath,
+          cwd: NodeOS.tmpdir(),
+          runtimeMode: "full-access",
+          environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+        });
+        yield* runtime.start();
+        yield* runtime.sendTurn({ input: "complete while metadata is unavailable" });
+        yield* Deferred.await(failed);
+        assert.equal(readRecordedRequests().length, 3);
+        yield* runtime.close;
+      }).pipe(Effect.provide(Logger.layer([logger], { mergeWithExisting: false })));
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 

@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -1486,41 +1487,48 @@ export const makeCodexSessionRuntime = (
         return;
       }
 
-      // The child is already loaded. This rejoins it without starting a turn,
-      // and excludeTurns avoids loading or replaying its history.
-      yield* client.raw
-        .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
-        .pipe(
-          Effect.flatMap(decodeCodexChildResumeMetadata),
-          Effect.timeout("5 seconds"),
-          Effect.flatMap((response) =>
-            Effect.gen(function* () {
-              if (response.thread.id !== agentThreadId) {
-                return;
-              }
-              const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
-              const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
-              if (!child || metadata?.closed) {
-                return;
-              }
-              const model = nonEmptyMetadataValue(response.model);
-              const effort = nonEmptyMetadataValue(response.reasoningEffort);
-              const changed = yield* updateCollabChildMetadata(
-                agentThreadId,
-                {
-                  ...(model ? { model } : {}),
-                  ...(effort ? { effort } : {}),
-                },
-                false,
-              );
-              if (changed) {
-                yield* emitCollabChildMetadataUpdated(agentThreadId);
-              }
-            }),
-          ),
-          Effect.catch(() => Effect.void),
-          Effect.forkIn(runtimeScope),
+      // Registration can arrive before the child is ready to resume. Keep one
+      // bounded lookup per child, with retries for transient startup failures.
+      yield* Effect.gen(function* () {
+        const current = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+        if (current?.closed) {
+          return;
+        }
+        // Rejoin without starting a turn or replaying the child's history.
+        const response = yield* client.raw
+          .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
+          .pipe(Effect.flatMap(decodeCodexChildResumeMetadata), Effect.timeout("5 seconds"));
+        if (response.thread.id !== agentThreadId) {
+          return;
+        }
+        const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+        const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+        if (!child || metadata?.closed) {
+          return;
+        }
+        const model = nonEmptyMetadataValue(response.model);
+        const effort = nonEmptyMetadataValue(response.reasoningEffort);
+        const changed = yield* updateCollabChildMetadata(
+          agentThreadId,
+          {
+            ...(model ? { model } : {}),
+            ...(effort ? { effort } : {}),
+          },
+          false,
         );
+        if (changed) {
+          yield* emitCollabChildMetadataUpdated(agentThreadId);
+        }
+      }).pipe(
+        Effect.retry({ times: 2, schedule: Schedule.spaced("250 millis") }),
+        Effect.catch((cause) =>
+          Effect.logWarning("Failed to read Codex child model metadata after retries", {
+            agentThreadId,
+            cause,
+          }),
+        ),
+        Effect.forkIn(runtimeScope),
+      );
     });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>

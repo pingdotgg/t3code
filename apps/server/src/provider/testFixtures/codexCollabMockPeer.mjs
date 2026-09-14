@@ -18,6 +18,7 @@ const script = JSON.parse(NodeFS.readFileSync(process.env.T3_CODEX_COLLAB_SCRIPT
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
 let turnStartCount = 0;
 let activeTurn;
+const childResumeAttempts = new Map();
 
 const rl = NodeReadline.createInterface({ input: process.stdin });
 rl.on("line", (line) => {
@@ -78,6 +79,8 @@ rl.on("line", (line) => {
     }
     const threadId = message.params?.threadId;
     const childSnapshot = script.childResumeSnapshots?.[threadId];
+    const attempt = (childResumeAttempts.get(threadId) ?? 0) + 1;
+    childResumeAttempts.set(threadId, attempt);
     if (script.resumeRequestMarker) {
       write({
         jsonrpc: "2.0",
@@ -89,6 +92,13 @@ rl.on("line", (line) => {
       });
     }
     if (childSnapshot?.hang) {
+      return;
+    }
+    if (attempt <= (childSnapshot?.failuresBeforeSuccess ?? 0)) {
+      write({ id, error: { code: -32000, message: "child not yet available" } });
+      for (const notification of childSnapshot.failureNotifications ?? []) {
+        write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
+      }
       return;
     }
     if (childSnapshot?.error) {
