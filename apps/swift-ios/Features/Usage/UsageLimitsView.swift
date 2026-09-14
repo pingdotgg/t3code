@@ -127,20 +127,33 @@ struct UsageLimitsView: View {
                         Text("\(window.remainingPercent)% left").monospacedDigit()
                     }
                     .font(T3Typography.supporting)
-                    GeometryReader { geometry in
-                        ZStack(alignment: .leading) {
-                            Rectangle().fill(T3Colors.subtleStrong)
-                            Rectangle().fill(window.remainingPercent <= 10 ? T3Colors.danger : T3Colors.textPrimary)
-                                .frame(width: geometry.size.width * Double(window.remainingPercent) / 100)
+                    HStack(spacing: 3) {
+                        ForEach(Array(window.columns.enumerated()), id: \.offset) { index, accountWindow in
+                            VStack(alignment: .leading, spacing: 3) {
+                                GeometryReader { geometry in
+                                    if let accountWindow {
+                                        let remaining = UsageLimitsMath.remainingPercent(accountWindow)
+                                        ZStack(alignment: .leading) {
+                                            Rectangle().fill(T3Colors.subtleStrong)
+                                            Rectangle().fill(remaining <= 10 ? T3Colors.danger : T3Colors.textPrimary)
+                                                .frame(width: geometry.size.width * remaining / 100)
+                                        }
+                                    }
+                                }
+                                .frame(height: 6)
+                                Text(accountWindow.map { "\(index + 1): \(Int(UsageLimitsMath.remainingPercent($0)))%" } ?? "\(index + 1): N/A")
+                                    .font(.caption2)
+                                    .foregroundStyle(T3Colors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                            .frame(maxWidth: .infinity)
                         }
                     }
-                    .frame(height: 6)
-                    .accessibilityHidden(true)
                     HStack {
                         if let pace = window.pace { Text(pace.label) }
                         Spacer()
-                        if let reset = window.resets.first {
-                            Text("Next reset \(reset.at.formatted(date: .abbreviated, time: .shortened))")
+                        if let reset = window.resets.first(where: { $0.restoresPercent > 0 }) {
+                            Text("+\(reset.restoresPercent)% on \(reset.at.formatted(date: .abbreviated, time: .shortened))")
                         }
                     }
                     .font(.caption)
@@ -148,7 +161,7 @@ struct UsageLimitsView: View {
                 }
                 .accessibilityElement(children: .combine)
             }
-            ForEach(pool.accounts) { account in
+            ForEach(Array(pool.accounts.enumerated()), id: \.element.id) { index, account in
                 DisclosureGroup {
                     UsageLimitsAccountView(
                         driver: account.driver, instanceID: account.id,
@@ -169,8 +182,11 @@ struct UsageLimitsView: View {
                     }
                 } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        UsageAccountLabel(value: account.label)
-                            .font(T3Typography.control)
+                        HStack {
+                            Text("\(index + 1)")
+                            UsageAccountLabel(value: account.label)
+                        }
+                        .font(T3Typography.control)
                         Text(account.locationLabel)
                             .font(T3Typography.supporting)
                             .foregroundStyle(T3Colors.textSecondary)
