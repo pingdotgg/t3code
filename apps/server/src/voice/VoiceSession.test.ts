@@ -59,7 +59,7 @@ function harness(overrides: Partial<VoiceTransport> = {}) {
   let receive = (_value: unknown) => {};
   let closed = 0;
   const sent: unknown[] = [];
-  const dispatched: Array<{ id: string; prompt: string }> = [];
+  const dispatched: Array<{ threadId: ThreadId; id: string; prompt: string }> = [];
   const manager = makeVoiceSession({
     transport: {
       create: async () => ({ sessionId: "live-1", sdp: "answer" }),
@@ -86,8 +86,8 @@ function harness(overrides: Partial<VoiceTransport> = {}) {
       ...overrides,
     },
     context: async () => "Current thread: build fix. Existing permissions apply.",
-    dispatch: async (_threadId, id, prompt) => {
-      dispatched.push({ id, prompt });
+    dispatch: async (targetThreadId, id, prompt) => {
+      dispatched.push({ threadId: targetThreadId, id, prompt });
     },
   });
   return {
@@ -102,7 +102,7 @@ function harness(overrides: Partial<VoiceTransport> = {}) {
 }
 
 describe("voice session ownership and delegation", () => {
-  it("dispatches a delegation once with the spoken request and pinned thread context", async () => {
+  it("dispatches a delegation once to the pinned thread with the spoken request", async () => {
     const h = harness();
     await h.manager.start({ threadId, sdp: "offer" });
     h.receive(transcript);
@@ -111,7 +111,8 @@ describe("voice session ownership and delegation", () => {
     await h.manager.drain();
     expect(h.dispatched).toHaveLength(1);
     expect(h.dispatched[0]?.prompt).toContain("Please fix the failing build");
-    expect(h.dispatched[0]?.prompt).toContain("Current thread: build fix");
+    expect(h.dispatched[0]?.threadId).toBe(threadId);
+    expect(h.dispatched[0]?.prompt).not.toContain("Current thread: build fix");
     expect(h.sent).toContainEqual(
       expect.objectContaining({ type: "session.thinking.append", delegation_id: "delegation-1" }),
     );
