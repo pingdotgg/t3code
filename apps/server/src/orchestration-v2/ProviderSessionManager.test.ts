@@ -398,6 +398,7 @@ function makeTestLayer(input: {
   ) => ReturnType<ProviderAdapterV2SessionRuntime["resumeThread"]>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly fileSystemLayer?: Layer.Layer<FileSystem.FileSystem>;
   readonly extraAdapters?: ReadonlyArray<ProviderAdapterV2Shape>;
 }) {
   const mcpRegistryLayer = input.mcpRegistryLayer ?? TestMcpRegistryLayer;
@@ -447,6 +448,7 @@ function makeTestLayer(input: {
           TestStoresLayer,
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
+          ...(input.fileSystemLayer === undefined ? [] : [input.fileSystemLayer]),
         ),
       ),
     ),
@@ -8279,6 +8281,40 @@ it.effect("ProviderSessionManagerV2 shutdown joins a session release already in 
   }),
 );
 
+it.effect("ProviderSessionManagerV2 shutdown releases wedged sessions concurrently", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const hangClose = yield* Deferred.make<void>();
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const a = yield* makeThreadSessionFixture(ThreadId.make("thread-shutdown-concurrent-a"));
+      const b = yield* makeThreadSessionFixture(ThreadId.make("thread-shutdown-concurrent-b"));
+      const aId = yield* a.allocate;
+      yield* a.open(aId);
+      const bId = yield* b.allocate;
+      yield* b.open(bId);
+
+      const stopping = yield* manager.shutdown.pipe(Effect.exit, Effect.forkChild);
+      // Both scope closes park on the shared gate; each release is bounded
+      // at 30s. Sequential release would stack the bounds (60s+ here);
+      // concurrent release settles at the single bound.
+      yield* TestClock.adjust("30 seconds");
+      yield* Effect.yieldNow;
+      const exit = stopping.pollUnsafe();
+      assert.isTrue(exit !== undefined && Exit.isSuccess(exit));
+    }).pipe(
+      Effect.ensuring(Deferred.succeed(hangClose, undefined)),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          hangSessionScopeClose: hangClose,
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 bounds the detach wait on a stalled in-flight attach", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -8948,6 +8984,65 @@ it.effect("ProviderSessionManagerV2 an interrupted startup cannot strand the ope
       ),
     );
   }),
+);
+
+it.effect("ProviderSessionManagerV2 close joins an open still resolving its workspace", () =>
+  Effect.gen(function* () {
+    const realFileSystem = yield* FileSystem.FileSystem;
+    const root = yield* realFileSystem.makeTempDirectoryScoped();
+    const cwd = `${root}/workspace`;
+    yield* realFileSystem.makeDirectory(cwd);
+    const statEntered = yield* Deferred.make<void>();
+    const statRelease = yield* Deferred.make<void>();
+    const gatedFileSystem = new Proxy(realFileSystem, {
+      get: (target, property, receiver) =>
+        property === "stat"
+          ? (path: string) =>
+              path === cwd
+                ? Deferred.succeed(statEntered, undefined).pipe(
+                    Effect.andThen(Deferred.await(statRelease)),
+                    Effect.andThen(target.stat(path)),
+                  )
+                : target.stat(path)
+          : Reflect.get(target, property, receiver),
+    });
+    const state = yield* Ref.make(emptyState);
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const threadId = ThreadId.make("thread-close-during-workspace-stat");
+      const { allocate } = yield* makeThreadSessionFixture(threadId);
+      const providerSessionId = yield* allocate;
+      const opening = yield* manager
+        .open({
+          providerSessionId,
+          threadId,
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd },
+        })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(statEntered);
+      const closing = yield* manager.close(providerSessionId).pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+      // The startup record is registered before the workspace stat, so the
+      // close marks it and joins its unwind — it cannot complete while the
+      // open is still parked. When the stat resolves, the marked record
+      // fences the spawn and the unwind settles the close.
+      assert.isTrue(closing.pollUnsafe() === undefined);
+      yield* Deferred.succeed(statRelease, undefined);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(closing)));
+      assert.equal((yield* Fiber.join(opening))._tag, "Failure");
+      assert.isTrue(Option.isNone(yield* manager.get(providerSessionId)));
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          fileSystemLayer: Layer.succeed(FileSystem.FileSystem, gatedFileSystem),
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
 );
 
 it.effect("ProviderSessionManagerV2 closeInstance joins only its own unfinished sweeps", () =>
