@@ -28,6 +28,19 @@ const THREAD_HISTORY_DROPPABLE_KEY_PATHS_ANY: ReadonlyArray<readonly string[]> =
   ["questionAnswer", "attachmentsByQuestionId"],
 ];
 
+// Interactive arrays whose members each carry required structure — dropping a
+// question, approval option, or plan step silently changes what the user is
+// asked or shown, so these keep every member and let string truncation carry
+// the budget. A preserved array's floor may exceed the row cap; the stored
+// input already bounds it, and the skeleton stays decode-safe over budget.
+const THREAD_HISTORY_PRESERVE_MEMBER_PATHS: Readonly<
+  Record<string, ReadonlyArray<readonly string[]>>
+> = {
+  approval_request: [["options"]],
+  todo_list: [["steps"]],
+  user_input_request: [["questions"], ["questions", "options"]],
+};
+
 // Strings never truncate below this floor: union discriminators, branded ids,
 // enum values and timestamps are all short, and a truncated discriminator
 // fails schema decode while a truncated long-form string still decodes. A
@@ -92,8 +105,11 @@ type CompactionPolicy = {
   readonly droppableKeys: boolean;
   /** Member is identity-named — its string value must survive verbatim. */
   readonly preserveString: boolean;
+  /** This array is interactive structure — keep every member regardless of budget. */
+  readonly preserveMembers: boolean;
   readonly untypedPaths: ReadonlyArray<readonly string[]>;
   readonly droppablePaths: ReadonlyArray<readonly string[]>;
+  readonly preservePaths: ReadonlyArray<readonly string[]>;
   /**
    * Memoized serialized sizes for *input* subtrees. Budget retries and
    * iterated passes re-measure the same input nodes — deep recursive payloads
@@ -116,6 +132,54 @@ const memberPaths = (paths: ReadonlyArray<readonly string[]>, key: string) =>
 
 const pathEndsHere = (paths: ReadonlyArray<readonly string[]>, key: string) =>
   paths.some((path) => path.length === 1 && path[0] === key);
+
+// The smallest a subtree can compact to: strings stop at the string floor
+// (identity members never shrink at all), objects keep every key, and array
+// members all count — measuring the floor never drops a member the way the
+// budgeting pass can. Used to decide whether an array keeps every member.
+const floorSerializedBytes = (policy: CompactionPolicy, value: unknown): number => {
+  if (typeof value === "string") {
+    if (policy.preserveString) return serializedJsonBytes(value);
+    return (
+      Math.min(Buffer.byteLength(value, "utf8"), THREAD_HISTORY_COMPACTED_STRING_FLOOR_BYTES) + 2
+    );
+  }
+  if (value === null || typeof value !== "object") return serializedJsonBytes(value);
+  if (
+    !Array.isArray(value) &&
+    Object.getPrototypeOf(value) !== Object.prototype &&
+    Object.getPrototypeOf(value) !== null
+  ) {
+    return serializedJsonBytes(value);
+  }
+  if (Array.isArray(value)) {
+    const elementPolicy = policy.untyped ? policy : { ...policy, droppableKeys: false };
+    return value.reduce(
+      (total, element) => total + 8 + floorSerializedBytes(elementPolicy, element),
+      2,
+    );
+  }
+  let total = 2;
+  for (const [key, member] of Object.entries(value)) {
+    total +=
+      8 +
+      Buffer.byteLength(key, "utf8") +
+      floorSerializedBytes(
+        {
+          untyped: policy.untyped || pathEndsHere(policy.untypedPaths, key),
+          droppableKeys: pathEndsHere(policy.droppablePaths, key),
+          preserveString: isIdentityMemberKey(key),
+          preserveMembers: pathEndsHere(policy.preservePaths, key),
+          untypedPaths: memberPaths(policy.untypedPaths, key),
+          droppablePaths: memberPaths(policy.droppablePaths, key),
+          preservePaths: memberPaths(policy.preservePaths, key),
+          sizes: policy.sizes,
+        },
+        member,
+      );
+  }
+  return total;
+};
 
 /**
  * Bounds one over-cap payload member for the bounded-window path. Shape is
@@ -177,17 +241,32 @@ const compactProjectedHistoryValue = (
   if (Array.isArray(value)) {
     const members: unknown[] = [];
     let cumulativeBytes = 0;
-    for (const element of value) {
-      // Each element gets the budget that remains for it. Members inside the
-      // element compact toward that same budget, so a near-budget element can
-      // still overflow by its own keys and fixed skeleton — shrink the
+    // Greedy first-come budgeting lets head members spend the whole budget and
+    // drops identical tail members a fair share would have kept — a pending
+    // user_input_request loses questions its compacted form could afford.
+    // When every member's floor fits the budget, all members survive and split
+    // the slack; tail members only drop when the floors genuinely overflow.
+    const floorSizes = value.map((element) =>
+      floorSerializedBytes(policy.untyped ? policy : { ...policy, droppableKeys: false }, element),
+    );
+    const floorTotal = floorSizes.reduce((total, size) => total + 8 + size, 0);
+    const keepAll = policy.preserveMembers || floorTotal <= maxBytes;
+    const slack =
+      keepAll && !policy.preserveMembers && value.length > 0
+        ? (maxBytes - floorTotal) / value.length
+        : 0;
+    for (const [index, element] of value.entries()) {
+      // Each element gets the budget that remains for it — or its floor plus
+      // an equal slack share when all members are being kept. Members inside
+      // the element compact toward that same budget, so a near-budget element
+      // can still overflow by its own keys and fixed skeleton — shrink the
       // element's budget until it fits, and drop it (plus the tail) when its
       // skeleton alone is over. That is what finally bounds self-similar
       // chains like nested accessibility nodes.
       const remaining = maxBytes - cumulativeBytes - 8;
-      if (remaining <= 0) break;
+      if (remaining <= 0 && !keepAll) break;
       const elementPolicy = policy.untyped ? policy : { ...policy, droppableKeys: false };
-      let elementBudget = remaining;
+      let elementBudget = keepAll ? Math.max(1, Math.floor(floorSizes[index]! + slack)) : remaining;
       let compacted = compactProjectedHistoryValue(
         element,
         elementPolicy,
@@ -195,12 +274,13 @@ const compactProjectedHistoryValue = (
         depth + 1,
       );
       let elementBytes = serializedJsonBytes(compacted);
-      while (elementBytes > remaining && elementBudget > 1) {
+      const elementCap = keepAll ? maxBytes - cumulativeBytes - 8 : remaining;
+      while (elementBytes > elementBudget && elementBudget > 1) {
         elementBudget = Math.max(1, Math.floor(elementBudget / 4));
         compacted = compactProjectedHistoryValue(element, elementPolicy, elementBudget, depth + 1);
         elementBytes = serializedJsonBytes(compacted);
       }
-      if (elementBytes > remaining) break;
+      if (elementBytes > elementCap && !policy.preserveMembers) break;
       cumulativeBytes += 8 + elementBytes;
       members.push(compacted);
     }
@@ -219,8 +299,10 @@ const compactProjectedHistoryValue = (
         untyped: policy.untyped || pathEndsHere(policy.untypedPaths, key),
         droppableKeys: pathEndsHere(policy.droppablePaths, key),
         preserveString: isIdentityMemberKey(key),
+        preserveMembers: pathEndsHere(policy.preservePaths, key),
         untypedPaths: memberPaths(policy.untypedPaths, key),
         droppablePaths: memberPaths(policy.droppablePaths, key),
+        preservePaths: memberPaths(policy.preservePaths, key),
         sizes: policy.sizes,
       },
       maxBytes,
@@ -239,6 +321,7 @@ const compactProjectedHistoryPayloadWithSizes = (
     ...THREAD_HISTORY_UNTYPED_PATHS_ANY,
     ...(THREAD_HISTORY_UNTYPED_PATHS[payload.type as string] ?? []),
   ];
+  const preservePaths = THREAD_HISTORY_PRESERVE_MEMBER_PATHS[payload.type as string] ?? [];
   const compacted: Record<string, unknown> = {};
   for (const [key, member] of Object.entries(payload)) {
     compacted[key] = compactProjectedHistoryValue(
@@ -247,8 +330,10 @@ const compactProjectedHistoryPayloadWithSizes = (
         untyped: pathEndsHere(untypedPaths, key),
         droppableKeys: pathEndsHere(THREAD_HISTORY_DROPPABLE_KEY_PATHS_ANY, key),
         preserveString: isIdentityMemberKey(key),
+        preserveMembers: pathEndsHere(preservePaths, key),
         untypedPaths: memberPaths(untypedPaths, key),
         droppablePaths: memberPaths(THREAD_HISTORY_DROPPABLE_KEY_PATHS_ANY, key),
+        preservePaths: memberPaths(preservePaths, key),
         sizes,
       },
       maxBytes,
