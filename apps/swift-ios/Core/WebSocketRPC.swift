@@ -510,6 +510,7 @@ public actor WebSocketRPCClient {
     }
 
     private func requestRaw(_ tag: String, payload: JSONValue) async throws -> JSONValue {
+        try Task.checkCancellation()
         start()
         let id = allocateRequestID()
         let envelope = RPCRequestEnvelope(
