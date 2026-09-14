@@ -213,7 +213,7 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
       "Receiving objects:  40% (4/10), 1.00 MiB | 2.00 MiB/s",
       "Receiving objects: 100% (10/10), 2.50 MiB | 2.00 MiB/s, done.",
       "fatal: early EOF",
-      "fatal: unable to access 'https://user:s3cret@github.com/octocat/t3code.git/': could not resolve host",
+      "fatal: unable to access 'https://user:s3c@ret@github.com/octocat/t3code.git/': could not resolve host",
     ];
     const error = yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
@@ -287,6 +287,52 @@ it.effect("strips embedded credentials from the remote URL it reports", () =>
     assert.equal(result.remoteUrl, "https://github.com/octocat/t3code.git");
     // Git itself still receives the credentials.
     assert.equal(result.cloneUrl, "https://user:s3cret@github.com/octocat/t3code.git");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("discards only a directory git wrote to", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-discard-" });
+    const partial = path.join(parent, "partial");
+    yield* fs.makeDirectory(path.join(partial, ".git"), { recursive: true });
+    yield* fs.writeFileString(path.join(partial, "README.md"), "half");
+    const foreign = path.join(parent, "foreign");
+    yield* fs.makeDirectory(foreign);
+    yield* fs.writeFileString(path.join(foreign, "notes.txt"), "mine");
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.discardClone(partial);
+      const error = yield* Effect.flip(service.discardClone(foreign));
+      assert.include(error.detail, "not from the clone");
+    }).pipe(Effect.provide(makeLayer({})));
+
+    // The partial clone is emptied but its directory (the workspace root) stays.
+    assert.deepStrictEqual(yield* fs.readDirectory(partial), []);
+    assert.deepStrictEqual(yield* fs.readDirectory(foreign), ["notes.txt"]);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("redacts query tokens and userinfo containing '@' from reported URLs", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-redact2-" });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const query = yield* service.prepareClone({
+        remoteUrl: "https://github.com/octocat/t3code.git?access_token=s3cret",
+        destinationPath: path.join(parent, "a"),
+      });
+      assert.equal(query.remoteUrl, "https://github.com/octocat/t3code.git");
+      const nested = yield* service.prepareClone({
+        remoteUrl: "https://user:pa@rt@github.com/octocat/t3code.git",
+        destinationPath: path.join(parent, "b"),
+      });
+      assert.equal(nested.remoteUrl, "https://github.com/octocat/t3code.git");
+    }).pipe(Effect.provide(makeLayer({})));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 

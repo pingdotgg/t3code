@@ -118,16 +118,22 @@ function toRepositoryInfo(
 function redactRemoteUrl(remoteUrl: string): string {
   try {
     const url = new URL(remoteUrl);
-    if (url.username.length === 0 && url.password.length === 0) return remoteUrl;
+    // Clone URLs have no legitimate query; when one is present it is a token.
+    if (url.username.length === 0 && url.password.length === 0 && url.search.length === 0) {
+      return remoteUrl;
+    }
     url.username = "";
     url.password = "";
+    url.search = "";
     return url.toString();
   } catch {
     return remoteUrl;
   }
 }
 
-const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi;
+// Userinfo may itself contain `@`; everything up to the last one before the
+// host boundary goes.
+const URL_WITH_USERINFO = /\b([a-z][a-z0-9+.-]*:\/\/)[^\s/]+@/gi;
 
 /** Drops `user:token@` from any URL embedded in free text. */
 function redactUrlCredentials(text: string): string {
@@ -334,6 +340,19 @@ export const make = Effect.gen(function* () {
     destinationPath: string,
   ) {
     const normalized = yield* normalizeDestinationPath(destinationPath);
+    // Only what git left behind may go. The destination was empty when the
+    // clone started, so anything without a `.git` inside was put there by
+    // someone else since; refuse rather than delete their files.
+    const entries = yield* fileSystem
+      .readDirectory(normalized)
+      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    if (entries.length > 0 && !entries.includes(".git")) {
+      return yield* new SourceControlRepositoryError({
+        operation: "discardClone",
+        provider: "unknown",
+        detail: "Destination path contains files that are not from the clone.",
+      });
+    }
     // The directory itself is the project's workspace root and must stay;
     // only git's partial contents go. An interrupted git may still be closing
     // files, so removal retries briefly.
