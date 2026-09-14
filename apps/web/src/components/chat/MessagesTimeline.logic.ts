@@ -6,6 +6,10 @@ import {
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  formatThinkingSegmentLabel,
+  isReasoningSegmentEntry,
+  reasoningHasVisibleText,
+  reasoningSegmentSpanForEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
@@ -55,7 +59,9 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   const toolPresentation = resolveWorkEntryToolPresentation(entry);
   if (toolPresentation) return toolPresentation.displayName;
   if (entry.command) return entry.command;
-  if (entry.detail) return entry.detail;
+  // Readable reasoning uses reasoning-markdown rows; never promote detail to
+  // the Thought/tool label.
+  if (entry.detail && !isReasoningSegmentEntry(entry)) return entry.detail;
   const [firstPath] = entry.changedFiles ?? [];
   if (firstPath) {
     const path = formatWorkspaceRelativePath(firstPath, workspaceRoot);
@@ -72,6 +78,11 @@ export function liveWorkEntryLabel(
   workspaceRoot: string | undefined,
   active: boolean,
 ) {
+  // Structural thoughts stay labeled "Thinking"; readable text uses the
+  // reasoning-markdown row instead of this label path.
+  if (isReasoningSegmentEntry(entry)) {
+    return "Thinking";
+  }
   const status = liveActivityToolStatus(entry.toolLifecycleStatus, active);
   const toolPresentation = resolveWorkEntryToolPresentation({
     ...entry,
@@ -400,6 +411,17 @@ export type MessagesTimelineRow =
       id: string;
       createdAt: string | null;
       snapshot: WorktreeSetupSnapshot;
+    }
+  | {
+      /**
+       * Provider-supplied readable reasoning rendered as chronological
+       * Markdown (Codex-style), not a Thought-for-Xs accordion.
+       */
+      kind: "reasoning-markdown";
+      id: string;
+      createdAt: string;
+      text: string;
+      streaming: boolean;
     };
 
 export interface StableMessagesTimelineRowsState {
@@ -940,6 +962,13 @@ export function deriveMessagesTimelineRows(input: {
     ) {
       break;
     }
+    const laterEntry = activeToolEntries[0]?.entry;
+    if (
+      laterEntry &&
+      isReasoningSegmentEntry(entry.entry) !== isReasoningSegmentEntry(laterEntry)
+    ) {
+      break;
+    }
     activeToolEntries.unshift(entry);
   }
   const visibleActiveToolEntries = omitSupersededLifecycleMarkers(
@@ -970,7 +999,13 @@ export function deriveMessagesTimelineRows(input: {
           !workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry))));
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
-    activeWorkAnchor && latestVisibleToolEntry && !latestToolFailed
+    activeWorkAnchor &&
+    latestVisibleToolEntry &&
+    !latestToolFailed &&
+    !(
+      isReasoningSegmentEntry(latestVisibleToolEntry.entry) &&
+      latestVisibleToolEntry.entry.toolLifecycleStatus !== "inProgress"
+    )
       ? (() => {
           const groupId = workGroupId(activeWorkAnchor.id, activeWorkAnchor.entry);
           return {
@@ -988,8 +1023,48 @@ export function deriveMessagesTimelineRows(input: {
         })()
       : null;
   const activeWorkEntryIds = new Set(
-    activeWorkRow !== null || latestToolFailed ? activeToolEntries.map((entry) => entry.id) : [],
+    activeWorkRow !== null || latestToolFailed
+      ? activeToolEntries
+          .filter(
+            ({ entry }) =>
+              !isReasoningSegmentEntry(entry) || entry.toolLifecycleStatus === "inProgress",
+          )
+          .map((entry) => entry.id)
+      : [],
   );
+  // Only the latest open reasoning entry in the unsettled turn may be live;
+  // terminal siblings suppress stale updates delivered out of order.
+  const liveReasoningWorkEntryId = (() => {
+    if (!input.isWorking || unsettledTurnId === null) return null;
+    const terminalReasoningIds = new Set<string>();
+    for (const timelineEntry of input.timelineEntries) {
+      if (timelineEntry.kind !== "work") continue;
+      const entry = timelineEntry.entry;
+      if (entry.turnId !== unsettledTurnId || !isReasoningSegmentEntry(entry)) continue;
+      if (
+        entry.toolLifecycleStatus !== undefined &&
+        entry.toolLifecycleStatus !== "inProgress" &&
+        entry.toolCallId !== undefined
+      ) {
+        terminalReasoningIds.add(entry.toolCallId);
+      }
+    }
+    let designated: string | null = null;
+    for (const timelineEntry of input.timelineEntries) {
+      if (timelineEntry.kind !== "work") continue;
+      const entry = timelineEntry.entry;
+      if (!isReasoningSegmentEntry(entry)) continue;
+      if (entry.turnId !== unsettledTurnId) continue;
+      if (entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress") {
+        designated = null;
+        continue;
+      }
+      if (entry.toolLifecycleStatus !== "inProgress") continue;
+      if (entry.toolCallId !== undefined && terminalReasoningIds.has(entry.toolCallId)) continue;
+      designated = entry.id;
+    }
+    return designated;
+  })();
   const appendWorkingRow = () => {
     const latestUserMessage = input.timelineEntries[lastUserMessageIndex(input.timelineEntries)];
     const visualResponseStartedAt =
@@ -1104,6 +1179,23 @@ export function deriveMessagesTimelineRows(input: {
         ) {
           break;
         }
+        // A thinking segment ends the tool group before it: thought and
+        // action stay in separate compact rows instead of one giant pile.
+        // Distinct thoughts split too, so a superseded thought renders
+        // statically beside the live one instead of hiding inside it.
+        const previousEntry = groupedEntries[groupedEntries.length - 1]!;
+        const previousReasoning = isReasoningSegmentEntry(previousEntry);
+        const nextReasoning = isReasoningSegmentEntry(nextEntry.entry);
+        if (previousReasoning !== nextReasoning) {
+          break;
+        }
+        if (
+          previousReasoning &&
+          nextReasoning &&
+          previousEntry.toolCallId !== nextEntry.entry.toolCallId
+        ) {
+          break;
+        }
         groupedEntries.push(nextEntry.entry);
         cursor += 1;
       }
@@ -1115,7 +1207,12 @@ export function deriveMessagesTimelineRows(input: {
       );
       if (visibleGroupedEntries.length > 0) {
         const activeInProgressToolEntries = visibleGroupedEntries.filter(workEntryIsInActiveRun);
-        if (activeInProgressToolEntries.length > 0) {
+        // Reasoning groups take the designated-live branch below: entry-level
+        // in-progress status alone must never animate a superseded thought.
+        if (
+          activeInProgressToolEntries.length > 0 &&
+          !visibleGroupedEntries.every(isReasoningSegmentEntry)
+        ) {
           const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
           const expanded = input.expandedWorkGroupIds?.has(groupId) ?? false;
           const latestActiveToolEntry = activeInProgressToolEntries.at(-1)!;
@@ -1134,6 +1231,64 @@ export function deriveMessagesTimelineRows(input: {
             nextRows.push(
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
             );
+          }
+        } else if (visibleGroupedEntries.every(isReasoningSegmentEntry)) {
+          // One live thought per turn at most: the designated open segment
+          // animates while every other thought renders statically beside it.
+          // Text-bearing segments render as chronological Markdown (no Thought
+          // accordion). Boundary-only segments keep Thinking / Thought for Xs.
+          const liveEntry =
+            activeWorkRow?.active === true
+              ? undefined
+              : visibleGroupedEntries.find((entry) => entry.id === liveReasoningWorkEntryId);
+          for (const entry of visibleGroupedEntries) {
+            const span = reasoningSegmentSpanForEntry(entry);
+            const text = entry.detail?.trim() ?? "";
+            const isLive = liveEntry !== undefined && entry.id === liveEntry.id;
+            if (reasoningHasVisibleText(entry) && text.length > 0) {
+              // Stable across streaming lifecycle merges: turn + reasoning identity,
+              // not the transient activity/event id that changes on every update.
+              const reasoningIdentity =
+                entry.toolCallId !== undefined
+                  ? `${entry.turnId ?? timelineEntry.id}:${entry.toolCallId}`
+                  : `${timelineEntry.id}:${entry.id}`;
+              nextRows.push({
+                kind: "reasoning-markdown",
+                id: `reasoning-markdown:${reasoningIdentity}`,
+                createdAt: span.startedAt ?? entry.createdAt,
+                text,
+                streaming: isLive,
+              });
+              if (isLive) {
+                hasActivityRow = true;
+              }
+              continue;
+            }
+            if (isLive) {
+              const groupId = workGroupId(timelineEntry.id, timelineEntry.entry);
+              nextRows.push({
+                kind: "work-live",
+                id: `work-live:${workGroupIdentity(timelineEntry.id, timelineEntry.entry)}`,
+                createdAt: timelineEntry.createdAt,
+                entry: liveEntry!,
+                groupedEntries: visibleGroupedEntries.filter(
+                  (candidate) => candidate.id === entry.id,
+                ),
+                groupId,
+                expanded: false,
+                active: true,
+              });
+              hasActivityRow = true;
+              continue;
+            }
+            nextRows.push({
+              kind: "work",
+              id: `thinking-segment:${timelineEntry.id}:${entry.id}`,
+              createdAt: span.startedAt ?? entry.createdAt,
+              groupedEntries: [entry],
+              isExpandedToolGroup: false,
+              displayLabel: formatThinkingSegmentLabel(span),
+            });
           }
         } else if (
           visibleGroupedEntries.length === 1 &&
@@ -1404,6 +1559,11 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === (b as typeof a).createdAt;
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
+
+    case "reasoning-markdown": {
+      const br = b as typeof a;
+      return a.createdAt === br.createdAt && a.text === br.text && a.streaming === br.streaming;
+    }
 
     case "assistant-meta": {
       const bm = b as typeof a;

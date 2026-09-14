@@ -10,6 +10,7 @@ import {
   ThreadId,
   TurnId,
   type OrchestrationThread,
+  type OrchestrationThreadActivity,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import {
@@ -39,6 +40,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
+  deriveWorkLogEntries,
   type WorkLogEntry,
   type TimelineEntriesProjection,
 } from "../../session-logic";
@@ -3353,5 +3355,609 @@ describe("computeStableMessagesTimelineRows", () => {
 
     expect(reordered).not.toBe(initial);
     expect(reordered.result).toEqual([initial.result[1], initial.result[0]]);
+  });
+});
+
+describe("reasoning segments", () => {
+  const turnId = TurnId.make("segment-turn");
+  const time = (second: number) => new Date(Date.UTC(2026, 8, 8, 0, 0, second)).toISOString();
+  const thinkingActivity = (
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    second: number,
+    toolCallId = id,
+    activityTurnId = turnId,
+  ): OrchestrationThreadActivity =>
+    ({
+      id: EventId.make(id),
+      tone: "tool",
+      kind,
+      summary: "Thinking",
+      payload: {
+        itemType: "reasoning",
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: "Thinking",
+      },
+      turnId: activityTurnId,
+      createdAt: time(second),
+    }) as unknown as OrchestrationThreadActivity;
+  const toolActivity = (id: string, second: number, command = "git status") =>
+    ({
+      id: EventId.make(id),
+      tone: "tool",
+      kind: "tool.completed",
+      summary: "Ran command",
+      payload: {
+        itemType: "command_execution",
+        toolCallId: `call-${id}`,
+        status: "completed",
+        title: "Ran command",
+        command,
+      },
+      turnId,
+      createdAt: time(second),
+    }) as unknown as OrchestrationThreadActivity;
+  const toolLifecycleActivity = (
+    id: string,
+    toolCallId: string,
+    kind: "tool.updated" | "tool.completed",
+    second: number,
+  ) =>
+    ({
+      ...toolActivity(id, second),
+      kind,
+      payload: {
+        itemType: "command_execution",
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: kind === "tool.completed" ? "Ran command" : "Running command",
+        command: "git status",
+      },
+    }) as unknown as OrchestrationThreadActivity;
+  const userMessage: ChatMessage = {
+    id: MessageId.make("segment-user"),
+    role: "user",
+    text: "Inspect",
+    turnId: null,
+    createdAt: time(0),
+    updatedAt: time(0),
+    streaming: false,
+  };
+  const assistantMessage = (id: string, second: number, streaming = false): ChatMessage => ({
+    id: MessageId.make(id),
+    role: "assistant",
+    text: "Noted",
+    turnId,
+    createdAt: time(second),
+    updatedAt: time(second),
+    streaming,
+  });
+  const settledInput = (work: WorkLogEntry[], expanded = true) => ({
+    timelineEntries: deriveTimelineEntries([], [], work),
+    latestTurn: { turnId, state: "completed" as const, startedAt: time(0), completedAt: time(30) },
+    isWorking: false,
+    activeTurnStartedAt: null,
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+    ...(expanded ? { expandedTurnIds: new Set([turnId]) } : {}),
+  });
+  const liveInput = (messages: ChatMessage[], work: WorkLogEntry[]) => ({
+    timelineEntries: deriveTimelineEntries(messages, [], work),
+    latestTurn: { turnId, state: "running" as const, startedAt: time(0), completedAt: null },
+    runningTurnId: turnId,
+    isWorking: true,
+    activeTurnStartedAt: time(0),
+    turnDiffSummaries: [],
+    supportsConversationRollback: false,
+  });
+
+  it("splits tool groups at thinking boundaries instead of one giant pile", () => {
+    const work = deriveWorkLogEntries([
+      thinkingActivity("thought-1-updated", "tool.updated", 0, "thought-1"),
+      thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"),
+      toolActivity("tool-1", 5),
+      toolActivity("tool-2", 6),
+      toolActivity("tool-3", 7),
+      thinkingActivity("thought-2-updated", "tool.updated", 8, "thought-2"),
+      thinkingActivity("thought-2-completed", "tool.completed", 15, "thought-2"),
+      toolActivity("tool-4", 16),
+      toolActivity("tool-5", 17),
+    ]);
+    // Lifecycle pairs merge regardless of adjacency, so interleaved tools
+    // can never split a thought's timing.
+    expect(work).toHaveLength(7);
+    const rows = deriveMessagesTimelineRows(settledInput(work));
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "turn-fold",
+      "work",
+      "work-toggle",
+      "work",
+      "work-toggle",
+    ]);
+    expect(
+      rows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 4.0s", "Ran 3 commands", "Thought for 7.0s", "Ran 2 commands"]);
+  });
+
+  it("renders text-bearing reasoning as inline markdown between tools while live", () => {
+    const textA = "The user wants to know their opencode version.";
+    const textB = "I should run the command to check.";
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const work = deriveWorkLogEntries([
+      withDetail(thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"), textA),
+      withDetail(thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"), textA),
+      toolActivity("tool-1", 5),
+      toolActivity("tool-2", 6),
+      withDetail(thinkingActivity("thought-2-updated", "tool.updated", 7, "thought-2"), textB),
+    ]);
+    const rows = deriveMessagesTimelineRows(
+      liveInput([userMessage, assistantMessage("live-commentary", 8, true)], work),
+    );
+
+    expect(
+      rows
+        .filter(
+          (row) =>
+            row.kind === "reasoning-markdown" ||
+            row.kind === "work" ||
+            row.kind === "work-toggle" ||
+            row.kind === "work-live",
+        )
+        .map((row) => {
+          if (row.kind === "reasoning-markdown") {
+            return { kind: row.kind, text: row.text, streaming: row.streaming };
+          }
+          if (row.kind === "work") return { kind: row.kind, label: row.displayLabel };
+          if (row.kind === "work-toggle") return { kind: row.kind, label: row.summary };
+          return { kind: row.kind, label: "live" };
+        }),
+    ).toEqual([
+      { kind: "reasoning-markdown", text: textA, streaming: false },
+      { kind: "work-toggle", label: "Ran 2 commands" },
+      { kind: "reasoning-markdown", text: textB, streaming: true },
+    ]);
+    expect(rows.some((row) => row.kind === "work" && row.displayLabel?.startsWith("Thought"))).toBe(
+      false,
+    );
+  });
+
+  it("keeps a stable reasoning-markdown row id across streaming updates", () => {
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const rowsFor = (activities: OrchestrationThreadActivity[]) =>
+      deriveMessagesTimelineRows(
+        liveInput(
+          [userMessage, assistantMessage("live-commentary", 8, true)],
+          deriveWorkLogEntries(activities),
+        ),
+      );
+    const first = rowsFor([
+      withDetail(thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"), "Start"),
+    ]);
+    const second = rowsFor([
+      withDetail(thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"), "Start"),
+      withDetail(thinkingActivity("thought-1-b", "tool.updated", 2, "thought-1"), " middle"),
+      withDetail(thinkingActivity("thought-1-c", "tool.updated", 3, "thought-1"), " end"),
+    ]);
+    const firstRow = first.find((row) => row.kind === "reasoning-markdown");
+    const secondRow = second.find((row) => row.kind === "reasoning-markdown");
+    expect(firstRow).toMatchObject({
+      kind: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start",
+      streaming: true,
+    });
+    expect(secondRow).toMatchObject({
+      kind: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start middle end",
+      streaming: true,
+    });
+    expect(secondRow?.id).toBe(firstRow?.id);
+  });
+
+  it("folds text-bearing reasoning into one Worked-for turn fold when settled", () => {
+    const text =
+      "The user wants to know their opencode version. I should run the command to check.";
+    const withDetail = (
+      activity: OrchestrationThreadActivity,
+      detail: string,
+    ): OrchestrationThreadActivity =>
+      ({
+        ...activity,
+        payload: {
+          ...(activity.payload as Record<string, unknown>),
+          detail,
+        },
+      }) as OrchestrationThreadActivity;
+    const work = deriveWorkLogEntries([
+      withDetail(thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"), text),
+      withDetail(thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"), text),
+      toolActivity("tool-1", 5),
+      toolActivity("tool-2", 6),
+      withDetail(
+        thinkingActivity("thought-2-updated", "tool.updated", 7, "thought-2"),
+        "Next step.",
+      ),
+      withDetail(
+        thinkingActivity("thought-2-completed", "tool.completed", 10, "thought-2"),
+        "Next step.",
+      ),
+    ]);
+    const terminal = assistantMessage("segment-final", 12);
+    const timelineEntries = deriveTimelineEntries([userMessage, terminal], [], work);
+    const collapsed = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "completed",
+        startedAt: time(0),
+        completedAt: time(12),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+    });
+    expect(collapsed.filter((row) => row.kind === "turn-fold")).toHaveLength(1);
+    expect(collapsed.find((row) => row.kind === "turn-fold")).toMatchObject({
+      kind: "turn-fold",
+      label: expect.stringMatching(/^Worked for /),
+    });
+    expect(collapsed.some((row) => row.kind === "reasoning-markdown")).toBe(false);
+
+    const expanded = deriveMessagesTimelineRows({
+      timelineEntries,
+      latestTurn: {
+        turnId,
+        state: "completed",
+        startedAt: time(0),
+        completedAt: time(12),
+      },
+      isWorking: false,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      expandedTurnIds: new Set([turnId]),
+    });
+    expect(
+      expanded
+        .filter((row) => row.kind === "reasoning-markdown" || row.kind === "work-toggle")
+        .map((row) =>
+          row.kind === "reasoning-markdown"
+            ? row.text
+            : row.kind === "work-toggle"
+              ? row.summary
+              : null,
+        ),
+    ).toEqual([text, "Ran 2 commands", "Next step."]);
+  });
+
+  it("keeps settled history monotonic while the live tail alternates", () => {
+    const commentary = assistantMessage("commentary", 3);
+    const steps: OrchestrationThreadActivity[] = [
+      thinkingActivity("thought-a-start", "tool.updated", 1, "thought-a"),
+      thinkingActivity("thought-a-end", "tool.completed", 2, "thought-a"),
+      toolLifecycleActivity("tool-a-start", "tool-a", "tool.updated", 4),
+      toolLifecycleActivity("tool-a-end", "tool-a", "tool.completed", 5),
+      toolLifecycleActivity("tool-b-start", "tool-b", "tool.updated", 6),
+      toolLifecycleActivity("tool-b-end", "tool-b", "tool.completed", 7),
+      thinkingActivity("thought-b-start", "tool.updated", 8, "thought-b"),
+      thinkingActivity("thought-b-end", "tool.completed", 9, "thought-b"),
+      toolLifecycleActivity("tool-c-start", "tool-c", "tool.updated", 10),
+      toolLifecycleActivity("tool-c-end", "tool-c", "tool.completed", 11),
+      thinkingActivity("thought-c-start", "tool.updated", 12, "thought-c"),
+    ];
+    const stages = [
+      { activityCount: 1, commentary: false },
+      { activityCount: 2, commentary: false },
+      { activityCount: 2, commentary: true },
+      ...steps.slice(2).map((_, index) => ({ activityCount: index + 3, commentary: true })),
+    ];
+    let settledHistory: string[] = [];
+    let finalRows: ReturnType<typeof deriveMessagesTimelineRows> = [];
+
+    for (const stage of stages) {
+      const messages = stage.commentary ? [userMessage, commentary] : [userMessage];
+      finalRows = deriveMessagesTimelineRows(
+        liveInput(messages, deriveWorkLogEntries(steps.slice(0, stage.activityCount))),
+      );
+      const history = finalRows
+        .filter(
+          (row) =>
+            row.kind === "work" ||
+            row.kind === "work-toggle" ||
+            (row.kind === "message" && row.message.role === "assistant"),
+        )
+        .map((row) =>
+          row.kind === "work"
+            ? `${row.id}:${row.displayLabel}`
+            : row.kind === "work-toggle"
+              ? `${row.id}:${row.summary}`
+              : row.kind === "message"
+                ? `${row.id}:${row.message.text}`
+                : row.id,
+        );
+      expect(history.slice(0, settledHistory.length)).toEqual(settledHistory);
+      settledHistory = history;
+      expect(
+        finalRows.filter((row) => row.kind === "work-live" || row.kind === "thinking"),
+      ).toHaveLength(1);
+    }
+
+    expect(
+      finalRows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command"]);
+
+    const restoredRows = deriveMessagesTimelineRows(settledInput(deriveWorkLogEntries(steps)));
+    expect(
+      restoredRows
+        .filter((row) => row.kind === "work" || row.kind === "work-toggle")
+        .map((row) => (row.kind === "work" ? row.displayLabel : row.summary)),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command", "Thought"]);
+  });
+
+  it("keeps twenty-plus tool calls in small groups when thoughts intervene", () => {
+    const activities: OrchestrationThreadActivity[] = [];
+    for (let segment = 0; segment < 4; segment += 1) {
+      const base = segment * 10;
+      activities.push(
+        thinkingActivity(`thought-${segment}-updated`, "tool.updated", base, `thought-${segment}`),
+        thinkingActivity(
+          `thought-${segment}-completed`,
+          "tool.completed",
+          base + 2,
+          `thought-${segment}`,
+        ),
+      );
+      for (let call = 0; call < 6; call += 1) {
+        activities.push(toolActivity(`tool-${segment}-${call}`, base + 3 + call));
+      }
+    }
+    const rows = deriveMessagesTimelineRows(settledInput(deriveWorkLogEntries(activities)));
+    const toggles = rows.filter((row) => row.kind === "work-toggle");
+    const thoughts = rows.filter((row) => row.kind === "work");
+
+    expect(rows.filter((row) => row.kind !== "turn-fold")).toHaveLength(8);
+    expect(thoughts).toHaveLength(4);
+    expect(toggles).toHaveLength(4);
+    for (const toggle of toggles) {
+      expect(toggle.kind === "work-toggle" && toggle.hiddenCount).toBe(6);
+    }
+    for (const thought of thoughts) {
+      expect(thought.kind === "work" && thought.displayLabel).toBe("Thought for 2.0s");
+    }
+  });
+
+  it("shows the live thought while reasoning runs and hides the generic fallback", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          toolActivity("tool-1", 6),
+          thinkingActivity("thought-live", "tool.updated", 7, "thought-live"),
+        ]),
+      ),
+    );
+
+    const live = rows.filter((row) => row.kind === "work-live");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({
+      active: true,
+      entry: { id: expect.any(String), toolLifecycleStatus: "inProgress" },
+    });
+    // Segment-scoped timing: the live thought counts from the native
+    // reasoning start, not the turn start.
+    expect(live[0]?.kind === "work-live" && live[0].entry.createdAt).toBe(time(7));
+    expect(
+      live[0]?.kind === "work-live" && liveWorkEntryLabel(live[0].entry, undefined, true),
+    ).toBe("Thinking");
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("keeps completed thoughts static while the turn keeps working", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage, assistantMessage("assistant-1", 8)],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+          thinkingActivity("thought-1-completed", "tool.completed", 5, "thought-1"),
+          toolActivity("tool-1", 9),
+        ]),
+      ),
+    );
+
+    // Exactly one live row (the running tool); the finished thought is
+    // history even though the turn is still working.
+    const live = rows.filter((row) => row.kind === "work-live");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ entry: { toolCallId: "call-tool-1" } });
+    const thoughts = rows.filter((row) => row.kind === "work");
+    expect(thoughts.map((row) => row.kind === "work" && row.displayLabel)).toEqual([
+      "Thought for 4.0s",
+    ]);
+  });
+
+  it("keeps an adjacent completed thought beside the live tool row", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-updated", "tool.updated", 1, "thought"),
+          thinkingActivity("thought-completed", "tool.completed", 5, "thought"),
+          toolActivity("tool-1", 9),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
+      { entry: { toolCallId: "call-tool-1" } },
+    ]);
+    expect(rows.filter((row) => row.kind === "work")).toMatchObject([
+      { displayLabel: "Thought for 4.0s" },
+    ]);
+  });
+
+  it("does not let completed reasoning claim the live tool row", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-updated", "tool.updated", 1, "thought"),
+          thinkingActivity("thought-completed", "tool.completed", 5, "thought"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "work")).toMatchObject([
+      { displayLabel: "Thought for 4.0s" },
+    ]);
+    expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+  });
+
+  it("scopes terminal reasoning identity to the unsettled turn", () => {
+    const oldTurnId = TurnId.make("older-segment-turn");
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("old-completed", "tool.completed", 1, "shared-id", oldTurnId),
+          thinkingActivity("current-open", "tool.updated", 2, "shared-id"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toMatchObject([
+      { active: true, entry: { toolCallId: "shared-id", turnId } },
+    ]);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("does not reactivate an older thought after a later thought completes", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-a-open", "tool.updated", 1, "thought-a"),
+          thinkingActivity("thought-b-open", "tool.updated", 2, "thought-b"),
+          thinkingActivity("thought-b-done", "tool.completed", 3, "thought-b"),
+        ]),
+      ),
+    );
+
+    expect(rows.filter((row) => row.kind === "work-live")).toHaveLength(0);
+    expect(rows.filter((row) => row.kind === "thinking")).toHaveLength(1);
+  });
+
+  it("lets only the latest open thought animate", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage, assistantMessage("assistant-1", 2)],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+          thinkingActivity("thought-2-updated", "tool.updated", 3, "thought-2"),
+        ]),
+      ),
+    );
+
+    // Two open thoughts separated by commentary (delayed completions): the
+    // older one renders as a static Thought, only the current one animates,
+    // and the generic fallback stays hidden.
+    const live = rows.filter((row) => row.kind === "work-live");
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ active: true });
+    expect(
+      live[0]?.kind === "work-live" && liveWorkEntryLabel(live[0].entry, undefined, true),
+    ).toBe("Thinking");
+    const thoughts = rows.filter((row) => row.kind === "work");
+    expect(thoughts.map((row) => row.kind === "work" && row.displayLabel)).toEqual(["Thought"]);
+    expect(rows.some((row) => row.kind === "thinking")).toBe(false);
+  });
+
+  it("folds adjacent open thoughts into a single live row", () => {
+    const rows = deriveMessagesTimelineRows(
+      liveInput(
+        [userMessage],
+        deriveWorkLogEntries([
+          thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+          thinkingActivity("thought-2-updated", "tool.updated", 2, "thought-2"),
+        ]),
+      ),
+    );
+
+    // Back-to-back open thoughts share the trailing live slot instead of
+    // animating as two rows.
+    expect(rows.filter((row) => row.kind === "work-live")).toHaveLength(1);
+    expect(rows.filter((row) => row.kind === "work")).toHaveLength(0);
+  });
+
+  it("renders an interrupted thought as a static Thought", () => {
+    const rows = deriveMessagesTimelineRows(
+      settledInput(
+        deriveWorkLogEntries([
+          toolActivity("tool-1", 5),
+          thinkingActivity("thought-live", "tool.updated", 6, "thought-live"),
+        ]),
+      ),
+    ).filter((row) => row.kind === "work");
+
+    expect(rows.map((row) => row.kind)).toEqual(["work", "work"]);
+    expect(rows[1]).toMatchObject({ kind: "work", displayLabel: "Thought" });
+  });
+
+  it("folds settled thoughts away with their turn", () => {
+    const rows = deriveMessagesTimelineRows(
+      settledInput(
+        deriveWorkLogEntries([
+          thinkingActivity("thought-1-updated", "tool.updated", 0, "thought-1"),
+          thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"),
+          toolActivity("tool-1", 5),
+        ]),
+        false,
+      ),
+    );
+
+    expect(rows.map((row) => row.kind)).toEqual(["turn-fold"]);
+  });
+
+  it("projects canonical reasoning activities into thought rows without text", () => {
+    const entries = deriveWorkLogEntries([
+      thinkingActivity("reasoning-e2e-updated", "tool.updated", 0, "reasoning-e2e"),
+      thinkingActivity("reasoning-e2e-completed", "tool.completed", 4, "reasoning-e2e"),
+    ]);
+    expect(entries).toHaveLength(1);
+    const rows = deriveMessagesTimelineRows(settledInput(entries));
+
+    expect(
+      rows
+        .filter((row) => row.kind === "work")
+        .map((row) => (row.kind === "work" ? row.displayLabel : null)),
+    ).toEqual(["Thought for 4.0s"]);
   });
 });

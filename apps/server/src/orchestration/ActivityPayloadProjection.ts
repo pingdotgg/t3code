@@ -609,37 +609,108 @@ function dropSupersededToolUpdatedActivities(
   activities: ReadonlyArray<OrchestrationThreadActivity>,
 ): ReadonlyArray<OrchestrationThreadActivity> {
   const completionIndicesByKey = new Map<string, number[]>();
+  const updateIndicesByKey = new Map<string, number[]>();
   for (let index = 0; index < activities.length; index += 1) {
     const activity = activities[index]!;
-    if (activity.kind !== "tool.completed") {
-      continue;
-    }
     const identity = toolLifecycleIdentity(activity);
     if (!identity) {
       continue;
     }
     const key = `${activity.turnId ?? ""}\u0000${identity}`;
-    const indices = completionIndicesByKey.get(key);
+    if (activity.kind === "tool.completed") {
+      const indices = completionIndicesByKey.get(key);
+      if (indices) {
+        indices.push(index);
+      } else {
+        completionIndicesByKey.set(key, [index]);
+      }
+      continue;
+    }
+    if (activity.kind !== "tool.updated") {
+      continue;
+    }
+    const indices = updateIndicesByKey.get(key);
     if (indices) {
       indices.push(index);
     } else {
-      completionIndicesByKey.set(key, [index]);
+      updateIndicesByKey.set(key, [index]);
     }
   }
-  if (completionIndicesByKey.size === 0) {
+  if (completionIndicesByKey.size === 0 && updateIndicesByKey.size === 0) {
     return activities;
   }
 
-  return activities.filter((activity, index) => {
+  // Completed thoughts: first update (start timing, no partial detail) +
+  // completion (final text). In-flight thoughts: first update (start timing,
+  // no partial detail) + latest update with reconstructed full text (OpenCode
+  // streams incremental detail chunks). If first === latest, keep that single
+  // update with its detail. Intermediate streaming updates are dropped from
+  // snapshots (live clients already received them as appends).
+  const retainedReasoningUpdateIndices = new Set<number>();
+  const stripDetailFromReasoningUpdateIndices = new Set<number>();
+  const reconstructedReasoningDetailByIndex = new Map<number, string>();
+  for (const [key, updateIndices] of updateIndicesByKey) {
+    const firstUpdate = updateIndices[0];
+    const lastUpdate = updateIndices[updateIndices.length - 1];
+    if (firstUpdate === undefined || lastUpdate === undefined) {
+      continue;
+    }
+    const payload = asRecord(activities[firstUpdate]?.payload);
+    if (payload?.itemType !== "reasoning") {
+      continue;
+    }
+    const hasLaterCompletion =
+      completionIndicesByKey.get(key)?.some((index) => index > firstUpdate) ?? false;
+    retainedReasoningUpdateIndices.add(firstUpdate);
+    if (hasLaterCompletion) {
+      stripDetailFromReasoningUpdateIndices.add(firstUpdate);
+      continue;
+    }
+    if (lastUpdate !== firstUpdate) {
+      retainedReasoningUpdateIndices.add(lastUpdate);
+      stripDetailFromReasoningUpdateIndices.add(firstUpdate);
+      const reconstructed = updateIndices
+        .map((updateIndex) => {
+          const detail = asRecord(activities[updateIndex]?.payload)?.detail;
+          return typeof detail === "string" ? detail : "";
+        })
+        .join("");
+      if (reconstructed.trim().length > 0) {
+        reconstructedReasoningDetailByIndex.set(lastUpdate, reconstructed);
+      }
+    }
+  }
+
+  return activities.flatMap((activity, index) => {
     if (activity.kind !== "tool.updated") {
-      return true;
+      return [activity];
     }
     const identity = toolLifecycleIdentity(activity);
     if (!identity) {
-      return true;
+      return [activity];
     }
-    const indices = completionIndicesByKey.get(`${activity.turnId ?? ""}\u0000${identity}`);
-    return !indices?.some((completionIndex) => completionIndex > index);
+    const key = `${activity.turnId ?? ""}\u0000${identity}`;
+    if (asRecord(activity.payload)?.itemType === "reasoning") {
+      if (!retainedReasoningUpdateIndices.has(index)) {
+        return [];
+      }
+      const reconstructed = reconstructedReasoningDetailByIndex.get(index);
+      if (reconstructed !== undefined) {
+        const payload = asRecord(activity.payload) ?? {};
+        return [{ ...activity, payload: { ...payload, detail: reconstructed } }];
+      }
+      if (!stripDetailFromReasoningUpdateIndices.has(index)) {
+        return [activity];
+      }
+      const payload = asRecord(activity.payload);
+      if (!payload || payload.detail === undefined) {
+        return [activity];
+      }
+      const { detail: _detail, ...rest } = payload;
+      return [{ ...activity, payload: rest }];
+    }
+    const indices = completionIndicesByKey.get(key);
+    return indices?.some((completionIndex) => completionIndex > index) ? [] : [activity];
   });
 }
 

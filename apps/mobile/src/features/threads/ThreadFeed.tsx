@@ -1410,6 +1410,23 @@ function renderFeedEntry(
     return <ThreadThinkingRow rowSizing={props.workRowSizing} iconSubtleColor={iconSubtleColor} />;
   }
 
+  if (entry.type === "reasoning-markdown") {
+    return (
+      <View className="mb-2 px-1 opacity-70">
+        <MarkdownImageAvailableWidthContext value={props.markdownContentWidth}>
+          <AssistantMarkdownContent
+            markdown={entry.text}
+            markdownStyles={markdownStyles.assistant}
+            linkHandlers={props.markdownLinkHandlers}
+            onUseArtifactTemplate={props.onUseArtifactTemplate}
+            renderImage={props.renderMarkdownImage}
+            skills={props.skills}
+          />
+        </MarkdownImageAvailableWidthContext>
+      </View>
+    );
+  }
+
   if (entry.type === "agent-spawn") {
     return (
       <ThreadAgentSpawnCard
@@ -2633,6 +2650,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         case "work-toggle":
         case "thinking":
           return WORK_GROUP_TOGGLE_HEIGHT;
+        case "reasoning-markdown":
+          return undefined;
         case "activity-group":
           if (isContextCompactionActivityGroup(entry)) {
             return undefined;

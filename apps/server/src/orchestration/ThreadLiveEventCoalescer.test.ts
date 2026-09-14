@@ -29,21 +29,27 @@ function makeToolActivity(
     readonly kind?: "tool.updated" | "tool.completed";
     readonly toolCallId?: string;
     readonly turnId?: TurnId;
+    readonly itemType?: string;
+    readonly detail?: string;
   } = {},
 ): OrchestrationEvent {
   const {
     kind = "tool.updated",
     toolCallId = "call-edit",
     turnId: activityTurnId = turnId,
+    itemType = "file_change",
+    detail,
   } = options;
   const activity: OrchestrationThreadActivity = {
     id: EventId.make(`activity-${sequence}`),
     tone: "tool",
     kind,
-    summary: "Editing app.ts",
+    summary: itemType === "reasoning" ? "Thinking" : "Editing app.ts",
     payload: {
-      itemType: "file_change",
-      title: "Editing app.ts",
+      itemType,
+      title: itemType === "reasoning" ? "Thinking" : "Editing app.ts",
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(detail !== undefined ? { detail } : {}),
       data: toolCallId ? { toolCallId } : {},
     },
     turnId: activityTurnId,
@@ -98,6 +104,28 @@ describe("ThreadLiveEventCoalescer", () => {
     ];
 
     expect(coalesceLiveToolUpdatedEvents(events).map((event) => event.sequence)).toEqual([2, 3]);
+  });
+
+  it("does not drop incremental reasoning detail chunks for the same toolCallId", () => {
+    const events = [
+      makeToolActivity(1, { toolCallId: "reasoning-1", itemType: "reasoning", detail: "Start" }),
+      makeToolActivity(2, { toolCallId: "reasoning-1", itemType: "reasoning", detail: " middle" }),
+      makeToolActivity(3, { toolCallId: "reasoning-1", itemType: "reasoning", detail: " end" }),
+      makeToolActivity(4, { toolCallId: "call-a" }),
+      makeToolActivity(5, { toolCallId: "call-a" }),
+    ];
+
+    const coalesced = coalesceLiveToolUpdatedEvents(events);
+    expect(coalesced.map((event) => event.sequence)).toEqual([1, 2, 3, 5]);
+    expect(
+      coalesced
+        .filter((event) => event.type === "thread.activity-appended")
+        .map((event) =>
+          event.type === "thread.activity-appended"
+            ? (event.payload.activity.payload as { detail?: string }).detail
+            : undefined,
+        ),
+    ).toEqual(["Start", " middle", " end", undefined]);
   });
 
   it("preserves parallel same-label calls without a stable toolCallId", () => {

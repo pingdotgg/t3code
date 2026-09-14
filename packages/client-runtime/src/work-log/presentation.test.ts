@@ -5,11 +5,16 @@ import { ThreadId } from "@t3tools/contracts";
 import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
+  formatThinkingSegmentLabel,
+  isReasoningSegmentEntry,
+  reasoningSegmentElapsedMs,
+  reasoningSegmentSpanForEntry,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
   toolGroupSummaryKind,
+  type ReasoningSegmentEntryLike,
   type WorkLogPresentationEntry,
   workEntryViewedImagePath,
   workEntryIndicatesToolFailure,
@@ -708,5 +713,95 @@ describe("device group summaries", () => {
         },
       ]),
     ).toBe("Used 1 tool");
+  });
+});
+
+describe("reasoning segments", () => {
+  const thinking = (
+    overrides: Partial<WorkLogPresentationEntry> &
+      Partial<ReasoningSegmentEntryLike> & { label: string },
+  ): WorkLogPresentationEntry & ReasoningSegmentEntryLike => ({
+    tone: "thinking",
+    sourceActivityKind: "tool.completed",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  });
+
+  it("recognizes thinking tool lifecycle rows but not task progress rows", () => {
+    expect(isReasoningSegmentEntry(thinking({ label: "Thinking" }))).toBe(true);
+    expect(
+      isReasoningSegmentEntry(thinking({ label: "Thinking", sourceActivityKind: "tool.updated" })),
+    ).toBe(true);
+    // Subagent progress shares the thinking tone but is a different narrative.
+    expect(
+      isReasoningSegmentEntry(
+        thinking({ label: "Reasoning update", sourceActivityKind: "task.progress" }),
+      ),
+    ).toBe(false);
+    expect(isReasoningSegmentEntry({ tone: "tool", sourceActivityKind: "tool.completed" })).toBe(
+      false,
+    );
+  });
+
+  it("bounds one entry's segment from its merged timing", () => {
+    // Lifecycle pairs merge before the timeline: the terminal entry carries
+    // the preserved start plus its own end.
+    expect(
+      reasoningSegmentSpanForEntry(
+        thinking({
+          label: "Thinking",
+          toolCallId: "reasoning-1",
+          toolLifecycleStatus: "completed",
+          createdAt: "2026-01-01T00:00:04.000Z",
+          segmentStartedAt: "2026-01-01T00:00:00.000Z",
+        }),
+      ),
+    ).toEqual({
+      startedAt: "2026-01-01T00:00:00.000Z",
+      endedAt: "2026-01-01T00:00:04.000Z",
+      completed: true,
+    });
+    // A dangling in-progress entry is an open thought with no known end.
+    expect(
+      reasoningSegmentSpanForEntry(
+        thinking({
+          label: "Thinking",
+          sourceActivityKind: "tool.updated",
+          toolCallId: "reasoning-2",
+          toolLifecycleStatus: "inProgress",
+          createdAt: "2026-01-01T00:00:10.000Z",
+        }),
+      ),
+    ).toEqual({
+      startedAt: "2026-01-01T00:00:10.000Z",
+      endedAt: null,
+      completed: false,
+    });
+  });
+
+  it("measures elapsed time only between parseable timestamps", () => {
+    expect(reasoningSegmentElapsedMs("2026-01-01T00:00:00.000Z", "2026-01-01T00:00:04.000Z")).toBe(
+      4000,
+    );
+    expect(reasoningSegmentElapsedMs(null, "2026-01-01T00:00:04.000Z")).toBeNull();
+    expect(reasoningSegmentElapsedMs("not-a-date", "2026-01-01T00:00:04.000Z")).toBeNull();
+  });
+
+  it("labels completed segments with durations and static Thoughts otherwise", () => {
+    expect(
+      formatThinkingSegmentLabel({
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:04.000Z",
+      }),
+    ).toBe("Thought for 4.0s");
+    // Same-flush lifecycle pairs and untimed providers carry no real elapsed
+    // time; history never renders as live "Thinking".
+    expect(
+      formatThinkingSegmentLabel({
+        startedAt: "2026-01-01T00:00:00.000Z",
+        endedAt: "2026-01-01T00:00:00.200Z",
+      }),
+    ).toBe("Thought");
+    expect(formatThinkingSegmentLabel({ startedAt: null, endedAt: null })).toBe("Thought");
   });
 });

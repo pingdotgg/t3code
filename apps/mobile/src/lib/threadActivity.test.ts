@@ -19,6 +19,7 @@ import {
   buildThreadFeed,
   deriveThreadFeedPresentation,
   isPendingUserInputOptionSelected,
+  LIVE_ACTIVITY_ROW_ID,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
   workEntryRowLabel,
@@ -3450,4 +3451,662 @@ it("keeps attachment-only question answers expandable outside mobile work groups
   expect(running[0]?.type).toBe("work-toggle");
   expect(running[1]).toBe(group);
   expect(running[2]?.type).toBe("work-toggle");
+});
+
+describe("reasoning segments", () => {
+  const turnId = TurnId.make("segment-turn");
+  const at = (second: number) => `2026-09-08T00:00:${String(second).padStart(2, "0")}.000Z`;
+  const thinkingActivity = (
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    second: number,
+    toolCallId = id,
+    activityTurnId = turnId,
+  ) =>
+    makeActivity({
+      id: EventId.make(id),
+      kind,
+      summary: "Thinking",
+      tone: "tool",
+      createdAt: at(second),
+      turnId: activityTurnId,
+      payload: {
+        itemType: "reasoning",
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: "Thinking",
+      },
+    });
+  const toolActivity = (id: string, second: number) =>
+    makeActivity({
+      id: EventId.make(id),
+      kind: "tool.completed",
+      summary: "Ran command",
+      tone: "tool",
+      createdAt: at(second),
+      turnId,
+      payload: {
+        itemType: "command_execution",
+        toolCallId: `call-${id}`,
+        status: "completed",
+        title: "Ran command",
+        command: "git status",
+      },
+    });
+  const settledTurn = {
+    turnId,
+    state: "completed" as const,
+    requestedAt: at(0),
+    startedAt: at(0),
+    completedAt: at(30),
+    assistantMessageId: null,
+  };
+  const summaries = (rows: ThreadFeedEntry[]) =>
+    rows
+      .filter((row) => row.type === "work-toggle")
+      .map((row) => (row.type === "work-toggle" ? row.summary : null));
+
+  it("splits tool runs at thinking boundaries instead of one giant pile", () => {
+    const thread = makeThread({
+      id: ThreadId.make("segment-split"),
+      projectId: ProjectId.make("project-1"),
+      title: "Segments",
+      latestTurn: settledTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 0, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"),
+        toolActivity("tool-1", 5),
+        toolActivity("tool-2", 6),
+        toolActivity("tool-3", 7),
+        thinkingActivity("thought-2-updated", "tool.updated", 8, "thought-2"),
+        thinkingActivity("thought-2-completed", "tool.completed", 15, "thought-2"),
+        toolActivity("tool-4", 16),
+        toolActivity("tool-5", 17),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      settledTurn,
+      new Set([turnId]),
+    );
+
+    expect(summaries(rows)).toEqual([
+      "Thought for 4.0s",
+      "Ran 3 commands",
+      "Thought for 7.0s",
+      "Ran 2 commands",
+    ]);
+  });
+
+  it("renders provider reasoning text as inline markdown, not a Thought accordion", () => {
+    const text =
+      "The user wants to know their opencode version. I should run the command to check.";
+    const thread = makeThread({
+      id: ThreadId.make("segment-visible-text"),
+      projectId: ProjectId.make("project-1"),
+      title: "Visible thoughts",
+      latestTurn: settledTurn,
+      activities: [
+        makeActivity({
+          id: EventId.make("thought-text-updated"),
+          kind: "tool.updated",
+          summary: "Thinking",
+          tone: "tool",
+          createdAt: at(0),
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            toolCallId: "thought-text",
+            status: "inProgress",
+            title: "Thinking",
+            detail: "The user wants",
+          },
+        }),
+        makeActivity({
+          id: EventId.make("thought-text-completed"),
+          kind: "tool.completed",
+          summary: "Thinking",
+          tone: "tool",
+          createdAt: at(4),
+          turnId,
+          payload: {
+            itemType: "reasoning",
+            toolCallId: "thought-text",
+            status: "completed",
+            title: "Thinking",
+            detail: text,
+          },
+        }),
+        toolActivity("tool-1", 5),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      settledTurn,
+      new Set([turnId]),
+    );
+    expect(summaries(rows)).toEqual(["Ran command"]);
+    const markdown = rows.find((row) => row.type === "reasoning-markdown");
+    expect(markdown).toMatchObject({
+      type: "reasoning-markdown",
+      text,
+      streaming: false,
+    });
+    expect(
+      rows.some((row) => row.type === "work-toggle" && row.summary.startsWith("Thought")),
+    ).toBe(false);
+  });
+
+  it("keeps a stable reasoning-markdown row id across streaming updates", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const present = (activities: ReturnType<typeof thinkingActivity>[]) => {
+      const thread = makeThread({
+        id: ThreadId.make("segment-stable-id"),
+        projectId: ProjectId.make("project-1"),
+        title: "Stable id",
+        latestTurn: runningTurn,
+        activities,
+      });
+      return deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        runningTurn,
+        new Set([turnId]),
+        new Set(),
+        at(0),
+      );
+    };
+    const first = present([
+      {
+        ...thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: "Start",
+        },
+      },
+    ]);
+    const second = present([
+      {
+        ...thinkingActivity("thought-1-a", "tool.updated", 1, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: "Start",
+        },
+      },
+      {
+        ...thinkingActivity("thought-1-b", "tool.updated", 2, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: " middle",
+        },
+      },
+      {
+        ...thinkingActivity("thought-1-c", "tool.updated", 3, "thought-1"),
+        payload: {
+          itemType: "reasoning",
+          toolCallId: "thought-1",
+          status: "inProgress",
+          title: "Thinking",
+          detail: " end",
+        },
+      },
+    ]);
+    const firstRow = first.find((row) => row.type === "reasoning-markdown");
+    const secondRow = second.find((row) => row.type === "reasoning-markdown");
+    expect(firstRow).toMatchObject({
+      type: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start",
+      streaming: true,
+    });
+    expect(secondRow).toMatchObject({
+      type: "reasoning-markdown",
+      id: `reasoning-markdown:${turnId}:thought-1`,
+      text: "Start middle end",
+      streaming: true,
+    });
+    expect(secondRow?.id).toBe(firstRow?.id);
+  });
+
+  it("keeps settled history monotonic while the live tail alternates", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const commentary = {
+      id: MessageId.make("monotonic-commentary"),
+      role: "assistant" as const,
+      text: "Checking the next step.",
+      turnId,
+      streaming: false,
+      createdAt: at(3),
+      updatedAt: at(3),
+    };
+    const steps = [
+      thinkingActivity("thought-a-start", "tool.updated", 1, "thought-a"),
+      thinkingActivity("thought-a-end", "tool.completed", 2, "thought-a"),
+      toolActivity("tool-a", 5),
+      toolActivity("tool-b", 7),
+      thinkingActivity("thought-b-start", "tool.updated", 8, "thought-b"),
+      thinkingActivity("thought-b-end", "tool.completed", 9, "thought-b"),
+      toolActivity("tool-c", 11),
+      thinkingActivity("thought-c-start", "tool.updated", 12, "thought-c"),
+    ];
+    const stages = [
+      { activityCount: 1, commentary: false },
+      { activityCount: 2, commentary: false },
+      { activityCount: 2, commentary: true },
+      ...steps.slice(2).map((_, index) => ({ activityCount: index + 3, commentary: true })),
+    ];
+    let settledHistory: string[] = [];
+    let finalRows: ThreadFeedEntry[] = [];
+
+    for (const [index, stage] of stages.entries()) {
+      const thread = makeThread({
+        id: ThreadId.make(`segment-monotonic-${index}`),
+        projectId: ProjectId.make("project-1"),
+        title: "Monotonic segments",
+        latestTurn: runningTurn,
+        messages: stage.commentary ? [commentary] : [],
+        activities: steps.slice(0, stage.activityCount),
+      });
+      finalRows = deriveThreadFeedPresentation(
+        buildThreadFeed(thread),
+        runningTurn,
+        new Set([turnId]),
+        new Set(),
+        at(0),
+      );
+      const history = finalRows
+        .filter(
+          (row) =>
+            (row.type === "work-toggle" && !row.shimmer) ||
+            (row.type === "message" && row.message.role === "assistant"),
+        )
+        .map((row) =>
+          row.type === "work-toggle"
+            ? `${row.id}:${row.summary}`
+            : row.type === "message"
+              ? `${row.id}:${row.message.text}`
+              : row.id,
+        );
+      expect(history.slice(0, settledHistory.length)).toEqual(settledHistory);
+      settledHistory = history;
+      expect(
+        finalRows.filter(
+          (row) => (row.type === "work-toggle" && row.shimmer) || row.type === "thinking",
+        ),
+      ).toHaveLength(1);
+    }
+
+    expect(summaries(finalRows)).toEqual([
+      "Thought for 1.0s",
+      "Ran 2 commands",
+      "Thought for 1.0s",
+      "Ran command",
+      "Thinking",
+    ]);
+
+    const restoredThread = makeThread({
+      id: ThreadId.make("segment-monotonic-restored"),
+      projectId: ProjectId.make("project-1"),
+      title: "Restored monotonic segments",
+      latestTurn: settledTurn,
+      messages: [commentary],
+      activities: steps,
+    });
+    expect(
+      summaries(
+        deriveThreadFeedPresentation(
+          buildThreadFeed(restoredThread),
+          settledTurn,
+          new Set([turnId]),
+        ),
+      ),
+    ).toEqual(["Thought for 1.0s", "Ran 2 commands", "Thought for 1.0s", "Ran command", "Thought"]);
+  });
+
+  it("expands a thought into its lifecycle pair", () => {
+    const thread = makeThread({
+      id: ThreadId.make("segment-expand"),
+      projectId: ProjectId.make("project-1"),
+      title: "Expand thought",
+      latestTurn: settledTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 0, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      settledTurn,
+      new Set([turnId]),
+      new Set(["work-group:tool:segment-turn:thought-1"]),
+    );
+
+    expect(summaries(rows)).toEqual(["Thought for 4.0s"]);
+    const details = rows.filter((row) => row.type === "activity-group");
+    expect(details).toHaveLength(1);
+    // The lifecycle pair merges into one entry carrying both ends.
+    expect(details[0]?.type === "activity-group" && details[0].activities).toHaveLength(1);
+  });
+
+  it("shimmers the live thought and hides the generic thinking fallback", () => {
+    const thread = makeThread({
+      id: ThreadId.make("segment-live"),
+      projectId: ProjectId.make("project-1"),
+      title: "Live thought",
+      latestTurn: { ...settledTurn, state: "running", completedAt: null },
+      activities: [
+        toolActivity("tool-1", 6),
+        thinkingActivity("thought-live", "tool.updated", 7, "thought-live"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      { ...settledTurn, state: "running", completedAt: null },
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    const live = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(live).toHaveLength(1);
+    expect(live[0]).toMatchObject({ summary: "Thinking", live: true });
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("renders an interrupted thought without inventing a duration", () => {
+    const thread = makeThread({
+      id: ThreadId.make("segment-interrupted"),
+      projectId: ProjectId.make("project-1"),
+      title: "Interrupted",
+      latestTurn: settledTurn,
+      activities: [
+        toolActivity("tool-1", 5),
+        thinkingActivity("thought-live", "tool.updated", 6, "thought-live"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      settledTurn,
+      new Set([turnId]),
+    );
+
+    expect(summaries(rows)).toEqual(["Ran command", "Thought"]);
+  });
+
+  it("keeps completed thoughts static while the turn keeps working", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-working-history"),
+      projectId: ProjectId.make("project-1"),
+      title: "Working history",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 5, "thought-1"),
+        {
+          ...toolActivity("tool-1", 9),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Ran command",
+            command: "git status",
+          },
+        },
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    // Exactly one shimmering row (the running tool); the finished thought is
+    // history even though the turn is still working.
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(summaries(rows)).toEqual(["Thought for 4.0s", "Ran command"]);
+  });
+
+  it("pins an earlier thought static when commentary splits the groups", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-split-groups"),
+      projectId: ProjectId.make("project-1"),
+      title: "Split groups",
+      latestTurn: runningTurn,
+      messages: [
+        {
+          id: MessageId.make("commentary"),
+          role: "assistant",
+          text: "On it.",
+          turnId,
+          streaming: false,
+          createdAt: at(6),
+          updatedAt: at(6),
+        },
+      ],
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 5, "thought-1"),
+        {
+          ...toolActivity("tool-1", 9),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Ran command",
+            command: "git status",
+          },
+        },
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    // The live tool lives in a later group than the thought; still exactly
+    // one shimmering row, and the thought is static history.
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(summaries(rows)).toEqual(["Thought for 4.0s", "Ran command"]);
+    expect(rows.some((row) => row.type === "message")).toBe(true);
+  });
+
+  it("lets only the latest open thought shimmer", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-two-open"),
+      projectId: ProjectId.make("project-1"),
+      title: "Two open",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 1, "thought-1"),
+        thinkingActivity("thought-2-updated", "tool.updated", 2, "thought-2"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    const shimmering = rows.filter((row) => row.type === "work-toggle" && row.shimmer);
+    expect(shimmering).toHaveLength(1);
+    expect(shimmering[0]).toMatchObject({ summary: "Thinking" });
+    expect(summaries(rows)).toEqual(["Thought", "Thinking"]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("keeps a commentary-separated live thought in the single live slot", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-commentary-live"),
+      projectId: ProjectId.make("project-1"),
+      title: "Commentary then live thought",
+      latestTurn: runningTurn,
+      messages: [
+        {
+          id: MessageId.make("commentary-after-thought"),
+          role: "assistant",
+          text: "Still working.",
+          turnId,
+          streaming: false,
+          createdAt: at(2),
+          updatedAt: at(2),
+        },
+      ],
+      activities: [thinkingActivity("thought-live", "tool.updated", 1, "thought-live")],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true, id: LIVE_ACTIVITY_ROW_ID },
+    ]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+
+    const liveThought = rows.find(
+      (row): row is Extract<(typeof rows)[number], { type: "work-toggle" }> =>
+        row.type === "work-toggle" && row.live,
+    )!;
+    const expandedRows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set([liveThought.groupId]),
+      at(0),
+    );
+    expect(
+      expandedRows
+        .filter((row) => row.type === "activity-group")
+        .flatMap((row) => row.activities)
+        .filter((activity) => activity.live),
+    ).toMatchObject([{ live: true }]);
+  });
+
+  it("lets a later thought take the live slot from an earlier tool", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-after-live-tool"),
+      projectId: ProjectId.make("project-1"),
+      title: "Thought after tool",
+      latestTurn: runningTurn,
+      activities: [
+        {
+          ...toolActivity("tool-1", 1),
+          payload: {
+            itemType: "command_execution",
+            toolCallId: "call-tool-1",
+            status: "inProgress",
+            title: "Running command",
+            command: "git status",
+          },
+        },
+        thinkingActivity("thought-live", "tool.updated", 2, "thought-live"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true },
+    ]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("scopes terminal reasoning identity to the unsettled turn", () => {
+    const oldTurnId = TurnId.make("older-segment-turn");
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-turn-scoped-identity"),
+      projectId: ProjectId.make("project-1"),
+      title: "Turn-scoped reasoning",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("old-completed", "tool.completed", 1, "shared-id", oldTurnId),
+        thinkingActivity("current-open", "tool.updated", 2, "shared-id"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.filter((row) => row.type === "work-toggle" && row.shimmer)).toMatchObject([
+      { summary: "Thinking", live: true },
+    ]);
+    expect(rows.some((row) => row.type === "thinking")).toBe(false);
+  });
+
+  it("does not reactivate an older thought after a later thought completes", () => {
+    const runningTurn = { ...settledTurn, state: "running" as const, completedAt: null };
+    const thread = makeThread({
+      id: ThreadId.make("segment-terminal-boundary"),
+      projectId: ProjectId.make("project-1"),
+      title: "Terminal reasoning boundary",
+      latestTurn: runningTurn,
+      activities: [
+        thinkingActivity("thought-a-open", "tool.updated", 1, "thought-a"),
+        thinkingActivity("thought-b-open", "tool.updated", 2, "thought-b"),
+        thinkingActivity("thought-b-done", "tool.completed", 3, "thought-b"),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(
+      buildThreadFeed(thread),
+      runningTurn,
+      new Set([turnId]),
+      new Set(),
+      at(0),
+    );
+
+    expect(rows.some((row) => row.type === "work-toggle" && row.shimmer)).toBe(false);
+    expect(rows.filter((row) => row.type === "thinking")).toHaveLength(1);
+  });
+
+  it("folds settled thoughts away with their turn", () => {
+    const thread = makeThread({
+      id: ThreadId.make("segment-fold"),
+      projectId: ProjectId.make("project-1"),
+      title: "Fold",
+      latestTurn: settledTurn,
+      activities: [
+        thinkingActivity("thought-1-updated", "tool.updated", 0, "thought-1"),
+        thinkingActivity("thought-1-completed", "tool.completed", 4, "thought-1"),
+        toolActivity("tool-1", 5),
+      ],
+    });
+    const rows = deriveThreadFeedPresentation(buildThreadFeed(thread), settledTurn, new Set());
+
+    expect(rows.map((row) => row.type)).toEqual(["turn-fold"]);
+  });
 });

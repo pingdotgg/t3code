@@ -19,10 +19,15 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
+  formatThinkingSegmentLabel,
+  isReasoningItemPayload,
+  isReasoningSegmentEntry,
   isWorktreeSetupActivity,
   liveActivityToolStatus,
   normalizeCompactToolLabel,
   omitSupersededLifecycleMarkers,
+  reasoningHasVisibleText,
+  reasoningSegmentSpanForEntry,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
   toolGroupAction,
@@ -101,6 +106,12 @@ export interface WorkLogEntry {
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
   toolCallId?: string;
+  /**
+   * Reasoning segment start, preserved when lifecycle updates merge into
+   * their completion. Lets the feed bound "Thought for Xs" even when tool
+   * activity interleaves between the segment's start and end.
+   */
+  segmentStartedAt?: string;
   /**
    * One row per workflow run or per-turn batch of direct spawns, like web's
    * "Kicked off N subagents" CTA. Mobile has no Agents sheet, so the row
@@ -194,6 +205,15 @@ export type ThreadFeedEntry =
       readonly turnId: TurnId | null;
     }
   | {
+      /** Provider-supplied readable reasoning as chronological Markdown. */
+      readonly type: "reasoning-markdown";
+      readonly id: string;
+      readonly createdAt: string;
+      readonly turnId: TurnId | null;
+      readonly text: string;
+      readonly streaming: boolean;
+    }
+  | {
       /**
        * One batch of spawned subagents. Rendered as its own card because a
        * single-line tool row has no room for what the agents are doing now,
@@ -246,6 +266,8 @@ const presentedActivityGroupsCache = new WeakMap<
     readonly unsettledTurnId: TurnId | null;
     readonly isWorking: boolean;
     readonly activeTail: boolean;
+    readonly designatedThinkingActivityId: string | null;
+    readonly hasLiveToolActivity: boolean;
     readonly rows: ReadonlyArray<ThreadFeedEntry>;
   }
 >();
@@ -494,7 +516,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     ...(taskId ? { taskId } : {}),
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningItemPayload(payload)
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -534,9 +556,13 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   if (!taskDetailAsLabel && output) {
     entry.detail = output;
   } else if (!taskDetailAsLabel && typeof payload?.detail === "string") {
-    const detail = stripTrailingExitCode(payload.detail).output;
+    // Provider reasoning text is opaque — do not strip command exit-code suffixes.
+    const detail = isReasoningItemPayload(payload)
+      ? payload.detail
+      : stripTrailingExitCode(payload.detail).output;
     const data = asRecord(payload.data);
     const repeatsCommand =
+      !isReasoningItemPayload(payload) &&
       detail !== null &&
       commandDetailRepeatsCommand({
         detail,
@@ -829,7 +855,13 @@ function shouldCollapseToolLifecycleEntries(
     return false;
   }
   if (previous.sourceActivityKind === "tool.completed") {
-    return false;
+    // Allow corrective reasoning completions to refresh terminal detail.
+    return (
+      isReasoningSegmentEntry(previous) &&
+      isReasoningSegmentEntry(next) &&
+      previous.toolCallId !== undefined &&
+      previous.toolCallId === next.toolCallId
+    );
   }
   if (previous.collapseKey !== undefined && previous.collapseKey === next.collapseKey) {
     return true;
@@ -848,7 +880,16 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  // OpenCode streams inProgress reasoning detail as incremental chunks.
+  const reasoningMerge = isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next);
+  const detail =
+    reasoningMerge &&
+    previous.toolLifecycleStatus === "inProgress" &&
+    next.toolLifecycleStatus === "inProgress" &&
+    previous.detail !== undefined &&
+    next.detail !== undefined
+      ? `${previous.detail}${next.detail}`
+      : (next.detail ?? previous.detail);
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
@@ -862,11 +903,21 @@ function mergeDerivedWorkLogEntries(
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolData = next.toolData ?? previous.toolData;
+  // A reasoning completion never carries its segment's start, so keep the
+  // earliest observed time across the merge. Interleaved tool activity can't
+  // break the pairing: collapse keys on identity, not adjacency.
+  const segmentStartedAt =
+    next.segmentStartedAt ??
+    previous.segmentStartedAt ??
+    (reasoningMerge ? previous.createdAt : undefined);
+  // Reasoning pairs anchor at their end like web (chronological with the
+  // tools that follow); other rows keep the launch anchor so streaming
+  // updates never move them. Keep a stable id across reasoning merges so
+  // list virtualization does not remount the Markdown row on every chunk.
   return {
     ...previous,
     ...next,
-    id: previous.id,
-    createdAt: previous.createdAt,
+    ...(!reasoningMerge ? { id: previous.id, createdAt: previous.createdAt } : { id: previous.id }),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -882,6 +933,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolLifecycleStatus ? { toolLifecycleStatus } : {}),
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(segmentStartedAt ? { segmentStartedAt } : {}),
   };
 }
 
@@ -1748,6 +1800,7 @@ export function deriveThreadFeedPresentation(
       entry.type !== "turn-fold" &&
       entry.type !== "work-toggle" &&
       entry.type !== "thinking" &&
+      entry.type !== "reasoning-markdown" &&
       entry.type !== "agent-spawn",
   );
   const activeTailGroup = sourceFeed.findLast(
@@ -1756,6 +1809,11 @@ export function deriveThreadFeedPresentation(
   const foldsByAnchorId = deriveThreadFeedTurnFolds(sourceFeed, latestTurn);
   const unsettledTurnId = deriveUnsettledTurnId(latestTurn);
   const isWorking = activeWorkStartedAt !== null;
+  // At most one thought is ever live feed-wide: the latest still-open
+  // thinking activity of the unsettled turn. Same-turn thoughts can sit in
+  // different groups (commentary splits them), so this is computed once
+  // here, not per group.
+  const thinkingLiveScope = designateLiveThinkingScope(sourceFeed, isWorking, unsettledTurnId);
   const collapsedEntryIds = new Set<string>();
   for (const fold of foldsByAnchorId.values()) {
     if (!expandedTurnIds.has(fold.turnId)) {
@@ -1805,6 +1863,7 @@ export function deriveThreadFeedPresentation(
         unsettledTurnId,
         isWorking,
         isActiveTailGroup,
+        thinkingLiveScope,
       );
     }
   }
@@ -1844,13 +1903,95 @@ function thinkingRow(createdAt: string, turnId: TurnId | null) {
   return cachedThinkingRow;
 }
 
+interface ThinkingLiveScope {
+  readonly designatedThinkingActivityId: string | null;
+  readonly hasLiveToolActivity: boolean;
+}
+
+/**
+ * Feed-wide live-thought arbitration: at most one thought is ever live —
+ * the latest still-open thinking activity of the unsettled turn — and a
+ * live tool run pins earlier thoughts static. Same-turn thoughts can sit in
+ * different groups (commentary splits them), so this runs once per
+ * presentation, not per group. Completed siblings disqualify stale
+ * in-progress updates delivered out of order.
+ */
+function designateLiveThinkingScope(
+  feed: ReadonlyArray<ThreadFeedEntry>,
+  isWorking: boolean,
+  unsettledTurnId: TurnId | null,
+): ThinkingLiveScope {
+  if (!isWorking || unsettledTurnId === null) {
+    return { designatedThinkingActivityId: null, hasLiveToolActivity: false };
+  }
+  const terminalReasoningIds = new Set<string>();
+  let designatedThinkingActivityId: string | null = null;
+  let hasLiveToolActivity = false;
+  for (const entry of feed) {
+    if (entry.type !== "activity-group") continue;
+    for (const activity of entry.activities) {
+      const workEntry = activity.workEntry;
+      if (isReasoningSegmentEntry(workEntry)) {
+        if (
+          activity.turnId === unsettledTurnId &&
+          workEntry.toolLifecycleStatus !== undefined &&
+          workEntry.toolLifecycleStatus !== "inProgress" &&
+          workEntry.toolCallId !== undefined
+        ) {
+          terminalReasoningIds.add(workEntry.toolCallId);
+        }
+      }
+    }
+  }
+  for (const entry of feed) {
+    if (entry.type !== "activity-group") continue;
+    for (const activity of entry.activities) {
+      const workEntry = activity.workEntry;
+      if (activity.turnId !== unsettledTurnId) {
+        continue;
+      }
+      if (
+        isReasoningSegmentEntry(workEntry) &&
+        activity.lifecycleStatus !== undefined &&
+        activity.lifecycleStatus !== "inProgress"
+      ) {
+        designatedThinkingActivityId = null;
+        hasLiveToolActivity = false;
+        continue;
+      }
+      if (activity.lifecycleStatus !== "inProgress") continue;
+      if (!isReasoningSegmentEntry(workEntry)) {
+        hasLiveToolActivity = true;
+        continue;
+      }
+      if (workEntry.toolCallId !== undefined && terminalReasoningIds.has(workEntry.toolCallId)) {
+        continue;
+      }
+      designatedThinkingActivityId = activity.id;
+      hasLiveToolActivity = false;
+    }
+  }
+  return { designatedThinkingActivityId, hasLiveToolActivity };
+}
+
 function appendPresentedFeedEntry(
   result: ThreadFeedEntry[],
-  entry: Exclude<ThreadFeedEntry, { readonly type: "turn-fold" | "work-toggle" | "thinking" }>,
+  entry: Exclude<
+    ThreadFeedEntry,
+    {
+      readonly type:
+        | "turn-fold"
+        | "work-toggle"
+        | "thinking"
+        | "reasoning-markdown"
+        | "agent-spawn";
+    }
+  >,
   expandedWorkGroupIds: ReadonlySet<string>,
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thinkingLiveScope: ThinkingLiveScope,
 ): void {
   if (entry.type !== "activity-group") {
     result.push(entry);
@@ -1867,6 +2008,8 @@ function appendPresentedFeedEntry(
     cached.unsettledTurnId !== unsettledTurnId ||
     cached.isWorking !== isWorking ||
     cached.activeTail !== activeTail ||
+    cached.designatedThinkingActivityId !== thinkingLiveScope.designatedThinkingActivityId ||
+    cached.hasLiveToolActivity !== thinkingLiveScope.hasLiveToolActivity ||
     cached.rows.some(
       (row) =>
         (row.type === "work-toggle" && expandedWorkGroupIds.has(row.groupId) !== row.expanded) ||
@@ -1881,8 +2024,16 @@ function appendPresentedFeedEntry(
       unsettledTurnId,
       isWorking,
       activeTail,
+      thinkingLiveScope,
     );
-    cached = { unsettledTurnId, isWorking, activeTail, rows };
+    cached = {
+      unsettledTurnId,
+      isWorking,
+      activeTail,
+      designatedThinkingActivityId: thinkingLiveScope.designatedThinkingActivityId,
+      hasLiveToolActivity: thinkingLiveScope.hasLiveToolActivity,
+      rows,
+    };
     presentedActivityGroupsCache.set(entry, cached);
   }
   for (const row of cached.rows) {
@@ -1897,11 +2048,15 @@ function appendActivityGroupRows(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thinkingLiveScope: ThinkingLiveScope,
 ): void {
   const activities = omitSupersededLifecycleMarkers(
     entry.activities.filter(
       (activity) =>
         !(activity.toolLike && activity.status === "neutral") ||
+        // Reasoning segments are structural boundaries, not tool output:
+        // completed thoughts render their duration, live ones shimmer.
+        isReasoningSegmentEntry(activity.workEntry) ||
         (isWorking &&
           activity.lifecycleStatus === "inProgress" &&
           activity.turnId === unsettledTurnId),
@@ -1911,6 +2066,10 @@ function appendActivityGroupRows(
   if (activities.length === 0) {
     return;
   }
+  // Live-thought arbitration is feed-wide (see designateLiveThinkingScope):
+  // same-turn thoughts can sit in different groups, so a per-group latest
+  // would animate twice. thinkingLiveScope carries the single designation.
+  const { designatedThinkingActivityId, hasLiveToolActivity } = thinkingLiveScope;
   let groupableRun: ThreadFeedActivity[] = [];
   const flushGroupableRun = (isTrailingRun: boolean) => {
     if (groupableRun.length === 0) return;
@@ -1922,12 +2081,30 @@ function appendActivityGroupRows(
       unsettledTurnId,
       isWorking,
       activeTail && isTrailingRun,
+      groupableRun.every((activity) => isReasoningSegmentEntry(activity.workEntry))
+        ? { designatedThinkingActivityId, hasLiveToolActivity }
+        : undefined,
     );
     groupableRun = [];
   };
   for (const activity of activities) {
     const spawn = activity.workEntry.agentSpawn;
     if (activity.workEntry.tone !== "error" && spawn === undefined) {
+      // A thinking segment ends the tool run before it so thought and
+      // action stay in separate compact rows (mirrors web grouping).
+      // Distinct thoughts split too, so a superseded thought renders
+      // statically beside the live one instead of hiding inside it.
+      const reasoning = isReasoningSegmentEntry(activity.workEntry);
+      if (groupableRun.length > 0) {
+        const previous = groupableRun.at(-1)!.workEntry;
+        const previousReasoning = isReasoningSegmentEntry(previous);
+        if (
+          previousReasoning !== reasoning ||
+          (reasoning && previous.toolCallId !== activity.workEntry.toolCallId)
+        ) {
+          flushGroupableRun(false);
+        }
+      }
       groupableRun.push(activity);
       continue;
     }
@@ -1966,6 +2143,7 @@ function appendToolGroupRows(
   unsettledTurnId: TurnId | null,
   isWorking: boolean,
   activeTail: boolean,
+  thinkingLive?: { designatedThinkingActivityId: string | null; hasLiveToolActivity: boolean },
 ): void {
   const firstEntry = activities[0]!.workEntry;
   const identity = firstEntry.toolCallId
@@ -1973,6 +2151,10 @@ function appendToolGroupRows(
     : activities[0]!.id;
   const groupId = `work-group:${identity}`;
   const expanded = expandedWorkGroupIds.has(groupId);
+  if (thinkingLive !== undefined) {
+    appendThinkingSegmentRows(result, sourceGroup, activities, groupId, expanded, thinkingLive);
+    return;
+  }
   const latestActiveActivity = activities.findLast(
     (activity) =>
       isWorking &&
@@ -2067,6 +2249,78 @@ function appendToolGroupRows(
         activity.turnId === unsettledTurnId,
     })),
   });
+}
+
+/**
+ * Settled thinking renders one compact row per thought ("Thought for 4s",
+ * or a static "Thought" without accurate timing); only the designated live
+ * thought shimmers in the turn's live slot like a running tool.
+ */
+function appendThinkingSegmentRows(
+  result: ThreadFeedEntry[],
+  sourceGroup: Extract<ThreadFeedEntry, { readonly type: "activity-group" }>,
+  activities: ReadonlyArray<ThreadFeedActivity>,
+  groupId: string,
+  expanded: boolean,
+  thinkingLive: { designatedThinkingActivityId: string | null; hasLiveToolActivity: boolean },
+): void {
+  for (const activity of activities) {
+    const entry = activity.workEntry;
+    const span = reasoningSegmentSpanForEntry(entry);
+    const live =
+      activity.id === thinkingLive.designatedThinkingActivityId &&
+      !thinkingLive.hasLiveToolActivity;
+    const shimmer = live;
+    const text = entry.detail?.trim() ?? "";
+    if (reasoningHasVisibleText(entry) && text.length > 0) {
+      // Stable across streaming lifecycle merges: turn + reasoning identity.
+      const reasoningIdentity =
+        entry.toolCallId !== undefined
+          ? `${entry.turnId ?? sourceGroup.turnId ?? groupId}:${entry.toolCallId}`
+          : `${groupId}:${activity.id}`;
+      result.push({
+        type: "reasoning-markdown",
+        id: `reasoning-markdown:${reasoningIdentity}`,
+        createdAt: span.startedAt ?? activity.createdAt,
+        turnId: sourceGroup.turnId,
+        text,
+        streaming: live,
+      });
+      continue;
+    }
+    result.push({
+      type: "work-toggle",
+      // The shimmering row is the turn's live slot; it keeps that identity
+      // until "Thinking" takes the slot (mirrors the tool live row).
+      id: shimmer ? LIVE_ACTIVITY_ROW_ID : `work-toggle:${groupId}:${activity.id}`,
+      createdAt: span.startedAt ?? activity.createdAt,
+      turnId: sourceGroup.turnId,
+      groupId,
+      hiddenCount: 1,
+      expanded,
+      summary: live ? "Thinking" : formatThinkingSegmentLabel(span),
+      summaryKind: toolGroupSummaryKind([entry]),
+      hasFailure: false,
+      live,
+      shimmer,
+    });
+    if (!expanded) {
+      continue;
+    }
+    result.push({
+      type: "activity-group",
+      id: `work-details:${groupId}:${activity.id}`,
+      createdAt: activity.createdAt,
+      turnId: activity.turnId,
+      activities: [
+        {
+          ...activity,
+          groupedToolDetail: true,
+          live,
+        },
+      ],
+    });
+  }
 }
 
 function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boolean): string {

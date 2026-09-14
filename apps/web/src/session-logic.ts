@@ -13,6 +13,8 @@ import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
   extractWorkLogToolLifecycleStatus,
+  isReasoningItemPayload,
+  isReasoningSegmentEntry,
   isWorktreeSetupActivity,
   workEntryIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
@@ -76,6 +78,12 @@ export interface WorkLogEntry {
   requestKind?: PendingApproval["requestKind"];
   /** From runtime item / task payload `status` when present (e.g. tool.updated). */
   toolLifecycleStatus?: WorkLogToolLifecycleStatus;
+  /**
+   * Reasoning segment start, preserved when lifecycle updates merge into
+   * their completion. Lets the timeline bound "Thought for Xs" even when
+   * tool activity interleaves between the segment's start and end.
+   */
+  segmentStartedAt?: string;
   /** Originating orchestration activity kind (e.g. `user-input.requested`) for row chrome. */
   sourceActivityKind?: OrchestrationThreadActivity["kind"];
   /** Grouping key for subagent lifecycle rows (one row per agent). */
@@ -175,6 +183,12 @@ export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolea
   // task.progress (tone "thinking") and the neutral filter was swallowing
   // them exactly while the fleet ran — the one moment they matter most.
   if (entry.agentSpawn !== undefined) {
+    return false;
+  }
+  // Reasoning segments are structural boundaries, not tool output: a
+  // completed thought renders its duration, and an interrupted one keeps the
+  // honest "Thinking" row where the turn stopped.
+  if (isReasoningSegmentEntry(entry)) {
     return false;
   }
   if (!workLogEntryIsToolLike(entry)) {
@@ -563,14 +577,22 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       ? payload.detail
       : null;
   const taskLabel = taskSummary || taskDetailAsLabel;
-  const detail = isTaskActivity
-    ? !taskDetailAsLabel &&
-      payload &&
-      typeof payload.detail === "string" &&
-      payload.detail.length > 0
-      ? stripTrailingExitCode(payload.detail).output
+  // Reasoning lifecycle rides the tool activity kinds with a `reasoning`
+  // item type; clients render it as thinking segments, never as tool rows.
+  const isReasoningSegment = isReasoningItemPayload(payload);
+  // Provider reasoning text is opaque — do not run command-output stripping.
+  const detail = isReasoningSegment
+    ? typeof payload?.detail === "string" && payload.detail.length > 0
+      ? payload.detail
       : null
-    : extractToolDetail(payload, title ?? activity.summary);
+    : isTaskActivity
+      ? !taskDetailAsLabel &&
+        payload &&
+        typeof payload.detail === "string" &&
+        payload.detail.length > 0
+        ? stripTrailingExitCode(payload.detail).output
+        : null
+      : extractToolDetail(payload, title ?? activity.summary);
   const toolCallId = isTaskActivity ? null : extractToolCallId(payload);
   const entry: DerivedWorkLogEntry = {
     id: activity.id,
@@ -578,7 +600,7 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     turnId: activity.turnId,
     label: taskLabel || activity.summary,
     tone:
-      activity.kind === "task.progress"
+      activity.kind === "task.progress" || isReasoningSegment
         ? "thinking"
         : activity.tone === "approval"
           ? "info"
@@ -822,7 +844,14 @@ function shouldCollapseToolLifecycleEntries(
     return false;
   }
   if (previous.sourceActivityKind === "tool.completed") {
-    return false;
+    // Allow corrective reasoning completions (OpenCode can edit a finished
+    // reasoning part on reconnect) to refresh terminal detail in place.
+    return (
+      isReasoningSegmentEntry(previous) &&
+      isReasoningSegmentEntry(next) &&
+      previous.toolCallId !== undefined &&
+      previous.toolCallId === next.toolCallId
+    );
   }
   if (
     previous[workLogCollapseKey] !== undefined &&
@@ -844,7 +873,18 @@ function mergeDerivedWorkLogEntries(
   next: DerivedWorkLogEntry,
 ): DerivedWorkLogEntry {
   const changedFiles = mergeChangedFiles(previous.changedFiles, next.changedFiles);
-  const detail = next.detail ?? previous.detail;
+  // OpenCode streams inProgress reasoning detail as incremental chunks.
+  // Concatenate those; completions (and corrective edits) replace with the
+  // full terminal body.
+  const reasoningMerge = isReasoningSegmentEntry(previous) && isReasoningSegmentEntry(next);
+  const detail =
+    reasoningMerge &&
+    previous.toolLifecycleStatus === "inProgress" &&
+    next.toolLifecycleStatus === "inProgress" &&
+    previous.detail !== undefined &&
+    next.detail !== undefined
+      ? `${previous.detail}${next.detail}`
+      : (next.detail ?? previous.detail);
   const viewedImagePath = next.viewedImagePath ?? previous.viewedImagePath;
   const command = next.command ?? previous.command;
   const rawCommand = next.rawCommand ?? previous.rawCommand;
@@ -858,9 +898,19 @@ function mergeDerivedWorkLogEntries(
   const toolCallId = next.toolCallId ?? previous.toolCallId;
   const toolLifecycleStatus = next.toolLifecycleStatus ?? previous.toolLifecycleStatus;
   const toolData = next.toolData ?? previous.toolData;
+  // A reasoning completion never carries its segment's start, so keep the
+  // earliest observed time across the merge. Interleaved tool activity can't
+  // break the pairing: collapse keys on identity, not adjacency.
+  const segmentStartedAt =
+    next.segmentStartedAt ??
+    previous.segmentStartedAt ??
+    (reasoningMerge ? previous.createdAt : undefined);
   return {
     ...previous,
     ...next,
+    // Keep a stable id across reasoning merges so list virtualization does
+    // not remount the Markdown row on every incremental chunk.
+    ...(reasoningMerge ? { id: previous.id } : {}),
     ...(detail ? { detail } : {}),
     ...(viewedImagePath ? { viewedImagePath } : {}),
     ...(command ? { command } : {}),
@@ -876,6 +926,7 @@ function mergeDerivedWorkLogEntries(
     ...(toolCallId ? { toolCallId } : {}),
     ...(toolLifecycleStatus !== undefined ? { toolLifecycleStatus } : {}),
     ...(toolData !== undefined ? { toolData } : {}),
+    ...(segmentStartedAt ? { segmentStartedAt } : {}),
   };
 }
 

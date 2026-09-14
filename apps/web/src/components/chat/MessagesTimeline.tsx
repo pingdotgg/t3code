@@ -1409,7 +1409,8 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
                   row.kind === "work-live" ||
                   row.kind === "work-toggle" ||
                   row.kind === "thinking" ||
-                  row.kind === "worktree-setup"
+                  row.kind === "worktree-setup" ||
+                  row.kind === "reasoning-markdown"
                 ? "pb-2"
                 : "pb-4",
         (row.kind === "message" && row.message.role === "assistant") ||
@@ -1445,6 +1446,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "working" ? <WorkingTimelineRow row={row} /> : null}
       {row.kind === "thinking" ? <ThinkingTimelineRow /> : null}
       {row.kind === "worktree-setup" ? <WorktreeSetupTimelineRow row={row} /> : null}
+      {row.kind === "reasoning-markdown" ? <ReasoningMarkdownTimelineRow row={row} /> : null}
     </div>
   );
 });
@@ -2526,6 +2528,29 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
         active={row.active}
       />
     </button>
+  );
+}
+
+function ReasoningMarkdownTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "reasoning-markdown" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <div className="relative min-w-0 px-1 py-0.5 text-muted-foreground">
+      <ChatMarkdown
+        text={row.text}
+        cwd={ctx.markdownCwd}
+        threadRef={ctx.threadRef ?? undefined}
+        isStreaming={row.streaming}
+        lineBreaks={shouldPreserveAssistantLineBreaks(row.text)}
+        skills={ctx.skills}
+        headingLevelOffset={MESSAGE_HEADING_LEVEL}
+        onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+        onImageExpand={ctx.onImageExpand}
+      />
+    </div>
   );
 }
 

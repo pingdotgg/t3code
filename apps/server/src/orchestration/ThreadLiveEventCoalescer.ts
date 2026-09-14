@@ -48,10 +48,20 @@ function stableToolCallIdentity(event: OrchestrationEvent): string | null {
   return asTrimmedString(payload.toolCallId) ?? asTrimmedString(data?.toolCallId);
 }
 
+function isReasoningToolUpdated(event: OrchestrationEvent): boolean {
+  if (event.type !== "thread.activity-appended" || event.payload.activity.kind !== "tool.updated") {
+    return false;
+  }
+  const payload = event.payload.activity.payload;
+  return Predicate.isObject(payload) && payload.itemType === "reasoning";
+}
+
 /**
  * Retain only the latest in-flight update for each stable tool-call id in a
  * live run. Anonymous calls pass through because labels are not unique when
- * tools execute in parallel. Survivors remain in sequence order.
+ * tools execute in parallel. Reasoning updates also pass through: OpenCode
+ * streams incremental detail chunks that clients concatenate, so dropping
+ * intermediates would lose visible text. Survivors remain in sequence order.
  */
 export function coalesceLiveToolUpdatedEvents(
   events: ReadonlyArray<OrchestrationEvent>,
@@ -64,6 +74,10 @@ export function coalesceLiveToolUpdatedEvents(
     const latestUpdates: Array<OrchestrationEvent> = [];
     for (let index = pendingUpdates.length - 1; index >= 0; index -= 1) {
       const event = pendingUpdates[index]!;
+      if (isReasoningToolUpdated(event)) {
+        latestUpdates.push(event);
+        continue;
+      }
       const identity = stableToolCallIdentity(event);
       const activity =
         event.type === "thread.activity-appended" ? event.payload.activity : undefined;

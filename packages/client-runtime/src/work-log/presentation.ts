@@ -10,6 +10,7 @@ import { classifyMarkdownImageSource } from "@t3tools/client-runtime/markdown-im
 import { resolveMediaSource } from "@t3tools/client-runtime/media-source";
 import { parseChangeRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
+import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 
 export function isWorktreeSetupActivity(kind: string): boolean {
   return kind === "setup-script.requested" || kind === "setup-script.started";
@@ -356,6 +357,102 @@ export function workLogEntryIsToolLike(entry: WorkLogPresentationEntry): boolean
   if (entry.command !== undefined && entry.command.trim().length > 0) return true;
   if (entry.requestKind !== undefined) return true;
   return entry.itemType !== undefined && isToolLifecycleItemType(entry.itemType);
+}
+
+/**
+ * Raw activity payloads carry the canonical item type. Reasoning lifecycle
+ * arrives through the tool activity kinds with itemType "reasoning".
+ */
+export function isReasoningItemPayload(payload: unknown): boolean {
+  return (
+    payload !== null &&
+    typeof payload === "object" &&
+    !Array.isArray(payload) &&
+    (payload as Record<string, unknown>).itemType === "reasoning"
+  );
+}
+
+/**
+ * Provider thinking is surfaced as lifecycle activity. Adapters emit it
+ * through the tool activity kinds with a `reasoning` item type, and the
+ * clients derive the thinking tone from that. Optional provider-supplied
+ * reasoning text rides lifecycle `detail` when present; empty reasoning stays
+ * structural only. Subagent progress rows share the thinking tone but ride
+ * `task.progress`, so the kind check keeps them out of segment handling.
+ */
+export function isReasoningSegmentEntry(
+  entry: Pick<WorkLogPresentationEntry, "tone" | "sourceActivityKind">,
+): boolean {
+  return (
+    entry.tone === "thinking" &&
+    (entry.sourceActivityKind === "tool.updated" || entry.sourceActivityKind === "tool.completed")
+  );
+}
+
+/** Provider-supplied readable reasoning body (not fabricated, not structural-only). */
+export function reasoningHasVisibleText(
+  entry: Pick<WorkLogPresentationEntry, "tone" | "sourceActivityKind" | "detail">,
+): boolean {
+  return isReasoningSegmentEntry(entry) && Boolean(entry.detail?.trim());
+}
+
+export interface ReasoningSegmentSpan {
+  /** Segment start: native thinking start when observed, else first sighting. */
+  readonly startedAt: string | null;
+  /** Segment end when a terminal lifecycle update arrived. */
+  readonly endedAt: string | null;
+  readonly completed: boolean;
+}
+
+/** Minimum shape for reasoning segment timing. */
+export interface ReasoningSegmentEntryLike {
+  readonly createdAt: string;
+  readonly toolCallId?: string | undefined;
+  readonly toolLifecycleStatus?: string | undefined;
+  /** Preserved across lifecycle merges: the segment's first observed time. */
+  readonly segmentStartedAt?: string | undefined;
+}
+
+/**
+ * Bounds one reasoning entry's segment. Lifecycle pairs merge before they
+ * reach the timeline, so a terminal entry carries both ends; a dangling
+ * in-progress entry is an open thought with no known end.
+ */
+export function reasoningSegmentSpanForEntry(
+  entry: ReasoningSegmentEntryLike,
+): ReasoningSegmentSpan {
+  const completed =
+    entry.toolLifecycleStatus !== undefined && entry.toolLifecycleStatus !== "inProgress";
+  return {
+    startedAt: entry.segmentStartedAt ?? entry.createdAt,
+    endedAt: completed ? entry.createdAt : null,
+    completed,
+  };
+}
+
+/** Elapsed milliseconds between two ISO timestamps, or null when unparseable. */
+export function reasoningSegmentElapsedMs(
+  startedAt: string | null,
+  endedAt: string | null,
+): number | null {
+  if (!startedAt || !endedAt) return null;
+  const start = Date.parse(startedAt);
+  const end = Date.parse(endedAt);
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return null;
+  return Math.max(0, end - start);
+}
+
+/**
+ * Compact settled label for a thinking segment. Only "Thinking" is ever
+ * live; history renders "Thought for Xs" with real timing, or a static
+ * "Thought" when no accurate duration exists.
+ */
+export function formatThinkingSegmentLabel(
+  span: Pick<ReasoningSegmentSpan, "startedAt" | "endedAt">,
+): string {
+  const elapsedMs = reasoningSegmentElapsedMs(span.startedAt, span.endedAt);
+  if (elapsedMs === null || elapsedMs < 1_000) return "Thought";
+  return `Thought for ${formatDuration(elapsedMs)}`;
 }
 
 /** Maps item and task status to the status shown on a work-log row. */

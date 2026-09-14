@@ -329,6 +329,7 @@ type OpenCodeTextPartState = Pick<OpenCodeTextPart, "id" | "messageID" | "type" 
   text: string | undefined;
   emittedText: string | undefined;
   completed: boolean;
+  reasoningStarted: boolean;
 };
 
 type OpenCodeStepUsage = Pick<Extract<Part, { readonly type: "step-finish" }>, "id" | "tokens">;
@@ -350,6 +351,14 @@ interface OpenCodeSessionContext {
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
+  /**
+   * The single currently open thought. A session thinks one thought at a
+   * time: sighting a new reasoning part, acting, commenting, or settling the
+   * turn closes whatever is open, so historical segments can never linger as
+   * live rows. Direct lookup only — never iterate retained parts here (see
+   * the history-visits guard in OpenCodeAdapter.test.ts).
+   */
+  openReasoningPart: { messageID: string; id: string } | undefined;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
   activeAgent: string | undefined;
@@ -597,6 +606,18 @@ function resolveTextStreamKind(part: Pick<Part, "type">): "assistant_text" | "re
   return part.type === "reasoning" ? "reasoning_text" : "assistant_text";
 }
 
+/** Provider-supplied reasoning body text only — never synthesize content. */
+function openCodeReasoningDetail(
+  part: Pick<OpenCodeTextPartState, "text" | "emittedText">,
+): string | undefined {
+  const text = part.emittedText ?? part.text;
+  if (text === undefined) {
+    return undefined;
+  }
+  const trimmed = text.trim();
+  return trimmed.length > 0 ? text : undefined;
+}
+
 function retainOpenCodeTextPart(
   context: OpenCodeSessionContext,
   part: OpenCodeTextPart,
@@ -612,6 +633,7 @@ function retainOpenCodeTextPart(
     ...(part.time !== undefined ? { time: part.time } : {}),
     emittedText: previous?.emittedText,
     completed: previous?.completed ?? false,
+    reasoningStarted: previous?.reasoningStarted ?? false,
   };
   parts.set(part.id, state);
   context.textPartsByMessageId.set(part.messageID, parts);
@@ -1059,7 +1081,7 @@ export function makeOpenCodeAdapter(
         // the remaining cleanups.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(finalizeAndStopOpenCodeContext(context)),
           { concurrency: "unbounded", discard: true },
         );
         // Close the logger AFTER session teardown so any final lifecycle
@@ -1149,6 +1171,7 @@ export function makeOpenCodeAdapter(
         yield* Fiber.interrupt(pendingIdleReconciliation.fiber);
       }
       yield* schedulePendingRequestRecovery(context);
+      yield* completeOpenReasoningSegment(context, turnId, raw);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1514,6 +1537,7 @@ export function makeOpenCodeAdapter(
         );
       }
       yield* clearPendingOpenCodeRequests(context, { type: "session.abort" });
+      yield* completeOpenReasoningSegment(context, turnId, raw);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1561,6 +1585,7 @@ export function makeOpenCodeAdapter(
       // run this inside a fiber forked via `Effect.forkIn(context.sessionScope)`;
       // closing that scope triggers the fiber-interrupt finalizer, so any
       // subsequent yield point would unwind and silently drop these emits.
+      yield* completeOpenReasoningSegment(context, turnId, undefined);
       yield* emit({
         ...(yield* buildEventBase({
           threadId: context.session.threadId,
@@ -1591,6 +1616,130 @@ export function makeOpenCodeAdapter(
       yield* Scope.close(context.sessionScope, Exit.void);
     });
 
+    /**
+     * Close the open thought, if any. A thought ends as soon as the model
+     * acts on it: a tool call starts, commentary flows, a new thought
+     * begins, or the turn settles. The end is stamped with the native time
+     * when the provider reported one, otherwise with the observation time —
+     * never left dangling as a perpetual live row.
+     */
+    const completeOpenReasoningSegment = Effect.fn("completeOpenReasoningSegment")(function* (
+      context: OpenCodeSessionContext,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      const open = context.openReasoningPart;
+      if (!open) {
+        return;
+      }
+      context.openReasoningPart = undefined;
+      const state = context.textPartsByMessageId.get(open.messageID)?.get(open.id);
+      if (!state || state.type !== "reasoning" || !state.reasoningStarted || state.completed) {
+        return;
+      }
+      state.completed = true;
+      const detail = openCodeReasoningDetail(state);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: state.id,
+          createdAt: state.time?.end !== undefined ? isoFromEpochMs(state.time.end) : undefined,
+          raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          title: "Thinking",
+          ...(detail !== undefined ? { detail } : {}),
+        },
+      });
+    });
+
+    const finalizeAndStopOpenCodeContext = Effect.fn("finalizeAndStopOpenCodeContext")(function* (
+      context: OpenCodeSessionContext,
+    ) {
+      yield* completeOpenReasoningSegment(context, context.activeTurnId, undefined);
+      return yield* stopOpenCodeContext(context);
+    });
+
+    /** Start a reasoning lifecycle segment (completion happens after text merge). */
+    const emitReasoningSegmentEvent = Effect.fn("emitReasoningSegmentEvent")(function* (
+      context: OpenCodeSessionContext,
+      part: OpenCodeTextPartState,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (part.type !== "reasoning") {
+        return;
+      }
+      // Capability-driven: native part identity/time always give structural
+      // thought/tool/thought boundaries. When the provider also supplies
+      // readable reasoning text, carry it on lifecycle `detail` so clients can
+      // render it through the existing work-entry path. Empty reasoning stays
+      // structural only — never fabricate text. (content.delta reasoning_text
+      // is still emitted for adapter parity, but ingestion drops non-assistant
+      // deltas; detail is the surviving carrier.)
+      if (!part.reasoningStarted) {
+        part.reasoningStarted = true;
+        yield* completeOpenReasoningSegment(context, turnId, raw);
+        context.openReasoningPart = { messageID: part.messageID, id: part.id };
+        const detail = openCodeReasoningDetail(part);
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            itemId: part.id,
+            createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
+            raw,
+          })),
+          type: "item.updated",
+          payload: {
+            itemType: "reasoning",
+            status: "inProgress",
+            title: "Thinking",
+            ...(detail !== undefined ? { detail } : {}),
+          },
+        });
+      }
+    });
+
+    const completeReasoningSegmentPart = Effect.fn("completeReasoningSegmentPart")(function* (
+      context: OpenCodeSessionContext,
+      part: OpenCodeTextPartState,
+      turnId: TurnId | undefined,
+      raw: unknown,
+    ) {
+      if (part.type !== "reasoning" || part.completed || part.time?.end === undefined) {
+        return;
+      }
+      part.completed = true;
+      if (
+        context.openReasoningPart?.messageID === part.messageID &&
+        context.openReasoningPart.id === part.id
+      ) {
+        context.openReasoningPart = undefined;
+      }
+      const detail = openCodeReasoningDetail(part);
+      yield* emit({
+        ...(yield* buildEventBase({
+          threadId: context.session.threadId,
+          turnId,
+          itemId: part.id,
+          createdAt: isoFromEpochMs(part.time.end),
+          raw,
+        })),
+        type: "item.completed",
+        payload: {
+          itemType: "reasoning",
+          status: "completed",
+          title: "Thinking",
+          ...(detail !== undefined ? { detail } : {}),
+        },
+      });
+    });
+
     /** Emit content.delta and item.completed events for an assistant text part. */
     const emitAssistantTextDelta = Effect.fn("emitAssistantTextDelta")(function* (
       context: OpenCodeSessionContext,
@@ -1598,12 +1747,22 @@ export function makeOpenCodeAdapter(
       turnId: TurnId | undefined,
       raw: unknown,
     ) {
+      const reasoningAlreadyStarted = part.reasoningStarted;
+      const reasoningAlreadyCompleted = part.completed;
+      yield* emitReasoningSegmentEvent(context, part, turnId, raw);
       if (part.text === undefined) {
+        // Native end can arrive without a new text body; still finalize.
+        yield* completeReasoningSegmentPart(context, part, turnId, raw);
         return;
       }
       const { latestText, deltaToEmit } = mergeOpenCodeAssistantText(part.emittedText, part.text);
       part.emittedText = latestText;
       part.text = latestText;
+      // Flowing commentary ends any open thought before the words land, so a
+      // thought never stays live underneath the model's own answer.
+      if (part.type === "text" && latestText.length > 0) {
+        yield* completeOpenReasoningSegment(context, turnId, raw);
+      }
       if (deltaToEmit.length > 0) {
         yield* emit({
           ...(yield* buildEventBase({
@@ -1617,6 +1776,68 @@ export function makeOpenCodeAdapter(
           payload: {
             streamKind: resolveTextStreamKind(part),
             delta: deltaToEmit,
+          },
+        });
+        // Stream reasoning growth as an incremental lifecycle detail chunk —
+        // not the full cumulative body. Clients concatenate inProgress updates;
+        // completion carries the final full text. That keeps live/persist
+        // transfer O(N) instead of O(N²) cumulative prefixes. Skip the first
+        // sighting when emitReasoningSegmentEvent already carried opening detail.
+        if (
+          part.type === "reasoning" &&
+          !part.completed &&
+          latestText.trim().length > 0 &&
+          reasoningAlreadyStarted
+        ) {
+          yield* emit({
+            ...(yield* buildEventBase({
+              threadId: context.session.threadId,
+              turnId,
+              itemId: part.id,
+              createdAt: part.time !== undefined ? isoFromEpochMs(part.time.start) : undefined,
+              raw,
+            })),
+            type: "item.updated",
+            payload: {
+              itemType: "reasoning",
+              status: "inProgress",
+              title: "Thinking",
+              detail: deltaToEmit,
+            },
+          });
+        }
+      }
+
+      // Complete after merge so lifecycle detail has the latest provider text.
+      yield* completeReasoningSegmentPart(context, part, turnId, raw);
+      // OpenCode can edit a completed reasoning part later (reconnect/history).
+      // Refresh terminal detail without reopening the segment as live.
+      if (
+        part.type === "reasoning" &&
+        reasoningAlreadyCompleted &&
+        part.reasoningStarted &&
+        deltaToEmit.length > 0 &&
+        latestText.trim().length > 0
+      ) {
+        yield* emit({
+          ...(yield* buildEventBase({
+            threadId: context.session.threadId,
+            turnId,
+            itemId: part.id,
+            createdAt:
+              part.time?.end !== undefined
+                ? isoFromEpochMs(part.time.end)
+                : part.time !== undefined
+                  ? isoFromEpochMs(part.time.start)
+                  : undefined,
+            raw,
+          })),
+          type: "item.completed",
+          payload: {
+            itemType: "reasoning",
+            status: "completed",
+            title: "Thinking",
+            detail: latestText,
           },
         });
       }
@@ -2370,12 +2591,21 @@ export function makeOpenCodeAdapter(
         }
 
         case "message.removed": {
+          if (context.openReasoningPart?.messageID === event.properties.messageID) {
+            yield* completeOpenReasoningSegment(context, turnId, event);
+          }
           context.messageRoleById.delete(event.properties.messageID);
           context.textPartsByMessageId.delete(event.properties.messageID);
           break;
         }
 
         case "message.part.removed": {
+          if (
+            context.openReasoningPart?.messageID === event.properties.messageID &&
+            context.openReasoningPart.id === event.properties.partID
+          ) {
+            yield* completeOpenReasoningSegment(context, turnId, event);
+          }
           const parts = context.textPartsByMessageId.get(event.properties.messageID);
           parts?.delete(event.properties.partID);
           if (parts?.size === 0) {
@@ -2405,6 +2635,9 @@ export function makeOpenCodeAdapter(
           if (deltaToEmit.length === 0) {
             break;
           }
+          if (existingPart.type === "text") {
+            yield* completeOpenReasoningSegment(context, turnId, event);
+          }
           existingPart.emittedText = nextText;
           existingPart.text = nextText;
           yield* emit({
@@ -2420,6 +2653,62 @@ export function makeOpenCodeAdapter(
               delta: deltaToEmit,
             },
           });
+          // Delta-only reasoning streams never revisit message.part.updated, so
+          // mirror the snapshot path: push an incremental lifecycle detail chunk
+          // (ingestion drops reasoning_text content.delta).
+          if (
+            existingPart.type === "reasoning" &&
+            existingPart.reasoningStarted &&
+            !existingPart.completed &&
+            nextText.trim().length > 0
+          ) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: event.properties.partID,
+                createdAt:
+                  existingPart.time !== undefined
+                    ? isoFromEpochMs(existingPart.time.start)
+                    : undefined,
+                raw: event,
+              })),
+              type: "item.updated",
+              payload: {
+                itemType: "reasoning",
+                status: "inProgress",
+                title: "Thinking",
+                detail: deltaToEmit,
+              },
+            });
+          } else if (
+            existingPart.type === "reasoning" &&
+            existingPart.reasoningStarted &&
+            existingPart.completed &&
+            nextText.trim().length > 0
+          ) {
+            yield* emit({
+              ...(yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: event.properties.partID,
+                createdAt:
+                  existingPart.time?.end !== undefined
+                    ? isoFromEpochMs(existingPart.time.end)
+                    : existingPart.time !== undefined
+                      ? isoFromEpochMs(existingPart.time.start)
+                      : undefined,
+                raw: event,
+              })),
+              type: "item.completed",
+              payload: {
+                itemType: "reasoning",
+                status: "completed",
+                title: "Thinking",
+                detail: nextText,
+              },
+            });
+          }
           break;
         }
 
@@ -2460,6 +2749,9 @@ export function makeOpenCodeAdapter(
           }
 
           if (part.type === "tool") {
+            // Acting ends thinking: close any open thought before the tool
+            // lifecycle lands so the tool supersedes it in event order.
+            yield* completeOpenReasoningSegment(context, turnId, event);
             const itemType = toToolLifecycleItemType(part.tool);
             const title =
               part.state.status === "running" || part.state.status === "completed"
@@ -2639,6 +2931,9 @@ export function makeOpenCodeAdapter(
               break;
             }
           }
+          if (activeTurnId) {
+            yield* completeOpenReasoningSegment(context, activeTurnId, event);
+          }
           yield* cancelIdleReconciliation(context);
           const terminalCancellation =
             activeTurnId !== undefined && cancellation?.turnId === activeTurnId
@@ -2816,7 +3111,7 @@ export function makeOpenCodeAdapter(
           if (existing.session.status === "connecting" && !(yield* Ref.get(existing.stopped))) {
             return (yield* awaitOpenCodeContextReady(existing)).session;
           }
-          yield* stopOpenCodeContext(existing);
+          yield* finalizeAndStopOpenCodeContext(existing);
           deleteContextIfCurrent(existing);
         }
 
@@ -2994,6 +3289,7 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          openReasoningPart: undefined,
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
@@ -3752,7 +4048,7 @@ export function makeOpenCodeAdapter(
             threadId,
           });
         }
-        const stopped = yield* stopOpenCodeContext(context);
+        const stopped = yield* finalizeAndStopOpenCodeContext(context);
         deleteContextIfCurrent(context);
         if (!stopped) {
           return;
@@ -3911,7 +4207,7 @@ export function makeOpenCodeAdapter(
         // interrupt the sibling fibers. Same pattern as the layer finalizer.
         yield* Effect.forEach(
           contexts,
-          (context) => Effect.ignoreCause(stopOpenCodeContext(context)),
+          (context) => Effect.ignoreCause(finalizeAndStopOpenCodeContext(context)),
           { concurrency: "unbounded", discard: true },
         );
       });

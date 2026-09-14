@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
-import { projectActivityPayload } from "./ActivityPayloadProjection.ts";
+import {
+  projectActivityPayload,
+  projectThreadDetailSnapshot,
+} from "./ActivityPayloadProjection.ts";
 
 function activity(payload: Record<string, unknown>): OrchestrationThreadActivity {
   return {
@@ -342,5 +345,204 @@ describe("projectActivityPayload", () => {
     });
     const projected = projectActivityPayload(source);
     expect(projected.payload).toEqual(source.payload);
+  });
+});
+
+describe("projectThreadDetailSnapshot reasoning retention", () => {
+  const lifecycleActivity = (
+    id: string,
+    kind: "tool.updated" | "tool.completed",
+    itemType: string,
+    toolCallId: string,
+    createdAt: string,
+  ): OrchestrationThreadActivity =>
+    ({
+      id,
+      tone: "tool",
+      kind,
+      summary: itemType === "reasoning" ? "Thinking" : "Render",
+      payload: {
+        itemType,
+        toolCallId,
+        status: kind === "tool.completed" ? "completed" : "inProgress",
+        title: itemType === "reasoning" ? "Thinking" : "Render",
+      },
+      turnId: "turn-1",
+      createdAt,
+    }) as unknown as OrchestrationThreadActivity;
+
+  it("keeps the reasoning start update that completion would otherwise supersede", () => {
+    const snapshot = {
+      snapshotSequence: 0,
+      thread: {
+        activities: [
+          lifecycleActivity("reasoning-updated", "tool.updated", "reasoning", "reasoning-1", "t1"),
+          lifecycleActivity("tool-updated", "tool.updated", "command_execution", "tool-1", "t2"),
+          lifecycleActivity(
+            "tool-completed",
+            "tool.completed",
+            "command_execution",
+            "tool-1",
+            "t3",
+          ),
+          lifecycleActivity(
+            "reasoning-completed",
+            "tool.completed",
+            "reasoning",
+            "reasoning-1",
+            "t4",
+          ),
+        ],
+      },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0];
+
+    const projected = projectThreadDetailSnapshot(snapshot);
+    // The ordinary tool update is slimmed away, but the reasoning start update
+    // must survive reloads: clients bound segment durations from it.
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated",
+      "tool-completed",
+      "reasoning-completed",
+    ]);
+  });
+
+  it("drops intermediate reasoning text copies while keeping start timing and final text", () => {
+    // Incremental chunks (the live/write path), not cumulative prefixes.
+    const chunks = Array.from({ length: 40 }, (_, index) => `word${index} `);
+    const finalText = chunks.join("");
+    expect(finalText.length).toBeGreaterThan(180);
+
+    const activities: OrchestrationThreadActivity[] = chunks.map((detail, index) => {
+      const row = lifecycleActivity(
+        `reasoning-updated-${index}`,
+        "tool.updated",
+        "reasoning",
+        "reasoning-stream",
+        `t${String(index).padStart(2, "0")}`,
+      );
+      return {
+        ...row,
+        payload: {
+          ...(row.payload as Record<string, unknown>),
+          detail,
+        },
+      } as OrchestrationThreadActivity;
+    });
+    // Live/persist path proof: 40 incremental chunks stay O(N) bytes total,
+    // not O(N²) cumulative prefixes.
+    const persistedDetailBytes = activities.reduce((total, activity) => {
+      const detail = (activity.payload as Record<string, unknown>).detail;
+      return total + (typeof detail === "string" ? detail.length : 0);
+    }, 0);
+    expect(persistedDetailBytes).toBe(finalText.length);
+    expect(persistedDetailBytes).toBeLessThan(finalText.length * 2);
+
+    activities.push({
+      ...lifecycleActivity(
+        "reasoning-completed",
+        "tool.completed",
+        "reasoning",
+        "reasoning-stream",
+        "t99",
+      ),
+      payload: {
+        itemType: "reasoning",
+        toolCallId: "reasoning-stream",
+        status: "completed",
+        title: "Thinking",
+        detail: finalText,
+      },
+    } as OrchestrationThreadActivity);
+
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: { activities },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-0",
+      "reasoning-completed",
+    ]);
+    const start = projected.thread.activities[0]!;
+    const completed = projected.thread.activities[1]!;
+    expect((start.payload as Record<string, unknown>).detail).toBeUndefined();
+    expect((completed.payload as Record<string, unknown>).detail).toBe(finalText);
+    // Snapshot stores O(1) bodies, not every streaming chunk.
+    const detailBytes = projected.thread.activities.reduce((total, activity) => {
+      const detail = (activity.payload as Record<string, unknown>).detail;
+      return total + (typeof detail === "string" ? detail.length : 0);
+    }, 0);
+    expect(detailBytes).toBe(finalText.length);
+  });
+
+  it("keeps first and latest in-flight reasoning updates across distinct createdAt values", () => {
+    const chunks = ["partial-", "one-", "two-", "three-", "four"];
+    const activities = chunks.map((detail, index) => {
+      const n = index + 1;
+      const row = lifecycleActivity(
+        `reasoning-updated-${n}`,
+        "tool.updated",
+        "reasoning",
+        "reasoning-live",
+        `2026-08-01T10:00:0${n}.000Z`,
+      );
+      return {
+        ...row,
+        payload: {
+          ...(row.payload as Record<string, unknown>),
+          detail,
+        },
+      } as OrchestrationThreadActivity;
+    });
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: { activities },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-1",
+      "reasoning-updated-5",
+    ]);
+    expect(projected.thread.activities).toHaveLength(2);
+    expect(projected.thread.activities[0]?.createdAt).toBe("2026-08-01T10:00:01.000Z");
+    expect(
+      (projected.thread.activities[0]?.payload as Record<string, unknown>).detail,
+    ).toBeUndefined();
+    expect(projected.thread.activities[1]?.createdAt).toBe("2026-08-01T10:00:05.000Z");
+    // Latest retained row reconstructs the full concatenated body from chunks.
+    expect((projected.thread.activities[1]?.payload as Record<string, unknown>).detail).toBe(
+      chunks.join(""),
+    );
+  });
+
+  it("keeps a single in-flight reasoning update when first and latest are the same row", () => {
+    const row = lifecycleActivity(
+      "reasoning-updated-only",
+      "tool.updated",
+      "reasoning",
+      "reasoning-live",
+      "2026-08-01T10:00:01.000Z",
+    );
+    const projected = projectThreadDetailSnapshot({
+      snapshotSequence: 0,
+      thread: {
+        activities: [
+          {
+            ...row,
+            payload: {
+              ...(row.payload as Record<string, unknown>),
+              detail: "only-partial",
+            },
+          } as OrchestrationThreadActivity,
+        ],
+      },
+    } as unknown as Parameters<typeof projectThreadDetailSnapshot>[0]);
+
+    expect(projected.thread.activities.map((activity) => activity.id)).toEqual([
+      "reasoning-updated-only",
+    ]);
+    expect((projected.thread.activities[0]?.payload as Record<string, unknown>).detail).toBe(
+      "only-partial",
+    );
   });
 });

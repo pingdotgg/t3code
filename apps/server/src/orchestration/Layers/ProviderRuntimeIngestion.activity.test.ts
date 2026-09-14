@@ -1,6 +1,7 @@
 import {
   EventId,
   ProviderDriverKind,
+  RuntimeItemId,
   RuntimeTaskId,
   ThreadId,
   type ProviderRuntimeEvent,
@@ -140,5 +141,145 @@ describe("runtimeEventToActivities tool streaming persistence", () => {
     expect(activities).toHaveLength(1);
     const payload = activities[0]?.payload as Record<string, unknown>;
     expect(payload.data).toEqual(streamingData);
+  });
+});
+
+describe("runtimeEventToActivities reasoning lifecycle", () => {
+  const reasoningUpdated = {
+    ...base,
+    provider: ProviderDriverKind.make("opencode"),
+    type: "item.updated",
+    eventId: EventId.make("evt-reasoning-updated"),
+    itemId: RuntimeItemId.make("reasoning-part-1"),
+    createdAt: "2026-08-06T00:00:01.000Z",
+    payload: {
+      itemType: "reasoning",
+      status: "inProgress",
+      title: "Thinking",
+    },
+  } satisfies ProviderRuntimeEvent;
+
+  it("projects reasoning updates as thinking tool activity without text", () => {
+    const activities = runtimeEventToActivities(reasoningUpdated);
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      tone: "tool",
+      kind: "tool.updated",
+      summary: "Thinking",
+    });
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    expect(payload.itemType).toBe("reasoning");
+    expect(payload.toolCallId).toBe("reasoning-part-1");
+    expect(payload.status).toBe("inProgress");
+    expect(payload.title).toBe("Thinking");
+    expect(payload).not.toHaveProperty("detail");
+  });
+
+  it("preserves provider reasoning text on lifecycle detail without truncating it", () => {
+    const longDetail = `${"The user wants to know their opencode version. ".repeat(8)}I should run the command.`;
+    expect(longDetail.length).toBeGreaterThan(180);
+
+    const updated = runtimeEventToActivities({
+      ...reasoningUpdated,
+      payload: {
+        itemType: "reasoning",
+        status: "inProgress",
+        title: "Thinking",
+        detail: longDetail,
+      },
+    });
+    expect(updated[0]?.payload).toMatchObject({
+      itemType: "reasoning",
+      detail: longDetail,
+    });
+
+    const completed = runtimeEventToActivities({
+      ...reasoningUpdated,
+      type: "item.completed",
+      eventId: EventId.make("evt-reasoning-completed-text"),
+      createdAt: "2026-08-06T00:00:05.000Z",
+      payload: {
+        itemType: "reasoning",
+        status: "completed",
+        title: "Thinking",
+        detail: longDetail,
+      },
+    });
+    expect(completed[0]?.payload).toMatchObject({
+      itemType: "reasoning",
+      status: "completed",
+      detail: longDetail,
+    });
+  });
+
+  it("projects reasoning completions with terminal status", () => {
+    const activities = runtimeEventToActivities({
+      ...reasoningUpdated,
+      type: "item.completed",
+      eventId: EventId.make("evt-reasoning-completed"),
+      createdAt: "2026-08-06T00:00:05.000Z",
+      payload: { itemType: "reasoning", status: "completed", title: "Thinking" },
+    });
+
+    expect(activities).toHaveLength(1);
+    expect(activities[0]).toMatchObject({
+      tone: "tool",
+      kind: "tool.completed",
+      summary: "Thinking",
+      createdAt: "2026-08-06T00:00:05.000Z",
+    });
+    const payload = activities[0]?.payload as Record<string, unknown>;
+    expect(payload.itemType).toBe("reasoning");
+    expect(payload.toolCallId).toBe("reasoning-part-1");
+    expect(payload.status).toBe("completed");
+    expect(payload).not.toHaveProperty("detail");
+  });
+
+  it("still drops reasoning starts and unrelated item types", () => {
+    expect(
+      runtimeEventToActivities({
+        ...reasoningUpdated,
+        type: "item.started",
+        eventId: EventId.make("evt-reasoning-started"),
+      }),
+    ).toEqual([]);
+    for (const itemType of ["plan", "assistant_message", "unknown"] as const) {
+      expect(
+        runtimeEventToActivities({
+          ...reasoningUpdated,
+          type: "item.completed",
+          eventId: EventId.make(`evt-other-${itemType}`),
+          payload: { itemType, status: "completed", title: "Other" },
+        }),
+      ).toEqual([]);
+    }
+  });
+
+  it("drops status-less Codex-style reasoning updates so timelines stay unchanged", () => {
+    // Codex summaryPartAdded emits itemType reasoning without lifecycle status.
+    expect(
+      runtimeEventToActivities({
+        ...reasoningUpdated,
+        provider: ProviderDriverKind.make("codex"),
+        eventId: EventId.make("evt-codex-reasoning"),
+        payload: {
+          itemType: "reasoning",
+          data: { text: "summary part" },
+        },
+      }),
+    ).toEqual([]);
+    expect(
+      runtimeEventToActivities({
+        ...reasoningUpdated,
+        provider: ProviderDriverKind.make("codex"),
+        type: "item.completed",
+        eventId: EventId.make("evt-codex-reasoning-completed"),
+        payload: {
+          itemType: "reasoning",
+          data: { text: "summary part" },
+        },
+      }),
+    ).toEqual([]);
   });
 });
