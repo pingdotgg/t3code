@@ -8693,43 +8693,12 @@ for (const operation of ["shutdown", "closeInstance"] as const) {
         const mcpConfigs = yield* Ref.make<
           ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
         >([]);
-        // Armed per iteration: a credential sweep reaching the registry
-        // signals `started` and parks on `gate` until the test releases it.
-        const revokeSlot = yield* Ref.make<
-          | {
-              readonly started: Deferred.Deferred<void>;
-              readonly gate: Deferred.Deferred<void>;
-            }
-          | undefined
-        >(undefined);
-        const mcpRegistryLayer = Layer.effect(
-          McpSessionRegistry.McpSessionRegistry,
-          Effect.gen(function* () {
-            const delegate = yield* McpSessionRegistry.McpSessionRegistry;
-            return McpSessionRegistry.McpSessionRegistry.of({
-              ...delegate,
-              revokeProviderSession: (providerSessionId) =>
-                Ref.get(revokeSlot).pipe(
-                  Effect.flatMap((slot) =>
-                    slot === undefined
-                      ? delegate.revokeProviderSession(providerSessionId)
-                      : Deferred.succeed(slot.started, undefined).pipe(
-                          Effect.andThen(Deferred.await(slot.gate)),
-                          Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
-                        ),
-                  ),
-                ),
-            });
-          }),
-        ).pipe(Layer.provide(TestMcpRegistryLayer));
-
         // Teardown is one-shot, so every offset runs against a fresh manager.
         // The detach's first scheduler checkpoints land while it is still
-        // queued on the [session, thread] lock — marker registered, mutation
-        // and revocation-tail registration not yet run.
+        // queued on the [session, thread] lock — its in-flight marker is
+        // registered, but the masked mutation/registration stretch has not
+        // run, so no pendingRevocations record exists yet.
         for (let ops = 4; ops < 24; ops += 1) {
-          const started = yield* Deferred.make<void>();
-          const gate = yield* Deferred.make<void>();
           yield* Effect.gen(function* () {
             const manager = yield* ProviderSessionManagerV2;
             const stepper = makeSteppingScheduler();
@@ -8738,10 +8707,6 @@ for (const operation of ["shutdown", "closeInstance"] as const) {
             const providerSessionId = yield* allocate;
             yield* open(providerSessionId);
 
-            // Suspend the detach inside its lock-acquisition window: the
-            // in-flight marker is registered but the revocation tail is not —
-            // the masked mutation/registration section runs as a single
-            // scheduled stretch once the lock is taken.
             const detaching = yield* manager
               .detach({ providerSessionId, threadId, revokeMcpCredential: true })
               .pipe(
@@ -8761,53 +8726,119 @@ for (const operation of ["shutdown", "closeInstance"] as const) {
             }
             // The detach is in flight but has registered no revocation yet;
             // only draining the in-flight marker keeps teardown pending here.
+            // A one-time snapshot returns Success over the owed sweep.
             assert.isUndefined(
               tearingDown.pollUnsafe(),
               `${operation} returned while an in-flight detach could still register a revocation tail (op ${ops})`,
             );
 
-            // Arm the gate only now — earlier revocations are the release
-            // sweep's own credential work, not the late-registered tail.
-            yield* Ref.set(revokeSlot, { started, gate });
             yield* stepper.drain;
-            for (let i = 0; i < 16; i += 1) {
-              yield* Effect.yieldNow;
-            }
-            // The tail registered after the snapshot and parked on the
-            // registry gate; teardown must still be joining it.
-            if (yield* Deferred.isDone(started)) {
-              assert.isUndefined(
-                tearingDown.pollUnsafe(),
-                `${operation} returned while a registered revocation tail was still parked (op ${ops})`,
-              );
-            }
-
-            yield* Deferred.succeed(gate, undefined);
-            for (let i = 0; i < 16; i += 1) {
-              yield* Effect.yieldNow;
-            }
             const teardownExit = yield* Fiber.join(tearingDown);
             assert.isTrue(
               Exit.isSuccess(teardownExit),
               `${operation} returned ${teardownExit._tag} instead of Success (op ${ops})`,
             );
+            // Teardown may only finish once the in-flight detach has exited —
+            // its tail registration and bounded join are what the drain waits
+            // on.
+            assert.isDefined(
+              detaching.pollUnsafe(),
+              `${operation} returned before the in-flight detach settled (op ${ops})`,
+            );
             yield* Fiber.join(detaching);
           }).pipe(
-            Effect.ensuring(Deferred.succeed(gate, undefined)),
             Effect.provide(
               makeTestLayer({
                 state,
                 idleTimeoutMs: 3_600_000,
                 mcpConfigs,
-                mcpRegistryLayer,
               }),
             ),
           );
         }
-        yield* Ref.set(revokeSlot, undefined);
       }),
   );
 }
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance does not drain an in-flight detach owned by another instance",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const stepper = makeSteppingScheduler();
+        const otherSelection = {
+          ...modelSelection,
+          instanceId: ProviderInstanceId.make("codex_other"),
+        };
+        const foreignThread = ThreadId.make("thread-foreign-detach");
+        const first = yield* makeThreadSessionFixture(ThreadId.make("thread-foreign-detach-owner"));
+        yield* makeThreadSessionFixture(foreignThread);
+        const sessionA = yield* first.allocate;
+        const sessionB = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherSelection.instanceId,
+          threadId: foreignThread,
+        });
+        yield* first.open(sessionA);
+        yield* manager.open({
+          threadId: foreignThread,
+          providerSessionId: sessionB,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+
+        // The foreign detach is in flight — marker registered, still queued
+        // on its session's attach lock — but belongs to codex_other, so this
+        // instance's teardown must not be held behind it.
+        const detaching = yield* manager
+          .detach({
+            providerSessionId: sessionB,
+            threadId: foreignThread,
+            revokeMcpCredential: true,
+          })
+          .pipe(
+            Effect.exit,
+            Effect.forkDetach,
+            Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+          );
+        yield* stepper.step(detaching, 8);
+
+        const closing = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        const closeExit = yield* Fiber.join(closing);
+        assert.isTrue(
+          Exit.isSuccess(closeExit),
+          `closeInstance returned ${closeExit._tag} instead of Success`,
+        );
+        assert.isUndefined(
+          detaching.pollUnsafe(),
+          "closeInstance drained a detach owned by another instance",
+        );
+
+        yield* stepper.drain;
+        yield* Fiber.join(detaching);
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            extraAdapters: [
+              makeProviderAdapter(state, {
+                instanceId: ProviderInstanceId.make("codex_other"),
+              }),
+            ],
+          }),
+        ),
+      );
+    }),
+);
 
 it.effect(
   "ProviderSessionManagerV2 closeInstance joins a chained revocation started by its own instance",
