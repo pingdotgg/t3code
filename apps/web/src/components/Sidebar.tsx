@@ -609,6 +609,21 @@ function SortableSidebarRepositoryGroup(props: {
     </li>
   );
 }
+
+function SidebarRepositoryGroupHeader(props: { group: SidebarProjectSnapshot }) {
+  return (
+    <li
+      data-testid="sidebar-repository-group"
+      data-repository-key={props.group.projectKey}
+      className="list-none"
+    >
+      <div className="flex min-w-0 items-center gap-1.5 px-2.5 pb-1 pt-2 text-[11px] font-medium text-sidebar-muted-foreground/80">
+        <ProjectFavicon project={props.group} className="size-3" />
+        <span className="min-w-0 flex-1 truncate">{props.group.displayName}</span>
+      </div>
+    </li>
+  );
+}
 // Unsent work shares one look: the new-thread draft rows and thread rows
 // with unsent composer text both use this tint and pen so they read alike.
 const draftSurfaceClassName = "bg-amber-400/[0.04] hover:bg-amber-400/[0.08]";
@@ -3518,7 +3533,10 @@ export default function Sidebar() {
     const pinnedRows = rowsOf(pinnedThreads, "pinned");
     items.push(...pinnedRows);
     items.push({ kind: "marker", marker: "pinned-divider" });
-    const activeRows = rowsOf(activeThreads, "active");
+    const activeRows = rowsOf(
+      activeThreadGroups.flatMap(({ threads: groupThreads }) => groupThreads),
+      "active",
+    );
     items.push({ kind: "marker", marker: "active-placeholder" });
     items.push(...activeRows);
     if (snoozedThreads.length > 0) {
@@ -3531,7 +3549,8 @@ export default function Sidebar() {
     items.push(...settledRows);
     return items;
   }, [
-    activeThreads,
+    activeThreadGroups,
+    activeThreads.length,
     pinnedThreads,
     renderedSettledThreads,
     settledThreads.length,
@@ -5203,9 +5222,25 @@ export default function Sidebar() {
                           onNavigateToDraft={navigateToDraft}
                         />,
                       ];
+                      let renderedActiveGroupKey: string | null = null;
                       for (const item of sidebarListItems) {
                         if (item.kind === "thread") {
-                          items.push(renderThreadRow(threadByKey.get(item.key)!, item.section));
+                          const thread = threadByKey.get(item.key)!;
+                          if (item.section === "active") {
+                            const group = projectGroupByPhysicalRef.get(
+                              `${thread.environmentId}:${thread.projectId}`,
+                            );
+                            if (group && group.projectKey !== renderedActiveGroupKey) {
+                              items.push(
+                                <SidebarRepositoryGroupHeader
+                                  key={`repository-group:${group.projectKey}`}
+                                  group={group}
+                                />,
+                              );
+                              renderedActiveGroupKey = group.projectKey;
+                            }
+                          }
+                          items.push(renderThreadRow(thread, item.section));
                           continue;
                         }
                         switch (item.marker) {
