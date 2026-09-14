@@ -5,12 +5,12 @@
 T3 Code has one server-side observability model:
 
 - pretty logs go to stdout for humans
-- completed spans go to a local NDJSON trace file
+- completed spans go to a local NDJSON trace file by default
 - traces and metrics can also be exported over OTLP to a real backend like Grafana LGTM
 
-The local trace file is the persisted source of truth for normal local launches. Those launches do not
-write a separate server log file, but SSH-managed launches also persist the remote process's
-stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
+When enabled, the local trace file is the persisted source of truth for normal local launches. Those
+launches do not write a separate server log file, but SSH-managed launches also persist the remote
+process's stdout/stderr at `~/.t3/ssh-launch/<state>/server.log`.
 
 ## Where To Find Things
 
@@ -27,8 +27,8 @@ If you want a log message to show up in the trace file, emit it inside an active
 
 ### Traces
 
-Completed spans are written as NDJSON records to `serverTracePath`. The default depends on how the
-server starts: production and explicitly configured homes use
+When local tracing is enabled, completed spans are written as NDJSON records to `serverTracePath`.
+The default depends on how the server starts: production and explicitly configured homes use
 `<home>/userdata/logs/server.trace.ndjson` (so `~/.t3/userdata/...` by default, or
 `/custom/path/userdata/...` with `--home-dir /custom/path`), a linked worktree dev run uses
 `<worktree>/.t3/userdata/logs/server.trace.ndjson`, and an implicit dev run outside a linked
@@ -45,6 +45,12 @@ Important fields common to both record types:
 
 `effect-span` records also contain `exit` with `Success`, `Failure`, or `Interrupted`. `otlp-span`
 records instead carry OTLP resource, scope, and optional status fields.
+
+Set `T3CODE_TRACE_MIN_LEVEL=None` before launch to disable local tracing. In this mode, neither
+server spans nor browser-submitted spans create or write the local trace file. `None` is also the
+server's global minimum span level, so server spans are not exported over OTLP either. Browser
+trace payloads are still forwarded when `T3CODE_OTLP_TRACES_URL` is configured, and OTLP metrics
+are unaffected.
 
 The `TraceRecord`, `EffectTraceRecord`, and `OtlpTraceRecord` schemas live in
 `packages/shared/src/observability.ts`.
@@ -76,7 +82,8 @@ There are two useful modes:
 - local-only: stdout + local `server.trace.ndjson`
 - full local observability: stdout + local trace file + OTLP export to Grafana/Tempo/Prometheus
 
-The local trace file is always on. OTLP export is opt-in.
+The local trace file is on by default. Set `T3CODE_TRACE_MIN_LEVEL=None` to turn it off. OTLP export
+is opt-in.
 
 ### Option 1: Local Traces Only
 
@@ -519,7 +526,8 @@ Local trace file:
 - `T3CODE_TRACE_MAX_BYTES`: per-file rotation size, default `10485760`
 - `T3CODE_TRACE_MAX_FILES`: rotated file count, default `10`
 - `T3CODE_TRACE_BATCH_WINDOW_MS`: flush window, default `200`
-- `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`
+- `T3CODE_TRACE_MIN_LEVEL`: minimum trace level, default `Info`; use `None` to disable local tracing
+  and server span creation
 - `T3CODE_TRACE_TIMING_ENABLED`: enable timing metadata, default `true`
 
 OTLP export:
