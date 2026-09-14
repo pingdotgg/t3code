@@ -2704,31 +2704,6 @@ export const layerWithOptions = (
               // later can only be a failed leftover. The flag check and the
               // insert share one synchronous step so a startup can never
               // begin tracking after its instance's close already scanned.
-              const openingRecord = yield* Effect.sync((): OpeningSessionRecord | undefined => {
-                if (
-                  shutdownInitiated ||
-                  closingInstanceCounts.has(input.modelSelection.instanceId)
-                ) {
-                  return undefined;
-                }
-                const record: OpeningSessionRecord = {
-                  providerSessionId: input.providerSessionId,
-                  threadId: input.threadId,
-                  instanceId: input.modelSelection.instanceId,
-                  closeRequested: false,
-                  failed: undefined,
-                  settled: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
-                };
-                opening.set(key, record);
-                return record;
-              });
-              if (openingRecord === undefined) {
-                return yield* new ProviderSessionOpenError({
-                  instanceId: input.modelSelection.instanceId,
-                  providerSessionId: input.providerSessionId,
-                  cause: "The provider session was closed before it finished opening.",
-                });
-              }
               // Set when the entry lands in `sessions`: the release path owns
               // cleanup from then on. Any earlier non-success exit — typed
               // failure, defect, or interruption — must close the scope and
@@ -2737,241 +2712,278 @@ export const layerWithOptions = (
               // unowned and unrecoverable.
               let entryRegistered = false;
               let registeredRuntime: ProviderAdapterV2SessionRuntime | undefined;
-              const exposedRuntime = yield* Effect.gen(function* () {
-                const prepared = yield* prepareMcpSession(
-                  input.threadId,
-                  input.modelSelection.instanceId,
-                  (mcpCredentialId) => {
-                    pendingMcpCredentialId = mcpCredentialId;
-                  },
-                );
-                const mcpCredentialId = prepared.mcpCredentialId;
-                // A close marked this startup while credentials were
-                // resolving: skip the spawn entirely and unwind. A mark
-                // landing after this read is still caught by the
-                // registration fence below.
-                if (openingRecord.closeRequested) {
-                  return yield* new ProviderSessionOpenError({
-                    instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
-                    cause: "The provider session was closed before it finished opening.",
+              // Registration and the unwind handler are one uninterruptible
+              // handoff: an interrupt landing after `opening.set` but before
+              // the onExit is installed would strand the record — a racing
+              // close would mark it and join a `settled` that never
+              // completes. The open itself stays interruptible under
+              // `restore`; every exit from it still runs the unwind.
+              const exposedRuntime = yield* Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  const openingRecord = yield* Effect.sync((): OpeningSessionRecord | undefined => {
+                    if (
+                      shutdownInitiated ||
+                      closingInstanceCounts.has(input.modelSelection.instanceId)
+                    ) {
+                      return undefined;
+                    }
+                    const record: OpeningSessionRecord = {
+                      providerSessionId: input.providerSessionId,
+                      threadId: input.threadId,
+                      instanceId: input.modelSelection.instanceId,
+                      closeRequested: false,
+                      failed: undefined,
+                      settled: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                    };
+                    opening.set(key, record);
+                    return record;
                   });
-                }
-                const runtime = yield* adapter
-                  .openSession({
-                    threadId: input.threadId,
-                    providerSessionId: input.providerSessionId,
-                    modelSelection: input.modelSelection,
-                    runtimePolicy: input.runtimePolicy,
-                    ...(input.resumeFromSession === undefined
-                      ? {}
-                      : { resumeFromSession: input.resumeFromSession }),
-                    ...(input.initialNativeThreadId === undefined
-                      ? {}
-                      : { initialNativeThreadId: input.initialNativeThreadId }),
-                    ...(input.initialProviderItemIdentityVersion === undefined
-                      ? {}
-                      : {
-                          initialProviderItemIdentityVersion:
-                            input.initialProviderItemIdentityVersion,
-                        }),
-                  })
-                  .pipe(
-                    Effect.provideService(Scope.Scope, sessionScope),
-                    Effect.mapError(
-                      (cause) =>
-                        new ProviderSessionOpenError({
+                  if (openingRecord === undefined) {
+                    return yield* new ProviderSessionOpenError({
+                      instanceId: input.modelSelection.instanceId,
+                      providerSessionId: input.providerSessionId,
+                      cause: "The provider session was closed before it finished opening.",
+                    });
+                  }
+                  return yield* restore(
+                    Effect.gen(function* () {
+                      const prepared = yield* prepareMcpSession(
+                        input.threadId,
+                        input.modelSelection.instanceId,
+                        (mcpCredentialId) => {
+                          pendingMcpCredentialId = mcpCredentialId;
+                        },
+                      );
+                      const mcpCredentialId = prepared.mcpCredentialId;
+                      // A close marked this startup while credentials were
+                      // resolving: skip the spawn entirely and unwind. A mark
+                      // landing after this read is still caught by the
+                      // registration fence below.
+                      if (openingRecord.closeRequested) {
+                        return yield* new ProviderSessionOpenError({
                           instanceId: input.modelSelection.instanceId,
                           providerSessionId: input.providerSessionId,
-                          cause,
-                        }),
-                    ),
-                  );
-                const eventSubscribers = yield* Ref.make<
-                  ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
-                >(new Map());
-                const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
-                const now = yield* Clock.currentTimeMillis;
-                const entry: LiveSessionEntry = {
-                  attachedThreadIds: new Set([input.threadId]),
-                  loadedProviderThreadKeyByThread: new Map(),
-                  mcpCredentialIdByThread:
-                    mcpCredentialId === undefined
-                      ? new Map()
-                      : new Map([[input.threadId, mcpCredentialId]]),
-                  supportsMultipleProviderThreads:
-                    runtime.providerSession.capabilities.sessions
-                      .supportsMultipleProviderThreadsPerSession,
-                  runtime,
-                  exposedRuntime,
-                  eventSubscribers,
-                  requestEventPermit: yield* Semaphore.make(1),
-                  scope: sessionScope,
-                  idleGeneration: 0,
-                  busyCount: 0,
-                  lastActivityAtMs: now,
-                  idleFiber: null,
-                  pinnedSinceMs: null,
-                };
-                // Fenced in the same atomic step: a close that marked this
-                // startup (or a closeInstance/shutdown that fenced its
-                // instance) before the adapter returned must not see a live
-                // entry appear behind its back — the unwind below closes
-                // the scope and completes `settled` instead.
-                yield* Ref.modify(
-                  sessions,
-                  (current): readonly [boolean, Map<string, LiveSessionEntry>] => {
-                    if (
-                      openingRecord.closeRequested ||
-                      shutdownInitiated ||
-                      closingInstanceCounts.has(openingRecord.instanceId)
-                    ) {
-                      return [false, current] as const;
-                    }
-                    const updated = new Map(current);
-                    updated.set(key, entry);
-                    // Set inside the atomic update: from here the release path
-                    // owns cleanup and the entry's credential record guards the
-                    // credential.
-                    entryRegistered = true;
-                    registeredRuntime = runtime;
-                    return [true, updated] as const;
-                  },
-                );
-                if (entryRegistered) {
-                  opening.delete(key);
-                  yield* Deferred.done(openingRecord.settled, Exit.void);
-                } else {
-                  // A close won the race: skip the spawn bookkeeping entirely
-                  // and fail so the unwind closes the provider scope and
-                  // settles the startup record the close is joining.
-                  return yield* new ProviderSessionOpenError({
-                    instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
-                    cause: "The provider session was closed before it finished opening.",
-                  });
-                }
-                // The pre-open reservation can be dropped now; the onExit
-                // below also drops it so an interruption landing before this
-                // line cannot strand it.
-                yield* dropReservation;
-                // Ownership check, attach-event write, and recheck all run under
-                // releaseStatus — the lock the release path reports terminal
-                // status through. A close can claim the session while this write
-                // suspends (removal does not take the lock), so the recheck keeps
-                // open from returning a runtime that is already being released,
-                // and the in-lock check keeps a late attach event from
-                // overwriting the persisted stopped/error status.
-                const persisted = yield* releaseStatus
-                  .withLock(
-                    input.providerSessionId,
-                    Effect.gen(function* () {
-                      const owned = (yield* Ref.get(sessions)).get(key)?.runtime === runtime;
-                      if (!owned) {
-                        return false;
-                      }
-                      yield* withActivityError(
-                        input.providerSessionId,
-                        writeProviderSessionEvents({
-                          runtime,
-                          threadIds: [input.threadId],
-                          type: "provider-session.attached",
-                          payload: runtime.providerSession,
-                        }),
-                      );
-                      return (yield* Ref.get(sessions)).get(key)?.runtime === runtime;
-                    }),
-                  )
-                  .pipe(
-                    Effect.tapError(() =>
-                      releaseEntry({
-                        providerSessionId: input.providerSessionId,
-                        reason: "runtime_error",
-                        detail: "Failed to persist the provider-session attachment.",
-                        alreadyLocked: true,
-                        expectedRuntime: runtime,
-                      }).pipe(Effect.ignore),
-                    ),
-                  );
-                if (!persisted) {
-                  return yield* new ProviderSessionOpenError({
-                    instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
-                    cause: "The provider session was closed before it finished opening.",
-                  });
-                }
-                yield* startEventPump(entry);
-                yield* scheduleIdleRelease(input.providerSessionId, runtime);
-                return exposedRuntime;
-              }).pipe(
-                Effect.onExit((exit) =>
-                  Exit.isSuccess(exit)
-                    ? Effect.void
-                    : Effect.suspend(() => {
-                        if (entryRegistered) {
-                          // A registered entry guards the credential by its
-                          // own record, so the reservation can go before the
-                          // half-initialized entry is handed to the release
-                          // path. Forked: this fiber still holds sessionOpen,
-                          // which the release's waitForOpens needs.
-                          dropReservationNow();
-                          return releaseEntry({
-                            providerSessionId: input.providerSessionId,
-                            reason: "runtime_error",
-                            detail: "Provider session open was interrupted.",
-                            ...(registeredRuntime === undefined
-                              ? {}
-                              : { expectedRuntime: registeredRuntime }),
-                          }).pipe(Effect.forkDetach({ startImmediately: true }), Effect.asVoid);
-                        }
-                        // A defecting finalizer must not keep the rest of the
-                        // unwind from running — but its failure must stay
-                        // visible: closing over a provider process that may
-                        // still be alive keeps the opening record as a failed
-                        // cleanup so replacement opens stay blocked until
-                        // restart, and a racing close's join sees the error.
-                        return Effect.gen(function* () {
-                          // The record stays blocking while the unwind runs:
-                          // attachments and replacements must wait for the
-                          // scope close rather than racing a provider process
-                          // that is still shutting down.
-                          openingRecord.closeRequested = true;
-                          const closeExit = yield* Scope.close(sessionScope, Exit.void).pipe(
-                            Effect.exit,
-                          );
-                          // The reservation outlives the scope close: the
-                          // provider process can still present the credential
-                          // while it is shutting down, so a peer's terminal
-                          // detach must keep seeing this claim until the close
-                          // settles.
-                          dropReservationNow();
-                          const sweepExit =
-                            pendingMcpCredentialId === undefined
-                              ? Exit.void
-                              : yield* releaseUnclaimedMcpCredential(
-                                  input.threadId,
-                                  pendingMcpCredentialId,
-                                ).pipe(Effect.exit);
-                          const failed = Exit.isFailure(closeExit)
-                            ? closeExit
-                            : Exit.isFailure(sweepExit)
-                              ? sweepExit
-                              : undefined;
-                          if (failed === undefined) {
-                            opening.delete(key);
-                            yield* Deferred.done(openingRecord.settled, Exit.void);
-                            return;
-                          }
-                          const error = new ProviderSessionReleaseError({
-                            providerSessionId: input.providerSessionId,
-                            reason: "runtime_error",
-                            cause: failed.cause,
-                          });
-                          openingRecord.failed = error;
-                          yield* Deferred.done(openingRecord.settled, Exit.fail(error));
+                          cause: "The provider session was closed before it finished opening.",
                         });
-                      }),
-                ),
+                      }
+                      const runtime = yield* adapter
+                        .openSession({
+                          threadId: input.threadId,
+                          providerSessionId: input.providerSessionId,
+                          modelSelection: input.modelSelection,
+                          runtimePolicy: input.runtimePolicy,
+                          ...(input.resumeFromSession === undefined
+                            ? {}
+                            : { resumeFromSession: input.resumeFromSession }),
+                          ...(input.initialNativeThreadId === undefined
+                            ? {}
+                            : { initialNativeThreadId: input.initialNativeThreadId }),
+                          ...(input.initialProviderItemIdentityVersion === undefined
+                            ? {}
+                            : {
+                                initialProviderItemIdentityVersion:
+                                  input.initialProviderItemIdentityVersion,
+                              }),
+                        })
+                        .pipe(
+                          Effect.provideService(Scope.Scope, sessionScope),
+                          Effect.mapError(
+                            (cause) =>
+                              new ProviderSessionOpenError({
+                                instanceId: input.modelSelection.instanceId,
+                                providerSessionId: input.providerSessionId,
+                                cause,
+                              }),
+                          ),
+                        );
+                      const eventSubscribers = yield* Ref.make<
+                        ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
+                      >(new Map());
+                      const exposedRuntime = decorateRuntime(runtime, eventSubscribers);
+                      const now = yield* Clock.currentTimeMillis;
+                      const entry: LiveSessionEntry = {
+                        attachedThreadIds: new Set([input.threadId]),
+                        loadedProviderThreadKeyByThread: new Map(),
+                        mcpCredentialIdByThread:
+                          mcpCredentialId === undefined
+                            ? new Map()
+                            : new Map([[input.threadId, mcpCredentialId]]),
+                        supportsMultipleProviderThreads:
+                          runtime.providerSession.capabilities.sessions
+                            .supportsMultipleProviderThreadsPerSession,
+                        runtime,
+                        exposedRuntime,
+                        eventSubscribers,
+                        requestEventPermit: yield* Semaphore.make(1),
+                        scope: sessionScope,
+                        idleGeneration: 0,
+                        busyCount: 0,
+                        lastActivityAtMs: now,
+                        idleFiber: null,
+                        pinnedSinceMs: null,
+                      };
+                      // Fenced in the same atomic step: a close that marked this
+                      // startup (or a closeInstance/shutdown that fenced its
+                      // instance) before the adapter returned must not see a live
+                      // entry appear behind its back — the unwind below closes
+                      // the scope and completes `settled` instead.
+                      yield* Ref.modify(
+                        sessions,
+                        (current): readonly [boolean, Map<string, LiveSessionEntry>] => {
+                          if (
+                            openingRecord.closeRequested ||
+                            shutdownInitiated ||
+                            closingInstanceCounts.has(openingRecord.instanceId)
+                          ) {
+                            return [false, current] as const;
+                          }
+                          const updated = new Map(current);
+                          updated.set(key, entry);
+                          // Set inside the atomic update: from here the release path
+                          // owns cleanup and the entry's credential record guards the
+                          // credential.
+                          entryRegistered = true;
+                          registeredRuntime = runtime;
+                          return [true, updated] as const;
+                        },
+                      );
+                      if (entryRegistered) {
+                        opening.delete(key);
+                        yield* Deferred.done(openingRecord.settled, Exit.void);
+                      } else {
+                        // A close won the race: skip the spawn bookkeeping entirely
+                        // and fail so the unwind closes the provider scope and
+                        // settles the startup record the close is joining.
+                        return yield* new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause: "The provider session was closed before it finished opening.",
+                        });
+                      }
+                      // The pre-open reservation can be dropped now; the onExit
+                      // below also drops it so an interruption landing before this
+                      // line cannot strand it.
+                      yield* dropReservation;
+                      // Ownership check, attach-event write, and recheck all run under
+                      // releaseStatus — the lock the release path reports terminal
+                      // status through. A close can claim the session while this write
+                      // suspends (removal does not take the lock), so the recheck keeps
+                      // open from returning a runtime that is already being released,
+                      // and the in-lock check keeps a late attach event from
+                      // overwriting the persisted stopped/error status.
+                      const persisted = yield* releaseStatus
+                        .withLock(
+                          input.providerSessionId,
+                          Effect.gen(function* () {
+                            const owned = (yield* Ref.get(sessions)).get(key)?.runtime === runtime;
+                            if (!owned) {
+                              return false;
+                            }
+                            yield* withActivityError(
+                              input.providerSessionId,
+                              writeProviderSessionEvents({
+                                runtime,
+                                threadIds: [input.threadId],
+                                type: "provider-session.attached",
+                                payload: runtime.providerSession,
+                              }),
+                            );
+                            return (yield* Ref.get(sessions)).get(key)?.runtime === runtime;
+                          }),
+                        )
+                        .pipe(
+                          Effect.tapError(() =>
+                            releaseEntry({
+                              providerSessionId: input.providerSessionId,
+                              reason: "runtime_error",
+                              detail: "Failed to persist the provider-session attachment.",
+                              alreadyLocked: true,
+                              expectedRuntime: runtime,
+                            }).pipe(Effect.ignore),
+                          ),
+                        );
+                      if (!persisted) {
+                        return yield* new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause: "The provider session was closed before it finished opening.",
+                        });
+                      }
+                      yield* startEventPump(entry);
+                      yield* scheduleIdleRelease(input.providerSessionId, runtime);
+                      return exposedRuntime;
+                    }),
+                  ).pipe(
+                    Effect.onExit((exit) =>
+                      Exit.isSuccess(exit)
+                        ? Effect.void
+                        : Effect.suspend(() => {
+                            if (entryRegistered) {
+                              // A registered entry guards the credential by its
+                              // own record, so the reservation can go before the
+                              // half-initialized entry is handed to the release
+                              // path. Forked: this fiber still holds sessionOpen,
+                              // which the release's waitForOpens needs.
+                              dropReservationNow();
+                              return releaseEntry({
+                                providerSessionId: input.providerSessionId,
+                                reason: "runtime_error",
+                                detail: "Provider session open was interrupted.",
+                                ...(registeredRuntime === undefined
+                                  ? {}
+                                  : { expectedRuntime: registeredRuntime }),
+                              }).pipe(Effect.forkDetach({ startImmediately: true }), Effect.asVoid);
+                            }
+                            // A defecting finalizer must not keep the rest of the
+                            // unwind from running — but its failure must stay
+                            // visible: closing over a provider process that may
+                            // still be alive keeps the opening record as a failed
+                            // cleanup so replacement opens stay blocked until
+                            // restart, and a racing close's join sees the error.
+                            return Effect.gen(function* () {
+                              // The record stays blocking while the unwind runs:
+                              // attachments and replacements must wait for the
+                              // scope close rather than racing a provider process
+                              // that is still shutting down.
+                              openingRecord.closeRequested = true;
+                              const closeExit = yield* Scope.close(sessionScope, Exit.void).pipe(
+                                Effect.exit,
+                              );
+                              // The reservation outlives the scope close: the
+                              // provider process can still present the credential
+                              // while it is shutting down, so a peer's terminal
+                              // detach must keep seeing this claim until the close
+                              // settles.
+                              dropReservationNow();
+                              const sweepExit =
+                                pendingMcpCredentialId === undefined
+                                  ? Exit.void
+                                  : yield* releaseUnclaimedMcpCredential(
+                                      input.threadId,
+                                      pendingMcpCredentialId,
+                                    ).pipe(Effect.exit);
+                              const failed = Exit.isFailure(closeExit)
+                                ? closeExit
+                                : Exit.isFailure(sweepExit)
+                                  ? sweepExit
+                                  : undefined;
+                              if (failed === undefined) {
+                                opening.delete(key);
+                                yield* Deferred.done(openingRecord.settled, Exit.void);
+                                return;
+                              }
+                              const error = new ProviderSessionReleaseError({
+                                providerSessionId: input.providerSessionId,
+                                reason: "runtime_error",
+                                cause: failed.cause,
+                              });
+                              openingRecord.failed = error;
+                              yield* Deferred.done(openingRecord.settled, Exit.fail(error));
+                            });
+                          }),
+                    ),
+                  );
+                }),
               );
               return exposedRuntime;
             }),
@@ -3083,12 +3095,15 @@ export const layerWithOptions = (
             // Tracked credential sweeps outlive their detach callers; the
             // ones owned by this instance's sessions (or unattributed, where
             // the owning entry was already gone) still run under teardown.
-            // Only unfinished records count: a tail is joined when its own
-            // sweep or any still-running sweep it waits behind belongs to
-            // this instance — a completed predecessor's caller is done and
-            // must not be kept waiting on a successor it does not own.
+            // Only unfinished records count, and each matching record is
+            // joined on its own completion — not the tail's: a chained
+            // successor may still be sweeping for another instance after
+            // this instance's own sweep finishes. A completed predecessor's
+            // caller is done and must not be kept waiting on a successor it
+            // does not own.
             const revocationOutcomes = yield* Effect.forEach(
-              [...pendingRevocations].filter(([, record]) => {
+              [...pendingRevocations].flatMap(([threadId, record]) => {
+                const owned: Array<readonly [ThreadId, PendingRevocation]> = [];
                 for (
                   let current: PendingRevocation | undefined = record;
                   current !== undefined;
@@ -3098,10 +3113,10 @@ export const layerWithOptions = (
                     !current.settled &&
                     (current.instanceId === undefined || current.instanceId === instanceId)
                   ) {
-                    return true;
+                    owned.push([threadId, current]);
                   }
                 }
-                return false;
+                return owned;
               }),
               ([threadId, record]) =>
                 Deferred.await(record.done).pipe(
