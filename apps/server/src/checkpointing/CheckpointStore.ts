@@ -13,10 +13,18 @@
  *
  * @module CheckpointStore
  */
-import { VcsUnsupportedOperationError, type CheckpointRef } from "@t3tools/contracts";
+import {
+  VcsProcessExitError,
+  VcsProcessTimeoutError,
+  VcsUnsupportedOperationError,
+  type CheckpointRef,
+  type VcsError,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Schedule from "effect/Schedule";
 
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
@@ -98,6 +106,15 @@ export class CheckpointStore extends Context.Service<
   }
 >()("t3/checkpointing/CheckpointStore") {}
 
+/**
+ * Checkpoint capture runs alongside concurrent git activity in the workspace
+ * (agents writing files, colocated VCS exports, lock churn), so process-level
+ * git failures can be transient. These are the only errors worth retrying;
+ * unsupported drivers and repository detection failures are permanent.
+ */
+const isTransientCaptureError = (error: VcsError): boolean =>
+  error instanceof VcsProcessExitError || error instanceof VcsProcessTimeoutError;
+
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
@@ -125,8 +142,20 @@ export const make = Effect.gen(function* () {
   const captureCheckpoint: CheckpointStore["Service"]["captureCheckpoint"] = Effect.fn(
     "captureCheckpoint",
   )(function* (input) {
-    const checkpoints = yield* resolveCheckpoints("CheckpointStore.captureCheckpoint", input.cwd);
-    return yield* checkpoints.captureCheckpoint(input);
+    return yield* Effect.retry(
+      Effect.gen(function* () {
+        const checkpoints = yield* resolveCheckpoints(
+          "CheckpointStore.captureCheckpoint",
+          input.cwd,
+        );
+        return yield* checkpoints.captureCheckpoint(input);
+      }),
+      {
+        times: 2,
+        while: isTransientCaptureError,
+        schedule: Schedule.spaced(Duration.millis(75)),
+      },
+    );
   });
 
   const hasCheckpointRef: CheckpointStore["Service"]["hasCheckpointRef"] = Effect.fn(

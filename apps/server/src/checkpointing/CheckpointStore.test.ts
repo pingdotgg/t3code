@@ -3,11 +3,18 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { ThreadId, type VcsError } from "@t3tools/contracts";
+import {
+  ThreadId,
+  VcsProcessExitError,
+  VcsUnsupportedOperationError,
+  type VcsError,
+} from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
 import * as Scope from "effect/Scope";
 import { describe, expect } from "vite-plus/test";
@@ -16,6 +23,7 @@ import { checkpointRefForThreadTurn } from "./Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import * as VcsDriver from "../vcs/VcsDriver.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
 
@@ -431,4 +439,129 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       }),
     );
   });
+});
+
+const RetryCwd = "/tmp/checkpoint-retry-test";
+
+function makeCaptureExitError(): VcsProcessExitError {
+  return new VcsProcessExitError({
+    operation: "CheckpointStore.captureCheckpoint",
+    command: "git",
+    cwd: RetryCwd,
+    exitCode: 128,
+    detail: "Process exited with a non-zero status.",
+  });
+}
+
+function makeFakeRegistryLayer(
+  capture: () => Effect.Effect<void, VcsError>,
+): Layer.Layer<VcsDriverRegistry.VcsDriverRegistry> {
+  const driver = {
+    checkpoints: {
+      captureCheckpoint: () => capture(),
+    },
+  } as unknown as VcsDriver.VcsDriver["Service"];
+  return Layer.succeed(
+    VcsDriverRegistry.VcsDriverRegistry,
+    VcsDriverRegistry.VcsDriverRegistry.of({
+      get: () => Effect.die("not used in this test"),
+      detect: () => Effect.succeed(null),
+      resolve: () =>
+        Effect.succeed({
+          kind: "git",
+          repository: {
+            kind: "git",
+            rootPath: RetryCwd,
+            metadataPath: null,
+            freshness: {
+              source: "live-local",
+              observedAt: DateTime.makeUnsafe(0),
+              expiresAt: Option.none(),
+            },
+          },
+          driver,
+        }),
+    }),
+  );
+}
+
+function makeStoreWithCapture(
+  capture: () => Effect.Effect<void, VcsError>,
+): Effect.Effect<CheckpointStore.CheckpointStore["Service"], never, Scope.Scope> {
+  return Effect.provide(
+    CheckpointStore.CheckpointStore,
+    CheckpointStore.layer.pipe(Layer.provide(makeFakeRegistryLayer(capture))),
+  );
+}
+
+describe("captureCheckpoint retry", () => {
+  it.live("retries transient capture failures until they succeed", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const error = makeCaptureExitError();
+        const checkpointStore = yield* makeStoreWithCapture(() => {
+          attempts += 1;
+          return attempts < 3 ? Effect.fail(error) : Effect.void;
+        });
+
+        yield* checkpointStore.captureCheckpoint({
+          cwd: RetryCwd,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-capture-retry"), 0),
+        });
+
+        expect(attempts).toBe(3);
+      }),
+    ),
+  );
+
+  it.live("gives up after retries and keeps the last failure", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const error = makeCaptureExitError();
+        const checkpointStore = yield* makeStoreWithCapture(() => {
+          attempts += 1;
+          return Effect.fail(error);
+        });
+
+        const failure = yield* Effect.flip(
+          checkpointStore.captureCheckpoint({
+            cwd: RetryCwd,
+            checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-capture-retry"), 0),
+          }),
+        );
+
+        expect(attempts).toBe(3);
+        expect(failure).toBe(error);
+      }),
+    ),
+  );
+
+  it.live("does not retry permanent unsupported-driver failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const error = new VcsUnsupportedOperationError({
+          operation: "CheckpointStore.captureCheckpoint",
+          kind: "unknown",
+          detail: "unknown driver does not implement checkpoint operations.",
+        });
+        const checkpointStore = yield* makeStoreWithCapture(() => {
+          attempts += 1;
+          return Effect.fail(error);
+        });
+
+        const failure = yield* Effect.flip(
+          checkpointStore.captureCheckpoint({
+            cwd: RetryCwd,
+            checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-capture-retry"), 0),
+          }),
+        );
+
+        expect(attempts).toBe(1);
+        expect(failure).toBe(error);
+      }),
+    ),
+  );
 });
