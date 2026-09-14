@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useThrottledValue } from "@tanstack/react-pacer";
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
@@ -29,7 +30,7 @@ import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
 import { vcsEnvironment } from "./vcs";
 
-const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
+const PROJECT_PATH_SEARCH_THROTTLE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
@@ -238,20 +239,34 @@ export function useProjectPathSearch(
     }),
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
-  const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
+  const isSearchEnabled =
+    normalizedTarget.environmentId !== null &&
+    normalizedTarget.cwd !== null &&
+    normalizedTarget.query !== null &&
+    (allowEmptyQuery || normalizedTarget.query.length > 0);
+  // Keep results moving while typing instead of waiting for a pause between keys.
+  const [throttledTarget] = useThrottledValue(normalizedTarget, {
+    wait: PROJECT_PATH_SEARCH_THROTTLE_MS,
+    leading: true,
+    trailing: true,
+    enabled: isSearchEnabled,
+  });
   const result = useEnvironmentQuery(
-    debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
+    isSearchEnabled &&
+      normalizedTarget.environmentId === throttledTarget.environmentId &&
+      normalizedTarget.cwd === throttledTarget.cwd &&
+      throttledTarget.environmentId !== null &&
+      throttledTarget.cwd !== null &&
+      throttledTarget.query !== null &&
+      (allowEmptyQuery || throttledTarget.query.length > 0)
       ? projectEnvironment.searchEntries({
-          environmentId: debouncedTarget.environmentId,
+          environmentId: throttledTarget.environmentId,
           input: {
-            cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            cwd: throttledTarget.cwd,
+            query: throttledTarget.query,
             limit,
-            ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
-            ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
+            ...(throttledTarget.kind ? { kind: throttledTarget.kind } : {}),
+            ...(throttledTarget.imageOnly ? { imageOnly: true } : {}),
           },
         })
       : null,
@@ -261,8 +276,9 @@ export function useProjectPathSearch(
     entries: result.data?.entries ?? [],
     error: result.error,
     isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
-    searchedQuery: debouncedTarget.query ?? "",
+      isSearchEnabled &&
+      (!areProjectPathSearchTargetsEqual(normalizedTarget, throttledTarget) || result.isPending),
+    searchedQuery: isSearchEnabled ? (throttledTarget.query ?? "") : "",
     truncated: result.data?.truncated ?? false,
     refresh: result.refresh,
   };
