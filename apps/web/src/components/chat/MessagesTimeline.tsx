@@ -1494,7 +1494,7 @@ function WorktreeSetupTimelineRow({
   );
 }
 
-/** A message waiting for the running turn: a dashed user bubble with icon actions under it. */
+/** A message waiting for the running turn: a dashed user bubble with icon actions inside it. */
 function QueuedMessageTimelineRow({
   row,
 }: {
@@ -1509,10 +1509,10 @@ function QueuedMessageTimelineRow({
     queuedMessage.reviewComments.length;
   const text = queuedMessage.prompt.trim();
   const statusLabel = row.isNext
-    ? "Queued. Sends after the next tool call or when the turn ends."
-    : "Queued. Sends after the messages above it.";
+    ? "Sends after the next tool call or when the turn ends"
+    : "Sends after the messages above it";
   return (
-    <div className="flex flex-col items-end gap-1" data-queued-message-id={queuedMessage.id}>
+    <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
       <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
         {text.length > 0 ? (
           <div className="whitespace-pre-wrap break-words text-sm">{text}</div>
@@ -1531,57 +1531,59 @@ function QueuedMessageTimelineRow({
               .join(", ")}
           </div>
         ) : null}
-      </div>
-      <div
-        className="flex items-center gap-0.5 pe-1 text-secondary-label"
-        data-scroll-anchor-ignore
-      >
-        <Tooltip>
-          <TooltipTrigger
-            render={<span className="inline-flex h-6 items-center gap-1 px-1 text-xs" />}
-            aria-label={statusLabel}
-          >
-            <ClockIcon className="size-3.5" aria-hidden />
-            Queued
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-micro"
-                variant="ghost-muted"
-                className="size-6"
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
-                aria-label="Send now"
-              />
-            }
-          >
-            <ArrowUpIcon className="size-3.5" aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">Send now</TooltipPopup>
-        </Tooltip>
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <Button
-                type="button"
-                size="icon-micro"
-                variant="ghost-muted"
-                className="size-6"
-                onPointerDown={(event) => event.preventDefault()}
-                onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
-                aria-label="Cancel and return to the composer"
-              />
-            }
-          >
-            <XIcon className="size-3.5" aria-hidden />
-          </TooltipTrigger>
-          <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
-        </Tooltip>
+        <div
+          className="mt-2 flex items-center gap-4 text-secondary-label text-xs"
+          data-scroll-anchor-ignore
+        >
+          <Tooltip>
+            <TooltipTrigger
+              render={<span className="inline-flex h-6 items-center gap-1" />}
+              aria-label={`Queued. ${statusLabel}.`}
+            >
+              <ClockIcon className="size-3.5" aria-hidden />
+              Queued
+            </TooltipTrigger>
+            <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
+          </Tooltip>
+          <div className="ml-auto flex items-center gap-0.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    className="size-6"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
+                    aria-label="Send now"
+                  />
+                }
+              >
+                <ArrowUpIcon className="size-3.5" aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Send now</TooltipPopup>
+            </Tooltip>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    type="button"
+                    size="icon-micro"
+                    variant="ghost-muted"
+                    className="size-6"
+                    onPointerDown={(event) => event.preventDefault()}
+                    onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
+                    aria-label="Cancel and return to the composer"
+                  />
+                }
+              >
+                <XIcon className="size-3.5" aria-hidden />
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
+            </Tooltip>
+          </div>
+        </div>
       </div>
     </div>
   );
