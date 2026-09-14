@@ -74,6 +74,7 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
+      | "thread.session-set"
       | "thread.settled";
   }
 >;
@@ -87,6 +88,11 @@ const isCompactCommandMessage = (message: ThreadTitleMessage): boolean =>
   message.role === "user" &&
   (message.attachments?.length ?? 0) === 0 &&
   message.text.trim().toLowerCase() === "/compact";
+
+// A bare skill or slash command with at most one argument, such as "$wayfinder 769". The title
+// model cannot see what it refers to, so the title is regenerated once the agent has answered.
+const isOpaqueCommandMessage = (text: string, attachments: ReadonlyArray<ChatAttachment>) =>
+  attachments.length === 0 && /^[$/][\w:-]+(?:\s+\S+)?$/.test(text.trim());
 function mapProviderSessionStatusToOrchestrationStatus(
   status: "connecting" | "ready" | "running" | "error" | "closed",
 ): OrchestrationSession["status"] {
@@ -373,6 +379,8 @@ const make = Effect.gen(function* () {
     }
   >();
   const stoppingThreadIds = new Set<ThreadId>();
+  // Thread id → first-turn title to regenerate after the turn completes, unless renamed meanwhile.
+  const firstTurnTitlesToRefresh = new Map<ThreadId, string>();
 
   const appendProviderFailureActivity = (input: {
     readonly threadId: ThreadId;
@@ -1090,6 +1098,10 @@ const make = Effect.gen(function* () {
           threadId: input.threadId,
           title: generated.title,
         });
+        if (isOpaqueCommandMessage(input.messageText, attachments)) {
+          firstTurnTitlesToRefresh.set(input.threadId, generated.title);
+          yield* refreshFirstTurnTitle(input.threadId);
+        }
       }).pipe(
         Effect.catchCause((cause) =>
           Effect.logWarning("provider command reactor failed to generate or rename thread title", {
@@ -1273,6 +1285,38 @@ const make = Effect.gen(function* () {
   const threadTitleRegenerationWorker = yield* makeDrainableWorker(
     processThreadTitleRegenerationSafely,
   );
+
+  // Runs when the first title lands and when the session settles, since either can come last.
+  const refreshFirstTurnTitle = Effect.fn("refreshFirstTurnTitle")(function* (threadId: ThreadId) {
+    const generatedTitle = firstTurnTitlesToRefresh.get(threadId);
+    if (generatedTitle === undefined) {
+      return;
+    }
+    const thread = yield* resolveThreadDetail(threadId);
+    const status = thread?.session?.status;
+    // A deleted thread or a first turn that ended without completing never refreshes.
+    if (!thread || status === "error" || status === "stopped" || status === "interrupted") {
+      firstTurnTitlesToRefresh.delete(threadId);
+      return;
+    }
+    const turnFinished =
+      status === "ready" &&
+      !thread.session?.activeTurnId &&
+      thread.messages.some((message) => message.role === "assistant" && message.text);
+    // The delete also stops the other caller when both observe a finished turn.
+    if (!turnFinished || !firstTurnTitlesToRefresh.delete(threadId)) {
+      return;
+    }
+    if (thread.title !== generatedTitle) {
+      return;
+    }
+    yield* orchestrationEngine.dispatch({
+      type: "thread.meta.update",
+      commandId: yield* serverCommandId("thread-title-refresh"),
+      threadId,
+      regenerateTitle: true,
+    });
+  });
 
   const processTurnStartRequested = Effect.fn("processTurnStartRequested")(function* (
     receivedEvent: Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>,
@@ -1877,6 +1921,9 @@ const make = Effect.gen(function* () {
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
         return;
+      case "thread.session-set":
+        yield* refreshFirstTurnTitle(event.payload.threadId);
+        return;
       case "thread.settled": {
         const thread = yield* projectionSnapshotQuery.getThreadShellById(event.payload.threadId);
         if (
@@ -1934,6 +1981,11 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      // Deleting a thread stops its session without a later session update to clear this.
+      if (event.type === "thread.deleted") {
+        firstTurnTitlesToRefresh.delete(event.payload.threadId);
+        return;
+      }
       if (
         (event.type === "thread.meta-updated" && event.payload.regenerateTitle === true) ||
         event.type === "thread.runtime-mode-set" ||
@@ -1942,6 +1994,8 @@ const make = Effect.gen(function* () {
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested" ||
+        (event.type === "thread.session-set" &&
+          firstTurnTitlesToRefresh.has(event.payload.threadId)) ||
         event.type === "thread.settled"
       ) {
         return yield* worker.enqueue(event);

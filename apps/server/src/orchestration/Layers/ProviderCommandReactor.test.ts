@@ -2352,6 +2352,177 @@ describe("ProviderCommandReactor", () => {
     expect(thread?.title).toBe("Keep this custom title");
   });
 
+  describe("first-turn title refresh", () => {
+    const threadId = ThreadId.make("thread-1");
+    const readTitle = async (harness: Awaited<ReturnType<typeof createHarness>>) =>
+      (await harness.readModel()).threads.find((entry) => entry.id === threadId)?.title;
+
+    // Runs a first turn whose initial title is "Wayfinding Plan for Issue 769", then completes it.
+    const runFirstTurn = async (
+      harness: Awaited<ReturnType<typeof createHarness>>,
+      input: {
+        readonly text: string;
+        readonly beforeCompletion?: () => Promise<unknown>;
+        readonly completeBeforeFirstTitle?: boolean;
+      },
+    ) => {
+      const now = "2026-01-01T00:00:00.000Z";
+      const firstTitleReleased = await harness.runEffect(Deferred.make<void>());
+      harness.generateThreadTitle
+        .mockReturnValueOnce(
+          Deferred.await(firstTitleReleased).pipe(
+            Effect.as({ title: "Wayfinding Plan for Issue 769" }),
+          ),
+        )
+        .mockReturnValue(Effect.succeed({ title: "Specify Settings Port Rulings" }));
+      const releaseFirstTitle = async () => {
+        await harness.runEffect(Deferred.succeed(firstTitleReleased, undefined));
+        await waitFor(async () => (await readTitle(harness)) !== input.text);
+      };
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.meta.update",
+          commandId: CommandId.make("cmd-refresh-title-seed"),
+          threadId,
+          title: input.text,
+        }),
+      );
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("cmd-refresh-title-turn"),
+          threadId,
+          message: {
+            messageId: asMessageId("user-message-refresh-title"),
+            role: "user",
+            text: input.text,
+            attachments: [],
+          },
+          titleSeed: input.text,
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "approval-required",
+          createdAt: now,
+        }),
+      );
+      if (!input.completeBeforeFirstTitle) {
+        await releaseFirstTitle();
+      }
+      const setSessionReady = (commandId: string) =>
+        harness.runEffect(
+          harness.engine.dispatch({
+            type: "thread.session.set",
+            commandId: CommandId.make(commandId),
+            threadId,
+            session: {
+              threadId,
+              status: "ready",
+              providerName: "codex",
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              runtimeMode: "approval-required",
+              activeTurnId: null,
+              lastError: null,
+              updatedAt: now,
+            },
+            createdAt: now,
+          }),
+        );
+      // A session can report ready before the agent has answered; that must not refresh yet.
+      await setSessionReady("cmd-refresh-title-session-ready");
+      await harness.drain();
+      await input.beforeCompletion?.();
+      await harness.runEffect(
+        harness.engine.dispatch({
+          type: "thread.message.assistant.delta",
+          commandId: CommandId.make("cmd-refresh-title-assistant"),
+          threadId,
+          messageId: asMessageId("assistant-message-refresh-title"),
+          delta: "Q1 is settled: the settings port imports at Boot.",
+          createdAt: now,
+        }),
+      );
+      await setSessionReady("cmd-refresh-title-turn-completed");
+      await harness.drain();
+      if (input.completeBeforeFirstTitle) {
+        await releaseFirstTitle();
+      }
+    };
+
+    it("regenerates the title after a bare skill command's first turn", async () => {
+      const harness = await createHarness();
+      await runFirstTurn(harness, { text: "$wayfinder 769" });
+
+      await waitFor(async () => (await readTitle(harness)) === "Specify Settings Port Rulings");
+      expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
+      expect(harness.generateThreadTitle.mock.calls[1]?.[0]).toMatchObject({
+        previousTitle: "Wayfinding Plan for Issue 769",
+        message: expect.stringContaining("the settings port imports at Boot"),
+      });
+    });
+
+    it("regenerates when the first turn finishes before its first title", async () => {
+      const harness = await createHarness();
+      await runFirstTurn(harness, { text: "$wayfinder 769", completeBeforeFirstTitle: true });
+
+      await waitFor(async () => (await readTitle(harness)) === "Specify Settings Port Rulings");
+    });
+
+    it("keeps the first title when the message describes the work", async () => {
+      const harness = await createHarness();
+      await runFirstTurn(harness, { text: "Specify the settings port rulings from the map" });
+
+      expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not regenerate over a rename made during the first turn", async () => {
+      const harness = await createHarness();
+      await runFirstTurn(harness, {
+        text: "$wayfinder 769",
+        beforeCompletion: () =>
+          harness.runEffect(
+            harness.engine.dispatch({
+              type: "thread.meta.update",
+              commandId: CommandId.make("cmd-refresh-title-manual-rename"),
+              threadId,
+              title: "Settings port map",
+            }),
+          ),
+      });
+
+      expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+      expect(await readTitle(harness)).toBe("Settings port map");
+    });
+
+    it("forgets the refresh when the first turn fails", async () => {
+      const harness = await createHarness();
+      await runFirstTurn(harness, {
+        text: "$wayfinder 769",
+        beforeCompletion: async () => {
+          await harness.runEffect(
+            harness.engine.dispatch({
+              type: "thread.session.set",
+              commandId: CommandId.make("cmd-refresh-title-turn-failed"),
+              threadId,
+              session: {
+                threadId,
+                status: "error",
+                providerName: "codex",
+                providerInstanceId: ProviderInstanceId.make("codex"),
+                runtimeMode: "approval-required",
+                activeTurnId: null,
+                lastError: "Turn failed",
+                updatedAt: "2026-01-01T00:00:00.000Z",
+              },
+              createdAt: "2026-01-01T00:00:00.000Z",
+            }),
+          );
+          await harness.drain();
+        },
+      });
+
+      expect(harness.generateThreadTitle).toHaveBeenCalledTimes(1);
+    });
+  });
+
   it("matches the client-seeded title even when the outgoing prompt is reformatted", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
