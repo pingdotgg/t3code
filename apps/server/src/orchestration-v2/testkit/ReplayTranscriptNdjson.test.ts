@@ -1,11 +1,16 @@
 import { ProviderReplayNdjsonParseError } from "./ReplayTranscriptNdjson.ts";
+import * as NodePath from "@effect/platform-node/NodePath";
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
   decodeProviderReplayNdjson,
   materializeReplayTranscriptWorkspace,
+  readProviderReplayTranscript,
 } from "./ReplayTranscriptNdjson.ts";
 
 const encodeParseError = Schema.encodeUnknownEffect(ProviderReplayNdjsonParseError);
@@ -93,6 +98,78 @@ describe("decodeProviderReplayNdjson", () => {
         type: "emit_inbound",
         frame: { method: "item/completed", params: { text: "<workspace>" } },
       });
+    }),
+  );
+});
+
+const FILE_URL_TRANSCRIPT = `{"type":"transcript_start","provider":"codex","protocol":"codex.app-server","version":"0.120.0","scenario":"file-url-read"}
+{"type":"runtime_exit","status":"success"}
+`;
+
+it.layer(NodeServices.layer)("readProviderReplayTranscript", (it) => {
+  it.effect("loads a transcript behind a file URL containing an encoded space", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3 replay fixture " });
+      const filePath = path.join(dir, "transcript.ndjson");
+      yield* fs.writeFileString(filePath, FILE_URL_TRANSCRIPT);
+
+      const fileUrl = yield* path.toFileUrl(filePath);
+      assert.isTrue(fileUrl.pathname.includes("%20"));
+
+      const transcript = yield* readProviderReplayTranscript(fileUrl);
+      assert.equal(transcript.scenario, "file-url-read");
+    }),
+  );
+
+  it.effect("passes drive-letter and UNC file URLs through the Windows path service", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const requestedPaths: Array<string> = [];
+      const recordingFs = FileSystem.FileSystem.of({
+        ...fs,
+        readFileString: (filePath: string) => {
+          requestedPaths.push(filePath);
+          return Effect.succeed(FILE_URL_TRANSCRIPT);
+        },
+      });
+      const readAsWindows = (file: URL) =>
+        readProviderReplayTranscript(file).pipe(
+          Effect.provideService(FileSystem.FileSystem, recordingFs),
+          Effect.provide(NodePath.layerWin32),
+        );
+
+      const driveLetter = yield* readAsWindows(
+        new URL("file:///C:/Users/dev/t3%20worktree/transcript.ndjson"),
+      );
+      const unc = yield* readAsWindows(new URL("file://fileserver/shared/transcript.ndjson"));
+
+      assert.equal(driveLetter.scenario, "file-url-read");
+      assert.equal(unc.scenario, "file-url-read");
+      assert.deepEqual(requestedPaths, [
+        "C:\\Users\\dev\\t3 worktree\\transcript.ndjson",
+        "\\\\fileserver\\shared\\transcript.ndjson",
+      ]);
+    }),
+  );
+
+  it.effect("rejects non-file URLs instead of decoding their pathname", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const recordingFs = FileSystem.FileSystem.of({
+        ...fs,
+        readFileString: () => Effect.succeed(FILE_URL_TRANSCRIPT),
+      });
+      const error = yield* readProviderReplayTranscript(
+        new URL("https://example.com/transcript.ndjson"),
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, recordingFs),
+        Effect.provide(NodePath.layerPosix),
+        Effect.flip,
+      );
+
+      assert.equal(error._tag, "BadArgument");
     }),
   );
 });
