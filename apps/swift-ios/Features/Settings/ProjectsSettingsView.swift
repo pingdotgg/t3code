@@ -188,7 +188,7 @@ struct ProjectPreferencesView: View {
         .navigationTitle(project?.name ?? "Project")
         .navigationBarTitleDisplayMode(.inline)
         .t3NavigationChrome()
-        .task(id: projectID) { await load() }
+        .task(id: project?.supportsProjectSettingsOverrides) { await load() }
     }
 
     private func projectSetting<Content: View>(
