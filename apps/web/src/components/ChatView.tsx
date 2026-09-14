@@ -343,6 +343,8 @@ import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
 import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
+import { ChatSearch, CHAT_SEARCH_OPEN_EVENT } from "./chat/ChatSearch";
+import type { ChatSearchRequest } from "./chat/useChatSearchTarget";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
@@ -1638,6 +1640,28 @@ export default function ChatView(props: ChatViewProps) {
   );
   const [isWorkspaceFileDragActive, setIsWorkspaceFileDragActive] = useState(false);
   const [showScrollToBottom, setShowScrollToBottom] = useState(false);
+  const [chatSearchThreadKey, setChatSearchThreadKey] = useState<string | null>(null);
+  const chatSearchOpen = chatSearchThreadKey === routeThreadKey;
+  const [chatSearchRequest, setChatSearchRequest] = useState<ChatSearchRequest | null>(null);
+  const chatSearchInputRef = useRef<HTMLInputElement>(null);
+  const openChatSearch = useCallback(() => {
+    setChatSearchThreadKey(routeThreadKey);
+    chatSearchInputRef.current?.focus();
+    chatSearchInputRef.current?.select();
+  }, [routeThreadKey]);
+  const closeChatSearch = useCallback(() => {
+    setChatSearchThreadKey(null);
+    setChatSearchRequest(null);
+    composerRef.current?.focusAtEnd();
+  }, [composerRef]);
+  useEffect(() => {
+    setChatSearchThreadKey(null);
+    setChatSearchRequest(null);
+  }, [routeThreadKey]);
+  useEffect(() => {
+    window.addEventListener(CHAT_SEARCH_OPEN_EVENT, openChatSearch);
+    return () => window.removeEventListener(CHAT_SEARCH_OPEN_EVENT, openChatSearch);
+  }, [openChatSearch]);
   const [expandedImage, setExpandedImage] = useState<ExpandedImagePreview | null>(null);
   useEffect(() => {
     const item = expandedImage?.images[expandedImage.index];
@@ -6442,6 +6466,13 @@ export default function ChatView(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "thread.search" && isServerThread) {
+        event.preventDefault();
+        event.stopPropagation();
+        openChatSearch();
+        return;
+      }
+
       if (command === "thread.copyReference") {
         event.preventDefault();
         event.stopPropagation();
@@ -6643,6 +6674,7 @@ export default function ChatView(props: ChatViewProps) {
     supportsSettlement,
     confirmAndUnpinThread,
     copyActiveThreadReference,
+    openChatSearch,
     previewPanelOpen,
     toggleRightPanel,
     toggleRightPanelMaximized,
@@ -8942,10 +8974,22 @@ export default function ChatView(props: ChatViewProps) {
                 }}
               />
             </div>
+            {chatSearchOpen && isServerThread ? (
+              <ChatSearch
+                key={activeThreadKey}
+                threadRef={routeThreadRef}
+                inputRef={chatSearchInputRef}
+                onSelect={setChatSearchRequest}
+                onClose={closeChatSearch}
+              />
+            ) : null}
             {/* Messages Wrapper */}
             <div className="relative flex min-h-0 flex-1 flex-col bg-background">
               {/* Messages — LegendList handles virtualization and scrolling internally */}
               <MessagesTimeline
+                searchRequest={
+                  paintOnlyDisplayedTimeline || !chatSearchOpen ? null : chatSearchRequest
+                }
                 citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                 citationHistoryLoading={threadDetailLoading}
                 {...(!paintOnlyDisplayedTimeline

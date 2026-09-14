@@ -15,6 +15,7 @@ export interface CitationHistoryPage {
 /** Fetch, unfold, and mount the source before its measured quote owns scrolling. */
 export function useAssistantCitationTarget({
   request,
+  suspended = false,
   entries,
   rows,
   listRef,
@@ -25,6 +26,7 @@ export function useAssistantCitationTarget({
   onManualNavigation,
 }: {
   request: AssistantCitationRequest | null;
+  suspended?: boolean;
   entries: ReadonlyArray<TimelineEntry>;
   rows: ReadonlyArray<MessagesTimelineRow>;
   listRef: RefObject<LegendListRef | null>;
@@ -74,6 +76,15 @@ export function useAssistantCitationTarget({
       };
       setReady(null);
       onManualNavigation();
+    }
+    if (suspended) {
+      const navigation = navigationRef.current;
+      navigation.target.activationRef.current.dismissed = true;
+      navigation.target.activationRef.current.cancelScroll?.();
+      navigation.done = true;
+      setReady(null);
+      setFinishedKey(request.key);
+      return;
     }
     if (!viewport || historyLoading) return;
     const navigation = navigationRef.current;
@@ -132,6 +143,7 @@ export function useAssistantCitationTarget({
     onExpandTurn,
     onManualNavigation,
     request,
+    suspended,
     rows,
     viewport,
   ]);

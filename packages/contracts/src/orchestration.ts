@@ -2131,11 +2131,13 @@ export type OrchestrationThreadSearchSource = typeof OrchestrationThreadSearchSo
 export const OrchestrationSearchThreadsInput = Schema.Struct({
   query: TrimmedString.check(Schema.isMinLength(2), Schema.isMaxLength(200)),
   limit: Schema.optionalKey(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 50 }))),
+  threadId: Schema.optionalKey(ThreadId),
 });
 export type OrchestrationSearchThreadsInput = typeof OrchestrationSearchThreadsInput.Type;
 
 export const OrchestrationThreadSearchMatch = Schema.Struct({
   threadId: ThreadId,
+  messageId: Schema.optionalKey(MessageId),
   projectId: ProjectId,
   source: OrchestrationThreadSearchSource,
   snippet: Schema.String.check(Schema.isMaxLength(240)),

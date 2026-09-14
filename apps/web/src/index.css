@@ -547,6 +547,10 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(t3-mobil
 }
 
 @layer base {
+  ::highlight(t3-chat-search) {
+    background-color: color-mix(in oklab, var(--primary) 45%, transparent);
+    color: var(--foreground);
+  }
   ::highlight(t3-assistant-citation) {
     background-color: color-mix(
       in oklab,

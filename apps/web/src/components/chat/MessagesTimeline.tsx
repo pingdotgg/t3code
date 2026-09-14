@@ -161,6 +161,7 @@ import {
   type AssistantCitationTarget,
 } from "./AssistantCitationSource";
 import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssistantCitationTarget";
+import { useChatSearchTarget, type ChatSearchRequest } from "./useChatSearchTarget";
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
@@ -252,6 +253,7 @@ import {
 // ---------------------------------------------------------------------------
 
 interface TimelineRowSharedState {
+  searchMessageId: MessageId | null;
   citationRequest: AssistantCitationTarget | null;
   listRef: React.RefObject<LegendListRef | null>;
   timestampFormat: TimestampFormat;
@@ -367,6 +369,7 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // ---------------------------------------------------------------------------
 
 interface MessagesTimelineProps {
+  searchRequest?: ChatSearchRequest | null;
   citationRequest?: AssistantCitationRequest | null;
   citationHistoryLoading?: boolean;
   onCiteAssistantText?: (
@@ -439,6 +442,7 @@ interface MessagesTimelineProps {
 // ---------------------------------------------------------------------------
 
 export const MessagesTimeline = memo(function MessagesTimeline({
+  searchRequest = null,
   citationRequest = null,
   citationHistoryLoading = false,
   onCiteAssistantText,
@@ -742,6 +746,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     alwaysRender: citationAlwaysRender,
   } = useAssistantCitationTarget({
     request: citationRequest,
+    suspended: searchRequest !== null,
     entries: timelineEntries,
     rows,
     listRef,
@@ -751,6 +756,28 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     onExpandTurn: expandCitedTurn,
     onManualNavigation,
   });
+  const {
+    positioning: searchPositioning,
+    onListLoad: onSearchListLoad,
+    alwaysRender: searchAlwaysRender,
+  } = useChatSearchTarget({
+    request: searchRequest,
+    threadKey: routeThreadKey,
+    entries: timelineEntries,
+    rows,
+    listRef,
+    viewport: timelineViewportElement,
+    historyLoading: citationHistoryLoading || listIdentityKey !== routeThreadKey,
+    loadEarlier,
+    onExpandTurn: expandCitedTurn,
+    onManualNavigation,
+  });
+  const alwaysRender = searchAlwaysRender ?? citationAlwaysRender;
+  const dataVersion = searchRequest?.key ?? readyCitationRequest?.key;
+  const onListLoad = useCallback(() => {
+    onCitationListLoad();
+    onSearchListLoad();
+  }, [onCitationListLoad, onSearchListLoad]);
   const [minimapHasPersistentGutter, setMinimapHasPersistentGutter] = useState(false);
   const [minimapHitStripWidth, setMinimapHitStripWidth] = useState(0);
   const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
@@ -815,7 +842,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const handleScroll = useCallback(() => {
     const state = listRef.current?.getState?.();
     const isAtEnd = resolveTimelineIsAtEnd(state);
-    if (isAtEnd !== undefined && !citationPositioning) {
+    if (isAtEnd !== undefined && !citationPositioning && !searchPositioning) {
       onIsAtEndChange(isAtEnd);
     }
     reportContentOverflow();
@@ -855,6 +882,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     );
   }, [
     citationPositioning,
+    searchPositioning,
     listRef,
     minimapItems,
     minimapStripMap,
@@ -896,6 +924,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const sharedState = useMemo<TimelineRowSharedState>(
     () => ({
       citationRequest: readyCitationRequest,
+      searchMessageId: searchRequest?.messageId ?? null,
       listRef,
       timestampFormat,
       routeThreadKey,
@@ -927,6 +956,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     }),
     [
       readyCitationRequest,
+      searchRequest?.messageId,
       listRef,
       timestampFormat,
       routeThreadKey,
@@ -1014,15 +1044,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             getItemType={getItemType}
             renderItem={renderItem}
             estimatedItemSize={90}
-            initialScrollAtEnd={citationRequest === null}
+            initialScrollAtEnd={citationRequest === null && searchRequest === null}
             // Legend needs a data refresh to mount new pins without a scroll event.
-            {...(readyCitationRequest ? { dataVersion: readyCitationRequest.key } : {})}
-            {...(citationAlwaysRender ? { alwaysRender: citationAlwaysRender } : {})}
-            onLoad={onCitationListLoad}
+            {...(dataVersion ? { dataVersion } : {})}
+            {...(alwaysRender ? { alwaysRender } : {})}
+            onLoad={onListLoad}
             {...(anchoredEndSpace ? { anchoredEndSpace } : {})}
             contentInsetEndAdjustment={anchoredEndSpace ? contentInsetEndAdjustment : 0}
             maintainScrollAtEnd={
               citationPositioning ||
+              searchPositioning ||
               anchoredEndSpace ||
               !liveFollowEnabled ||
               disclosureToggleSettling
@@ -1032,7 +1063,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
                   : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
             maintainVisibleContentPosition={
-              citationPositioning ? false : maintainVisibleContentPosition
+              citationPositioning || searchPositioning ? false : maintainVisibleContentPosition
             }
             maintainScrollAtEndThreshold={1}
             onScroll={handleScroll}
@@ -1387,6 +1418,7 @@ type TimelineWorkEntry = Extract<MessagesTimelineRow, { kind: "work" }>["grouped
 type TimelineRow = MessagesTimelineRow;
 
 const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: TimelineRow }) {
+  const { searchMessageId } = use(TimelineRowCtx);
   const isExpandedToolGroup = row.kind === "work" && row.isExpandedToolGroup;
   const isExpandedToolGroupHeader =
     (row.kind === "work-toggle" && row.expanded) || (row.kind === "work-live" && row.expanded);
@@ -1394,6 +1426,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
   return (
     <div
       className={cn(
+        row.kind === "message" &&
+          row.message.id === searchMessageId &&
+          "rounded-md bg-primary/5 ring-1 ring-inset ring-primary/30",
         // Commentary (non-terminal assistant) rows carry no metadata row, so
         // they sit closer to the work that follows them.
         isExpandedToolGroup
@@ -1810,6 +1845,7 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
         <div onCopyCapture={onBodyCopyCapture}>
           <CollapsibleUserMessageBody
             text={resolvedContext.text}
+            searchExpanded={ctx.searchMessageId === row.message.id}
             renderContextReference={renderContextReference}
             skills={ctx.skills}
             markdownCwd={ctx.markdownCwd}
@@ -3220,6 +3256,7 @@ function shouldCollapseUserMessage(text: string): boolean {
 }
 
 const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(props: {
+  searchExpanded?: boolean;
   text: string;
   renderContextReference: (reference: ChatMarkdownContextReference) => ReactNode;
   skills: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
@@ -3227,6 +3264,9 @@ const CollapsibleUserMessageBody = memo(function CollapsibleUserMessageBody(prop
   footer?: ReactNode;
 }) {
   const [expanded, setExpanded] = useState(false);
+  useEffect(() => {
+    if (props.searchExpanded) setExpanded(true);
+  }, [props.searchExpanded]);
   const hasVisibleBody = props.text.trim().length > 0;
   const canCollapse = hasVisibleBody && shouldCollapseUserMessage(props.text);
   const isCollapsed = canCollapse && !expanded;

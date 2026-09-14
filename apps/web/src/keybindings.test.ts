@@ -1,4 +1,5 @@
 import { assert, describe, it } from "vite-plus/test";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 
 import {
   type KeybindingCommand,
@@ -1055,5 +1056,38 @@ describe("plus key parsing", () => {
         platform: "Linux",
       }),
     );
+  });
+});
+
+describe("current chat search shortcut", () => {
+  it("resolves the platform find shortcut while preserving terminal, preview, and project search", () => {
+    for (const [platform, modifiers] of [
+      ["MacIntel", { metaKey: true }],
+      ["Linux", { ctrlKey: true }],
+    ] as const) {
+      assert.equal(
+        resolveShortcutCommand(event({ key: "f", ...modifiers }), DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+        }),
+        "thread.search",
+      );
+      for (const context of [{ terminalFocus: true }, { previewFocus: true }]) {
+        assert.equal(
+          resolveShortcutCommand(event({ key: "f", ...modifiers }), DEFAULT_RESOLVED_KEYBINDINGS, {
+            platform,
+            context,
+          }),
+          null,
+        );
+      }
+      assert.equal(
+        resolveShortcutCommand(
+          event({ key: "f", shiftKey: true, ...modifiers }),
+          DEFAULT_RESOLVED_KEYBINDINGS,
+          { platform },
+        ),
+        "projectSearch.toggle",
+      );
+    }
   });
 });

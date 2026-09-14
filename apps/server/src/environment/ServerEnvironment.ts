@@ -221,6 +221,7 @@ export const make = Effect.gen(function* () {
       pullRequests: true,
       inlineMessageContext: true,
       threadSettlement: true,
+      threadMessageSearch: true,
       threadAutoSettlement: true,
       threadRestartContinuation: true,
       projectSettingsOverrides: true,
