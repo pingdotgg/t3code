@@ -295,7 +295,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return showContinueInterruptedTurn ? (
       <Tooltip>
         <TooltipTrigger render={sendButton} />
-        <TooltipPopup side="top">Continue generation</TooltipPopup>
+        <TooltipPopup side="top">Continue</TooltipPopup>
       </Tooltip>
     ) : (
       sendButton
