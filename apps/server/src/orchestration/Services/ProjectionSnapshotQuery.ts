@@ -206,6 +206,9 @@ export interface ProjectionSnapshotQueryShape {
     ReadonlyArray<OrchestrationProjectShell>,
     ProjectionRepositoryError
   >;
+  readonly getProjectShells: (
+    projectIds?: ReadonlyArray<ProjectId>,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, ProjectionRepositoryError>;
 
   /**
    * Read the earliest active thread for a project.
