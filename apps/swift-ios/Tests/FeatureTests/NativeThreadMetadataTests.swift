@@ -6,6 +6,59 @@ import Testing
 @Suite("Native thread metadata")
 struct NativeThreadMetadataTests {
     @Test
+    func multiplePRLinksUpdateWithoutReloadAndHideDismissedStackMembers() throws {
+        let link = ThreadPullRequestLink(host: "github.com", repository: "test/repo", number: 2,
+            url: "https://github.com/test/repo/pull/2", source: "manual",
+            linkedAt: "2026-09-06T20:00:00Z", snapshot: nil, stack: nil)
+        let linked = NativeThreadDetailReducer.apply(event(type: "thread.pull-request-linked",
+            payload: ["link": try JSONValue.encode(link)]), to: thread())
+        guard case let .updated(withLink) = linked.result else {
+            Issue.record("Expected a local PR link update")
+            return
+        }
+        #expect(withLink.pullRequests == [link])
+        let state = ThreadPullRequestSnapshot(state: .merged, title: "Finished PR", headBranch: "task",
+            baseBranch: "main", isDraft: false, updatedAt: nil, syncedAt: "2026-09-06T20:00:00Z")
+        let key: [String: JSONValue] = ["host": .string("GITHUB.COM"), "repository": .string("TEST/REPO"), "number": .number(2)]
+        let synced = NativeThreadDetailReducer.apply(event(type: "thread.pull-request-synced",
+            payload: key.merging(["snapshot": try JSONValue.encode(state), "stack": .null]) { _, next in next }), to: withLink)
+        guard case let .updated(withState) = synced.result else {
+            Issue.record("Expected a local PR state update")
+            return
+        }
+        #expect(withState.pullRequests?.first?.snapshot?.state == .merged)
+        #expect(HomeThreadPullRequestPresentation.resolve(links: withState.pullRequests ?? [])?.state == .merged)
+        let removed = NativeThreadDetailReducer.apply(event(type: "thread.pull-request-unlinked", payload: key), to: withState)
+        guard case let .updated(withoutLink) = removed.result else {
+            Issue.record("Expected a local PR unlink")
+            return
+        }
+        #expect(withoutLink.pullRequests == [])
+
+        var dismissed = link
+        dismissed.source = "stack-dismissed"
+        let feature = FeatureThread(id: "thread", projectID: "project", title: "Task", pullRequests: [dismissed])
+        #expect(feature.effectivePullRequest == nil)
+        #expect(ThreadPullRequestDestination.resolve(thread: feature, branchPullRequest: nil) == nil)
+        #expect(HomeThreadPullRequestPresentation.resolve(links: [dismissed]) == nil)
+    }
+
+    @Test
+    func multiplePRSnapshotsReachThreadSearchAndExternalLinks() {
+        let link = ThreadPullRequestLink(host: "github.example.com", repository: "test/other", number: 24,
+            url: "https://github.example.com/test/other/pull/24", source: "manual",
+            linkedAt: "2026-09-06T20:00:00Z", snapshot: nil, stack: nil)
+        let feature = FeatureThread(id: "thread", projectID: "project", title: "Task", pullRequests: [link])
+        #expect(ThreadPullRequestDestination.resolve(thread: feature, branchPullRequest: nil)?.url.absoluteString == link.url)
+        #expect(ThreadPullRequests.searchTerms(feature.pullRequests, legacy: nil).contains("test/other#24"))
+        var changed = feature
+        changed.pullRequests = []
+        #expect(HomeOrderKey(feature) != HomeOrderKey(changed))
+        #expect(feature.pullRequestObservationIdentity == feature.pullRequestObservationIdentity)
+        #expect(feature.pullRequestObservationIdentity != changed.pullRequestObservationIdentity)
+    }
+
+    @Test
     func snapshotsDecodeServerPRAndOrderWithoutRequiringThemFromOlderServers() throws {
         let base = try JSONValue.encode(thread())
         guard case var .object(fields) = base else {
@@ -14,15 +67,19 @@ struct NativeThreadMetadataTests {
         }
         fields.removeValue(forKey: "branchPullRequest")
         fields.removeValue(forKey: "activeOrderKey")
+        fields.removeValue(forKey: "pullRequests")
         let older = try JSONValue.object(fields).decode(OrchestrationThread.self)
         #expect(older.branchPullRequest == nil)
         #expect(older.activeOrderKey == nil)
+        #expect(older.pullRequests == nil)
 
         fields["branchPullRequest"] = try JSONValue.encode(reference())
         fields["activeOrderKey"] = .string("nm")
+        fields["pullRequests"] = .array([])
         let current = try JSONValue.object(fields).decode(OrchestrationThread.self)
         #expect(current.branchPullRequest == reference())
         #expect(current.activeOrderKey == "nm")
+        #expect(current.pullRequests == [])
 
         fields["latestUserMessageAt"] = .null
         fields["hasPendingApprovals"] = .bool(false)
@@ -31,6 +88,7 @@ struct NativeThreadMetadataTests {
         let shell = try JSONValue.object(fields).decode(OrchestrationThreadShell.self)
         #expect(shell.branchPullRequest == reference())
         #expect(shell.activeOrderKey == "nm")
+        #expect(shell.pullRequests == [])
     }
 
     @Test

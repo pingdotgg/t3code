@@ -275,6 +275,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var branch: String?
     public var worktreePath: String?
     public var linkedPullRequest: ThreadLinkedPullRequest?
+    public var pullRequests: [ThreadPullRequestLink]?
     public var branchPullRequest: ThreadLinkedPullRequest?
     public var createdAt: Date
     public var updatedAt: Date
@@ -304,6 +305,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     public var supportsActiveReorder: Bool?
     public var supportsTitleRegeneration: Bool?
     public var supportsPullRequestLinking: Bool?
+    public var supportsMultiplePullRequests: Bool?
     /// True while the server is generating a new title. Derived from the wire
     /// snapshot only, the same way the web and React Native clients do it.
     public var isRegeneratingTitle: Bool
@@ -325,6 +327,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         branch: String? = nil,
         worktreePath: String? = nil,
         linkedPullRequest: ThreadLinkedPullRequest? = nil,
+        pullRequests: [ThreadPullRequestLink]? = nil,
         branchPullRequest: ThreadLinkedPullRequest? = nil,
         createdAt: Date = .now,
         updatedAt: Date = .now,
@@ -352,6 +355,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         supportsActiveReorder: Bool? = nil,
         supportsTitleRegeneration: Bool? = nil,
         supportsPullRequestLinking: Bool? = nil,
+        supportsMultiplePullRequests: Bool? = nil,
         isRegeneratingTitle: Bool = false,
         attentionAt: Date? = nil,
         workingStartedAt: Date? = nil,
@@ -370,6 +374,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.branch = branch
         self.worktreePath = worktreePath
         self.linkedPullRequest = linkedPullRequest
+        self.pullRequests = pullRequests
         self.branchPullRequest = branchPullRequest
         self.createdAt = createdAt
         self.updatedAt = updatedAt
@@ -397,6 +402,7 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
         self.supportsActiveReorder = supportsActiveReorder
         self.supportsTitleRegeneration = supportsTitleRegeneration
         self.supportsPullRequestLinking = supportsPullRequestLinking
+        self.supportsMultiplePullRequests = supportsMultiplePullRequests
         self.isRegeneratingTitle = isRegeneratingTitle
         self.attentionAt = attentionAt
         self.workingStartedAt = workingStartedAt
@@ -407,7 +413,13 @@ public struct FeatureThread: Identifiable, Sendable, Equatable, Hashable, Codabl
     }
 
     public var effectivePullRequest: ThreadLinkedPullRequest? {
-        linkedPullRequest ?? branchPullRequest
+        if let pullRequests, !pullRequests.isEmpty {
+            return ThreadPullRequests.current(pullRequests).map {
+                ThreadLinkedPullRequest(projectId: projectID, repository: $0.repository,
+                                        number: $0.number, url: $0.url)
+            }
+        }
+        return linkedPullRequest ?? branchPullRequest
     }
 
     /// Missing capabilities mean unsupported. Existing states remain reversible

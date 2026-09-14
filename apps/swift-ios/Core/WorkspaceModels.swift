@@ -62,10 +62,16 @@ public struct FilesystemBrowseResult: Codable, Equatable, Sendable {
 
 public enum SourceControlProviderKind: String, Codable, CaseIterable, Sendable {
     case github
+    case forgejo
     case gitlab
     case azureDevOps = "azure-devops"
     case bitbucket
     case unknown
+
+    public init(from decoder: any Decoder) throws {
+        let raw = try decoder.singleValueContainer().decode(String.self)
+        self = Self(rawValue: raw) ?? (raw == "gitea" ? .forgejo : .unknown)
+    }
 }
 
 public struct SourceControlProviderInfo: Codable, Equatable, Sendable {

@@ -269,6 +269,14 @@ public actor T3Client {
         )
     }
 
+    public func pullRequestRouting(_ reference: PullRequestRef) async throws -> PullRequestRoutingIdentity {
+        try await rpc.request(RPCMethod.pullRequestsRouting.rawValue, payload: try JSONValue.encode(reference), as: PullRequestRoutingIdentity.self)
+    }
+
+    public func pullRequestRoutingIdentity(host: String) async throws -> PullRequestRoutingIdentity {
+        try await rpc.request(RPCMethod.pullRequestsRoutingIdentity.rawValue, payload: .object(["host": .string(host)]), as: PullRequestRoutingIdentity.self)
+    }
+
     public func pullRequestActivity(_ reference: PullRequestRef) async throws
         -> PullRequestActivity
     {
@@ -1955,6 +1963,8 @@ public enum RPCMethod: String, Sendable {
     case serverGetUsageSummary = "server.getUsageSummary"
     case pullRequestsList = "pullRequests.list"
     case pullRequestsDetail = "pullRequests.detail"
+    case pullRequestsRouting = "pullRequests.routing"
+    case pullRequestsRoutingIdentity = "pullRequests.routingIdentity"
     case pullRequestsActivity = "pullRequests.activity"
     case pullRequestsRunAction = "pullRequests.runAction"
     case pullRequestsUpdate = "pullRequests.update"

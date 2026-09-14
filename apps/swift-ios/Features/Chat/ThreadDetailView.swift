@@ -31,6 +31,9 @@ public struct ThreadDetailView: View {
     @State private var draftSaveError: String?
     @State private var toolSurface: FeatureThreadToolSurface?
     @State private var branchPullRequest: FeaturePullRequest?
+    @State private var showsLinkPullRequest = false
+    @State private var pullRequestURL = ""
+    @State private var pullRequestError: String?
     @State private var linkedMediaPreview: FeatureLinkedMediaPreview?
     @State private var linkedMediaPreviewError: String?
     // Plain state, not `FocusState`: the composer's UIKit text view owns
@@ -69,6 +72,18 @@ public struct ThreadDetailView: View {
             }
         }
         .background(T3Colors.background)
+        .alert("Link pull request", isPresented: $showsLinkPullRequest) {
+            TextField("Pull request URL", text: $pullRequestURL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+            Button("Link") { changePullRequest(url: pullRequestURL, linked: true) }
+            Button("Cancel", role: .cancel) {}
+        }
+        .alert("Could not update pull request", isPresented: Binding(
+            get: { pullRequestError != nil }, set: { if !$0 { pullRequestError = nil } }
+        )) {
+            Button("OK") { pullRequestError = nil }
+        } message: { Text(pullRequestError ?? "") }
         .navigationBarTitleDisplayMode(.inline)
         .navigationBarBackButtonHidden(false)
         .t3NavigationChrome()
@@ -353,6 +368,28 @@ public struct ThreadDetailView: View {
                         Label("Open pull request #\(pullRequest.number)", systemImage: "arrow.triangle.pull")
                     }
                 }
+                let links = ThreadPullRequests.visible(currentThread.pullRequests ?? [])
+                if links.count > 1 {
+                    Menu("Linked pull requests") {
+                        ForEach(links) { link in
+                            if let url = URL(string: link.url) {
+                                Button("\(link.repository)#\(link.number)") { parentOpenURL(url) }
+                            }
+                        }
+                    }
+                }
+                if currentThread.supportsMultiplePullRequests == true || currentThread.supportsPullRequestLinking == true {
+                    Button("Link pull request…") { showsLinkPullRequest = true }
+                    if !links.isEmpty {
+                        Menu("Unlink pull request") {
+                            ForEach(links) { link in
+                                Button("\(link.repository)#\(link.number)") { changePullRequest(url: link.url, linked: false) }
+                            }
+                        }
+                    } else if let linked = currentThread.linkedPullRequest {
+                        Button("Unlink pull request #\(linked.number)") { changePullRequest(url: linked.url, linked: false) }
+                    }
+                }
                 if currentThread.supportsTitleRegeneration == true {
                     Button {
                         Task { await model.regenerateThreadTitle(thread.id) }
@@ -480,6 +517,13 @@ public struct ThreadDetailView: View {
         )
     }
 
+    private func changePullRequest(url: String, linked: Bool) {
+        Task {
+            do { try await model.client.setThreadPullRequest(id: thread.id, url: url.trimmingCharacters(in: .whitespacesAndNewlines), linked: linked) }
+            catch { pullRequestError = error.localizedDescription }
+        }
+    }
+
     private var pullRequestObservationID: String? {
         currentThread.pullRequestObservationIdentity
     }
@@ -492,6 +536,14 @@ public struct ThreadDetailView: View {
             return
         }
 
+        if let links = currentThread.pullRequests, !links.isEmpty {
+            model.updatePullRequest(
+                HomeThreadPullRequestPresentation.resolve(links: links),
+                threadID: currentThread.id, observationIdentity: observationIdentity
+            )
+            return
+        }
+
         if let linked = currentThread.effectivePullRequest,
            let environmentID = currentThread.environmentID {
             let target = FeaturePullRequestTarget(
@@ -500,7 +552,8 @@ public struct ThreadDetailView: View {
                 reference: PullRequestRef(
                     projectId: linked.projectId,
                     repository: linked.repository,
-                    number: linked.number
+                    number: linked.number,
+                    host: URL(string: linked.url)?.host
                 )
             )
             while !Task.isCancelled {

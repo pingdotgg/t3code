@@ -829,12 +829,13 @@ struct DailyUXSidebarIndex {
         }
         return candidates.filter { thread in
             let project = projectByID[thread.projectID]
-            return [
+            return ([
                 thread.title,
                 thread.preview ?? "",
                 project?.name ?? "",
                 project?.path ?? "",
-            ].contains { $0.localizedCaseInsensitiveContains(normalizedQuery) }
+            ] + ThreadPullRequests.searchTerms(thread.pullRequests, legacy: thread.linkedPullRequest))
+                .contains { $0.localizedCaseInsensitiveContains(normalizedQuery) }
         }
     }
 }
@@ -867,6 +868,7 @@ struct HomeOrderKey: Equatable {
     let keepsActive: Bool
     let isSettled: Bool
     let title: String
+    let pullRequestSearchTerms: [String]
     /// Only the archived shelf orders by `updatedAt`; live shelves ignore it.
     let archivedSortDate: Date?
     /// Only a settled thread's position depends on its settled sort date.
@@ -895,6 +897,7 @@ struct HomeOrderKey: Equatable {
         keepsActive = thread.keepsActive
         isSettled = thread.isSettled
         title = thread.title
+        pullRequestSearchTerms = ThreadPullRequests.searchTerms(thread.pullRequests, legacy: thread.linkedPullRequest)
         archivedSortDate = thread.isArchived ? thread.updatedAt : nil
         settledSortDate = thread.isEffectivelySettled() ? thread.settledSortDate : nil
     }

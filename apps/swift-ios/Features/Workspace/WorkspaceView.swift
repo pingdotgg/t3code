@@ -961,16 +961,32 @@ struct HomeThreadPullRequestPresentation: Equatable {
         case open
         case merged
         case closed
+        case draft
     }
 
     let number: Int
     let state: State
     let updatedAt: Date?
+    var count = 1
+    var isStack = false
 
-    var label: String { "#\(number)" }
+    var label: String {
+        count > 1 ? (isStack ? "\(count) PRs" : "#\(number) +\(count - 1)") : "#\(number)"
+    }
 
     var accessibilityLabel: String {
-        "Pull request #\(number), \(state.rawValue)"
+        "\(count > 1 ? "\(count) pull requests" : "Pull request #\(number)"), \(state.rawValue)"
+    }
+
+    static func resolve(links: [ThreadPullRequestLink]) -> Self? {
+        let visible = ThreadPullRequests.visible(links)
+        guard let current = ThreadPullRequests.current(visible) else { return nil }
+        let state: State = visible.allSatisfy { $0.snapshot?.state == .open && $0.snapshot?.isDraft == true }
+            ? .draft : visible.contains(where: \.isOpen) ? .open
+            : visible.allSatisfy { $0.snapshot?.state == .merged } ? .merged : .closed
+        return Self(number: current.number, state: state,
+                    updatedAt: parseDate(current.snapshot?.updatedAt), count: visible.count,
+                    isStack: visible.count > 1 && ThreadPullRequests.chains(visible).count == 1)
     }
 
     static func resolve(
@@ -997,6 +1013,8 @@ struct HomeThreadPullRequestPresentation: Equatable {
     ) -> Self? {
         guard detail.number == linkedPullRequest.number,
               detail.repository.caseInsensitiveCompare(linkedPullRequest.repository) == .orderedSame,
+              URL(string: detail.url)?.host?.lowercased() == URL(string: linkedPullRequest.url)?.host?.lowercased(),
+              URL(string: detail.url)?.port == URL(string: linkedPullRequest.url)?.port,
               let state = State(rawValue: detail.state.rawValue) else {
             return nil
         }
@@ -1018,6 +1036,9 @@ struct HomeThreadPullRequestPresentation: Equatable {
 extension FeatureThread {
     var pullRequestObservationIdentity: String? {
         let environment = environmentID ?? ""
+        if let pullRequests, !pullRequests.isEmpty {
+            return [id, environment, projectID, String(pullRequests.hashValue)].joined(separator: "\u{0}")
+        }
         if let linkedPullRequest = effectivePullRequest {
             return [
                 id,
@@ -1025,6 +1046,7 @@ extension FeatureThread {
                 projectID,
                 linkedPullRequest.projectId,
                 linkedPullRequest.repository.lowercased(),
+                linkedPullRequest.url,
                 String(linkedPullRequest.number),
             ].joined(separator: "\u{0}")
         }
@@ -1291,6 +1313,12 @@ struct FeatureThreadRow: View {
 
     @MainActor
     private func observePullRequest() async {
+        if let links = thread.pullRequests, !links.isEmpty {
+            let next = HomeThreadPullRequestPresentation.resolve(links: links)
+            pullRequest = next
+            onPullRequestChange(next)
+            return
+        }
         guard pullRequestObservationID != nil,
               let projectFaviconClient else {
             pullRequest = nil
@@ -1306,7 +1334,8 @@ struct FeatureThreadRow: View {
                 reference: PullRequestRef(
                     projectId: linked.projectId,
                     repository: linked.repository,
-                    number: linked.number
+                    number: linked.number,
+                    host: URL(string: linked.url)?.host
                 )
             )
             while !Task.isCancelled {
@@ -1342,7 +1371,7 @@ struct FeatureThreadRow: View {
 
     private func pullRequestIndicator(_ pullRequest: HomeThreadPullRequestPresentation) -> some View {
         HStack(spacing: 3) {
-            Image(systemName: "arrow.triangle.pull")
+            Image(systemName: pullRequest.isStack ? "square.stack.3d.up" : "arrow.triangle.pull")
                 .font(.system(size: 10, weight: .semibold))
             Text(pullRequest.label)
                 .font(T3Typography.homeMetadata.monospacedDigit().weight(.medium))
@@ -1358,6 +1387,7 @@ struct FeatureThreadRow: View {
         case .open: T3Colors.success
         case .merged: T3Colors.syntaxKeyword
         case .closed: T3Colors.danger
+        case .draft: T3Colors.textSecondary
         }
     }
 

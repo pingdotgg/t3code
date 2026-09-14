@@ -65,7 +65,7 @@ public enum PullRequestBaseComparison: String, Codable, Sendable {
     case unknown
 }
 
-public struct PullRequestActor: Codable, Equatable, Sendable {
+public struct PullRequestActor: Codable, Hashable, Sendable {
     public let login: String
     public let name: String?
     public let avatarUrl: String?
@@ -351,11 +351,18 @@ public struct PullRequestListResult: Codable, Equatable, Sendable {
 
 public struct PullRequestRef: Codable, Equatable, Hashable, Sendable {
     public let projectId: String
+    public let host: String?
+    public let expectedAccountId: String?
+    public let allowStale: Bool?
     public let repository: String
     public let number: Int
 
-    public init(projectId: String, repository: String, number: Int) {
+    public init(projectId: String, repository: String, number: Int, host: String? = nil,
+                expectedAccountId: String? = nil, allowStale: Bool? = nil) {
         self.projectId = projectId
+        self.host = host
+        self.expectedAccountId = expectedAccountId
+        self.allowStale = allowStale
         self.repository = repository
         self.number = number
     }
@@ -368,13 +375,22 @@ public struct PullRequestRef: Codable, Equatable, Hashable, Sendable {
     }
 }
 
+public struct PullRequestRoutingIdentity: Codable, Equatable, Sendable {
+    public let accountId: String
+    public let host: String
+    public let provider: SourceControlProviderKind
+    public let viewer: String
+    public let projectTitle: String?
+    public let workspaceRoot: String?
+}
+
 public struct PullRequestDetail: Codable, Equatable, Sendable {
     public let provider: SourceControlProviderKind
     public let capabilities: PullRequestCapabilities
     public let viewerPermissions: PullRequestViewerPermissions
-    public let projectId: String
-    public let projectTitle: String
-    public let workspaceRoot: String
+    public var projectId: String
+    public var projectTitle: String
+    public var workspaceRoot: String
     public let repository: String
     public let number: Int
     public let title: String
@@ -420,6 +436,7 @@ public struct PullRequestDiffInput: Codable, Equatable, Sendable {
     public let number: Int
     public let cursor: String?
     public let commit: String?
+    public var host: String? = nil
 }
 
 public struct PullRequestOmittedFileStat: Codable, Equatable, Sendable {

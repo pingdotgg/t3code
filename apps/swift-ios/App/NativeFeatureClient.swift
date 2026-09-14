@@ -43,6 +43,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     private let t3ConnectDeviceManager: any T3ConnectDeviceManaging
     private let hasMatchingT3ConnectController: Bool
     private let settingsStore: UserDefaults
+    private static let gitHubRoutingKey = "swift-ios.github-routing.v1"
+    private var routedPullRequests: [FeaturePullRequestTarget: Set<String>] = [:]
     private var cachedSettings: FeatureSettings?
     private let projectFaviconStore: FeatureProjectFaviconStore
     private let fallbackPollingInitialDelay: Duration
@@ -487,6 +489,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             try await runtime.revokeCredential(id: id)
         }
         try await runtime.remove(id: id)
+        saveGitHubRoutingGrants(gitHubRoutingGrants.filter { $0.environmentID != id })
         if removesActiveEnvironment {
             await clearActiveEnvironment(disconnectClient: false)
         }
@@ -709,16 +712,110 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
     }
 
+    private var gitHubRoutingGrants: [GitHubRoutingGrant] {
+        guard let data = settingsStore.data(forKey: Self.gitHubRoutingKey) else { return [] }
+        return (try? JSONDecoder().decode([GitHubRoutingGrant].self, from: data)) ?? []
+    }
+
+    private func saveGitHubRoutingGrants(_ grants: [GitHubRoutingGrant]) {
+        settingsStore.set(try? JSONEncoder().encode(grants), forKey: Self.gitHubRoutingKey)
+    }
+
+    func gitHubRoutingPermission(environmentID: String) async throws -> GitHubRoutingPermission {
+        guard let environment = try await runtime.environments().first(where: { $0.id == environmentID }) else {
+            throw NativeFeatureClientError.environmentNotFound
+        }
+        return GitHubRoutingGrant.permission(for: environment, grants: gitHubRoutingGrants)
+    }
+
+    func setGitHubRoutingPermission(environmentID: String, permission: GitHubRoutingPermission) async throws {
+        guard let environment = try await runtime.environments().first(where: { $0.id == environmentID }),
+              let key = GitHubRoutingGrant.connectionKey(environment) else {
+            throw NativeFeatureClientError.environmentNotFound
+        }
+        var grants = gitHubRoutingGrants.filter { $0.environmentID != environmentID }
+        if permission != .off {
+            grants.append(GitHubRoutingGrant(environmentID: environmentID, connectionKey: key, permission: permission))
+        }
+        saveGitHubRoutingGrants(grants)
+    }
+
+    private func routingAllowed(origin: Environment, destination: Environment, write: Bool) async -> Bool {
+        guard let current = try? await runtime.environments(),
+              let source = current.first(where: { $0.id == origin.id }),
+              let target = current.first(where: { $0.id == destination.id }),
+              GitHubRoutingGrant.connectionKey(source) == GitHubRoutingGrant.connectionKey(origin),
+              GitHubRoutingGrant.connectionKey(target) == GitHubRoutingGrant.connectionKey(destination) else { return false }
+        return GitHubRoutingGrant.allowed(origin: source, destination: target, grants: gitHubRoutingGrants, write: write)
+    }
+
+    /// Only verified GitHub accounts can route. A dispatched write is never retried elsewhere.
+    private func withPullRequestRoute<Result>(
+        _ target: FeaturePullRequestTarget, write: Bool = false,
+        operation: (T3Client, PullRequestRef, PullRequestRoutingIdentity?) async throws -> Result
+    ) async throws -> Result {
+        let client = try await projectCreationClient(environmentID: target.environmentID)
+        let environments = try await runtime.environments()
+        let origin = client.environment
+        let alternatives = environments.filter {
+            GitHubRoutingGrant.allowed(origin: origin, destination: $0, grants: gitHubRoutingGrants, write: write)
+                && environmentConnectionStates[$0.id] == .connected
+        }.sorted { left, right in
+            let localHosts = ["localhost", "127.0.0.1", "::1"]
+            let leftLocal = localHosts.contains(left.httpBaseURL.host ?? "")
+            let rightLocal = localHosts.contains(right.httpBaseURL.host ?? "")
+            return leftLocal == rightLocal ? left.id < right.id : leftLocal
+        }
+        guard !alternatives.isEmpty,
+              let identity = try? await client.pullRequestRouting(target.reference),
+              identity.provider == .github else {
+            try Task.checkCancellation()
+            return try await operation(client, target.reference, nil)
+        }
+        let reference = PullRequestRef(projectId: target.reference.projectId,
+                                       repository: target.reference.repository, number: target.reference.number,
+                                       host: identity.host, expectedAccountId: identity.accountId)
+        for environment in alternatives {
+            try Task.checkCancellation()
+            guard await routingAllowed(origin: origin, destination: environment, write: write) else { continue }
+            let alternate = try await projectCreationClient(environmentID: environment.id)
+            guard GitHubRoutingGrant.connectionKey(alternate.environment) == GitHubRoutingGrant.connectionKey(environment),
+                  let account = try? await alternate.pullRequestRoutingIdentity(host: identity.host),
+                  account.provider == .github, account.accountId == identity.accountId,
+                  account.host.caseInsensitiveCompare(identity.host) == .orderedSame,
+                  await routingAllowed(origin: origin, destination: environment, write: write) else { continue }
+            do {
+                let result = try await operation(alternate, reference, identity)
+                if routedPullRequests.count >= 256 { routedPullRequests.removeAll(keepingCapacity: true) }
+                routedPullRequests[target, default: []].insert(environment.id)
+                if write { try? await invalidatePullRequests(target) }
+                return result
+            } catch {
+                if write || Task.isCancelled { throw error }
+            }
+        }
+        try Task.checkCancellation()
+        let result = try await operation(client, reference, identity)
+        if write { try? await invalidatePullRequests(target) }
+        return result
+    }
+
     func pullRequestDetail(_ target: FeaturePullRequestTarget) async throws -> PullRequestDetail {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .pullRequestDetail(target.reference)
+        try await withPullRequestRoute(target) { client, reference, identity in
+            var detail = try await client.pullRequestDetail(reference)
+            detail.projectId = target.reference.projectId
+            if let title = identity?.projectTitle { detail.projectTitle = title }
+            if let root = identity?.workspaceRoot { detail.workspaceRoot = root }
+            return detail
+        }
     }
 
     func pullRequestActivity(_ target: FeaturePullRequestTarget) async throws
         -> PullRequestActivity
     {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .pullRequestActivity(target.reference)
+        try await withPullRequestRoute(target) { client, reference, _ in
+            try await client.pullRequestActivity(reference)
+        }
     }
 
     func pullRequestDiff(_ target: FeaturePullRequestTarget, cursor: String?) async throws
@@ -730,7 +827,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 repository: target.reference.repository,
                 number: target.reference.number,
                 cursor: cursor,
-                commit: nil
+                commit: nil,
+                host: target.reference.host
             )
         )
     }
@@ -741,12 +839,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         mergeMethod: PullRequestMergeMethod?,
         updateMethod: PullRequestUpdateMethod?
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID).runPullRequestAction(
-            target.reference,
-            action: action,
-            mergeMethod: mergeMethod,
-            updateMethod: updateMethod
-        )
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.runPullRequestAction(reference, action: action, mergeMethod: mergeMethod, updateMethod: updateMethod)
+        }
     }
 
     func updatePullRequest(
@@ -754,16 +849,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         title: String?,
         body: String?
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID).updatePullRequest(
-            target.reference,
-            title: title,
-            body: body
-        )
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.updatePullRequest(reference, title: title, body: body)
+        }
     }
 
     func commentOnPullRequest(_ target: FeaturePullRequestTarget, body: String) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .commentOnPullRequest(target.reference, body: body)
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.commentOnPullRequest(reference, body: body)
+        }
     }
 
     func submitPullRequestReview(
@@ -772,13 +866,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         body: String,
         comments: [PullRequestReviewCommentDraft]
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .submitPullRequestReview(
-                target.reference,
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.submitPullRequestReview(
+                reference,
                 verdict: verdict,
                 body: body,
                 comments: comments
             )
+        }
     }
 
     func replyToPullRequestThread(
@@ -786,8 +881,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         threadID: String,
         body: String
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .replyToPullRequestThread(target.reference, threadID: threadID, body: body)
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.replyToPullRequestThread(reference, threadID: threadID, body: body)
+        }
     }
 
     func setPullRequestThreadResolved(
@@ -795,12 +891,13 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         threadID: String,
         resolved: Bool
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .setPullRequestThreadResolved(
-                target.reference,
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.setPullRequestThreadResolved(
+                reference,
                 threadID: threadID,
                 resolved: resolved
             )
+        }
     }
 
     func setPullRequestReaction(
@@ -809,20 +906,22 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         content: PullRequestReactionContent,
         reacted: Bool
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .setPullRequestReaction(
-                target.reference,
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.setPullRequestReaction(
+                reference,
                 subjectID: subjectID,
                 content: content,
                 reacted: reacted
             )
+        }
     }
 
     func pullRequestReviewerCandidates(_ target: FeaturePullRequestTarget) async throws
         -> PullRequestReviewerCandidateList
     {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .pullRequestReviewerCandidates(target.reference)
+        try await withPullRequestRoute(target) { client, reference, _ in
+            try await client.pullRequestReviewerCandidates(reference)
+        }
     }
 
     func requestPullRequestReviewers(
@@ -830,18 +929,27 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         reviewers: [PullRequestReviewerCandidate],
         requested: Bool
     ) async throws {
-        try await projectCreationClient(environmentID: target.environmentID)
-            .requestPullRequestReviewers(
-                target.reference,
+        try await withPullRequestRoute(target, write: true) { client, reference, _ in
+            try await client.requestPullRequestReviewers(
+                reference,
                 reviewers: reviewers,
                 requested: requested
             )
+        }
     }
 
     func invalidatePullRequests(_ target: FeaturePullRequestTarget?) async throws {
         if let target {
             try await projectCreationClient(environmentID: target.environmentID)
                 .invalidatePullRequests(target.reference)
+            let environments = try await runtime.environments()
+            if let origin = environments.first(where: { $0.id == target.environmentID }) {
+                for id in routedPullRequests[target] ?? [] {
+                    guard let destination = environments.first(where: { $0.id == id }),
+                          await routingAllowed(origin: origin, destination: destination, write: false) else { continue }
+                    try? await projectCreationClient(environmentID: id).invalidatePullRequests(target.reference)
+                }
+            }
             return
         }
         let environments = try await runtime.environments().filter(\.isEnabled)
@@ -1817,6 +1925,35 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             throw firstError
         }
         return confirmed
+    }
+
+    func setThreadPullRequest(id: String, url: String, linked: Bool) async throws {
+        let route = try threadRoute(for: id)
+        guard let thread = cachedThread(id: route.uiID),
+              thread.supportsMultiplePullRequests == true || thread.supportsPullRequestLinking == true else {
+            throw NativeFeatureClientError.invalidPullRequestLink
+        }
+        let existing = thread.pullRequests?.first { $0.url == url }
+        let legacyKey = thread.linkedPullRequest.flatMap { link -> ThreadPullRequestKey? in
+            guard link.url == url, let host = URL(string: link.url)?.host else { return nil }
+            return ThreadPullRequestKey(host: host, repository: link.repository, number: link.number)
+        }
+        guard let key = existing?.id ?? ThreadPullRequests.parseURL(url) ?? legacyKey else {
+            throw NativeFeatureClientError.invalidPullRequestLink
+        }
+        let project = latestSnapshot?.projects.first {
+            $0.environmentID == route.environmentID
+                && $0.repositoryIdentity?.canonicalKey.lowercased() == "\(key.host)/\(key.repository)"
+        }
+        guard let command = ThreadPullRequests.mutation(
+            threadID: route.wireID, key: key, url: url, linked: linked,
+            multiple: thread.supportsMultiplePullRequests == true,
+            legacyProjectID: project.flatMap { projectWireIDs[$0.id] },
+            legacyRepository: key.host == "dev.azure.com" ? key.repository.components(separatedBy: "/_git/").last : nil
+        ) else { throw NativeFeatureClientError.invalidPullRequestLink }
+        _ = try await route.client.dispatch(command)
+        try? await refresh(client: route.client)
+        if activeThreadID == route.uiID { try? await refreshThread(id: route.uiID, client: route.client) }
     }
 
     func setRuntimeMode(id: String, mode: FeatureRuntimeMode) async throws {
@@ -3295,6 +3432,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             linkedPullRequest: thread.linkedPullRequest,
+            pullRequests: thread.pullRequests,
             branchPullRequest: thread.branchPullRequest,
             latestTurn: thread.latestTurn,
             createdAt: thread.createdAt,
@@ -4952,6 +5090,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         detail.thread.supportsPinning = capabilities?.threadPinning
         detail.thread.supportsTitleRegeneration = capabilities?.threadTitleRegeneration
         detail.thread.supportsPullRequestLinking = capabilities?.threadPullRequestLinking
+        detail.thread.supportsMultiplePullRequests = capabilities?.threadPullRequests
         let sessionIsLive = shellThread.session?.status == "starting"
             || shellThread.session?.status == "running"
         detail.thread.state = Self.resolveThreadState(
@@ -5424,6 +5563,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             linkedPullRequest: thread.linkedPullRequest,
+            pullRequests: thread.pullRequests,
             branchPullRequest: thread.branchPullRequest,
             createdAt: parseDate(thread.createdAt),
             updatedAt: parseDate(thread.updatedAt),
@@ -5464,6 +5604,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsActiveReorder: capabilities?.threadActiveReorder,
             supportsTitleRegeneration: capabilities?.threadTitleRegeneration,
             supportsPullRequestLinking: capabilities?.threadPullRequestLinking,
+            supportsMultiplePullRequests: capabilities?.threadPullRequests,
             isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
@@ -5513,6 +5654,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             linkedPullRequest: thread.linkedPullRequest,
+            pullRequests: thread.pullRequests,
             branchPullRequest: thread.branchPullRequest,
             createdAt: parseDate(thread.createdAt),
             updatedAt: parseDate(thread.updatedAt),
@@ -5553,6 +5695,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsActiveReorder: capabilities?.threadActiveReorder,
             supportsTitleRegeneration: capabilities?.threadTitleRegeneration,
             supportsPullRequestLinking: capabilities?.threadPullRequestLinking,
+            supportsMultiplePullRequests: capabilities?.threadPullRequests,
             isRegeneratingTitle: thread.titleRegeneration != nil,
             attentionAt: failureDate(
                 latestTurn: thread.latestTurn,
@@ -5848,6 +5991,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: loaded.branch,
             worktreePath: loaded.worktreePath,
             linkedPullRequest: loaded.linkedPullRequest,
+            pullRequests: loaded.pullRequests,
             branchPullRequest: loaded.branchPullRequest,
             latestTurn: loaded.latestTurn,
             createdAt: loaded.createdAt,
@@ -6333,6 +6477,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         thread.pinnedAt = shell.pinnedAt.flatMap(parseValidDate)
         thread.pinOrderKey = shell.pinOrderKey
         thread.linkedPullRequest = shell.linkedPullRequest
+        thread.pullRequests = shell.pullRequests
         thread.branchPullRequest = shell.branchPullRequest
         thread.settlementFacts = settlementFacts(
             override: shell.settledOverride,
@@ -7392,6 +7537,8 @@ enum NativeThreadDetailReducer {
                 occurredAt: occurredAt,
                 thread: thread
             )
+        case "thread.pull-request-linked", "thread.pull-request-unlinked", "thread.pull-request-synced":
+            result = reducePullRequest(type: type, payload: payload, thread: thread)
         case "thread.message-sent":
             result = reduceMessage(
                 payload: payload,
@@ -7470,6 +7617,45 @@ enum NativeThreadDetailReducer {
                 updatedAt: updatedAt
             )
         )
+    }
+
+    private static func reducePullRequest(
+        type: String, payload: JSONValue, thread: OrchestrationThread
+    ) -> NativeThreadDetailReductionResult {
+        guard let updatedAt = payload["updatedAt"]?.stringValue else { return .refresh }
+        var updated = replacing(thread, updatedAt: updatedAt)
+        var links = thread.pullRequests ?? []
+        if type == "thread.pull-request-linked" {
+            guard let link = try? payload["link"]?.decode(ThreadPullRequestLink.self) else { return .refresh }
+            if let index = links.firstIndex(where: { $0.id == link.id }) { links[index] = link }
+            else { links.append(link) }
+        } else {
+            guard let host = payload["host"]?.stringValue,
+                  let repository = payload["repository"]?.stringValue,
+                  let number = intValue(payload["number"]) else { return .refresh }
+            let key = ThreadPullRequestKey(host: host, repository: repository, number: number)
+            guard let index = links.firstIndex(where: { $0.id == key }) else { return .unchanged }
+            if type == "thread.pull-request-unlinked" {
+                links.remove(at: index)
+            } else {
+                guard let snapshot = try? payload["snapshot"]?.decode(ThreadPullRequestSnapshot.self),
+                      let stackValue = payload["stack"] else { return .refresh }
+                let stack: ThreadPullRequestStack?
+                if stackValue == .null { stack = nil }
+                else {
+                    guard let decoded = try? stackValue.decode(ThreadPullRequestStack.self) else { return .refresh }
+                    stack = decoded
+                }
+                links[index].snapshot = snapshot
+                links[index].stack = stack
+            }
+        }
+        updated.pullRequests = links
+        if let legacy = updated.linkedPullRequest,
+           !links.contains(where: { $0.isVisible && $0.number == legacy.number && $0.url == legacy.url }) {
+            updated.linkedPullRequest = nil
+        }
+        return .updated(updated)
     }
 
     private static func reduceMetadata(
@@ -7788,6 +7974,7 @@ enum NativeThreadDetailReducer {
             branch: thread.branch,
             worktreePath: thread.worktreePath,
             linkedPullRequest: thread.linkedPullRequest,
+            pullRequests: thread.pullRequests,
             branchPullRequest: thread.branchPullRequest,
             latestTurn: latestTurn ?? thread.latestTurn,
             createdAt: thread.createdAt,
@@ -8067,9 +8254,12 @@ private enum NativeFeatureClientError: LocalizedError {
     case tooManyAttachments
     case invalidAutomaticSettlementDays
     case remoteStatusUnavailable
+    case invalidPullRequestLink
 
     var errorDescription: String? {
         switch self {
+        case .invalidPullRequestLink:
+            "Use a supported pull request URL. Older servers need a project for its repository."
         case .notConnected: "Connect to a T3 environment first."
         case .environmentNotFound: "That T3 environment is no longer available."
         case .projectNotFound: "The selected project is no longer available."

@@ -15,7 +15,8 @@ struct FeaturePullRequestRow: Identifiable, Equatable {
             reference: PullRequestRef(
                 projectId: entry.projectId,
                 repository: entry.repository,
-                number: entry.number
+                number: entry.number,
+                host: entry.host
             )
         )
     }

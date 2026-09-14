@@ -7,6 +7,7 @@ struct EnvironmentPreferencesView: View {
     @State private var busy = false
     @State private var errorMessage: String?
     @State private var mismatches: [String] = []
+    @State private var routingPermission = GitHubRoutingPermission.off
 
     private var environment: FeatureEnvironment? {
         model.snapshot.environments.first { $0.id == environmentID }
@@ -18,6 +19,15 @@ struct EnvironmentPreferencesView: View {
 
     var body: some View {
         Form {
+            Section {
+                Picker("GitHub sharing", selection: Binding(
+                    get: { routingPermission }, set: { saveRoutingPermission($0) }
+                )) {
+                    ForEach(GitHubRoutingPermission.allCases, id: \.self) { Text($0.label).tag($0) }
+                }
+            } footer: {
+                Text("Enable both environments to share PR data through the same GitHub account. Write access permits PR changes. Credentials stay on each environment.")
+            }
             if let settings {
                 if let streamingMode = settings.responseStreamingMode {
                     Section {
@@ -102,7 +112,10 @@ struct EnvironmentPreferencesView: View {
     }
 
     private func load() async {
+        busy = true
+        defer { busy = false }
         do {
+            routingPermission = try await model.client.gitHubRoutingPermission(environmentID: environmentID)
             settings = try await model.client.serverPreferences(environmentID: environmentID)
             mismatches = model.client.sharedPreferenceMismatches(environmentID: environmentID)
             errorMessage = nil
@@ -117,6 +130,18 @@ struct EnvironmentPreferencesView: View {
                 try await model.client.updateServerPreferences(environmentID: environmentID, change: change)
                 await load()
             } catch { errorMessage = "Could not save preferences. Check this connection and try again." }
+        }
+    }
+
+    private func saveRoutingPermission(_ permission: GitHubRoutingPermission) {
+        guard !busy else { return }
+        busy = true
+        Task {
+            defer { busy = false }
+            do {
+                try await model.client.setGitHubRoutingPermission(environmentID: environmentID, permission: permission)
+                routingPermission = permission
+            } catch { errorMessage = "Could not save GitHub sharing." }
         }
     }
 }
