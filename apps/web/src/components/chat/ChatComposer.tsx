@@ -242,7 +242,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
-import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, resolveComposerIdlePrimaryAction } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
 import { ComposerPlanFollowUpBanner } from "./ComposerPlanFollowUpBanner";
@@ -923,6 +923,7 @@ import { toastManager } from "../ui/toast";
 import {
   FileIcon,
   BotIcon,
+  ChevronRightIcon,
   CircleAlertIcon,
   PaperclipIcon,
   PencilRulerIcon,
@@ -2615,6 +2616,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       attachmentTargetKey,
     ],
   );
+  const canContinueInterruptedTurn =
+    resolveComposerIdlePrimaryAction({
+      canContinueInterruptedTurn: activeThread?.latestTurn?.state === "interrupted",
+      hasSendableContent: composerSendState.hasSendableContent,
+    }) === "continue";
   const collapsedComposerPrimaryActionDisabled =
     phase === "running" ||
     isSendBusy ||
@@ -2623,8 +2629,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     noProviderAvailable ||
     projectSelectionRequired ||
     environmentUnavailable !== null ||
-    !composerSendState.hasSendableContent;
-  const collapsedComposerPrimaryActionLabel = "Send message";
+    (!canContinueInterruptedTurn && !composerSendState.hasSendableContent);
+  const collapsedComposerPrimaryActionLabel = canContinueInterruptedTurn
+    ? "Continue generation"
+    : "Send message";
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -5610,8 +5618,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     const prompt = "Continue";
     promptRef.current = prompt;
     setComposerDraftPrompt(composerDraftTarget, prompt);
-    void onSend();
-  }, [composerDraftTarget, onSend, promptRef, setComposerDraftPrompt]);
+    void submitComposer();
+  }, [composerDraftTarget, promptRef, setComposerDraftPrompt, submitComposer]);
   const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
     void onImplementPlanInNewThread();
   }, [onImplementPlanInNewThread]);
@@ -6177,18 +6185,26 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   onPointerDown={(event) => event.preventDefault()}
                   onClick={(event) => {
                     event.stopPropagation();
+                    if (canContinueInterruptedTurn) {
+                      handleContinueInterruptedTurnPrimaryAction();
+                      return;
+                    }
                     submitComposer();
                   }}
                 >
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-                    <path
-                      d="M8 3L8 13M8 3L4 7M8 3L12 7"
-                      stroke="currentColor"
-                      strokeWidth="2"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                    />
-                  </svg>
+                  {canContinueInterruptedTurn ? (
+                    <ChevronRightIcon className="size-4" aria-hidden="true" />
+                  ) : (
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                      <path
+                        d="M8 3L8 13M8 3L4 7M8 3L12 7"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      />
+                    </svg>
+                  )}
                 </button>
               </div>
             ) : null}
@@ -6813,7 +6829,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     hasSendableContent={composerSendState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning={isMobileViewport}
-                    canContinueInterruptedTurn={activeThread?.latestTurn?.state === "interrupted"}
+                    canContinueInterruptedTurn={canContinueInterruptedTurn}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
                     onContinueInterruptedTurn={handleContinueInterruptedTurnPrimaryAction}
