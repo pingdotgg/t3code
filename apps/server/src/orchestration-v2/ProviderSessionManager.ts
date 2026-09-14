@@ -428,6 +428,10 @@ export const layerWithOptions = (
         // is detaching from: the maps can re-resolve the session id to a
         // same-id replacement owned by another instance, so drain attribution
         // reads what the detach observed, not what owns the key now.
+        // `ownershipResolved` distinguishes "has not looked yet" (fall back to
+        // the maps) from "looked and found no entry" (an unattributed tail —
+        // owned by every teardown, so the marker must still be drained).
+        ownershipResolved: boolean;
         instanceId: ProviderInstanceId | undefined;
         // Published when the detach registers its tracked sweep. The record
         // leaves pendingRevocations on settle, so a tail that registers and
@@ -524,11 +528,15 @@ export const layerWithOptions = (
         threadId: ThreadId,
         revoke: Effect.Effect<void, E>,
         instanceId: ProviderInstanceId | undefined,
+        onRegistered?: (done: Deferred.Deferred<void, ProviderSessionReleaseError>) => void,
       ) =>
         // Registration and the worker fork are one uninterruptible handoff:
         // an interrupt landing between them would leave a tail whose `done`
         // never settles, parking every later join and chaining every retry
         // behind it. The forked worker is a separate fiber and is unaffected.
+        // `onRegistered` runs inside the same handoff so a caller publishing
+        // the deferred (an in-flight detach marker) cannot be interrupted out
+        // of that publication while the record is already visible.
         Effect.uninterruptible(
           Effect.gen(function* () {
             // A tracked sweep captures only the credentials its caller pruned;
@@ -544,6 +552,7 @@ export const layerWithOptions = (
               done,
             };
             pendingRevocations.set(threadId, record);
+            onRegistered?.(done);
             yield* Effect.gen(function* () {
               if (predecessor !== undefined) {
                 // A failed predecessor reports on its own deferred; this
@@ -3299,11 +3308,11 @@ export const layerWithOptions = (
               // session id may already name a same-id replacement.
               (marker, live) => {
                 const key = sessionKey(marker.providerSessionId);
-                const ownerInstance =
-                  marker.instanceId ??
-                  live.get(key)?.runtime.instanceId ??
-                  releasing.get(key)?.entry.runtime.instanceId ??
-                  opening.get(key)?.instanceId;
+                const ownerInstance = marker.ownershipResolved
+                  ? marker.instanceId
+                  : (live.get(key)?.runtime.instanceId ??
+                    releasing.get(key)?.entry.runtime.instanceId ??
+                    opening.get(key)?.instanceId);
                 return ownerInstance === undefined || ownerInstance === instanceId;
               },
             );
@@ -3346,6 +3355,7 @@ export const layerWithOptions = (
                 providerSessionId: input.providerSessionId,
                 threadId: input.threadId,
                 detached: Deferred.makeUnsafe<void, never>(),
+                ownershipResolved: false,
                 instanceId: undefined,
                 revokeDone: undefined,
               };
@@ -3356,6 +3366,7 @@ export const layerWithOptions = (
                   const pendingRelease = releasing.get(key);
                   if (pendingRelease !== undefined) {
                     inflight.instanceId = pendingRelease.entry.runtime.instanceId;
+                    inflight.ownershipResolved = true;
                     let revokeDone:
                       | Deferred.Deferred<void, ProviderSessionReleaseError>
                       | undefined;
@@ -3376,8 +3387,10 @@ export const layerWithOptions = (
                           recorded === undefined ? [] : [recorded],
                         ),
                         pendingRelease.entry.runtime.instanceId,
+                        (done) => {
+                          inflight.revokeDone = done;
+                        },
                       );
-                      inflight.revokeDone = revokeDone;
                     }
                     yield* releaseEntry({
                       providerSessionId: input.providerSessionId,
@@ -3405,6 +3418,7 @@ export const layerWithOptions = (
                   const currentEntry = (yield* Ref.get(sessions)).get(key);
                   inflight.instanceId =
                     currentEntry?.runtime.instanceId ?? opening.get(key)?.instanceId;
+                  inflight.ownershipResolved = true;
                   const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
                   if (openingRecord !== undefined && openingRecord.threadId === input.threadId) {
                     // Detaching the thread an in-flight startup belongs to aborts
@@ -3626,8 +3640,10 @@ export const layerWithOptions = (
                                 ? detached.value.entry.runtime.instanceId
                                 : (sameInstancePending?.entry.runtime.instanceId ??
                                     currentEntry?.runtime.instanceId),
+                              (done) => {
+                                inflight.revokeDone = done;
+                              },
                             );
-                            inflight.revokeDone = revokeDone;
                             if (Option.isSome(detached) && releaseFiber === undefined) {
                               // No release owns this credential's sweep (the session
                               // stays live for other threads), so this join is the
