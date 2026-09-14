@@ -5,22 +5,53 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
-`npx t3` needs Node.js only to run npm itself; the CLI it installs is a
-self-contained executable. SSH hosts and WSL backends need Node.js 22.16+
-(22.x), 23.11+ (23.x), or 24.10 and later. The native desktop app includes its
-server runtime.
+T3 Code does not need Node.js. The CLI and the desktop app are self-contained,
+and so is the server they install on SSH hosts and in WSL. You only need
+Node.js if you run T3 Code with `npx`, and then only for `npx` itself.
 
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.
 
-## Run without installing
+## Command line
+
+The `t3` CLI is a single executable. Install it with:
+
+```bash
+curl -fsSL https://t3.codes/install.sh | sh
+```
+
+On Windows, in PowerShell:
+
+```powershell
+irm https://t3.codes/install.ps1 | iex
+```
+
+This downloads the release for your platform, verifies it, and puts `t3` in
+`~/.local/bin` (`~\.local\bin` on Windows). Set `T3CODE_CHANNEL=nightly` to
+install the nightly train, or `T3CODE_VERSION` to pin an exact version.
+
+Then:
+
+| Task                                  | Command                                                   |
+| ------------------------------------- | --------------------------------------------------------- |
+| Start the server and open the web app | `t3`                                                      |
+| Start the server without a browser    | `t3 serve`                                                |
+| Keep it running in the background     | `t3 service install` ([details](./background-service.md)) |
+| Move to the newest release            | `t3 update`                                               |
+| Remove it again                       | `t3 uninstall`                                            |
+
+Run `t3 --help` for the full reference.
+
+### Run once without installing
 
 ```bash
 npx t3@latest
 ```
 
-This starts the server and opens the local web app. Run
-`npx t3@latest --help` for command-line options.
+This fetches the same executable through npm and runs it, so it needs Node.js
+for `npx` itself. Use it to try T3 Code or on a machine where you do not want
+a lasting install; for anything you keep running, install the CLI above so
+`t3 update` and the background service are available.
 
 The executable is built for Apple Silicon Macs, Linux, and Windows. There is
 no Intel Mac build of it, because Node cannot produce a single executable for
@@ -53,20 +84,20 @@ or use a package manager:
 ### Windows Subsystem for Linux
 
 Choose a WSL distro in **Settings → Connections** to run agents and projects
-there. Install Node.js and provider CLIs inside that distro. T3 Code installs its
-matching server runtime there automatically; the first launch after an app
-update can take longer.
+there. Install the provider CLIs inside that distro. T3 Code installs its own
+server runtime there automatically; the first launch after an app update can
+take longer.
 
 ### Open a project from a terminal
 
 With the desktop app already running on the same machine:
 
 ```bash
-npx t3 app
+t3 app
 ```
 
 This opens a new thread for the current directory, adding the project if needed.
-Pass a path, such as `npx t3 app ../my-project`, to open another directory. It requires
+Pass a path, such as `t3 app ../my-project`, to open another directory. It requires
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 

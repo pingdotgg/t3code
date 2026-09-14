@@ -5,41 +5,29 @@ to keep a terminal open.
 
 ## Manage the service
 
-Run these commands on the machine that will host T3 Code:
+Install the `t3` CLI first ([Install T3 Code](./install.md#command-line)), then
+run these commands on the machine that will host T3 Code:
 
-| Task                            | Command                           |
-| ------------------------------- | --------------------------------- |
-| Install and start               | `npx t3@latest service install`   |
-| Inspect status and log location | `npx t3@latest service status`    |
-| Update or repair                | `npx t3@latest service update`    |
-| Stop and remove from startup    | `npx t3@latest service uninstall` |
+| Task                            | Command                |
+| ------------------------------- | ---------------------- |
+| Install and start               | `t3 service install`   |
+| Inspect status and log location | `t3 service status`    |
+| Update or repair                | `t3 service update`    |
+| Stop and remove from startup    | `t3 service uninstall` |
 
 Uninstalling the service leaves your projects, threads, and settings intact.
 
-Install and update use the version of the CLI you invoke. For nightly, use
-`npx t3@nightly service update`; replace `nightly` with an exact version to pin
-one. An older CLI refuses to replace a newer service unless you explicitly add
-`--allow-downgrade`.
+The service runs the same executable as the `t3` you invoke, so the machine
+needs neither Node.js nor npm. An older CLI refuses to replace a newer service
+unless you explicitly add `--allow-downgrade`.
 
 Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
-Self-contained builds install as a download from the T3 Code GitHub release
-instead of through npm, so the machine running the service does not need
-Node.js or npm once the CLI is on it. To get the CLI onto a machine without
-Node, run the install script:
-
-```sh
-curl -fsSL https://t3.codes/install.sh | sh
-```
-
-On Windows, run `irm https://t3.codes/install.ps1 | iex` in PowerShell instead.
-
-It places `t3` in `~/.local/bin` and reuses the same download when you later
-run `t3 service install`. It follows the stable train by default; set
-`T3CODE_CHANNEL=nightly` for nightlies, `T3CODE_VERSION` to pin an exact
-version, or `T3CODE_RELEASE_BASE_URL` to download from a mirror.
+The installer follows the stable train by default; set `T3CODE_CHANNEL=nightly`
+for nightlies, `T3CODE_VERSION` to pin an exact version, or
+`T3CODE_RELEASE_BASE_URL` to download from a mirror.
 
 `preview` is a third train that maintainers cut from unreleased branches to
 exercise the release pipeline. Those builds can be broken, receive no fixes,
@@ -114,7 +102,7 @@ that session open.
 
 On macOS, check **System Settings → General → Login Items** if the service no
 longer starts at login. If agent work cannot access Desktop, Documents, or
-Downloads, it may need Full Disk Access for the Node executable listed in
+Downloads, it may need Full Disk Access for the `t3` executable listed in
 `ProgramArguments` in
 `~/Library/LaunchAgents/com.t3tools.t3code.service.plist`.
 

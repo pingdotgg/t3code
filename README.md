@@ -22,17 +22,23 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 > - OpenCode: install [OpenCode](https://opencode.ai) and run `opencode auth login`
 > - Antigravity: enable it in Settings, then use **Install Antigravity** and **Sign in with Google**. No CLI is required.
 
-### Try it out (install-free)
+### Command line
 
-The easiest way to test T3 Code is to run the server in your terminal (requires Node.js 22.16+, 23.11+, or 24.10+):
+Install the standalone `t3` CLI. It is a single self-contained executable: no Node.js, npm, or compiler required.
 
 ```bash
-npx t3@latest
+curl -fsSL https://t3.codes/install.sh | sh
 ```
 
-This will launch T3 Code's backend on your machine as well as the local web app to control your agents.
+On Windows, in PowerShell:
 
-Tip: Use `npx t3@latest --help` for the full CLI reference.
+```powershell
+irm https://t3.codes/install.ps1 | iex
+```
+
+Then run `t3` to start the server and open the local web app, `t3 service install` to keep it running in the background, and `t3 update` to move to a newer release. `t3 --help` has the full reference.
+
+To try it once without installing anything, `npx t3@latest` runs the same executable through npm (Node.js is only needed for `npx` itself).
 
 ### Desktop app
 
