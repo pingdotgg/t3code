@@ -8684,6 +8684,131 @@ it.effect(
     }),
 );
 
+for (const operation of ["shutdown", "closeInstance"] as const) {
+  it.effect(
+    `ProviderSessionManagerV2 ${operation} waits for a revocation tail registered by an in-flight detach`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const mcpConfigs = yield* Ref.make<
+          ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+        >([]);
+        // Armed per iteration: a credential sweep reaching the registry
+        // signals `started` and parks on `gate` until the test releases it.
+        const revokeSlot = yield* Ref.make<
+          | {
+              readonly started: Deferred.Deferred<void>;
+              readonly gate: Deferred.Deferred<void>;
+            }
+          | undefined
+        >(undefined);
+        const mcpRegistryLayer = Layer.effect(
+          McpSessionRegistry.McpSessionRegistry,
+          Effect.gen(function* () {
+            const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+            return McpSessionRegistry.McpSessionRegistry.of({
+              ...delegate,
+              revokeProviderSession: (providerSessionId) =>
+                Ref.get(revokeSlot).pipe(
+                  Effect.flatMap((slot) =>
+                    slot === undefined
+                      ? delegate.revokeProviderSession(providerSessionId)
+                      : Deferred.succeed(slot.started, undefined).pipe(
+                          Effect.andThen(Deferred.await(slot.gate)),
+                          Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
+                        ),
+                  ),
+                ),
+            });
+          }),
+        ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+        // Teardown is one-shot, so every offset runs against a fresh manager.
+        // The detach's first scheduler checkpoints land while it is still
+        // queued on the [session, thread] lock — marker registered, mutation
+        // and revocation-tail registration not yet run.
+        for (let ops = 4; ops < 24; ops += 1) {
+          const started = yield* Deferred.make<void>();
+          const gate = yield* Deferred.make<void>();
+          yield* Effect.gen(function* () {
+            const manager = yield* ProviderSessionManagerV2;
+            const stepper = makeSteppingScheduler();
+            const threadId = ThreadId.make(`thread-${operation}-late-tail-${ops}`);
+            const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+            const providerSessionId = yield* allocate;
+            yield* open(providerSessionId);
+
+            // Suspend the detach inside its lock-acquisition window: the
+            // in-flight marker is registered but the revocation tail is not —
+            // the masked mutation/registration section runs as a single
+            // scheduled stretch once the lock is taken.
+            const detaching = yield* manager
+              .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+              .pipe(
+                Effect.exit,
+                Effect.forkDetach,
+                Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+              );
+            yield* stepper.step(detaching, ops);
+
+            const tearingDown = yield* (
+              operation === "shutdown"
+                ? manager.shutdown
+                : manager.closeInstance(modelSelection.instanceId)
+            ).pipe(Effect.exit, Effect.forkChild);
+            for (let i = 0; i < 16; i += 1) {
+              yield* Effect.yieldNow;
+            }
+            // The detach is in flight but has registered no revocation yet;
+            // only draining the in-flight marker keeps teardown pending here.
+            assert.isUndefined(
+              tearingDown.pollUnsafe(),
+              `${operation} returned while an in-flight detach could still register a revocation tail (op ${ops})`,
+            );
+
+            // Arm the gate only now — earlier revocations are the release
+            // sweep's own credential work, not the late-registered tail.
+            yield* Ref.set(revokeSlot, { started, gate });
+            yield* stepper.drain;
+            for (let i = 0; i < 16; i += 1) {
+              yield* Effect.yieldNow;
+            }
+            // The tail registered after the snapshot and parked on the
+            // registry gate; teardown must still be joining it.
+            if (yield* Deferred.isDone(started)) {
+              assert.isUndefined(
+                tearingDown.pollUnsafe(),
+                `${operation} returned while a registered revocation tail was still parked (op ${ops})`,
+              );
+            }
+
+            yield* Deferred.succeed(gate, undefined);
+            for (let i = 0; i < 16; i += 1) {
+              yield* Effect.yieldNow;
+            }
+            const teardownExit = yield* Fiber.join(tearingDown);
+            assert.isTrue(
+              Exit.isSuccess(teardownExit),
+              `${operation} returned ${teardownExit._tag} instead of Success (op ${ops})`,
+            );
+            yield* Fiber.join(detaching);
+          }).pipe(
+            Effect.ensuring(Deferred.succeed(gate, undefined)),
+            Effect.provide(
+              makeTestLayer({
+                state,
+                idleTimeoutMs: 3_600_000,
+                mcpConfigs,
+                mcpRegistryLayer,
+              }),
+            ),
+          );
+        }
+        yield* Ref.set(revokeSlot, undefined);
+      }),
+  );
+}
+
 it.effect(
   "ProviderSessionManagerV2 closeInstance joins a chained revocation started by its own instance",
   () =>
