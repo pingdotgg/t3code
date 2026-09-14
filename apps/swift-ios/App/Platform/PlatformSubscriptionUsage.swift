@@ -2,8 +2,22 @@ import Foundation
 import WidgetKit
 
 struct PlatformSubscriptionUsageObservationKey: Equatable {
+    struct Environment: Equatable {
+        let id: String
+        let name: String
+        let endpoint: String
+        let connectionState: FeatureConnection.State?
+    }
+
     let isActive: Bool
-    let environments: [FeatureEnvironment]
+    let environments: [Environment]
+
+    init(isActive: Bool, environments: [FeatureEnvironment]) {
+        self.isActive = isActive
+        self.environments = environments.map {
+            Environment(id: $0.id, name: $0.name, endpoint: $0.endpoint, connectionState: $0.connectionState)
+        }
+    }
 }
 
 enum PlatformSubscriptionUsageSnapshot {
@@ -53,6 +67,7 @@ final class PlatformSubscriptionUsageCoordinator {
     private var environments: [FeatureEnvironmentUsageLimits] = []
     private var generation = 0
     private var lastRefresh: Date?
+    private var lastRefreshEnvironmentIDs: Set<String> = []
 
     func observe(client: any FeatureClient, environmentIDs: [String]) async {
         generation += 1
@@ -70,8 +85,13 @@ final class PlatformSubscriptionUsageCoordinator {
         guard hasWidget, !Task.isCancelled, generation == currentGeneration else { return }
 
         // Bound probes across rapid scene and connection changes.
-        let shouldRefresh = lastRefresh.map { Date().timeIntervalSince($0) >= 5 * 60 } ?? true
-        if shouldRefresh { lastRefresh = Date() }
+        let currentIDs = Set(environmentIDs)
+        let shouldRefresh = !currentIDs.isSubset(of: lastRefreshEnvironmentIDs)
+            || (lastRefresh.map { Date().timeIntervalSince($0) >= 5 * 60 } ?? true)
+        if shouldRefresh {
+            lastRefresh = Date()
+            lastRefreshEnvironmentIDs = currentIDs
+        }
         await withTaskGroup(of: Void.self) { group in
             if shouldRefresh {
                 group.addTask {

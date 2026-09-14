@@ -5,6 +5,17 @@ import Testing
 @Suite("Subscription usage widget snapshots")
 struct PlatformSubscriptionUsageTests {
     @Test
+    func changingTheSelectedEnvironmentDoesNotRestartWidgetSubscriptions() {
+        var environment = FeatureEnvironment(id: "a", name: "A", endpoint: "https://a.example.com")
+        let previous = PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment])
+        environment.isActive = true
+        environment.connectionDetail = "A thread became active"
+        #expect(PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment]) == previous)
+        environment.endpoint = "https://b.example.com"
+        #expect(PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment]) != previous)
+    }
+
+    @Test
     func publishesOnePooledQuotaWithoutAccountOrEnvironmentIdentity() throws {
         let environments = [
             FeatureEnvironmentUsageLimits(environmentID: "private-server", label: "Private machine", providers: [
