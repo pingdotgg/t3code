@@ -86,7 +86,9 @@ struct FeatureContextClipboardTests {
 
         #expect(attachment.id != local.id)
         #expect(attachment.uploadedReference == nil)
-        #expect(attachment.data == local.data)
+        let ownedFile = try #require(attachment.ownedFile)
+        #expect(try Data(contentsOf: ownedFile.url) == local.data)
+        #expect(attachment.data.isEmpty)
         #expect(attachment.source == .pastedText)
         #expect(result.context.records.first?.attachment?.attachmentId == attachment.id.uuidString)
         #expect(result.context.records.first?.contextId != record.contextId)

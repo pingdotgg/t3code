@@ -1117,6 +1117,8 @@ struct FeatureComposerView: View {
 
     private func pasteContext(_ content: ComposerContextClipboard.Content, _ originalText: String, _ range: NSRange) {
         guard contextImportID == nil, !voiceInputController.isBusy else { return }
+        pastedTextTask?.cancel()
+        pastedTextGeneration = UUID()
         let originalContext = context
         let originalAttachments = attachments
         let owner = draftOwnerID
@@ -1212,7 +1214,7 @@ struct FeatureComposerView: View {
     }
 
     private func attachPastedText(_ pastedText: String, commitSelection: @escaping @MainActor () -> Bool) {
-        guard !voiceInputController.isBusy, !pastedText.isEmpty,
+        guard !voiceInputController.isBusy, contextImportID == nil, !pastedText.isEmpty,
               let maximumPastedTextBytes,
               pastedText.utf8.count <= maximumPastedTextBytes else {
             pastedTextErrorMessage = "Could not attach pasted text. Your draft has not changed."

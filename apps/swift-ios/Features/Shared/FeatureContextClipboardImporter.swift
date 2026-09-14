@@ -120,6 +120,15 @@ struct FeatureContextClipboardImporter {
                 guard local.byteCount <= maximumBytes else {
                     throw FileAttachmentError.tooLarge(actualBytes: local.byteCount, maximumBytes: maximumBytes)
                 }
+                if !binding.mimeType.hasPrefix("image/") {
+                    let id = UUID()
+                    let store = fileStore
+                    let data = local.data
+                    let file = try await Task.detached(priority: .userInitiated) {
+                        try store.writeOwnedFile(data: data, attachmentID: id, originalFileName: binding.name, maximumBytes: maximumBytes)
+                    }.value
+                    return FeatureDraftAttachment(id: id, ownedFile: file, filename: binding.name, mimeType: binding.mimeType, source: local.source)
+                }
                 return FeatureDraftAttachment(
                     data: local.data, thumbnailData: local.thumbnailData,
                     filename: binding.name, mimeType: binding.mimeType, source: local.source
