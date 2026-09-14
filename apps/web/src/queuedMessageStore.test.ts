@@ -23,7 +23,7 @@ function makeMessage(prompt: string): Omit<QueuedComposerMessage, "id"> {
 
 describe("queuedMessageStore", () => {
   beforeEach(() => {
-    useQueuedMessageStore.setState({ queuesByThreadKey: {} });
+    useQueuedMessageStore.setState({ queuesByThreadKey: {}, drainGeneration: 0 });
   });
 
   it("keeps messages in submission order per thread", () => {
@@ -93,7 +93,9 @@ describe("queuedMessageStore", () => {
     enqueue("thread-b", makeMessage("other"));
 
     expect(drain("thread-a").map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
     expect(drain("thread-a")).toEqual([]);
+    expect(useQueuedMessageStore.getState().drainGeneration).toBe(1);
     expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-b"]).toHaveLength(1);
   });
 });

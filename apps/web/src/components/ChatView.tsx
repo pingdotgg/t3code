@@ -7623,6 +7623,10 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
     }
+    // Stop drains the queue. A queued send whose upload was still running at
+    // that moment must not start a turn afterwards; it checks this before
+    // dispatch and hands the message back to the composer instead.
+    const drainGenerationAtTake = useQueuedMessageStore.getState().drainGeneration;
     // A queued send that fails goes back to the head of the queue, held. The
     // messages behind it keep their order and wait; the composer is not
     // touched, which also keeps a failure after navigation off the new
@@ -7665,6 +7669,15 @@ export default function ChatView(props: ChatViewProps) {
         abortQueuedReplay();
         return;
       }
+    }
+
+    if (
+      queuedMessage &&
+      useQueuedMessageStore.getState().drainGeneration !== drainGenerationAtTake
+    ) {
+      sendInFlightRef.current = false;
+      restoreQueuedMessagesToComposer([queuedMessage]);
+      return;
     }
 
     const resolvedSubmissionIntent =

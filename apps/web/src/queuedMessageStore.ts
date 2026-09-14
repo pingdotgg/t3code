@@ -37,6 +37,12 @@ export interface QueuedComposerMessage {
 
 interface QueuedMessageStoreState {
   queuesByThreadKey: Record<string, QueuedComposerMessage[]>;
+  /**
+   * Bumped by `drain`. A send that took a message before a drain and finishes
+   * its upload after it compares this to the value it captured and gives up,
+   * so Stop cannot be followed by a queued message starting a new turn.
+   */
+  drainGeneration: number;
   enqueue: (threadKey: string, message: Omit<QueuedComposerMessage, "id">) => QueuedComposerMessage;
   /**
    * Removes one message and returns it, or null when another caller already
@@ -64,6 +70,7 @@ const EMPTY_QUEUE: QueuedComposerMessage[] = [];
 /** In-memory only: a queued message is a live intent, not a draft worth persisting. */
 export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get) => ({
   queuesByThreadKey: {},
+  drainGeneration: 0,
   enqueue: (threadKey, message) => {
     const entry: QueuedComposerMessage = { ...message, id: randomUUID() };
     set((state) => ({
@@ -139,7 +146,7 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
     set((state) => {
       const queuesByThreadKey = { ...state.queuesByThreadKey };
       delete queuesByThreadKey[threadKey];
-      return { queuesByThreadKey };
+      return { queuesByThreadKey, drainGeneration: state.drainGeneration + 1 };
     });
     return queue;
   },
