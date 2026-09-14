@@ -1,0 +1,7 @@
+{
+  "type": "thread.user-input.dismiss",
+  "commandId": "command-fixture",
+  "threadId": "thread-fixture",
+  "requestId": "question-fixture",
+  "createdAt": "2026-08-07T12:00:00.000Z"
+}
