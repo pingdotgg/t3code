@@ -3,6 +3,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import type { MenuAction } from "@react-native-menu/menu";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
 import { type ReactNode, useRef, useState } from "react";
@@ -16,8 +17,9 @@ import {
   View,
 } from "react-native";
 
+import { SymbolView } from "../../components/AppSymbol";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
-import { cn } from "../../lib/cn";
+import { ControlPillMenu } from "../../components/ControlPill";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useAtomCommand } from "../../state/use-atom-command";
 import {
@@ -149,15 +151,11 @@ export function T3ConnectProfilePage() {
       <ClerkSectionHeader>Registered servers</ClerkSectionHeader>
 
       {environmentsState.error ? (
-        <ClerkSection>
-          <View className="gap-1 px-6 py-4">
-            <Text className="text-base leading-snug text-clerk-foreground">
-              Could not load T3 Connect environments
-            </Text>
-            <Text className="text-sm leading-normal text-clerk-foreground-muted">
-              {environmentsState.error}
-            </Text>
-          </View>
+        <>
+          <ClerkRow
+            title="Could not load T3 Connect environments"
+            subtitle={environmentsState.error}
+          />
           {errorTraceId ? (
             <ClerkButtonRow
               label="Copy trace ID"
@@ -166,51 +164,70 @@ export function T3ConnectProfilePage() {
               }}
             />
           ) : null}
-        </ClerkSection>
+        </>
       ) : isInitialLoad ? (
-        <ClerkSection>
-          <View className="flex-row items-center gap-3 px-6 py-4">
-            <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
-            <Text className="text-base text-clerk-foreground-muted">Loading environments</Text>
-          </View>
-        </ClerkSection>
+        <View className="flex-row items-center gap-3 px-6 py-4">
+          <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
+          <Text className="text-base text-clerk-foreground-muted">Loading environments</Text>
+        </View>
       ) : environments.length > 0 ? (
-        <ClerkSection>
-          {environments.map((environment) => (
-            <T3ConnectEnvironmentRow
-              key={environment.environmentId}
-              environment={environment}
-              isDeregistering={deregisteringEnvironmentId === environment.environmentId}
-              mutationPending={deregisteringEnvironmentId !== null}
-              onDeregister={() =>
-                confirmDeregister(environment, () => void handleDeregister(environment))
-              }
-            />
-          ))}
-        </ClerkSection>
+        environments.map((environment) => (
+          <ClerkRow
+            key={environment.environmentId}
+            title={environment.label}
+            subtitle={`${linkedAtLabel(environment.linkedAt)} · ${endpointLabel(environment)}`}
+            accessory={
+              deregisteringEnvironmentId === environment.environmentId ? (
+                <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
+              ) : (
+                <ControlPillMenu
+                  actions={ENVIRONMENT_MENU_ACTIONS}
+                  isAnchoredToRight
+                  onPressAction={() =>
+                    confirmDeregister(environment, () => void handleDeregister(environment))
+                  }
+                >
+                  <Pressable
+                    accessibilityLabel={`Actions for ${environment.label}`}
+                    accessibilityRole="button"
+                    disabled={deregisteringEnvironmentId !== null}
+                    className="size-[30px] items-center justify-center active:opacity-60 disabled:opacity-50"
+                  >
+                    <View className="rotate-90">
+                      <SymbolView
+                        name="ellipsis"
+                        size={18}
+                        tintColorClassName={"accent-clerk-foreground-muted"}
+                        type="monochrome"
+                      />
+                    </View>
+                  </Pressable>
+                </ControlPillMenu>
+              )
+            }
+          />
+        ))
       ) : (
-        <ClerkSection>
-          <View className="gap-1 px-6 py-4">
-            <Text className="text-base leading-snug text-clerk-foreground">
-              No servers registered
-            </Text>
-            <Text className="text-sm leading-normal text-clerk-foreground-muted">
-              Link a server from its local Settings to reach it through T3 Connect.
-            </Text>
-          </View>
-        </ClerkSection>
+        <ClerkRow
+          title="No servers registered"
+          subtitle="Link a server from its local Settings to reach it through T3 Connect."
+        />
       )}
 
-      <Text className="px-6 pt-4 text-xs leading-normal text-clerk-foreground-muted">
+      <Text className="px-6 pt-6 text-xs leading-normal text-clerk-foreground-muted">
         Connections on this device are managed in Settings.
       </Text>
     </ScrollView>
   );
 }
 
-// Layout primitives that mirror clerk-ios ClerkKitUI's profile sections so a
-// custom page reads as one of Clerk's own screens. System font on purpose:
-// Clerk's native views do not use the app's DM Sans.
+const ENVIRONMENT_MENU_ACTIONS = [
+  { id: "deregister", title: "Deregister", image: "trash", attributes: { destructive: true } },
+] satisfies MenuAction[];
+
+// Layout primitives that mirror clerk-ios ClerkKitUI's profile rows so a custom
+// page reads as one of Clerk's own screens. System font on purpose: Clerk's
+// native views do not use the app's DM Sans.
 
 function ClerkSectionHeader(props: { readonly children: string }) {
   return (
@@ -220,71 +237,37 @@ function ClerkSectionHeader(props: { readonly children: string }) {
   );
 }
 
-function ClerkSection(props: { readonly children: ReactNode }) {
+function ClerkRow(props: {
+  readonly title: string;
+  readonly subtitle: string;
+  readonly accessory?: ReactNode;
+}) {
   return (
-    <View collapsable={false} className="bg-clerk-surface">
-      {props.children}
+    <View
+      collapsable={false}
+      className="flex-row items-center gap-3 border-b border-clerk-border px-6 py-4"
+    >
+      <View className="min-w-0 flex-1 gap-0.5">
+        <Text className="min-h-[22px] text-base text-clerk-foreground" numberOfLines={1}>
+          {props.title}
+        </Text>
+        <Text className="min-h-5 text-sm text-clerk-foreground-muted" numberOfLines={2}>
+          {props.subtitle}
+        </Text>
+      </View>
+      {props.accessory}
     </View>
   );
 }
 
-function ClerkButtonRow(props: {
-  readonly label: string;
-  readonly destructive?: boolean;
-  readonly disabled?: boolean;
-  readonly pending?: boolean;
-  readonly onPress: () => void;
-}) {
+function ClerkButtonRow(props: { readonly label: string; readonly onPress: () => void }) {
   return (
     <Pressable
       accessibilityRole="button"
-      disabled={props.disabled}
       onPress={props.onPress}
-      className="flex-row items-center border-b border-clerk-border px-6 py-4 active:opacity-60 disabled:opacity-50"
+      className="border-b border-clerk-border px-6 py-4 active:opacity-60"
     >
-      <Text
-        className={cn(
-          "text-base font-semibold",
-          props.destructive ? "text-clerk-danger" : "text-clerk-foreground",
-        )}
-      >
-        {props.label}
-      </Text>
-      {props.pending ? (
-        <ActivityIndicator
-          className="ml-3"
-          colorClassName={"accent-clerk-foreground-muted"}
-          size="small"
-        />
-      ) : null}
+      <Text className="text-base font-semibold text-clerk-foreground">{props.label}</Text>
     </Pressable>
-  );
-}
-
-function T3ConnectEnvironmentRow(props: {
-  readonly environment: RelayClientEnvironmentRecord;
-  readonly isDeregistering: boolean;
-  readonly mutationPending: boolean;
-  readonly onDeregister: () => void;
-}) {
-  const { environment } = props;
-  return (
-    <View collapsable={false}>
-      <View className="gap-0.5 border-b border-clerk-border px-6 py-4">
-        <Text className="min-h-[22px] text-base text-clerk-foreground" numberOfLines={1}>
-          {environment.label}
-        </Text>
-        <Text className="min-h-5 text-sm text-clerk-foreground-muted" numberOfLines={1}>
-          {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
-        </Text>
-      </View>
-      <ClerkButtonRow
-        destructive
-        disabled={props.mutationPending}
-        label="Deregister"
-        onPress={props.onDeregister}
-        pending={props.isDeregistering}
-      />
-    </View>
   );
 }

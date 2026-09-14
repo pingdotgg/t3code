@@ -235,27 +235,25 @@
 
 /* ─── Clerk native profile ──────────────────────────────────────────── */
 /* Fixed palette for custom pages inside Clerk's native user profile. Mirrors
-   clerk-ios ClerkKitUI's default theme, not the app theme, so those pages
-   match the SDK's own screens around them. Kept out of the runtime palette
-   above on purpose: custom themes must not restyle Clerk's chrome. */
+   clerk-theme.json, which themes the SDK's own screens, so ours match them.
+   Kept out of the runtime palette above on purpose: custom themes must not
+   restyle Clerk's chrome. Keep in sync with clerk-theme.json. */
 @layer theme {
   :root {
     @variant light {
-      --color-clerk-page: #f7f7f7;
-      --color-clerk-surface: #ffffff;
-      --color-clerk-foreground: #2f3037;
-      --color-clerk-foreground-muted: #747686;
-      --color-clerk-border: rgba(0, 0, 0, 0.06);
-      --color-clerk-danger: #ef4444;
+      --color-clerk-page: #f2f2f7;
+      --color-clerk-foreground: #262626;
+      --color-clerk-foreground-muted: #737373;
+      --color-clerk-border: rgba(229, 229, 234, 0.06);
+      --color-clerk-danger: #dc2626;
     }
 
     @variant dark {
-      --color-clerk-page: #1a1a1d;
-      --color-clerk-surface: #131316;
-      --color-clerk-foreground: #ffffff;
-      --color-clerk-foreground-muted: #b7b8c2;
-      --color-clerk-border: rgba(255, 255, 255, 0.06);
-      --color-clerk-danger: #ef4444;
+      --color-clerk-page: #0e0e0e;
+      --color-clerk-foreground: #f5f5f5;
+      --color-clerk-foreground-muted: #a3a3a3;
+      --color-clerk-border: rgba(42, 42, 42, 0.06);
+      --color-clerk-danger: #fca5a5;
     }
   }
 }
