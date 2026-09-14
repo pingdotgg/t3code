@@ -221,7 +221,7 @@ export function orderWebThreadLineageRows(input: {
     return 2;
   };
 
-  return input.rows.toSorted((left, right) => {
+  return [...input.rows].sort((left, right) => {
     const rankDelta = pinRank(left) - pinRank(right);
     if (rankDelta !== 0) return rankDelta;
     const leftCreatedAt = threadCreatedAtMillis(input.graph.nodes.get(left.threadId));
