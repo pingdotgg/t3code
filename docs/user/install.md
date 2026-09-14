@@ -5,16 +5,10 @@ desktop, web, or mobile app. Set up the machine where the agents will work first
 
 ## Requirements
 
-T3 Code does not need Node.js. The CLI and the desktop app are self-contained,
-and so is the server they install on SSH hosts and in WSL. You only need
-Node.js if you run T3 Code with `npx`, and then only for `npx` itself.
-
 You need an installed, authenticated provider before starting a thread. You can
 launch T3 Code and configure providers afterwards.
 
 ## Command line
-
-The `t3` CLI is a single executable. Install it with:
 
 ```bash
 curl -fsSL https://t3.codes/install.sh | sh
@@ -26,11 +20,8 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-This downloads the release for your platform, verifies it, and puts `t3` in
-`~/.local/bin` (`~\.local\bin` on Windows). Set `T3CODE_CHANNEL=nightly` to
-install the nightly train, or `T3CODE_VERSION` to pin an exact version.
-
-Then:
+This puts `t3` in `~/.local/bin`. Set `T3CODE_CHANNEL=nightly` to install the
+nightly train, or `T3CODE_VERSION` to pin an exact version.
 
 | Task                                  | Command                                                   |
 | ------------------------------------- | --------------------------------------------------------- |
@@ -42,22 +33,13 @@ Then:
 
 Run `t3 --help` for the full reference.
 
-### Run once without installing
+To try T3 Code once without installing it, run `npx t3@latest` instead.
 
-```bash
-npx t3@latest
-```
+### Intel Macs
 
-This fetches the same executable through npm and runs it, so it needs Node.js
-for `npx` itself. Use it to try T3 Code or on a machine where you do not want
-a lasting install; for anything you keep running, install the CLI above so
-`t3 update` and the background service are available.
-
-The executable is built for Apple Silicon Macs, Linux, and Windows. There is
-no Intel Mac build of it, because Node cannot produce a single executable for
-that platform; the Intel desktop app is unaffected. To run a standalone server
-on an Intel Mac, build it from source. You need Node.js 24 and `vp` (see
-[Install vp](https://github.com/pingdotgg/t3code#install-vp)):
+There is no `t3` executable for Intel Macs (the desktop app is available). To
+run a server there, build it from source with Node.js 24 and `vp`
+([Install vp](https://github.com/pingdotgg/t3code#install-vp)):
 
 ```bash
 git clone https://github.com/pingdotgg/t3code
@@ -65,9 +47,8 @@ cd t3code && vp i && vp run build:desktop
 node apps/server/dist/bin.mjs
 ```
 
-A server run this way is a plain Node program: `t3 update` and the background
-service do not apply, so update it with `git pull` and a rebuild, and start it
-however you run other Node processes.
+`t3 update` and the background service do not apply to a server run this way;
+update it with `git pull` and a rebuild.
 
 ## Desktop app
 

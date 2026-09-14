@@ -24,8 +24,6 @@ We wanted something performant, remote-ready, and truly open. If we ever go the 
 
 ### Command line
 
-Install the standalone `t3` CLI. It is a single self-contained executable: no Node.js, npm, or compiler required.
-
 ```bash
 curl -fsSL https://t3.codes/install.sh | sh
 ```
@@ -36,9 +34,9 @@ On Windows, in PowerShell:
 irm https://t3.codes/install.ps1 | iex
 ```
 
-Then run `t3` to start the server and open the local web app, `t3 service install` to keep it running in the background, and `t3 update` to move to a newer release. `t3 --help` has the full reference.
+Then run `t3` to start the server and open the local web app. `t3 service install` keeps it running in the background, `t3 update` moves to a newer release, and `t3 --help` has the full reference.
 
-To try it once without installing anything, `npx t3@latest` runs the same executable through npm (Node.js is only needed for `npx` itself).
+To try it once without installing, run `npx t3@latest` instead.
 
 ### Desktop app
 

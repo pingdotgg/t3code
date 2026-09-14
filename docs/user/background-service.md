@@ -17,41 +17,28 @@ run these commands on the machine that will host T3 Code:
 
 Uninstalling the service leaves your projects, threads, and settings intact.
 
-The service runs the same executable as the `t3` you invoke, so the machine
-needs neither Node.js nor npm. An older CLI refuses to replace a newer service
-unless you explicitly add `--allow-downgrade`.
-
 Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
-[Updating T3 Code](./updating.md).
+[Updating T3 Code](./updating.md). An older CLI refuses to replace a newer
+service unless you add `--allow-downgrade`.
 
-The installer follows the stable train by default; set `T3CODE_CHANNEL=nightly`
-for nightlies, `T3CODE_VERSION` to pin an exact version, or
-`T3CODE_RELEASE_BASE_URL` to download from a mirror.
+`t3 update` downloads the newest release on your channel and switches `t3` to
+it. When a background service is installed it asks before restarting it, since
+a restart interrupts running agent turns, terminals, and remote clients; answer
+no and the service keeps the old version until you run `t3 service update`.
+Pass `--yes` from a script. A server you started by hand is left running; stop
+and start it again to pick up the new version.
 
-`preview` is a third train that maintainers cut from unreleased branches to
-exercise the release pipeline. Those builds can be broken, receive no fixes,
-and are never offered as updates; the installer and `t3 update` only take you
-there when you ask for the channel explicitly, and warn you when they do.
+Pass an exact version (`t3 update 0.0.42`) to pin one, `--channel nightly` to
+switch trains, or `--allow-downgrade` to move backwards. `preview` is a
+maintainers' test train: its builds can be broken and are never offered as
+updates, so the installer and `t3 update` ask for confirmation before
+installing one.
 
-Once a self-contained `t3` is installed, `t3 update` moves the machine to a
-newer one without npm: it downloads the newest release on the channel the
-running `t3` came from, verifies it, and points the `t3` launcher at it. When
-a background service is installed for the same T3 home it asks before
-restarting it, since a restart interrupts running agent turns, terminals, and
-remote clients; answer no and the service keeps the old version until you run
-`t3 service update`. From a script there is no prompt, so pass `--yes` to
-restart the service. A server you started by hand is never touched; the
-command tells you it is still on the old version so you can restart it
-yourself. Pass an exact version (`t3 update 0.0.41-preview.20260912.1595`) to
-pin one, `--channel` to follow a different release train (moving onto preview from stable or nightly asks for confirmation), or
-`--allow-downgrade` to move backwards.
-
-`t3 uninstall` reverses the install script: it shows what it found (the
-background service, the `t3` launcher, every downloaded version under
-`~/.t3/runtime`), asks once, and removes them. Your projects, threads, and
-settings under `~/.t3/userdata` are kept; delete that directory yourself if
-you want them gone too. Pass `--yes` from a script.
+`t3 uninstall` removes the background service, the `t3` launcher, and the
+downloaded versions after showing you the list and asking once. Your projects,
+threads, and settings under `~/.t3/userdata` are kept. Pass `--yes` from a
+script.
 
 ## Platform support
 

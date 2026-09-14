@@ -31,22 +31,17 @@ The offered action depends on how the server runs:
 | **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
 | **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
 
-On a host with the `t3` CLI installed, run:
+On the host, run:
 
 ```sh
 t3 update <client-version>
 ```
 
-Replace `<client-version>` with the version shown in the notice. `t3 update`
-downloads that release, points `t3` at it, and offers to restart the background
-service when one is installed. Plain `t3 update` takes the newest release on
-your channel, which only resolves the mismatch if your client is on that
-release.
-
-For a foreground server, stop it and start it again after updating. Preserve
+Replace `<client-version>` with the version shown in the notice. The command
+offers to restart the background service when one is installed. For a server
+you started by hand, stop it and start it again afterwards with your usual
 options such as `--host` or `--tailscale-serve`. If you run the server with
-`npx` instead, the copied command is `npx t3@<client-version>`. See
-[background services](./background-service.md) for service management.
+`npx`, the copied command is `npx t3@<client-version>`.
 
 ## If an update fails
 
