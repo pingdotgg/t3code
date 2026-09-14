@@ -1,17 +1,17 @@
 // Regenerate after changing Swift packages or the vendored Ghostty framework.
 // Ghostty dependencies match cf8edc23f3a6a87a96e41a90013e89e987d34980,
 // src/build/SharedDeps.zig, its package pins, and the iOS archive members.
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { promisify } from "node:util";
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
-const run = promisify(execFile);
+const run = NodeUtil.promisify(NodeChildProcess.execFile);
 const app = new URL("../", import.meta.url);
 const output = new URL("Resources/NativeLicenses.json", app);
 const resolved = JSON.parse(
-  await readFile(
+  await NodeFSP.readFile(
     new URL("T3Code.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved", app),
     "utf8",
   ),
@@ -218,7 +218,7 @@ const swiftPackages = resolved.pins.map((pin) => ({
     "/LICENSE",
 }));
 
-const ghosttyNotice = await readFile(
+const ghosttyNotice = await NodeFSP.readFile(
   new URL("../mobile/modules/t3-terminal/THIRD_PARTY_NOTICES.md", app),
   "utf8",
 );
@@ -232,7 +232,7 @@ bundled.find((source) => source.name === "libphonenumber metadata").version =
   "PhoneNumberKit " + phoneNumberVersion;
 
 if (process.argv.includes("--check")) {
-  const saved = JSON.parse(await readFile(output, "utf8"));
+  const saved = JSON.parse(await NodeFSP.readFile(output, "utf8"));
   for (const source of [...swiftPackages, ...bundled]) {
     const entry = saved.find((entry) => entry.name === source.name);
     if (!entry || entry.version !== source.version || entry.revision !== source.revision) {
@@ -244,7 +244,7 @@ if (process.argv.includes("--check")) {
   }
   console.log("Native license metadata matches the dependency pins.");
 } else {
-  const directory = await mkdtemp(join(tmpdir(), "t3-native-licenses-"));
+  const directory = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-native-licenses-"));
   const downloads = new Map();
   async function download(url) {
     if (!downloads.has(url)) {
@@ -262,8 +262,8 @@ if (process.argv.includes("--check")) {
     const bytes = await download(source.url);
     const texts = [];
     if (source.files) {
-      const archive = join(directory, encodeURIComponent(source.name) + ".tar");
-      await writeFile(archive, bytes);
+      const archive = NodePath.join(directory, encodeURIComponent(source.name) + ".tar");
+      await NodeFSP.writeFile(archive, bytes);
       const listing = (
         await run("tar", ["-tf", archive], { maxBuffer: 8 * 1024 * 1024 })
       ).stdout.split("\n");
@@ -306,9 +306,9 @@ if (process.argv.includes("--check")) {
       result.push(...(await Promise.all(sources.slice(index, index + 4).map(notice))));
     }
     result.sort((a, b) => a.name.localeCompare(b.name, "en"));
-    await writeFile(output, JSON.stringify(result, null, 2) + "\n");
+    await NodeFSP.writeFile(output, JSON.stringify(result, null, 2) + "\n");
     console.log("Saved " + result.length + " native license notices.");
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    await NodeFSP.rm(directory, { recursive: true, force: true });
   }
 }
