@@ -210,17 +210,23 @@ type ProjectPathSearchTarget = ComposerPathSearchTarget & {
   readonly imageOnly?: boolean | undefined;
 };
 
-export function areProjectPathSearchTargetsEqual(
+function areProjectPathSearchScopesEqual(
   left: ProjectPathSearchTarget,
   right: ProjectPathSearchTarget,
 ): boolean {
   return (
     left.environmentId === right.environmentId &&
     left.cwd === right.cwd &&
-    left.query === right.query &&
     left.kind === right.kind &&
     left.imageOnly === right.imageOnly
   );
+}
+
+export function areProjectPathSearchTargetsEqual(
+  left: ProjectPathSearchTarget,
+  right: ProjectPathSearchTarget,
+): boolean {
+  return areProjectPathSearchScopesEqual(left, right) && left.query === right.query;
 }
 
 export function useProjectPathSearch(
@@ -253,8 +259,7 @@ export function useProjectPathSearch(
   });
   const result = useEnvironmentQuery(
     isSearchEnabled &&
-      normalizedTarget.environmentId === throttledTarget.environmentId &&
-      normalizedTarget.cwd === throttledTarget.cwd &&
+      areProjectPathSearchScopesEqual(normalizedTarget, throttledTarget) &&
       throttledTarget.environmentId !== null &&
       throttledTarget.cwd !== null &&
       throttledTarget.query !== null &&
@@ -272,14 +277,33 @@ export function useProjectPathSearch(
       : null,
   );
 
+  const [lastCompleted, setLastCompleted] = useState<{
+    target: ProjectPathSearchTarget;
+    data: NonNullable<typeof result.data>;
+  } | null>(null);
+  const retained =
+    isSearchEnabled &&
+    lastCompleted !== null &&
+    areProjectPathSearchScopesEqual(normalizedTarget, lastCompleted.target)
+      ? lastCompleted
+      : null;
+  if (result.data !== null && lastCompleted?.data !== result.data) {
+    setLastCompleted({ target: throttledTarget, data: result.data });
+  } else if (lastCompleted !== null && retained === null) {
+    setLastCompleted(null);
+  }
+  // A new query atom starts empty. Keep the list mounted until its response arrives.
+  const visibleData = result.data ?? (result.error === null ? retained?.data : null);
+  const visibleQuery = result.data !== null ? throttledTarget.query : retained?.target.query;
+
   return {
-    entries: result.data?.entries ?? [],
+    entries: visibleData?.entries ?? [],
     error: result.error,
     isPending:
       isSearchEnabled &&
       (!areProjectPathSearchTargetsEqual(normalizedTarget, throttledTarget) || result.isPending),
-    searchedQuery: isSearchEnabled ? (throttledTarget.query ?? "") : "",
-    truncated: result.data?.truncated ?? false,
+    searchedQuery: isSearchEnabled ? (visibleQuery ?? "") : "",
+    truncated: visibleData?.truncated ?? false,
     refresh: result.refresh,
   };
 }

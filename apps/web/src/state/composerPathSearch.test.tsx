@@ -1,11 +1,14 @@
 import { EnvironmentId } from "@t3tools/contracts";
-import { act, useLayoutEffect } from "react";
+import { act, useLayoutEffect, useMemo } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useComposerPathSearch } from "./queries";
 
 const requests = vi.hoisted(() => ({
+  pending: new Set<string>(),
+  empty: new Set<string>(),
+  errors: new Set<string>(),
   search: vi.fn(
     (target: { environmentId: string; input: { cwd: string; query: string } }) => target,
   ),
@@ -15,11 +18,22 @@ vi.mock("./projects", () => ({
   projectContentSearch: vi.fn(),
 }));
 vi.mock("./query", () => ({
-  useEnvironmentQuery: (target: { input: { query: string } } | null) => ({
-    data: target ? { entries: [{ path: `${target.input.query}.ts`, kind: "file" }] } : null,
-    error: null,
-    isPending: false,
-  }),
+  useEnvironmentQuery: (target: { input: { query: string } } | null) => {
+    const query = target?.input.query;
+    const pending = query !== undefined && requests.pending.has(query);
+    const error = query !== undefined && requests.errors.has(query) ? "Search failed" : null;
+    const empty = query !== undefined && requests.empty.has(query);
+    const data = useMemo(
+      () =>
+        query === undefined || pending || error
+          ? null
+          : {
+              entries: empty ? [] : [{ path: `${query}.ts`, kind: "file" }],
+            },
+      [query, pending, error, empty],
+    );
+    return { data, error, isPending: pending };
+  },
 }));
 
 const target = { environmentId: EnvironmentId.make("local"), cwd: "/worktree-a" };
@@ -54,6 +68,9 @@ beforeEach(async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", globalThis);
   requests.search.mockClear();
+  requests.pending.clear();
+  requests.empty.clear();
+  requests.errors.clear();
   await act(() => {
     renderer = create(<Probe query={null} />);
   });
@@ -136,5 +153,32 @@ describe("composer path search scheduling", () => {
     await type("readme");
     expect(latest.entries).toEqual([{ path: "readme.ts", kind: "file" }]);
     expect(latest.isPending).toBe(false);
+  });
+  it("keeps the last results visible while the next query is pending", async () => {
+    await type("r");
+    requests.pending.add("readme");
+    await advance(500);
+    await type("readme");
+    expect(latest.isPending).toBe(true);
+    expect(latest.entries).toEqual([{ path: "r.ts", kind: "file" }]);
+    requests.pending.clear();
+    await type("readme");
+    expect(latest.entries).toEqual([{ path: "readme.ts", kind: "file" }]);
+    expect(latest.isPending).toBe(false);
+  });
+
+  it("replaces retained results with an empty result or an error", async () => {
+    await type("r");
+    requests.empty.add("missing");
+    await advance(500);
+    await type("missing");
+    expect(latest.entries).toEqual([]);
+    await advance(500);
+    await type("r");
+    requests.errors.add("broken");
+    await advance(500);
+    await type("broken");
+    expect(latest.entries).toEqual([]);
+    expect(latest.error).toBe("Search failed");
   });
 });
