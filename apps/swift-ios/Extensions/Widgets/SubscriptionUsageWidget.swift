@@ -7,15 +7,15 @@ enum T3SubscriptionPeriod: String, AppEnum {
     case session
     case weekly
 
-    static var typeDisplayRepresentation: TypeDisplayRepresentation = "Period"
-    static var caseDisplayRepresentations: [T3SubscriptionPeriod: DisplayRepresentation] = [
+    static let typeDisplayRepresentation: TypeDisplayRepresentation = "Period"
+    static let caseDisplayRepresentations: [T3SubscriptionPeriod: DisplayRepresentation] = [
         .both: "Both", .session: "Session", .weekly: "Weekly",
     ]
 }
 
 struct T3SubscriptionUsageConfiguration: WidgetConfigurationIntent {
-    static var title: LocalizedStringResource = "Subscription usage"
-    static var description = IntentDescription("Choose the limits shown for each provider.")
+    static let title: LocalizedStringResource = "Subscription usage"
+    static let description = IntentDescription("Choose the limits shown for each provider.")
 
     @Parameter(title: "Codex", default: .both)
     var codexPeriod: T3SubscriptionPeriod

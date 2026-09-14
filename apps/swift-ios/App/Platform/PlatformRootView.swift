@@ -45,7 +45,7 @@ struct PlatformRootView: View {
             guard subscriptionUsageKey.isActive else { return }
             await subscriptionUsage.observe(
                 client: model.client,
-                environmentIDs: subscriptionUsageKey.environments.map(\.id)
+                key: subscriptionUsageKey
             )
         }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
@@ -145,7 +145,8 @@ struct PlatformRootView: View {
     private var subscriptionUsageKey: PlatformSubscriptionUsageObservationKey {
         .init(
             isActive: scenePhase == .active && !model.isLoading,
-            environments: model.snapshot.environments.filter(\.isEnabled)
+            environments: model.snapshot.environments.filter(\.isEnabled),
+            accountID: (model.client as? any T3ConnectCapable)?.t3ConnectController.account?.id
         )
     }
 

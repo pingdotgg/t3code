@@ -5,6 +5,55 @@ import Testing
 @Suite("Subscription usage widget snapshots")
 struct PlatformSubscriptionUsageTests {
     @Test
+    func startupKeepsSameScopesLastReadingUntilCatchUpCompletes() throws {
+        let environment = FeatureEnvironment(id: "a", name: "A", endpoint: "https://a.example.com")
+        let scope = PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment], accountID: "user-a").scopeID
+        var saved = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(used: 80),
+        ])])
+        saved.scopeID = scope
+        var pending = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", isPending: true)])
+        pending.scopeID = scope
+        let retained = PlatformSubscriptionUsageSnapshot.retainingPendingSnapshot(pending, previous: saved, isPending: true)
+        let provider = try #require(retained.providers.first)
+        #expect(provider.windows.first?.remaining == 20)
+        #expect(provider.hasPartialData)
+        #expect(provider.checkedAt == saved.providers.first?.checkedAt)
+        #expect(provider.expiresAt == saved.providers.first?.expiresAt)
+        #expect(provider.detail(at: UsageLimitTestFixtures.now) == "Some limits unavailable")
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: UsageLimitTestFixtures.now.addingTimeInterval(15 * 60)).isEmpty)
+
+        var current = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(used: 10),
+        ])])
+        current.scopeID = scope
+        #expect(PlatformSubscriptionUsageSnapshot.retainingPendingSnapshot(current, previous: saved, isPending: false) == current)
+    }
+
+    @Test
+    func changedUserEnabledEnvironmentSetOrAddressCannotReuseSavedQuotas() throws {
+        let environment = FeatureEnvironment(id: "a", name: "A", endpoint: "https://a.example.com")
+        let scope = PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment], accountID: "user-a").scopeID
+        var saved = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [try UsageLimitTestFixtures.provider()])])
+        saved.scopeID = scope
+        let changedScopes = [
+            PlatformSubscriptionUsageObservationKey(isActive: true, environments: [], accountID: "user-a"),
+            PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment], accountID: "user-b"),
+            PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment], accountID: nil),
+            PlatformSubscriptionUsageObservationKey(isActive: true, environments: [.init(id: "a", name: "A", endpoint: "https://b.example.com")], accountID: "user-a"),
+        ]
+        for key in changedScopes {
+            var pending = T3SubscriptionUsageSnapshot.empty
+            pending.scopeID = key.scopeID
+            let result = PlatformSubscriptionUsageSnapshot.retainingPendingSnapshot(pending, previous: saved, isPending: true)
+            #expect(result.providers.allSatisfy(\.windows.isEmpty))
+        }
+        let encoded = try #require(String(data: JSONEncoder().encode(saved), encoding: .utf8))
+        #expect(!encoded.contains("user-a"))
+        #expect(!encoded.contains("a.example.com"))
+    }
+
+    @Test
     func changingTheSelectedEnvironmentDoesNotRestartWidgetSubscriptions() {
         var environment = FeatureEnvironment(id: "a", name: "A", endpoint: "https://a.example.com")
         let previous = PlatformSubscriptionUsageObservationKey(isActive: true, environments: [environment])

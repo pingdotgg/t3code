@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import WidgetKit
 
@@ -11,16 +12,44 @@ struct PlatformSubscriptionUsageObservationKey: Equatable {
 
     let isActive: Bool
     let environments: [Environment]
+    let accountID: String?
 
-    init(isActive: Bool, environments: [FeatureEnvironment]) {
+    init(isActive: Bool, environments: [FeatureEnvironment], accountID: String? = nil) {
         self.isActive = isActive
+        self.accountID = accountID
         self.environments = environments.map {
             Environment(id: $0.id, name: $0.name, endpoint: $0.endpoint, connectionState: $0.connectionState)
         }
     }
+
+    var scopeID: String {
+        let identifiers = [accountID ?? ""] + environments.sorted { $0.id < $1.id }.flatMap { [$0.id, $0.endpoint] }
+        // Length prefixes make the digest unambiguous even when an identifier
+        // contains a separator. Neither labels nor transient connection state
+        // change which account data the saved snapshot belongs to.
+        let input = identifiers.map { "\($0.utf8.count):\($0)" }.joined()
+        return SHA256.hash(data: Data(input.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
 }
 
 enum PlatformSubscriptionUsageSnapshot {
+    static func retainingPendingSnapshot(
+        _ incoming: T3SubscriptionUsageSnapshot,
+        previous: T3SubscriptionUsageSnapshot?,
+        isPending: Bool
+    ) -> T3SubscriptionUsageSnapshot {
+        guard isPending, let scopeID = incoming.scopeID,
+              let previous, previous.scopeID == scopeID,
+              previous.providers.contains(where: { !$0.windows.isEmpty }) else { return incoming }
+        // Pooled display values have no per-environment contributions to merge.
+        // Keep the whole saved reading until every environment answers.
+        return T3SubscriptionUsageSnapshot(providers: previous.providers.map {
+            var provider = $0
+            provider.hasPartialData = true
+            return provider
+        }, scopeID: scopeID)
+    }
+
     static func make(_ environments: [FeatureEnvironmentUsageLimits]) -> T3SubscriptionUsageSnapshot {
         let pools = UsageLimitPooling.pools(UsageLimitPooling.accounts(environments), now: .distantPast)
         return T3SubscriptionUsageSnapshot(providers: ["codex", "claudeAgent"].map { driver in
@@ -70,12 +99,25 @@ final class PlatformSubscriptionUsageCoordinator {
     private var generation = 0
     private var lastRefresh: Date?
     private var lastRefreshEnvironmentIDs: Set<String> = []
+    private var scopeID: String?
+    private var previousSnapshot: T3SubscriptionUsageSnapshot?
 
-    func observe(client: any FeatureClient, environmentIDs: [String]) async {
+    func observe(client: any FeatureClient, key: PlatformSubscriptionUsageObservationKey) async {
         Self.nextGeneration += 1
         generation = Self.nextGeneration
         let currentGeneration = generation
-        environments = environments.filter { environmentIDs.contains($0.id) }
+        let environmentIDs = key.environments.map(\.id)
+        if scopeID != key.scopeID {
+            environments = []
+            lastRefresh = nil
+            scopeID = key.scopeID
+        }
+        let savedSnapshot = await PlatformSubscriptionUsageWriter.shared.load()
+        guard !Task.isCancelled, generation == currentGeneration else { return }
+        previousSnapshot = savedSnapshot
+        environments = UsageLimitsPresentation.retainingPendingRows(key.environments.map {
+            .init(environmentID: $0.id, label: $0.name, isPending: true)
+        }, previous: environments)
         await publish()
         guard !environmentIDs.isEmpty else { return }
         let hasWidget = await withCheckedContinuation { continuation in
@@ -97,7 +139,7 @@ final class PlatformSubscriptionUsageCoordinator {
         }
         await withTaskGroup(of: Void.self) { group in
             if shouldRefresh {
-                group.addTask {
+                group.addTask { @MainActor in
                     // Refresh emits config events. Do not overwrite newer stream
                     // data with the operation result if the two complete out of order.
                     _ = try? await client.refreshUsageLimits()
@@ -122,7 +164,11 @@ final class PlatformSubscriptionUsageCoordinator {
     }
 
     private func publish() async {
-        let snapshot = PlatformSubscriptionUsageSnapshot.make(environments)
+        var incoming = PlatformSubscriptionUsageSnapshot.make(environments)
+        incoming.scopeID = scopeID
+        let snapshot = PlatformSubscriptionUsageSnapshot.retainingPendingSnapshot(
+            incoming, previous: previousSnapshot, isPending: environments.contains(where: \.isPending)
+        )
         let saved = await PlatformSubscriptionUsageWriter.shared.save(snapshot, generation: generation)
         if saved { WidgetCenter.shared.reloadTimelines(ofKind: T3SubscriptionUsageSnapshotStore.kind) }
     }
@@ -132,6 +178,10 @@ private actor PlatformSubscriptionUsageWriter {
     static let shared = PlatformSubscriptionUsageWriter()
     private var generation = 0
     private var previous: T3SubscriptionUsageSnapshot?
+
+    func load() -> T3SubscriptionUsageSnapshot {
+        previous ?? T3SubscriptionUsageSnapshotStore.load()
+    }
 
     func save(_ snapshot: T3SubscriptionUsageSnapshot, generation: Int) -> Bool {
         guard generation >= self.generation else { return false }

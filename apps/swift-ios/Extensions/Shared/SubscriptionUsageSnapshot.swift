@@ -19,7 +19,7 @@ struct T3SubscriptionUsageSnapshot: Codable, Equatable, Sendable {
         let expiresAt: Date?
         let windows: [Window]
         let totalWindows: Int
-        let hasPartialData: Bool
+        var hasPartialData: Bool
 
         func isFresh(at now: Date) -> Bool { expiresAt.map { $0 > now } ?? false }
 
@@ -40,6 +40,9 @@ struct T3SubscriptionUsageSnapshot: Codable, Equatable, Sendable {
     }
 
     let providers: [Provider]
+    /// An opaque digest identifies the enabled environments and signed-in user.
+    /// The widget does not receive their identifiers or connection addresses.
+    var scopeID: String? = nil
     static let empty = T3SubscriptionUsageSnapshot(providers: [
         .init(id: "codex", name: "Codex", accountCount: 0, checkedAt: nil, expiresAt: nil, windows: [], totalWindows: 0, hasPartialData: false),
         .init(id: "claudeAgent", name: "Claude", accountCount: 0, checkedAt: nil, expiresAt: nil, windows: [], totalWindows: 0, hasPartialData: false),
