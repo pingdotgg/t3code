@@ -99,7 +99,9 @@ enum UsageLimitPooling {
             // Display the newest successful credit balance, but redeem through a
             // hub when possible so its account-routing cooldown is cleared too.
             previous.redeem = hubRedeems[key]?.redeem
-                ?? credits[key]?.redeem ?? winner.redeem ?? previous.redeem ?? next.redeem
+                ?? (credits[key] != nil
+                    ? credits[key]?.redeem
+                    : winner.redeem ?? previous.redeem ?? next.redeem)
             previous.limits = ServerProviderUsageLimits(
                 checkedAt: winner.limits.checkedAt,
                 windows: winner.limits.windows,
@@ -196,6 +198,11 @@ enum UsageLimitPooling {
             for source in environment.sources {
                 if let error = source.error { result.append("\(label(source.label)): \(error)") }
                 else if source.accounts.isEmpty { result.append("\(label(source.label)): No accounts reported.") }
+                for (index, account) in source.accounts.enumerated() {
+                    guard account.usageLimits.unavailable?.reason != .unsupported,
+                          let notice = UsageLimitsPresentation.limitsNotice(account.usageLimits) else { continue }
+                    result.append("\(label(source.label)) · \(UsageLimitsPresentation.providerLabel(driver: account.driver)) account \(index + 1): \(notice)")
+                }
             }
         }
         return result

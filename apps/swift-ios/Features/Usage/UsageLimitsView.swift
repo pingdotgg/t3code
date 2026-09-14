@@ -61,6 +61,11 @@ struct UsageLimitsView: View {
                         environmentSection(group)
                     }
                 } else {
+                    ForEach(environments) { environment in
+                        if let error = refreshErrors[environment.id] {
+                            notice("\(environment.label): Could not refresh limits. \(error)")
+                        }
+                    }
                     ForEach(Array(UsageLimitPooling.notices(environments).enumerated()), id: \.offset) { _, message in
                         notice(message)
                     }

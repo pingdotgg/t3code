@@ -64,13 +64,16 @@ enum PlatformSubscriptionUsageSnapshot {
 /// activation. No timer, background socket, or widget-owned transport is needed.
 @MainActor
 final class PlatformSubscriptionUsageCoordinator {
+    // The writer outlives views. Its ordering must outlive their coordinators too.
+    private static var nextGeneration = 0
     private var environments: [FeatureEnvironmentUsageLimits] = []
     private var generation = 0
     private var lastRefresh: Date?
     private var lastRefreshEnvironmentIDs: Set<String> = []
 
     func observe(client: any FeatureClient, environmentIDs: [String]) async {
-        generation += 1
+        Self.nextGeneration += 1
+        generation = Self.nextGeneration
         let currentGeneration = generation
         environments = environments.filter { environmentIDs.contains($0.id) }
         await publish()

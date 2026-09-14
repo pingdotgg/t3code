@@ -54,6 +54,31 @@ struct UsageLimitPoolingTests {
     }
 
     @Test
+    func hubBalanceWithoutACreditIDDoesNotFallBackToNativeRedemption() throws {
+        let source = UsageLimitTestFixtures.source(accounts: [.init(
+            id: "hub-user", driver: "codex", email: "user@example.com",
+            usageLimits: UsageLimitTestFixtures.limits(used: 90, credits: .init(availableCount: 1))
+        )])
+        let native = try UsageLimitTestFixtures.provider(email: "user@example.com")
+        let account = try #require(UsageLimitPooling.accounts([
+            .init(environmentID: "native", label: "Laptop", providers: [native], sources: [source]),
+        ]).first)
+        #expect(account.limits.resetCredits?.availableCount == 1)
+        #expect(account.redeem == nil)
+    }
+
+    @Test
+    func failedHubAccountHasANoticeEvenWhenTheHubReadSucceeded() {
+        let source = UsageLimitTestFixtures.source(accounts: [.init(
+            id: "private@example.com", driver: "codex",
+            usageLimits: .init(checkedAt: "2026-09-13T12:00:00Z", windows: [], unavailable: .init(reason: .probeFailed))
+        )])
+        let environments = [FeatureEnvironmentUsageLimits(environmentID: "hub", label: "Server", sources: [source])]
+        #expect(UsageLimitPooling.accounts(environments).isEmpty)
+        #expect(UsageLimitPooling.notices(environments) == ["Hub · Codex account 1: Could not read limits."])
+    }
+
+    @Test
     func anonymousNativeInstancesAndDifferentDriversStaySeparate() throws {
         let accounts = UsageLimitPooling.accounts([
             .init(environmentID: "a", label: "A", providers: [try UsageLimitTestFixtures.provider(), try UsageLimitTestFixtures.provider(id: "named", email: "same@example.com")]),
