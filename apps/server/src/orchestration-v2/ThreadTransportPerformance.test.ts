@@ -34,7 +34,9 @@ const HISTORICAL_FULL_SNAPSHOT_APPLICATION_BYTES = 10_375_079;
 // snapshot variants. WebSocket framing and compression are intentionally out
 // of scope for this deterministic pre-compression measurement.
 const FULL_SNAPSHOT_RPC_JSON_BYTES = 10_375_121;
-const PRE_OMISSION_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 1_038_647;
+// v2 history cursors carry fixed 43-char thread/item digests plus an ordinal
+// instead of raw thread/item ids, shifting this fixture's size slightly.
+const PRE_OMISSION_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 1_038_751;
 // The first payload-omitting projection measured 67,412 bytes.
 const MAX_PROJECTED_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 131_072;
 const PRE_OMISSION_COMMAND_EVENT_RPC_JSON_BYTES = 8_790;

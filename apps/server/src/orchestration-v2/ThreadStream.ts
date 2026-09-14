@@ -43,10 +43,12 @@ type ThreadSnapshotStreamItem = Extract<
 export function buildBoundedThreadStreamSnapshot(input: {
   readonly snapshotSequence: number;
   readonly projection: OrchestrationV2ThreadProjection;
+  readonly hasOlderHistory?: boolean | undefined;
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
     projection: projectThreadProjectionForWire(input.projection),
+    ...(input.hasOlderHistory === undefined ? {} : { hasOlderHistory: input.hasOlderHistory }),
   });
   return {
     kind: "snapshot",
