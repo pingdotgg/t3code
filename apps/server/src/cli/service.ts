@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Terminal from "effect/Terminal";
 import { Command, Flag, GlobalFlag, Prompt } from "effect/unstable/cli";
+import { FetchHttpClient } from "effect/unstable/http";
 
 import packageJson from "../../package.json" with { type: "json" };
 import * as BootService from "../cloud/bootService.ts";
@@ -17,7 +18,11 @@ export const bootServiceLayer = (config: ServerConfig.ServerConfig["Service"]) =
     baseDir: config.baseDir,
     logsDir: config.logsDir,
     cliVersion: packageJson.version,
-  }).pipe(Layer.provide(ProcessRunner.layer));
+  }).pipe(
+    Layer.provide(ProcessRunner.layer),
+    // Archive-distributed versions download the release archive here.
+    Layer.provide(FetchHttpClient.layer),
+  );
 
 export type ServiceReconcileResult =
   | {
@@ -135,7 +140,7 @@ const serviceInstallCommand = Command.make("install", serviceReconcileFlags).pip
 
 const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   Command.withDescription(
-    "Update or repair the background service using this CLI version. Use `npx t3@latest service update` for the latest release.",
+    "Update or repair the background service using this CLI version. Use `t3 update` to move to a newer release first.",
   ),
   Command.withHandler((flags) =>
     runServiceCommand(

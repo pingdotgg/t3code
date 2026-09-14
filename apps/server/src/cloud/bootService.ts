@@ -1,4 +1,5 @@
 import {
+  HostProcessArchitecture,
   HostProcessExecutablePath,
   HostProcessPlatform,
   HostProcessUserId,
@@ -12,16 +13,19 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import { HttpClient } from "effect/unstable/http";
 import * as Schema from "effect/Schema";
+
+import { CLI_RELEASE_BASE_URL_ENV } from "@t3tools/shared/cliRelease";
 
 import * as ProcessRunner from "../processRunner.ts";
 import {
   ensurePinnedRuntimeInstalled,
+  pinnedRuntimeCommand,
   pinnedRuntimePaths,
   PinnedRuntimeInstallError,
 } from "./pinnedRuntime.ts";
 import {
-  SERVICE_LAUNCHER_FILE,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
@@ -51,9 +55,36 @@ function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
+/**
+ * Reads `T3CODE_HOME` back out of a rendered unit or plist. Only values this
+ * file writes are expected, so a quoted systemd value is unquoted and
+ * unescaped the same way `quoteSystemdValue` produced it.
+ */
+export function bootServiceBaseDirOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) {
+    const raw = systemd.trim();
+    const unquoted =
+      raw.startsWith('"') && raw.endsWith('"')
+        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+        : raw;
+    return unquoted.replaceAll("%%", "%");
+  }
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  if (plist !== undefined) {
+    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  }
+  return undefined;
+}
+
 export interface BootServicePlan {
-  readonly nodePath: string;
-  readonly launcherPath: string;
+  /**
+   * What the service manager executes. npm-distributed runtimes run the
+   * standalone launcher script with the installing Node; archive-distributed
+   * runtimes run their own executable, which hosts the launcher as a hidden
+   * subcommand so the machine never needs Node.
+   */
+  readonly program: ReadonlyArray<string>;
   readonly baseDir: string;
   readonly logPath: string;
   readonly unitPath: string;
@@ -73,7 +104,7 @@ export function renderBootServiceUnit(plan: BootServicePlan): string {
     "WorkingDirectory=%h",
     `Environment=T3CODE_HOME=${quoteSystemdValue(plan.baseDir)}`,
     `Environment=${BOOT_SERVICE_UNIT_ENV}=${BOOT_SERVICE_UNIT_FILE}`,
-    `ExecStart=${quoteSystemdValue(plan.nodePath)} ${quoteSystemdValue(plan.launcherPath)}`,
+    `ExecStart=${plan.program.map(quoteSystemdValue).join(" ")}`,
     // Let the launcher mark an explicit stop before it signals the server.
     // systemd still SIGKILLs the whole cgroup if graceful shutdown times out.
     "KillMode=mixed",
@@ -124,8 +155,7 @@ export function renderBootServicePlist(
     `  <string>${BOOT_SERVICE_LAUNCHD_LABEL}</string>`,
     `  <key>ProgramArguments</key>`,
     `  <array>`,
-    `    <string>${escapeXmlText(plan.nodePath)}</string>`,
-    `    <string>${escapeXmlText(plan.launcherPath)}</string>`,
+    ...plan.program.map((argument) => `    <string>${escapeXmlText(argument)}</string>`),
     `  </array>`,
     `  <key>EnvironmentVariables</key>`,
     `  <dict>`,
@@ -476,6 +506,13 @@ export interface BootServiceStatus {
   readonly installed: boolean;
   readonly current: boolean;
   readonly installedVersion?: string;
+  /**
+   * The T3 home the installed unit serves. The unit name is fixed per user,
+   * so a caller working against another base dir must not treat this service
+   * as its own; `t3 update --base-dir` learned that by restarting the live
+   * server of the machine it ran on.
+   */
+  readonly installedBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -494,7 +531,6 @@ export class BootService extends Context.Service<
 
 export interface BootServiceHost {
   readonly execPath: string;
-  readonly launcherSourcePath?: string;
 }
 
 export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
@@ -505,7 +541,12 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 }) {
   const hostExecPath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
+  const arch = yield* HostProcessArchitecture;
   const uid = yield* HostProcessUserId;
+  const httpClient = yield* HttpClient.HttpClient;
+  const releaseBaseUrl = Option.getOrUndefined(
+    yield* Config.string(CLI_RELEASE_BASE_URL_ENV).pipe(Config.option),
+  );
   const homeDir = yield* Config.string("HOME").pipe(Config.withDefault(""));
   const installerPath = yield* Config.string("PATH").pipe(Config.withDefault(""));
   const fs = yield* FileSystem.FileSystem;
@@ -542,12 +583,8 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   });
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
-  const launcherPath = path.join(input.baseDir, "runtime", SERVICE_LAUNCHER_FILE);
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
-  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion);
-  const launcherSourcePath =
-    host.launcherSourcePath ??
-    path.join(path.dirname(runtimePaths.entryPath), SERVICE_LAUNCHER_FILE);
+  const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -567,9 +604,10 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
         );
       }),
     ).pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+  // The executable hosts the launcher as a hidden subcommand of itself, so
+  // the unit runs the pinned runtime directly.
   const plan: BootServicePlan = {
-    nodePath: host.execPath,
-    launcherPath,
+    program: [runtimePaths.entryPath, "__service-launcher"],
     baseDir: input.baseDir,
     logPath,
     unitPath,
@@ -708,11 +746,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       fs,
       path,
       runner,
+      httpClient,
+      platform,
+      arch,
+      releaseBaseUrl,
       validate: (runtime) =>
         runner
           .run({
-            command: host.execPath,
-            args: [runtime.entryPath, "--version"],
+            command: pinnedRuntimeCommand(runtime).command,
+            args: [...pinnedRuntimeCommand(runtime).args, "--version"],
             timeout: Duration.seconds(30),
           })
           .pipe(
@@ -750,10 +792,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           : new BootServiceInstallError({ cause: error }),
       ),
     );
-    const launcherSource = yield* fs
-      .readFileString(launcherSourcePath)
-      .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
@@ -786,7 +824,6 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-      yield* writeDurably(launcherPath, launcherSource);
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -833,18 +870,17 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     if (!(yield* fs.exists(unitPath))) {
       return { supported: true, installed: false, current: false, unitPath, logPath };
     }
-    const [unit, launcherExists, runtimeEntryExists, runtimeSentinel, stateText] =
-      yield* Effect.all([
-        fs.readFileString(unitPath),
-        fs.exists(launcherPath),
-        fs.exists(runtimePaths.entryPath),
-        fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
-        fs.readFileString(statePath).pipe(Effect.option),
-      ]);
+    const [unit, runtimeEntryExists, runtimeSentinel, stateText] = yield* Effect.all([
+      fs.readFileString(unitPath),
+      fs.exists(runtimePaths.entryPath),
+      fs.readFileString(runtimePaths.sentinelPath).pipe(Effect.option),
+      fs.readFileString(statePath).pipe(Effect.option),
+    ]);
     const state = Option.isSome(stateText) ? parseServiceState(stateText.value) : undefined;
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
+    const installedBaseDir = bootServiceBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -854,11 +890,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
+      ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       problems,
       current:
         problems.length === 0 &&
         normalizeUnit(unit) === normalizeUnit(detectedManager.render(plan)) &&
-        launcherExists &&
         runtimeEntryExists &&
         Option.isSome(runtimeSentinel) &&
         runtimeSentinel.value.trim() === input.cliVersion &&
