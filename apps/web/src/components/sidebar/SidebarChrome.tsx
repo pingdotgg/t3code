@@ -86,7 +86,7 @@ function SidebarBrand({ onBackdrop }: { onBackdrop: boolean }) {
     <Link
       aria-label="Go to threads"
       className={cn(
-        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex group-data-[collapsible=icon]:hidden",
+        "relative z-10 ml-[var(--workspace-titlebar-content-left)] hidden h-7 w-fit min-w-0 shrink-0 items-center overflow-hidden rounded-md outline-hidden ring-ring focus-visible:ring-2 md:flex",
         onBackdrop ? "text-white" : "text-foreground",
       )}
       to="/"
@@ -187,12 +187,12 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   }, [canGoBack, closeMobileSidebar, navigate]);
 
   return (
-    <SidebarMenu className="flex-row items-center group-data-[collapsible=icon]:flex-col">
+    <SidebarMenu className="flex-row items-center">
       {currentFooterPage ? (
         <SidebarMenuItem className="min-w-0 flex-1">
-          <SidebarMenuButton onClick={handleBackClick} aria-label="Back" tooltip="Back">
+          <SidebarMenuButton onClick={handleBackClick}>
             <ArrowLeftIcon />
-            <span className="group-data-[collapsible=icon]:hidden">Back</span>
+            <span>Back</span>
           </SidebarMenuButton>
         </SidebarMenuItem>
       ) : (
@@ -224,10 +224,8 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
 export const SidebarChromeFooter = memo(function SidebarChromeFooter() {
   return (
     <SidebarFooter className="px-[var(--sidebar-content-inset)] py-1">
-      <div className="contents group-data-[collapsible=icon]:hidden">
-        <SidebarProviderUpdatePill />
-        <SidebarUpdateArchitectureWarning />
-      </div>
+      <SidebarProviderUpdatePill />
+      <SidebarUpdateArchitectureWarning />
       <SidebarUtilityMenu />
     </SidebarFooter>
   );

@@ -199,11 +199,7 @@ import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrom
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
-import {
-  useClientSettings,
-  useCompactSidebarEnabled,
-  useUpdateClientSettings,
-} from "~/hooks/useSettings";
+import { useClientSettings, useUpdateClientSettings } from "~/hooks/useSettings";
 import { primaryServerKeybindingsAtom } from "../state/server";
 import {
   derivePhysicalProjectKey,
@@ -1198,9 +1194,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const router = useRouter();
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
-  const { isMobile, setOpenMobile, state, setOpen } = useSidebar();
-  const compactSidebarEnabled = useCompactSidebarEnabled();
-  const isCompact = compactSidebarEnabled && !isMobile && state === "collapsed";
+  const { isMobile, setOpenMobile } = useSidebar();
   const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
@@ -1451,13 +1445,10 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (useThreadSelectionStore.getState().hasSelection()) {
         clearSelection();
       }
-      setProjectExpanded(projectPreferenceKeys, isCompact || !projectExpanded);
-      if (isCompact) setOpen(true);
+      setProjectExpanded(projectPreferenceKeys, !projectExpanded);
     },
     [
       clearSelection,
-      isCompact,
-      setOpen,
       dragInProgressRef,
       projectExpanded,
       projectPreferenceKeys,
@@ -1474,17 +1465,9 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       if (dragInProgressRef.current) {
         return;
       }
-      setProjectExpanded(projectPreferenceKeys, isCompact || !projectExpanded);
-      if (isCompact) setOpen(true);
+      setProjectExpanded(projectPreferenceKeys, !projectExpanded);
     },
-    [
-      dragInProgressRef,
-      isCompact,
-      projectExpanded,
-      projectPreferenceKeys,
-      setOpen,
-      setProjectExpanded,
-    ],
+    [dragInProgressRef, projectExpanded, projectPreferenceKeys, setProjectExpanded],
   );
 
   const handleProjectButtonPointerDownCapture = useCallback(
@@ -2376,10 +2359,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     <>
       <div className="group/project-header relative">
         <SidebarMenuButton
-          tooltip={project.displayName}
-          aria-label={project.displayName}
           ref={isManualProjectSorting ? dragHandleProps?.setActivatorNodeRef : undefined}
-          className={`pr-8 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-14 group-data-[collapsible=icon]:justify-center ${
+          className={`pr-8 group-hover/project-header:bg-sidebar-row-hover group-hover/project-header:text-sidebar-foreground max-sm:pr-14 ${
             isManualProjectSorting ? "cursor-grab active:cursor-grabbing" : ""
           }`}
           {...(isManualProjectSorting && dragHandleProps ? dragHandleProps.attributes : {})}
@@ -2389,7 +2370,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           onKeyDown={handleProjectButtonKeyDown}
           onContextMenu={handleProjectButtonContextMenu}
         >
-          {isCompact ? null : !projectExpanded && projectStatus ? (
+          {!projectExpanded && projectStatus ? (
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -2420,7 +2401,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
           <span className="flex shrink-0">
             <ProjectFavicon project={project} />
           </span>
-          <span className="flex min-w-0 flex-1 items-center gap-2 group-data-[collapsible=icon]:hidden">
+          <span className="flex min-w-0 flex-1 items-center gap-2">
             <span className="truncate text-sm font-medium text-sidebar-foreground/90">
               {project.displayName}
             </span>
@@ -2434,7 +2415,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         {/* Environment badge – visible by default, crossfades with the
             "new thread" button on hover using the same pointer-events +
             opacity pattern as the thread row archive/timestamp swap. */}
-        {!isCompact && project.environmentPresence === "remote-only" && (
+        {project.environmentPresence === "remote-only" && (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -2460,7 +2441,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
         <Tooltip>
           <TooltipTrigger
             render={
-              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100 group-data-[collapsible=icon]:hidden">
+              <div className="pointer-events-none absolute top-[calc(50%+1px)] right-0.5 -translate-y-1/2 opacity-0 transition-opacity duration-150 max-sm:pointer-events-auto max-sm:opacity-100 group-hover/project-header:pointer-events-auto group-hover/project-header:opacity-100 group-focus-within/project-header:pointer-events-auto group-focus-within/project-header:opacity-100">
                 <button
                   type="button"
                   aria-label={`Create new thread in ${project.displayName}`}
@@ -2693,7 +2674,7 @@ function LocalSecondaryStatus() {
   }
 
   return (
-    <SidebarGroup className="px-2 pt-2 pb-0 group-data-[collapsible=icon]:hidden">
+    <SidebarGroup className="px-2 pt-2 pb-0">
       {connecting.length > 0 ? (
         <Alert
           variant="default"
@@ -2997,16 +2978,14 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
                 render={
                   <SidebarMenuButton
                     className="focus-visible:ring-0"
-                    tooltip="Search"
-                    aria-label="Search"
                     data-testid="command-palette-trigger"
                   />
                 }
               >
                 <SearchIcon />
-                <span className="flex-1 truncate group-data-[collapsible=icon]:hidden">Search</span>
+                <span className="flex-1 truncate">Search</span>
                 {commandPaletteShortcutLabel ? (
-                  <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px] group-data-[collapsible=icon]:hidden">
+                  <Kbd className="h-4 min-w-0 rounded-sm px-1.5 text-[10px]">
                     {commandPaletteShortcutLabel}
                   </Kbd>
                 ) : null}
@@ -3017,7 +2996,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       }
     >
       {showArm64IntelBuildWarning && arm64IntelBuildWarningDescription ? (
-        <SidebarGroup className="px-2 pt-2 pb-0 group-data-[collapsible=icon]:hidden">
+        <SidebarGroup className="px-2 pt-2 pb-0">
           <Alert variant="warning" className="rounded-2xl border-warning/40 bg-warning/8">
             <TriangleAlertIcon />
             <AlertTitle>Intel build on Apple Silicon</AlertTitle>
@@ -3041,21 +3020,17 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       ) : null}
       <LocalSecondaryStatus />
       <SidebarGroup className="px-2 py-2">
-        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0">
-          <span className="text-xs font-medium text-sidebar-muted-foreground/80 group-data-[collapsible=icon]:hidden">
-            Projects
-          </span>
+        <div className="mb-1 flex items-center justify-between pl-2 pr-1.5">
+          <span className="text-xs font-medium text-sidebar-muted-foreground/80">Projects</span>
           <div className="flex items-center gap-1">
-            <div className="group-data-[collapsible=icon]:hidden">
-              <ProjectSortMenu
-                projectSortOrder={projectSortOrder}
-                threadSortOrder={threadSortOrder}
-                threadPreviewCount={threadPreviewCount}
-                onProjectSortOrderChange={handleProjectSortOrderChange}
-                onThreadSortOrderChange={handleThreadSortOrderChange}
-                onThreadPreviewCountChange={handleThreadPreviewCountChange}
-              />
-            </div>
+            <ProjectSortMenu
+              projectSortOrder={projectSortOrder}
+              threadSortOrder={threadSortOrder}
+              threadPreviewCount={threadPreviewCount}
+              onProjectSortOrderChange={handleProjectSortOrderChange}
+              onThreadSortOrderChange={handleThreadSortOrderChange}
+              onThreadPreviewCountChange={handleThreadPreviewCountChange}
+            />
             <Tooltip>
               <TooltipTrigger
                 render={
@@ -3152,9 +3127,7 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
         )}
 
         {projectsLength === 0 && (
-          <div className="px-2 pt-4 text-center text-secondary-label text-xs group-data-[collapsible=icon]:hidden">
-            No projects yet
-          </div>
+          <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
         )}
       </SidebarGroup>
     </SidebarContent>
