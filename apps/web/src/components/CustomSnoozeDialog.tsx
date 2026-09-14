@@ -8,6 +8,9 @@ import {
   type CustomSnoozeInput,
 } from "@t3tools/client-runtime/state/thread-settled";
 import { Button } from "./ui/button";
+import { CalendarIcon } from "lucide-react";
+import { Calendar } from "./ui/calendar";
+import { Popover, PopoverTrigger, PopoverPopup } from "./ui/popover";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { toggleVariants } from "./ui/toggle";
@@ -54,12 +57,14 @@ function CustomSnoozeDialog() {
   const id = useId();
   const [initial] = useState(() => new Date(Date.now() + 3_600_000));
   const [mode, setMode] = useState<CustomSnoozeInput["mode"]>("date");
-  const [date, setDate] = useState(localSnoozeDate(initial));
+  const [date, setDate] = useState(initial);
+  const [calendarOpen, setCalendarOpen] = useState(false);
   const [time, setTime] = useState(localSnoozeTime(initial));
   const [amount, setAmount] = useState("2");
   const [unit, setUnit] = useState<"minutes" | "hours" | "days">("hours");
   const [error, setError] = useState<string | null>(null);
-  const input: CustomSnoozeInput = mode === "date" ? { mode, date, time } : { mode, amount, unit };
+  const input: CustomSnoozeInput =
+    mode === "date" ? { mode, date: localSnoozeDate(date), time } : { mode, amount, unit };
   return (
     <Dialog
       open
@@ -119,24 +124,41 @@ function CustomSnoozeDialog() {
               <Tabs.Panel value={mode} className="flex flex-col gap-4">
                 {mode === "date" ? (
                   <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                    <Label
-                      className="flex min-w-0 flex-col items-stretch gap-1.5"
-                      htmlFor={`${id}-date`}
-                    >
-                      Date
-                      <Input
-                        nativeInput
-                        id={`${id}-date`}
-                        type="date"
-                        required
-                        value={date}
-                        min={localSnoozeDate(new Date())}
-                        onChange={(event) => {
-                          setDate(event.target.value);
-                          setError(null);
-                        }}
-                      />
-                    </Label>
+                    <div className="flex min-w-0 flex-col gap-1.5">
+                      <Label htmlFor={`${id}-date`}>Date</Label>
+                      <Popover open={calendarOpen} onOpenChange={setCalendarOpen}>
+                        <PopoverTrigger
+                          render={
+                            <Button
+                              id={`${id}-date`}
+                              variant="outline"
+                              className="w-full justify-between font-normal"
+                            />
+                          }
+                        >
+                          {date.toLocaleDateString(undefined, {
+                            month: "short",
+                            day: "numeric",
+                            year: "numeric",
+                          })}
+                          <CalendarIcon className="size-4 text-muted-foreground" />
+                        </PopoverTrigger>
+                        <PopoverPopup align="start" aria-label="Choose snooze date">
+                          <Calendar
+                            mode="single"
+                            required
+                            selected={date}
+                            defaultMonth={date}
+                            disabled={{ before: new Date(new Date().setHours(0, 0, 0, 0)) }}
+                            onSelect={(selected) => {
+                              setDate(selected);
+                              setCalendarOpen(false);
+                              setError(null);
+                            }}
+                          />
+                        </PopoverPopup>
+                      </Popover>
+                    </div>
                     <Label
                       className="flex min-w-0 flex-col items-stretch gap-1.5"
                       htmlFor={`${id}-time`}
