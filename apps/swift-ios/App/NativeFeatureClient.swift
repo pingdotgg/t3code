@@ -1705,13 +1705,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         try? await refresh(client: route.client)
     }
 
-    /// Executes a hold-and-drag reorder. `orderedIDs` is the moved thread's
-    /// displayed section order after the drop — the same input web passes to
-    /// `planPinnedReorder`. Rows absent from the current snapshot are skipped;
-    /// every row a spread rewrite would write must sit in a connected,
-    /// reorder-capable environment or the whole drop is rejected before any
-    /// write. Returns the assignments the server confirmed so the caller can
-    /// patch local state if a refresh fell behind.
+    /// Saves a full-section order. Cross-section moves first clear the source
+    /// lifecycle state. Every key write goes to the thread's owning server.
     @discardableResult
     func reorderThread(
         id: String,
@@ -1726,15 +1721,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         // server's rows keep their stale keys as anchors but never receive
         // writes, so a spread rewrite cannot half-land on a dead client.
         let connectedEnvironmentIDs = Set(
-            environmentConnectionStates
-                .filter { $0.value == .connected }
-                .map(\.key)
+            snapshot.environments
+                .filter { $0.isEnabled && environmentConnectionStates[$0.id] == .connected }
+                .map(\.id)
         )
         let threadsByID = Dictionary(
             snapshot.threads.map { ($0.id, $0) },
             uniquingKeysWith: { first, _ in first }
         )
-        guard let assignments = ThreadOrderPlanner.planDrop(
+        let now = Date.now
+        let canonical = DailyUXSidebarIndex.orderedSection(snapshot.threads, section: section, now: now)
+        guard let moved = threadsByID[id],
+              ThreadArrangementPlanner.canEnter(moved, section: section, now: now),
+              Set(orderedIDs).count == orderedIDs.count,
+              Set(orderedIDs) == Set(canonical.map(\.id)).union([id]),
+              let assignments = ThreadOrderPlanner.planDrop(
             ordered: orderedIDs.compactMap { threadsByID[$0] },
             all: snapshot.threads,
             section: section,
@@ -1750,9 +1751,35 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         var confirmed: [FeatureThreadOrderAssignment] = []
         var touchedEnvironmentIDs = Set<String>()
         var firstError: Error?
+        let crossesSection = !canonical.contains(where: { $0.id == id })
+        if crossesSection {
+            do {
+                let route = try threadRoute(for: id)
+                touchedEnvironmentIDs.insert(route.environmentID)
+                for action in ThreadArrangementPlanner.lifecycle(moved, section: section, now: now) {
+                    switch action {
+                    case .pin:
+                        let key = assignments.first(where: { $0.threadID == id })?.orderKey
+                        _ = try await route.client.pin(threadID: route.wireID, pinned: true, orderKey: key)
+                    case .unpin:
+                        _ = try await route.client.pin(threadID: route.wireID, pinned: false)
+                    case .unsettle:
+                        _ = try await route.client.settle(threadID: route.wireID, settled: false)
+                    case .unsnooze:
+                        _ = try await route.client.snooze(threadID: route.wireID, until: nil)
+                    }
+                }
+            } catch {
+                firstError = error
+            }
+        }
         for assignment in assignments {
+            guard firstError == nil else { break }
             do {
                 let route = try threadRoute(for: assignment.threadID)
+                // Refresh even when the transport lost a receipt after the
+                // server accepted the write.
+                touchedEnvironmentIDs.insert(route.environmentID)
                 switch section {
                 case .pinned:
                     _ = try await route.client.reorderPinnedThread(
@@ -1766,7 +1793,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     )
                 }
                 confirmed.append(assignment)
-                touchedEnvironmentIDs.insert(route.environmentID)
             } catch {
                 // Confirmed writes stand: a later environment rejecting its
                 // write leaves the earlier arrangement in place.
