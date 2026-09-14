@@ -287,19 +287,31 @@ describe("ProjectSetupScriptRunner", () => {
         expect(subscribe).toHaveBeenCalledTimes(1);
         expect(writes).toHaveLength(1);
         // The block closes on its own line so a trailing comment in the
-        // command cannot swallow the sentinel.
-        expect(writes[0]).toBe("( bun install\r); printf '\\n__T3_SETUP_DONE__:%s\\n' \"$?\"\r");
+        // command cannot swallow the sentinel, and the sentinel carries a
+        // per-run token so script output cannot spoof it.
+        const written = writes[0] ?? "";
+        const sentinel = /__T3_SETUP_DONE___[0-9a-f]{32}:/.exec(written)?.[0];
+        expect(sentinel).toBeDefined();
+        expect(written).toBe(`( bun install\r); printf '\\n${sentinel}%s\\n' "$?"\r`);
 
         // Output arrives in chunks; partial lines are buffered until a newline,
         // control sequences are stripped, and the echoed wrapper is hidden.
-        yield* emit("( bun install\r\n> ); printf '\\n__T3_SETUP_DONE__:%s\\n' \"$?\"\r\n");
+        yield* emit(`( bun install\r\n> ); printf '\\n${sentinel}%s\\n' "$?"\r\n`);
         yield* emit("\u001b[32mResolving");
         yield* emit(" deps\u001b[0m\r\nDone in 2s\r\n");
-        yield* emit("__T3_SETUP_DONE__:3\r\n");
+        // A spoofed sentinel from the script itself must not settle completion.
+        yield* emit("__T3_SETUP_DONE__:0\r\n");
+        yield* emit(`__T3_SETUP_DONE___${"0".repeat(32)}:0\r\n`);
+        yield* emit(`${sentinel}3\r\n`);
 
         const completion = yield* result.completion!;
         expect(completion.exitCode).toBe(3);
-        expect(seen).toEqual(["Resolving deps", "Done in 2s"]);
+        expect(seen).toEqual([
+          "Resolving deps",
+          "Done in 2s",
+          "__T3_SETUP_DONE__:0",
+          `__T3_SETUP_DONE___${"0".repeat(32)}:0`,
+        ]);
         // The subscription is torn down once the sentinel arrives.
         expect(listener).toBeNull();
       }).pipe(
@@ -361,11 +373,12 @@ describe("ProjectSetupScriptRunner", () => {
   it.effect.each([
     {
       shell: "/usr/bin/fish",
-      expected: "begin\rbun install\rend; printf '\\n__T3_SETUP_DONE__:%s\\n' $status",
+      expected:
+        /^begin\rbun install\rend; printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' \$status\r$/,
     },
     {
       shell: "/bin/bash",
-      expected: "( bun install\r); printf '\\n__T3_SETUP_DONE__:%s\\n' \"$?\"",
+      expected: /^\( bun install\r\); printf '\\n__T3_SETUP_DONE___[0-9a-f]{32}:%s\\n' "\$\?"\r$/,
     },
   ])("wraps the command for the $shell syntax", ({ shell, expected }) => {
     const open = vi.fn(() =>
@@ -404,7 +417,8 @@ describe("ProjectSetupScriptRunner", () => {
         worktreePath: "/repo/worktrees/a",
         observeCompletion: {},
       });
-      expect(writes).toEqual([`${expected}\r`]);
+      expect(writes).toHaveLength(1);
+      expect(writes[0]).toMatch(expected);
     }).pipe(
       Effect.provide(testLayer(project, { open, write })),
       Effect.provideService(HostProcessPlatform, "linux"),

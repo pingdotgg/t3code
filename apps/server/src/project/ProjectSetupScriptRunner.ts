@@ -5,6 +5,8 @@ import {
   resolveProjectScripts,
   setupProjectScript,
 } from "@t3tools/shared/projectScripts";
+import * as NodeCrypto from "node:crypto";
+
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
@@ -111,10 +113,23 @@ export class ProjectSetupScriptRunner extends Context.Service<
 >()("t3/project/ProjectSetupScriptRunner") {}
 
 /** @public Service construction is part of the canonical Effect module API. */
-/** Marker the wrapped setup command echoes so the exit code can be read from the PTY stream. */
-const COMPLETION_SENTINEL_PREFIX = "__T3_SETUP_DONE__:";
-const COMPLETION_SENTINEL_PATTERN = /__T3_SETUP_DONE__:(-?\d+)/;
+/**
+ * Marker the wrapped setup command echoes so the exit code can be read from
+ * the PTY stream. Each run gets its own random token so script output cannot
+ * spoof completion, and the sentinel pattern is built per run from it.
+ */
+const COMPLETION_SENTINEL_PREFIX = "__T3_SETUP_DONE__";
 const OUTPUT_LINE_MAX_LENGTH = 400;
+/** A partial line longer than this is a byte stream, not a line. Keep only the tail. */
+const PARTIAL_LINE_MAX_LENGTH = 4_096;
+
+function completionSentinel(token: string): string {
+  return `${COMPLETION_SENTINEL_PREFIX}_${token}:`;
+}
+
+function completionSentinelPattern(token: string): RegExp {
+  return new RegExp(`${COMPLETION_SENTINEL_PREFIX}_${token}:(-?\\d+)`);
+}
 
 /** Removes ANSI escape sequences and cursor controls so lines can be shown as plain text. */
 function stripTerminalControl(text: string): string {
@@ -157,15 +172,19 @@ function resolveCompletionShell(
  * stdin cannot consume the sentinel line either. Lines are separated by `\r`
  * because that is the Enter key for every shell's line editor.
  */
-function wrapCommandForCompletion(command: string, shell: CompletionShell): string {
+function wrapCommandForCompletion(
+  command: string,
+  shell: CompletionShell,
+  sentinel: string,
+): string {
   const body = command.replace(/\r?\n/g, "\r");
   switch (shell) {
     case "powershell":
-      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${COMPLETION_SENTINEL_PREFIX}$__t3c"`;
+      return `$global:LASTEXITCODE = $null; & {\r${body}\r}; if ($null -ne $LASTEXITCODE) { $__t3c = $LASTEXITCODE } elseif ($?) { $__t3c = 0 } else { $__t3c = 1 }; Write-Host "${sentinel}$__t3c"`;
     case "fish":
-      return `begin\r${body}\rend; printf '\\n${COMPLETION_SENTINEL_PREFIX}%s\\n' $status`;
+      return `begin\r${body}\rend; printf '\\n${sentinel}%s\\n' $status`;
     case "posix":
-      return `( ${body}\r); printf '\\n${COMPLETION_SENTINEL_PREFIX}%s\\n' "$?"`;
+      return `( ${body}\r); printf '\\n${sentinel}%s\\n' "$?"`;
   }
 }
 
@@ -187,6 +206,9 @@ export const make = Effect.gen(function* () {
   const observeTerminalCompletion = (input: {
     readonly threadId: string;
     readonly terminalId: string;
+    /** Per-run sentinel, so only this run's wrapper can settle completion. */
+    readonly sentinel: string;
+    readonly sentinelPattern: RegExp;
     /** The shell echoes typed input; lines ending with these are the wrapper, not output. */
     readonly echoedWrapperLines: ReadonlyArray<string>;
     readonly onOutputLine: ((line: string) => Effect.Effect<void>) | undefined;
@@ -211,7 +233,7 @@ export const make = Effect.gen(function* () {
 
       const handleLine = (rawLine: string) =>
         Effect.suspend(() => {
-          const sentinel = COMPLETION_SENTINEL_PATTERN.exec(rawLine);
+          const sentinel = input.sentinelPattern.exec(rawLine);
           if (sentinel) {
             const parsed = Number(sentinel[1]);
             return settle(Number.isFinite(parsed) ? parsed : null);
@@ -219,7 +241,7 @@ export const make = Effect.gen(function* () {
           const cleaned = stripTerminalControl(rawLine).trimEnd();
           if (
             cleaned.length === 0 ||
-            cleaned.includes(COMPLETION_SENTINEL_PREFIX) ||
+            cleaned.includes(input.sentinel) ||
             input.echoedWrapperLines.some((echoed) => cleaned.endsWith(echoed)) ||
             input.onOutputLine === undefined
           ) {
@@ -236,6 +258,11 @@ export const make = Effect.gen(function* () {
           lineBuffer += event.data;
           const lines = lineBuffer.split(/\r?\n/);
           lineBuffer = lines.pop() ?? "";
+          // A script that never prints a newline must not grow this forever.
+          // The sentinel is always on its own line, so keeping the tail is safe.
+          if (lineBuffer.length > PARTIAL_LINE_MAX_LENGTH) {
+            lineBuffer = lineBuffer.slice(-PARTIAL_LINE_MAX_LENGTH);
+          }
           return Effect.forEach(lines, handleLine, { discard: true });
         }
         if (event.type === "exited" || event.type === "closed") {
@@ -316,9 +343,15 @@ export const make = Effect.gen(function* () {
       worktreePath: input.worktreePath,
     });
     const observe = input.observeCompletion;
-    const commandLine = observe
-      ? wrapCommandForCompletion(script.command, completionShell)
-      : script.command;
+    const completionToken = observe ? NodeCrypto.randomUUID().replaceAll("-", "") : null;
+    const commandLine =
+      observe && completionToken
+        ? wrapCommandForCompletion(
+            script.command,
+            completionShell,
+            completionSentinel(completionToken),
+          )
+        : script.command;
 
     yield* terminalManager
       .open({
@@ -339,14 +372,17 @@ export const make = Effect.gen(function* () {
         ),
       );
     // Subscribe before writing so the sentinel cannot race past the listener.
-    const observed = observe
-      ? yield* observeTerminalCompletion({
-          threadId: input.threadId,
-          terminalId,
-          echoedWrapperLines: commandLine.split("\r").filter((line) => line.length > 0),
-          onOutputLine: observe.onOutputLine,
-        })
-      : undefined;
+    const observed =
+      observe && completionToken
+        ? yield* observeTerminalCompletion({
+            threadId: input.threadId,
+            terminalId,
+            sentinel: completionSentinel(completionToken),
+            sentinelPattern: completionSentinelPattern(completionToken),
+            echoedWrapperLines: commandLine.split("\r").filter((line) => line.length > 0),
+            onOutputLine: observe.onOutputLine,
+          })
+        : undefined;
 
     yield* terminalManager
       .write({

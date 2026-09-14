@@ -995,6 +995,9 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          // The setup script's terminal, once started. Cancel closes only this
+          // one so terminals the user opened meanwhile survive.
+          let setupTerminalId: string | null = null;
 
           const cleanupCreatedThread = () =>
             createdThread
@@ -1150,6 +1153,7 @@ const makeWsRpcLayer = (
                           ),
                         ).pipe(Effect.as(null));
                       }
+                      setupTerminalId = setupResult.terminalId;
                       return recordSetupScriptStarted({
                         requestedAt,
                         worktreePath,
@@ -1312,9 +1316,9 @@ const makeWsRpcLayer = (
                 },
                 {
                   progress: {
-                    // Known before git writes anything, so a cancel during the
-                    // checkout still removes the half-made directory.
-                    onWorktreePathResolved: (path) =>
+                    // Git has registered the directory at this point, so a
+                    // cancel during the submodule step can still remove it.
+                    onWorktreeClaimed: (path) =>
                       Effect.sync(() => {
                         targetWorktreePath = path;
                       }),
@@ -1459,9 +1463,16 @@ const makeWsRpcLayer = (
                 // first so a still-running script cannot hold files open in
                 // the worktree while git removes it. Closing kills the
                 // process asynchronously, so the removal retries briefly.
+                const closeSetupTerminal = setupTerminalId
+                  ? terminalManager.close({
+                      threadId,
+                      terminalId: setupTerminalId,
+                      deleteHistory: true,
+                    })
+                  : Effect.void;
                 const removeCreatedWorktree =
                   tracked && targetWorktreePath && bootstrap?.prepareWorktree
-                    ? terminalManager.close({ threadId, deleteHistory: true }).pipe(
+                    ? closeSetupTerminal.pipe(
                         Effect.ignoreCause({ log: true }),
                         Effect.andThen(
                           gitWorkflow

@@ -1704,22 +1704,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const seen = yield* Ref.make<Array<{ percent: number; completed: number; total: number }>>(
           [],
         );
-        const resolvedPath = yield* Ref.make<string | null>(null);
+        const claimed = yield* Ref.make<{ path: string; existed: boolean } | null>(null);
 
         yield* driver.createWorktree(
           { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/progress" },
           {
             progress: {
-              onWorktreePathResolved: (path) => Ref.set(resolvedPath, path),
-              onCheckoutProgress: (update) =>
-                Effect.gen(function* () {
-                  // The path is known before the first progress line arrives.
-                  assert.equal(yield* Ref.get(resolvedPath), worktreePath);
-                  yield* Ref.update(seen, (all) => [...all, update]);
-                }),
+              onWorktreeClaimed: (path) =>
+                Ref.set(claimed, { path, existed: NodeFS.existsSync(path) }),
+              onCheckoutProgress: (update) => Ref.update(seen, (all) => [...all, update]),
             },
           },
         );
+        // Claimed only once git has registered the directory.
+        assert.deepEqual(yield* Ref.get(claimed), { path: worktreePath, existed: true });
 
         // Git separates live progress updates with `\r`, so the driver must
         // surface every intermediate percentage, not just the final line.
