@@ -17,6 +17,7 @@ public struct SettingsView: View {
                     workspaceSection
                     appSection
                     activitySection
+                    supportSection
                     aboutSection
                 }
                 .padding(.vertical, 20)
@@ -149,6 +150,18 @@ public struct SettingsView: View {
                 )
                 .accessibilityIdentifier("settings-haptics")
             }
+        }
+    }
+
+    private var supportSection: some View {
+        SettingsSection(title: "Support") {
+            NavigationLink {
+                SettingsDiagnosticsView()
+            } label: {
+                SettingsNavigationRow(title: "Diagnostics", systemImage: "stethoscope")
+            }
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("settings-diagnostics")
         }
     }
 

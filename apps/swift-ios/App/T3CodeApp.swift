@@ -7,6 +7,7 @@ struct T3CodeApp: App {
     @State private var model: FeatureRootModel
 
     init() {
+        NativeDiagnostics.shared.start()
         let client = NativeFeatureClient()
         let model = FeatureRootModel(client: client)
         _model = State(initialValue: model)
