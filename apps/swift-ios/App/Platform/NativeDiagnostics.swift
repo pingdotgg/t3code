@@ -33,6 +33,11 @@ struct NativeDiagnosticReport: Codable, Identifiable, Sendable {
 @MainActor
 @Observable
 final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
+    private struct Archive: Codable {
+        let reports: [NativeDiagnosticReport]
+        let clearedThrough: Date?
+    }
+
     static let shared = NativeDiagnostics(
         fileURL: URL.applicationSupportDirectory.appending(path: "Diagnostics/reports.json")
     )
@@ -43,6 +48,7 @@ final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
     private(set) var storageError: String?
     private let fileURL: URL
     private var started = false
+    private var clearedThrough: Date?
 
     init(fileURL: URL) {
         self.fileURL = fileURL
@@ -56,8 +62,9 @@ final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
                 storageError = "Saved reports exceed the size limit."
                 return
             }
-            reports = Array(try JSONDecoder().decode([NativeDiagnosticReport].self, from: data)
-                .prefix(Self.maximumReports))
+            let archive = try JSONDecoder().decode(Archive.self, from: data)
+            reports = Array(archive.reports.prefix(Self.maximumReports))
+            clearedThrough = archive.clearedThrough
         } catch {
             storageError = "Could not read saved reports."
         }
@@ -93,13 +100,15 @@ final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
     func receive(_ incoming: [NativeDiagnosticReport]) {
         guard !incoming.isEmpty else { return }
         var byID = Dictionary(reports.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
-        for report in incoming { byID[report.id] = report }
+        for report in incoming where clearedThrough.map({ report.periodEnd > $0 }) ?? true {
+            byID[report.id] = report
+        }
         reports = Array(byID.values.sorted {
             if $0.periodEnd != $1.periodEnd { return $0.periodEnd > $1.periodEnd }
             return $0.id < $1.id
         }.prefix(Self.maximumReports))
         do {
-            let data = try JSONEncoder().encode(reports)
+            let data = try JSONEncoder().encode(Archive(reports: reports, clearedThrough: clearedThrough))
             guard data.count <= Self.maximumStorageBytes else {
                 storageError = "Reports exceed the size limit."
                 return
@@ -114,12 +123,18 @@ final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
         }
     }
 
-    func clear() {
+    func clear(at date: Date = .now) {
         do {
-            if FileManager.default.fileExists(atPath: fileURL.path) {
-                try FileManager.default.removeItem(at: fileURL)
-            }
+            // MetricKit can redeliver old payloads. Keep one timestamp after deletion
+            // so reports for cleared periods do not return on the next launch.
+            let cutoff = max(date, reports.map(\.periodEnd).max() ?? date, clearedThrough ?? date)
+            let data = try JSONEncoder().encode(Archive(reports: [], clearedThrough: cutoff))
+            try FileManager.default.createDirectory(
+                at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
+            )
+            try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUnlessOpen])
             reports = []
+            clearedThrough = cutoff
             storageError = nil
         } catch {
             storageError = "Could not clear saved reports."

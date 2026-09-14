@@ -33,16 +33,22 @@ struct NativeDiagnosticsTests {
         #expect(report.periodEnd == .distantFuture)
     }
 
-    @Test func clearRemovesSavedReports() {
+    @Test func clearSurvivesRestartAndRedeliveryWithoutDiscardingNewReports() {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }
         let file = directory.appending(path: "reports.json")
         let diagnostics = NativeDiagnostics(fileURL: file)
-        diagnostics.receive([report(json: "{}", date: 1)])
-        diagnostics.clear()
+        let oldReport = report(json: "{\"old\":true}", date: 1)
+        diagnostics.receive([oldReport])
+        diagnostics.clear(at: Date(timeIntervalSince1970: 1))
         #expect(diagnostics.reports.isEmpty)
-        #expect(NativeDiagnostics(fileURL: file).reports.isEmpty)
-        #expect(!FileManager.default.fileExists(atPath: file.path))
+        let restored = NativeDiagnostics(fileURL: file)
+        #expect(restored.reports.isEmpty)
+        restored.receive([oldReport])
+        #expect(restored.reports.isEmpty)
+        let newReport = report(json: "{\"new\":true}", date: 2)
+        restored.receive([oldReport, newReport])
+        #expect(restored.reports.map(\.id) == [newReport.id])
     }
 
     @Test func rejectsOversizedSavedData() throws {
