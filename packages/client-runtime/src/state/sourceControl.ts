@@ -5,6 +5,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
@@ -32,6 +33,31 @@ export function createSourceControlEnvironmentAtoms<R, E>(
         mode: "serial",
         key: ({ environmentId }) => environmentId,
       },
+    }),
+    // Clone-backed project creation. The RPC returns once the project exists
+    // and the clone runs in the background; `projectClones` carries progress.
+    startProjectClone: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:project-clone-start",
+      tag: WS_METHODS.projectCloneStart,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
+    }),
+    cancelProjectClone: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:project-clone-cancel",
+      tag: WS_METHODS.projectCloneCancel,
+    }),
+    retryProjectClone: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:project-clone-retry",
+      tag: WS_METHODS.projectCloneRetry,
+    }),
+    // Every clone the environment tracks. Empty until a clone starts; a
+    // finished clone drops out after a grace period, a failed one stays.
+    projectClones: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:source-control:project-clones",
+      tag: WS_METHODS.subscribeProjectClones,
     }),
     publishRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:publish-repository",

@@ -148,6 +148,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -933,6 +934,13 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.terminalManager,
           }),
           WorktreeSetupTracker.layer,
+          ProjectCloneTracker.layer.pipe(
+            Layer.provide(
+              Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+                ...options?.layers?.sourceControlRepositoryService,
+              }),
+            ),
+          ),
         ),
       ),
       Layer.provide(
@@ -7235,6 +7243,96 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("starts a project clone in the background and blocks threads until it lands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-clone-" });
+      const destinationPath = path.join(parentDir, "t3code");
+      const projectId = ProjectId.make("project-clone-1");
+      const dispatched: Array<string> = [];
+      const cloneGate = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }),
+          },
+          sourceControlRepositoryService: {
+            prepareClone: (input) =>
+              Effect.succeed({
+                destinationPath: input.destinationPath,
+                remoteUrl: input.remoteUrl ?? "",
+                repository: null,
+              }),
+            cloneRepository: (input) =>
+              Deferred.await(cloneGate).pipe(
+                Effect.as({
+                  cwd: input.destinationPath,
+                  remoteUrl: input.remoteUrl ?? "",
+                  repository: null,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.projectCloneStart]({
+              projectId,
+              title: "t3code",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              remoteUrl: "git@github.com:octocat/t3code.git",
+              destinationPath,
+            });
+            assert.equal(started.cwd, destinationPath);
+            // The project exists before the clone finishes.
+            assert.deepEqual(dispatched, ["project.create"]);
+
+            const blocked = yield* Effect.flip(
+              client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.create",
+                commandId: CommandId.make("cmd-thread-create-while-cloning"),
+                threadId: ThreadId.make("thread-while-cloning"),
+                projectId,
+                title: "Draft",
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: "gpt-5-codex",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt: "2026-01-01T00:00:01.000Z",
+              }),
+            );
+            assert.include(String(blocked.message), "still being cloned");
+
+            const snapshots = yield* client[WS_METHODS.subscribeProjectClones]({}).pipe(
+              Stream.takeUntil((clones) => clones[0]?.phase === "done"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(cloneGate, undefined);
+            const lists = yield* Fiber.join(snapshots);
+            assert.equal(lists.at(-1)?.[0]?.phase, "done");
+            // The finished clone refreshes the project so its repository identity updates.
+            assert.deepEqual(dispatched, ["project.create", "project.meta.update"]);
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
