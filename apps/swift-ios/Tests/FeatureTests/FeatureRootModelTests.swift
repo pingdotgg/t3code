@@ -32,10 +32,12 @@ struct FeatureRootModelTests {
             #expect(threadID == thread.id)
             #expect(messageID == message.id)
             #expect(model.rewindingThreadIDs.contains(thread.id))
-            #expect(try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread)) == draft)
-            #expect(try await drafts.draft(for: FeatureComposerDraftStore.rewindRecoveryKey(
+            let savedDraft = try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread))
+            let savedRecovery = try await drafts.draft(for: FeatureComposerDraftStore.rewindRecoveryKey(
                 for: FeatureComposerDraftStore.threadKey(thread)
-            ))?.text == "Original prompt")
+            ))
+            #expect(savedDraft == draft)
+            #expect(savedRecovery?.text == "Original prompt")
             #expect(!(await model.sendMessage(.init(threadID: thread.id, text: "Do not send", selection: nil, attachments: []))))
             #expect(client.sendMessageCallCount == 0)
             model.releaseThread(thread.id)
