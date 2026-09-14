@@ -1248,7 +1248,11 @@ function OpenCommandPaletteDialog(props: {
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
         renderTrailingContent: (thread) => (
           <>
-            <ThreadSearchPullRequestNumber thread={thread} query={threadSearchQuery} />
+            <ThreadSearchPullRequestNumber
+              thread={thread}
+              query={threadSearchQuery}
+              settled={thread.settledOverride === "settled"}
+            />
             <ThreadRowTrailingStatus thread={thread} />
           </>
         ),
