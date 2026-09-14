@@ -2798,8 +2798,14 @@ export const make = Effect.gen(function* () {
   );
   const preview: PullRequestService["Service"]["preview"] = (input) => {
     const key = refCacheKey(input);
-    const held = input.allowStale === false ? undefined : lastGoodDetail.peek(key);
-    return held === undefined ? Cache.get(previewCache, key) : Effect.succeed(previewFields(held));
+    return Cache.getSuccess(detailCache, key).pipe(
+      Effect.flatMap(
+        Option.match({
+          onNone: () => Cache.get(previewCache, key),
+          onSome: (detail) => Effect.succeed(previewFields(detail)),
+        }),
+      ),
+    );
   };
   const activity: PullRequestService["Service"]["activity"] = (input) => {
     const key = refCacheKey(input);

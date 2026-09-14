@@ -2867,7 +2867,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
               environmentId,
               input: {
                 projectId: pullRequestProject.id,
-                host: pullRequestCandidate.host,
+                host: pullRequestCandidate.authority ?? pullRequestCandidate.host,
                 repository:
                   pullRequestProject.repositoryIdentity?.displayName ??
                   pullRequestCandidate.repository,

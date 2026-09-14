@@ -152,6 +152,64 @@ it.effect("caches narrow previews and invalidates them after refresh or mutation
   }),
 );
 
+it.effect("reuses only unexpired detail for previews", () =>
+  Effect.gen(function* () {
+    let previewReads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () => Effect.succeed(hostedChangeRequest("Description")),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              previewReads++;
+              return {
+                ...changeRequest(1, "2026-07-02T00:00:00Z"),
+                title: "Updated title",
+                state: "closed" as const,
+              };
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    yield* service.detail(ref);
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    assert.strictEqual(previewReads, 0);
+    yield* TestClock.adjust("16 seconds");
+    const preview = yield* service.preview(ref);
+    assert.strictEqual(preview.title, "Updated title");
+    assert.strictEqual(preview.state, "closed");
+    assert.strictEqual(previewReads, 1);
+  }),
+);
+
+it.effect("does not wait for an in-flight detail read to display a preview", () =>
+  Effect.gen(function* () {
+    const detailStarted = yield* Deferred.make<void>();
+    const releaseDetail = yield* Deferred.make<void>();
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequest: () =>
+            Deferred.succeed(detailStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(releaseDetail)),
+              Effect.as(hostedChangeRequest("Description")),
+            ),
+          getChangeRequestPreview: () => Effect.succeed(changeRequest(1, "2026-07-02T00:00:00Z")),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const detail = yield* Effect.forkChild(service.detail(ref));
+    yield* Deferred.await(detailStarted);
+    assert.strictEqual((yield* service.preview(ref)).title, "Change request 1");
+    yield* Deferred.succeed(releaseDetail, undefined);
+    yield* Fiber.join(detail);
+  }),
+);
+
 it.effect("uses full detail for hosts without a narrow preview", () =>
   Effect.gen(function* () {
     let reads = 0;
@@ -1849,6 +1907,13 @@ it.effect("routes explicit Forgejo HTTP authorities through SSH checkouts after 
         state: "open",
       });
       assert.strictEqual(listed.viewers["code.example:3000"], "bilal");
+      const preview = yield* service.preview({
+        projectId: "ssh" as ProjectId,
+        host: "code.example:3000",
+        repository: "team/repo",
+        number: 42,
+      });
+      assert.strictEqual(preview.number, 42);
       const detail = yield* service.detail({
         projectId: "ssh" as ProjectId,
         host: "code.example:3000",
