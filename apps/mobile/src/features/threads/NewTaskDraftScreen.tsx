@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import {
   nextPastedTextFileName,
@@ -103,6 +105,11 @@ import {
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useProjectClone } from "../../state/projectClones";
+import { projectEnvironment } from "../../state/projects";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
   resolveSelectableModelSelection,
@@ -198,6 +205,37 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  // A project added by cloning exists before its files do: the prompt can be
+  // written meanwhile, but Start waits for the clone.
+  const projectClone = useProjectClone(
+    selectedProject
+      ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
+      : null,
+  );
+  const cloneBlocksStart = projectClone !== null && projectClone.phase !== "done";
+  const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
+    reportFailure: false,
+  });
+  const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
+    reportFailure: false,
+  });
+  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  const removeClonedProject = async () => {
+    if (!selectedProject) return;
+    const result = await deleteProject({
+      environmentId: selectedProject.environmentId,
+      input: { projectId: selectedProject.id },
+    });
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(
+        "Failed to remove project",
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+      return;
+    }
+    navigation.dispatch(StackActions.replace("Home"));
+  };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
     ? composerAttachmentUploadBlockReason({
@@ -1261,6 +1299,7 @@ export function NewTaskDraftScreen(props: {
   const isAndroid = Platform.OS === "android";
   const canStart =
     !isImportingContext &&
+    !cloneBlocksStart &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
@@ -1479,6 +1518,27 @@ export function NewTaskDraftScreen(props: {
       ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
+      {projectClone && projectClone.phase !== "done" && selectedProject ? (
+        <View className="px-1 pb-2">
+          <ProjectCloneBanner
+            clone={projectClone}
+            onCancel={() =>
+              void cancelProjectClone({
+                environmentId: selectedProject.environmentId,
+                input: { projectId: selectedProject.id },
+              })
+            }
+            onRetry={() =>
+              void retryProjectClone({
+                environmentId: selectedProject.environmentId,
+                input: { projectId: selectedProject.id },
+              })
+            }
+            onRemove={() => void removeClonedProject()}
+          />
+        </View>
+      ) : null}
+
       {modelUnavailable ? (
         <Pressable
           accessibilityRole="button"
@@ -1618,15 +1678,19 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     attachmentBlockReason ??
-                    (pendingPastedTextAttachmentCount > 0
-                      ? "Attaching pasted text"
-                      : flow.submitting
-                        ? "Starting task"
-                        : attachmentsUploading
-                          ? "Queue task, sends when uploads finish"
-                          : environmentConnected
-                            ? "Start task"
-                            : "Queue task")
+                    (cloneBlocksStart
+                      ? projectClone.phase === "running"
+                        ? "Cloning repository"
+                        : "Repository not cloned"
+                      : pendingPastedTextAttachmentCount > 0
+                        ? "Attaching pasted text"
+                        : flow.submitting
+                          ? "Starting task"
+                          : attachmentsUploading
+                            ? "Queue task, sends when uploads finish"
+                            : environmentConnected
+                              ? "Start task"
+                              : "Queue task")
                   }
                   disabled={!canStart}
                   icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}
