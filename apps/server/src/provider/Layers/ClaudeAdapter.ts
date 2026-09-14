@@ -88,6 +88,11 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { CUA_MCP_SERVER_NAME, cuaClaudeMcpServer } from "../../cua/cuaMcpServer.ts";
+import {
+  cuaToolPresentation,
+  parseCuaToolName,
+  rememberCuaToolResult,
+} from "../../cua/cuaToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -256,6 +261,22 @@ interface ToolInFlight {
   /** Owning agent when this tool ran inside a subagent (see attribution note). */
   readonly agentId?: string;
   readonly parentToolUseId?: string;
+}
+
+/** Cua Driver calls take the shared computer-use title and app icon. */
+function cuaPresentationFor(
+  context: ClaudeSessionContext,
+  tool: ToolInFlight,
+  status: "inProgress" | "completed" | "failed",
+) {
+  return (
+    cuaToolPresentation({
+      threadId: context.session.threadId,
+      rawToolName: tool.toolName,
+      args: tool.input,
+      status,
+    }) ?? {}
+  );
 }
 
 interface ClaudeTaskState {
@@ -2952,6 +2973,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
+          ...cuaPresentationFor(context, tool, "inProgress"),
           data: {
             toolName: tool.toolName,
             input: toolInput,
@@ -3010,6 +3032,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
       const toolUseResult = readClaudeToolUseResult(message);
+      const cuaTool = parseCuaToolName(tool.toolName);
+      if (cuaTool && !toolResult.isError) {
+        rememberCuaToolResult(context.session.threadId, cuaTool, tool.input, toolResult.text);
+      }
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
@@ -3032,6 +3058,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
+          ...cuaPresentationFor(context, tool, toolResult.isError ? "failed" : "inProgress"),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -3086,6 +3113,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           ...(tool.detail ? { detail: tool.detail } : {}),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
+          ...cuaPresentationFor(context, tool, itemStatus),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {

@@ -50,6 +50,12 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveCodexCua } from "../../cua/resolveCodexCua.ts";
+import { CUA_MCP_SERVER_NAME } from "../../cua/cuaMcpServer.ts";
+import {
+  cuaToolPresentation,
+  isCuaServerName,
+  rememberCuaToolResult,
+} from "../../cua/cuaToolPresentation.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -1020,6 +1026,24 @@ function mapItemLifecycle(
           ? item.status
           : "completed"
         : undefined;
+  let cuaPresentation = {};
+  if (item.type === "mcpToolCall" && isCuaServerName(item.server)) {
+    if (item.result && item.status !== "failed") {
+      rememberCuaToolResult(canonicalThreadId, item.tool, item.arguments, item.result);
+    }
+    cuaPresentation =
+      cuaToolPresentation({
+        threadId: canonicalThreadId,
+        rawToolName: `${CUA_MCP_SERVER_NAME}/${item.tool}`,
+        args: item.arguments,
+        status:
+          status === undefined || status === "inProgress"
+            ? "inProgress"
+            : status === "completed"
+              ? "completed"
+              : "failed",
+      }) ?? {};
+  }
 
   return {
     ...runtimeEventBase(event, canonicalThreadId),
@@ -1030,6 +1054,7 @@ function mapItemLifecycle(
       ...(title ? { title } : {}),
       ...(detail ? { detail } : {}),
       ...toolPresentation,
+      ...cuaPresentation,
       ...(event.payload !== undefined ? { data: event.payload } : {}),
     },
   };

@@ -1355,6 +1355,147 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("presents Cua Driver calls as computer use with the app learned from list_apps", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      const base = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+      };
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-list"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        itemId: asItemId("cua_list"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_list",
+            server: "cua-driver",
+            tool: "list_apps",
+            arguments: {},
+            durationMs: 5,
+            error: null,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: JSON.stringify({
+                    apps: [{ pid: 1246, name: "Helium", bundle_id: "net.imput.helium" }],
+                  }),
+                },
+              ],
+            },
+            status: "completed",
+          },
+        },
+      });
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-click-start"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/started",
+        itemId: asItemId("cua_click"),
+        payload: {
+          startedAtMs: 1_778_000_001_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_click",
+            server: "cua-driver",
+            tool: "click",
+            arguments: { pid: 1246, window_id: 59, x: 700, y: 39 },
+            durationMs: null,
+            error: null,
+            result: null,
+            status: "inProgress",
+          },
+        },
+      });
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-click-done"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        method: "item/completed",
+        itemId: asItemId("cua_click"),
+        payload: {
+          completedAtMs: 1_778_000_002_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_click",
+            server: "cua-driver",
+            tool: "click",
+            arguments: { pid: 1246, window_id: 59, x: 700, y: 39 },
+            durationMs: 40,
+            error: null,
+            result: { content: [{ type: "text", text: '{"ok":true}' }] },
+            status: "completed",
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const heliumIcon = {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "net.imput.helium" },
+      };
+      NodeAssert.deepStrictEqual(
+        events.map((event) => ({
+          type: event.type,
+          title: "title" in event.payload ? event.payload.title : undefined,
+          toolSurface: "toolSurface" in event.payload ? event.payload.toolSurface : undefined,
+          toolIcon: "toolIcon" in event.payload ? event.payload.toolIcon : undefined,
+          toolSource: "toolSource" in event.payload ? event.payload.toolSource : undefined,
+        })),
+        [
+          {
+            type: "item.completed",
+            title: "Listed apps",
+            toolSurface: "computer",
+            toolIcon: undefined,
+            toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+          },
+          {
+            type: "item.started",
+            title: "Clicking in Helium",
+            toolSurface: "computer",
+            toolIcon: heliumIcon,
+            toolSource: {
+              key: "native-app:net.imput.helium",
+              name: "Helium",
+              kind: "computer",
+              icon: heliumIcon,
+            },
+          },
+          {
+            type: "item.completed",
+            title: "Clicked in Helium",
+            toolSurface: "computer",
+            toolIcon: heliumIcon,
+            toolSource: {
+              key: "native-app:net.imput.helium",
+              name: "Helium",
+              kind: "computer",
+              icon: heliumIcon,
+            },
+          },
+        ],
+      );
+    }),
+  );
+
   it.effect("presents browser and computer-use calls with Codex-style titles and sources", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();

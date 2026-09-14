@@ -18,6 +18,11 @@ import {
   type AcpToolCallState,
   canonicalItemTypeFromAcpToolKind,
 } from "./AcpRuntimeModel.ts";
+import {
+  cuaToolPresentation,
+  parseCuaToolName,
+  rememberCuaToolResult,
+} from "../../cua/cuaToolPresentation.ts";
 
 type AcpAdapterRawSource = Extract<
   RuntimeEventRawSource,
@@ -157,6 +162,24 @@ export function makeAcpToolCallEvent(input: {
   readonly rawPayload: unknown;
 }): ProviderRuntimeEvent {
   const runtimeStatus = runtimeItemStatusFromAcpToolStatus(input.toolCall.status);
+  // ACP carries no tool name, only the agent's title; Cua calls are matched on it.
+  const cuaTool = parseCuaToolName(input.toolCall.title);
+  if (cuaTool && runtimeStatus === "completed") {
+    rememberCuaToolResult(
+      input.threadId,
+      cuaTool,
+      input.toolCall.data.rawInput,
+      input.toolCall.data.rawOutput,
+    );
+  }
+  const cuaPresentation = cuaTool
+    ? (cuaToolPresentation({
+        threadId: input.threadId,
+        rawToolName: input.toolCall.title,
+        args: input.toolCall.data.rawInput,
+        status: runtimeStatus ?? "inProgress",
+      }) ?? {})
+    : {};
   return {
     type:
       input.toolCall.status === "completed" || input.toolCall.status === "failed"
@@ -172,6 +195,7 @@ export function makeAcpToolCallEvent(input: {
       ...(runtimeStatus ? { status: runtimeStatus } : {}),
       ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
       ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),
+      ...cuaPresentation,
       ...(Object.keys(input.toolCall.data).length > 0 ? { data: input.toolCall.data } : {}),
     },
     raw: {
