@@ -75,7 +75,7 @@ export const findOwnedLauncher = Effect.fn("cli.uninstall.find_launcher")(functi
   return launcherOwnsVersionsDir(path, input.versionsDir, resolved) ? input.launchedAs : undefined;
 });
 
-export const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
+const planUninstall = Effect.fn("cli.uninstall.plan")(function* (input: {
   readonly baseDir: string;
 }) {
   const fs = yield* FileSystem.FileSystem;
