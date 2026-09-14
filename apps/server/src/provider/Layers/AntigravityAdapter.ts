@@ -112,15 +112,37 @@ type Runtime = Pick<
 type NativePermission = EffectAcpSchema.RequestPermissionRequest;
 type NativePermissionResponse = EffectAcpSchema.RequestPermissionResponse;
 
+/** Shown when Antigravity drops a `streamGenerateContent` call mid-turn. */
+export const ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE =
+  "Antigravity lost its connection to the model. Send your message again to retry.";
+
+/**
+ * True for the raw Go transport error the `agy_acp_server` proxy returns when
+ * it drops a streaming model request. Neither string originates in this repo;
+ * without this check the raw `doRequest: ... EOF` text reaches the chat.
+ */
+function isAntigravityStreamDisconnect(cause: EffectAcpErrors.AcpError): boolean {
+  return cause.message.includes("streamGenerateContent") && cause.message.includes("EOF");
+}
+
 function mapAntigravityError(threadId: ThreadId, method: string, cause: EffectAcpErrors.AcpError) {
-  return isAntigravitySignInRequiredError(cause)
-    ? new ProviderAdapterRequestError({
-        provider: PROVIDER,
-        method,
-        detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
-        cause,
-      })
-    : mapAcpToAdapterError(PROVIDER, threadId, method, cause);
+  if (isAntigravitySignInRequiredError(cause)) {
+    return new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method,
+      detail: ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE,
+      cause,
+    });
+  }
+  if (isAntigravityStreamDisconnect(cause)) {
+    return new ProviderAdapterRequestError({
+      provider: PROVIDER,
+      method,
+      detail: ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE,
+      cause,
+    });
+  }
+  return mapAcpToAdapterError(PROVIDER, threadId, method, cause);
 }
 
 export interface AntigravityAdapterOptions {
