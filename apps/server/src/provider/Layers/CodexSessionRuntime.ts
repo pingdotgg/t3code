@@ -2507,6 +2507,23 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           const session = yield* Ref.get(sessionRef);
+          // A Codex goal starts promptless continuation turns until it leaves
+          // the active state. Interrupting only the current turn lets the
+          // app-server immediately start another one, so Stop appears broken
+          // and fills the conversation with repeated acknowledgements. Pause
+          // the goal first; older app-servers may not expose this API, and a
+          // goal-control failure must never prevent the actual interrupt.
+          yield* client.request("thread/goal/get", { threadId: providerThreadId }).pipe(
+            Effect.flatMap((response) =>
+              response.goal?.status === "active"
+                ? client.request("thread/goal/set", {
+                    threadId: providerThreadId,
+                    status: "paused",
+                  })
+                : Effect.void,
+            ),
+            Effect.ignore,
+          );
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
           // each live child turn first, best-effort per child, BOUNDED: the

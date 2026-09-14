@@ -654,6 +654,87 @@ describe("CodexSessionRuntime collab integration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
+  it.live("Stop pauses an active Codex goal before interrupting its turn", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        goalStatus: "active",
+        notifications: [],
+      };
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const goalRequestsPath = `${scriptPath}.goal-requests`;
+      NodeFS.rmSync(goalRequestsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(`${scriptPath}.interrupts`, { force: true });
+          NodeFS.rmSync(goalRequestsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-goal-stop"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      yield* runtime.sendTurn({ input: "keep working" });
+      yield* runtime.interruptTurn();
+
+      const goalRequests = NodeFS.readFileSync(goalRequestsPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { threadId?: string; status?: string });
+      assert.deepEqual(goalRequests, [{ threadId: ROOT, status: "paused" }]);
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
+  it.live("Stop still interrupts when the Codex goal API is unavailable", () =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        holdTurnOpen: true,
+        goalGetError: true,
+        notifications: [],
+      };
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      const interruptsPath = `${scriptPath}.interrupts`;
+      NodeFS.rmSync(interruptsPath, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
+          NodeFS.rmSync(interruptsPath, { force: true });
+        }),
+      );
+
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-codex-legacy-goal-stop"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+
+      yield* runtime.start();
+      const turn = yield* runtime.sendTurn({ input: "keep working" });
+      yield* runtime.interruptTurn();
+
+      const interrupts = NodeFS.readFileSync(interruptsPath, "utf8")
+        .trim()
+        .split("\n")
+        .map((line) => JSON.parse(line) as { threadId?: string; turnId?: string });
+      assert.deepEqual(interrupts.at(-1), { threadId: ROOT, turnId: turn.turnId });
+
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+
   const elicitationCases = [
     {
       decision: "accept",

@@ -186,6 +186,38 @@ rl.on("line", (line) => {
     write({ id, result: {} });
     return;
   }
+  if (method === "thread/goal/get") {
+    if (script.goalGetError) {
+      write({ id, error: { code: -32601, message: "Method not found" } });
+      return;
+    }
+    write({
+      id,
+      result: {
+        goal:
+          script.goalStatus == null
+            ? null
+            : {
+                threadId: message.params?.threadId,
+                objective: "Keep working",
+                status: script.goalStatus,
+                createdAt: 0,
+                updatedAt: 0,
+                timeUsedSeconds: 0,
+                tokensUsed: 0,
+              },
+      },
+    });
+    return;
+  }
+  if (method === "thread/goal/set") {
+    NodeFS.appendFileSync(
+      `${process.env.T3_CODEX_COLLAB_SCRIPT}.goal-requests`,
+      `${JSON.stringify(message.params)}\n`,
+    );
+    write({ id, result: { goal: { ...message.params, objective: "Keep working" } } });
+    return;
+  }
   if (id !== undefined) {
     write({ id, result: {} });
   }
