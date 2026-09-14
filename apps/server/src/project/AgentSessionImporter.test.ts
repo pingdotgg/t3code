@@ -593,23 +593,25 @@ const integrationLayer = Layer.mergeAll(
 );
 
 it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
-  for (const source of ["codex", "claudeAgent"] as const) {
+  for (const [source, cursorKey] of [
+    ["codex", "threadId"],
+    ["claudeAgent", "resume"],
+    ["claudeAgent", "sessionId"],
+  ] as const) {
     for (const timing of ["before scan", "before reservation"] as const) {
-      it.effect(`skips native ${source} sessions bound ${timing}`, () =>
+      it.effect(`skips native ${source} ${cursorKey} sessions bound ${timing}`, () =>
         Effect.gen(function* () {
           const engine = yield* OrchestrationEngine.OrchestrationEngineService;
           const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
           const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
-          const projectId = ProjectId.make(`native-import-${source}-${timing}`);
-          const threadId = ThreadId.make(`native-${source}-${timing}`);
+          const projectId = ProjectId.make(`native-import-${source}-${cursorKey}-${timing}`);
+          const threadId = ThreadId.make(`native-${source}-${cursorKey}-${timing}`);
           const thread = {
             ...makeThread(source),
             providerSessionId:
               source === "codex"
                 ? `native-codex-session-${timing}`
-                : timing === "before scan"
-                  ? "123e4567-e89b-42d3-a456-426614174001"
-                  : "123e4567-e89b-42d3-a456-426614174002",
+                : `123e4567-e89b-42d3-a456-4266141840${cursorKey === "sessionId" ? "1" : "0"}${timing === "before scan" ? "1" : "2"}`,
           };
           yield* engine.dispatch({
             type: "project.create",
@@ -638,10 +640,7 @@ it.layer(integrationLayer)("AgentSessionImporter integration", (it) => {
             provider: ProviderDriverKind.make(source),
             providerInstanceId: thread.providerInstanceId,
             status: "stopped",
-            resumeCursor:
-              source === "codex"
-                ? { threadId: thread.providerSessionId }
-                : { threadId, resume: thread.providerSessionId },
+            resumeCursor: { [cursorKey]: thread.providerSessionId },
           });
           if (timing === "before scan") yield* bindNative;
           const before = yield* snapshots.getThreadDetailById(threadId);

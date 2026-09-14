@@ -274,10 +274,14 @@ export const make = Effect.gen(function* () {
             AND provider_name = ${runtime.providerName}
             AND COALESCE(provider_instance_id, provider_name) = ${runtime.providerInstanceId}
             AND CASE WHEN json_valid(resume_cursor_json) THEN
-              json_extract(resume_cursor_json, CASE provider_name
-                WHEN 'claudeAgent' THEN '$.resume'
-                WHEN 'codex' THEN '$.threadId'
-              END)
+              CASE provider_name
+                WHEN 'claudeAgent' THEN CASE
+                  WHEN json_type(resume_cursor_json, '$.resume') = 'text'
+                  THEN json_extract(resume_cursor_json, '$.resume')
+                  ELSE json_extract(resume_cursor_json, '$.sessionId')
+                END
+                WHEN 'codex' THEN json_extract(resume_cursor_json, '$.threadId')
+              END
             END = ${runtime.unlessNativeSessionId}
         )
         ON CONFLICT (thread_id) DO UPDATE SET thread_id = provider_session_runtime.thread_id

@@ -129,10 +129,6 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     .pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-projects", cause })),
     );
-  const threads = scanner.recentThreads(
-    workspaceRoot,
-    completedSources.map((entry) => entry.source),
-  );
   const importedThreadIds = new Set<ThreadId>();
   const nativeSessions = new Set<string>();
   const bindings = yield* directory
@@ -146,7 +142,9 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
     }
     const sessionId =
       binding.provider === "claudeAgent"
-        ? binding.resumeCursor.resume
+        ? typeof binding.resumeCursor.resume === "string"
+          ? binding.resumeCursor.resume
+          : binding.resumeCursor.sessionId
         : binding.provider === "codex"
           ? binding.resumeCursor.threadId
           : undefined;
@@ -154,6 +152,11 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
       nativeSessions.add(`${binding.providerInstanceId}\0${sessionId}`);
     }
   }
+  const threads = scanner.recentThreads(
+    workspaceRoot,
+    completedSources.map((entry) => entry.source),
+    nativeSessions,
+  );
   let importedCount = 0;
   let skippedCount = 0;
 

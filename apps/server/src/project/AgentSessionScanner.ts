@@ -199,6 +199,7 @@ export class AgentSessionScanner extends Context.Service<
     readonly recentThreads: (
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
+      nativeSessions?: ReadonlySet<string>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
   }
 >()("t3/project/AgentSessionScanner") {}
@@ -215,6 +216,7 @@ interface RawCandidate {
   readonly transcripts: ReadonlyArray<{
     readonly filePath: string;
     readonly mtimeMs: number | null;
+    readonly providerSessionId: string | null;
   }>;
 }
 
@@ -627,13 +629,23 @@ function isT3ManagedWorktree(
 function extractDiscoveryMetadata(
   source: AgentSessionSource,
   line: string,
-): { readonly cwd: string; readonly isSubagent: boolean } | null {
+): {
+  readonly cwd: string;
+  readonly isSubagent: boolean;
+  readonly providerSessionId: string | null;
+} | null {
   const decoded = decodeTranscriptRecord(line);
   if (Option.isNone(decoded)) return null;
   const cwd = extractDecodedCwd(decoded.value);
   if (cwd === null) return null;
   return {
     cwd,
+    providerSessionId:
+      source === "codex"
+        ? decoded.value.type === "session_meta"
+          ? decoded.value.payload?.id?.trim() || decoded.value.payload?.session_id?.trim() || null
+          : null
+        : decoded.value.sessionId?.trim() || null,
     isSubagent:
       source === "codex" &&
       decoded.value.type === "session_meta" &&
@@ -1107,25 +1119,26 @@ export const make = Effect.gen(function* () {
         cwd: string;
         providerInstanceId: ProviderInstanceId;
         lastActiveAtMs: number;
-        transcripts: Array<{ filePath: string; mtimeMs: number }>;
+        transcripts: Array<RawCandidate["transcripts"][number]>;
       }
     >();
 
     for (const transcript of transcripts) {
       const metadata = yield* readDiscoveryMetadata(transcript, source, budget);
       if (metadata === null || metadata.isSubagent) continue;
-      const { cwd } = metadata;
+      const { cwd, providerSessionId } = metadata;
+      const sessionTranscript = { ...transcript, providerSessionId };
       const key = `${transcript.providerInstanceId}\0${cwd}`;
       const existing = byOwnerAndCwd.get(key);
       if (existing) {
         existing.lastActiveAtMs = Math.max(existing.lastActiveAtMs, transcript.mtimeMs);
-        existing.transcripts.push(transcript);
+        existing.transcripts.push(sessionTranscript);
       } else {
         byOwnerAndCwd.set(key, {
           cwd,
           providerInstanceId: transcript.providerInstanceId,
           lastActiveAtMs: transcript.mtimeMs,
-          transcripts: [transcript],
+          transcripts: [sessionTranscript],
         });
       }
     }
@@ -1386,6 +1399,7 @@ export const make = Effect.gen(function* () {
   const prepareRecentThreads = Effect.fn("AgentSessionScanner.prepareRecentThreads")(function* (
     workspaceRoot: string,
     completedSources: ReadonlyArray<AgentSessionImportSource>,
+    nativeSessions: ReadonlySet<string>,
   ) {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
@@ -1408,6 +1422,12 @@ export const make = Effect.gen(function* () {
       if ((yield* directoryIdentity(resolved)) !== rootIdentity) continue;
 
       for (const transcript of candidate.transcripts) {
+        if (
+          transcript.providerSessionId !== null &&
+          nativeSessions.has(`${candidate.providerInstanceId}\0${transcript.providerSessionId}`)
+        ) {
+          continue;
+        }
         if (
           transcript.mtimeMs === null ||
           transcript.mtimeMs < cutoffMs ||
@@ -1549,7 +1569,8 @@ export const make = Effect.gen(function* () {
   const recentThreads: AgentSessionScanner["Service"]["recentThreads"] = (
     workspaceRoot,
     completedSources = [],
-  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
+    nativeSessions = new Set(),
+  ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources, nativeSessions));
 
   return AgentSessionScanner.of({ scan, recentThreads });
 });
