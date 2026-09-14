@@ -164,6 +164,15 @@ it.layer(NodeServices.layer)("SessionStore.layer", (it) => {
         );
       }).pipe(Effect.provide(layerB), Effect.scoped);
 
+      const reopenedB = yield* makeDiskSessionStoreLayer(baseB, token);
+      yield* Effect.gen(function* () {
+        const sessions = yield* SessionStore.SessionStore;
+        const dev = yield* sessions.verify(token);
+        expect(dev.sessionId).toBe(fromA.dev.sessionId);
+        const ticket = yield* sessions.issueWebSocketToken(dev.sessionId);
+        expect((yield* sessions.verifyWebSocketToken(ticket.token)).sessionId).toBe(dev.sessionId);
+      }).pipe(Effect.provide(reopenedB), Effect.scoped);
+
       const reopenedA = yield* makeDiskSessionStoreLayer(baseA, token);
       yield* Effect.gen(function* () {
         const sessions = yield* SessionStore.SessionStore;

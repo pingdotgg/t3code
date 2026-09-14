@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { EnvironmentAuthHttpApi } from "@t3tools/contracts";
+import { EnvironmentHttpApi } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -22,7 +22,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import { authHttpApiLayer, environmentAuthenticatedAuthLayer } from "./http.ts";
 
 const DEV_TOKEN = "reusable-dev-auth-token-that-is-long-enough";
-class AuthTestApi extends HttpApi.make("environment").add(EnvironmentAuthHttpApi) {}
+class AuthTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.auth) {}
 
 const configLayer = Layer.effect(
   ServerConfig.ServerConfig,
