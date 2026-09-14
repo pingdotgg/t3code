@@ -20,11 +20,18 @@ The v2 checks pin these invariants:
 - Clients with confirmed history paging opt into socket snapshot fallbacks that use the same
   bounded recent-history window and carry the cursor needed to fetch older history. Older clients
   and WebSocket-only starts retain the compatible full-snapshot fallback.
-- The compatibility `getThreadProjection` RPC serves the same bounded window with paging metadata
-  spread flat over the projection fields, so clients decoding the historical schema still get a
-  valid projection. Older rows page through `getThreadHistoryPage` or the HTTP history endpoint
-  with the same opaque cursor. Never restore an unbounded read here: on long-lived threads that
-  path decoded the entire history into memory per call.
+- The compatibility `getThreadProjection` RPC serves the bounded window only when the request
+  opts in via `acceptBoundedSnapshot`; without the flag it returns the full projection so older
+  clients keep complete history access and out-of-window checkpoint rewind. Bounded responses
+  carry paging metadata spread flat over the projection fields, and older rows page through
+  `getThreadHistoryPage` or the HTTP history endpoint with the same opaque cursor. Do not bound
+  the unflagged response: legacy callers cannot see the paging metadata, so a bounded default
+  silently truncates their history.
+- Snapshot window reads bound rows, encoded bytes, and decode work inside the query: the newest
+  rows are kept within hard row and payload-byte caps, oversized payloads are read from the
+  write-time `bounded_json` preview (schema-safe compaction computed at projection write), and
+  dropped rows surface as `hasOlderHistory` so they remain pageable. Reads never transfer raw
+  oversized payloads; legacy rows without a preview fall back to a bounded decode-time pass.
 - Snapshot queries bound timeline reads per fork ancestor, not total rows: dependency and
   control records still accompany the window. Smaller socket frames alone do not establish a
   whole-server memory reduction.

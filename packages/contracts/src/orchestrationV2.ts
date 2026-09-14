@@ -2697,19 +2697,28 @@ export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2Dispatc
 
 export const OrchestrationV2GetThreadProjectionInput = Schema.Struct({
   threadId: ThreadId,
+  /**
+   * Opt in to the bounded snapshot-window response (recent complete turns plus
+   * progressive-history metadata). Older servers decode the input without this
+   * key and still return the full projection; callers that omit it always get
+   * the legacy unbounded response so rewind and history access keep working.
+   */
+  acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2GetThreadProjectionInput =
   typeof OrchestrationV2GetThreadProjectionInput.Type;
 
 /**
- * Compatibility response for `orchestration.getThreadProjection`. The timeline
- * fields (`turnItems`, `visibleTurnItems`, `messages`) carry the same bounded
- * recent window as `OrchestrationV2ThreadBoundedSnapshot` instead of the full
- * history; the additive progressive-history fields declare that bound in-band.
- * Older clients decoding `OrchestrationV2ThreadProjection` drop the extra keys
- * and still see a valid projection; newer clients page older rows with
- * `historyCursor` through `orchestration.getThreadHistoryPage` or the HTTP
- * history endpoint. Absent fields mean the server did not bound the response.
+ * Compatibility response for `orchestration.getThreadProjection`. When the
+ * request opts in via `acceptBoundedSnapshot`, the timeline fields
+ * (`turnItems`, `visibleTurnItems`, `messages`) carry the same bounded recent
+ * window as `OrchestrationV2ThreadBoundedSnapshot` instead of the full history;
+ * the additive progressive-history fields declare that bound in-band. Requests
+ * without the opt-in keep the legacy full projection so older clients retain
+ * complete history access and out-of-window checkpoint rewind. Newer clients
+ * page older rows with `historyCursor` through `orchestration.getThreadHistoryPage`
+ * or the HTTP history endpoint. Absent fields mean the server did not bound the
+ * response.
  */
 export const OrchestrationV2GetThreadProjectionResult = Schema.Struct({
   ...OrchestrationV2ThreadProjection.fields,

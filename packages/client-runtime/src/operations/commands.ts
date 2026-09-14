@@ -262,8 +262,12 @@ const allocateCommandId = Effect.fn("EnvironmentCommands.allocateCommandId")(fun
 const dispatch = (command: OrchestrationV2Command) =>
   request(ORCHESTRATION_V2_WS_METHODS.dispatchCommand, command);
 
-const getProjection = (threadId: ThreadId) =>
-  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, { threadId });
+const getProjection = (threadId: ThreadId, options?: { readonly bounded?: boolean }) =>
+  request(ORCHESTRATION_V2_WS_METHODS.getThreadProjection, {
+    threadId,
+    // Older servers strip the unknown key and return the full projection.
+    ...(options?.bounded === false ? {} : { acceptBoundedSnapshot: true as const }),
+  });
 
 const getCheckpointContext = (threadId: ThreadId) =>
   request(ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext, { threadId });
@@ -849,9 +853,11 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
     }
     // Bounded projections only retain cohort checkpoints; the targeted context
     // read resolves ordinals across the whole history without a projection.
+    // The projection fallback needs every checkpoint, so it must not opt into
+    // the bounded window.
     const checkpoints = (yield* supportsThreadCheckpointContext())
       ? (yield* getCheckpointContext(input.threadId)).checkpoints
-      : (yield* getProjection(input.threadId)).checkpoints;
+      : (yield* getProjection(input.threadId, { bounded: false })).checkpoints;
     const checkpoint =
       checkpoints.find(
         (candidate) => candidate.id === input.checkpointId && candidate.scopeId === input.scopeId,
