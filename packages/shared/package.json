@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./legacyCliLauncher": {
+      "types": "./src/legacyCliLauncher.ts",
+      "import": "./src/legacyCliLauncher.ts"
+    },
     "./delimitedPreview": {
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
