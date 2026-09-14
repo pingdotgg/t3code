@@ -300,7 +300,24 @@ describe("ProviderRuntimeIngestion", () => {
         });
       }),
     ).pipe(Layer.provide(projectionSnapshotLayer));
+    // Real clock plus an offset the test can advance, so delivery pacing in
+    // ingestion can be driven without sleeping. Sleeps stay real.
+    let clockOffsetMs = 0;
+    const realClock = Effect.runSync(Effect.service(Clock.Clock));
+    const shiftedClock: Clock.Clock = {
+      currentTimeMillisUnsafe: () => realClock.currentTimeMillisUnsafe() + clockOffsetMs,
+      currentTimeMillis: Effect.sync(() => realClock.currentTimeMillisUnsafe() + clockOffsetMs),
+      currentTimeNanosUnsafe: () =>
+        realClock.currentTimeNanosUnsafe() + BigInt(clockOffsetMs) * 1_000_000n,
+      currentTimeNanos: Effect.sync(
+        () => realClock.currentTimeNanosUnsafe() + BigInt(clockOffsetMs) * 1_000_000n,
+      ),
+      monotonicTimeNanosUnsafe: () => realClock.monotonicTimeNanosUnsafe(),
+      monotonicTimeNanos: realClock.monotonicTimeNanos,
+      sleep: (duration) => realClock.sleep(duration),
+    };
     const layer = ProviderRuntimeIngestionLive.pipe(
+      Layer.provide(Layer.succeed(Clock.Clock, shiftedClock)),
       Layer.provideMerge(orchestrationLayer),
       Layer.provideMerge(ingestionProjectionSnapshotLayer),
       // Single shared liveness instance across ingestion (writer), the
@@ -395,6 +412,9 @@ describe("ProviderRuntimeIngestion", () => {
             .pipe(Effect.map(Option.getOrThrow)),
         ),
       emit: provider.emit,
+      advanceClock: (ms: number) => {
+        clockOffsetMs += ms;
+      },
       emitAndDrain,
       sqlCount: sqlCounter.count,
       setProviderSession: provider.setSession,
@@ -3154,18 +3174,19 @@ describe("ProviderRuntimeIngestion", () => {
     );
 
     // Each delta lands well outside the pacing window of the one before.
-    let deltaCount = 0;
-    const emitDelta = (eventId: string, delta: string) =>
+    const emitDelta = (eventId: string, delta: string) => {
+      harness.advanceClock(1_000);
       harness.emit({
         type: "content.delta",
         eventId: asEventId(eventId),
         provider: codex,
-        createdAt: new Date(Date.parse(now) + ++deltaCount * 1_000).toISOString(),
+        createdAt: now,
         threadId,
         turnId,
         itemId,
         payload: { streamKind: "assistant_text", delta },
       });
+    };
 
     emitDelta("evt-paragraph-1", "First paragraph.\n\nSecond para");
     const afterFirst = await waitForThread(harness.readModel, (thread) =>
@@ -3220,14 +3241,15 @@ describe("ProviderRuntimeIngestion", () => {
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("turn-paced");
     const itemId = asItemId("item-paced");
-    const t0 = Date.parse("2026-01-01T00:00:00.000Z");
-    const at = (offsetMs: number) => new Date(t0 + offsetMs).toISOString();
+    // Every delta carries the same event time, like OpenCode does for one
+    // part. Pacing must follow the server clock, not the event stamp.
+    const now = "2026-01-01T00:00:00.000Z";
 
     harness.emit({
       type: "turn.started",
       eventId: asEventId("evt-paced-started"),
       provider: codex,
-      createdAt: at(0),
+      createdAt: now,
       threadId,
       turnId,
     });
@@ -3235,31 +3257,37 @@ describe("ProviderRuntimeIngestion", () => {
       harness.readModel,
       (thread) => thread.session?.status === "running" && thread.session?.activeTurnId === turnId,
     );
-    const emitDelta = (eventId: string, delta: string, offsetMs: number) =>
-      harness.emit({
-        type: "content.delta",
-        eventId: asEventId(eventId),
-        provider: codex,
-        createdAt: at(offsetMs),
-        threadId,
-        turnId,
-        itemId,
-        payload: { streamKind: "assistant_text", delta },
-      });
+    // Emit is fire-and-forget, so drain after each delta before moving the
+    // clock. Otherwise the worker reads a clock that has already advanced.
+    let clockMs = 0;
+    const emitDelta = async (eventId: string, delta: string, offsetMs: number) => {
+      harness.advanceClock(offsetMs - clockMs);
+      clockMs = offsetMs;
+      await harness.emitAndDrain([
+        {
+          type: "content.delta",
+          eventId: asEventId(eventId),
+          provider: codex,
+          createdAt: now,
+          threadId,
+          turnId,
+          itemId,
+          payload: { streamKind: "assistant_text", delta },
+        },
+      ]);
+    };
     const messageText = async () =>
       (await harness.readModel()).threads
         .find((t) => t.id === threadId)
         ?.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`)?.text;
 
-    emitDelta("evt-paced-1", "One.\n\n", 0);
-    emitDelta("evt-paced-2", "Two.\n\n", 100);
-    emitDelta("evt-paced-3", "Three.\n\n", 200);
-    await harness.drain();
+    await emitDelta("evt-paced-1", "One.\n\n", 0);
+    await emitDelta("evt-paced-2", "Two.\n\n", 100);
+    await emitDelta("evt-paced-3", "Three.\n\n", 200);
     // The first paragraph lands right away. The next two are inside the window.
     expect(await messageText()).toBe("One.\n\n");
 
-    emitDelta("evt-paced-4", "Four.\n\n", 500);
-    await harness.drain();
+    await emitDelta("evt-paced-4", "Four.\n\n", 500);
     expect(await messageText()).toBe("One.\n\nTwo.\n\nThree.\n\nFour.\n\n");
   });
 

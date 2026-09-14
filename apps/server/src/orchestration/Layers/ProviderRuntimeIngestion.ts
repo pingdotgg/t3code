@@ -19,6 +19,7 @@ import {
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -1757,10 +1758,12 @@ const make = Effect.gen(function* () {
               : "buffered",
         );
         if (assistantDeliveryMode === "buffered") {
+          // Pace on the server clock. OpenCode stamps every delta of a part
+          // with the part's start time, so the event time cannot measure gaps.
           const spillChunk = yield* appendBufferedAssistantText(
             assistantMessageId,
             assistantDelta,
-            Date.parse(now),
+            yield* Clock.currentTimeMillis,
           );
           if (spillChunk.length > 0) {
             yield* orchestrationEngine.dispatch({

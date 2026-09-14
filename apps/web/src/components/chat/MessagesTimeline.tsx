@@ -481,12 +481,16 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
   const previousLatestTurnRef = useRef(latestTurn);
+  // The list stays mounted across thread switches. Its first end pins on the
+  // new thread must snap, not glide, even if that thread is mid-turn.
+  const [settlingListIdentity, setSettlingListIdentity] = useState<string | null>(null);
   let paintedExpandedTurnIds = expandedTurnIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedSpawnEntryIds = expandedSpawnEntryIds;
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     previousLatestTurnRef.current = latestTurn;
+    setSettlingListIdentity(listIdentityKey);
     paintedExpandedTurnIds = new Set();
     paintedExpandedWorkGroupIds = new Set();
     paintedExpandedSpawnEntryIds = new Set();
@@ -530,6 +534,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       }
     };
   }, []);
+
+  useEffect(() => {
+    if (settlingListIdentity === null) return;
+    // Two frames covers the fresh-data layout pass and the initial end pin.
+    let second: number | null = null;
+    const first = requestAnimationFrame(() => {
+      second = requestAnimationFrame(() => {
+        setSettlingListIdentity((current) => (current === settlingListIdentity ? null : current));
+      });
+    });
+    return () => {
+      cancelAnimationFrame(first);
+      if (second !== null) cancelAnimationFrame(second);
+    };
+  }, [settlingListIdentity]);
 
   const suspendEndScrollMaintenanceForDisclosure = useCallback(
     (anchorKey: string, collapsed = false) => {
@@ -986,7 +1005,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
               !liveFollowEnabled ||
               disclosureToggleSettling
                 ? false
-                : isWorking && !prefersReducedMotion
+                : isWorking && !prefersReducedMotion && settlingListIdentity === null
                   ? TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH
                   : TIMELINE_MAINTAIN_SCROLL_AT_END
             }
