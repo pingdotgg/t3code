@@ -1,4 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - createRequire is the only way the single-executable reaches a file-backed package.
 import * as NodeCrypto from "node:crypto";
+import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
+import * as NodePath from "node:path";
 
 import type { CuaDriverMcpConfiguration, DesktopCuaDriverReport } from "@t3tools/contracts";
 import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
@@ -286,10 +290,30 @@ type StandaloneHostModule = {
   ) => Pick<EmbeddedCuaDriverHost, "start" | "stop" | "waitForExit" | "uniffiDestroy">;
 };
 
+// The SDK stays external to the CLI bundle because it dlopens a native
+// library. Inside a Node single-executable, `import()` cannot load files from
+// disk, while `require` reads the real filesystem. The package only exposes
+// `import` conditions, so `require` cannot resolve its specifier; locate the
+// package through the same lookup paths and require its entry file directly.
+const requireForCuaDriver = NodeModule.createRequire(import.meta.url);
+
+const loadEmbeddedCuaDriver = (): Promise<StandaloneHostModule> =>
+  Promise.resolve().then(() => {
+    for (const lookupPath of requireForCuaDriver.resolve.paths("@trycua/cua-driver") ?? []) {
+      const packageDir = NodePath.join(lookupPath, "@trycua", "cua-driver");
+      if (NodeFS.existsSync(NodePath.join(packageDir, "package.json"))) {
+        return requireForCuaDriver(
+          NodePath.join(packageDir, "dist", "embedded.js"),
+        ) as StandaloneHostModule;
+      }
+    }
+    throw new Error("@trycua/cua-driver is not installed beside this server.");
+  });
+
 /** A timed-out native cleanup still owns the factory until every call settles. */
 export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFactory")(function* (
   binaryPath: string,
-  loadEmbedded: () => Promise<StandaloneHostModule> = () => import("@trycua/cua-driver/embedded"),
+  loadEmbedded: () => Promise<StandaloneHostModule> = loadEmbeddedCuaDriver,
 ) {
   const mutex = yield* Semaphore.make(1);
   let occupied = false;
