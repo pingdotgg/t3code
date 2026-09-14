@@ -55,6 +55,7 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
     otlpHeaders: undefined,
+    otlpProtocol: "http/json",
     cwd: process.cwd(),
     baseDir,
     mode: "web",

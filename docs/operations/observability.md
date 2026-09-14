@@ -530,6 +530,7 @@ OTLP export:
 - `T3CODE_OTLP_SERVICE_NAME`: service name, default `t3-server`
 - `T3CODE_OTLP_HEADERS`: extra headers for both exporters, same format as
   `OTEL_EXPORTER_OTLP_HEADERS`: comma-separated `key=value` pairs with percent-encoded values.
+- `T3CODE_OTLP_PROTOCOL`: `http/json` (default) or `http/protobuf`
 
 If the OTLP URLs are unset, local tracing still works and metrics stay in-process only.
 
