@@ -89,6 +89,7 @@ public final class FeatureRootModel {
         draftStore: draftStore
     )
     private var pendingSubmissionsByID: [String: FeatureQueuedSubmission] = [:]
+    private var activeSubmissionCounts: [String: Int] = [:]
     private var pendingThreadsByID: [String: FeatureThread] = [:]
     private var pendingSettlementMutations: [String: PendingSettlementMutation] = [:]
     private var pendingCompletionSubmissionIDs: Set<String> = []
@@ -804,6 +805,11 @@ public final class FeatureRootModel {
 
     public func sendMessage(_ submission: FeatureMessageSubmission) async -> Bool {
         guard !rewindingThreadIDs.contains(submission.threadID) else { return false }
+        activeSubmissionCounts[submission.threadID, default: 0] += 1
+        defer {
+            let remaining = (activeSubmissionCounts[submission.threadID] ?? 1) - 1
+            activeSubmissionCounts[submission.threadID] = remaining > 0 ? remaining : nil
+        }
         let trimmed = submission.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty || !submission.attachments.isEmpty else { return false }
 
@@ -890,6 +896,7 @@ public final class FeatureRootModel {
 
     public func canRewindConversation(threadID: String, messageID: String) -> Bool {
         guard !rewindingThreadIDs.contains(threadID),
+              activeSubmissionCounts[threadID] == nil,
               let detail = details[threadID],
               FeatureConversationRewind.canStart(in: detail),
               let environmentID = detail.thread.environmentID,
@@ -925,6 +932,11 @@ public final class FeatureRootModel {
             recoveredRewindDrafts[threadID] = recovered
             do {
                 try await draftStore.setDraft(recovered, for: key)
+                if let environmentID = detail.thread.environmentID {
+                    attachmentUploads.syncOwner(
+                        draftKey: key, environmentID: environmentID, attachments: recovered.attachments
+                    )
+                }
             } catch {
                 rewindErrors[threadID] = "Rewind finished, but the draft could not be saved. \(error.localizedDescription)"
             }
