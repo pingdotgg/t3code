@@ -107,6 +107,82 @@ function hostedChangeRequest(body: string, additions = 1) {
   };
 }
 
+it.effect("caches narrow previews and invalidates them after refresh or mutation", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" })],
+      providers: [
+        fakeProvider("github", {
+          getViewer: () => Effect.die("preview must not read the viewer"),
+          getChangeRequestPreview: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const previews = yield* Effect.all([service.preview(ref), service.preview(ref)], {
+      concurrency: 2,
+    });
+    assert.deepStrictEqual(previews[0], {
+      ...ref,
+      title: "Change request 1",
+      url: "https://host/pull/1",
+      author: { login: "octocat", name: null, avatarUrl: null },
+      state: "open",
+      isDraft: false,
+      createdAt: "2026-07-01T00:00:00Z",
+    });
+    assert.strictEqual(reads, 1);
+    yield* service.invalidate({ reference: ref });
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 2);
+    yield* service.runAction({ ...ref, action: "close" });
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 3);
+    yield* service.refreshAfterTurn(ref.projectId);
+    yield* service.preview(ref);
+    assert.strictEqual(reads, 4);
+    const error = yield* Effect.flip(service.preview({ ...ref, repository: "another/repo" }));
+    assert.strictEqual(error._tag, "PullRequestOperationError");
+    assert.strictEqual(reads, 4);
+  }),
+);
+
+it.effect("uses full detail for hosts without a narrow preview", () =>
+  Effect.gen(function* () {
+    let reads = 0;
+    const service = yield* makeService({
+      projects: [
+        project({
+          id: "p1",
+          title: "web",
+          workspaceRoot: "/w",
+          repository: "acme/web",
+          provider: "gitlab",
+        }),
+      ],
+      providers: [
+        fakeProvider("gitlab", {
+          getChangeRequest: () =>
+            Effect.sync(() => {
+              reads += 1;
+              return hostedChangeRequest("Description");
+            }),
+        }),
+      ],
+    });
+    const ref = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const preview = yield* service.preview(ref);
+    assert.strictEqual(preview.title, "Change request 1");
+    assert.strictEqual(reads, 1);
+    assert.ok(!("body" in preview));
+  }),
+);
+
 function unusable(provider: SourceControlProviderKind, reason: "missing-tool" | "unauthenticated") {
   return new PullRequestProviderError({
     provider,
@@ -3915,7 +3991,7 @@ it.effect("keeps routed reads separate when the GitHub account changes", () =>
 
 it.effect("isolates routed caches for two credentials belonging to the same account", () =>
   Effect.gen(function* () {
-    for (const operation of ["summary", "detail", "diff"] as const) {
+    for (const operation of ["summary", "detail", "diff", "preview"] as const) {
       let credential = "broad";
       let calls = 0;
       const read = () =>
@@ -3945,6 +4021,7 @@ it.effect("isolates routed caches for two credentials belonging to the same acco
               read().pipe(
                 Effect.as({ patch: "private patch", truncated: false, nextCursor: null }),
               ),
+            getChangeRequestPreview: read,
           }),
         ],
       });

@@ -336,59 +336,65 @@ export const make = Effect.gen(function* () {
     getChangeRequestStack: (input) =>
       cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
+    getChangeRequestPreview: (input) =>
+      cli.getPullRequestPreview(input).pipe(Effect.mapError(fail("getChangeRequestPreview"))),
+
     getChangeRequest: (input) =>
       Effect.all(
         [
           cli.getPullRequestDetail(input).pipe(
             Effect.flatMap((pullRequest) =>
-              Effect.all({
-                // Only an open pull request can be behind anything worth saying so about, and
-                // only one whose head repository is known can be compared at all.
-                comparison:
-                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                    ? Effect.succeed(null)
-                    : cli
-                        .getPullRequestBaseComparison({
-                          ...input,
-                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                        })
-                        .pipe(Effect.orElseSucceed(() => null)),
-                // GitHub omits a fork workflow that has not been approved from the normal check
-                // rollup. Read the action-required runs by head revision so "all passed" cannot
-                // be shown while a whole workflow is still waiting to start.
-                workflowApprovals:
-                  pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
-                    ? Effect.succeed({
-                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                        unavailable: false,
-                      })
-                    : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+              Effect.all(
+                {
+                  // Only an open pull request can be behind anything worth saying so about, and
+                  // only one whose head repository is known can be compared at all.
+                  comparison:
+                    pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                      ? Effect.succeed(null)
+                      : cli
+                          .getPullRequestBaseComparison({
+                            ...input,
+                            headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                          })
+                          .pipe(Effect.orElseSucceed(() => null)),
+                  // GitHub omits a fork workflow that has not been approved from the normal check
+                  // rollup. Read the action-required runs by head revision so "all passed" cannot
+                  // be shown while a whole workflow is still waiting to start.
+                  workflowApprovals:
+                    pullRequest.state !== "open" || pullRequest.isCrossRepository !== true
                       ? Effect.succeed({
                           runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                          unavailable: true,
+                          unavailable: false,
                         })
-                      : cli
-                          .listWorkflowRunsRequiringApproval({
-                            ...input,
-                            headSha: pullRequest.headSha,
-                            headBranch: pullRequest.headBranch,
-                            headRepositoryOwner: pullRequest.headRepositoryOwner,
-                            isCrossRepository: true,
+                      : pullRequest.headSha == null || pullRequest.headRepositoryOwner == null
+                        ? Effect.succeed({
+                            runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                            unavailable: true,
                           })
-                          .pipe(
-                            Effect.matchEffect({
-                              onFailure: (error) =>
-                                error._tag === "GitHubCliRateLimitError" ||
-                                error._tag === "SourceControlRateLimitPausedError"
-                                  ? Effect.fail(error)
-                                  : Effect.succeed({
-                                      runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
-                                      unavailable: true,
-                                    }),
-                              onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
-                            }),
-                          ),
-              }).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
+                        : cli
+                            .listWorkflowRunsRequiringApproval({
+                              ...input,
+                              headSha: pullRequest.headSha,
+                              headBranch: pullRequest.headBranch,
+                              headRepositoryOwner: pullRequest.headRepositoryOwner,
+                              isCrossRepository: true,
+                            })
+                            .pipe(
+                              Effect.matchEffect({
+                                onFailure: (error) =>
+                                  error._tag === "GitHubCliRateLimitError" ||
+                                  error._tag === "SourceControlRateLimitPausedError"
+                                    ? Effect.fail(error)
+                                    : Effect.succeed({
+                                        runs: [] as ReadonlyArray<GitHubWorkflowRunApproval>,
+                                        unavailable: true,
+                                      }),
+                                onSuccess: (runs) => Effect.succeed({ runs, unavailable: false }),
+                              }),
+                            ),
+                },
+                { concurrency: 2 },
+              ).pipe(Effect.map((extra) => ({ pullRequest, ...extra }))),
             ),
           ),
           getRepositoryAccess({

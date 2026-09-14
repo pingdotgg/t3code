@@ -255,6 +255,60 @@ it.effect(
 );
 
 layer("GitHubPullRequestCli.layer", (it) => {
+  it.effect("loads the complete hover card with one GraphQL request", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            encodeJson({
+              data: {
+                repository: {
+                  pullRequest: {
+                    number: 7,
+                    title: "Fast previews",
+                    url: "https://github.example/acme/web/pull/7",
+                    state: "MERGED",
+                    isDraft: false,
+                    createdAt: "2026-07-01T00:00:00Z",
+                    author: {
+                      login: "octocat",
+                      name: "Octo Cat",
+                      avatarUrl: "https://github.example/avatar.png",
+                    },
+                  },
+                },
+              },
+            }),
+          ),
+        ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+      const preview = yield* cli.getPullRequestPreview({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.example",
+        number: 7,
+      });
+      expect(preview).toEqual({
+        number: 7,
+        title: "Fast previews",
+        url: "https://github.example/acme/web/pull/7",
+        state: "merged",
+        isDraft: false,
+        createdAt: "2026-07-01T00:00:00Z",
+        author: {
+          login: "octocat",
+          name: "Octo Cat",
+          avatarUrl: "https://github.example/avatar.png",
+        },
+      });
+      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(callAt(0).args).toEqual(
+        expect.arrayContaining(["api", "graphql", "--hostname", "github.example"]),
+      );
+    }),
+  );
+
   it.effect("coalesces concurrent identity verification for the same host and credential", () =>
     Effect.gen(function* () {
       mockedExecute.mockImplementation((input) =>
@@ -1943,8 +1997,47 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads workflow runs and their pull request scope concurrently", () =>
+    Effect.gen(function* () {
+      const headsStarted = yield* Deferred.make<void>();
+      const runsStarted = yield* Deferred.make<void>();
+      mockedExecute.mockImplementation(({ args }) =>
+        args[0] === "pr"
+          ? Deferred.succeed(headsStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(runsStarted)),
+              Effect.as(
+                output(
+                  '[{"number":7,"headRefOid":"abc123","isCrossRepository":true,"headRepositoryOwner":{"login":"octocat"}}]',
+                ),
+              ),
+            )
+          : Deferred.succeed(runsStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(headsStarted)),
+              Effect.as(
+                output('[{"databaseId":10,"workflowName":"build","url":"https://example.com/10"}]'),
+              ),
+            ),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const runs = yield* cli.listWorkflowRunsRequiringApproval({
+        cwd: "/w",
+        repository: "acme/web",
+        host: "github.com",
+        number: 7,
+        headSha: "abc123",
+        headBranch: "feat/page",
+        headRepositoryOwner: "octocat",
+        isCrossRepository: true,
+      });
+
+      expect(runs).toEqual([{ id: 10, name: "build", url: "https://example.com/10" }]);
+    }),
+  );
+
   it.effect("refuses workflow approval when one head belongs to several pull requests", () =>
     Effect.gen(function* () {
+      mockedExecute.mockReturnValue(Effect.succeed(output("[]")));
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
           output(
@@ -1983,7 +2076,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
         limit: 1_000,
       });
       expect(error.detail).toContain("instead of uniquely matching #7");
-      expect(mockedExecute).toHaveBeenCalledTimes(1);
+      expect(mockedExecute).toHaveBeenCalledTimes(2);
     }),
   );
 

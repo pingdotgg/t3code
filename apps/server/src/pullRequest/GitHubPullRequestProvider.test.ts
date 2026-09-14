@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
@@ -456,6 +457,53 @@ const openDetail = {
   comments: [],
   commits: [],
 };
+
+it.effect("reads branch comparison and workflow approvals concurrently", () =>
+  Effect.gen(function* () {
+    const comparisonStarted = yield* Deferred.make<void>();
+    const approvalsStarted = yield* Deferred.make<void>();
+    const provider = yield* make.pipe(
+      Effect.provide(
+        Layer.mock(GitHubPullRequestCli.GitHubPullRequestCli)({
+          getPullRequestDetail: () => Effect.succeed(openDetail),
+          getPullRequestBaseComparison: () =>
+            Deferred.succeed(comparisonStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(approvalsStarted)),
+              Effect.as({ behindBy: 2, viewerCanUpdate: true }),
+            ),
+          listWorkflowRunsRequiringApproval: () =>
+            Deferred.succeed(approvalsStarted, undefined).pipe(
+              Effect.andThen(Deferred.await(comparisonStarted)),
+              Effect.as([{ id: 123, name: "tests", url: "https://example.com/runs/123" }]),
+            ),
+          getRepositoryAccess: () =>
+            Effect.succeed({
+              canWrite: true,
+              mergeCapabilities: { merge: true, squash: true, rebase: true },
+            }),
+          getViewerAccess: () =>
+            Effect.succeed({ canWrite: true, canTriage: true, canUpdate: true, didAuthor: false }),
+        }),
+      ),
+    );
+
+    const detail = yield* provider.getChangeRequest({
+      cwd: "/w",
+      repository: "acme/web",
+      host: "github.com",
+      number: 7,
+    });
+
+    expect(detail.behindBy).toBe(2);
+    expect(detail.workflowApprovalsRequired).toBe(1);
+    expect(detail.checks).toContainEqual({
+      name: "tests",
+      status: "action-required",
+      description: "A maintainer must approve this workflow before it can run.",
+      url: "https://example.com/runs/123",
+    });
+  }),
+);
 
 it.effect("does not classify same-repository gates as fork workflow approvals", () =>
   Effect.gen(function* () {

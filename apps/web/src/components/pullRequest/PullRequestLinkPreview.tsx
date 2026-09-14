@@ -1,6 +1,12 @@
 import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId, PullRequestRef } from "@t3tools/contracts";
-import { cloneElement, useState, type ComponentPropsWithoutRef, type ReactElement } from "react";
+import {
+  cloneElement,
+  useEffect,
+  useState,
+  type ComponentPropsWithoutRef,
+  type ReactElement,
+} from "react";
 
 import { formatRelativeTimeLabel } from "~/timestampFormat";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -34,9 +40,9 @@ export function PullRequestLinkPreview({
 }) {
   const [open, setOpen] = useState(false);
   const [resolvingClick, setResolvingClick] = useState(false);
-  const detailQuery = useEnvironmentQuery(
+  const previewQuery = useEnvironmentQuery(
     open
-      ? pullRequestEnvironment.detail({
+      ? pullRequestEnvironment.preview({
           environmentId: target.environmentId,
           input: target.input,
         })
@@ -46,9 +52,33 @@ export function PullRequestLinkPreview({
     reportFailure: false,
     reportDefect: false,
   });
+  const readPreview = useAtomQueryRunner(pullRequestEnvironment.preview, {
+    reportFailure: false,
+    reportDefect: false,
+  });
+  const { environmentId, input } = target;
+  // Keep the page warm while the smaller hover response is displayed.
+  useEffect(() => {
+    if (!open || previewQuery.data === null) return;
+    void readDetail({
+      environmentId,
+      input,
+    }).catch(() => undefined);
+  }, [open, previewQuery.data, readDetail, environmentId, input]);
+
+  const previewLink = cloneElement(link, {
+    onPointerEnter: (event) => {
+      link.props.onPointerEnter?.(event);
+      if (event.pointerType !== "touch") void readPreview(target).catch(() => undefined);
+    },
+    onFocus: (event) => {
+      link.props.onFocus?.(event);
+      void readPreview(target).catch(() => undefined);
+    },
+  });
 
   const trigger = confirmBeforeOpen
-    ? cloneElement(link, {
+    ? cloneElement(previewLink, {
         onClick: (event) => {
           if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
@@ -56,7 +86,7 @@ export function PullRequestLinkPreview({
           if (resolvingClick) return;
           setOpen(false);
           setResolvingClick(true);
-          void readDetail({ environmentId: target.environmentId, input: target.input })
+          void readPreview(target)
             .then(async (result) => {
               if (isAtomCommandInterrupted(result)) return;
               if (result._tag === "Success" && onOpenPullRequest(result.value.url)) return;
@@ -68,8 +98,8 @@ export function PullRequestLinkPreview({
             .finally(() => setResolvingClick(false));
         },
       })
-    : link;
-  const detail = detailQuery.data;
+    : previewLink;
+  const detail = previewQuery.data;
   const state =
     detail === null
       ? null
@@ -84,36 +114,38 @@ export function PullRequestLinkPreview({
   return (
     <PreviewCard open={open} onOpenChange={setOpen}>
       <PreviewCardTrigger render={trigger} delay={350} closeDelay={120} />
-      <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
-        {detail === null ? (
-          <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
-            {detailQuery.isPending ? "Loading pull request details…" : originalUrl}
-          </p>
-        ) : (
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
-              <span className="min-w-0 truncate">{detail.repository}</span>
-              <span className="shrink-0">#{detail.number}</span>
-              <span aria-hidden>·</span>
-              {state === null ? null : (
-                <span className="inline-flex shrink-0 items-center gap-1">
-                  <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
-                  {state.label}
-                </span>
-              )}
-            </div>
-            <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
-              {detail.title}
+      {detail !== null || previewQuery.error !== null ? (
+        <PreviewCardPopup align="center" className="w-80 max-w-[calc(100vw-2rem)] p-3">
+          {detail === null ? (
+            <p className="text-xs leading-relaxed text-muted-foreground wrap-anywhere">
+              {originalUrl}
             </p>
-            <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
-              <PullRequestActorAvatar actor={detail.author} className="size-4" />
-              <span className="min-w-0 truncate">{authorLabel}</span>
-              <span aria-hidden>·</span>
-              <span className="shrink-0">opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+          ) : (
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span className="min-w-0 truncate">{detail.repository}</span>
+                <span className="shrink-0">#{detail.number}</span>
+                <span aria-hidden>·</span>
+                {state === null ? null : (
+                  <span className="inline-flex shrink-0 items-center gap-1">
+                    <state.Icon aria-hidden className={`size-3 ${state.toneClassName}`} />
+                    {state.label}
+                  </span>
+                )}
+              </div>
+              <p className="mt-1 text-sm font-medium leading-snug text-foreground text-pretty">
+                {detail.title}
+              </p>
+              <div className="mt-2 flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                <PullRequestActorAvatar actor={detail.author} className="size-4" />
+                <span className="min-w-0 truncate">{authorLabel}</span>
+                <span aria-hidden>·</span>
+                <span className="shrink-0">opened {formatRelativeTimeLabel(detail.createdAt)}</span>
+              </div>
             </div>
-          </div>
-        )}
-      </PreviewCardPopup>
+          )}
+        </PreviewCardPopup>
+      ) : null}
     </PreviewCard>
   );
 }

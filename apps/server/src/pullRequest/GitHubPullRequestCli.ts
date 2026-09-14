@@ -29,6 +29,7 @@ import {
   type PullRequestLabelCandidateList,
   type PullRequestThreadCommentsResult,
   type PullRequestUpdateMethod,
+  type PullRequestPreview,
 } from "@t3tools/contracts";
 
 import * as GitHubCli from "../sourceControl/GitHubCli.ts";
@@ -42,6 +43,8 @@ import {
   decodeActorAvatarsJson,
   decodePullRequestActivityJson,
   decodePullRequestDetailJson,
+  decodePullRequestPreviewJson,
+  PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
   decodePullRequestFilesJson,
   decodePullRequestHeadsJson,
   decodePullRequestListJson,
@@ -497,6 +500,16 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
     }) => Effect.Effect<GitHubPullRequestDetail, GitHubPullRequestCliError>;
+
+    readonly getPullRequestPreview: (input: {
+      readonly cwd: string;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<
+      Omit<PullRequestPreview, "projectId" | "repository">,
+      GitHubPullRequestCliError
+    >;
 
     readonly listWorkflowRunsRequiringApproval: (input: {
       readonly cwd: string;
@@ -1483,71 +1496,74 @@ export const make = Effect.gen(function* () {
     });
   const listWorkflowRunsRequiringApproval: GitHubPullRequestCli["Service"]["listWorkflowRunsRequiringApproval"] =
     (input) =>
-      github
-        .execute({
-          cwd: input.cwd,
-          args: [
-            "pr",
-            "list",
-            ...repositoryArgs(input),
-            "--state",
-            "open",
-            "--head",
-            input.headBranch,
-            "--limit",
-            workflowApprovalProbeLimit,
-            "--json",
-            "number,headRefOid,isCrossRepository,headRepositoryOwner",
-          ],
-        })
-        .pipe(
-          Effect.flatMap(
-            (
-              result,
-            ): Effect.Effect<
-              GitHubPullRequestHead,
-              GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
-            > => {
-              const decoded = decodePullRequestHeadsJson(result.stdout.trim());
-              if (!Result.isSuccess(decoded)) {
-                return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
-              }
-              const exactHeads = decoded.success.filter(
-                (pullRequest) =>
-                  pullRequest.headSha === input.headSha &&
-                  pullRequest.isCrossRepository === true &&
-                  pullRequest.headRepositoryOwner?.toLowerCase() ===
-                    input.headRepositoryOwner.toLowerCase(),
-              );
-              if (decoded.success.length > workflowApprovalLimit) {
-                return Effect.fail(
-                  new GitHubWorkflowApprovalRefusedError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    number: input.number,
-                    reason: "head-list-truncated",
-                    observedCount: decoded.success.length,
-                    limit: workflowApprovalLimit,
-                  }),
-                );
-              }
-              if (exactHeads.length !== 1 || exactHeads[0]?.number !== input.number) {
-                return Effect.fail(
-                  new GitHubWorkflowApprovalRefusedError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    number: input.number,
-                    reason: "head-not-unique",
-                    observedCount: exactHeads.length,
-                    limit: workflowApprovalLimit,
-                  }),
-                );
-              }
-              return Effect.succeed(exactHeads[0]);
-            },
-          ),
-          Effect.flatMap(() =>
-            github.execute({
+      Effect.all(
+        [
+          github
+            .execute({
+              cwd: input.cwd,
+              args: [
+                "pr",
+                "list",
+                ...repositoryArgs(input),
+                "--state",
+                "open",
+                "--head",
+                input.headBranch,
+                "--limit",
+                workflowApprovalProbeLimit,
+                "--json",
+                "number,headRefOid,isCrossRepository,headRepositoryOwner",
+              ],
+            })
+            .pipe(
+              Effect.flatMap(
+                (
+                  result,
+                ): Effect.Effect<
+                  GitHubPullRequestHead,
+                  GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
+                > => {
+                  const decoded = decodePullRequestHeadsJson(result.stdout.trim());
+                  if (!Result.isSuccess(decoded)) {
+                    return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
+                  }
+                  const exactHeads = decoded.success.filter(
+                    (pullRequest) =>
+                      pullRequest.headSha === input.headSha &&
+                      pullRequest.isCrossRepository === true &&
+                      pullRequest.headRepositoryOwner?.toLowerCase() ===
+                        input.headRepositoryOwner.toLowerCase(),
+                  );
+                  if (decoded.success.length > workflowApprovalLimit) {
+                    return Effect.fail(
+                      new GitHubWorkflowApprovalRefusedError({
+                        command: "gh",
+                        cwd: input.cwd,
+                        number: input.number,
+                        reason: "head-list-truncated",
+                        observedCount: decoded.success.length,
+                        limit: workflowApprovalLimit,
+                      }),
+                    );
+                  }
+                  if (exactHeads.length !== 1 || exactHeads[0]?.number !== input.number) {
+                    return Effect.fail(
+                      new GitHubWorkflowApprovalRefusedError({
+                        command: "gh",
+                        cwd: input.cwd,
+                        number: input.number,
+                        reason: "head-not-unique",
+                        observedCount: exactHeads.length,
+                        limit: workflowApprovalLimit,
+                      }),
+                    );
+                  }
+                  return Effect.succeed(exactHeads[0]);
+                },
+              ),
+            ),
+          github
+            .execute({
               cwd: input.cwd,
               args: [
                 "run",
@@ -1566,34 +1582,37 @@ export const make = Effect.gen(function* () {
                 "--json",
                 "databaseId,workflowName,url",
               ],
-            }),
-          ),
-          Effect.flatMap(
-            (
-              result,
-            ): Effect.Effect<
-              ReadonlyArray<GitHubWorkflowRunApproval>,
-              GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
-            > => {
-              const decoded = decodeWorkflowRunApprovalsJson(result.stdout.trim());
-              if (!Result.isSuccess(decoded)) {
-                return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
-              }
-              return decoded.success.length > workflowApprovalLimit
-                ? Effect.fail(
-                    new GitHubWorkflowApprovalRefusedError({
-                      command: "gh",
-                      cwd: input.cwd,
-                      number: input.number,
-                      reason: "run-list-truncated",
-                      observedCount: decoded.success.length,
-                      limit: workflowApprovalLimit,
-                    }),
-                  )
-                : Effect.succeed(decoded.success);
-            },
-          ),
-        );
+            })
+            .pipe(
+              Effect.flatMap(
+                (
+                  result,
+                ): Effect.Effect<
+                  ReadonlyArray<GitHubWorkflowRunApproval>,
+                  GitHubPullRequestReadError | GitHubWorkflowApprovalRefusedError
+                > => {
+                  const decoded = decodeWorkflowRunApprovalsJson(result.stdout.trim());
+                  if (!Result.isSuccess(decoded)) {
+                    return Effect.fail(workflowApprovalReadError(input.cwd, decoded.failure));
+                  }
+                  return decoded.success.length > workflowApprovalLimit
+                    ? Effect.fail(
+                        new GitHubWorkflowApprovalRefusedError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          number: input.number,
+                          reason: "run-list-truncated",
+                          observedCount: decoded.success.length,
+                          limit: workflowApprovalLimit,
+                        }),
+                      )
+                    : Effect.succeed(decoded.success);
+                },
+              ),
+            ),
+        ],
+        { concurrency: 2 },
+      ).pipe(Effect.map(([, runs]) => runs));
 
   return GitHubPullRequestCli.of({
     withVerifiedCredential,
@@ -1853,6 +1872,21 @@ export const make = Effect.gen(function* () {
         ),
 
     getPullRequestDetail,
+    getPullRequestPreview: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return graphqlRead({
+        cwd: input.cwd,
+        host: input.host,
+        operation: "getPullRequestPreview",
+        variables: [
+          ["-f", `owner=${owner}`],
+          ["-f", `name=${name}`],
+          ["-F", `number=${input.number}`],
+        ],
+        query: PULL_REQUEST_PREVIEW_GRAPHQL_QUERY,
+        decode: decodePullRequestPreviewJson,
+      });
+    },
     listWorkflowRunsRequiringApproval,
 
     getPullRequestStack: (input) => {
