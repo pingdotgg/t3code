@@ -8138,17 +8138,30 @@ export default function ChatView(props: ChatViewProps) {
     queueSendGate,
   ]);
 
-  const onSteerQueuedMessage = (id: string) => {
-    const message = queuedMessages.find((entry) => entry.id === id);
-    if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
-    void onSend(undefined, message.submissionIntent, undefined, message);
+  // The row handlers are read from refs at call-time so their identity stays
+  // stable and does not bust TimelineRowCtx on every ChatView render.
+  const queuedMessageActionsRef = useRef({
+    steer: (_id: string) => {},
+    remove: (_id: string) => {},
+  });
+  queuedMessageActionsRef.current = {
+    steer: (id) => {
+      const message = queuedMessages.find((entry) => entry.id === id);
+      if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
+      void onSend(undefined, message.submissionIntent, undefined, message);
+    },
+    remove: (id) => {
+      if (!activeThreadKey) return;
+      const message = useQueuedMessageStore.getState().remove(activeThreadKey, id);
+      if (message) restoreQueuedMessagesToComposer([message]);
+    },
   };
-
-  const onRemoveQueuedMessage = (id: string) => {
-    if (!activeThreadKey) return;
-    const message = useQueuedMessageStore.getState().remove(activeThreadKey, id);
-    if (message) restoreQueuedMessagesToComposer([message]);
-  };
+  const onSteerQueuedMessage = useCallback((id: string) => {
+    queuedMessageActionsRef.current.steer(id);
+  }, []);
+  const onRemoveQueuedMessage = useCallback((id: string) => {
+    queuedMessageActionsRef.current.remove(id);
+  }, []);
   // Stop also cancels the queue: the messages return to the composer instead
   // of starting a new turn the moment the interrupted one settles.
   restoreQueuedMessagesRef.current = restoreQueuedMessagesToComposer;
