@@ -151,12 +151,12 @@ struct ProjectPreferencesView: View {
                 }
                 projectSetting(.sidebarAutoSettleAfterDays) {
                     Picker("Settle after inactivity", selection: Binding(
-                        get: { effective.sidebarAutoSettleAfterDays.map(Int.init) ?? 0 },
-                        set: { save(.sidebarAutoSettleAfterDays, value: $0 == 0 ? .null : .number(Double($0))) }
+                        get: { effective.sidebarAutoSettleAfterDays ?? 0 },
+                        set: { save(.sidebarAutoSettleAfterDays, value: $0 == 0 ? .null : .number($0)) }
                     )) {
-                        Text("Never").tag(0)
+                        Text("Never").tag(0.0)
                         ForEach(settlementDays(effective.sidebarAutoSettleAfterDays), id: \.self) { days in
-                            Text(days == 1 ? "1 day" : "\(days) days").tag(days)
+                            Text(days == 1 ? "1 day" : "\(days.formatted()) days").tag(days)
                         }
                     }
                 }
@@ -211,8 +211,8 @@ struct ProjectPreferencesView: View {
         Binding(get: { value }, set: { save(key, value: .bool($0)) })
     }
 
-    private func settlementDays(_ current: Double?) -> [Int] {
-        Array(Set([1, 3, 7, 14, 30, 90] + (current.map { [Int($0)] } ?? []))).sorted()
+    private func settlementDays(_ current: Double?) -> [Double] {
+        Array(Set([1, 3, 7, 14, 30, 90] + (current.map { [$0] } ?? []))).sorted()
     }
 
     private func modelLabel(_ selection: ModelSelection?) -> String {
