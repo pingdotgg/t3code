@@ -197,7 +197,7 @@ function DeviceHostList({
         const error =
           check?.status === "failed"
             ? check.error
-            : check
+            : check?.status === "local"
               ? undefined
               : status?.status === "failed"
                 ? status.detail
