@@ -55,9 +55,22 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
     const stem = `t3-${VERSION}-${key}`;
     const stage = path.join(root, "stage", key);
     const contentDir = path.join(stage, stem);
-    for (const dir of ["client", "resource-monitor", "node_modules/node-pty"]) {
+    for (const dir of [
+      "client",
+      "resource-monitor",
+      "node_modules/node-pty",
+      "node_modules/@ff-labs/fff-node",
+    ]) {
       yield* fs.makeDirectory(path.join(contentDir, dir), { recursive: true });
     }
+    yield* fs.writeFileString(
+      path.join(contentDir, "node_modules/node-pty/package.json"),
+      '{ "name": "node-pty", "version": "1.1.0" }\n',
+    );
+    yield* fs.writeFileString(
+      path.join(contentDir, "node_modules/@ff-labs/fff-node/package.json"),
+      '{ "name": "@ff-labs/fff-node", "version": "0.9.4" }\n',
+    );
     yield* fs.writeFileString(path.join(contentDir, "client/index.html"), "<html></html>\n");
     yield* fs.writeFileString(
       path.join(contentDir, "t3"),
@@ -127,6 +140,13 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);
       assert.isUndefined(linuxManifest.bin);
+      // The shipped node_modules is declared, or npm prunes it as extraneous
+      // on the next install in the same project and the executable breaks.
+      assert.deepStrictEqual(linuxManifest.dependencies, {
+        "@ff-labs/fff-node": "0.9.4",
+        "node-pty": "1.1.0",
+      });
+      assert.deepStrictEqual(linuxManifest.bundleDependencies, ["@ff-labs/fff-node", "node-pty"]);
       // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
       // A root README, or npm would display a bundled dependency's.
