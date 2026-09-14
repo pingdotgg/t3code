@@ -320,9 +320,9 @@ const isTransportError = (error: unknown) =>
 /**
  * Polls Clerk's token endpoint until the user approves or denies the device
  * request in the browser (RFC 8628 §3.4/3.5). `authorization_pending` keeps
- * waiting, `slow_down` widens the interval, and transient failures are
- * retried on the next tick; the caller bounds the whole loop with the device
- * code's lifetime.
+ * waiting, while `slow_down` and transient failures widen the interval before
+ * the next tick; the caller bounds the whole loop with the device code's
+ * lifetime.
  */
 const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function* (
   metadata: Pick<CloudCliOAuthConfig, "tokenEndpoint" | "clientId">,
@@ -345,8 +345,14 @@ const pollDeviceToken = Effect.fn("cloud.cli_token.poll_device_token")(function*
       Effect.catchIf(isTransportError, () => Effect.succeedNone),
     );
     // Transport failures and upstream 5xx are transient while the device code
-    // is still valid; the next tick retries.
-    if (Option.isNone(response) || response.value.status >= 500) continue;
+    // is still valid. RFC 8628 §3.5 asks clients to back off before retrying,
+    // so widen the interval like slow_down; drain the body so the connection
+    // returns to the pool for the next poll.
+    if (Option.isNone(response) || response.value.status >= 500) {
+      if (Option.isSome(response)) yield* Effect.ignore(response.value.text);
+      interval = Duration.sum(interval, DEVICE_AUTHORIZATION_SLOW_DOWN_INCREMENT);
+      continue;
+    }
     if (response.value.status >= 200 && response.value.status < 300) {
       return yield* readTokenResponse(response.value, params);
     }

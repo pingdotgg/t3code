@@ -239,6 +239,31 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
     }),
   );
 
+  it.effect("backs off after a transient upstream failure and keeps polling", () =>
+    Effect.gen(function* () {
+      const server: DeviceFlowServer = {
+        requests: [],
+        tokenReplies: [{ status: 503, body: "upstream unavailable" }, tokenGranted],
+      };
+
+      const fiber = yield* CliTokenManager.deviceAuthorizationLogin(() => Effect.void).pipe(
+        Effect.provide(makeDeviceFlowLayer(server)),
+        provideTestEnv,
+        Effect.forkChild,
+      );
+
+      yield* TestClock.adjust(Duration.seconds(5));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      // The 5xx widens the 5s interval to 10s before the retry.
+      yield* TestClock.adjust(Duration.seconds(9));
+      assert.lengthOf(tokenRequests(server.requests), 1);
+      yield* TestClock.adjust(Duration.seconds(1));
+      const { token } = yield* Fiber.join(fiber);
+      assert.lengthOf(tokenRequests(server.requests), 2);
+      assert.equal(token.accessToken, "access-token-1");
+    }),
+  );
+
   it.effect("fails with a denied error when the user rejects the request", () =>
     Effect.gen(function* () {
       const server: DeviceFlowServer = {
