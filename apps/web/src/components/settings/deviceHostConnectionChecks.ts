@@ -17,9 +17,11 @@ export type DeviceHostCheck =
   | { status: "connected"; platforms: ReadonlyArray<DevicePlatformAvailability> }
   | { status: "failed"; error: string };
 
+const decodeDeviceHostDraft = Schema.decodeUnknownOption(SshDeviceHostConfig);
+
 export function parseDeviceHostDraft(host: SshDeviceHostConfig) {
   const { identityFile, ...rest } = host;
-  return Schema.decodeUnknownOption(SshDeviceHostConfig)({
+  return decodeDeviceHostDraft({
     ...rest,
     ...(identityFile?.trim() ? { identityFile: identityFile.trim() } : {}),
   });
