@@ -1389,9 +1389,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
               content: [
                 {
                   type: "text",
-                  text: JSON.stringify({
-                    apps: [{ pid: 1246, name: "Helium", bundle_id: "net.imput.helium" }],
-                  }),
+                  text: '{"apps":[{"pid":1246,"name":"Helium","bundle_id":"net.imput.helium"}]}',
                 },
               ],
             },
