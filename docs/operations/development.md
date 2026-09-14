@@ -58,6 +58,11 @@ The workarounds live in the [web entry](../../apps/web/src/bootstrap.ts) and
 
 #### Reusable dev credential
 
+Use this only on a hostname where you trust every service. Browsers send cookies to all ports
+on that hostname. Any service you visit there can receive the reusable admin credential,
+including services unrelated to T3 Code. If you run untrusted services on that hostname, keep
+normal per-environment pairing instead.
+
 To use one browser profile across web dev worktrees on the same hostname, generate one fixed
 value once:
 

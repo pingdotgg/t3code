@@ -304,10 +304,6 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
     const serverConfigEvents = Stream.unwrap(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(serverConfigUpdates);
-        yield* Effect.raceFirst(
-          Deferred.await(initialConfigDeferred).pipe(Effect.asVoid),
-          Deferred.await(serverConfigExit),
-        );
         const snapshot = yield* Ref.get(serverConfigState);
         if (Option.isNone(snapshot)) {
           return Stream.empty;
@@ -347,10 +343,27 @@ export const make = Effect.fn("RpcSessionFactory.make")(function* (
         );
       }),
     );
+    const validatedInitialConfig = initialConfig.pipe(
+      Effect.mapError(
+        (cause) =>
+          new RpcClientError.RpcClientError({
+            reason: new RpcClientError.RpcClientDefect({
+              message: `${connection.label} config subscription failed.`,
+              cause,
+            }),
+          }),
+      ),
+    );
     const subscribeServerConfig = (input: ServerConfigSubscriptionInput) =>
-      Equal.equals(input, serverConfigInput)
-        ? serverConfigEvents
-        : protocolClient[WS_METHODS.subscribeServerConfig](input);
+      Stream.unwrap(
+        validatedInitialConfig.pipe(
+          Effect.as(
+            Equal.equals(input, serverConfigInput)
+              ? serverConfigEvents
+              : protocolClient[WS_METHODS.subscribeServerConfig](input),
+          ),
+        ),
+      );
     const probe = initialConfig.pipe(
       Effect.flatMap((config) =>
         (config.environment.capabilities.connectionProbe === true
