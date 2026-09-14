@@ -341,13 +341,22 @@ public actor FeatureComposerDraftStore {
         threadKey + ":rewind-recovery"
     }
 
+    public func hasRewindRecovery(for threadKey: String) throws -> Bool {
+        try loadIfNeeded()[Self.rewindRecoveryKey(for: threadKey)] != nil
+    }
+
     /// Moving recovery into the composer is one disk write. A crash cannot
     /// leave the same recovered message available to append a second time.
     public func consumeRewindRecovery(for threadKey: String) throws -> FeatureComposerDraft? {
         var drafts = try loadIfNeeded()
         let recoveryKey = Self.rewindRecoveryKey(for: threadKey)
-        guard let recovery = drafts[recoveryKey]?.featureValue(fileStore: attachmentFileStore) else { return nil }
+        guard let savedRecovery = drafts[recoveryKey] else { return nil }
+        let recovery = savedRecovery.featureValue(fileStore: attachmentFileStore)
         let current = drafts[threadKey]?.featureValue(fileStore: attachmentFileStore) ?? FeatureComposerDraft()
+        guard recovery.attachments.count == savedRecovery.attachments.count,
+              current.attachments.count == (drafts[threadKey]?.attachments.count ?? 0) else {
+            throw FeatureConversationRewindError(message: "Some saved attachments could not be read. The recovery copy is kept.")
+        }
         guard current.attachments.count + recovery.attachments.count <= 8 else {
             throw FeatureConversationRewindError(message: "Make room for the saved prompt's attachments before recovering it.")
         }

@@ -929,7 +929,7 @@ public final class FeatureRootModel {
         let key = FeatureComposerDraftStore.threadKey(detail.thread)
         let recoveryKey = FeatureComposerDraftStore.rewindRecoveryKey(for: key)
         do {
-            guard try await draftStore.draft(for: recoveryKey) == nil else {
+            guard try await !draftStore.hasRewindRecovery(for: key) else {
                 pendingRewindRecoveryIDs.insert(threadID)
                 rewindErrors[threadID] = "Recover the saved prompt before starting another rewind."
                 return
@@ -960,10 +960,10 @@ public final class FeatureRootModel {
     public func checkRewindRecovery(for thread: FeatureThread) async {
         guard !rewindingThreadIDs.contains(thread.id) else { return }
         do {
-            let key = FeatureComposerDraftStore.rewindRecoveryKey(for: FeatureComposerDraftStore.threadKey(thread))
-            let saved = try await draftStore.draft(for: key)
+            let key = FeatureComposerDraftStore.threadKey(thread)
+            let saved = try await draftStore.hasRewindRecovery(for: key)
             guard !rewindingThreadIDs.contains(thread.id) else { return }
-            if saved != nil { pendingRewindRecoveryIDs.insert(thread.id) }
+            if saved { pendingRewindRecoveryIDs.insert(thread.id) }
             else { pendingRewindRecoveryIDs.remove(thread.id) }
         } catch {
             rewindErrors[thread.id] = "Could not read the saved rewind prompt. \(error.localizedDescription)"

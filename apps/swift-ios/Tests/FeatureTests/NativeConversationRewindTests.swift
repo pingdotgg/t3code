@@ -76,6 +76,29 @@ struct NativeConversationRewindTests {
     }
 
     @Test
+    func missingRecoveryFilesAreNotSilentlyConsumed() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(
+            fileURL: directory.appendingPathComponent("drafts.json"),
+            attachmentStorageRootURL: directory.appendingPathComponent("owned")
+        )
+        let recoveryKey = FeatureComposerDraftStore.rewindRecoveryKey(for: "thread")
+        try await store.setDraft(.init(attachments: [.init(
+            ownedFile: .init(fileName: "missing.txt", url: directory.appendingPathComponent("missing.txt"), byteCount: 3),
+            filename: "input.txt", mimeType: "text/plain"
+        )]), for: recoveryKey)
+        do {
+            _ = try await store.consumeRewindRecovery(for: "thread")
+            Issue.record("Missing files must keep their recovery record")
+        } catch {
+            #expect(error.localizedDescription.contains("recovery copy is kept"))
+        }
+        #expect(try await store.hasRewindRecovery(for: "thread"))
+        #expect(try await store.draft(for: "thread") == nil)
+    }
+
+    @Test
     func completionIgnoresOldAndUnrelatedEvents() async throws {
         let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
         stream.continuation.yield([
