@@ -6442,6 +6442,13 @@ export default function ChatView(props: ChatViewProps) {
       });
       if (!command) return;
 
+      if (command === "composer.focus") {
+        event.preventDefault();
+        event.stopPropagation();
+        focusComposer();
+        return;
+      }
+
       if (command === "thread.copyReference") {
         event.preventDefault();
         event.stopPropagation();
@@ -6643,6 +6650,7 @@ export default function ChatView(props: ChatViewProps) {
     supportsSettlement,
     confirmAndUnpinThread,
     copyActiveThreadReference,
+    focusComposer,
     previewPanelOpen,
     toggleRightPanel,
     toggleRightPanelMaximized,

@@ -72,6 +72,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "filePicker.toggle",
   "projectSearch.toggle",
   "themeEditor.toggle",
+  "composer.focus",
   "composer.stash",
   "chat.new",
   "chat.newLocal",
