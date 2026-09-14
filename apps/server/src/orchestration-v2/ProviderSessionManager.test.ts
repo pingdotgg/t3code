@@ -9101,7 +9101,7 @@ it.effect(
           yield* Effect.yieldNow;
         }
         const closeExit = yield* Fiber.join(closing);
-        const detachExit = yield* Fiber.await(detaching);
+        const detachExit = yield* Fiber.join(detaching);
 
         assert.isUndefined(
           skippedDetach,
@@ -9119,6 +9119,7 @@ it.effect(
         Effect.provide(
           makeTestLayer({
             state,
+            idleTimeoutMs: 3_600_000,
             mcpConfigs,
             extraAdapters: [
               makeProviderAdapter(state, {
