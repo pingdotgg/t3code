@@ -15,10 +15,12 @@ import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { CursorProviderCapabilitiesV2 } from "./Adapters/CursorAdapterV2.ts";
 import { GrokProviderCapabilitiesV2 } from "./Adapters/GrokAdapterV2.ts";
 import {
+  type CommandPolicyCapability,
   CommandPolicyCapabilityUnsupportedError,
   CommandPolicyV2,
   layer as commandPolicyLayer,
   resolveMessageDispatchIntent,
+  type SteeringExecutionPolicyV2,
 } from "./CommandPolicy.ts";
 
 const commandId = CommandId.make("command-policy-test");
@@ -188,6 +190,209 @@ layer("CommandPolicyV2", (it) => {
       });
 
       assert.equal(result, "interrupt_restart");
+    }),
+  );
+
+  it.effect("reports the actually missing capability across the steering matrix", () =>
+    Effect.gen(function* () {
+      const policy = yield* CommandPolicyV2;
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const fallbackDetail =
+        "providerInstanceId cannot steer active turns directly or by interrupt-and-restart";
+      const forcedRestartDetail =
+        "providerInstanceId cannot satisfy a required interrupt-and-restart";
+
+      const cases: ReadonlyArray<{
+        readonly forceRestart: boolean;
+        readonly supportsActiveSteering: boolean;
+        readonly supportsInterrupt: boolean;
+        readonly supportsSteeringByInterruptRestart: boolean;
+        readonly expected:
+          | { readonly type: "policy"; readonly value: SteeringExecutionPolicyV2 }
+          | {
+              readonly type: "error";
+              readonly capability: CommandPolicyCapability;
+              readonly detail: string;
+            };
+      }> = [
+        // Ordinary steering prefers direct active steering whenever available.
+        {
+          forceRestart: false,
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+          expected: { type: "policy", value: "active_steering" },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "policy", value: "active_steering" },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: true,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+          expected: { type: "policy", value: "active_steering" },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: true,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "policy", value: "active_steering" },
+        },
+        // Ordinary steering falls back to interrupt-and-restart, then to a
+        // typed error naming the capability that is actually missing.
+        {
+          forceRestart: false,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "policy", value: "interrupt_restart" },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: fallbackDetail,
+          },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
+        },
+        {
+          forceRestart: false,
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+          expected: { type: "error", capability: "active_steering", detail: fallbackDetail },
+        },
+        // A forced restart skips direct steering and only succeeds via
+        // interrupt-and-restart; every other combination must report that
+        // capability instead of claiming live steering is unsupported.
+        {
+          forceRestart: true,
+          supportsActiveSteering: true,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "policy", value: "interrupt_restart" },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: true,
+          expected: { type: "policy", value: "interrupt_restart" },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: true,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: false,
+          supportsInterrupt: true,
+          supportsSteeringByInterruptRestart: false,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: true,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: true,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+        {
+          forceRestart: true,
+          supportsActiveSteering: false,
+          supportsInterrupt: false,
+          supportsSteeringByInterruptRestart: false,
+          expected: {
+            type: "error",
+            capability: "interrupt_restart_steering",
+            detail: forcedRestartDetail,
+          },
+        },
+      ];
+
+      for (const entry of cases) {
+        const decision = policy.decideSteeringExecution({
+          commandId,
+          threadId,
+          providerInstanceId,
+          forceRestart: entry.forceRestart,
+          capabilities: capabilities((current) => ({
+            ...current,
+            turns: {
+              ...current.turns,
+              supportsActiveSteering: entry.supportsActiveSteering,
+              supportsInterrupt: entry.supportsInterrupt,
+              supportsSteeringByInterruptRestart: entry.supportsSteeringByInterruptRestart,
+            },
+          })),
+        });
+
+        if (entry.expected.type === "policy") {
+          assert.equal(yield* decision, entry.expected.value);
+          continue;
+        }
+
+        const error = yield* decision.pipe(Effect.flip);
+        assert.instanceOf(error, CommandPolicyCapabilityUnsupportedError);
+        assert.equal(error.commandId, commandId);
+        assert.equal(error.threadId, threadId);
+        assert.equal(error.providerInstanceId, providerInstanceId);
+        assert.equal(error.capability, entry.expected.capability);
+        assert.equal(error.detail, entry.expected.detail);
+      }
     }),
   );
 
