@@ -669,6 +669,7 @@ public struct WorkspaceView: View {
         showingEnvironments = false
         showingSettings = false
         showingUsageLimits = false
+        showingThreadArrangement = false
         renamingThread = nil
     }
 
