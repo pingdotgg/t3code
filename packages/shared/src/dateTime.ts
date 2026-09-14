@@ -36,3 +36,92 @@ export function compareDateTimeStrings(left: string, right: string): number {
   if (leftIsValid) return leftTimestamp - rightTimestamp;
   return left < right ? -1 : left > right ? 1 : 0;
 }
+
+interface DateTimeSelection<T> {
+  readonly item: T;
+  readonly timestamp: number;
+  readonly raw: string;
+}
+
+function compareDateTimeSelections<T>(
+  left: DateTimeSelection<T>,
+  right: DateTimeSelection<T>,
+  compareTie: (left: T, right: T) => number,
+): number {
+  const leftValid = !Number.isNaN(left.timestamp);
+  const rightValid = !Number.isNaN(right.timestamp);
+  if (leftValid !== rightValid) return leftValid ? 1 : -1;
+  if (leftValid) {
+    const byTime = left.timestamp - right.timestamp;
+    return byTime !== 0 ? byTime : compareTie(left.item, right.item);
+  }
+  const byRaw = left.raw < right.raw ? -1 : left.raw > right.raw ? 1 : 0;
+  return byRaw !== 0 ? byRaw : compareTie(left.item, right.item);
+}
+
+function siftUp<T>(
+  heap: Array<DateTimeSelection<T>>,
+  index: number,
+  compare: (left: DateTimeSelection<T>, right: DateTimeSelection<T>) => number,
+): void {
+  while (index > 0) {
+    const parent = (index - 1) >> 1;
+    if (compare(heap[index]!, heap[parent]!) <= 0) return;
+    const swap = heap[index]!;
+    heap[index] = heap[parent]!;
+    heap[parent] = swap;
+    index = parent;
+  }
+}
+
+function siftDown<T>(
+  heap: Array<DateTimeSelection<T>>,
+  index: number,
+  compare: (left: DateTimeSelection<T>, right: DateTimeSelection<T>) => number,
+): void {
+  for (;;) {
+    const left = index * 2 + 1;
+    const right = left + 1;
+    let largest = index;
+    if (left < heap.length && compare(heap[left]!, heap[largest]!) > 0) largest = left;
+    if (right < heap.length && compare(heap[right]!, heap[largest]!) > 0) largest = right;
+    if (largest === index) return;
+    const swap = heap[index]!;
+    heap[index] = heap[largest]!;
+    heap[largest] = swap;
+    index = largest;
+  }
+}
+
+export function selectFirstByDateTime<T>(
+  items: readonly T[],
+  getDate: (item: T) => string,
+  limit: number,
+  compareTie: (left: T, right: T) => number,
+): T[] {
+  if (limit <= 0) return [];
+  const compare = (left: DateTimeSelection<T>, right: DateTimeSelection<T>): number =>
+    compareDateTimeSelections(left, right, compareTie);
+  if (limit >= items.length) {
+    return items
+      .map((item) => {
+        const raw = getDate(item);
+        return { item, raw, timestamp: parseTimestamp(raw) };
+      })
+      .sort(compare)
+      .map((selection) => selection.item);
+  }
+  const heap: Array<DateTimeSelection<T>> = [];
+  for (const item of items) {
+    const raw = getDate(item);
+    const selection = { item, raw, timestamp: parseTimestamp(raw) };
+    if (heap.length < limit) {
+      heap.push(selection);
+      siftUp(heap, heap.length - 1, compare);
+    } else if (compare(selection, heap[0]!) < 0) {
+      heap[0] = selection;
+      siftDown(heap, 0, compare);
+    }
+  }
+  return heap.sort(compare).map((selection) => selection.item);
+}

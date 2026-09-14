@@ -15,7 +15,7 @@ import type {
 } from "@t3tools/contracts";
 import { threadPullRequestKeysEqual } from "@t3tools/shared/threadPullRequests";
 import { isImportedAgentSessionMessageId } from "@t3tools/contracts";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { selectFirstByDateTime } from "@t3tools/shared/dateTime";
 
 export type ThreadDetailReducerResult =
   | { readonly kind: "updated"; readonly thread: OrchestrationThread }
@@ -837,21 +837,18 @@ function retainMessagesAfterRevert(
         retainedMessageIds.has(message.id),
     ).length;
     const missingCount = Math.max(0, turnCount - retainedCount);
-    const fallbackMessages = messages
-      .filter(
+    if (missingCount === 0) continue;
+    const fallbackMessages = selectFirstByDateTime(
+      messages.filter(
         (message) =>
           message.role === role &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      // `.sort()`, not `.toSorted()`: `.filter()` above already returned a fresh array, and
-      // this is shared with mobile, which runs on Hermes and has no ES2023 array methods.
-      .sort(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
-      .slice(0, missingCount);
+      ),
+      (message) => message.createdAt,
+      missingCount,
+      (left, right) => left.id.localeCompare(right.id),
+    );
     for (const message of fallbackMessages) {
       retainedMessageIds.add(message.id);
     }

@@ -19,7 +19,7 @@ import {
   legacyThreadPullRequestKey,
   threadPullRequestKeysEqual,
 } from "@t3tools/shared/threadPullRequests";
-import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import { selectFirstByDateTime } from "@t3tools/shared/dateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Predicate from "effect/Predicate";
@@ -223,19 +223,17 @@ function retainThreadMessagesAfterRevert(
   ).length;
   const missingUserCount = Math.max(0, turnCount - retainedUserCount);
   if (missingUserCount > 0) {
-    const fallbackUserMessages = messages
-      .filter(
+    const fallbackUserMessages = selectFirstByDateTime(
+      messages.filter(
         (message) =>
           message.role === "user" &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
-      .slice(0, missingUserCount);
+      ),
+      (message) => message.createdAt,
+      missingUserCount,
+      (left, right) => left.id.localeCompare(right.id),
+    );
     for (const message of fallbackUserMessages) {
       retainedMessageIds.add(message.id);
     }
@@ -249,19 +247,17 @@ function retainThreadMessagesAfterRevert(
   ).length;
   const missingAssistantCount = Math.max(0, turnCount - retainedAssistantCount);
   if (missingAssistantCount > 0) {
-    const fallbackAssistantMessages = messages
-      .filter(
+    const fallbackAssistantMessages = selectFirstByDateTime(
+      messages.filter(
         (message) =>
           message.role === "assistant" &&
           !retainedMessageIds.has(message.id) &&
           (message.turnId === null || retainedTurnIds.has(message.turnId)),
-      )
-      .toSorted(
-        (left, right) =>
-          compareDateTimeStrings(left.createdAt, right.createdAt) ||
-          left.id.localeCompare(right.id),
-      )
-      .slice(0, missingAssistantCount);
+      ),
+      (message) => message.createdAt,
+      missingAssistantCount,
+      (left, right) => left.id.localeCompare(right.id),
+    );
     for (const message of fallbackAssistantMessages) {
       retainedMessageIds.add(message.id);
     }
