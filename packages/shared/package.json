@@ -211,6 +211,10 @@
       "types": "./src/assistantCitations.ts",
       "import": "./src/assistantCitations.ts"
     },
+    "./composerAppContext": {
+      "types": "./src/composerAppContext.ts",
+      "import": "./src/composerAppContext.ts"
+    },
     "./composerContextReferences": {
       "types": "./src/composerContextReferences.ts",
       "import": "./src/composerContextReferences.ts"

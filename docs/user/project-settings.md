@@ -61,6 +61,11 @@ starting the server. Agent sessions started after enabling get the computer use 
 Turning the switch off revokes T3 Code's managed access without touching MCP servers
 you configured yourself.
 
+To point an agent at a specific app, type `@` in the composer followed by the app's name
+and pick it from the list. The chip tells the agent which app to drive and how to find
+it with the computer use tools. Apps appear in that list only while Cua computer use is
+on for the selected environment.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, or image. The choice applies to

@@ -350,6 +350,14 @@ export function ComposerContextSheet(props: {
                 {record.kind === "mention" ? (
                   <ContextField label="Path" value={record.path} code />
                 ) : null}
+                {record.kind === "app" ? (
+                  <View className="gap-3">
+                    <ContextField label="App" value={record.name} />
+                    {record.bundleId ? (
+                      <ContextField label="Bundle" value={record.bundleId} code />
+                    ) : null}
+                  </View>
+                ) : null}
                 {record.kind === "skill" ? (
                   <View className="gap-3">
                     <ContextField label="Skill" value={record.name} />

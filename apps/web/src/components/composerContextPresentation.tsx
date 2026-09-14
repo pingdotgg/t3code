@@ -3,6 +3,8 @@ import { ReadOnlySourcePreview } from "./files/AttachmentFilePreview";
 import type { PreviewAnnotationPayload } from "@t3tools/contracts";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { videoMimeType } from "@t3tools/shared/video";
+import type { EnvironmentId } from "@t3tools/contracts";
+import { bundleIdFromAppContextId } from "@t3tools/shared/composerAppContext";
 import { GitPullRequestIcon, MessageCircleIcon, MousePointerClickIcon } from "lucide-react";
 import { createContext, type MouseEvent, type ReactElement, type ReactNode, use } from "react";
 
@@ -43,6 +45,7 @@ import {
   PULL_REQUEST_INLINE_CHIP_TONE_CLASS_NAMES,
 } from "./composerInlineChip";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
+import { NativeAppIcon } from "./NativeAppIcon";
 import {
   ContextChipPopover,
   ContextChipShell,
@@ -329,6 +332,32 @@ function UnresolvedContextChip(props: { label: string }) {
 
 interface ComposerContextRenderContext {
   label: string;
+  contextId: string;
+}
+
+/** Environment the draft targets, so reference-only chips can fetch host assets. */
+export const ComposerEnvironmentContext = createContext<EnvironmentId | null>(null);
+
+function AppContextChip(props: { contextId: string; label: string }) {
+  const environmentId = use(ComposerEnvironmentContext);
+  const bundleId = bundleIdFromAppContextId(props.contextId);
+  if (bundleId === undefined) return <UnresolvedContextChip label={props.label} />;
+  return (
+    <ContextChip
+      icon={
+        <NativeAppIcon
+          environmentId={environmentId}
+          bundleId={bundleId}
+          className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+        />
+      }
+      label={props.label}
+      kindLabel="App"
+      details={`Computer use · ${bundleId}`}
+      detailsMode="tooltip"
+      toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.app}
+    />
+  );
 }
 
 const composerContextPresentationRegistry = createContextPresentationRegistry<
@@ -336,8 +365,15 @@ const composerContextPresentationRegistry = createContextPresentationRegistry<
   ComposerContextRenderContext,
   ReactElement
 >({
-  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation"],
+  requiredKinds: ["image", "file", "terminal", "review-comment", "preview-annotation", "app"],
   handlers: [
+    {
+      kind: "app",
+      renderWithoutRecord: true,
+      render: (_entry, context) => (
+        <AppContextChip contextId={context.contextId} label={context.label} />
+      ),
+    },
     {
       kind: "terminal",
       canRender: (entry) => entry.kind === "terminal",
@@ -460,5 +496,6 @@ export function ComposerContextReferenceChip(props: {
   const records = use(ComposerContextRecordsContext);
   return composerContextPresentationRegistry.render(props.kind, records.get(props.contextId), {
     label: props.label,
+    contextId: props.contextId,
   });
 }

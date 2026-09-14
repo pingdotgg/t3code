@@ -3,6 +3,7 @@ import {
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
 } from "@t3tools/contracts";
 import type {
+  AppContextRecord,
   ComposerContextId,
   ComposerContextRecord,
   EnvironmentId,
@@ -18,6 +19,7 @@ import type {
   ThreadId,
 } from "@t3tools/contracts";
 import { upgradeLegacyContextMessage } from "@t3tools/shared/composerContextLegacy";
+import { appContextRecordFromReference } from "@t3tools/shared/composerAppContext";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   collectComposerContextReferences,
@@ -292,11 +294,19 @@ export function attachmentContextRecord(
 }
 
 export function buildMessageContext(input: {
+  /** Outgoing text; app references carry their payload in the link itself. */
+  prompt?: string;
   terminalContexts: ReadonlyArray<TerminalContextDraft>;
   reviewComments: ReadonlyArray<ReviewCommentContext>;
   previewAnnotations: ReadonlyArray<PreviewAnnotationPayload>;
   attachments?: ReadonlyArray<BoundComposerAttachment>;
 }): OrchestrationMessageContext | undefined {
+  const appRecords = new Map<string, AppContextRecord>();
+  for (const occurrence of collectComposerContextReferences(input.prompt ?? "")) {
+    if (occurrence.kind !== "app" || appRecords.has(occurrence.contextId)) continue;
+    const record = appContextRecordFromReference(occurrence);
+    if (record) appRecords.set(occurrence.contextId, record);
+  }
   // An annotation's screenshot travels as the image attachment that reuses its id.
   const screenshotAttachmentIds = new Set(
     (input.attachments ?? []).flatMap(({ attachment }) =>
@@ -312,6 +322,7 @@ export function buildMessageContext(input: {
       }),
     ),
     ...(input.attachments ?? []).map(attachmentContextRecord),
+    ...appRecords.values(),
   ];
   return records.length === 0 ? undefined : { version: 1, records };
 }

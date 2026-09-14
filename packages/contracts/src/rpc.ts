@@ -161,6 +161,7 @@ import {
   ProjectWriteFileInput,
   ProjectWriteFileResult,
 } from "./project.ts";
+import { AppsListError, AppsListInput, AppsListResult } from "./apps.ts";
 import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -270,6 +271,7 @@ export const WS_METHODS = {
   projectsReadFile: "projects.readFile",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
+  appsList: "apps.list",
   projectsWriteFile: "projects.writeFile",
 
   // Shell methods
@@ -854,6 +856,12 @@ const WsProjectsSearchEntriesRpc = Rpc.make(WS_METHODS.projectsSearchEntries, {
   error: Schema.Union([ProjectSearchEntriesError, EnvironmentAuthorizationError]),
 });
 
+const WsAppsListRpc = Rpc.make(WS_METHODS.appsList, {
+  payload: AppsListInput,
+  success: AppsListResult,
+  error: Schema.Union([AppsListError, EnvironmentAuthorizationError]),
+});
+
 const WsProjectsSearchContentsRpc = Rpc.make(WS_METHODS.projectsSearchContents, {
   payload: ProjectSearchContentsInput,
   success: ProjectSearchContentsResult,
@@ -1383,6 +1391,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsReadFileRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
+  WsAppsListRpc,
   WsProjectsWriteFileRpc,
   WsShellOpenInEditorRpc,
   WsFilesystemBrowseRpc,

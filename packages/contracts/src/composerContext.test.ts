@@ -107,6 +107,15 @@ const knownRecords: Record<(typeof COMPOSER_CONTEXT_KINDS)[number], Record<strin
   },
   mention: { ...base, kind: "mention", label: "@src/index.ts", path: "src/index.ts" },
   skill: { ...base, kind: "skill", label: "$pinchtab", name: "pinchtab" },
+  app: {
+    version: 1,
+    contextId: "ctx-app",
+    kind: "app",
+    label: "Helium",
+    name: "Helium",
+    bundleId: "net.imput.helium",
+    path: "/Applications/Helium.app",
+  },
 };
 
 describe("ComposerContextRecord", () => {

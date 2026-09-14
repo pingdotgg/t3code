@@ -25,6 +25,7 @@ export const COMPOSER_CONTEXT_KINDS = [
   "review-comment",
   "mention",
   "skill",
+  "app",
 ] as const;
 export type KnownComposerContextKind = (typeof COMPOSER_CONTEXT_KINDS)[number];
 
@@ -215,6 +216,18 @@ export const SkillContextRecord = Schema.Struct({
 });
 export type SkillContextRecord = typeof SkillContextRecord.Type;
 
+/** A desktop application the agent should drive through computer use. */
+export const AppContextRecord = Schema.Struct({
+  ...recordBase,
+  kind: Schema.Literal("app"),
+  name: TrimmedNonEmptyString.check(Schema.isMaxLength(160)),
+  bundleId: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(512), Schema.isPattern(/^[A-Za-z0-9._-]+$/u)),
+  ),
+  path: Schema.optional(ShortString),
+});
+export type AppContextRecord = typeof AppContextRecord.Type;
+
 /**
  * Catch-all for kinds this build does not know. Known discriminators are excluded so a
  * malformed known record fails its own schema instead of sliding through unchecked.
@@ -245,6 +258,7 @@ export const KnownComposerContextRecord = Schema.Union([
   ReviewCommentContextRecord,
   MentionContextRecord,
   SkillContextRecord,
+  AppContextRecord,
 ]);
 export type KnownComposerContextRecord = typeof KnownComposerContextRecord.Type;
 
