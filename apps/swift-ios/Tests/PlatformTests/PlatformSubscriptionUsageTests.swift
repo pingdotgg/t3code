@@ -46,7 +46,7 @@ struct PlatformSubscriptionUsageTests {
             var pending = T3SubscriptionUsageSnapshot.empty
             pending.scopeID = key.scopeID
             let result = PlatformSubscriptionUsageSnapshot.retainingPendingSnapshot(pending, previous: saved, isPending: true)
-            #expect(result.providers.allSatisfy(\.windows.isEmpty))
+            #expect(result.providers.allSatisfy { $0.windows.isEmpty })
         }
         let encoded = try #require(String(data: JSONEncoder().encode(saved), encoding: .utf8))
         #expect(!encoded.contains("user-a"))
