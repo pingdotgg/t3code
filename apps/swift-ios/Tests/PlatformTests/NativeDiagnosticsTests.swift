@@ -33,6 +33,24 @@ struct NativeDiagnosticsTests {
         #expect(report.periodEnd == .distantFuture)
     }
 
+    @Test func encodedSizeLimitDropsOldestReportsAndKeepsMemoryInSync() throws {
+        let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appending(path: "reports.json")
+        let diagnostics = NativeDiagnostics(fileURL: file)
+        let escaped = String(repeating: "\\\"", count: 125_000)
+        let reports = (0..<5).map { index in
+            report(json: "{\"index\":\(index),\"value\":\"\(escaped)\"}", date: Double(index))
+        }
+        diagnostics.receive(reports)
+        let restored = NativeDiagnostics(fileURL: file)
+        #expect(diagnostics.storageError == nil)
+        #expect(diagnostics.reports.count == 4)
+        #expect(diagnostics.reports.first?.id == reports[4].id)
+        #expect(diagnostics.reports.map(\.id) == restored.reports.map(\.id))
+        #expect(try Data(contentsOf: file).count <= NativeDiagnostics.maximumStorageBytes)
+    }
+
     @Test func clearSurvivesRestartAndRedeliveryWithoutDiscardingNewReports() {
         let directory = FileManager.default.temporaryDirectory.appending(path: UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: directory) }

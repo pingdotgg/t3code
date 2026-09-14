@@ -103,20 +103,23 @@ final class NativeDiagnostics: NSObject, MXMetricManagerSubscriber {
         for report in incoming where clearedThrough.map({ report.periodEnd > $0 }) ?? true {
             byID[report.id] = report
         }
-        reports = Array(byID.values.sorted {
+        var updatedReports = Array(byID.values.sorted {
             if $0.periodEnd != $1.periodEnd { return $0.periodEnd > $1.periodEnd }
             return $0.id < $1.id
         }.prefix(Self.maximumReports))
         do {
-            let data = try JSONEncoder().encode(Archive(reports: reports, clearedThrough: clearedThrough))
-            guard data.count <= Self.maximumStorageBytes else {
-                storageError = "Reports exceed the size limit."
-                return
+            var data = try JSONEncoder().encode(Archive(reports: updatedReports, clearedThrough: clearedThrough))
+            // Encoding JSON as a string escapes it again. Drop older reports to
+            // fit the stored byte limit, as well as the report count limit.
+            while data.count > Self.maximumStorageBytes, !updatedReports.isEmpty {
+                updatedReports.removeLast()
+                data = try JSONEncoder().encode(Archive(reports: updatedReports, clearedThrough: clearedThrough))
             }
             try FileManager.default.createDirectory(
                 at: fileURL.deletingLastPathComponent(), withIntermediateDirectories: true
             )
             try data.write(to: fileURL, options: [.atomic, .completeFileProtectionUnlessOpen])
+            reports = updatedReports
             storageError = nil
         } catch {
             storageError = "Could not save reports."
