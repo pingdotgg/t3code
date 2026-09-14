@@ -44,7 +44,7 @@ The setup terminal uses the home directory and environment configured for the
 selected provider instance. Sensitive values remain redacted in Settings and
 terminal metadata while the terminal process can use them.
 
-## Import your projects
+## Add your projects
 
 T3 Code finds directories that Claude Code or Codex has used. Git repositories
 are listed first, newest activity on top. When the remote is on GitHub, the
@@ -58,10 +58,21 @@ directories under `Documents/Codex`, and anything under `Downloads` are not
 offered.
 
 A large or malformed history can reach the scan limit. T3 Code keeps the
-projects it found and warns when projects or conversations may be missing.
+projects it found and warns when some projects may be missing.
 
-Imported projects include Codex and Claude conversations active within the last
-30 days. You can continue those conversations in T3 Code.
+By default, setup only adds or reuses the selected projects. It does not create
+threads from Claude Code or Codex history.
+
+To bring in recent conversations, enable **Import recent conversation history**
+and review the preview. The preview is grouped by computer and project. Select
+the individual conversations you want before continuing; the button shows the
+exact number selected. New computers and projects discovered after the preview
+are not included unless you return to the project list and review again.
+The preview includes eligible conversations active within the last 30 days.
+
+Conversation preview and selection require a current T3 Code server on every
+selected computer. Turn off conversation history to add projects from an older
+server, or update the server before reviewing history.
 
 Conversation import is best effort. T3 Code keeps the first user prompt and the
 newest remaining visible user and assistant messages, with 200 messages total.
@@ -72,10 +83,11 @@ conversation so T3 Code does not remove user text. It reads one conversation at
 a time and skips files larger than 16 MiB. It ignores malformed records and skips
 unreadable or unparseable conversations.
 
-Each import attempt reads up to 100 conversation files and 64 MiB per project,
-with up to 100,000 input records. Run import again to continue a large batch.
-Completed conversations are not imported again. You can continue without the
-remaining history.
+Each preview reads a bounded set of recent conversation files. T3 Code reports
+when more work was deferred. Completed conversations are not imported again.
+If a conversation changes after preview, review the preview again before
+importing it.
 
-You can continue without configuring agents or importing projects, or return to an earlier step
-using the setup progress bar. Navigation pauses while an import is running.
+You can continue without configuring agents or adding projects, or return to an
+earlier step using the setup progress bar. Navigation pauses while setup is
+running.

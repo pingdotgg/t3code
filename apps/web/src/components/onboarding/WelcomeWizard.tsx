@@ -1,6 +1,8 @@
 import { useAuth } from "@clerk/react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
+  AgentSessionImportSelection,
+  AgentSessionPreviewResult,
   AgentSessionProjectCandidate,
   EnvironmentId,
   ProjectId,
@@ -34,10 +36,13 @@ import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   groupOnboardingProjects,
+  onboardingHistorySessionKey,
   partitionOnboardingProjects,
   onboardingProjectKey,
   resolveOnboardingLandingProject,
   resolveOnboardingProjectId,
+  selectedOnboardingHistorySessions,
+  summarizeOnboardingHistoryImport,
   type OnboardingProjectGroup,
 } from "../../onboarding/projectImport.logic";
 import {
@@ -48,8 +53,8 @@ import {
 } from "../../onboarding/providerReadiness.logic";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { newProjectId, randomUUID } from "../../lib/utils";
-import { agentSessionImport } from "../../state/agentSessions";
-import { readProjects, useProjects } from "../../state/entities";
+import { agentSessionImport, agentSessionPreview } from "../../state/agentSessions";
+import { readProjects, useProjects, useServerConfigs } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironment } from "../../state/environments";
 import { isOnboardingRelayEnvironment } from "../../onboarding/targetEnvironment.logic";
 import { useProjectScans } from "../../onboarding/useProjectScans";
@@ -76,6 +81,7 @@ import { Dialog } from "../ui/dialog";
 import { toastManager } from "../ui/toast";
 import { cn } from "../../lib/utils";
 import { formatRelativeTime } from "../../timestampFormat";
+import { OnboardingHistoryPreview } from "./OnboardingHistoryPreview";
 
 /**
  * First-run welcome wizard. Rendered over the workspace at `/welcome` on a
@@ -962,13 +968,20 @@ function ImportStep({
 }) {
   const { environments } = useEnvironments();
   const createProject = useAtomCommand(projectEnvironment.create, { reportFailure: false });
+  const previewThreads = useAtomCommand(agentSessionPreview, { reportFailure: false });
   const importThreads = useAtomCommand(agentSessionImport, { reportFailure: false });
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const [selectedPaths, setSelectedPaths] = useState<ReadonlySet<string> | null>(null);
+  const [historyEnabled, setHistoryEnabled] = useState(false);
+  const [historyReview, setHistoryReview] = useState<HistoryReview | null>(null);
+  const [isPreviewing, setIsPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState("");
   const [importError, setImportError] = useState("");
+  const [historyNeedsRefresh, setHistoryNeedsRefresh] = useState(false);
   const [landingProject, setLandingProject] = useState<ScopedProjectRef | null>(null);
   // Keep project creation attempts separate from completed history imports so both can retry.
-  const importedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
+  const preparedProjectsRef = useRef(new Map<string, ScopedProjectRef>());
   const projectsWithImportedHistoryRef = useRef(new Map<string, ScopedProjectRef>());
   const lastImportSelectionRef = useRef<ReadonlyArray<string>>([]);
   const projectAttemptsRef = useRef(
@@ -1017,13 +1030,38 @@ function ImportStep({
     () => selectedPaths ?? new Set(recent.map((candidate) => candidate.key)),
     [selectedPaths, recent],
   );
-  const selected = candidates.filter((candidate) => selectedKeys.has(candidate.key));
+  const selected = useMemo(
+    () => candidates.filter((candidate) => selectedKeys.has(candidate.key)),
+    [candidates, selectedKeys],
+  );
+  const environmentLabels = useMemo(
+    () =>
+      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
+    [environments],
+  );
+  const reviewedProjects = historyReview?.projects ?? null;
+  const historyPreviews = historyReview?.previews ?? EMPTY_HISTORY_PREVIEWS;
+  const selectedHistoryKeys = historyReview?.selectedKeys ?? EMPTY_HISTORY_SELECTION;
+  const previewedSessionCount = [...historyPreviews.values()].reduce(
+    (count, preview) => count + preview.sessions.length,
+    0,
+  );
+  const selectedHistoryCount = selectedHistoryKeys.size;
+  const setupProjectCount = reviewedProjects?.length ?? selected.length;
+  const unsupportedHistoryEnvironments = useMemo(() => {
+    const selectedEnvironmentIds = new Set(selected.map((candidate) => candidate.environmentId));
+    return [...selectedEnvironmentIds].filter(
+      (environmentId) =>
+        serverConfigs.get(environmentId)?.environment.capabilities.agentSessionImportPreview !==
+        true,
+    );
+  }, [selected, serverConfigs]);
 
   const finishAfterImport = () => {
     const projectRef = resolveOnboardingLandingProject(
       lastImportSelectionRef.current,
       projectsWithImportedHistoryRef.current,
-      importedProjectsRef.current,
+      preparedProjectsRef.current,
     );
     if (projectRef === undefined) {
       void onDone();
@@ -1033,7 +1071,55 @@ function ImportStep({
     setLandingProject(projectRef);
   };
 
-  const runImport = async (selection: typeof candidates) => {
+  const reviewHistory = async (selection: ReadonlyArray<ImportCandidate>) => {
+    if (isImporting || isPreviewing || selection.length === 0) return;
+    const unsupported = selection.filter(
+      (candidate) =>
+        serverConfigs.get(candidate.environmentId)?.environment.capabilities
+          .agentSessionImportPreview !== true,
+    );
+    if (unsupported.length > 0) return;
+
+    setIsPreviewing(true);
+    setPreviewError("");
+    setImportError("");
+    setHistoryNeedsRefresh(false);
+    const wasRefreshingReview = reviewedProjects !== null;
+    const previewGeneration = importGenerationRef.current;
+    const outcomes = await Promise.all(
+      selection.map(async (candidate) => ({
+        candidate,
+        result: await previewThreads({
+          environmentId: candidate.environmentId,
+          input: { workspaceRoot: candidate.path },
+        }),
+      })),
+    );
+    if (previewGeneration !== importGenerationRef.current) return;
+    setIsPreviewing(false);
+
+    if (outcomes.some(({ result }) => result._tag !== "Success")) {
+      setPreviewError("Could not preview conversations on every selected project. Try again.");
+      setHistoryNeedsRefresh(wasRefreshingReview);
+      return;
+    }
+
+    const previews = new Map<string, AgentSessionPreviewResult>();
+    const nextSelectedKeys = new Set<string>();
+    for (const { candidate, result } of outcomes) {
+      if (result._tag !== "Success") continue;
+      previews.set(candidate.key, result.value);
+      for (const session of result.value.sessions) {
+        nextSelectedKeys.add(onboardingHistorySessionKey(candidate.key, session));
+      }
+    }
+    setHistoryReview({ projects: selection, previews, selectedKeys: nextSelectedKeys });
+  };
+
+  const runImport = async (
+    selection: ReadonlyArray<ImportCandidate>,
+    historySelection: ReadonlyMap<string, ReadonlyArray<AgentSessionImportSelection>> | null,
+  ) => {
     if (isImporting) return;
     if (selection.length === 0) {
       void onDone();
@@ -1043,30 +1129,27 @@ function ImportStep({
     setImportError("");
     lastImportSelectionRef.current = selection.map((candidate) => candidate.key);
     const importGeneration = importGenerationRef.current;
-    const importedProjects = importedProjectsRef.current;
+    const preparedProjects = preparedProjectsRef.current;
     const projectAttempts = projectAttemptsRef.current;
-    // Interrupted imports are neither failures nor successes — the command was
-    // superseded or the environment dropped — but they still didn't land, so
-    // they must not read as "imported everything". Retries skip paths that
-    // already landed this session (re-creating them would only trip the
-    // duplicate-root invariant and read as a failure).
-    let importedProjectsCount =
-      importedProjects.size > 0
-        ? selection.filter((candidate) => importedProjects.has(candidate.key)).length
-        : 0;
+    let completedProjectsCount = 0;
     let importedThreadCount = 0;
-    let skippedThreadCount = 0;
+    let failedThreadCount = 0;
+    let deferredThreadCount = 0;
+    let failedProjectCount = 0;
     const refreshEnvironments = new Set<EnvironmentId>();
     for (const candidate of selection) {
       const { environmentId } = candidate;
       if (
         importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
+        preparedProjects !== preparedProjectsRef.current
       ) {
         return;
       }
-      if (importedProjects.has(candidate.key)) continue;
-      let projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      let projectRef = preparedProjects.get(candidate.key);
+      let projectId = projectRef?.projectId ?? null;
+      if (projectId === null) {
+        projectId = resolveOnboardingProjectId(readProjects(), environmentId, candidate);
+      }
       if (projectId === null) {
         let attempt = projectAttempts.get(candidate.key);
         if (attempt === undefined) {
@@ -1091,7 +1174,7 @@ function ImportStep({
         });
         if (
           importGeneration !== importGenerationRef.current ||
-          importedProjects !== importedProjectsRef.current
+          preparedProjects !== preparedProjectsRef.current
         ) {
           return;
         }
@@ -1099,36 +1182,47 @@ function ImportStep({
           if (!isAtomCommandInterrupted(result)) {
             projectAttempts.delete(candidate.key);
             refreshEnvironments.add(environmentId);
+            failedProjectCount += 1;
           }
           continue;
         }
       }
 
+      projectRef = scopeProjectRef(environmentId, projectId);
+      preparedProjects.set(candidate.key, projectRef);
+      const selectedSessions = historySelection?.get(candidate.key) ?? [];
+      if (historySelection === null || selectedSessions.length === 0) {
+        completedProjectsCount += 1;
+        continue;
+      }
+
       const threadImportResult = await importThreads({
         environmentId,
-        input: { projectId, expectedWorkspaceRoot: candidate.path },
+        input: {
+          projectId,
+          expectedWorkspaceRoot: candidate.path,
+          selection: selectedSessions,
+        },
       });
       if (
         importGeneration !== importGenerationRef.current ||
-        importedProjects !== importedProjectsRef.current
+        preparedProjects !== preparedProjectsRef.current
       ) {
         return;
       }
       if (threadImportResult._tag === "Success") {
-        importedThreadCount += threadImportResult.value.importedCount;
-        skippedThreadCount += threadImportResult.value.skippedCount;
-        if (threadImportResult.value.importedCount > 0) {
-          projectsWithImportedHistoryRef.current.set(
-            candidate.key,
-            scopeProjectRef(environmentId, projectId),
-          );
+        const summary = summarizeOnboardingHistoryImport(threadImportResult.value);
+        importedThreadCount += summary.importedCount;
+        failedThreadCount += summary.failedCount;
+        deferredThreadCount += summary.deferredCount;
+        if (summary.importedCount > 0) {
+          projectsWithImportedHistoryRef.current.set(candidate.key, projectRef);
         }
-        if (threadImportResult.value.skippedCount === 0) {
-          importedProjectsCount += 1;
-          importedProjects.set(candidate.key, scopeProjectRef(environmentId, projectId));
+        if (summary.incompleteCount === 0) {
+          completedProjectsCount += 1;
         }
       } else if (!isAtomCommandInterrupted(threadImportResult)) {
-        projectAttempts.delete(candidate.key);
+        failedThreadCount += selectedSessions.length;
         refreshEnvironments.add(environmentId);
       }
     }
@@ -1136,21 +1230,28 @@ function ImportStep({
       if (refreshEnvironments.has(scan.environmentId)) scan.refresh();
     }
     setIsImporting(false);
-    if (importedProjectsCount < selection.length) {
-      if (importedThreadCount > 0 && skippedThreadCount > 0) {
+    if (completedProjectsCount < selection.length) {
+      if (failedThreadCount > 0 || deferredThreadCount > 0) {
+        const prefix =
+          importedThreadCount > 0
+            ? `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "conversation" : "conversations"}. `
+            : "";
+        const details = [
+          failedThreadCount > 0
+            ? `${failedThreadCount} ${failedThreadCount === 1 ? "selection changed or failed" : "selections changed or failed"}`
+            : null,
+          deferredThreadCount > 0
+            ? `${deferredThreadCount} ${deferredThreadCount === 1 ? "selection was deferred" : "selections were deferred"}`
+            : null,
+        ].filter((part) => part !== null);
+        setImportError(`${prefix}${details.join("; ")}. Review the conversation preview again.`);
+        setHistoryNeedsRefresh(true);
+      } else if (failedProjectCount > 0) {
         setImportError(
-          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. ${skippedThreadCount} ${skippedThreadCount === 1 ? "thread" : "threads"} could not be imported.`,
-        );
-      } else if (skippedThreadCount > 0) {
-        setImportError(
-          `${skippedThreadCount} ${skippedThreadCount === 1 ? "thread could" : "threads could"} not be imported.`,
-        );
-      } else if (importedThreadCount > 0) {
-        setImportError(
-          `Imported ${importedThreadCount} ${importedThreadCount === 1 ? "thread" : "threads"}. Some thread history could not be imported.`,
+          `${failedProjectCount} ${failedProjectCount === 1 ? "project could" : "projects could"} not be added. Try again.`,
         );
       } else {
-        setImportError("Could not import thread history.");
+        setImportError("Could not finish adding the selected projects.");
       }
       return;
     }
@@ -1169,7 +1270,7 @@ function ImportStep({
         </div>
         <div className="flex justify-end">
           <Button variant="ghost-muted" onClick={() => void onDone()}>
-            Do not import projects
+            Do not add projects
           </Button>
         </div>
       </div>
@@ -1179,9 +1280,9 @@ function ImportStep({
   return (
     <StepShell
       title="Choose your projects"
-      description="Import projects and conversations from your selected computers."
+      description="Add projects from your selected computers. Conversation history stays off unless you choose it below."
     >
-      {candidates.length > 0 ? (
+      {reviewedProjects === null && candidates.length > 0 ? (
         <div className="mt-5 flex items-center justify-between gap-3 text-xs text-muted-foreground">
           <span role="status">
             {selected.length} of {candidates.length} selected
@@ -1206,79 +1307,197 @@ function ImportStep({
           </div>
         </div>
       ) : null}
-      <ScrollArea
-        scrollFade
-        className="mt-2 h-auto max-h-80 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
-      >
-        <div className="space-y-5 pr-3">
-          {scans.map((scan) => {
-            const scanCandidates = candidates.filter(
-              (candidate) => candidate.environmentId === scan.environmentId,
-            );
-            const label =
-              environments.find((environment) => environment.environmentId === scan.environmentId)
-                ?.label ?? "Computer";
-            return (
-              <fieldset
-                key={scan.environmentId}
-                className="min-w-0 space-y-0.5"
-                disabled={isImporting}
-              >
-                {scans.length > 1 ? (
-                  <legend className="mb-2 text-sm font-medium">{label}</legend>
-                ) : null}
-                {scan.isPending && scan.data === null ? (
-                  <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
-                    <Spinner className="size-4" />
-                    Looking for projects…
-                  </div>
-                ) : scan.error !== null ? (
-                  <div
-                    role="alert"
-                    className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
-                  >
-                    <span>Could not check projects. {scan.error}</span>
-                    <Button variant="ghost" size="sm" onClick={scan.refresh}>
-                      Retry
-                    </Button>
-                  </div>
-                ) : scanCandidates.length === 0 ? (
-                  <p className="py-2 text-sm text-muted-foreground">
-                    No existing Claude Code or Codex projects found.
-                  </p>
-                ) : null}
-                {scan.data?.truncated ? (
-                  <p className="text-xs text-muted-foreground" role="status">
-                    {SCAN_LIMIT_MESSAGE}
-                  </p>
-                ) : null}
-                <ImportCandidateList
-                  candidates={scanCandidates}
-                  selectedKeys={selectedKeys}
-                  onSelectionChange={setSelectedPaths}
-                />
-              </fieldset>
-            );
-          })}
+      {reviewedProjects === null ? (
+        <ScrollArea
+          scrollFade
+          className="mt-2 h-auto max-h-72 [&_[data-slot=scroll-area-scrollbar]]:opacity-100"
+        >
+          <div className="space-y-5 pr-3">
+            {scans.map((scan) => {
+              const scanCandidates = candidates.filter(
+                (candidate) => candidate.environmentId === scan.environmentId,
+              );
+              const label =
+                environments.find((environment) => environment.environmentId === scan.environmentId)
+                  ?.label ?? "Computer";
+              return (
+                <fieldset
+                  key={scan.environmentId}
+                  className="min-w-0 space-y-0.5"
+                  disabled={isImporting}
+                >
+                  {scans.length > 1 ? (
+                    <legend className="mb-2 text-sm font-medium">{label}</legend>
+                  ) : null}
+                  {scan.isPending && scan.data === null ? (
+                    <div className="flex items-center gap-2 py-3 text-sm text-muted-foreground">
+                      <Spinner className="size-4" />
+                      Looking for projects…
+                    </div>
+                  ) : scan.error !== null ? (
+                    <div
+                      role="alert"
+                      className="flex items-center justify-between gap-3 text-sm text-muted-foreground"
+                    >
+                      <span>Could not check projects. {scan.error}</span>
+                      <Button variant="ghost" size="sm" onClick={scan.refresh}>
+                        Retry
+                      </Button>
+                    </div>
+                  ) : scanCandidates.length === 0 ? (
+                    <p className="py-2 text-sm text-muted-foreground">
+                      No existing Claude Code or Codex projects found.
+                    </p>
+                  ) : null}
+                  {scan.data?.truncated ? (
+                    <p className="text-xs text-muted-foreground" role="status">
+                      {SCAN_LIMIT_MESSAGE}
+                    </p>
+                  ) : null}
+                  <ImportCandidateList
+                    candidates={scanCandidates}
+                    selectedKeys={selectedKeys}
+                    onSelectionChange={setSelectedPaths}
+                  />
+                </fieldset>
+              );
+            })}
+          </div>
+        </ScrollArea>
+      ) : (
+        <OnboardingHistoryPreview
+          projects={reviewedProjects}
+          previews={historyPreviews}
+          environmentLabels={environmentLabels}
+          selectedKeys={selectedHistoryKeys}
+          onSelectionChange={(next) =>
+            setHistoryReview((current) =>
+              current === null ? null : { ...current, selectedKeys: next },
+            )
+          }
+        />
+      )}
+      {reviewedProjects === null && candidates.length > 0 ? (
+        <label className="mt-4 flex cursor-pointer items-start gap-2.5 border-t border-border/60 pt-4">
+          <Checkbox
+            checked={historyEnabled}
+            disabled={isImporting || isPreviewing}
+            onCheckedChange={(checked) => {
+              setHistoryEnabled(checked === true);
+              setPreviewError("");
+            }}
+          />
+          <span className="min-w-0">
+            <span className="block text-sm font-medium">Import recent conversation history</span>
+            <span className="block text-xs text-muted-foreground">
+              Off by default. You will review and select individual conversations first.
+            </span>
+          </span>
+        </label>
+      ) : null}
+      {historyEnabled && reviewedProjects === null && unsupportedHistoryEnvironments.length > 0 ? (
+        <p className="mt-3 text-sm text-muted-foreground" role="status">
+          Update T3 Code on{" "}
+          {unsupportedHistoryEnvironments.length === 1 ? "this computer" : "these computers"} to
+          preview and select conversation history. You can still add the projects without it.
+        </p>
+      ) : null}
+      {reviewedProjects !== null ? (
+        <div className="mt-3 flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span role="status">
+            {selectedHistoryCount} of {previewedSessionCount} conversations selected
+          </span>
+          <Button
+            variant="ghost"
+            size="xs"
+            disabled={isImporting || isPreviewing}
+            onClick={() => {
+              setHistoryReview(null);
+              setImportError("");
+              setHistoryNeedsRefresh(false);
+            }}
+          >
+            Change projects
+          </Button>
         </div>
-      </ScrollArea>
+      ) : null}
+      {previewError ? <p className="mt-3 text-sm text-destructive">{previewError}</p> : null}
       {importError ? <p className="mt-3 text-sm text-destructive">{importError}</p> : null}
       <div className="mt-6 flex flex-wrap items-center justify-end gap-3">
         <Button
           variant="ghost-muted"
-          disabled={isImporting}
-          onClick={importError ? finishAfterImport : () => void onDone()}
+          disabled={isImporting || isPreviewing}
+          onClick={
+            importError
+              ? finishAfterImport
+              : reviewedProjects !== null
+                ? () => void runImport(reviewedProjects, null)
+                : () => void onDone()
+          }
         >
-          {importError ? "Continue without the rest" : "Do not import projects"}
+          {importError ? (
+            <>
+              <span className="sm:hidden">Continue</span>
+              <span className="max-sm:hidden">Continue without the rest</span>
+            </>
+          ) : reviewedProjects !== null ? (
+            "Add projects only"
+          ) : (
+            "Do not add projects"
+          )}
         </Button>
         <Button
           autoFocus
-          disabled={isImporting || selected.length === 0}
-          onClick={() => void runImport(selected)}
+          disabled={
+            isImporting ||
+            isPreviewing ||
+            setupProjectCount === 0 ||
+            (historyEnabled &&
+              reviewedProjects === null &&
+              unsupportedHistoryEnvironments.length > 0)
+          }
+          onClick={() => {
+            if (historyEnabled && reviewedProjects === null) {
+              void reviewHistory(selected);
+              return;
+            }
+            if (historyNeedsRefresh && reviewedProjects !== null) {
+              void reviewHistory(reviewedProjects);
+              return;
+            }
+            const setupProjects = reviewedProjects ?? selected;
+            const historySelection =
+              reviewedProjects === null
+                ? null
+                : new Map(
+                    reviewedProjects.map((candidate) => [
+                      candidate.key,
+                      selectedOnboardingHistorySessions(
+                        candidate.key,
+                        historyPreviews.get(candidate.key)?.sessions ?? [],
+                        selectedHistoryKeys,
+                      ),
+                    ]),
+                  );
+            void runImport(setupProjects, historySelection);
+          }}
         >
-          {isImporting
-            ? "Importing…"
-            : `Import ${selected.length} ${selected.length === 1 ? "project" : "projects"}`}
+          {isPreviewing ? (
+            "Loading preview…"
+          ) : isImporting ? (
+            "Adding…"
+          ) : historyNeedsRefresh ? (
+            <>
+              <span className="sm:hidden">Review again</span>
+              <span className="max-sm:hidden">Review conversations again</span>
+            </>
+          ) : historyEnabled && reviewedProjects === null ? (
+            "Review conversations"
+          ) : reviewedProjects !== null && selectedHistoryCount > 0 ? (
+            `Add ${reviewedProjects.length} ${reviewedProjects.length === 1 ? "project" : "projects"} + ${selectedHistoryCount} ${selectedHistoryCount === 1 ? "conversation" : "conversations"}`
+          ) : (
+            `Add ${setupProjectCount} ${setupProjectCount === 1 ? "project" : "projects"}`
+          )}
         </Button>
       </div>
     </StepShell>
@@ -1289,6 +1508,15 @@ type ImportCandidate = AgentSessionProjectCandidate & {
   readonly environmentId: EnvironmentId;
   readonly key: string;
 };
+
+interface HistoryReview {
+  readonly projects: ReadonlyArray<ImportCandidate>;
+  readonly previews: ReadonlyMap<string, AgentSessionPreviewResult>;
+  readonly selectedKeys: ReadonlySet<string>;
+}
+
+const EMPTY_HISTORY_PREVIEWS: ReadonlyMap<string, AgentSessionPreviewResult> = new Map();
+const EMPTY_HISTORY_SELECTION: ReadonlySet<string> = new Set();
 
 /**
  * Repositories first, newest activity on top. Clones of one repository share

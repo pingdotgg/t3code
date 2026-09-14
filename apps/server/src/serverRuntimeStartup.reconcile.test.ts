@@ -150,7 +150,7 @@ it.effect("marks active running sessions that have persisted resume state", () =
             }),
           ),
         ),
-      upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+      upsert: (binding) => Effect.sync(() => upserts.push(binding)).pipe(Effect.as(true)),
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
@@ -279,6 +279,7 @@ it.effect.each(
               Effect.flatMap((firstMarkerCleared) =>
                 firstMarkerCleared ? Deferred.succeed(continuationCleared, undefined) : Effect.void,
               ),
+              Effect.as(true),
             ),
           recordImportedTranscript: () => Effect.die("unused"),
           getProvider: () => Effect.die("unused"),
@@ -412,7 +413,7 @@ it.effect("does not continue archived or deleted marked sessions", () => {
           }),
         );
       },
-      upsert: () => Effect.void,
+      upsert: () => Effect.succeed(true),
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
@@ -468,7 +469,7 @@ it.effect("retries continuation preparation before settling a persistent failure
             },
           }),
         ),
-      upsert: () => Effect.void,
+      upsert: () => Effect.succeed(true),
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
@@ -540,7 +541,7 @@ it.effect("reconciles multiple active and archived orphans but skips live sessio
             }),
           ),
         ),
-      upsert: (binding) => Effect.sync(() => upserts.push(binding)),
+      upsert: (binding) => Effect.sync(() => upserts.push(binding)).pipe(Effect.as(true)),
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
@@ -658,7 +659,7 @@ it.effect("retries failed projections and continues after a persistent failure",
     threads: [transient, persistent, later],
     directory: {
       getBinding: () => Effect.succeed(Option.none()),
-      upsert: () => Effect.void,
+      upsert: () => Effect.succeed(true),
       recordImportedTranscript: () => Effect.die("unused"),
       getProvider: () => Effect.die("unused"),
       listThreadIds: () => Effect.die("unused"),
@@ -774,6 +775,7 @@ for (const scenario of [
         upsert: (binding) =>
           Effect.sync(() => {
             upserts.push(binding);
+            return true;
           }),
         recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),
@@ -846,8 +848,10 @@ for (const preparedStatus of [
           upsert: (next: ProviderSessionDirectory.ProviderRuntimeBinding) =>
             Effect.gen(function* () {
               binding = next;
-              if (binding.status !== "starting" || sends.length === 0) return;
-              yield* Deferred.succeed(cleared, undefined);
+              if (binding.status === "starting" && sends.length > 0) {
+                yield* Deferred.succeed(cleared, undefined);
+              }
+              return true;
             }),
           recordImportedTranscript: () => Effect.die("unused"),
           getProvider: () => Effect.die("unused"),
@@ -954,6 +958,7 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
         upsert: (next) =>
           Effect.sync(() => {
             binding = next;
+            return true;
           }),
         recordImportedTranscript: () => Effect.die("unused"),
         getProvider: () => Effect.die("unused"),

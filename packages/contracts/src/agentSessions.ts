@@ -73,9 +73,42 @@ export const AgentSessionScanResult = Schema.Struct({
 });
 export type AgentSessionScanResult = typeof AgentSessionScanResult.Type;
 
+/** A reviewed transcript identity; the server keeps its filesystem path private. */
+export const AgentSessionImportSelection = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString,
+  revision: TrimmedNonEmptyString.check(Schema.isMaxLength(128)),
+});
+export type AgentSessionImportSelection = typeof AgentSessionImportSelection.Type;
+
+export const AgentSessionPreviewInput = Schema.Struct({
+  workspaceRoot: TrimmedNonEmptyString,
+});
+export type AgentSessionPreviewInput = typeof AgentSessionPreviewInput.Type;
+
+export const AgentSessionPreviewResult = Schema.Struct({
+  sessions: Schema.Array(
+    AgentSessionImportSelection.mapFields((fields) => ({
+      ...fields,
+      title: TrimmedNonEmptyString,
+      createdAt: IsoDateTime,
+      messageCount: NonNegativeInt,
+    })),
+  ),
+  alreadyImportedCount: NonNegativeInt,
+  excludedCount: NonNegativeInt,
+  failedCount: NonNegativeInt,
+  deferredCount: NonNegativeInt,
+});
+export type AgentSessionPreviewResult = typeof AgentSessionPreviewResult.Type;
+
 export const AgentSessionImportInput = Schema.Struct({
   projectId: ProjectId,
   expectedWorkspaceRoot: Schema.optional(TrimmedNonEmptyString),
+  /** Missing preserves legacy bulk import; an empty selection imports nothing. */
+  selection: Schema.optional(
+    Schema.Array(AgentSessionImportSelection).check(Schema.isMaxLength(100)),
+  ),
 });
 export type AgentSessionImportInput = typeof AgentSessionImportInput.Type;
 
@@ -99,7 +132,12 @@ export class AgentSessionImportProjectChangedError extends Schema.TaggedError<Ag
 
 export const AgentSessionImportResult = Schema.Struct({
   importedCount: NonNegativeInt,
+  /** Legacy clients treat skipped work as incomplete; excludes expected exclusions. */
   skippedCount: NonNegativeInt,
+  alreadyImportedCount: Schema.optional(NonNegativeInt),
+  excludedCount: Schema.optional(NonNegativeInt),
+  failedCount: Schema.optional(NonNegativeInt),
+  deferredCount: Schema.optional(NonNegativeInt),
 });
 export type AgentSessionImportResult = typeof AgentSessionImportResult.Type;
 

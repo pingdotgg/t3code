@@ -813,7 +813,7 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.antigravityInstallation,
           }),
           Layer.mock(ProviderSessionDirectory.ProviderSessionDirectory)({
-            upsert: () => Effect.void,
+            upsert: () => Effect.succeed(true),
             getBinding: () => Effect.succeed(Option.none()),
             listThreadIds: () => Effect.succeed([]),
             listBindings: () => Effect.succeed([]),
@@ -5598,7 +5598,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.deepEqual(result, { importedCount: 0, skippedCount: 1 });
+      assert.deepEqual(result, {
+        importedCount: 0,
+        skippedCount: 1,
+        alreadyImportedCount: 0,
+        excludedCount: 0,
+        failedCount: 1,
+        deferredCount: 0,
+      });
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
