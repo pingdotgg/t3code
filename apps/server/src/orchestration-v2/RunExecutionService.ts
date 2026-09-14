@@ -1,3 +1,4 @@
+import { makeAssistantStreamingFilter } from "./assistantStreaming.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
@@ -526,26 +527,6 @@ export class RunExecutionServiceV2 extends Context.Service<
   RunExecutionServiceV2Shape
 >()("t3/orchestration-v2/RunExecutionService/RunExecutionServiceV2") {}
 
-function shouldDeliverProviderEvent(
-  event: ProviderAdapterV2Event,
-  assistantStreamingEnabled: boolean,
-): boolean {
-  if (assistantStreamingEnabled) {
-    return true;
-  }
-
-  switch (event.type) {
-    case "node.updated":
-      return event.node.kind !== "assistant_message" || event.node.status !== "running";
-    case "message.updated":
-      return event.message.role !== "assistant" || !event.message.streaming;
-    case "turn_item.updated":
-      return event.turnItem.type !== "assistant_message" || !event.turnItem.streaming;
-    default:
-      return true;
-  }
-}
-
 /**
  * IMPLEMENTATIONS
  */
@@ -786,11 +767,11 @@ export const layer: Layer.Layer<
     return RunExecutionServiceV2.of({
       startRootRun: (input) =>
         Effect.gen(function* () {
-          const assistantStreamingEnabled = yield* serverSettings.getSettings.pipe(
+          const responseStreamingMode = yield* serverSettings.getSettings.pipe(
             Effect.map(
               (settings) =>
                 resolveProjectSettings(settings, input.appThread.projectId).settings
-                  .enableLegacyTokenStreaming,
+                  .responseStreamingMode,
             ),
             Effect.mapError(
               (cause) =>
@@ -1117,6 +1098,7 @@ export const layer: Layer.Layer<
             }
             return true;
           });
+          const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -1124,8 +1106,11 @@ export const layer: Layer.Layer<
             Stream.tap((event) =>
               Effect.gen(function* () {
                 let storedEventCount = 0;
-                const shouldDeliver = shouldDeliverProviderEvent(event, assistantStreamingEnabled);
-                if (shouldDeliver) {
+                const deliveredEvent = filterAssistantEvent(
+                  event,
+                  DateTime.toEpochMillis(yield* DateTime.now),
+                );
+                if (deliveredEvent) {
                   // Root provider_thread.updated always uses an ownership gate:
                   // pre-terminal writeIfRunCurrent (attempt still running), or
                   // post-terminal writeIfProviderThreadOwner so late roster
@@ -1146,7 +1131,7 @@ export const layer: Layer.Layer<
                     threadId: input.run.threadId,
                     runId: input.run.id,
                     nodeId: input.rootNode.id,
-                    event,
+                    event: deliveredEvent,
                     ...(isRootProviderThreadUpdate
                       ? rootTerminalAlreadySeen
                         ? {
@@ -1196,7 +1181,7 @@ export const layer: Layer.Layer<
                   yield* Ref.set(rootTerminalSeen, true);
                   yield* finalizeRootRun(event);
                 }
-                yield* trackChildLifecycle(event, shouldDeliver);
+                yield* trackChildLifecycle(event, deliveredEvent !== null);
               }),
             ),
             Stream.takeUntilEffect(() => shouldStopProviderEventIngestion),

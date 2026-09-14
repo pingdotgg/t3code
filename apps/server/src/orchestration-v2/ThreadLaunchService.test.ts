@@ -1,3 +1,6 @@
+import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
+import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
+import * as TerminalManager from "../terminal/Manager.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../config.ts";
@@ -125,6 +128,9 @@ function makeHarness(options: HarnessOptions = {}) {
     options.generateTitle ?? (() => Effect.succeed({ title: "Generated title" })),
   );
   const externalServices = Layer.mergeAll(
+    WorktreeSetupTracker.layer,
+    Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({ get: () => Effect.succeed(null) }),
+    Layer.mock(TerminalManager.TerminalManager)({ close: () => Effect.void }),
     Layer.succeed(ProjectService.ProjectService, {
       create: () => Effect.die("unused"),
       bootstrap: () => Effect.die("unused"),
@@ -183,7 +189,14 @@ function makeHarness(options: HarnessOptions = {}) {
     Layer.provide(Layer.mergeAll(threadManagement, projectedProjects, externalServices)),
   );
   return {
-    layer: Layer.mergeAll(launch, threadManagement, titleRegeneration, outbox, database),
+    layer: Layer.mergeAll(
+      launch,
+      threadManagement,
+      titleRegeneration,
+      outbox,
+      database,
+      externalServices,
+    ),
     createWorktree,
     renameBranch,
     generateBranchName,
@@ -454,6 +467,7 @@ it.effect("enqueues provider work only after setup has been initiated", () =>
             status: "started" as const,
             scriptId: "setup",
             scriptName: "Setup",
+            scriptCommand: "vp install",
             terminalId: "setup",
             cwd: "/repo",
           }),
@@ -1660,3 +1674,33 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
 });
+
+it.effect("cancels tracked setup before provider work is released", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      runSetup: () => Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const outbox = yield* EffectOutbox.EffectOutboxV2;
+      const input = launchInput({
+        command: "launch:cancel-tracked",
+        thread: "thread:cancel-tracked",
+        message: "Start",
+        workspace: { type: "worktree", baseRef: "main" },
+      });
+      const launched = yield* launches.launch(input);
+      yield* Deferred.await(entered);
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "running");
+      assert.isTrue(yield* tracker.cancel(launched.threadId));
+      assert.equal((yield* tracker.get(launched.threadId))?.phase, "cancelled");
+      const projection = yield* threads.getThreadProjection(launched.threadId);
+      assert.equal(projection.runs[0]?.status, "failed");
+      assert.isNull(projection.thread.worktreePath);
+      assert.isEmpty(yield* outbox.listByCommandId(CommandId.make(`${input.commandId}:release`)));
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);

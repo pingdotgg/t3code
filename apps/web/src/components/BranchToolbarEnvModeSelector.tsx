@@ -145,6 +145,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
                 displayMode === "panel" && THREAD_DETAILS_PANEL_SELECT_ROW_CLASS,
               )}
               aria-label="Workspace"
+              data-composer-shortcut="composer.workspace"
               data-composer-context-control
             />
           }
