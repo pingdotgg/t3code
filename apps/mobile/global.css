@@ -38,6 +38,15 @@
       --color-border-subtle: rgba(0, 0, 0, 0.06);
       --color-separator: rgba(0, 0, 0, 0.04);
 
+      /* Clerk native profile custom pages. Mirrors clerk-ios ClerkKitUI default
+         theme colors so our pages match the SDK's own screens. */
+      --color-clerk-page: #f7f7f7;
+      --color-clerk-surface: #ffffff;
+      --color-clerk-foreground: #2f3037;
+      --color-clerk-foreground-muted: #747686;
+      --color-clerk-border: rgba(0, 0, 0, 0.06);
+      --color-clerk-danger: #ef4444;
+
       /* Subtle backgrounds (badges, pills, overlays) */
       --color-subtle: rgba(0, 0, 0, 0.04);
       --color-subtle-strong: rgba(0, 0, 0, 0.08);
@@ -150,6 +159,12 @@
       --color-separator: rgba(255, 255, 255, 0.03);
 
       /* Subtle backgrounds (badges, pills, overlays) */
+      --color-clerk-page: #1a1a1d;
+      --color-clerk-surface: #131316;
+      --color-clerk-foreground: #ffffff;
+      --color-clerk-foreground-muted: #b7b8c2;
+      --color-clerk-border: rgba(255, 255, 255, 0.06);
+      --color-clerk-danger: #ef4444;
       --color-subtle: rgba(255, 255, 255, 0.04);
       --color-subtle-strong: rgba(255, 255, 255, 0.08);
       --color-inline-skill-background: rgba(217, 70, 239, 0.12);

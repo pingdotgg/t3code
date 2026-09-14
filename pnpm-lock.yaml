@@ -85,7 +85,7 @@ overrides:
 packageExtensionsChecksum: sha256-k/dT9NFDl5hihRPaoFKeY11hzyutMFs5psfZLFiKJic=
 
 patchedDependencies:
-  '@clerk/expo@4.6.6': 72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1
+  '@clerk/expo@4.6.6': a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb
   '@effect/vitest@4.0.0-rc.112': a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b
   '@expo/metro-config@57.0.12': 96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2
   '@ff-labs/fff-node@0.9.4': c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8
@@ -231,7 +231,7 @@ importers:
     dependencies:
       '@clerk/expo':
         specifier: 4.6.6
-        version: 4.6.6(patch_hash=72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1)(dbc31631339ce74330e188d5d7a88158)
+        version: 4.6.6(patch_hash=a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb)(dbc31631339ce74330e188d5d7a88158)
       '@effect/atom-react':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(react@19.2.3)(scheduler@0.27.0)
@@ -774,7 +774,7 @@ importers:
         version: link:../../packages/shared
       alchemy:
         specifier: 2.0.0-beta.76
-        version: 2.0.0-beta.76(b3825b36417e56a486ccb5f22a7f3d7e)
+        version: 2.0.0-beta.76(197b68e0d20fdf20cf352009eca17c9f)
       drizzle-orm:
         specifier: 1.0.0-rc.5-ab785fc
         version: 1.0.0-rc.5-ab785fc(8ab70e2706da13c78d64d8a92fef1884)
@@ -12437,7 +12437,7 @@ snapshots:
       electron-store: 8.2.0
       react-dom: 19.2.6(react@19.2.6)
 
-  '@clerk/expo@4.6.6(patch_hash=72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1)(dbc31631339ce74330e188d5d7a88158)':
+  '@clerk/expo@4.6.6(patch_hash=a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb)(dbc31631339ce74330e188d5d7a88158)':
     dependencies:
       '@clerk/clerk-js': 6.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@clerk/react': 6.15.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
@@ -16445,7 +16445,7 @@ snapshots:
       json-schema-traverse: 1.0.0
       require-from-string: 2.0.2
 
-  alchemy@2.0.0-beta.76(b3825b36417e56a486ccb5f22a7f3d7e):
+  alchemy@2.0.0-beta.76(197b68e0d20fdf20cf352009eca17c9f):
     dependencies:
       '@alchemy.run/cloudflare-runtime': 2.0.0-beta.76(@distilled.cloud/cloudflare@1.0.0-rc.8(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)))(@effect/platform-bun@4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6))(@effect/platform-node@4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(redis@6.2.1)(utf-8-validate@6.0.6))(@types/node@24.12.4)(@voidzero-dev/vite-plus-core@0.3.0(@types/node@24.12.4)(esbuild@0.28.1)(jiti@2.7.0)(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(yaml@2.9.0))(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(rolldown@1.2.5)(typescript@7.0.2)
       '@alchemy.run/floci': 2.0.0-beta.76(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))

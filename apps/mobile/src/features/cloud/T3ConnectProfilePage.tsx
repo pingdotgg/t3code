@@ -5,11 +5,17 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
-import { useRef, useState } from "react";
-import { ActivityIndicator, Alert, Pressable, ScrollView, View } from "react-native";
+import { type ReactNode, useRef, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  Pressable,
+  RefreshControl,
+  ScrollView,
+  Text,
+  View,
+} from "react-native";
 
-import { SymbolView } from "../../components/AppSymbol";
-import { AppText as Text } from "../../components/AppText";
 import { showConfirmDialog } from "../../components/ConfirmDialogHost";
 import { cn } from "../../lib/cn";
 import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
@@ -130,75 +136,49 @@ export function T3ConnectProfilePage() {
 
   return (
     <ScrollView
-      className="flex-1 bg-sheet"
-      contentContainerClassName="gap-3 px-4 pb-10 pt-4"
+      className="flex-1 bg-clerk-page"
+      contentContainerClassName="pb-8"
       contentInsetAdjustmentBehavior="automatic"
-      showsVerticalScrollIndicator={false}
+      refreshControl={
+        <RefreshControl
+          refreshing={environmentsState.isPending && environmentsState.data !== null}
+          onRefresh={environmentsState.refresh}
+        />
+      }
     >
-      <View className="flex-row items-start justify-between gap-3 px-1">
-        <Text className="min-w-0 flex-1 text-sm leading-normal text-foreground-muted">
-          Environments registered to your account. Connections on this device are managed in
-          Settings.
-        </Text>
-        <Pressable
-          accessibilityLabel="Refresh"
-          accessibilityRole="button"
-          disabled={environmentsState.isPending || deregisteringEnvironmentId !== null}
-          onPress={environmentsState.refresh}
-          className="h-9 w-9 items-center justify-center rounded-full bg-subtle active:opacity-70 disabled:opacity-50"
-        >
-          {environmentsState.isPending ? (
-            <ActivityIndicator colorClassName={"accent-icon"} size="small" />
-          ) : (
-            <SymbolView
-              name="arrow.clockwise"
-              size={14}
-              tintColorClassName={"accent-icon"}
-              type="monochrome"
-            />
-          )}
-        </Pressable>
-      </View>
+      <ClerkSectionHeader>Registered servers</ClerkSectionHeader>
 
       {environmentsState.error ? (
-        <View collapsable={false} className="gap-3 rounded-[24px] bg-card p-5">
-          <Text className="text-base font-t3-bold text-foreground">
-            Could not load T3 Connect environments
-          </Text>
-          <Text className="text-sm text-foreground-muted">{environmentsState.error}</Text>
+        <ClerkSection>
+          <View className="gap-1 px-6 py-4">
+            <Text className="text-base leading-snug text-clerk-foreground">
+              Could not load T3 Connect environments
+            </Text>
+            <Text className="text-sm leading-normal text-clerk-foreground-muted">
+              {environmentsState.error}
+            </Text>
+          </View>
           {errorTraceId ? (
-            <Pressable
-              accessibilityRole="button"
+            <ClerkButtonRow
+              label="Copy trace ID"
               onPress={() => {
                 copyTextWithHaptic(errorTraceId, { target: "connection-trace-id" });
               }}
-              className="self-start flex-row items-center gap-1.5 rounded-full bg-subtle px-3 py-2 active:opacity-70"
-            >
-              <SymbolView
-                name="doc.on.doc"
-                size={12}
-                tintColorClassName={"accent-icon"}
-                type="monochrome"
-              />
-              <Text className="text-xs font-t3-bold text-foreground">Copy trace ID</Text>
-            </Pressable>
+            />
           ) : null}
-        </View>
-      ) : null}
-
-      {isInitialLoad ? (
-        <View collapsable={false} className="items-center gap-3 rounded-[24px] bg-card p-6">
-          <ActivityIndicator colorClassName={"accent-icon"} />
-          <Text className="text-center text-sm leading-normal text-foreground-muted">
-            Loading environments.
-          </Text>
-        </View>
+        </ClerkSection>
+      ) : isInitialLoad ? (
+        <ClerkSection>
+          <View className="flex-row items-center gap-3 px-6 py-4">
+            <ActivityIndicator colorClassName={"accent-clerk-foreground-muted"} size="small" />
+            <Text className="text-base text-clerk-foreground-muted">Loading environments</Text>
+          </View>
+        </ClerkSection>
       ) : environments.length > 0 ? (
-        <View collapsable={false} className="overflow-hidden rounded-[24px] bg-card">
-          {environments.map((environment, index) => (
+        <ClerkSection>
+          {environments.map((environment) => (
             <T3ConnectEnvironmentRow
               key={environment.environmentId}
-              borderTop={index !== 0}
               environment={environment}
               isDeregistering={deregisteringEnvironmentId === environment.environmentId}
               mutationPending={deregisteringEnvironmentId !== null}
@@ -207,21 +187,81 @@ export function T3ConnectProfilePage() {
               }
             />
           ))}
-        </View>
-      ) : environmentsState.error ? null : (
-        <View collapsable={false} className="rounded-[24px] bg-card p-5">
-          <Text className="text-base font-t3-bold text-foreground">No T3 Connect environments</Text>
-          <Text className="mt-1 text-sm leading-normal text-foreground-muted">
-            Link an environment from its local Settings to make it available through T3 Connect.
-          </Text>
-        </View>
+        </ClerkSection>
+      ) : (
+        <ClerkSection>
+          <View className="gap-1 px-6 py-4">
+            <Text className="text-base leading-snug text-clerk-foreground">
+              No servers registered
+            </Text>
+            <Text className="text-sm leading-normal text-clerk-foreground-muted">
+              Link a server from its local Settings to reach it through T3 Connect.
+            </Text>
+          </View>
+        </ClerkSection>
       )}
+
+      <Text className="px-6 pt-4 text-xs leading-normal text-clerk-foreground-muted">
+        Connections on this device are managed in Settings.
+      </Text>
     </ScrollView>
   );
 }
 
+// Layout primitives that mirror clerk-ios ClerkKitUI's profile sections so a
+// custom page reads as one of Clerk's own screens. System font on purpose:
+// Clerk's native views do not use the app's DM Sans.
+
+function ClerkSectionHeader(props: { readonly children: string }) {
+  return (
+    <Text className="min-h-4 border-b border-clerk-border px-6 pt-8 pb-4 text-xs font-medium tracking-[0.3px] text-clerk-foreground-muted uppercase">
+      {props.children}
+    </Text>
+  );
+}
+
+function ClerkSection(props: { readonly children: ReactNode }) {
+  return (
+    <View collapsable={false} className="bg-clerk-surface">
+      {props.children}
+    </View>
+  );
+}
+
+function ClerkButtonRow(props: {
+  readonly label: string;
+  readonly destructive?: boolean;
+  readonly disabled?: boolean;
+  readonly pending?: boolean;
+  readonly onPress: () => void;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      disabled={props.disabled}
+      onPress={props.onPress}
+      className="flex-row items-center border-b border-clerk-border px-6 py-4 active:opacity-60 disabled:opacity-50"
+    >
+      <Text
+        className={cn(
+          "text-base font-semibold",
+          props.destructive ? "text-clerk-danger" : "text-clerk-foreground",
+        )}
+      >
+        {props.label}
+      </Text>
+      {props.pending ? (
+        <ActivityIndicator
+          className="ml-3"
+          colorClassName={"accent-clerk-foreground-muted"}
+          size="small"
+        />
+      ) : null}
+    </Pressable>
+  );
+}
+
 function T3ConnectEnvironmentRow(props: {
-  readonly borderTop: boolean;
   readonly environment: RelayClientEnvironmentRecord;
   readonly isDeregistering: boolean;
   readonly mutationPending: boolean;
@@ -229,36 +269,22 @@ function T3ConnectEnvironmentRow(props: {
 }) {
   const { environment } = props;
   return (
-    <View
-      collapsable={false}
-      className={cn(
-        "flex-row items-center gap-3 bg-card px-4 py-3.5",
-        props.borderTop && "border-t border-border",
-      )}
-    >
-      <View className="min-w-0 flex-1 gap-0.5">
-        <Text
-          className="min-w-0 text-base font-t3-bold leading-snug text-foreground"
-          numberOfLines={1}
-        >
+    <View collapsable={false}>
+      <View className="gap-0.5 border-b border-clerk-border px-6 py-4">
+        <Text className="min-h-[22px] text-base text-clerk-foreground" numberOfLines={1}>
           {environment.label}
         </Text>
-        <Text className="text-xs text-foreground-muted" numberOfLines={1}>
+        <Text className="min-h-5 text-sm text-clerk-foreground-muted" numberOfLines={1}>
           {linkedAtLabel(environment.linkedAt)} · {endpointLabel(environment)}
         </Text>
       </View>
-      <Pressable
-        accessibilityRole="button"
+      <ClerkButtonRow
+        destructive
         disabled={props.mutationPending}
+        label="Deregister"
         onPress={props.onDeregister}
-        className="min-w-24 items-center rounded-full bg-danger px-3.5 py-2 active:opacity-70 disabled:opacity-50"
-      >
-        {props.isDeregistering ? (
-          <ActivityIndicator colorClassName={"accent-danger-foreground"} size="small" />
-        ) : (
-          <Text className="text-xs font-t3-bold text-danger-foreground">Deregister</Text>
-        )}
-      </Pressable>
+        pending={props.isDeregistering}
+      />
     </View>
   );
 }
