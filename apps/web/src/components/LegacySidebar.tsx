@@ -1,3 +1,4 @@
+import { projectSettingsSearch } from "../projectSettingsNavigation";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { GitPullRequestIcon } from "lucide-react";
 import { resolveThreadCurrentPullRequestLink } from "@t3tools/shared/threadPullRequests";
@@ -2254,10 +2255,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "project-settings") {
+        if (!threadProject) return;
         if (isMobile) setOpenMobile(false);
         void router.navigate({
-          to: "/projects/$projectKey",
-          params: { projectKey: project.projectKey },
+          to: "/settings/projects",
+          search: projectSettingsSearch(project.projectKey, threadProject),
         });
         return;
       }

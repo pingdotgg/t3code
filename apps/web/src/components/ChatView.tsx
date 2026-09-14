@@ -1,3 +1,4 @@
+import { projectSettingsSearch } from "../projectSettingsNavigation";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -2103,12 +2104,12 @@ export default function ChatView(props: ChatViewProps) {
       ? deriveLogicalProjectKeyFromSettings(activeProject, projectGroupingSettings)
       : undefined;
   const handleOpenDraftProjectSettings = useCallback(() => {
-    if (!activeDraftLogicalProjectKey) return;
+    if (!activeDraftLogicalProjectKey || !activeProject) return;
     void navigate({
-      to: "/projects/$projectKey",
-      params: { projectKey: activeDraftLogicalProjectKey },
+      to: "/settings/projects",
+      search: projectSettingsSearch(activeDraftLogicalProjectKey, activeProject),
     });
-  }, [activeDraftLogicalProjectKey, navigate]);
+  }, [activeDraftLogicalProjectKey, activeProject, navigate]);
   const activeEnvironmentShell = useEnvironmentQuery(
     activeThread ? environmentShell.stateAtom(activeThread.environmentId) : null,
   );
