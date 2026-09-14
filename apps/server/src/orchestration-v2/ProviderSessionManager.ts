@@ -414,6 +414,77 @@ export const layerWithOptions = (
         readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
       }
       const pendingRevocations = new Map<ThreadId, PendingRevocation>();
+      // Every running detach carries one marker from its first uninterruptible
+      // step to its exit. Teardown drains this set before snapshotting
+      // pendingRevocations: a detach that started earlier can still be inside
+      // its lock, not yet at the forkTrackedRevocation call that registers the
+      // sweep, and a one-time snapshot would return while that tail is still
+      // being created.
+      interface InflightDetach {
+        readonly providerSessionId: ProviderSessionId;
+        readonly detached: Deferred.Deferred<void, never>;
+      }
+      const inflightDetaches = new Set<InflightDetach>();
+      // Drains in-flight detaches that may still register a matching sweep
+      // (each marker awaited once, bounded like every cleanup wait), then
+      // joins every unfinished revocation record matching `owned` — repeating
+      // until a pass finds no new records and no un-awaited markers, so a tail
+      // registered while the previous pass was joining is still awaited rather
+      // than left running past teardown. A marker that outlives its own bound
+      // is not awaited again: its detach is already past the contract, and
+      // re-waiting would make teardown unbounded.
+      const joinTrackedRevocations = (
+        owned: (record: PendingRevocation) => boolean,
+        join: (
+          threadId: ThreadId,
+          record: PendingRevocation,
+        ) => Effect.Effect<void, ProviderSessionReleaseError>,
+        ownsInflight: (
+          providerSessionId: ProviderSessionId,
+          live: ReadonlyMap<string, LiveSessionEntry>,
+        ) => boolean,
+      ) =>
+        Effect.gen(function* () {
+          const outcomes: Array<Exit.Exit<void, ProviderSessionReleaseError>> = [];
+          const joined = new Set<PendingRevocation>();
+          const awaited = new Set<InflightDetach>();
+          for (;;) {
+            const live = yield* Ref.get(sessions);
+            const pending = [...inflightDetaches].filter(
+              (marker) => !awaited.has(marker) && ownsInflight(marker.providerSessionId, live),
+            );
+            for (const marker of pending) awaited.add(marker);
+            yield* Effect.forEach(
+              pending,
+              (marker) =>
+                Deferred.await(marker.detached).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.ignore,
+                ),
+              { concurrency: "unbounded", discard: true },
+            );
+            const fresh: Array<readonly [ThreadId, PendingRevocation]> = [];
+            for (const [threadId, record] of pendingRevocations) {
+              for (
+                let current: PendingRevocation | undefined = record;
+                current !== undefined;
+                current = current.predecessor
+              ) {
+                if (!current.settled && !joined.has(current) && owned(current)) {
+                  joined.add(current);
+                  fresh.push([threadId, current]);
+                }
+              }
+            }
+            if (fresh.length === 0 && pending.length === 0) return outcomes;
+            const pass = yield* Effect.forEach(
+              fresh,
+              ([threadId, record]) => join(threadId, record).pipe(Effect.exit),
+              { concurrency: "unbounded" },
+            );
+            outcomes.push(...pass);
+          }
+        });
       const forkTrackedRevocation = <E>(
         providerSessionId: ProviderSessionId,
         threadId: ThreadId,
@@ -2551,10 +2622,11 @@ export const layerWithOptions = (
             // Terminal-detach credential sweeps outlive their callers in
             // pendingRevocations; join each tracked tail (bounded like every
             // cleanup wait) so teardown does not return while a revocation is
-            // still running.
-            Effect.forEach(
-              [...pendingRevocations],
-              ([threadId, record]) =>
+            // still running. In-flight detaches are drained first: one still
+            // inside its lock can register a tail after a single snapshot.
+            joinTrackedRevocations(
+              () => true,
+              (threadId, record) =>
                 Deferred.await(record.done).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
                   Effect.flatMap((settled) =>
@@ -2572,8 +2644,8 @@ export const layerWithOptions = (
                     }),
                   ),
                 ),
-              { concurrency: "unbounded", discard: true },
-            ),
+              () => true,
+            ).pipe(Effect.ignore),
             // In-flight startups own provider resources without a live entry;
             // they were marked above — join their bounded unwind during
             // shutdown too.
@@ -3132,25 +3204,11 @@ export const layerWithOptions = (
             // successor may still be sweeping for another instance after
             // this instance's own sweep finishes. A completed predecessor's
             // caller is done and must not be kept waiting on a successor it
-            // does not own.
-            const revocationOutcomes = yield* Effect.forEach(
-              [...pendingRevocations].flatMap(([threadId, record]) => {
-                const owned: Array<readonly [ThreadId, PendingRevocation]> = [];
-                for (
-                  let current: PendingRevocation | undefined = record;
-                  current !== undefined;
-                  current = current.predecessor
-                ) {
-                  if (
-                    !current.settled &&
-                    (current.instanceId === undefined || current.instanceId === instanceId)
-                  ) {
-                    owned.push([threadId, current]);
-                  }
-                }
-                return owned;
-              }),
-              ([threadId, record]) =>
+            // does not own. In-flight detaches are drained first: one still
+            // inside its lock can register a tail after a single snapshot.
+            const revocationOutcomes = yield* joinTrackedRevocations(
+              (record) => record.instanceId === undefined || record.instanceId === instanceId,
+              (threadId, record) =>
                 Deferred.await(record.done).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
                   Effect.flatMap((settled) =>
@@ -3167,9 +3225,19 @@ export const layerWithOptions = (
                         )
                       : Effect.void,
                   ),
-                  Effect.exit,
                 ),
-              { concurrency: "unbounded" },
+              // Drain only detaches whose sweep could match `owned` above: a
+              // detach on a session provably owned by another instance cannot
+              // register a tail this close must join, and waiting on one would
+              // only stretch logout behind an unrelated stuck detach.
+              (providerSessionId, live) => {
+                const key = sessionKey(providerSessionId);
+                const ownerInstance =
+                  live.get(key)?.runtime.instanceId ??
+                  releasing.get(key)?.entry.runtime.instanceId ??
+                  opening.get(key)?.instanceId;
+                return ownerInstance === undefined || ownerInstance === instanceId;
+              },
             );
             const failure = [...outcomes, ...startupOutcomes, ...revocationOutcomes].find(
               Exit.isFailure,
@@ -3200,380 +3268,409 @@ export const layerWithOptions = (
           ),
         release: releaseEntry,
         detach: (input) =>
-          Effect.gen(function* () {
-            const key = sessionKey(input.providerSessionId);
-            const pendingRelease = releasing.get(key);
-            if (pendingRelease !== undefined) {
-              let revokeDone: Deferred.Deferred<void, ProviderSessionReleaseError> | undefined;
-              if (input.revokeMcpCredential === true) {
-                const recorded = pendingRelease.mcpCredentialIdByThread.get(input.threadId);
-                // The claim-aware revocation can wait on a peer's stalled
-                // prepare; run it detached so this retry reaches the bounded
-                // join instead of blocking indefinitely first. The pending
-                // release's own sweep is the primary revocation path for a
-                // credential it still records — but a credential an earlier
-                // detach already pruned is absent from its record, so this
-                // tracked sweep is the only owner for that work.
-                revokeDone = yield* forkTrackedRevocation(
-                  input.providerSessionId,
-                  input.threadId,
-                  revokeUnclaimedThreadCredentials(
-                    input.threadId,
-                    recorded === undefined ? [] : [recorded],
-                  ),
-                  pendingRelease.entry.runtime.instanceId,
-                );
-              }
-              yield* releaseEntry({
+          Effect.uninterruptibleMask((restore) =>
+            Effect.suspend(() => {
+              // Registered inside the mask before the body can suspend, and
+              // removed on any exit below: teardown drains this set before
+              // snapshotting pendingRevocations, so a detach already in
+              // flight cannot register a credential sweep the join misses.
+              const inflight: InflightDetach = {
                 providerSessionId: input.providerSessionId,
-                reason: "manual_shutdown",
-                joinRelease: pendingRelease,
-              });
-              // The release's sweep does not cover a credential pruned before
-              // its record was captured — joining only the release would
-              // report success while that revocation is still running.
-              if (revokeDone !== undefined) {
-                const settled = yield* Deferred.await(revokeDone).pipe(
-                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                );
-                if (Option.isNone(settled)) {
-                  return yield* new ProviderSessionReleaseError({
-                    providerSessionId: input.providerSessionId,
-                    reason: "runtime_error",
-                    cause:
-                      "MCP credential revocation did not finish within 30 seconds and is still running.",
-                  });
-                }
-              }
-              return;
-            }
-            const currentEntry = (yield* Ref.get(sessions)).get(key);
-            const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
-            if (openingRecord !== undefined && openingRecord.threadId === input.threadId) {
-              // Detaching the thread an in-flight startup belongs to aborts
-              // it: mark the open like a close and join its bounded unwind
-              // instead of returning success while a provider process may
-              // still be spawning for this thread.
-              return yield* releaseEntry({
-                providerSessionId: input.providerSessionId,
-                reason: "manual_shutdown",
-              });
-            }
-            if (currentEntry?.supportsMultipleProviderThreads === true) {
-              const projection = yield* Effect.option(
-                projectionStore.getThreadProjection(input.threadId),
-              );
-              if (Option.isSome(projection)) {
-                const providerThreads = new Map(
-                  projection.value.providerThreads
-                    .filter((thread) => thread.providerSessionId === input.providerSessionId)
-                    .map((thread) => [thread.id, thread] as const),
-                );
-                const activeTurns = projection.value.providerTurns.filter(
-                  (turn) => turn.status === "running" && providerThreads.has(turn.providerThreadId),
-                );
-                yield* Effect.forEach(
-                  activeTurns,
-                  (turn) =>
-                    currentEntry.exposedRuntime
-                      .interruptTurn({
-                        providerThread: providerThreads.get(turn.providerThreadId)!,
-                        providerTurnId: turn.id,
-                      })
-                      .pipe(
-                        Effect.catchCause((cause) =>
-                          Effect.logWarning(
-                            "orchestration-v2.driver-session.detach-interrupt-failed",
-                            {
-                              providerSessionId: input.providerSessionId,
-                              threadId: input.threadId,
-                              providerTurnId: turn.id,
-                              cause,
-                            },
-                          ),
-                        ),
-                      ),
-                  { concurrency: 1, discard: true },
-                );
-              }
-            }
-            // The attachment mutation and credential cleanup run under the same
-            // [session, thread] lock an attach holds through its provisional
-            // bookkeeping, MCP preparation, and event write. Without it a detach
-            // can land between an in-flight attach's provisional add and its
-            // post-prepare completion: the attach would then record a credential
-            // and emit its attached event for a thread the entry no longer
-            // tracks, resurrecting a detached binding.
-            // The acquisition itself is bounded: an attach can hold this
-            // lock through MCP preparation, and a stalled holder must not
-            // keep a cleanup caller waiting past the bound. Timing out here
-            // leaves ownership with the lock holder — nothing this detach
-            // could have claimed is touched.
-            const locked = yield* threadAttach
-              .withLock(
-                threadAttachKey(input.providerSessionId, input.threadId),
-                // Masked so the attachment mutation and the release handoff
-                // stay atomic with respect to interruption: once the last
-                // exclusive attachment is removed, the release must exist
-                // before this fiber can be interrupted out of the revocation
-                // wait below.
-                Effect.uninterruptibleMask((restore) =>
-                  Effect.gen(function* () {
-                    const detached = yield* Ref.modify(sessions, (current) => {
-                      const entry = current.get(key);
-                      if (
-                        entry === undefined ||
-                        currentEntry === undefined ||
-                        // The entry read above may belong to a released session: a
-                        // same-id reopen installs a new runtime, and this detach must
-                        // never mutate the replacement's attachments.
-                        entry.runtime !== currentEntry.runtime ||
-                        !entry.attachedThreadIds.has(input.threadId)
-                      ) {
-                        return [
-                          Option.none<{
-                            readonly entry: LiveSessionEntry;
-                            readonly priorMcpCredentialId: string | undefined;
-                            readonly release: PendingSessionRelease | undefined;
-                          }>(),
-                          current,
-                        ] as const;
-                      }
-                      const attachedThreadIds = new Set(entry.attachedThreadIds);
-                      attachedThreadIds.delete(input.threadId);
-                      const loadedProviderThreadKeyByThread = new Map(
-                        entry.loadedProviderThreadKeyByThread,
-                      );
-                      loadedProviderThreadKeyByThread.delete(input.threadId);
-                      // For a plain (workspace-change) detach, the credential id stays
-                      // recorded: the thread may re-attach and reuse it, and
-                      // releaseEntry revokes it when the provider process finally goes
-                      // away. A terminal detach (archive/delete) prunes the record so
-                      // nothing vetoes the revocation below.
-                      const mcpCredentialIdByThread =
-                        input.revokeMcpCredential === true
-                          ? (() => {
-                              const pruned = new Map(entry.mcpCredentialIdByThread);
-                              pruned.delete(input.threadId);
-                              return pruned;
-                            })()
-                          : entry.mcpCredentialIdByThread;
-                      const updatedEntry = {
-                        ...entry,
-                        attachedThreadIds,
-                        loadedProviderThreadKeyByThread,
-                        mcpCredentialIdByThread,
-                      };
-                      // An exclusive session whose last attachment just
-                      // detached must move into `releasing` in this same
-                      // atomic step: a close landing between the mutation and
-                      // a later claim would otherwise register the emptied
-                      // entry — a release record with no thread or credential
-                      // ownership — and the thread-scoped cleanup gate would
-                      // let this thread's replacement open while the provider
-                      // process still runs. The record keeps the detached
-                      // thread and its pruned credential so the release's own
-                      // bounded sweep and its joiners cover them.
-                      const release: PendingSessionRelease | undefined =
-                        attachedThreadIds.size === 0 && !entry.supportsMultipleProviderThreads
-                          ? {
-                              entry: {
-                                ...updatedEntry,
-                                attachedThreadIds: new Set([input.threadId]),
-                              },
-                              threadIds: new Set([
-                                input.threadId,
-                                ...entry.mcpCredentialIdByThread.keys(),
-                              ]),
-                              mcpCredentialIdByThread: new Map(entry.mcpCredentialIdByThread),
-                              done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
-                            }
-                          : undefined;
-                      const updated = new Map(current);
-                      if (release === undefined) {
-                        updated.set(key, updatedEntry);
-                      } else {
-                        releasing.set(key, release);
-                        updated.delete(key);
-                      }
-                      return [
-                        Option.some({
-                          entry: updatedEntry,
-                          priorMcpCredentialId: entry.mcpCredentialIdByThread.get(input.threadId),
-                          release,
-                        }),
-                        updated,
-                      ] as const;
-                    });
-                    // Forked while masked so the handoff cannot be skipped by
-                    // an interruption delivered during the revocation wait
-                    // below, and joined by the caller after the lock is
-                    // released. The record was already claimed atomically
-                    // above, so this only starts the cleanup worker.
-                    const releaseFiber =
-                      Option.isSome(detached) && detached.value.release !== undefined
-                        ? yield* releaseEntry({
-                            providerSessionId: input.providerSessionId,
-                            reason: "manual_shutdown",
-                            preclaimed: detached.value.release,
-                            ...(input.detail === undefined ? {} : { detail: input.detail }),
-                          }).pipe(Effect.forkDetach({ startImmediately: true }))
-                        : undefined;
-                    // Plain detaches deliberately do not revoke: a detached thread's
-                    // provider process may still be alive (shared multi-thread codex
-                    // session across a workspace handoff) and holds its MCP client's
-                    // credential for the thread it will re-attach with. Credentials
-                    // are revoked when the session entry is released (process gone)
-                    // or rotated on the next attach if they stopped resolving.
-                    // Terminal detaches (thread archived or deleted) revoke the
-                    // thread's credentials — claim-aware: a credential a live peer
-                    // session still records survives until that holder's own cleanup
-                    // revokes it, and a credential the releasing session still records
-                    // is handled by that pending cleanup.
+                detached: Deferred.makeUnsafe<void, never>(),
+              };
+              inflightDetaches.add(inflight);
+              return restore(
+                Effect.gen(function* () {
+                  const key = sessionKey(input.providerSessionId);
+                  const pendingRelease = releasing.get(key);
+                  if (pendingRelease !== undefined) {
+                    let revokeDone:
+                      | Deferred.Deferred<void, ProviderSessionReleaseError>
+                      | undefined;
                     if (input.revokeMcpCredential === true) {
-                      // Read the recorded credential only from a pending release
-                      // that belongs to the session this detach targeted; a
-                      // pending record for a same-id replacement owns a different
-                      // credential map.
-                      const pendingNow = releasing.get(key);
-                      const sameInstancePending =
-                        pendingNow !== undefined &&
-                        currentEntry !== undefined &&
-                        pendingNow.entry.runtime === currentEntry.runtime
-                          ? pendingNow
-                          : undefined;
-                      const priorMcpCredentialId = Option.isSome(detached)
-                        ? detached.value.priorMcpCredentialId
-                        : sameInstancePending?.mcpCredentialIdByThread.get(input.threadId);
-                      const revoke = revokeUnclaimedThreadCredentials(
-                        input.threadId,
-                        priorMcpCredentialId === undefined ? [] : [priorMcpCredentialId],
-                      );
-                      // Forked detached and tracked so interrupting this detach
-                      // cannot strand the pruned credential: the sweep keeps the
-                      // captured id and finishes under mcpPrepareLock even after
-                      // this fiber is gone, and a retry joins `revokeDone`
-                      // instead of forking a second sweep or reporting success
-                      // over a running one. The fork stays masked — a pending
-                      // interruption delivered by restore() below must not skip
-                      // it — while the join stays interruptible so a completed
-                      // detach still waits for revocation.
-                      const revokeDone = yield* forkTrackedRevocation(
+                      const recorded = pendingRelease.mcpCredentialIdByThread.get(input.threadId);
+                      // The claim-aware revocation can wait on a peer's stalled
+                      // prepare; run it detached so this retry reaches the bounded
+                      // join instead of blocking indefinitely first. The pending
+                      // release's own sweep is the primary revocation path for a
+                      // credential it still records — but a credential an earlier
+                      // detach already pruned is absent from its record, so this
+                      // tracked sweep is the only owner for that work.
+                      revokeDone = yield* forkTrackedRevocation(
                         input.providerSessionId,
                         input.threadId,
-                        revoke,
-                        Option.isSome(detached)
-                          ? detached.value.entry.runtime.instanceId
-                          : (sameInstancePending?.entry.runtime.instanceId ??
-                              currentEntry?.runtime.instanceId),
+                        revokeUnclaimedThreadCredentials(
+                          input.threadId,
+                          recorded === undefined ? [] : [recorded],
+                        ),
+                        pendingRelease.entry.runtime.instanceId,
                       );
-                      if (Option.isSome(detached) && releaseFiber === undefined) {
-                        // No release owns this credential's sweep (the session
-                        // stays live for other threads), so this join is the
-                        // only wait on revocation — and the sweep acquires
-                        // mcpPrepareLock, which a stalled peer prepare can hold
-                        // indefinitely. Bound the wait like any cleanup: the
-                        // detached sweep still finishes the revocation late,
-                        // and the timeout keeps the reported state honest
-                        // instead of blocking past the cleanup contract.
-                        const settled = yield* restore(
-                          Deferred.await(revokeDone).pipe(
-                            Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                          ),
-                        );
-                        if (Option.isNone(settled)) {
-                          return yield* new ProviderSessionReleaseError({
-                            providerSessionId: input.providerSessionId,
-                            reason: "runtime_error",
-                            cause:
-                              "MCP credential revocation did not finish within 30 seconds and is still running.",
-                          });
-                        }
-                      }
-                      // When a release was forked above, the pruned credential
-                      // was handed to its record via extraMcpCredentials and its
-                      // own bounded sweep revokes it — the bounded release join
-                      // below is this detach's wait, so joining the tracked
-                      // sweep too would only re-expose the unbounded
-                      // mcpPrepareLock wait. When nothing detached, the post-
-                      // lock tail joins `revokeDone` so a retry never reports
-                      // success over a running revocation.
-                      return { detached, releaseFiber, revokeDone };
                     }
-                    return { detached, releaseFiber, revokeDone: undefined };
-                  }),
+                    yield* releaseEntry({
+                      providerSessionId: input.providerSessionId,
+                      reason: "manual_shutdown",
+                      joinRelease: pendingRelease,
+                    });
+                    // The release's sweep does not cover a credential pruned before
+                    // its record was captured — joining only the release would
+                    // report success while that revocation is still running.
+                    if (revokeDone !== undefined) {
+                      const settled = yield* Deferred.await(revokeDone).pipe(
+                        Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                      );
+                      if (Option.isNone(settled)) {
+                        return yield* new ProviderSessionReleaseError({
+                          providerSessionId: input.providerSessionId,
+                          reason: "runtime_error",
+                          cause:
+                            "MCP credential revocation did not finish within 30 seconds and is still running.",
+                        });
+                      }
+                    }
+                    return;
+                  }
+                  const currentEntry = (yield* Ref.get(sessions)).get(key);
+                  const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
+                  if (openingRecord !== undefined && openingRecord.threadId === input.threadId) {
+                    // Detaching the thread an in-flight startup belongs to aborts
+                    // it: mark the open like a close and join its bounded unwind
+                    // instead of returning success while a provider process may
+                    // still be spawning for this thread.
+                    return yield* releaseEntry({
+                      providerSessionId: input.providerSessionId,
+                      reason: "manual_shutdown",
+                    });
+                  }
+                  if (currentEntry?.supportsMultipleProviderThreads === true) {
+                    const projection = yield* Effect.option(
+                      projectionStore.getThreadProjection(input.threadId),
+                    );
+                    if (Option.isSome(projection)) {
+                      const providerThreads = new Map(
+                        projection.value.providerThreads
+                          .filter((thread) => thread.providerSessionId === input.providerSessionId)
+                          .map((thread) => [thread.id, thread] as const),
+                      );
+                      const activeTurns = projection.value.providerTurns.filter(
+                        (turn) =>
+                          turn.status === "running" && providerThreads.has(turn.providerThreadId),
+                      );
+                      yield* Effect.forEach(
+                        activeTurns,
+                        (turn) =>
+                          currentEntry.exposedRuntime
+                            .interruptTurn({
+                              providerThread: providerThreads.get(turn.providerThreadId)!,
+                              providerTurnId: turn.id,
+                            })
+                            .pipe(
+                              Effect.catchCause((cause) =>
+                                Effect.logWarning(
+                                  "orchestration-v2.driver-session.detach-interrupt-failed",
+                                  {
+                                    providerSessionId: input.providerSessionId,
+                                    threadId: input.threadId,
+                                    providerTurnId: turn.id,
+                                    cause,
+                                  },
+                                ),
+                              ),
+                            ),
+                        { concurrency: 1, discard: true },
+                      );
+                    }
+                  }
+                  // The attachment mutation and credential cleanup run under the same
+                  // [session, thread] lock an attach holds through its provisional
+                  // bookkeeping, MCP preparation, and event write. Without it a detach
+                  // can land between an in-flight attach's provisional add and its
+                  // post-prepare completion: the attach would then record a credential
+                  // and emit its attached event for a thread the entry no longer
+                  // tracks, resurrecting a detached binding.
+                  // The acquisition itself is bounded: an attach can hold this
+                  // lock through MCP preparation, and a stalled holder must not
+                  // keep a cleanup caller waiting past the bound. Timing out here
+                  // leaves ownership with the lock holder — nothing this detach
+                  // could have claimed is touched.
+                  const locked = yield* threadAttach
+                    .withLock(
+                      threadAttachKey(input.providerSessionId, input.threadId),
+                      // Masked so the attachment mutation and the release handoff
+                      // stay atomic with respect to interruption: once the last
+                      // exclusive attachment is removed, the release must exist
+                      // before this fiber can be interrupted out of the revocation
+                      // wait below.
+                      Effect.uninterruptibleMask((restore) =>
+                        Effect.gen(function* () {
+                          const detached = yield* Ref.modify(sessions, (current) => {
+                            const entry = current.get(key);
+                            if (
+                              entry === undefined ||
+                              currentEntry === undefined ||
+                              // The entry read above may belong to a released session: a
+                              // same-id reopen installs a new runtime, and this detach must
+                              // never mutate the replacement's attachments.
+                              entry.runtime !== currentEntry.runtime ||
+                              !entry.attachedThreadIds.has(input.threadId)
+                            ) {
+                              return [
+                                Option.none<{
+                                  readonly entry: LiveSessionEntry;
+                                  readonly priorMcpCredentialId: string | undefined;
+                                  readonly release: PendingSessionRelease | undefined;
+                                }>(),
+                                current,
+                              ] as const;
+                            }
+                            const attachedThreadIds = new Set(entry.attachedThreadIds);
+                            attachedThreadIds.delete(input.threadId);
+                            const loadedProviderThreadKeyByThread = new Map(
+                              entry.loadedProviderThreadKeyByThread,
+                            );
+                            loadedProviderThreadKeyByThread.delete(input.threadId);
+                            // For a plain (workspace-change) detach, the credential id stays
+                            // recorded: the thread may re-attach and reuse it, and
+                            // releaseEntry revokes it when the provider process finally goes
+                            // away. A terminal detach (archive/delete) prunes the record so
+                            // nothing vetoes the revocation below.
+                            const mcpCredentialIdByThread =
+                              input.revokeMcpCredential === true
+                                ? (() => {
+                                    const pruned = new Map(entry.mcpCredentialIdByThread);
+                                    pruned.delete(input.threadId);
+                                    return pruned;
+                                  })()
+                                : entry.mcpCredentialIdByThread;
+                            const updatedEntry = {
+                              ...entry,
+                              attachedThreadIds,
+                              loadedProviderThreadKeyByThread,
+                              mcpCredentialIdByThread,
+                            };
+                            // An exclusive session whose last attachment just
+                            // detached must move into `releasing` in this same
+                            // atomic step: a close landing between the mutation and
+                            // a later claim would otherwise register the emptied
+                            // entry — a release record with no thread or credential
+                            // ownership — and the thread-scoped cleanup gate would
+                            // let this thread's replacement open while the provider
+                            // process still runs. The record keeps the detached
+                            // thread and its pruned credential so the release's own
+                            // bounded sweep and its joiners cover them.
+                            const release: PendingSessionRelease | undefined =
+                              attachedThreadIds.size === 0 && !entry.supportsMultipleProviderThreads
+                                ? {
+                                    entry: {
+                                      ...updatedEntry,
+                                      attachedThreadIds: new Set([input.threadId]),
+                                    },
+                                    threadIds: new Set([
+                                      input.threadId,
+                                      ...entry.mcpCredentialIdByThread.keys(),
+                                    ]),
+                                    mcpCredentialIdByThread: new Map(entry.mcpCredentialIdByThread),
+                                    done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                                  }
+                                : undefined;
+                            const updated = new Map(current);
+                            if (release === undefined) {
+                              updated.set(key, updatedEntry);
+                            } else {
+                              releasing.set(key, release);
+                              updated.delete(key);
+                            }
+                            return [
+                              Option.some({
+                                entry: updatedEntry,
+                                priorMcpCredentialId: entry.mcpCredentialIdByThread.get(
+                                  input.threadId,
+                                ),
+                                release,
+                              }),
+                              updated,
+                            ] as const;
+                          });
+                          // Forked while masked so the handoff cannot be skipped by
+                          // an interruption delivered during the revocation wait
+                          // below, and joined by the caller after the lock is
+                          // released. The record was already claimed atomically
+                          // above, so this only starts the cleanup worker.
+                          const releaseFiber =
+                            Option.isSome(detached) && detached.value.release !== undefined
+                              ? yield* releaseEntry({
+                                  providerSessionId: input.providerSessionId,
+                                  reason: "manual_shutdown",
+                                  preclaimed: detached.value.release,
+                                  ...(input.detail === undefined ? {} : { detail: input.detail }),
+                                }).pipe(Effect.forkDetach({ startImmediately: true }))
+                              : undefined;
+                          // Plain detaches deliberately do not revoke: a detached thread's
+                          // provider process may still be alive (shared multi-thread codex
+                          // session across a workspace handoff) and holds its MCP client's
+                          // credential for the thread it will re-attach with. Credentials
+                          // are revoked when the session entry is released (process gone)
+                          // or rotated on the next attach if they stopped resolving.
+                          // Terminal detaches (thread archived or deleted) revoke the
+                          // thread's credentials — claim-aware: a credential a live peer
+                          // session still records survives until that holder's own cleanup
+                          // revokes it, and a credential the releasing session still records
+                          // is handled by that pending cleanup.
+                          if (input.revokeMcpCredential === true) {
+                            // Read the recorded credential only from a pending release
+                            // that belongs to the session this detach targeted; a
+                            // pending record for a same-id replacement owns a different
+                            // credential map.
+                            const pendingNow = releasing.get(key);
+                            const sameInstancePending =
+                              pendingNow !== undefined &&
+                              currentEntry !== undefined &&
+                              pendingNow.entry.runtime === currentEntry.runtime
+                                ? pendingNow
+                                : undefined;
+                            const priorMcpCredentialId = Option.isSome(detached)
+                              ? detached.value.priorMcpCredentialId
+                              : sameInstancePending?.mcpCredentialIdByThread.get(input.threadId);
+                            const revoke = revokeUnclaimedThreadCredentials(
+                              input.threadId,
+                              priorMcpCredentialId === undefined ? [] : [priorMcpCredentialId],
+                            );
+                            // Forked detached and tracked so interrupting this detach
+                            // cannot strand the pruned credential: the sweep keeps the
+                            // captured id and finishes under mcpPrepareLock even after
+                            // this fiber is gone, and a retry joins `revokeDone`
+                            // instead of forking a second sweep or reporting success
+                            // over a running one. The fork stays masked — a pending
+                            // interruption delivered by restore() below must not skip
+                            // it — while the join stays interruptible so a completed
+                            // detach still waits for revocation.
+                            const revokeDone = yield* forkTrackedRevocation(
+                              input.providerSessionId,
+                              input.threadId,
+                              revoke,
+                              Option.isSome(detached)
+                                ? detached.value.entry.runtime.instanceId
+                                : (sameInstancePending?.entry.runtime.instanceId ??
+                                    currentEntry?.runtime.instanceId),
+                            );
+                            if (Option.isSome(detached) && releaseFiber === undefined) {
+                              // No release owns this credential's sweep (the session
+                              // stays live for other threads), so this join is the
+                              // only wait on revocation — and the sweep acquires
+                              // mcpPrepareLock, which a stalled peer prepare can hold
+                              // indefinitely. Bound the wait like any cleanup: the
+                              // detached sweep still finishes the revocation late,
+                              // and the timeout keeps the reported state honest
+                              // instead of blocking past the cleanup contract.
+                              const settled = yield* restore(
+                                Deferred.await(revokeDone).pipe(
+                                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                                ),
+                              );
+                              if (Option.isNone(settled)) {
+                                return yield* new ProviderSessionReleaseError({
+                                  providerSessionId: input.providerSessionId,
+                                  reason: "runtime_error",
+                                  cause:
+                                    "MCP credential revocation did not finish within 30 seconds and is still running.",
+                                });
+                              }
+                            }
+                            // When a release was forked above, the pruned credential
+                            // was handed to its record via extraMcpCredentials and its
+                            // own bounded sweep revokes it — the bounded release join
+                            // below is this detach's wait, so joining the tracked
+                            // sweep too would only re-expose the unbounded
+                            // mcpPrepareLock wait. When nothing detached, the post-
+                            // lock tail joins `revokeDone` so a retry never reports
+                            // success over a running revocation.
+                            return { detached, releaseFiber, revokeDone };
+                          }
+                          return { detached, releaseFiber, revokeDone: undefined };
+                        }),
+                      ),
+                    )
+                    .pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS));
+                  if (Option.isNone(locked)) {
+                    return yield* new ProviderSessionReleaseError({
+                      providerSessionId: input.providerSessionId,
+                      reason: "runtime_error",
+                      cause:
+                        "An in-flight attachment or cleanup held this session's lock for over " +
+                        "30 seconds; the detach could not run and ownership stays with the holder.",
+                    });
+                  }
+                  const { detached, releaseFiber, revokeDone } = locked.value;
+                  if (Option.isNone(detached)) {
+                    // A close may have moved the entry into `releasing` while this
+                    // detach was reading the projection or interrupting turns; join
+                    // that cleanup like any retry instead of reporting success over
+                    // still-pending work. The join is pinned to the ownership this
+                    // detach observed at read time: a pending record for a same-id
+                    // replacement is a different session and must not be joined.
+                    // When no entry was seen at all, the pending-release check at
+                    // the top already passed, so anything releasing now belongs to
+                    // another instance.
+                    if (currentEntry !== undefined && releasing.has(key)) {
+                      yield* releaseEntry({
+                        providerSessionId: input.providerSessionId,
+                        reason: "manual_shutdown",
+                        joinOnly: true,
+                        expectedRuntime: currentEntry.runtime,
+                      });
+                    }
+                    // An earlier terminal detach for this thread may have started
+                    // a revocation this call must not outrun: the caller that
+                    // forked it may already have timed out or been interrupted.
+                    // Join the tracked sweep (bounded like any cleanup wait) so a
+                    // retry only reports success once revocation actually finished.
+                    // The release record above does not cover a credential pruned
+                    // before it was captured, so this join runs whether or not a
+                    // release was pending.
+                    if (revokeDone !== undefined) {
+                      const settled = yield* Deferred.await(revokeDone).pipe(
+                        Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                      );
+                      if (Option.isNone(settled)) {
+                        return yield* new ProviderSessionReleaseError({
+                          providerSessionId: input.providerSessionId,
+                          reason: "runtime_error",
+                          cause:
+                            "MCP credential revocation did not finish within 30 seconds and is still running.",
+                        });
+                      }
+                    }
+                    return;
+                  }
+                  if (releaseFiber !== undefined) {
+                    // Forked inside the lock before the revocation wait so an
+                    // interrupted detach cannot strand the session; the join keeps
+                    // a completed detach waiting on the release outcome.
+                    yield* Fiber.join(releaseFiber);
+                    return;
+                  }
+                  yield* scheduleIdleRelease(input.providerSessionId, detached.value.entry.runtime);
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.fail(
+                      new ProviderSessionReleaseError({
+                        providerSessionId: input.providerSessionId,
+                        reason: "manual_shutdown",
+                        cause,
+                      }),
+                    ),
+                  ),
                 ),
-              )
-              .pipe(Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS));
-            if (Option.isNone(locked)) {
-              return yield* new ProviderSessionReleaseError({
-                providerSessionId: input.providerSessionId,
-                reason: "runtime_error",
-                cause:
-                  "An in-flight attachment or cleanup held this session's lock for over " +
-                  "30 seconds; the detach could not run and ownership stays with the holder.",
-              });
-            }
-            const { detached, releaseFiber, revokeDone } = locked.value;
-            if (Option.isNone(detached)) {
-              // A close may have moved the entry into `releasing` while this
-              // detach was reading the projection or interrupting turns; join
-              // that cleanup like any retry instead of reporting success over
-              // still-pending work. The join is pinned to the ownership this
-              // detach observed at read time: a pending record for a same-id
-              // replacement is a different session and must not be joined.
-              // When no entry was seen at all, the pending-release check at
-              // the top already passed, so anything releasing now belongs to
-              // another instance.
-              if (currentEntry !== undefined && releasing.has(key)) {
-                yield* releaseEntry({
-                  providerSessionId: input.providerSessionId,
-                  reason: "manual_shutdown",
-                  joinOnly: true,
-                  expectedRuntime: currentEntry.runtime,
-                });
-              }
-              // An earlier terminal detach for this thread may have started
-              // a revocation this call must not outrun: the caller that
-              // forked it may already have timed out or been interrupted.
-              // Join the tracked sweep (bounded like any cleanup wait) so a
-              // retry only reports success once revocation actually finished.
-              // The release record above does not cover a credential pruned
-              // before it was captured, so this join runs whether or not a
-              // release was pending.
-              if (revokeDone !== undefined) {
-                const settled = yield* Deferred.await(revokeDone).pipe(
-                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                );
-                if (Option.isNone(settled)) {
-                  return yield* new ProviderSessionReleaseError({
-                    providerSessionId: input.providerSessionId,
-                    reason: "runtime_error",
-                    cause:
-                      "MCP credential revocation did not finish within 30 seconds and is still running.",
-                  });
-                }
-              }
-              return;
-            }
-            if (releaseFiber !== undefined) {
-              // Forked inside the lock before the revocation wait so an
-              // interrupted detach cannot strand the session; the join keeps
-              // a completed detach waiting on the release outcome.
-              yield* Fiber.join(releaseFiber);
-              return;
-            }
-            yield* scheduleIdleRelease(input.providerSessionId, detached.value.entry.runtime);
-          }).pipe(
-            Effect.catchCause((cause) =>
-              Effect.fail(
-                new ProviderSessionReleaseError({
-                  providerSessionId: input.providerSessionId,
-                  reason: "manual_shutdown",
-                  cause,
-                }),
-              ),
-            ),
+              ).pipe(
+                Effect.onExit(() =>
+                  Effect.andThen(
+                    Deferred.done(inflight.detached, Exit.void),
+                    Effect.sync(() => {
+                      inflightDetaches.delete(inflight);
+                    }),
+                  ),
+                ),
+              );
+            }),
           ),
       } satisfies ProviderSessionManagerV2Shape);
     }),
