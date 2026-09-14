@@ -1,5 +1,14 @@
 import * as PullRequestSyncReactor from "./orchestration/PullRequestSyncReactor.ts";
-import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeHttp from "node:http";
+
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import {
+  EnvironmentHttpApi,
+  ProviderDriverKind,
+  type RepositoryIdentity,
+} from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
@@ -26,6 +35,7 @@ import { guardHttpResponseWriteErrors } from "./httpResponseErrorGuard.ts";
 import { fixPath } from "./os-jank.ts";
 import { websocketRpcRouteLayer } from "./ws.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
+import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
@@ -44,6 +54,7 @@ import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
+import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import { ProviderInstanceRegistryHydrationLive } from "./provider/Layers/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
@@ -83,12 +94,14 @@ import * as VcsProjectConfig from "./vcs/VcsProjectConfig.ts";
 import * as VcsProcess from "./vcs/VcsProcess.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as PullRequestReadCache from "./pullRequest/PullRequestReadCache.ts";
 import * as SourceControlRateLimit from "./sourceControl/SourceControlRateLimit.ts";
 import * as SourceControlRepositoryService from "./sourceControl/SourceControlRepositoryService.ts";
+import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import { ObservabilityLive } from "./observability/Layers/Observability.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
@@ -157,17 +170,7 @@ const ApplicationObservabilityLive = ObservabilityLive.pipe(
   Layer.provideMerge(ResourceAttributionLayerLive),
 );
 
-const PtyAdapterLive = Layer.unwrap(
-  Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const BunPtyAdapter = yield* Effect.promise(() => import("./terminal/BunPtyAdapter.ts"));
-      return BunPtyAdapter.layer;
-    } else {
-      const NodePtyAdapter = yield* Effect.promise(() => import("./terminal/NodePtyAdapter.ts"));
-      return NodePtyAdapter.layer;
-    }
-  }),
-);
+const PtyAdapterLive = NodePtyAdapter.layer;
 
 const ServerSettingsLayerLive = ServerSettings.layer.pipe(
   Layer.provide(ServerSecretStore.layer),
@@ -220,61 +223,22 @@ const RelayClientLive = Layer.unwrap(
 const HttpServerLive = Layer.unwrap(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    if (typeof Bun !== "undefined") {
-      const BunHttpServer = yield* Effect.promise(
-        () => import("@effect/platform-bun/BunHttpServer"),
-      );
-      return BunHttpServer.layer({
-        port: config.port,
-        hostname: config.host ?? "127.0.0.1",
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        websocket: {
-          // Negotiate permessage-deflate with clients that offer it; clients
-          // that don't still get uncompressed frames on their connection. A
-          // dedicated compressor keeps a per-connection sliding window
-          // (context takeover) so the compression dictionary is shared across
-          // server-to-client frames. Decompression uses the shared
-          // decompressor: uWebSockets' dedicated decompressor path can abort
-          // connections (close 1006) on valid DEFLATE input — see
-          // https://github.com/uNetworking/uWebSockets.js/issues/633.
-          perMessageDeflate: {
-            compress: "dedicated",
-            decompress: "shared",
-          },
-        },
-      });
-    } else {
-      const [NodeHttpServer, NodeHttp] = yield* Effect.all([
-        Effect.promise(() => import("@effect/platform-node/NodeHttpServer")),
-        Effect.promise(() => import("node:http")),
-      ]);
-      return NodeHttpServer.layer(() => guardHttpResponseWriteErrors(NodeHttp.createServer()), {
-        host: config.host ?? "127.0.0.1",
-        port: config.port,
-        gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
-        // Negotiate permessage-deflate with clients that offer it; clients
-        // that don't still get uncompressed frames on their connection.
-        // Context takeover stays enabled (ws default) so the compression
-        // window is shared across frames — that also makes small frames cheap
-        // to compress, so no size threshold is set (ws only honors
-        // `threshold` when context takeover is disabled).
-        websocket: { perMessageDeflate: true },
-      });
-    }
+    return NodeHttpServer.layer(() => guardHttpResponseWriteErrors(NodeHttp.createServer()), {
+      host: config.host ?? "127.0.0.1",
+      port: config.port,
+      gracefulShutdownTimeout: HTTP_PREEMPTIVE_SHUTDOWN_GRACE_MS,
+      // Negotiate permessage-deflate with clients that offer it; clients
+      // that don't still get uncompressed frames on their connection.
+      // Context takeover stays enabled (ws default) so the compression
+      // window is shared across frames — that also makes small frames cheap
+      // to compress, so no size threshold is set (ws only honors
+      // `threshold` when context takeover is disabled).
+      websocket: { perMessageDeflate: true },
+    });
   }),
 );
 
-const PlatformServicesLive = Layer.unwrap(
-  Effect.gen(function* () {
-    if (typeof Bun !== "undefined") {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-bun/BunServices"));
-      return layer;
-    } else {
-      const { layer } = yield* Effect.promise(() => import("@effect/platform-node/NodeServices"));
-      return layer;
-    }
-  }),
-);
+const PlatformServicesLive = NodeServices.layer;
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
@@ -284,11 +248,53 @@ const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
 
 const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.layer.pipe(
   Layer.provide(
-    Layer.mergeAll(AzureDevOpsCli.layer, BitbucketApi.layer, GitHubCli.layer, GitLabCli.layer),
+    Layer.mergeAll(
+      AzureDevOpsCli.layer,
+      BitbucketApi.layer,
+      GitHubCli.layer,
+      GitLabCli.layer,
+      ForgejoCli.layer,
+    ),
   ),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
+
+const RepositoryIdentityResolverLayerLive = Layer.effect(
+  RepositoryIdentityResolver.RepositoryIdentityResolver,
+  Effect.gen(function* () {
+    const registry = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+    return yield* RepositoryIdentityResolver.make({
+      refine: Effect.fn(function* (identity: RepositoryIdentity) {
+        const remote = ForgejoCli.parseForgejoRemote(identity.locator.remoteUrl);
+        if (
+          !remote ||
+          !identity.rootPath ||
+          (identity.provider !== undefined &&
+            identity.provider !== "unknown" &&
+            identity.provider !== "forgejo")
+        )
+          return identity;
+        const handle = yield* registry.resolveHandle({
+          cwd: identity.rootPath,
+          context: {
+            provider: { kind: "unknown", name: "Unknown", baseUrl: "" },
+            remoteName: identity.locator.remoteName,
+            remoteUrl: identity.locator.remoteUrl,
+          },
+        });
+        if (handle.context?.provider.kind !== "forgejo") return identity;
+        const baseUrl = handle.context.provider.baseUrl.replace(/\/+$/, "");
+        const basePath = new URL(baseUrl).pathname.replace(/^\/+|\/+$/g, "");
+        const path =
+          !remote.ssh && basePath && remote.path.startsWith(`${basePath}/`)
+            ? remote.path.slice(basePath.length + 1)
+            : remote.path;
+        return { ...identity, provider: "forgejo", webUrl: `${baseUrl}/${path}` };
+      }),
+    });
+  }),
+).pipe(Layer.provide(SourceControlProviderRegistryLayerLive), Layer.provide(ProcessRunner.layer));
 
 const PullRequestServiceLive = PullRequestService.layer.pipe(
   Layer.provide(PullRequestProviderRegistry.layer),
@@ -299,6 +305,7 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
 
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunnerLayerLive),
+  Layer.provideMerge(WorktreeSetupTracker.layer),
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(
@@ -321,6 +328,10 @@ const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.l
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
+const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
+  Layer.provide(SourceControlRepositoryServiceLayerLive),
+);
+
 const ReviewLayerLive = ReviewService.layer.pipe(
   Layer.provideMerge(GitVcsDriver.layer),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
@@ -333,6 +344,7 @@ const VcsLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitWorkflowLayerLive),
   Layer.provideMerge(ReviewLayerLive),
   Layer.provideMerge(SourceControlRepositoryServiceLayerLive),
+  Layer.provideMerge(ProjectCloneTrackerLayerLive),
   Layer.provideMerge(
     VcsStatusBroadcaster.layer.pipe(
       Layer.provide(GitWorkflowLayerLive),
@@ -533,7 +545,7 @@ const RuntimeCoreDependenciesLive = RuntimeCoreDependenciesBaseLive.pipe(
   Layer.provideMerge(WorkspaceLayerLive),
   Layer.provideMerge(ProjectEnrichmentService.layer),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
-  Layer.provideMerge(RepositoryIdentityResolver.layer),
+  Layer.provideMerge(RepositoryIdentityResolverLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
   Layer.provideMerge(AuthLayerLive),
   Layer.provideMerge(ServerSecretStore.layer),
@@ -633,9 +645,11 @@ const makeServerLayer = Layer.unwrap(
             return;
           }
 
+          const launcher = yield* ServiceLauncherClient.ServiceLauncherClient;
           const state = yield* makePersistedServerRuntimeState({
             config,
             port: address.port,
+            serviceManaged: launcher.managed,
           });
           yield* persistServerRuntimeState({
             path: config.serverRuntimeStatePath,
@@ -795,7 +809,7 @@ const makeServerLayer = Layer.unwrap(
     const serverApplicationLayer = Layer.mergeAll(
       routesLayer,
       httpListeningLayer,
-      runtimeStateLayer,
+      runtimeStateLayer.pipe(Layer.provide(launcherLayer)),
       tailscaleServeLayer,
       cloudDesiredLinkReconcileLayer,
     );
