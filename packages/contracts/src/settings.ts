@@ -753,7 +753,7 @@ export const AuggieSettings = makeProviderSettingsSchema(
       Schema.annotateKey({
         title: "Allow workspace indexing",
         description:
-          "Lets Augment index this workspace for codebase-aware retrieval. Turning this off asks for approval on every new session.",
+          "Lets Augment index this workspace for codebase-aware retrieval. Sends code to Augment; turn off to decline indexing.",
       }),
     ),
     customModels: Schema.Array(CustomModelSetting).pipe(

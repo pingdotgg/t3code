@@ -1,6 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
 
-import { isAuggieSessionMissingFailure, resolveRequestedModeId } from "./AuggieAdapter.ts";
+import {
+  isAuggieIndexingPermissionRequest,
+  isAuggieSessionMissingFailure,
+  resolveRequestedModeId,
+  selectDeclinedPermissionOption,
+} from "./AuggieAdapter.ts";
 import { buildAuggieModelsFromSessionModelState } from "./AuggieProvider.ts";
 
 const AUGGIE_MODES = {
@@ -99,5 +104,53 @@ describe("buildAuggieModelsFromSessionModelState", () => {
       availableModels: [{ modelId: "claude-opus-5", name: "   " }],
     });
     expect(models[0]?.name).toBe("claude-opus-5");
+  });
+});
+
+// Captured verbatim from `auggie --acp` 0.34.0 on the first `session/new` of a
+// workspace it has not indexed.
+const INDEXING_PERMISSION_REQUEST = {
+  sessionId: "f227dcc5-8bac-4921-81d8-c0a79ec095a9",
+  toolCall: {
+    toolCallId: "workspace-indexing-permission",
+    title: "Workspace Indexing Permission",
+  },
+  options: [
+    { optionId: "always-enable", name: "Always index", kind: "allow_always" },
+    { optionId: "always-disable", name: "Never index", kind: "reject_always" },
+    { optionId: "session-enable", name: "Index for this session", kind: "allow_once" },
+    { optionId: "session-disable", name: "Skip for this session", kind: "reject_once" },
+  ],
+} as const;
+
+describe("isAuggieIndexingPermissionRequest", () => {
+  it("recognizes the consent request Auggie raises during session setup", () => {
+    expect(isAuggieIndexingPermissionRequest(INDEXING_PERMISSION_REQUEST)).toBe(true);
+  });
+
+  it("leaves ordinary tool approvals to the user", () => {
+    expect(
+      isAuggieIndexingPermissionRequest({
+        ...INDEXING_PERMISSION_REQUEST,
+        toolCall: { toolCallId: "write-file-1", title: "Write file" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("selectDeclinedPermissionOption", () => {
+  it("declines for this session rather than writing a persistent refusal", () => {
+    // `always-disable` would persist "never index" into the user's own Auggie
+    // config, which is not T3's to change.
+    expect(selectDeclinedPermissionOption(INDEXING_PERMISSION_REQUEST)).toBe("session-disable");
+  });
+
+  it("reports no option when the agent offers no single-turn refusal", () => {
+    expect(
+      selectDeclinedPermissionOption({
+        ...INDEXING_PERMISSION_REQUEST,
+        options: [{ optionId: "always-disable", name: "Never index", kind: "reject_always" }],
+      }),
+    ).toBeUndefined();
   });
 });

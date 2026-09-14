@@ -168,7 +168,8 @@ export const AuggieDriver: ProviderDriver<AuggieSettings, AuggieDriverEnv> = {
         accentColor,
         enabled,
         snapshot,
-        refreshModels: () => Effect.ignore(snapshot.refresh),
+        // No `refreshModels`: the catalog only exists inside a live session, so
+        // there is nothing this could refresh. The RPC skips instances without it.
         adapter,
         textGeneration,
       } satisfies ProviderInstance;

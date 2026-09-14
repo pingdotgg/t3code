@@ -108,7 +108,8 @@ Cursor's executable is `cursor-agent`, although its login command is
 
 Auggie indexes a workspace to answer questions about it, which sends code to
 Augment. T3 Code allows this by default; turn off **Allow workspace indexing**
-in its provider settings to be asked for approval on each new session instead.
+in its provider settings to decline it. Auggie still answers, but without
+codebase-wide retrieval.
 Auggie does not generate thread titles or commit messages — pick another
 provider under **Settings → General** for those.
 

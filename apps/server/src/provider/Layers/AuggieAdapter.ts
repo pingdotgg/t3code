@@ -270,6 +270,32 @@ function selectAutoApprovedPermissionOption(
   return undefined;
 }
 
+/**
+ * Auggie asks for workspace-indexing consent through a normal permission
+ * request before the first prompt of a new session. The `allowIndexing`
+ * setting already carries the user's answer — `true` is passed as
+ * `--allow-indexing` at spawn so the request never arrives, and `false` is
+ * declined here. Either way it must never reach the approval UI: it is raised
+ * during `session/new`, before the session is registered, so a human answer
+ * could not be routed back to it.
+ */
+const AUGGIE_INDEXING_TOOL_CALL_ID = "workspace-indexing-permission";
+
+export function isAuggieIndexingPermissionRequest(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): boolean {
+  return request.toolCall?.toolCallId?.trim() === AUGGIE_INDEXING_TOOL_CALL_ID;
+}
+
+/** Declines for this session only; never writes a persistent "no" to the user's Auggie config. */
+export function selectDeclinedPermissionOption(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  const rejectOnceOption = request.options.find((option) => option.kind === "reject_once");
+  const optionId = rejectOnceOption?.optionId;
+  return typeof optionId === "string" && optionId.trim() ? optionId.trim() : undefined;
+}
+
 export function makeAuggieAdapter(
   auggieSettings: AuggieSettings,
   options?: AuggieAdapterLiveOptions,
@@ -291,6 +317,12 @@ export function makeAuggieAdapter(
     const makeAcpNativeLoggers = yield* makeAcpNativeLoggerFactory();
 
     const sessions = new Map<ThreadId, AuggieSessionContext>();
+    // Keyed separately from `sessions` because Auggie can open a permission
+    // request during `session/new`, before the session is registered. Routing
+    // replies through this map keeps such a request answerable instead of
+    // deadlocking startup on an approval nobody can resolve.
+    const pendingApprovalsByThread = new Map<ThreadId, Map<ApprovalRequestId, PendingApproval>>();
+    const ownerScope = yield* Effect.scope;
     const threadLocksRef = yield* SynchronizedRef.make(new Map<string, Semaphore.Semaphore>());
     const runtimeEventPubSub = yield* PubSub.unbounded<ProviderRuntimeEvent>();
 
@@ -421,6 +453,7 @@ export function makeAuggieAdapter(
         }
         yield* Effect.ignore(Scope.close(ctx.scope, Exit.void));
         sessions.delete(ctx.threadId);
+        pendingApprovalsByThread.delete(ctx.threadId);
         yield* offerRuntimeEvent({
           type: "session.exited",
           ...(yield* makeEventStamp()),
@@ -508,10 +541,15 @@ export function makeAuggieAdapter(
           }
 
           const pendingApprovals = new Map<ApprovalRequestId, PendingApproval>();
+          pendingApprovalsByThread.set(input.threadId, pendingApprovals);
           const sessionScope = yield* Scope.make("sequential");
           let sessionScopeTransferred = false;
           yield* Effect.addFinalizer(() =>
-            sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
+            sessionScopeTransferred
+              ? Effect.void
+              : Effect.sync(() => {
+                  pendingApprovalsByThread.delete(input.threadId);
+                }).pipe(Effect.andThen(Scope.close(sessionScope, Exit.void))),
           );
           let ctx!: AuggieSessionContext;
 
@@ -579,6 +617,20 @@ export function makeAuggieAdapter(
               mapHandlerFailure(
                 Effect.gen(function* () {
                   yield* logNative(input.threadId, "session/request_permission", params);
+                  if (isAuggieIndexingPermissionRequest(params)) {
+                    // `allowIndexing: true` never reaches here; the spawn flag
+                    // already answered it. Reaching here means the user turned
+                    // indexing off, so decline for this session.
+                    const declinedOptionId = selectDeclinedPermissionOption(params);
+                    return declinedOptionId === undefined
+                      ? { outcome: { outcome: "cancelled" as const } }
+                      : {
+                          outcome: {
+                            outcome: "selected" as const,
+                            optionId: declinedOptionId,
+                          },
+                        };
+                  }
                   if (input.runtimeMode === "full-access") {
                     const autoApprovedOptionId = selectAutoApprovedPermissionOption(params);
                     if (autoApprovedOptionId !== undefined) {
@@ -734,6 +786,17 @@ export function makeAuggieAdapter(
                     yield* Deferred.succeed(event.acknowledge, undefined);
                     return;
                   case "ModeChanged":
+                    return;
+                  case "ConnectionTerminated":
+                    // The agent is gone; without this the context would stay in
+                    // `sessions` unstopped and every later request would be sent
+                    // to a dead runtime. Forked into the adapter scope because
+                    // teardown interrupts this very fiber.
+                    yield* Effect.logWarning("Auggie ACP connection terminated.", {
+                      threadId: ctx.threadId,
+                      errorTag: event.error._tag,
+                    });
+                    yield* stopSessionInternal(ctx).pipe(Effect.forkIn(ownerScope));
                     return;
                   case "AssistantItemStarted":
                     yield* offerRuntimeEvent(
@@ -1009,8 +1072,9 @@ export function makeAuggieAdapter(
       decision,
     ) =>
       Effect.gen(function* () {
-        const ctx = yield* requireSession(threadId);
-        const pending = ctx.pendingApprovals.get(requestId);
+        // Deliberately not `requireSession`: a request opened while the session
+        // was still starting must stay answerable.
+        const pending = pendingApprovalsByThread.get(threadId)?.get(requestId);
         if (!pending) {
           return yield* new ProviderAdapterRequestError({
             provider: PROVIDER,

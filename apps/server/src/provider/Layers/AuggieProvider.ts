@@ -65,7 +65,9 @@ const AUGGIE_BUILT_IN_MODELS: ReadonlyArray<ServerProviderModel> = [
     slug: AUGGIE_DEFAULT_MODEL,
     name: "Auggie Default",
     isCustom: false,
-    isDefault: true,
+    // Deliberately not `isDefault`. A cached catalog restored after a restart
+    // is merged behind these built-ins, and marking the sentinel default would
+    // outrank the real default model Auggie reported.
     capabilities: EMPTY_CAPABILITIES,
   },
 ];
