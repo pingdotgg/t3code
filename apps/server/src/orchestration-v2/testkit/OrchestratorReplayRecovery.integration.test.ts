@@ -42,9 +42,9 @@ import {
 import { runOrchestratorV2ProviderReplayScenario } from "./ProviderReplayHarness.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
 import {
-  decodeProviderReplayNdjson,
   materializeReplayTranscriptRuntimeInstructions,
   materializeReplayTranscriptWorkspace,
+  readProviderReplayTranscript,
 } from "./ReplayTranscriptNdjson.ts";
 
 const FIRST_FINAL = "provider thread resume fixture first turn complete";
@@ -54,9 +54,7 @@ const decodeCodexTranscript = Schema.decodeUnknownEffect(
   CodexReplay.CodexAppServerReplayTranscript,
 );
 const readRawTranscript = Effect.fn("readRecoveryTranscript")(function* (file: URL) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
-  return yield* decodeProviderReplayNdjson(text);
+  return yield* readProviderReplayTranscript(file);
 });
 const readCodexTranscript = Effect.fn("readCodexRecoveryTranscript")(function* (workspace: string) {
   const transcript = yield* readRawTranscript(
