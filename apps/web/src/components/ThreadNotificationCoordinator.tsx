@@ -1,3 +1,4 @@
+import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { useAtomValue } from "@effect/atom-react";
 import { useNavigate, useParams } from "@tanstack/react-router";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
@@ -107,18 +108,19 @@ function EnvironmentNotifications({
       return;
     }
     const next = new Map<ThreadId, { attention: string | null; completion: number | null }>();
-    for (const thread of shell.snapshot.value.threads) {
+    for (const rawThread of shell.snapshot.value.threads) {
+      const thread = presentThreadShell(environmentId, rawThread);
       let status = resolveSidebarThreadStatus(thread);
-      if (status === "ready" && thread.latestTurn?.state === "error") status = "failed";
+      if (status === "ready" && thread.latestRun?.status === "failed") status = "failed";
       const prior = previous.current.get(thread.id);
       const attention =
         status === "input" || status === "approval" || status === "failed"
-          ? `${thread.latestTurn?.turnId ?? ""}:${status}`
+          ? `${thread.latestRun?.runId ?? ""}:${status}`
           : null;
-      const completedAt = Date.parse(thread.latestTurn?.completedAt ?? "");
+      const completedAt = Date.parse(thread.latestRun?.completedAt ?? "");
       const completion =
         status === "ready" &&
-        thread.latestTurn?.state === "completed" &&
+        thread.latestRun?.status === "completed" &&
         Number.isFinite(completedAt)
           ? completedAt
           : (prior?.completion ?? null);

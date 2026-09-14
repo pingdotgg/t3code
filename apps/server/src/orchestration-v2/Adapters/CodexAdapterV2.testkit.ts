@@ -99,6 +99,8 @@ export function makeReplayServerConfig(
       traceMaxBytes: 10 * 1024 * 1024,
       traceMaxFiles: 10,
       otlpTracesUrl: undefined,
+      otlpProtocol: "http/json",
+      otlpHeaders: undefined,
       otlpMetricsUrl: undefined,
       otlpExportIntervalMs: 10_000,
       otlpServiceName: "t3-server",

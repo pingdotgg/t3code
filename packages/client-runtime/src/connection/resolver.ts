@@ -23,6 +23,10 @@ import {
   mapRemoteEnvironmentError,
   profileMissingError,
 } from "./errors.ts";
+import {
+  GitHubRoutingPermissions,
+  gitHubRoutingConnectionKey,
+} from "./githubRoutingPermissions.ts";
 import type {
   BearerConnectionTarget,
   ConnectionTarget,
@@ -203,14 +207,20 @@ const makeSshBroker = Effect.fn("clientRuntime.connection.broker.makeSsh")(funct
       expectedEnvironmentId: target.environmentId,
       target: profile.target,
     });
-    yield* profiles.put(
-      new SshConnectionProfile({
-        connectionId: profile.connectionId,
-        environmentId: profile.environmentId,
-        label: profile.label,
-        target: prepared.bootstrap.target,
-      }),
-    );
+    const preparedProfile = new SshConnectionProfile({
+      connectionId: profile.connectionId,
+      environmentId: profile.environmentId,
+      label: profile.label,
+      target: prepared.bootstrap.target,
+    });
+    if (
+      gitHubRoutingConnectionKey(entry) !==
+      gitHubRoutingConnectionKey({ ...entry, profile: Option.some(preparedProfile) })
+    ) {
+      const permissions = yield* GitHubRoutingPermissions;
+      yield* permissions.forget(target.environmentId);
+    }
+    yield* profiles.put(preparedProfile);
     const authorized = yield* remote.authorizeBearer({
       expectedEnvironmentId: target.environmentId,
       httpBaseUrl: prepared.bootstrap.httpBaseUrl,
