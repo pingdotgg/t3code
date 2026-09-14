@@ -9,7 +9,11 @@ public struct ThreadPullRequestKey: Codable, Hashable, Sendable {
         let host = host.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let repository = repository.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let suffix = ".visualstudio.com"
-        if host.hasSuffix(suffix), repository.contains("/_git/") {
+        let parts = repository.split(separator: "/")
+        if ["ssh.dev.azure.com", "vs-ssh.visualstudio.com"].contains(host), parts.count == 4, parts[0] == "v3" {
+            self.host = "dev.azure.com"
+            self.repository = "\(parts[1])/\(parts[2])/_git/\(parts[3])"
+        } else if host.hasSuffix(suffix), repository.contains("/_git/") {
             let organization = String(host.dropLast(suffix.count))
             self.host = "dev.azure.com"
             self.repository = "\(organization)/\(repository.hasPrefix("defaultcollection/") ? String(repository.dropFirst("defaultcollection/".count)) : repository)"
@@ -18,6 +22,12 @@ public struct ThreadPullRequestKey: Codable, Hashable, Sendable {
             self.repository = repository
         }
         self.number = number
+    }
+
+    public func matchesRepository(_ canonicalKey: String) -> Bool {
+        guard let slash = canonicalKey.firstIndex(of: "/") else { return false }
+        return self == Self(host: String(canonicalKey[..<slash]),
+                            repository: String(canonicalKey[canonicalKey.index(after: slash)...]), number: number)
     }
 }
 
@@ -80,25 +90,37 @@ public struct ThreadPullRequestLink: Codable, Hashable, Sendable, Identifiable {
 
 /// Shared selection rules for badges, search and the thread's external PR link.
 public enum ThreadPullRequests {
+    public static func authority(of text: String) -> String? {
+        guard let url = URL(string: text), let host = url.host else { return nil }
+        return url.port.map { "\(host):\($0)" } ?? host
+    }
+
     public static func parseURL(_ text: String) -> ThreadPullRequestKey? {
         guard let url = URL(string: text.trimmingCharacters(in: .whitespacesAndNewlines)),
               ["https", "http"].contains(url.scheme?.lowercased() ?? ""),
               let host = url.host?.lowercased(), url.user == nil, url.password == nil else { return nil }
-        let parts = url.path.split(separator: "/").map(String.init)
-        let markers = ["pull", "pulls", "merge_requests", "pull-requests", "pullrequest"]
-        guard let index = parts.firstIndex(where: { markers.contains($0) }), index >= 2,
-              parts.count > index + 1, let number = Int(parts[index + 1]), number > 0 else { return nil }
-        var repository = Array(parts[..<index])
-        let marker = parts[index]
-        if marker == "merge_requests" {
-            guard repository.last == "-", repository.count >= 3 else { return nil }
-            repository.removeLast()
+        var routes: [(pattern: String, host: String)] = []
+        if host == "github.com" || host.hasSuffix(".github.com") || host.split(separator: ".").contains("github") {
+            routes.append((#"^/([^/]+/[^/]+)/pull/([0-9]+)(?:/|$)"#, host))
         }
-        if marker == "pull" && !(host == "github.com" || host.hasSuffix(".github.com") || host.split(separator: ".").contains("github")) { return nil }
-        if marker == "pull-requests" && !(host == "bitbucket.org" || host.split(separator: ".").contains("bitbucket")) { return nil }
-        if marker == "pullrequest" && !(host == "dev.azure.com" || host.hasSuffix(".visualstudio.com")) { return nil }
-        let authority = marker == "pulls" ? url.port.map { "\(host):\($0)" } ?? host : host
-        return ThreadPullRequestKey(host: authority, repository: repository.joined(separator: "/"), number: number)
+        routes.append((#"^/([^/]+(?:/[^/]+)+)/pulls/([0-9]+)(?:/|$)"#, authority(of: url.absoluteString) ?? host))
+        routes.append((#"^/([^/]+(?:/[^/]+)+)/-/merge_requests/([0-9]+)(?:/|$)"#, host))
+        if host == "bitbucket.org" || host.hasSuffix(".bitbucket.org") || host.split(separator: ".").contains("bitbucket") {
+            routes.append((#"^/([^/]+/[^/]+)/pull-requests/([0-9]+)(?:/|$)"#, host))
+        }
+        if host == "dev.azure.com" || host.hasSuffix(".dev.azure.com") || host.hasSuffix(".visualstudio.com") {
+            routes.append((#"^/((?:[^/]+/)*_git/[^/]+)/pullrequest/([0-9]+)(?:/|$)"#, host))
+        }
+        let path = url.path
+        for route in routes {
+            guard let regex = try? NSRegularExpression(pattern: route.pattern),
+                  let match = regex.firstMatch(in: path, range: NSRange(path.startIndex..., in: path)),
+                  let repositoryRange = Range(match.range(at: 1), in: path),
+                  let numberRange = Range(match.range(at: 2), in: path),
+                  let number = Int(path[numberRange]), number > 0 else { continue }
+            return ThreadPullRequestKey(host: route.host, repository: String(path[repositoryRange]), number: number)
+        }
+        return nil
     }
 
     public static func mutation(threadID: String, key: ThreadPullRequestKey, url: String,

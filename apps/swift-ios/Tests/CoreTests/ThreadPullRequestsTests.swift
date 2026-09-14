@@ -43,6 +43,15 @@ final class ThreadPullRequestsTests: XCTestCase {
         XCTAssertNil(ThreadPullRequests.parseURL("javascript:alert(1)"))
         XCTAssertNil(ThreadPullRequests.parseURL("https://github.com/org/repo/issues/2"))
         XCTAssertNil(ThreadPullRequests.parseURL("https://github.com/org/repo/pull/0"))
+        XCTAssertEqual(ThreadPullRequests.authority(of: "http://code.example:3000/org/repo/pulls/2"), "code.example:3000")
+        let nested = ThreadPullRequests.parseURL("https://gitlab.example/group/pull/123/repository/-/merge_requests/42")
+        XCTAssertEqual(nested?.number, 42)
+        XCTAssertEqual(nested?.repository, "group/pull/123/repository")
+        let azure = ThreadPullRequests.parseURL("https://org.visualstudio.com/DefaultCollection/project/_git/web/pullrequest/42")
+        XCTAssertEqual(azure?.host, "dev.azure.com")
+        XCTAssertEqual(azure?.repository, "org/project/_git/web")
+        XCTAssertTrue(azure?.matchesRepository("org.visualstudio.com/DefaultCollection/project/_git/web") == true)
+        XCTAssertTrue(azure?.matchesRepository("ssh.dev.azure.com/v3/org/project/web") == true)
     }
 
     func testLinkCommandsNegotiateMultipleAndLegacyServers() throws {

@@ -1291,6 +1291,94 @@ final class NativeMultiEnvironmentTests: XCTestCase {
     }
 }
 
+@Suite("Native GitHub routing")
+@MainActor
+struct NativeGitHubRoutingTests {
+    @Test(arguments: ["matching", "different", "old-server"])
+    func readOnlyRoutesToAnAlternateWithTheSameGuardedAccount(_ scenario: String) async throws {
+        let server = MultiEnvironmentConfigurationServer(
+            routingAccounts: ["one.example": "account-one", "two.example": scenario == "different" ? "account-two" : "account-one"],
+            routingIdentityHosts: scenario == "old-server" ? ["one.example"] : ["one.example", "two.example"]
+        )
+        let fixture = try await configuredFixture(server)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let activity = try await fixture.client.pullRequestActivity(target)
+        let requests = await server.pullRequestRequests().filter { $0.method == RPCMethod.pullRequestsActivity.rawValue }
+        let expectedHost = scenario == "matching" ? "two.example" : "one.example"
+        #expect(requests.map(\.host) == [expectedHost])
+        #expect(activity.author?.login == expectedHost)
+        #expect(requests.first?.input["expectedAccountId"] == .string("account-one"))
+        #expect(requests.first?.input["host"] == .string("github.com"))
+        await fixture.client.disconnect()
+    }
+
+    @Test
+    func aDispatchedWriteFailureDoesNotReplayOnTheOriginOrAnotherAlternate() async throws {
+        let server = MultiEnvironmentConfigurationServer(
+            routingAccounts: ["one.example": "account", "two.example": "account", "three.example": "account"],
+            failPullRequestWrites: true
+        )
+        let fixture = try await configuredFixture(server, includeThird: true)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        do {
+            try await fixture.client.commentOnPullRequest(target, body: "One comment")
+            Issue.record("Expected the dispatched write to fail")
+        } catch {
+            #expect(error is RPCError)
+        }
+        let writes = await server.pullRequestRequests().filter { $0.method == RPCMethod.pullRequestsComment.rawValue }
+        #expect(writes.count == 1)
+        #expect(writes.first?.host != "one.example")
+        #expect(writes.first?.input["expectedAccountId"] == .string("account"))
+        await fixture.client.disconnect()
+    }
+
+    @Test
+    func readPermissionDoesNotSendWritesToTheAlternate() async throws {
+        let server = MultiEnvironmentConfigurationServer(routingAccounts: ["one.example": "account", "two.example": "account"])
+        let fixture = try await configuredFixture(server)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        try await fixture.client.setGitHubRoutingPermission(environmentID: "two", permission: .read)
+        try await fixture.client.commentOnPullRequest(target, body: "Origin only")
+        let requests = await server.pullRequestRequests()
+        #expect(requests.filter { $0.method == RPCMethod.pullRequestsComment.rawValue }.map(\.host) == ["one.example"])
+        #expect(!requests.contains { $0.host == "two.example" })
+        await fixture.client.disconnect()
+    }
+
+    @Test
+    func diffUsesTheSameVerifiedAccountAndEndpointAsOtherReads() async throws {
+        let server = MultiEnvironmentConfigurationServer(routingAccounts: ["one.example": "account", "two.example": "account"])
+        let fixture = try await configuredFixture(server)
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.pullRequestDiff(target, cursor: "next")
+        let requests = await fixture.transport.pullRequestDiffRequests()
+        #expect(requests.map(\.host) == ["two.example"])
+        #expect(requests.first?.input["expectedAccountId"] == .string("account"))
+        #expect(requests.first?.input["host"] == .string("github.com"))
+        #expect(requests.first?.input["cursor"] == .string("next"))
+        await fixture.client.disconnect()
+    }
+
+    private var target: FeaturePullRequestTarget {
+        FeaturePullRequestTarget(environmentID: "one", environmentName: "Origin",
+            reference: PullRequestRef(projectId: "project-one", repository: "org/repo", number: 1, host: "github.com"))
+    }
+
+    private func configuredFixture(_ server: MultiEnvironmentConfigurationServer, includeThird: Bool = false) async throws -> MultiEnvironmentFixture {
+        let fixture = try await NativeMultiEnvironmentTests.makeFixture(
+            includeThirdEnvironment: includeThird, pullRequestsAvailable: true,
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(2)
+        )
+        _ = try await fixture.client.initialSnapshot()
+        for id in includeThird ? ["one", "two", "three"] : ["one", "two"] {
+            try await fixture.client.setGitHubRoutingPermission(environmentID: id, permission: .readWrite)
+        }
+        return fixture
+    }
+}
+
 @Suite("Native passive thread refresh")
 @MainActor
 struct NativePassiveThreadRefreshTests {
@@ -1693,6 +1781,9 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
     private var shellReadCounts: [String: Int] = [:]
     private var dispatched: [MultiEnvironmentDispatchRecord] = []
     private var hostsDroppingNextCreateReply = Set<String>()
+    private var diffRequests: [(host: String, input: JSONValue)] = []
+
+    func pullRequestDiffRequests() -> [(host: String, input: JSONValue)] { diffRequests }
 
     init(shells: [String: OrchestrationShellSnapshot]) {
         self.shells = shells
@@ -1752,6 +1843,10 @@ private actor MultiEnvironmentHTTPTransport: HTTPTransport {
         }
         guard reachableHosts.contains(host) else {
             throw URLError(.cannotConnectToHost)
+        }
+        if path == "/api/pull-requests/diff", let body = request.httpBody {
+            diffRequests.append((host, try JSONDecoder.t3.decode(JSONValue.self, from: body)))
+            return (Data(#"{"patch":"","truncated":false,"nextCursor":null}"#.utf8), multiEnvironmentResponse(request))
         }
         if path == "/api/orchestration/shell",
            shellReadsEnabledHosts.contains(host),
@@ -1834,6 +1929,10 @@ private actor MultiEnvironmentConfigurationServer {
     private var directoryRequests: [(host: String, input: JSONValue)] = []
     private let projectSettingsSupportHosts: Set<String>
     private let providersByHost: [String: [JSONValue]]
+    private let routingAccounts: [String: String]
+    private let routingIdentityHosts: Set<String>
+    private let failPullRequestWrites: Bool
+    private var prRequests: [(host: String, method: String, input: JSONValue)] = []
 
     init(
         restartSupportHosts: Set<String> = [],
@@ -1841,7 +1940,10 @@ private actor MultiEnvironmentConfigurationServer {
         legacyEntries: ProjectEntriesResult? = nil,
         projectSettingsSupportHosts: Set<String> = [],
         settingsByHost: [String: [String: JSONValue]] = [:],
-        providersByHost: [String: [JSONValue]] = [:]
+        providersByHost: [String: [JSONValue]] = [:],
+        routingAccounts: [String: String] = [:],
+        routingIdentityHosts: Set<String> = ["one.example", "two.example", "three.example"],
+        failPullRequestWrites: Bool = false
     ) {
         self.restartSupportHosts = restartSupportHosts
         self.directoryEntries = directoryEntries
@@ -1849,17 +1951,44 @@ private actor MultiEnvironmentConfigurationServer {
         self.projectSettingsSupportHosts = projectSettingsSupportHosts
         self.settingsByHost = settingsByHost
         self.providersByHost = providersByHost
+        self.routingAccounts = routingAccounts
+        self.routingIdentityHosts = routingIdentityHosts
+        self.failPullRequestWrites = failPullRequestWrites
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
     func settings(host: String) -> [String: JSONValue] { settingsByHost[host] ?? [:] }
     func fileRequests() -> [(host: String, input: JSONValue)] { directoryRequests }
+    func pullRequestRequests() -> [(host: String, method: String, input: JSONValue)] { prRequests }
 
     func response(to request: JSONValue, host: String) throws -> JSONValue? {
         guard let tag = request["tag"]?.stringValue,
               case let .number(id)? = request["id"] else { return nil }
         let value: JSONValue
+        if tag.hasPrefix("pullRequests.") {
+            prRequests.append((host, tag, request["payload"] ?? .object([:])))
+        }
         switch tag {
+        case RPCMethod.pullRequestsRouting.rawValue, RPCMethod.pullRequestsRoutingIdentity.rawValue:
+            if tag == RPCMethod.pullRequestsRoutingIdentity.rawValue && !routingIdentityHosts.contains(host) {
+                return failure(id: id, message: "Unknown method")
+            }
+            value = .object([
+                "accountId": .string(routingAccounts[host] ?? "unknown"), "host": .string("github.com"),
+                "provider": .string("github"), "viewer": .string("theo"),
+                "projectTitle": .string("Original project"), "workspaceRoot": .string("/origin/repo"),
+            ])
+        case RPCMethod.pullRequestsActivity.rawValue:
+            value = .object([
+                "author": .object(["login": .string(host)]), "comments": .array([]),
+                "commentCount": .number(0), "commentsTruncated": .bool(false),
+                "reviewThreads": .array([]), "commits": .array([]),
+            ])
+        case RPCMethod.pullRequestsComment.rawValue:
+            if failPullRequestWrites { return failure(id: id, message: "Write response failed after dispatch") }
+            value = .null
+        case RPCMethod.pullRequestsInvalidate.rawValue:
+            value = .null
         case RPCMethod.projectsListEntries.rawValue:
             let input = request["payload"] ?? .object([:])
             directoryRequests.append((host, input))
@@ -1910,6 +2039,15 @@ private actor MultiEnvironmentConfigurationServer {
         return .object([
             "_tag": .string("Exit"), "requestId": .number(id),
             "exit": .object(["_tag": .string("Success"), "value": value]),
+        ])
+    }
+
+    private func failure(id: Double, message: String) -> JSONValue {
+        .object([
+            "_tag": .string("Exit"), "requestId": .number(id),
+            "exit": .object(["_tag": .string("Failure"), "cause": .object([
+                "_tag": .string("Fail"), "error": .object(["message": .string(message)]),
+            ])]),
         ])
     }
 
