@@ -36,7 +36,7 @@ export const releaseClaimedAttachments = Effect.fn("AttachmentClaims.releaseClai
     yield* Effect.forEach(claimedPaths, (path) => fileSystem.remove(path).pipe(Effect.ignore), {
       concurrency: 1,
       discard: true,
-    });
+    }).pipe(Effect.uninterruptible);
   },
 );
 
@@ -113,7 +113,10 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
             });
           }
           // A copy, not a hard link: an agent editing the delivered file in
-          // place must not mutate the retry source.
+          // place must not mutate the retry source. fs.copyFile cannot be
+          // cancelled, so the copy and its rollback registration stay in one
+          // uninterruptible region: an interrupt landing mid-copy still waits
+          // for the write to settle and records the path before cleanup runs.
           yield* fileSystem.copyFile(claim.currentPath, claim.finalPath).pipe(
             Effect.mapError(
               (cause) =>
@@ -122,12 +125,13 @@ export const claimPendingAttachments = Effect.fn("AttachmentClaims.claimPendingA
                   cause,
                 }),
             ),
+            Effect.andThen(Effect.sync(() => claimedPaths.push(claim.finalPath))),
+            Effect.uninterruptible,
           );
-          claimedPaths.push(claim.finalPath);
           return normalized;
         }),
       { concurrency: 1 },
-    ).pipe(Effect.tapError(() => releaseClaimedAttachments(claimedPaths)));
+    ).pipe(Effect.onError(() => releaseClaimedAttachments(claimedPaths)));
     return { attachments, claimedPaths } satisfies ClaimedAttachments;
   },
 );
