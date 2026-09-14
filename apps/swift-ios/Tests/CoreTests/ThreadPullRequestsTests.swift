@@ -47,6 +47,7 @@ final class ThreadPullRequestsTests: XCTestCase {
         let nested = ThreadPullRequests.parseURL("https://gitlab.example/group/pull/123/repository/-/merge_requests/42")
         XCTAssertEqual(nested?.number, 42)
         XCTAssertEqual(nested?.repository, "group/pull/123/repository")
+        XCTAssertEqual(ThreadPullRequests.parseURL("https://gitlab.example/group/subgroup/pulls/123/repository/-/merge_requests/42")?.number, 42)
         let azure = ThreadPullRequests.parseURL("https://org.visualstudio.com/DefaultCollection/project/_git/web/pullrequest/42")
         XCTAssertEqual(azure?.host, "dev.azure.com")
         XCTAssertEqual(azure?.repository, "org/project/_git/web")

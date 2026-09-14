@@ -103,8 +103,8 @@ public enum ThreadPullRequests {
         if host == "github.com" || host.hasSuffix(".github.com") || host.split(separator: ".").contains("github") {
             routes.append((#"^/([^/]+/[^/]+)/pull/([0-9]+)(?:/|$)"#, host))
         }
-        routes.append((#"^/([^/]+(?:/[^/]+)+)/pulls/([0-9]+)(?:/|$)"#, authority(of: url.absoluteString) ?? host))
         routes.append((#"^/([^/]+(?:/[^/]+)+)/-/merge_requests/([0-9]+)(?:/|$)"#, host))
+        routes.append((#"^/([^/]+(?:/[^/]+)+)/pulls/([0-9]+)(?:/|$)"#, authority(of: url.absoluteString) ?? host))
         if host == "bitbucket.org" || host.hasSuffix(".bitbucket.org") || host.split(separator: ".").contains("bitbucket") {
             routes.append((#"^/([^/]+/[^/]+)/pull-requests/([0-9]+)(?:/|$)"#, host))
         }
