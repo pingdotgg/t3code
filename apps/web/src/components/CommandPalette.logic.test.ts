@@ -734,6 +734,9 @@ describe("filterPinnedBrowseEntries", () => {
 it.each([
   "#10839",
   "10839",
+  "pingdotgg t3code",
+  "cafe",
+  "cleanup cafe",
   "pingdotgg/t3code#10839",
   "https://github.com/pingdotgg/t3code/pull/10839",
 ])("finds linked threads from PR query %s", (query) => {
@@ -749,7 +752,15 @@ it.each([
             url: "https://github.com/pingdotgg/t3code/pull/10839",
             source: "manual",
             linkedAt: "2026-09-08T00:00:00Z",
-            snapshot: null,
+            snapshot: {
+              title: "Café cleanup",
+              state: "open",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-09-08T00:00:00Z",
+            },
             stack: null,
           },
         ],

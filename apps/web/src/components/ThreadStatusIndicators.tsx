@@ -631,15 +631,25 @@ export function ThreadSearchPullRequestNumber({
   settled?: boolean;
 }) {
   const matches = createThreadPullRequestMatcher(query);
-  const candidates =
-    thread.pullRequests.length > 0
-      ? visibleThreadPullRequests(thread.pullRequests).map((pr) => ({
-          ...pr,
-          projectId: thread.projectId,
-        }))
-      : [thread.linkedPullRequest, thread.branchPullRequest];
-  const reference = candidates.find((pr) => pr != null && matches({ linkedPullRequest: pr }));
-  const linked = useLinkedThreadPullRequest(thread.environmentId, reference, enabled);
+  const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
+    matches({ linkedPullRequest: { ...pr, projectId: thread.projectId } }),
+  );
+  const fallbackCandidates =
+    thread.pullRequests.length === 0
+      ? [thread.linkedPullRequest, thread.branchPullRequest]
+      : [thread.branchPullRequest];
+  const legacyReference = matchedLink
+    ? undefined
+    : fallbackCandidates.find((pr) => pr != null && matches({ linkedPullRequest: pr }));
+  const legacyStatus = useLinkedThreadPullRequest(
+    thread.environmentId,
+    legacyReference,
+    enabled,
+    undefined,
+    legacyReference,
+  );
+  const reference = matchedLink ?? legacyReference;
+  const linked = matchedLink ? linkedPullRequestSnapshotStatus(matchedLink) : legacyStatus;
   const status = prStatusIndicator(linked?.pr ?? null, linked?.sourceControlProvider);
   return reference ? (
     <ThreadPullRequestNumber

@@ -1,3 +1,4 @@
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
 import type { ThreadPullRequestSearchTarget } from "@t3tools/client-runtime/thread-pull-request-search";
@@ -388,6 +389,7 @@ export function filterCommandPaletteGroups(input: {
   }
   const queryTokens = normalizedQuery.split(" ");
   const matchesPullRequest = createThreadPullRequestMatcher(searchQuery);
+  const isPullRequestNumberQuery = /^#?\d+$/.test(searchQuery.trim());
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
@@ -423,7 +425,11 @@ export function filterCommandPaletteGroups(input: {
 
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
-      const haystack = normalizeSearchText(item.searchTerms.join(" "));
+      const searchTerms =
+        !isPullRequestNumberQuery && item.threadPullRequests
+          ? [...item.searchTerms, ...threadPullRequestSearchTerms(item.threadPullRequests)]
+          : item.searchTerms;
+      const haystack = normalizeSearchText(searchTerms.join(" "));
       const pullRequestMatch =
         item.threadPullRequests !== undefined && matchesPullRequest(item.threadPullRequests);
       if (!pullRequestMatch && !queryTokens.every((token) => haystack.includes(token))) {
@@ -433,7 +439,7 @@ export function filterCommandPaletteGroups(input: {
       return Result.succeed({
         item,
         index,
-        rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
+        rank: rankCommandPaletteItemMatch({ ...item, searchTerms }, normalizedQuery, queryTokens),
       });
     })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
