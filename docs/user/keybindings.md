@@ -60,6 +60,11 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
 
+`preview.openRecent` opens the right sidebar's in-app browser at the thread's
+most recent browser URL, or a blank browser if none is available. It reuses an
+existing tab for that URL. Assign a shortcut in **Settings → Keybindings**; none
+is assigned by default. The in-app browser requires a supported desktop runtime.
+
 ## Reserved shortcuts
 
 In the desktop app, `mod+w` closes the focused terminal or the active right-panel

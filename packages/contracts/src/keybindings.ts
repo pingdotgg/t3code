@@ -63,6 +63,7 @@ export const STATIC_KEYBINDING_COMMANDS = [
   "rightPanel.close",
   "diff.toggle",
   "preview.toggle",
+  "preview.openRecent",
   "preview.refresh",
   "preview.focusUrl",
   "preview.zoomIn",

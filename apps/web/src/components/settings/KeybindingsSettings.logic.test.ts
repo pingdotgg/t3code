@@ -17,6 +17,13 @@ import {
 } from "./KeybindingsSettings.logic";
 
 describe("KeybindingsSettings.logic", () => {
+  it("offers the recent browser command without assigning a default shortcut", () => {
+    expect(buildKeybindingCommandOptions([])).toContain("preview.openRecent");
+    expect(
+      DEFAULT_RESOLVED_KEYBINDINGS.some((binding) => binding.command === "preview.openRecent"),
+    ).toBe(false);
+  });
+
   it("builds searchable rows with readable key and when values", () => {
     const rows = buildKeybindingRows(
       [
