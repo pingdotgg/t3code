@@ -770,6 +770,38 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("keeps line callbacks flowing past the output cap when asked", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        // 4 KiB of multi-byte lines, well past a 512-byte cap; the last line
+        // is the one a failure surface would need.
+        const lines: Array<string> = [];
+        const result = yield* driver.execute({
+          operation: "GitVcsDriver.test.callbacksPastCap",
+          cwd,
+          args: [
+            "-c",
+            'alias.spew=!for i in $(seq 1 128); do printf "é%03d\\n" $i >&2; done; echo fatal: last line >&2',
+            "spew",
+          ],
+          maxOutputBytes: 512,
+          appendTruncationMarker: true,
+          keepLineCallbacksAfterTruncation: true,
+          progress: { onStderrLine: (line) => Effect.sync(() => void lines.push(line)) },
+        });
+
+        assert.isTrue(result.stderrTruncated);
+        assert.isAtMost(result.stderr.length, 600);
+        assert.equal(lines.length, 129);
+        assert.equal(lines[0], "é001");
+        assert.equal(lines[127], "é128");
+        assert.equal(lines.at(-1), "fatal: last line");
+        // No replacement characters: the cap landing inside "é" is invisible to callbacks.
+        assert.isFalse(lines.some((line) => line.includes("\uFFFD")));
+      }),
+    );
+
     it.effect("recovers a structurally identified missing cwd as a non-repository", () =>
       Effect.gen(function* () {
         const parent = yield* makeTmpDir();
