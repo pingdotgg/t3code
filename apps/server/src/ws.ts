@@ -7,11 +7,13 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import {
@@ -115,6 +117,7 @@ import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
 import * as PreviewAutomationBroker from "./mcp/PreviewAutomationBroker.ts";
 import * as DeviceService from "./device/DeviceService.ts";
+import { remoteSshDeviceHosts } from "./device/localSshDeviceHost.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
@@ -129,6 +132,7 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
@@ -155,6 +159,7 @@ import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
+import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
 import * as GitVcsDriver from "./vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "./vcs/VcsDriverRegistry.ts";
@@ -229,6 +234,12 @@ function projectEntriesFailureContext(error: WorkspaceEntries.WorkspaceEntriesEr
       return {
         failure: "workspace_root_not_directory",
         normalizedCwd: error.normalizedWorkspaceRoot,
+      };
+    case "WorkspaceEntriesReadDirectoryError":
+      return {
+        failure: "directory_list_failed",
+        ...(error.cwd !== undefined ? { normalizedCwd: error.cwd } : {}),
+        detail: error.message,
       };
     case "WorkspaceSearchIndexCreateFailed":
       return {
@@ -538,6 +549,8 @@ const makeWsRpcLayer = (
       const terminalManager = yield* TerminalManager.TerminalManager;
       const previewManager = yield* PreviewManager.PreviewManager;
       const deviceService = yield* DeviceService.DeviceService;
+      const deviceHostContext =
+        yield* Effect.context<Effect.Services<ReturnType<typeof remoteSshDeviceHosts>>>();
       const portDiscovery = yield* PortScanner.PortDiscovery;
       const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
       const providerService = yield* ProviderService.ProviderService;
@@ -590,6 +603,7 @@ const makeWsRpcLayer = (
         return true;
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
+      const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -623,6 +637,7 @@ const makeWsRpcLayer = (
       const sourceControlRepositories =
         yield* SourceControlRepositoryService.SourceControlRepositoryService;
       const pullRequests = yield* PullRequestService.PullRequestService;
+      const withPullRequestViewer = pullRequests.withRoutingCredential;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const sessions = yield* SessionStore.SessionStore;
@@ -983,6 +998,9 @@ const makeWsRpcLayer = (
           let targetProjectId = bootstrap?.createThread?.projectId;
           let targetProjectCwd = bootstrap?.prepareWorktree?.projectCwd;
           let targetWorktreePath = bootstrap?.createThread?.worktreePath ?? null;
+          // The setup script's terminal, once started. Cancel closes only this
+          // one so terminals the user opened meanwhile survive.
+          let setupTerminalId: string | null = null;
 
           const cleanupCreatedThread = () =>
             createdThread
@@ -1075,19 +1093,37 @@ const makeWsRpcLayer = (
               );
             });
 
+          const tracked = bootstrap?.prepareWorktree !== undefined;
+          const threadId = command.threadId;
+          const track = (effect: Effect.Effect<void>) => (tracked ? effect : Effect.void);
+
+          // Runs the setup script and, for tracked bootstraps, waits for it to
+          // exit so the card can show the exit code and the agent stage never
+          // starts on a half-installed tree. Untracked callers keep the old
+          // fire-and-forget behavior.
           const runSetupProgram = () =>
             Effect.gen(function* () {
               if (!bootstrap?.runSetupScript || !targetWorktreePath) {
+                yield* track(worktreeSetupTracker.stageStatus(threadId, "setup-script", "skipped"));
                 return;
               }
               const worktreePath = targetWorktreePath;
               const requestedAt = yield* nowIso;
-              yield* projectSetupScriptRunner
+              yield* track(worktreeSetupTracker.stageStatus(threadId, "setup-script", "running"));
+              const setupResult = yield* projectSetupScriptRunner
                 .runForThread({
-                  threadId: command.threadId,
+                  threadId,
                   ...(targetProjectId ? { projectId: targetProjectId } : {}),
                   ...(targetProjectCwd ? { projectCwd: targetProjectCwd } : {}),
                   worktreePath,
+                  ...(tracked
+                    ? {
+                        observeCompletion: {
+                          onOutputLine: (line) =>
+                            worktreeSetupTracker.appendTail(threadId, "setup-script", line),
+                        },
+                      }
+                    : {}),
                 })
                 .pipe(
                   Effect.matchEffect({
@@ -1096,24 +1132,158 @@ const makeWsRpcLayer = (
                         error,
                         requestedAt,
                         worktreePath,
-                      }),
+                      }).pipe(
+                        Effect.andThen(
+                          track(
+                            worktreeSetupTracker.stageStatus(
+                              threadId,
+                              "setup-script",
+                              "failed",
+                              "failed to start",
+                            ),
+                          ),
+                        ),
+                        Effect.as(null),
+                      ),
                     onSuccess: (setupResult) => {
                       if (setupResult.status !== "started") {
-                        return Effect.void;
+                        return track(
+                          worktreeSetupTracker.stageStatus(
+                            threadId,
+                            "setup-script",
+                            "skipped",
+                            "no setup script",
+                          ),
+                        ).pipe(Effect.as(null));
                       }
+                      setupTerminalId = setupResult.terminalId;
                       return recordSetupScriptStarted({
                         requestedAt,
                         worktreePath,
                         scriptId: setupResult.scriptId,
                         scriptName: setupResult.scriptName,
                         terminalId: setupResult.terminalId,
-                      });
+                      }).pipe(
+                        Effect.andThen(
+                          track(
+                            worktreeSetupTracker.update(threadId, (snapshot) => ({
+                              ...snapshot,
+                              setupScript: {
+                                name: setupResult.scriptName,
+                                command: setupResult.scriptCommand,
+                                terminalId: setupResult.terminalId,
+                              },
+                            })),
+                          ),
+                        ),
+                        Effect.as(setupResult),
+                      );
                     },
                   }),
                 );
+              if (!tracked || !setupResult?.completion) {
+                return;
+              }
+              // The setup script is best effort, like the untracked path: a
+              // failed install must not throw away the worktree the user just
+              // waited for. The card keeps the failed stage and its terminal.
+              const completion = yield* setupResult.completion;
+              if (completion.exitCode === 0) {
+                yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
+                return;
+              }
+              const detail =
+                completion.exitCode === null
+                  ? "terminal closed before the script finished"
+                  : `exit ${completion.exitCode}`;
+              yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "failed", detail);
             });
 
           const bootstrapProgram = Effect.gen(function* () {
+            const prepareWorktree = bootstrap?.prepareWorktree;
+            let shouldPrepareWorktree = prepareWorktree
+              ? yield* gitWorkflow.isRepository(prepareWorktree.projectCwd)
+              : false;
+            let worktreeBaseRef = prepareWorktree?.baseBranch ?? null;
+
+            if (prepareWorktree && shouldPrepareWorktree) {
+              // "Start from origin" is a stored default; repos without the
+              // requested remote branch fall back to the local base branch.
+              const startFromOrigin =
+                prepareWorktree.startFromOrigin === true &&
+                (yield* gitWorkflow.remoteExists({
+                  cwd: prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                }));
+              if (startFromOrigin) {
+                yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "running"));
+                yield* gitWorkflow.fetchRemote({
+                  cwd: prepareWorktree.projectCwd,
+                  remoteName: "origin",
+                });
+                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
+                  cwd: prepareWorktree.projectCwd,
+                  refName: prepareWorktree.baseBranch,
+                  remoteName: "origin",
+                });
+                if (remoteBaseExists) {
+                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
+                    cwd: prepareWorktree.projectCwd,
+                    refName: prepareWorktree.baseBranch,
+                    fallbackRemoteName: "origin",
+                  });
+                  worktreeBaseRef = resolvedRemoteBase.commitSha;
+                  yield* track(
+                    worktreeSetupTracker.stageStatus(
+                      threadId,
+                      "fetch",
+                      "done",
+                      `origin/${prepareWorktree.baseBranch} at ${resolvedRemoteBase.commitSha.slice(0, 7)}`,
+                    ),
+                  );
+                } else {
+                  yield* track(
+                    worktreeSetupTracker.stageStatus(
+                      threadId,
+                      "fetch",
+                      "warning",
+                      `origin/${prepareWorktree.baseBranch} not found, using local branch`,
+                    ),
+                  );
+                }
+              } else {
+                yield* track(worktreeSetupTracker.stageStatus(threadId, "fetch", "skipped"));
+              }
+
+              const resolvedWorktreeBaseRef = worktreeBaseRef ?? prepareWorktree.baseBranch;
+              shouldPrepareWorktree = yield* gitWorkflow.hasCommit({
+                cwd: prepareWorktree.projectCwd,
+                refName: resolvedWorktreeBaseRef,
+              });
+              worktreeBaseRef = resolvedWorktreeBaseRef;
+              yield* track(
+                worktreeSetupTracker.update(threadId, (snapshot) => ({
+                  ...snapshot,
+                  baseRef: resolvedWorktreeBaseRef,
+                })),
+              );
+            }
+
+            if (prepareWorktree && !shouldPrepareWorktree) {
+              // Not a git repo, or the base has no commit: the thread runs in
+              // the project checkout instead. The card says so and moves on.
+              yield* track(
+                worktreeSetupTracker.update(threadId, (snapshot) => ({
+                  ...snapshot,
+                  stages: snapshot.stages.map((stage) =>
+                    stage.id === "fetch" || stage.id === "checkout" || stage.id === "submodules"
+                      ? { ...stage, status: "skipped", detail: "using project checkout" }
+                      : stage,
+                  ),
+                })),
+              );
+            }
+
             if (bootstrap?.createThread) {
               const created = yield* dispatchFromClient({
                 type: "thread.create",
@@ -1136,47 +1306,93 @@ const makeWsRpcLayer = (
               createdThread = true;
             }
 
-            if (bootstrap?.prepareWorktree) {
-              let worktreeBaseRef = bootstrap.prepareWorktree.baseBranch;
-              // "Start from origin" is a stored default; repos without the
-              // requested remote branch fall back to the local base branch.
-              const startFromOrigin =
-                bootstrap.prepareWorktree.startFromOrigin === true &&
-                (yield* gitWorkflow.remoteExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                }));
-              if (startFromOrigin) {
-                yield* gitWorkflow.fetchRemote({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  remoteName: "origin",
-                });
-                const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
-                  cwd: bootstrap.prepareWorktree.projectCwd,
-                  refName: bootstrap.prepareWorktree.baseBranch,
-                  remoteName: "origin",
-                });
-                if (remoteBaseExists) {
-                  const resolvedRemoteBase = yield* gitWorkflow.resolveRemoteTrackingCommit({
-                    cwd: bootstrap.prepareWorktree.projectCwd,
-                    refName: bootstrap.prepareWorktree.baseBranch,
-                    fallbackRemoteName: "origin",
-                  });
-                  worktreeBaseRef = resolvedRemoteBase.commitSha;
-                }
-              }
-              const worktree = yield* gitWorkflow.createWorktree({
-                cwd: bootstrap.prepareWorktree.projectCwd,
-                refName: worktreeBaseRef,
-                newRefName: bootstrap.prepareWorktree.branch,
-                baseRefName: bootstrap.prepareWorktree.baseBranch,
-                path: null,
-              });
+            if (prepareWorktree && shouldPrepareWorktree && worktreeBaseRef) {
+              yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
+              let checkoutTotal: number | null = null;
+              const worktree = yield* gitWorkflow.createWorktree(
+                {
+                  cwd: prepareWorktree.projectCwd,
+                  refName: worktreeBaseRef,
+                  newRefName: prepareWorktree.branch,
+                  baseRefName: prepareWorktree.baseBranch,
+                  path: null,
+                },
+                {
+                  progress: {
+                    // Git has registered the directory at this point, so a
+                    // cancel during the submodule step can still remove it.
+                    onWorktreeClaimed: (path) =>
+                      Effect.sync(() => {
+                        targetWorktreePath = path;
+                      }),
+                    onCheckoutProgress: ({ percent, completed, total }) => {
+                      checkoutTotal = total;
+                      return worktreeSetupTracker.stage(threadId, "checkout", {
+                        percent,
+                        detail: `${completed.toLocaleString("en-US")} / ${total.toLocaleString("en-US")} files`,
+                      });
+                    },
+                    onSubmodulesStarted: () =>
+                      worktreeSetupTracker
+                        .stageStatus(
+                          threadId,
+                          "checkout",
+                          "done",
+                          checkoutTotal === null
+                            ? null
+                            : `${checkoutTotal.toLocaleString("en-US")} files`,
+                        )
+                        .pipe(
+                          Effect.andThen(
+                            worktreeSetupTracker.stageStatus(threadId, "submodules", "running"),
+                          ),
+                        ),
+                    onSubmoduleLine: (line) => {
+                      const submodulePath = /Submodule path '([^']+)'/.exec(line)?.[1];
+                      return submodulePath === undefined
+                        ? Effect.void
+                        : worktreeSetupTracker.stage(threadId, "submodules", {
+                            detail: submodulePath,
+                          });
+                    },
+                    onSubmodulesFinished: ({ ok, detail }) =>
+                      worktreeSetupTracker.stageStatus(
+                        threadId,
+                        "submodules",
+                        ok ? "done" : "warning",
+                        ok ? undefined : (detail ?? "submodule checkout failed"),
+                      ),
+                  },
+                },
+              );
+              const checkoutEndedAt = yield* nowIso;
+              yield* worktreeSetupTracker.update(threadId, (snapshot) => ({
+                ...snapshot,
+                worktreePath: worktree.worktree.path,
+                stages: snapshot.stages.map((stage) => {
+                  if (stage.id === "checkout" && stage.status === "running") {
+                    return {
+                      ...stage,
+                      status: "done",
+                      percent: 100,
+                      endedAt: checkoutEndedAt,
+                      detail:
+                        checkoutTotal === null
+                          ? stage.detail
+                          : `${checkoutTotal.toLocaleString("en-US")} files`,
+                    };
+                  }
+                  if (stage.id === "submodules" && stage.status === "pending") {
+                    return { ...stage, status: "skipped", detail: "none" };
+                  }
+                  return stage;
+                }),
+              }));
               targetWorktreePath = worktree.worktree.path;
               yield* dispatchFromClient({
                 type: "thread.meta.update",
                 commandId: yield* serverCommandId("bootstrap-thread-meta-update"),
-                threadId: command.threadId,
+                threadId,
                 branch: worktree.worktree.refName,
                 worktreePath: targetWorktreePath,
               });
@@ -1185,36 +1401,114 @@ const makeWsRpcLayer = (
 
             yield* runSetupProgram();
 
-            return yield* dispatchFromClient(finalTurnStartCommand);
+            yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "running"));
+            // Past this point a cancel would roll back a thread whose turn has
+            // started. Drop the cancel handle and make the handoff atomic.
+            yield* track(worktreeSetupTracker.markUncancellable(threadId));
+            const started = yield* Effect.uninterruptible(
+              dispatchFromClient(finalTurnStartCommand),
+            );
+            yield* track(
+              worktreeSetupTracker
+                .stageStatus(threadId, "agent", "done")
+                .pipe(Effect.andThen(worktreeSetupTracker.finish(threadId, "done"))),
+            );
+            return started;
           });
 
-          return yield* bootstrapProgram.pipe(
+          const runBootstrap = tracked
+            ? Effect.gen(function* () {
+                const fiber = yield* Effect.forkChild(bootstrapProgram);
+                yield* worktreeSetupTracker.begin({
+                  threadId,
+                  branch: bootstrap?.prepareWorktree?.branch ?? null,
+                  baseRef: bootstrap?.prepareWorktree?.baseBranch ?? null,
+                  stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
+                  fiber,
+                });
+                return yield* Fiber.join(fiber);
+              })
+            : bootstrapProgram;
+
+          const cleanupAndFail = (
+            cause: Cause.Cause<unknown>,
+            dispatchError: OrchestrationDispatchCommandError,
+          ) =>
+            Effect.uninterruptible(cleanupCreatedThread()).pipe(
+              Effect.matchCauseEffect({
+                onFailure: (cleanupCause) =>
+                  Effect.logWarning("bootstrap thread cleanup failed", {
+                    threadId,
+                    detail: Cause.pretty(cleanupCause),
+                  }).pipe(Effect.flatMap(() => Effect.fail(dispatchError))),
+                onSuccess: (threadDeleted) =>
+                  Effect.fail(
+                    threadDeleted
+                      ? new OrchestrationDispatchCommandError({
+                          message: dispatchError.message,
+                          ...(dispatchError.cause !== undefined
+                            ? { cause: dispatchError.cause }
+                            : {}),
+                          bootstrapThreadDisposition: "deleted",
+                        })
+                      : dispatchError,
+                  ),
+              }),
+            );
+
+          return yield* runBootstrap.pipe(
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
-                return Effect.fail(dispatchError);
+                // A user cancel interrupts the forked bootstrap fiber. The
+                // created thread is rolled back like any other failure so the
+                // draft returns to the composer. The setup terminal is closed
+                // first so a still-running script cannot hold files open in
+                // the worktree while git removes it. Closing kills the
+                // process asynchronously, so the removal retries briefly.
+                const closeSetupTerminal = setupTerminalId
+                  ? terminalManager.close({
+                      threadId,
+                      terminalId: setupTerminalId,
+                      deleteHistory: true,
+                    })
+                  : Effect.void;
+                const removeCreatedWorktree =
+                  tracked && targetWorktreePath && bootstrap?.prepareWorktree
+                    ? closeSetupTerminal.pipe(
+                        Effect.ignoreCause({ log: true }),
+                        Effect.andThen(
+                          gitWorkflow
+                            .removeWorktree({
+                              cwd: bootstrap.prepareWorktree.projectCwd,
+                              path: targetWorktreePath,
+                              force: true,
+                            })
+                            .pipe(
+                              Effect.retry({ times: 4, schedule: Schedule.spaced("500 millis") }),
+                            ),
+                        ),
+                        Effect.ignoreCause({ log: true }),
+                        Effect.uninterruptible,
+                      )
+                    : Effect.void;
+                return track(worktreeSetupTracker.finish(threadId, "cancelled")).pipe(
+                  Effect.andThen(removeCreatedWorktree),
+                  Effect.andThen(
+                    tracked
+                      ? cleanupAndFail(
+                          cause,
+                          new OrchestrationDispatchCommandError({
+                            message: "Worktree setup cancelled.",
+                          }),
+                        )
+                      : Effect.fail(dispatchError),
+                  ),
+                );
               }
-              return Effect.uninterruptible(cleanupCreatedThread()).pipe(
-                Effect.matchCauseEffect({
-                  onFailure: (cleanupCause) =>
-                    Effect.logWarning("bootstrap thread cleanup failed", {
-                      threadId: command.threadId,
-                      detail: Cause.pretty(cleanupCause),
-                    }).pipe(Effect.flatMap(() => Effect.fail(dispatchError))),
-                  onSuccess: (threadDeleted) =>
-                    Effect.fail(
-                      threadDeleted
-                        ? new OrchestrationDispatchCommandError({
-                            message: dispatchError.message,
-                            ...(dispatchError.cause !== undefined
-                              ? { cause: dispatchError.cause }
-                              : {}),
-                            bootstrapThreadDisposition: "deleted",
-                          })
-                        : dispatchError,
-                    ),
-                }),
-              );
+              return track(
+                worktreeSetupTracker.finish(threadId, "failed", dispatchError.message),
+              ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
             }),
           );
         });
@@ -2014,9 +2308,18 @@ const makeWsRpcLayer = (
         [WS_METHODS.serverUpdateSettings]: ({ patch }) =>
           observeRpcEffect(
             WS_METHODS.serverUpdateSettings,
-            serverSettings
-              .updateSettings(patch)
-              .pipe(Effect.map(ServerSettings.redactServerSettingsForClient)),
+            Effect.gen(function* () {
+              const deviceHosts = patch.deviceHosts
+                ? yield* remoteSshDeviceHosts(patch.deviceHosts).pipe(
+                    Effect.provide(deviceHostContext),
+                  )
+                : undefined;
+              const settings = yield* serverSettings.updateSettings({
+                ...patch,
+                ...(deviceHosts ? { deviceHosts } : {}),
+              });
+              return ServerSettings.redactServerSettingsForClient(settings);
+            }),
             {
               "rpc.aggregate": "server",
             },
@@ -2149,14 +2452,34 @@ const makeWsRpcLayer = (
           observeRpcEffect(WS_METHODS.pullRequestsListStats, pullRequests.listStats(input), {
             "rpc.aggregate": "pull-requests",
           }),
+        [WS_METHODS.pullRequestsRoutingIdentity]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.pullRequestsRoutingIdentity,
+            pullRequests.routingIdentity(input),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
+        [WS_METHODS.pullRequestsRouting]: (input) =>
+          observeRpcEffect(WS_METHODS.pullRequestsRouting, pullRequests.routing(input), {
+            "rpc.aggregate": "pull-requests",
+          }),
         [WS_METHODS.pullRequestsSummary]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSummary, pullRequests.summary(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSummary,
+            withPullRequestViewer(input, pullRequests.summary(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsStack]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsStack, pullRequests.stack(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsStack,
+            withPullRequestViewer(input, pullRequests.stack(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsLinkedThreads]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsLinkedThreads,
@@ -2172,17 +2495,25 @@ const makeWsRpcLayer = (
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsDetail]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsDetail, pullRequests.detail(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsDetail,
+            withPullRequestViewer(input, pullRequests.detail(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsActivity]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsActivity, pullRequests.activity(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsActivity,
+            withPullRequestViewer(input, pullRequests.activity(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsThreadComments]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsThreadComments,
-            pullRequests.threadComments(input),
+            withPullRequestViewer(input, pullRequests.threadComments(input)),
             {
               "rpc.aggregate": "pull-requests",
             },
@@ -2190,61 +2521,75 @@ const makeWsRpcLayer = (
         [WS_METHODS.pullRequestsDiffFileContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsDiffFileContents,
-            pullRequests.diffFileContents(input),
+            withPullRequestViewer(input, pullRequests.diffFileContents(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsRunAction]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsRunAction,
-            pullRequests
-              .runAction(input)
-              .pipe(
-                Effect.tap(() =>
-                  resolvePullRequestSyncKey(input).pipe(
-                    Effect.flatMap((key) =>
-                      key === null ? Effect.void : pullRequestSync.requestSync(key),
-                    ),
+            withPullRequestViewer(input, pullRequests.runAction(input)).pipe(
+              Effect.tap(() =>
+                resolvePullRequestSyncKey(input).pipe(
+                  Effect.flatMap((key) =>
+                    key === null ? Effect.void : pullRequestSync.requestSync(key),
                   ),
                 ),
               ),
+            ),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsUpdate]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsUpdate, pullRequests.update(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsUpdate,
+            withPullRequestViewer(input, pullRequests.update(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsComment]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsComment, pullRequests.comment(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsComment,
+            withPullRequestViewer(input, pullRequests.comment(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsUpdateComment]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsUpdateComment,
-            pullRequests.updateComment(input),
+            withPullRequestViewer(input, pullRequests.updateComment(input)),
             {
               "rpc.aggregate": "pull-requests",
             },
           ),
         [WS_METHODS.pullRequestsSubmitReview]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSubmitReview, pullRequests.submitReview(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSubmitReview,
+            withPullRequestViewer(input, pullRequests.submitReview(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsReplyToThread]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsReplyToThread,
-            pullRequests.replyToThread(input),
+            withPullRequestViewer(input, pullRequests.replyToThread(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetThreadResolution]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsSetThreadResolution,
-            pullRequests.setThreadResolution(input),
+            withPullRequestViewer(input, pullRequests.setThreadResolution(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetReaction]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSetReaction, pullRequests.setReaction(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetReaction,
+            withPullRequestViewer(input, pullRequests.setReaction(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.pullRequestsInvalidate]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsInvalidate,
@@ -2272,25 +2617,29 @@ const makeWsRpcLayer = (
         [WS_METHODS.pullRequestsReviewerCandidates]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsReviewerCandidates,
-            pullRequests.reviewerCandidates(input),
+            withPullRequestViewer(input, pullRequests.reviewerCandidates(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsRequestReviewers]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsRequestReviewers,
-            pullRequests.requestReviewers(input),
+            withPullRequestViewer(input, pullRequests.requestReviewers(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsLabelCandidates]: (input) =>
           observeRpcEffect(
             WS_METHODS.pullRequestsLabelCandidates,
-            pullRequests.labelCandidates(input),
+            withPullRequestViewer(input, pullRequests.labelCandidates(input)),
             { "rpc.aggregate": "pull-requests" },
           ),
         [WS_METHODS.pullRequestsSetLabels]: (input) =>
-          observeRpcEffect(WS_METHODS.pullRequestsSetLabels, pullRequests.setLabels(input), {
-            "rpc.aggregate": "pull-requests",
-          }),
+          observeRpcEffect(
+            WS_METHODS.pullRequestsSetLabels,
+            withPullRequestViewer(input, pullRequests.setLabels(input)),
+            {
+              "rpc.aggregate": "pull-requests",
+            },
+          ),
         [WS_METHODS.sourceControlLookupRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlLookupRepository,
@@ -2545,6 +2894,20 @@ const makeWsRpcLayer = (
             {
               "rpc.aggregate": "vcs",
             },
+          ),
+        [WS_METHODS.subscribeWorktreeSetup]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeWorktreeSetup,
+            worktreeSetupTracker.stream(input.threadId),
+            { "rpc.aggregate": "vcs" },
+          ),
+        [WS_METHODS.worktreeSetupCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.worktreeSetupCancel,
+            worktreeSetupTracker
+              .cancel(input.threadId)
+              .pipe(Effect.map((cancelled) => ({ cancelled }))),
+            { "rpc.aggregate": "vcs" },
           ),
         [WS_METHODS.vcsRefreshStatus]: (input) =>
           observeRpcEffect(
@@ -3112,6 +3475,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                           BitbucketApi.layer,
                           GitHubCli.layer,
                           GitLabCli.layer,
+                          ForgejoCli.layer,
                         ),
                       ),
                       Layer.provideMerge(GitVcsDriver.layer),

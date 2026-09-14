@@ -28,6 +28,11 @@ import {
   type ConnectionTarget,
 } from "./model.ts";
 import * as ConnectionProfileStore from "./profileStore.ts";
+import {
+  GitHubRoutingPermissions,
+  gitHubRoutingConnectionKey,
+  makeGitHubRoutingPermissions,
+} from "./githubRoutingPermissions.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const ENDPOINT = {
@@ -45,7 +50,7 @@ function catalogEntry(
   target: ConnectionTarget,
   profile: Option.Option<ConnectionProfile> = Option.none(),
 ): ConnectionCatalogEntry {
-  return { target, profile };
+  return { target, profile, enabled: true };
 }
 
 function collectingTracer(spans: Array<string>): Tracer.Tracer {
@@ -64,6 +69,7 @@ function collectingTracer(spans: Array<string>): Tracer.Tracer {
 
 const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((options?: {
   readonly profiles?: ReadonlyArray<ConnectionProfile>;
+  readonly profileStore?: ConnectionProfileStore.ConnectionProfileStore["Service"];
   readonly credentials?: ReadonlyArray<readonly [string, ConnectionCredential]>;
   readonly authorizeBearer?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeBearer"];
   readonly authorizeDpop?: RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]["authorizeDpop"];
@@ -134,7 +140,10 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
   });
 
   const dependencies = Layer.mergeAll(
-    Layer.succeed(ConnectionProfileStore.ConnectionProfileStore, profileStore),
+    Layer.succeed(
+      ConnectionProfileStore.ConnectionProfileStore,
+      options?.profileStore ?? profileStore,
+    ),
     Layer.succeed(ConnectionCredentialStore.ConnectionCredentialStore, credentialStore),
     Layer.succeed(
       ClientCapabilities.PrimaryEnvironmentAuth,
@@ -375,6 +384,102 @@ describe("ConnectionResolver", () => {
       expect(yield* Ref.get(connectionMethods)).toEqual(["ssh"]);
     }),
   );
+
+  for (const scenario of ["unchanged", "changed", "revocation-failed"] as const) {
+    it.effect(`handles ${scenario} SSH routing consent before saving or authorizing`, () =>
+      Effect.gen(function* () {
+        const calls: string[] = [];
+        const target = new SshConnectionTarget({
+          environmentId: ENVIRONMENT_ID,
+          label: "SSH",
+          connectionId: "ssh-1",
+        });
+        const profile = new SshConnectionProfile({
+          connectionId: target.connectionId,
+          environmentId: ENVIRONMENT_ID,
+          label: "SSH",
+          target: SSH_TARGET,
+        });
+        const entry = catalogEntry(target, Option.some(profile));
+        const preparedTarget =
+          scenario === "unchanged"
+            ? SSH_TARGET
+            : { ...SSH_TARGET, hostname: "replacement.example.test" };
+        const failure = new ConnectionTransientError({
+          reason: "remote-unavailable",
+          detail: "Could not persist routing consent.",
+        });
+        const permissions = yield* makeGitHubRoutingPermissions({
+          read: Effect.succeed([
+            {
+              environmentId: ENVIRONMENT_ID,
+              connectionKey: gitHubRoutingConnectionKey(entry)!,
+              permission: "read-write",
+            },
+          ]),
+          write: () =>
+            Effect.sync(() => {
+              calls.push("revoke");
+            }).pipe(
+              Effect.andThen(scenario === "revocation-failed" ? Effect.fail(failure) : Effect.void),
+            ),
+        });
+        let savedProfile: ConnectionProfile = profile;
+        const brokerLayer = yield* makeDependencies({
+          profileStore: {
+            get: () => Effect.sync(() => Option.some(savedProfile)),
+            put: (value) =>
+              Effect.sync(() => {
+                calls.push("profile");
+                savedProfile = value;
+              }),
+            remove: () => Effect.die("unused"),
+          },
+          prepareSsh: () =>
+            Effect.succeed({
+              bootstrap: {
+                target: preparedTarget,
+                httpBaseUrl: "http://127.0.0.1:4010",
+                wsBaseUrl: "ws://127.0.0.1:4010",
+                pairingToken: null,
+              },
+              bearerToken: "ssh-bearer",
+            }),
+          authorizeBearer: (input) =>
+            Effect.sync(() => {
+              calls.push("authorize");
+              return {
+                environmentId: input.expectedEnvironmentId,
+                label: "SSH",
+                httpBaseUrl: input.httpBaseUrl,
+                socketUrl: "ws://127.0.0.1:4010/ws?wsTicket=ssh",
+                httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+              };
+            }),
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(
+          Effect.provide(brokerLayer),
+        );
+        const prepare = broker
+          .prepare(entry)
+          .pipe(Effect.provideService(GitHubRoutingPermissions, permissions));
+        if (scenario === "revocation-failed") {
+          expect(yield* Effect.flip(prepare)).toBe(failure);
+          expect(savedProfile).toBe(profile);
+          expect(calls).toEqual(["revoke"]);
+        } else {
+          expect((yield* prepare).socketUrl).toContain("wsTicket=ssh");
+          expect(savedProfile).toMatchObject({ target: preparedTarget });
+          expect(calls).toEqual(
+            scenario === "unchanged"
+              ? ["profile", "authorize"]
+              : ["revoke", "profile", "authorize"],
+          );
+        }
+        expect(yield* permissions.get(entry)).toBe(scenario === "changed" ? "off" : "read-write");
+      }),
+    );
+  }
 
   it.effect("preserves relay authorization failure classification and trace details", () =>
     Effect.gen(function* () {

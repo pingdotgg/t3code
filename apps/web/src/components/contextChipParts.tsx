@@ -1,6 +1,12 @@
 import type { PullRequestContextMetadata } from "@t3tools/contracts";
 import { CircleDashedIcon, FilmIcon, GitPullRequestIcon, ImageIcon } from "lucide-react";
-import type { ComponentProps, MouseEvent, ReactNode } from "react";
+import {
+  useState,
+  type ComponentProps,
+  type CSSProperties,
+  type MouseEvent,
+  type ReactNode,
+} from "react";
 
 import { cn } from "~/lib/utils";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
@@ -113,30 +119,59 @@ export function PullRequestChip(props: {
   onOpen: (event: MouseEvent<HTMLElement>, url: string) => void;
 }) {
   return (
-    <ContextChipPopover
-      accessibleLabel={`${props.kindLabel} ${props.label}: ${props.metadata.title}`}
-      {...(props.copyMarkdown ? { copyMarkdown: props.copyMarkdown } : {})}
-      triggerClassName={props.className}
-      chip={
-        <>
-          <GitPullRequestIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
-          <span className={props.labelClassName}>{props.label}</span>
-        </>
-      }
-    >
-      <div className="space-y-3 p-2">
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            variant="chip"
+            className={cn(
+              props.className,
+              CONTEXT_INLINE_CHIP_FOCUS_CLASS_NAME,
+              CONTEXT_INLINE_CHIP_INTERACTIVE_CLASS_NAME,
+              "cursor-pointer",
+            )}
+            aria-label={`Open ${props.kindLabel} ${props.label}: ${props.metadata.title}`}
+            data-markdown-copy={props.copyMarkdown}
+            onClick={(event) => props.onOpen(event, props.metadata.url)}
+          >
+            <GitPullRequestIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
+            <span className={props.labelClassName}>{props.label}</span>
+          </Button>
+        }
+      />
+      <TooltipPopup side="top">
         <PullRequestContextDetails metadata={props.metadata} />
-        <p className="text-xs text-muted-foreground">Captured pull request context</p>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={(event) => props.onOpen(event, props.metadata.url)}
-        >
-          Open pull request
-        </Button>
-      </div>
-    </ContextChipPopover>
+      </TooltipPopup>
+    </Tooltip>
   );
+}
+
+/** Sample the loaded thumbnail once; transparent pixels should not darken its accent. */
+function averageImageColor(image: HTMLImageElement): string | undefined {
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = canvas.height = 16;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    context.drawImage(image, 0, 0, 16, 16);
+    const { data } = context.getImageData(0, 0, 16, 16);
+    let red = 0;
+    let green = 0;
+    let blue = 0;
+    let alpha = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const weight = data[index + 3]!;
+      red += data[index]! * weight;
+      green += data[index + 1]! * weight;
+      blue += data[index + 2]! * weight;
+      alpha += weight;
+    }
+    if (alpha === 0) return;
+    return `rgb(${Math.round(red / alpha)} ${Math.round(green / alpha)} ${Math.round(blue / alpha)})`;
+  } catch {
+    // Cross-origin or unavailable pixels keep the default image tone and preview action.
+    return;
+  }
 }
 
 export function ImageChipButton({
@@ -146,6 +181,7 @@ export function ImageChipButton({
   labelClassName,
   size,
   suffix,
+  style,
   ...props
 }: ComponentProps<"button"> & {
   name: string;
@@ -155,6 +191,9 @@ export function ImageChipButton({
   size: string;
   suffix?: string | null;
 }) {
+  const [sample, setSample] = useState<{ url: string; color: string | undefined }>();
+  const [corsFailedUrl, setCorsFailedUrl] = useState<string>();
+  const accent = sample?.url === previewUrl ? sample?.color : undefined;
   return (
     <Button
       variant="chip"
@@ -165,10 +204,21 @@ export function ImageChipButton({
         "cursor-zoom-in",
       )}
       aria-label={`Image attachment, ${name}, ${size}`}
+      style={{ ...style, ...(accent ? { "--context-chip-accent": accent } : {}) } as CSSProperties}
       {...props}
     >
       {previewUrl ? (
-        <img src={previewUrl} alt="" className="size-3.5 shrink-0 rounded-sm object-cover" />
+        <img
+          key={previewUrl}
+          crossOrigin={corsFailedUrl === previewUrl ? undefined : "anonymous"}
+          src={previewUrl}
+          alt=""
+          className="size-3.5 shrink-0 rounded-sm object-cover"
+          onError={() => setCorsFailedUrl(previewUrl)}
+          onLoad={(event) =>
+            setSample({ url: previewUrl, color: averageImageColor(event.currentTarget) })
+          }
+        />
       ) : (
         <ImageIcon
           className={cn(

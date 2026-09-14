@@ -597,6 +597,30 @@ describe("draft hero submission transition", () => {
     ).toBe(false);
   });
 
+  it("leaves the hero layout while a worktree setup card is on the timeline", () => {
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: true,
+        hasTimelineEntries: false,
+        isWorking: false,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: false,
+        hasWorktreeSetupCard: true,
+      }),
+    ).toBe(false);
+    // A background submission normally pins the hero, but never over the card.
+    expect(
+      resolveDraftHeroState({
+        isLocalDraftThread: true,
+        hasTimelineEntries: false,
+        isWorking: false,
+        draftHeroDockRequested: false,
+        backgroundSubmissionPending: true,
+        hasWorktreeSetupCard: true,
+      }),
+    ).toBe(false);
+  });
+
   it("keeps the composer in the hero layout until navigation after server promotion", () => {
     expect(
       resolveDraftHeroState({
@@ -2178,6 +2202,10 @@ describe("shouldRefocusComposerOnWindowFocus", () => {
     expect(shouldRefocusComposerOnWindowFocus(element("TEXTAREA"))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("DIV", { editable: true }))).toBe(false);
     expect(shouldRefocusComposerOnWindowFocus(element("DIV", { role: "textbox" }))).toBe(false);
+  });
+
+  it.each(["IFRAME", "WEBVIEW"])("leaves a focused %s preview alone", (tagName) => {
+    expect(shouldRefocusComposerOnWindowFocus(element(tagName))).toBe(false);
   });
 
   it("leaves a focused terminal alone in the drawer and the right panel", () => {

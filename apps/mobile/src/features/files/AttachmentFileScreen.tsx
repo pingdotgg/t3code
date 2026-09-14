@@ -20,6 +20,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { removeComposerDraftAttachment, useComposerDraft } from "../../state/use-composer-drafts";
 import { FileMarkdownPreview } from "./FileMarkdownPreview";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { SourceFileSurface } from "./SourceFileSurface";
 import { WorkspaceFileWebPreview } from "./WorkspaceFileWebPreview";
 
@@ -99,7 +100,7 @@ function AttachmentDocumentBody(props: {
             </Text>
           </View>
         ) : null}
-        {table && document.rendered ? (
+        {table && document.activeMode === "table" ? (
           <ScrollView className="flex-1">
             {table.truncated ? (
               <View className="border-b border-warning-border bg-warning px-4 py-2">
@@ -137,7 +138,7 @@ function AttachmentDocumentBody(props: {
               </View>
             </ScrollView>
           </ScrollView>
-        ) : document.kind === "markdown" && document.rendered && props.environmentId ? (
+        ) : document.activeMode === "markdown" && props.environmentId ? (
           <FileMarkdownPreview
             cwd=""
             relativePath=""
@@ -147,7 +148,7 @@ function AttachmentDocumentBody(props: {
             captured
           />
         ) : (
-          <SourceFileSurface contents={content.text} path={props.name} />
+          <SourceFileSurface contents={content.text} path={props.name} selectable />
         )}
       </View>
     );
@@ -175,6 +176,7 @@ function AttachmentDocumentBody(props: {
 
 export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
   const navigation = useNavigation();
+  const { appearance, setCodeWordBreak } = useAppearancePreferences();
   const iconColor = useUniwindTheme()["--color-icon"];
   const isAndroid = Platform.OS === "android";
   const params = props.route.params;
@@ -249,7 +251,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
     handleBack();
   }, [draftKey, handleBack, params.attachmentId]);
 
-  const { content, renderedMode, rendered, setRendered, share, sharing } = document;
+  const { content, renderedMode, activeMode, setRendered, share, sharing } = document;
   const menuActions = useMemo(
     () =>
       [
@@ -269,6 +271,15 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
               icon: "doc.text",
               inline: true,
               onPress: () => setRendered(false),
+            } as const)
+          : null,
+        content && activeMode === "source"
+          ? ({
+              id: "word-wrap",
+              title: appearance.codeWordBreak ? "Disable word wrap" : "Enable word wrap",
+              icon: "text.alignleft",
+              inline: false,
+              onPress: () => setCodeWordBreak(!appearance.codeWordBreak),
             } as const)
           : null,
         content
@@ -312,19 +323,31 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
             } as const)
           : null,
       ].filter((action) => action !== null),
-    [content, draftKey, removeFromDraft, renderedMode, setRendered, share, sharing, uri],
+    [
+      appearance.codeWordBreak,
+      setCodeWordBreak,
+      content,
+      draftKey,
+      removeFromDraft,
+      activeMode,
+      renderedMode,
+      setRendered,
+      share,
+      sharing,
+      uri,
+    ],
   );
-  const activeMode = rendered ? "preview" : "source";
+  const selectedAction = activeMode === "source" ? "source" : "preview";
   const androidMenuActions = useMemo<MenuAction[]>(
     () =>
       menuActions.map((action) => ({
         id: action.id,
         title: action.title,
         image: action.icon,
-        state: action.inline ? (action.id === activeMode ? "on" : "off") : undefined,
+        state: action.inline ? (action.id === selectedAction ? "on" : "off") : undefined,
         ...("destructive" in action ? { attributes: { destructive: true } } : {}),
       })),
-    [activeMode, menuActions],
+    [selectedAction, menuActions],
   );
   const handleAndroidMenuAction = useCallback(
     (event: { nativeEvent: { event: string } }) => {
@@ -372,7 +395,7 @@ export function AttachmentFileScreen(props: AttachmentFileScreenProps) {
                   <NativeHeaderToolbar.MenuAction
                     key={action.id}
                     icon={action.icon}
-                    isOn={action.id === activeMode}
+                    isOn={action.id === selectedAction}
                     onPress={action.onPress}
                   >
                     {action.title}
