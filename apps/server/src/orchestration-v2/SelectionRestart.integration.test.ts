@@ -1,6 +1,7 @@
 import { assert, it } from "@effect/vitest";
 import {
   CommandId,
+  EventId,
   MessageId,
   type ModelSelection,
   type OrchestrationV2ProviderCapabilities,
@@ -9,6 +10,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderThreadId,
   ProviderTurnId,
   type RunId,
@@ -24,6 +26,7 @@ import * as Stream from "effect/Stream";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { OrchestrationEffectWorkerV2 } from "./EffectWorker.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import {
   ProviderAdapterOpenSessionError,
@@ -48,6 +51,10 @@ const initialSelection = {
 const replacementSelection = {
   instanceId: providerInstanceId,
   model: "restart-model-b",
+} satisfies ModelSelection;
+const seedSelection = {
+  instanceId: providerInstanceId,
+  model: "seed-model",
 } satisfies ModelSelection;
 const handoffDriver = ProviderDriverKind.make("claudeAgent");
 const handoffProviderInstanceId = ProviderInstanceId.make("claude-handoff-test");
@@ -533,6 +540,177 @@ it.live("restarts selection as a new attempt and retries after old-session clean
     }),
   ),
 );
+
+for (const deadStatus of ["stopped", "error"] as const) {
+  it.live(
+    `restarts the live session on a model change when a newer ${deadStatus} session record exists`,
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const name = `selection-restart-dead-${deadStatus}`;
+          const cwd = yield* checkpointWorkspace(name);
+          const threadId = ThreadId.make(`thread:${name}`);
+          const state = yield* Ref.make<RestartAdapterState>({
+            activeTurn: null,
+            opened: [],
+            started: [],
+            closedSessionCount: 0,
+            // The dead record is seeded directly, so the adapter's one-shot
+            // simulated replacement-open failure is skipped.
+            failedReplacementOpen: true,
+          });
+          const registry = makeSingleProviderAdapterRegistryLayer(
+            makeRestartAdapter(state, exclusiveCapabilities),
+          );
+
+          const result = yield* Effect.gen(function* () {
+            const orchestrator = yield* OrchestratorV2;
+            const worker = yield* OrchestrationEffectWorkerV2;
+            const eventSink = yield* EventSinkV2;
+            const dispatch = (step: string, modelSelection: ModelSelection) =>
+              Effect.gen(function* () {
+                const terminal = yield* orchestrator.streamDomainEvents.pipe(
+                  Stream.filter(
+                    (event) => event.type === "run.updated" && event.payload.status === "completed",
+                  ),
+                  Stream.take(1),
+                  Stream.runDrain,
+                  Effect.forkScoped,
+                );
+                yield* orchestrator.dispatch({
+                  type: "message.dispatch",
+                  createdBy: "user",
+                  creationSource: "web",
+                  commandId: CommandId.make(`${name}:${step}`),
+                  threadId,
+                  messageId: MessageId.make(`${name}:${step}`),
+                  text: step,
+                  attachments: [],
+                  modelSelection,
+                  dispatchMode: { type: "start_immediately" },
+                });
+                yield* worker.drain();
+                yield* Fiber.join(terminal);
+                yield* worker.drain();
+                return yield* orchestrator.getThreadProjection(threadId);
+              });
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make(`${name}:create`),
+              threadId,
+              projectId: ProjectId.make(`project:${name}`),
+              title: name,
+              modelSelection: seedSelection,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: cwd,
+            });
+            const first = yield* dispatch("first", seedSelection);
+            const liveSession = first.providerSessions.find(
+              (session) => session.status !== "stopped" && session.status !== "error",
+            );
+            assert.isDefined(liveSession);
+
+            // Dead session records stay bound in the projection until
+            // detachment. A stale stopped/error record written after the
+            // live session attached must not hide it.
+            const deadAt = yield* DateTime.now;
+            const deadSession: OrchestrationV2ProviderSession = {
+              id: ProviderSessionId.make(`session:${name}:dead`),
+              driver,
+              providerInstanceId,
+              status: "ready",
+              cwd,
+              model: seedSelection.model,
+              capabilities: exclusiveCapabilities,
+              createdAt: deadAt,
+              updatedAt: deadAt,
+              lastError: null,
+            };
+            yield* eventSink.write({
+              events: [
+                {
+                  id: EventId.make(`event:${name}:dead-attached`),
+                  type: "provider-session.attached",
+                  threadId,
+                  driver,
+                  providerInstanceId,
+                  occurredAt: deadAt,
+                  payload: deadSession,
+                },
+                {
+                  id: EventId.make(`event:${name}:dead-updated`),
+                  type: "provider-session.updated",
+                  threadId,
+                  driver,
+                  providerInstanceId,
+                  occurredAt: deadAt,
+                  payload: {
+                    ...deadSession,
+                    status: deadStatus,
+                    updatedAt: deadAt,
+                    lastError: deadStatus === "error" ? "Simulated session failure." : null,
+                  },
+                },
+              ],
+            });
+
+            const switchCommandId = CommandId.make(`${name}:switch`);
+            yield* orchestrator.dispatch({
+              type: "thread.model-selection.set",
+              commandId: switchCommandId,
+              threadId,
+              modelSelection: replacementSelection,
+            });
+            yield* worker.drain();
+            const storedSwitchEvents = yield* eventSink
+              .readByCommandId({ commandId: switchCommandId })
+              .pipe(Stream.runCollect);
+            const detachedSessionIds = [...storedSwitchEvents].flatMap((stored) =>
+              stored.event.type === "provider-session.detached"
+                ? [stored.event.payload.providerSessionId]
+                : [],
+            );
+
+            const second = yield* dispatch("second", replacementSelection);
+            return {
+              projection: second,
+              captured: yield* Ref.get(state),
+              liveSessionId: liveSession.id,
+              detachedSessionIds,
+            };
+          }).pipe(Effect.provide(makeOrchestratorV2ReplayLayerWithRegistry({ name }, registry)));
+
+          const { projection, captured } = result;
+          assert.lengthOf(projection.runs, 2);
+          assert.equal(projection.runs[1]?.modelSelection.model, replacementSelection.model);
+          // The exact released session is the older live one, never the newer
+          // dead record.
+          assert.deepEqual(result.detachedSessionIds, [result.liveSessionId]);
+          assert.equal(captured.closedSessionCount, 1);
+          assert.deepEqual(
+            captured.opened.map((open) => open.model),
+            [seedSelection.model, replacementSelection.model],
+          );
+          assert.deepEqual(
+            captured.started.map((turn) => turn.model),
+            [seedSelection.model, replacementSelection.model],
+          );
+          const servingSession = projection.providerSessions.find(
+            (session) =>
+              session.id ===
+              projection.providerThreads.find(
+                (providerThread) => providerThread.id === projection.thread.activeProviderThreadId,
+              )?.providerSessionId,
+          );
+          assert.equal(servingSession?.model, replacementSelection.model);
+        }),
+      ),
+  );
+}
 
 it.live("detaches the old provider session after an active provider handoff", () =>
   Effect.scoped(
