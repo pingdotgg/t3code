@@ -231,6 +231,19 @@ describe("scoped settings writes", () => {
     });
   });
 
+  it("scopes agent device access to projects while keeping hub and hosts environment-wide", () => {
+    const plan = planScopedSettingsPatch(project, [laptop, server], {
+      enableAgentDeviceAccess: true,
+    });
+    expect(plan.serverWrites.map((write) => write.patch)).toEqual([
+      { projectSettingsOverrides: { [projectId]: { enableAgentDeviceAccess: true } } },
+      { projectSettingsOverrides: { [laptopProjectId]: { enableAgentDeviceAccess: true } } },
+    ]);
+    for (const patch of [{ enableDeviceSupport: true }, { deviceHosts: [] }]) {
+      expect(planScopedSettingsPatch(project, environments, patch).serverWrites).toEqual([]);
+    }
+  });
+
   it("refuses environment-wide keys and older servers at project scope", () => {
     expect(
       planScopedSettingsPatch(project, environments, { enableProviderUpdateChecks: false }),
