@@ -82,7 +82,7 @@ final class NativeThreadCatchUpTests: XCTestCase {
         var events = fixture.client.events().makeAsyncIterator()
         _ = try await fixture.client.loadThread(id: fixture.firstID)
         let stream = try await nextThreadRequest(&requests)
-        try await stream.synchronize()
+        // Legacy cold opens publish live when their HTTP snapshot arrives.
         _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
         try await stream.socket.chunk(id: stream.id, values: [
             stream.messageValue(text: "Stale", sequence: 1),
