@@ -8,7 +8,7 @@ declare function registerProcessor(name: string, processor: typeof AudioWorkletP
 
 class PcmCaptureProcessor extends AudioWorkletProcessor {
   private readonly resampler = new PcmResampler(sampleRate);
-  private chunk = new Float32Array(3_200);
+  private chunk = new Float32Array(8_000);
   private length = 0;
   private recording = false;
   private flushed = false;
