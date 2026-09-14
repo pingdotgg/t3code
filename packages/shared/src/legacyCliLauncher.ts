@@ -1,17 +1,23 @@
-/** Node entry point for service launchers installed before executable releases. */
-export function legacyCliLauncherScript(distribution: "npm" | "archive"): string {
-  const executable =
-    distribution === "npm"
-      ? 'join(dirname(require.resolve("@t3code/t3-" + process.platform + "-" + process.arch + "/package.json")), executableName)'
-      : 'resolve(dirname(fileURLToPath(import.meta.url)), "../../..", executableName)';
+/**
+ * `dist/bin.mjs` of the `t3` npm package: the entry point boot-service
+ * launchers installed before 0.0.41 run with Node to start a new version they
+ * just npm-installed. It forwards everything (arguments, stdio, the IPC
+ * channel the launcher talks over, signals, exit status) to the platform
+ * executable in the sibling `@t3code/t3-<platform>-<arch>` package.
+ *
+ * The first server started this way rewrites the service unit to run the
+ * executable directly, so nothing depends on this file after one update.
+ * Remove it once no supported release predates the executable (after the
+ * first stable release that ships it).
+ */
+export function legacyCliLauncherScript(): string {
   return `import { spawn } from "node:child_process";
 import { constants } from "node:os";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const executableName = process.platform === "win32" ? "t3.exe" : "t3";
-const executable = ${executable};
+const executable = join(dirname(require.resolve("@t3code/t3-" + process.platform + "-" + process.arch + "/package.json")), executableName);
 const ipc = process.send !== undefined;
 const child = spawn(executable, process.argv.slice(2), {
   stdio: ipc ? ["inherit", "inherit", "inherit", "ipc"] : "inherit",

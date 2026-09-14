@@ -389,7 +389,7 @@ const stageLauncherPackage = Effect.fn("stageLauncherPackage")(function* (input:
   // Older service updaters and launchers run this exact path with Node.
   // Keep it in the package so they can preflight and start the new executable.
   yield* fs.makeDirectory(path.join(stageDir, "dist"));
-  yield* fs.writeFileString(path.join(stageDir, "dist/bin.mjs"), legacyCliLauncherScript("npm"));
+  yield* fs.writeFileString(path.join(stageDir, "dist/bin.mjs"), legacyCliLauncherScript());
   const readme = yield* path.fromFileUrl(new URL("../apps/server/README.md", import.meta.url));
   if (yield* fs.exists(readme)) {
     yield* fs.copyFile(readme, path.join(stageDir, "README.md"));
