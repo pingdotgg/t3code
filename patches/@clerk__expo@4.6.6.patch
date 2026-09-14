@@ -1,8 +1,8 @@
 diff --git a/ios/ClerkAuthNativeView.swift b/ios/ClerkAuthNativeView.swift
-index e76a8be1b1c8faa64ec6dfa83764764094133aff..17b36ad1319765e2b6db0551d32e07d7140e482f 100644
+index 5f8d2ba66d5b232890af75c22b173c86d2ef546b..b170304cbf2fbaae8032db8dd6f89b6a59c6e3fe 100644
 --- a/ios/ClerkAuthNativeView.swift
 +++ b/ios/ClerkAuthNativeView.swift
-@@ -108,7 +108,12 @@ public class ClerkAuthNativeView: ClerkNativeViewHost {
+@@ -111,7 +111,12 @@ public class ClerkAuthNativeView: ClerkNativeViewHost {
  
    override func makeHostedController() -> UIViewController? {
      let hostBackAction: (() -> Void)? = currentHostBackButton
@@ -16,8 +16,35 @@ index e76a8be1b1c8faa64ec6dfa83764764094133aff..17b36ad1319765e2b6db0551d32e07d7
        : nil
  
      return ClerkNativeBridge.shared.makeAuthViewController(
+diff --git a/ios/ClerkNativeBridge.swift b/ios/ClerkNativeBridge.swift
+index c90ad2ef1162cc2ac025c8b0b4aa135e8913dc21..ce8cb68764b1a3d3537672fc83e4e3077fceb97a 100644
+--- a/ios/ClerkNativeBridge.swift
++++ b/ios/ClerkNativeBridge.swift
+@@ -1470,6 +1470,8 @@ private struct ClerkReactEmbeddedUserProfileCustomPage: View {
+ }
+ 
+ private struct ClerkReactUserProfileCustomPageContent: View {
++  @Environment(\.clerkTheme) private var theme
++
+   let path: String
+   let rows: [ClerkUserProfileCustomRowConfig]
+   let state: ClerkUserProfileCustomPageState
+@@ -1483,8 +1485,13 @@ private struct ClerkReactUserProfileCustomPageContent: View {
+       }
+     }
+     .frame(maxWidth: .infinity, maxHeight: .infinity)
++    // Match Clerk's own profile pages so the navigation bar and page share
++    // the theme's page background instead of a bare hosting container.
++    .background(theme.colors.muted)
+     .navigationTitle(userProfileCustomPageLabel(for: path, rows: rows))
+     .navigationBarTitleDisplayMode(.inline)
++    .preGlassSolidNavBar()
++    .background(theme.colors.background)
+   }
+ }
+ 
 diff --git a/ios/ClerkNativeViewHost.swift b/ios/ClerkNativeViewHost.swift
-index 0d91f0e749f121595c17bc803663df6ac90e4163..8f8a89df97a54168b8b45d0e9c197ca3953b7028 100644
+index 4e6540aceeaaab56ddf327bb3f16e120438f066f..cc16c94ca7a6eb91a97e76d5de02dc586f02a766 100644
 --- a/ios/ClerkNativeViewHost.swift
 +++ b/ios/ClerkNativeViewHost.swift
 @@ -5,6 +5,7 @@ public class ClerkNativeViewHost: ExpoView {
@@ -60,10 +87,10 @@ index 0d91f0e749f121595c17bc803663df6ac90e4163..8f8a89df97a54168b8b45d0e9c197ca3
      guard configuredObserver == nil else { return }
  
 diff --git a/ios/ClerkUserProfileNativeView.swift b/ios/ClerkUserProfileNativeView.swift
-index 12d6248b1dc4b4779b252c9954c2f89145907310..d838283b7adcf49fec2a63bff53251b9bee31bf8 100644
+index f2ca604d41f50d05de8ac334879126cdc0414f84..46f406d5361b9a560a7c4ce855e344cbddd1d0b6 100644
 --- a/ios/ClerkUserProfileNativeView.swift
 +++ b/ios/ClerkUserProfileNativeView.swift
-@@ -44,7 +44,12 @@ public class ClerkUserProfileNativeView: ClerkNativeViewHost {
+@@ -47,7 +47,12 @@ public class ClerkUserProfileNativeView: ClerkUserProfileCustomPageHost {
  
    override func makeHostedController() -> UIViewController? {
      let hostBackAction: (() -> Void)? = currentHostBackButton

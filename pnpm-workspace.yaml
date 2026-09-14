@@ -23,13 +23,13 @@ allowBuilds:
   workerd: false
 
 catalog:
-  "@clerk/backend": 3.14.0
-  "@clerk/clerk-js": 6.30.1
-  "@clerk/electron": 0.0.37
+  "@clerk/backend": 3.17.2
+  "@clerk/clerk-js": 6.31.1
+  "@clerk/electron": 0.0.42
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.2.0
-  "@clerk/react": 6.14.7
-  "@clerk/shared": 4.30.1
+  "@clerk/expo": 4.6.6
+  "@clerk/react": 6.15.2
+  "@clerk/shared": 4.31.1
   "@effect/atom-react": 4.0.0-rc.112
   "@effect/openapi-generator": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
@@ -55,12 +55,12 @@ catalog:
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
-  - "@clerk/backend@3.14.0"
-  - "@clerk/clerk-js@6.30.1"
-  - "@clerk/electron@0.0.37"
-  - "@clerk/expo@4.2.0"
-  - "@clerk/react@6.14.7"
-  - "@clerk/shared@4.30.1"
+  - "@clerk/backend@3.17.2"
+  - "@clerk/clerk-js@6.31.1"
+  - "@clerk/electron@0.0.42"
+  - "@clerk/expo@4.6.6"
+  - "@clerk/react@6.15.2"
+  - "@clerk/shared@4.31.1"
   - "@distilled.cloud/aws@0.30.2"
   - "@distilled.cloud/axiom@0.30.2"
   - "@distilled.cloud/cloudflare@0.30.2"
@@ -157,7 +157,7 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
-  "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
+  "@clerk/expo@4.6.6": patches/@clerk__expo@4.6.6.patch
   "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
