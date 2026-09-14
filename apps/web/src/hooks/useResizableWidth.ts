@@ -36,7 +36,7 @@ export interface ResizableWidthHandlers {
 
 /**
  * Width state for a side-anchored panel resized via a drag handle on the
- * specified edge. Width is read from localStorage on mount and persisted on
+ * specified edge. Width is read on mount or storage-key changes and persisted on
  * drag-end (not on every rAF tick — would otherwise be ~60 writes/sec).
  *
  * The hook updates an internal `width` state during drag (so the panel
@@ -58,7 +58,7 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
   );
 
   // No cross-tab subscription: panel width is per-window state.
-  const [width, setWidth] = useState<number>(() => {
+  const readWidth = () => {
     if (typeof window === "undefined") return defaultWidth;
     try {
       const stored = getLocalStorageItem(storageKey, WidthSchema);
@@ -67,31 +67,39 @@ export function useResizableWidth(options: UseResizableWidthOptions): {
       console.error("Could not read persisted panel width.", error);
       return defaultWidth;
     }
-  });
+  };
+  const [widthState, setWidthState] = useState(() => ({ storageKey, width: readWidth() }));
+  // Panels stay mounted across threads; restore the destination width before paint.
+  if (widthState.storageKey !== storageKey) {
+    setWidthState({ storageKey, width: readWidth() });
+  }
 
-  const clampedWidth = clamp(width);
+  const clampedWidth = clamp(widthState.width);
   const latestOptions = useRef({ clamp, storageKey });
   useLayoutEffect(() => {
     latestOptions.current = { clamp, storageKey };
   }, [clamp, storageKey]);
 
-  const handlers = useResizeDrag<HTMLElement>(() => ({
-    width: clampedWidth,
-    edge,
-    resize(value) {
-      const nextWidth = latestOptions.current.clamp(value);
-      setWidth(nextWidth);
-      return nextWidth;
-    },
-    finish(finalWidth) {
-      // Commit once at drag-end to avoid 60Hz localStorage writes.
-      try {
-        setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
-      } catch (error) {
-        console.error("Could not persist panel width.", error);
-      }
-    },
-  }));
+  const handlers = useResizeDrag<HTMLElement>(
+    () => ({
+      width: clampedWidth,
+      edge,
+      resize(value) {
+        const nextWidth = latestOptions.current.clamp(value);
+        setWidthState({ storageKey, width: nextWidth });
+        return nextWidth;
+      },
+      finish(finalWidth) {
+        // Commit once at drag-end to avoid 60Hz localStorage writes.
+        try {
+          setLocalStorageItem(latestOptions.current.storageKey, finalWidth, WidthSchema);
+        } catch (error) {
+          console.error("Could not persist panel width.", error);
+        }
+      },
+    }),
+    storageKey,
+  );
 
   return { width: clampedWidth, handlers };
 }
