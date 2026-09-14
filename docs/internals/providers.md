@@ -93,6 +93,13 @@ checkpoints but cannot roll back its conversation. The [checkpoint boundary](./o
 therefore rejects revert before touching files. Native permission and question option IDs must
 also survive normalization; a display label is not necessarily a valid reply.
 
+Grok in-process children are not Claude Task or Codex collab events. `spawn_subagent`
+returns a Text result with `subagent_id` / `type` / `description`, and later polls use a
+`[subagent:role] title` command. The [mapper](../../apps/server/src/provider/acp/XAiBackgroundTasks.ts)
+turns those into `task.*` with `taskType: "subagent"` so the Agents panel can list names
+and roles. Child ACP session updates stay dropped; do not flatten child transcripts into
+the parent stream.
+
 ## Attachments and stored history
 
 Attachments live outside the project workspace. [ProviderService](../../apps/server/src/provider/Layers/ProviderService.ts)

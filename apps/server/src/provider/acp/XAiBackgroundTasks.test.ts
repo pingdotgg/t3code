@@ -114,7 +114,7 @@ describe("Grok background tasks", () => {
     },
   );
 
-  it("starts unknown poll tasks before progress or completion and ignores subagents", () => {
+  it("starts unknown poll tasks before progress or completion, including subagents", () => {
     const { tasks, update } = mapper();
     const events = update({
       type: "TaskOutput",
@@ -131,20 +131,111 @@ describe("Grok background tasks", () => {
       "task.progress",
       "task.started",
       "task.completed",
+      "task.started",
+      "task.progress",
     ]);
     expect(events.map(({ payload }) => payload.taskType)).toEqual([
       "shell",
       "shell",
       "monitor",
       "monitor",
+      "subagent",
+      "subagent",
     ]);
-    expect([...tasks.keys()]).toEqual(["shell-1"]);
+    expect(events[4]?.payload).toMatchObject({
+      taskId: "agent-1",
+      taskType: "subagent",
+      title: "work",
+      role: "executor",
+      timelineBypass: true,
+    });
+    expect([...tasks.keys()]).toEqual(["shell-1", "agent-1"]);
     expect(events.map((event) => event.turnId)).toEqual([
       undefined,
       undefined,
       undefined,
       undefined,
+      undefined,
+      undefined,
     ]);
+  });
+
+  it("starts a subagent from spawn_subagent Text output", () => {
+    const { tasks, update } = mapper();
+    expect(
+      update({
+        type: "Text",
+        text: [
+          "Subagent started in background.",
+          "subagent_id: 01a09dc6-ed97-77a3-ac22-3312cd8877a8",
+          "type: jf-app",
+          "description: JF Coach program bug",
+          "",
+          "When you need its result, use get_command_or_subagent_output.",
+        ].join("\n"),
+      }),
+    ).toEqual([
+      {
+        type: "task.started",
+        turnId,
+        payload: {
+          taskId: "01a09dc6-ed97-77a3-ac22-3312cd8877a8",
+          taskType: "subagent",
+          description: "JF Coach program bug",
+          title: "JF Coach program bug",
+          toolUseId: "call-1",
+          role: "jf-app",
+          timelineBypass: true,
+        },
+      },
+    ]);
+    expect([...tasks.keys()]).toEqual(["01a09dc6-ed97-77a3-ac22-3312cd8877a8"]);
+  });
+
+  it("keeps spawn metadata and reports live tokens on later subagent polls", () => {
+    const { tasks, update } = mapper();
+    update({
+      type: "Text",
+      text: [
+        "Subagent started in background.",
+        "subagent_id: agent-1",
+        "type: explore",
+        "description: Search the codebase",
+      ].join("\n"),
+    });
+    const events = update({
+      type: "TaskOutput",
+      Result: {
+        task_id: "agent-1",
+        command: "[subagent:explore] Search the codebase",
+        status: "running",
+        duration_secs: 363.073,
+        output: [
+          "Subagent is still running.",
+          "Progress: turn 1, 73 tool calls, 123K/500K tokens (24% context)",
+          "Tools used: todo_write, list_dir, grep, read_file",
+        ].join("\n"),
+      },
+    });
+    expect(events).toEqual([
+      {
+        type: "task.progress",
+        turnId,
+        payload: {
+          taskId: "agent-1",
+          taskType: "subagent",
+          description: "Search the codebase",
+          title: "Search the codebase",
+          toolUseId: "call-1",
+          role: "explore",
+          timelineBypass: true,
+          summary: "turn 1, 73 tool calls, 123K/500K tokens (24% context)",
+          lastToolName: "read_file",
+          typedUsage: { totalTokens: 123000, toolUses: 73, durationMs: 363073 },
+        },
+      },
+    ]);
+    expect(tasks.size).toBe(1);
   });
 
   it("retires only successfully killed tasks, including mixed results", () => {
