@@ -19,7 +19,7 @@ export const CLI_RELEASE_BASE_URL_ENV = "T3CODE_RELEASE_BASE_URL";
  */
 // No darwin-x64: Node single-executables are unsupported on x64 macOS (the
 // SEA docs list macOS as arm64 only) and the binary segfaults on start.
-const CLI_ARCHIVE_PLATFORM_KEYS = [
+export const CLI_ARCHIVE_PLATFORM_KEYS = [
   "darwin-arm64",
   "linux-arm64",
   "linux-x64",
