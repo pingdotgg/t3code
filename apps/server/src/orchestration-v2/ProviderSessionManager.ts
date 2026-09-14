@@ -2431,11 +2431,22 @@ export const layerWithOptions = (
                     driver: runtime.driver,
                   }),
                 ),
-                // A turn runs for its whole duration; a release cannot drain
-                // it without deadlocking the scope close that would kill it.
-                // Its openAgent acquisition window is the adapter's own
-                // cleanup obligation, not a drainable operation.
-                Effect.andThen(runtime.startTurn(input)),
+                // The adapter call returns once the turn is started — every
+                // adapter forks the turn's lifetime into the session scope —
+                // so the admission record spans only the acquisition window
+                // (Cursor's openAgent/runner.open, ACP session activate+prompt
+                // submit), never the turn itself.
+                Effect.andThen(
+                  threadAttach.withLock(
+                    threadAttachKey(providerSessionId, input.threadId),
+                    runResourceCreatingAdapterOp({
+                      providerSessionId,
+                      expectedRuntime: runtime,
+                      driver: runtime.driver,
+                      operation: runtime.startTurn(input),
+                    }),
+                  ),
+                ),
                 Effect.catch((error) =>
                   observeActivity(providerSessionId, markIdle(providerSessionId, runtime)).pipe(
                     Effect.andThen(Effect.fail(error)),
@@ -2524,10 +2535,20 @@ export const layerWithOptions = (
                           driver: runtime.driver,
                         }),
                       ),
-                      // Like startTurn, compaction runs a full turn: a
-                      // release cannot drain it. Its openAgent acquisition
-                      // window is the adapter's own cleanup obligation.
-                      Effect.andThen(runtime.compactThread!(input)),
+                      // Compaction delegates to the same bounded
+                      // acquire-then-start path as startTurn, so it shares the
+                      // admission record for its acquisition window.
+                      Effect.andThen(
+                        threadAttach.withLock(
+                          threadAttachKey(providerSessionId, input.threadId),
+                          runResourceCreatingAdapterOp({
+                            providerSessionId,
+                            expectedRuntime: runtime,
+                            driver: runtime.driver,
+                            operation: runtime.compactThread!(input),
+                          }),
+                        ),
+                      ),
                       Effect.catch((error) =>
                         observeActivity(
                           providerSessionId,
