@@ -972,16 +972,26 @@ export function AddProjectDestinationScreen(props: {
       if (AsyncResult.isFailure(startResult)) {
         setError(errorMessage(Cause.squash(startResult.cause)));
       } else {
-        // The create event usually lands before the RPC returns; give the
-        // shell stream a moment so the draft opens on the new project rather
-        // than falling back to its picker.
-        await waitForProject({ environmentId: environment.environmentId, projectId }, 3_000);
-        openNewTaskDraft(navigation, {
-          environmentId: environment.environmentId,
-          projectId,
-          title,
-          cloning: "1",
-        });
+        // The draft screen resolves its project from the client store, so it
+        // must not open before the create event has arrived (it would fall
+        // back to the project picker and lose the clone controls). Stay in
+        // the submitting state until then; the clone keeps running either way.
+        const project = await waitForProject(
+          { environmentId: environment.environmentId, projectId },
+          15_000,
+        );
+        if (project === null) {
+          setError(
+            "The project was created but has not reached this device yet. It will appear in the project list once the connection catches up.",
+          );
+        } else {
+          openNewTaskDraft(navigation, {
+            environmentId: environment.environmentId,
+            projectId,
+            title,
+            cloning: "1",
+          });
+        }
       }
       setIsSubmitting(false);
       return;
