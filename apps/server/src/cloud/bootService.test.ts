@@ -20,6 +20,7 @@ import { pinnedRuntimePaths } from "./pinnedRuntime.ts";
 import {
   parseServiceState,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_RESTART_PENDING_FILE,
   serviceStateHasPendingUpdate,
 } from "./serviceProtocol.ts";
 
@@ -517,6 +518,27 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       expect(yield* newer.restart).toBe(true);
       expect((yield* newer.status).problems).not.toContain("restart-pending");
       expect((yield* newer.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("install with start=false keeps the marker when a later write fails", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, makeService } = yield* makeHarness();
+      const path = yield* Path.Path;
+      yield* service.install();
+      const newer = yield* makeService(undefined, "1.2.4");
+      // A non-empty directory in the unit's place: it still counts as an
+      // installed unit, and the rename that writes the new unit fails.
+      const unitPath = (yield* service.status).unitPath;
+      yield* fs.remove(unitPath);
+      yield* fs.makeDirectory(unitPath);
+      yield* fs.writeFileString(path.join(unitPath, "occupied"), "");
+
+      const error = yield* newer.install({ start: false }).pipe(Effect.flip);
+      expect(error._tag).toBe("BootServiceInstallError");
+      expect(
+        yield* fs.exists(path.join(path.dirname(statePath), SERVICE_RESTART_PENDING_FILE)),
+      ).toBe(true);
     }),
   );
 

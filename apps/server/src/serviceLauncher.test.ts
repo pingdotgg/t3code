@@ -10,6 +10,7 @@ import {
   decodeServiceState,
   isExactServiceVersion,
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
@@ -110,6 +111,38 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
 
       yield* Effect.promise(() => writeServiceState(statePath, state));
       assert.deepEqual(yield* Effect.promise(() => readServiceState(statePath)), state);
+    }),
+  );
+
+  it.effect("a fresh launcher clears a restart deferred by t3 update", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-launcher-restart-" });
+      const statePath = path.join(root, "runtime", "service-state.json");
+      const restartPending = path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE);
+      yield* writeFakeRuntime(
+        fs,
+        path,
+        path.join(root, "runtime", "versions", "1.0.0"),
+        "setInterval(() => {}, 1_000);\n",
+      );
+      yield* Effect.promise(() =>
+        writeServiceState(statePath, {
+          protocol: SERVICE_LAUNCHER_PROTOCOL,
+          activeVersion: "1.0.0",
+        }),
+      );
+      yield* fs.writeFileString(restartPending, "1.0.0\n");
+
+      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const running = launcher.run();
+      const stopping = launcher.stop("SIGTERM");
+      yield* Effect.promise(() => stopping);
+      yield* Effect.promise(() => running);
+      // Whoever restarted the service, the launcher now runs what the unit
+      // names, so the deferred-restart marker is gone.
+      assert.isFalse(yield* fs.exists(restartPending));
     }),
   );
 

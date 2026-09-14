@@ -410,11 +410,16 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
   const executableCurrent = targetVersion === currentVersion;
   // A service whose recorded version is missing or unreadable is not known
-  // to be current, so it gets the update rather than being skipped. So is one
-  // whose files already name the target but whose process was never
-  // restarted onto it (an earlier update where the restart was declined).
+  // to be current, so it gets the update rather than being skipped. Nor is
+  // one on the right version that is stopped, disabled, or still running the
+  // version before it (an earlier update where the restart was declined):
+  // `status.current` covers all of that when the target is this executable,
+  // and the problem list is what can be judged for any other target.
   const restartPending = status.problems?.includes("restart-pending") === true;
-  const serviceCurrent = !serviceInstalled || (serviceVersion === targetVersion && !restartPending);
+  const serviceCurrent =
+    !serviceInstalled ||
+    (serviceVersion === targetVersion &&
+      (executableCurrent ? status.current : (status.problems ?? []).length === 0));
   const newestInstalled =
     serviceVersion !== undefined && compareExactServiceVersions(serviceVersion, currentVersion) > 0
       ? serviceVersion

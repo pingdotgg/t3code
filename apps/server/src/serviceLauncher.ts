@@ -26,6 +26,7 @@ import {
   SERVICE_LAUNCHER_CONTEXT_ENV,
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_STATE_FILE,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
 } from "./cloud/serviceProtocol.ts";
 
@@ -273,6 +274,8 @@ async function terminateChild(
 
 const stopMarkerPath = (baseDir: string) =>
   NodePath.join(baseDir, "runtime", SERVICE_STOP_MARKER_FILE);
+const restartPendingPath = (baseDir: string) =>
+  NodePath.join(baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
 
 export class Launcher {
   readonly #baseDir: string;
@@ -365,8 +368,11 @@ export class Launcher {
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
-    // handoff release its tunnel.
+    // handoff release its tunnel. A fresh launcher is also, by definition,
+    // the one the unit names, so a restart deferred by `t3 update` is done
+    // no matter who restarted the service.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
+    await NodeFSP.rm(restartPendingPath(this.#baseDir), { force: true }).catch(() => undefined);
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {

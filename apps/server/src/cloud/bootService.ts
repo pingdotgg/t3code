@@ -851,6 +851,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      if (!start && installed) {
+        // Written first: once the files below name the new version, the
+        // running service is behind them, and a failure between the two
+        // writes must not leave it looking current. The launcher removes the
+        // marker when it starts, `restart` and a started install do too.
+        yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+      }
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -863,15 +870,23 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
+      if (!start && installed) {
+        // The launcher only writes this file while a remote update is in
+        // flight. One that began after the check above lands either before
+        // this write (then the launcher's copy in memory is what it keeps
+        // acting on, and its next write puts its own outcome back) or after
+        // it, which this read catches: the file no longer says what was just
+        // written, so stop here before repointing the unit.
+        const written = yield* fs.readFileString(statePath);
+        if (serviceStateActiveVersion(written) !== input.cliVersion) {
+          return yield* new BootServiceUpdatePendingError();
+        }
+      }
       yield* writeDurably(unitPath, manager.render(plan));
 
       if (start) {
         yield* runSteps(manager.activate);
         yield* fs.remove(restartPendingPath, { force: true });
-      } else if (installed) {
-        // The running service is now behind its unit until someone restarts
-        // it; the marker is what status and install use to remember that.
-        yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
       }
     }).pipe(
       Effect.mapError((cause) =>
