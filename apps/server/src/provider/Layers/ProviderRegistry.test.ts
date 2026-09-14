@@ -1447,6 +1447,11 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           const scopedProviderRef = yield* Ref.make<ServerProvider>(scopedProvider);
           const probeStarted = yield* Deferred.make<void>();
           const releaseProbe = yield* Deferred.make<void>();
+          const lookupCountdown = yield* Ref.make(0);
+          const commitLookupStarted = yield* Deferred.make<void>();
+          const releaseCommitLookup = yield* Deferred.make<void>();
+          const watchRefresh = yield* Ref.make(false);
+          const refreshStarted = yield* Deferred.make<void>();
           const makeInstance = (
             provider: ServerProvider,
             snapshotForCwd: NonNullable<ProviderInstance["snapshotForCwd"]>,
@@ -1468,7 +1473,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                   }),
                 ),
               getSnapshot: Effect.succeed(provider),
-              refresh: Effect.succeed(provider),
+              refresh: Effect.gen(function* () {
+                if (yield* Ref.get(watchRefresh)) {
+                  yield* Deferred.succeed(refreshStarted, undefined);
+                }
+                return provider;
+              }),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
             },
@@ -1501,11 +1511,18 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ProviderInstanceRegistry.ProviderInstanceRegistry,
             {
               getInstance: (requestedId) =>
-                Ref.get(instancesRef).pipe(
-                  Effect.map((instances) =>
-                    instances.find((instance) => instance.instanceId === requestedId),
-                  ),
-                ),
+                Effect.gen(function* () {
+                  const instances = yield* Ref.get(instancesRef);
+                  const countdown = yield* Ref.get(lookupCountdown);
+                  if (countdown > 0) {
+                    yield* Ref.set(lookupCountdown, countdown - 1);
+                    if (countdown === 1) {
+                      yield* Deferred.succeed(commitLookupStarted, undefined);
+                      yield* Deferred.await(releaseCommitLookup);
+                    }
+                  }
+                  return instances.find((instance) => instance.instanceId === requestedId);
+                }),
               listInstances: Ref.get(instancesRef),
               listUnavailable: Effect.succeed([]),
               streamChanges: Stream.fromPubSub(registryChanges),
@@ -1592,6 +1609,28 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               assert.deepStrictEqual(discovered[0]?.workspaceSnapshots?.[0]?.slashCommands, []);
             }
             assert.strictEqual(yield* Ref.get(snapshotCalls), 6);
+
+            // Pause inside the probe commit, then attempt invalidation. It must
+            // wait until publication finishes before clearing the snapshot.
+            yield* registry.refreshInstance(instanceId);
+            yield* Ref.set(lookupCountdown, 2);
+            const committingProbe = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            yield* Deferred.await(commitLookupStarted);
+            yield* Ref.set(watchRefresh, true);
+            const invalidationFinished = yield* Deferred.make<void>();
+            const invalidation = yield* registry.refreshInstance(instanceId).pipe(
+              Effect.tap(() => Deferred.succeed(invalidationFinished, undefined)),
+              Effect.forkChild,
+            );
+            yield* Deferred.await(refreshStarted);
+            yield* Effect.yieldNow;
+            assert.isFalse(yield* Deferred.isDone(invalidationFinished));
+            yield* Deferred.succeed(releaseCommitLookup, undefined);
+            yield* Fiber.join(committingProbe);
+            yield* Fiber.join(invalidation);
+            assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
 
             yield* Ref.set(instancesRef, [rebuiltInstance]);
             yield* PubSub.publish(registryChanges, undefined);

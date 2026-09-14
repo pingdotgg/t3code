@@ -531,18 +531,22 @@ export const ProviderRegistryLive = Layer.effect(
     ) {
       const nextProvider = yield* providerSource.refresh;
       const provider = yield* correlateSnapshotWithSource(providerSource, nextProvider);
-      // Explicit refresh invalidates workspace discovery, including probes
-      // still running against the previous skill inventory.
-      yield* Ref.update(
-        workspaceRefreshesRef,
-        (refreshes) =>
-          new Map(
-            [...refreshes].filter(
-              ([instance]) => instance.instanceId !== providerSource.instanceId,
-            ),
-          ),
+      return yield* syncSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          // Explicit refresh invalidates workspace discovery, including probes
+          // still running against the previous skill inventory.
+          yield* Ref.update(
+            workspaceRefreshesRef,
+            (refreshes) =>
+              new Map(
+                [...refreshes].filter(
+                  ([instance]) => instance.instanceId !== providerSource.instanceId,
+                ),
+              ),
+          );
+          return yield* upsertProviders([provider], { invalidateWorkspaceCache: true });
+        }),
       );
-      return yield* upsertProviders([provider], { invalidateWorkspaceCache: true });
     });
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
@@ -870,6 +874,7 @@ export const ProviderRegistryLive = Layer.effect(
                     );
                   }),
                 ),
+                syncSemaphore.withPermits(1),
               ),
         ),
         Effect.ensuring(
