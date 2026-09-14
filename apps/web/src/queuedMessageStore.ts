@@ -50,6 +50,11 @@ interface QueuedMessageStoreState {
   ) => QueuedComposerMessage | null;
   /** Removes one message without touching the others' anchors. Null when already gone. */
   remove: (threadKey: string, id: string) => QueuedComposerMessage | null;
+  /**
+   * Puts a message back at the head, held for user action. Used when its
+   * send failed: the queue keeps its order and nothing behind it overtakes.
+   */
+  holdAtFront: (threadKey: string, message: QueuedComposerMessage) => void;
   /** Removes and returns every queued message for the thread, oldest first. */
   drain: (threadKey: string) => QueuedComposerMessage[];
 }
@@ -112,6 +117,19 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
       return { queuesByThreadKey };
     });
     return entry;
+  },
+  holdAtFront: (threadKey, message) => {
+    set((state) => {
+      const rest = (state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE).filter(
+        (entry) => entry.id !== message.id,
+      );
+      return {
+        queuesByThreadKey: {
+          ...state.queuesByThreadKey,
+          [threadKey]: [{ ...message, holdUntilUserAction: true }, ...rest],
+        },
+      };
+    });
   },
   drain: (threadKey) => {
     const queue = get().queuesByThreadKey[threadKey];

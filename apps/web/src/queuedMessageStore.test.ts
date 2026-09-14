@@ -70,6 +70,22 @@ describe("queuedMessageStore", () => {
     expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([first]);
   });
 
+  it("holdAtFront returns a failed message to the head, held", () => {
+    const { enqueue, take, holdAtFront } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", makeMessage("first"));
+    enqueue("thread-a", makeMessage("second"));
+    const taken = take("thread-a", first.id, "t1")!;
+
+    holdAtFront("thread-a", taken);
+
+    const queue = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
+    expect(queue.map((message) => message.prompt)).toEqual(["first", "second"]);
+    expect(queue[0]?.holdUntilUserAction).toBe(true);
+    expect(
+      isQueuedMessageDue({ message: queue[0]!, phase: "ready", latestToolActivityId: null }),
+    ).toBe(false);
+  });
+
   it("drain empties one thread's queue in order", () => {
     const { enqueue, drain } = useQueuedMessageStore.getState();
     enqueue("thread-a", makeMessage("first"));

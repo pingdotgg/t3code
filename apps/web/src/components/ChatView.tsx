@@ -7479,10 +7479,10 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
       // A queued message whose only content expired would retry on every
-      // boundary and block the rest of the queue. Hand it back instead.
+      // boundary and block the rest of the queue. Nothing sendable is left
+      // in it, so drop it and let the queue move on.
       if (queuedMessage && activeThreadKey) {
-        const taken = useQueuedMessageStore.getState().remove(activeThreadKey, queuedMessage.id);
-        if (taken) restoreQueuedMessagesToComposer([taken]);
+        useQueuedMessageStore.getState().remove(activeThreadKey, queuedMessage.id);
       }
       return;
     }
@@ -7581,13 +7581,10 @@ export default function ChatView(props: ChatViewProps) {
       text: messageTextForSend || ATTACHMENT_ONLY_BOOTSTRAP_PROMPT,
     });
     if (composerRef.current?.validateProviderInput(outgoingMessageText) === false) {
-      // A queued message that no longer fits comes back for editing instead
-      // of sitting in the queue and failing on every boundary.
+      // A queued message that no longer fits is held at the head for the
+      // user to edit via Cancel, instead of failing on every boundary.
       if (queuedMessage && activeThreadKey) {
-        const taken = useQueuedMessageStore
-          .getState()
-          .take(activeThreadKey, queuedMessage.id, latestCompletedToolActivityId(threadActivities));
-        if (taken) restoreQueuedMessagesToComposer([taken]);
+        useQueuedMessageStore.getState().holdAtFront(activeThreadKey, queuedMessage);
       }
       return;
     }
@@ -7626,8 +7623,14 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
     }
+    // A queued send that fails goes back to the head of the queue, held. The
+    // messages behind it keep their order and wait; the composer is not
+    // touched, which also keeps a failure after navigation off the new
+    // thread's draft. The user retries with Send now or edits with Cancel.
     const abortQueuedReplay = () => {
-      if (queuedMessage) restoreQueuedMessagesToComposer([queuedMessage]);
+      if (queuedMessage && activeThreadKey) {
+        useQueuedMessageStore.getState().holdAtFront(activeThreadKey, queuedMessage);
+      }
     };
     const attachmentCapabilitiesBeforeUpload = readLiveAttachmentCapabilities();
     if (attachmentCapabilitiesBeforeUpload.fileBlockReason !== null) {
@@ -8035,10 +8038,13 @@ export default function ChatView(props: ChatViewProps) {
           return next.length === existing.length ? existing : next;
         });
         // The optimistic row's preview URLs were just revoked, so the images
-        // need fresh ones before they can show in the composer again.
-        restoreQueuedMessagesToComposer([
-          { ...queuedMessage, images: queuedMessage.images.map(cloneComposerImageForRetry) },
-        ]);
+        // need fresh ones before the row can show them again.
+        if (activeThreadKey) {
+          useQueuedMessageStore.getState().holdAtFront(activeThreadKey, {
+            ...queuedMessage,
+            images: queuedMessage.images.map(cloneComposerImageForRetry),
+          });
+        }
       } else if (
         promptRef.current.length === 0 &&
         composerImagesRef.current.length === 0 &&
