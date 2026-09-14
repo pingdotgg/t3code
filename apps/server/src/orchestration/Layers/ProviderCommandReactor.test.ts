@@ -3639,6 +3639,53 @@ describe("ProviderCommandReactor", () => {
     }),
   );
 
+  effectIt.effect("clears a dangling active turn when interrupting a stopped session", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const now = "2026-01-01T00:00:00.000Z";
+
+      // A stopped session that still points at a turn: the state an orphaned
+      // provider session leaves behind, where the thread keeps reading as working.
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-set-interrupt-stopped-dangling"),
+        threadId: ThreadId.make("thread-1"),
+        session: {
+          threadId: ThreadId.make("thread-1"),
+          status: "stopped",
+          providerName: "codex",
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-dangling"),
+          lastError: null,
+          updatedAt: now,
+        },
+        createdAt: now,
+      });
+
+      yield* harness.engine.dispatch({
+        type: "thread.turn.interrupt",
+        commandId: CommandId.make("cmd-turn-interrupt-stopped-dangling"),
+        threadId: ThreadId.make("thread-1"),
+        createdAt: now,
+      });
+
+      yield* Effect.promise(() => harness.drain());
+
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === ThreadId.make("thread-1"),
+      );
+      // The failure is still surfaced, and the thread no longer holds the turn,
+      // so stop is not a permanent dead end.
+      expect(
+        thread?.activities.find((activity) => activity.kind === "provider.turn.interrupt.failed"),
+      ).toMatchObject({
+        payload: { detail: "No active provider session is bound to this thread." },
+      });
+      expect(thread?.session).toMatchObject({ status: "stopped", activeTurnId: null });
+      expect(harness.interruptTurn).not.toHaveBeenCalled();
+    }),
+  );
+
   effectIt.effect("does not overwrite a session that became ready while an interrupt failed", () =>
     Effect.gen(function* () {
       const harness = yield* Effect.promise(() => createHarness());
