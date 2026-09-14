@@ -2,7 +2,7 @@
 title: Effect Service Conventions
 model: gpt-5-6-sol
 effort: medium
-input: full_diff
+input: incremental
 tools:
   - browse_code
   - modify_pr
