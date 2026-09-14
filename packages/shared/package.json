@@ -322,6 +322,10 @@
     "./dateTime": {
       "types": "./src/dateTime.ts",
       "import": "./src/dateTime.ts"
+    },
+    "./cliRelease": {
+      "types": "./src/cliRelease.ts",
+      "import": "./src/cliRelease.ts"
     }
   },
   "scripts": {

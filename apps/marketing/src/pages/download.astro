@@ -132,6 +132,9 @@ const imageProps = {
           <h2 class="platform-name">Terminal</h2>
         </div>
         <code class="cli-line">npx t3@nightly</code>
+        <p class="cli-note">No Node.js? The preview build installs as a single download:</p>
+        <code class="cli-line">curl -fsSL https://t3.codes/install.sh | sh</code>
+        <code class="cli-line">irm https://t3.codes/install.ps1 | iex</code>
       </section>
     </div>
 
@@ -430,6 +433,12 @@ const imageProps = {
     font-weight: 500;
     font-size: 1.1rem;
     letter-spacing: -0.01em;
+  }
+
+  .cli-note {
+    color: var(--fg-muted);
+    font-size: 0.85rem;
+    margin-top: 0.5rem;
   }
 
   .cli-line {

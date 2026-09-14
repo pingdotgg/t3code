@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off
 /**
  * ClaudeAdapterLive - Scoped live implementation for the Claude Agent provider adapter.
  *
@@ -6,6 +7,8 @@
  *
  * @module ClaudeAdapterLive
  */
+import * as NodeSea from "node:sea";
+
 import {
   type CanUseTool,
   query,
@@ -5128,16 +5131,22 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           detail: "Claude session id is unavailable.",
         });
       }
-      const historyWorkerPath = yield* path
-        .fromFileUrl(
-          new URL(
-            import.meta.url.endsWith(".ts")
-              ? "../../claudeHistoryWorker.ts"
-              : "./claudeHistoryWorker.mjs",
-            import.meta.url,
-          ),
-        )
-        .pipe(Effect.mapError((cause) => toRequestError(threadId, "thread/rollback", cause)));
+      // The single-executable has no sibling script and no Node to run one
+      // with, so it hosts the worker as a hidden subcommand of itself.
+      const historyWorkerArguments = NodeSea.isSea()
+        ? ["__claude-history"]
+        : [
+            yield* path
+              .fromFileUrl(
+                new URL(
+                  import.meta.url.endsWith(".ts")
+                    ? "../../claude-history-worker.ts"
+                    : "./claude-history-worker.mjs",
+                  import.meta.url,
+                ),
+              )
+              .pipe(Effect.mapError((cause) => toRequestError(threadId, "thread/rollback", cause))),
+          ];
       const runScopedHistoryCommand = async (
         method: "getSessionMessages" | "forkSession",
         args: object,
@@ -5150,7 +5159,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             process.execPath,
             ChildProcess.make(
               process.execPath,
-              [historyWorkerPath, method, historySessionId, encodeHistoryArgs(args)],
+              [...historyWorkerArguments, method, historySessionId, encodeHistoryArgs(args)],
               { env: { ...claudeEnvironment, ELECTRON_RUN_AS_NODE: "1" } },
             ),
           ).pipe(
