@@ -1318,6 +1318,23 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+/**
+ * Move a started thread to another account of the same provider. The server
+ * stops the running session and rebinds the thread; when the accounts cannot
+ * share resume state it drops that state, so the next turn starts a fresh
+ * provider conversation while T3 keeps the transcript. `fromInstanceId` is the
+ * account the user confirmed leaving: once another client has moved the thread
+ * the command no longer matches and is rejected instead of moving it again.
+ */
+const ThreadProviderAccountSwitchCommand = Schema.Struct({
+  type: Schema.Literal("thread.provider-account.switch"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  fromInstanceId: ProviderInstanceId,
+  modelSelection: ModelSelection,
+  createdAt: IsoDateTime,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1347,6 +1364,7 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
+  ThreadProviderAccountSwitchCommand,
 ]);
 export type DispatchableClientOrchestrationCommand =
   typeof DispatchableClientOrchestrationCommand.Type;
@@ -1380,6 +1398,7 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadCheckpointRevertCommand,
   ThreadConversationRevertCommand,
   ThreadSessionStopCommand,
+  ThreadProviderAccountSwitchCommand,
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
@@ -1549,6 +1568,7 @@ export const OrchestrationEventType = Schema.Literals([
   "thread.checkpoint-revert-requested",
   "thread.reverted",
   "thread.session-stop-requested",
+  "thread.provider-account-switch-requested",
   "thread.session-set",
   "thread.proposed-plan-upserted",
   "thread.turn-diff-completed",
@@ -1797,6 +1817,13 @@ export const ThreadSessionStopRequestedPayload = Schema.Struct({
   createdAt: IsoDateTime,
 });
 
+export const ThreadProviderAccountSwitchRequestedPayload = Schema.Struct({
+  threadId: ThreadId,
+  fromInstanceId: ProviderInstanceId,
+  modelSelection: ModelSelection,
+  createdAt: IsoDateTime,
+});
+
 export const ThreadSessionSetPayload = Schema.Struct({
   threadId: ThreadId,
   session: OrchestrationSession,
@@ -1998,6 +2025,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.session-stop-requested"),
     payload: ThreadSessionStopRequestedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.provider-account-switch-requested"),
+    payload: ThreadProviderAccountSwitchRequestedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

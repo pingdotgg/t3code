@@ -57,6 +57,7 @@ export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert
   readonly restoreFiles?: boolean;
 };
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type SwitchThreadProviderAccountInput = CommandInput<"thread.provider-account.switch">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -377,3 +378,17 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     createdAt: metadata.createdAt,
   });
 });
+
+export const switchThreadProviderAccount: (
+  input: SwitchThreadProviderAccountInput,
+) => CommandEffect = Effect.fn("EnvironmentCommands.switchThreadProviderAccount")(
+  function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.provider-account.switch",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  },
+);

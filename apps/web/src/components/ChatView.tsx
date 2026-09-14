@@ -232,6 +232,8 @@ import {
   PaperclipIcon,
   WifiOffIcon,
 } from "lucide-react";
+import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/state/provider-instance-display";
+import { requestConfirmDialog } from "~/confirmDialog";
 import { cn, randomHex, randomUUID } from "~/lib/utils";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 import { decodeProjectScriptKeybindingRule } from "~/lib/projectScriptKeybindings";
@@ -1470,6 +1472,9 @@ export default function ChatView(props: ChatViewProps) {
   const updateThreadMetadata = useAtomCommand(threadEnvironment.updateMetadata, {
     reportFailure: false,
   });
+  const switchThreadProviderAccount = useAtomCommand(threadEnvironment.switchProviderAccount, {
+    reportFailure: false,
+  });
   const switchGitRef = useAtomCommand(vcsEnvironment.switchRef, { reportFailure: false });
   const setThreadRuntimeMode = useAtomCommand(threadEnvironment.setRuntimeMode, {
     reportFailure: false,
@@ -2543,6 +2548,8 @@ export default function ChatView(props: ChatViewProps) {
   });
   const pullRequestsCapabilityKnown = serverConfig !== null;
   const supportsPullRequests = serverConfig?.environment.capabilities.pullRequests === true;
+  const providerAccountSwitchEnabled =
+    serverConfig?.environment.capabilities.threadProviderAccountSwitch === true;
   const attachmentEnvironmentConfig = environmentById.get(environmentId)?.serverConfig ?? null;
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments =
@@ -8494,7 +8501,7 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onProviderModelSelect = useCallback(
-    (instanceId: ProviderInstanceId, model: string) => {
+    async (instanceId: ProviderInstanceId, model: string) => {
       if (!activeThread) return;
       // Look up the configured instance so model normalization and custom
       // model lookup stay scoped to that exact instance. Unknown instance ids
@@ -8509,17 +8516,27 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
-      if (lockedProvider !== null && activeThread.session?.providerInstanceId) {
+      // A started thread's conversation lives on one account. Another account
+      // of the same driver can take the thread over only when the server
+      // supports it and the user confirms starting a fresh conversation there.
+      let accountSwitch: { readonly from: ServerProvider; readonly to: ServerProvider } | null =
+        null;
+      if (lockedProvider !== null) {
+        const currentInstanceId =
+          activeThread.session?.providerInstanceId ?? activeThread.modelSelection.instanceId;
         const currentEntry = providerStatuses.find(
-          (snapshot) => snapshot.instanceId === activeThread.session?.providerInstanceId,
+          (snapshot) => snapshot.instanceId === currentInstanceId,
         );
         if (
           currentEntry?.continuation?.groupKey &&
           entry?.continuation?.groupKey &&
           currentEntry.continuation.groupKey !== entry.continuation.groupKey
         ) {
-          scheduleComposerFocus();
-          return;
+          if (!providerAccountSwitchEnabled) {
+            scheduleComposerFocus();
+            return;
+          }
+          accountSwitch = { from: currentEntry, to: entry };
         }
       }
       const resolvedModel = resolveAppModelSelectionForInstance(
@@ -8552,6 +8569,41 @@ export default function ChatView(props: ChatViewProps) {
         scheduleComposerFocus();
         return;
       }
+      if (accountSwitch) {
+        const fromLabel = resolveProviderInstanceDisplayName(accountSwitch.from);
+        const toLabel = resolveProviderInstanceDisplayName(accountSwitch.to);
+        const confirmed = await requestConfirmDialog(
+          `Continue this thread on ${toLabel}?\n${toLabel} starts a fresh conversation from your next message; the messages shown here stay. This thread cannot return to the conversation ${fromLabel} was running, even by switching back.`,
+        );
+        if (confirmed !== true) {
+          scheduleComposerFocus();
+          return;
+        }
+        const result = await switchThreadProviderAccount({
+          environmentId: activeThread.environmentId,
+          input: {
+            threadId: activeThread.id,
+            fromInstanceId: accountSwitch.from.instanceId,
+            modelSelection: nextModelSelection,
+          },
+        });
+        if (result._tag === "Failure") {
+          if (!isAtomCommandInterrupted(result)) {
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not switch accounts",
+                description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+              }),
+            );
+          }
+          scheduleComposerFocus();
+          return;
+        }
+        // The server rebinds the thread; the composer follows its session instead of a draft.
+        scheduleComposerFocus();
+        return;
+      }
       setComposerDraftModelSelection(
         scopeThreadRef(activeThread.environmentId, activeThread.id),
         nextModelSelection,
@@ -8563,9 +8615,11 @@ export default function ChatView(props: ChatViewProps) {
     [
       activeThread,
       lockedProvider,
+      providerAccountSwitchEnabled,
       scheduleComposerFocus,
       setComposerDraftModelSelection,
       setStickyComposerModelSelection,
+      switchThreadProviderAccount,
       providerStatuses,
       settings,
     ],
@@ -9309,6 +9363,9 @@ export default function ChatView(props: ChatViewProps) {
                             runtimeMode={runtimeMode}
                             interactionMode={interactionMode}
                             lockedProvider={lockedProvider}
+                            providerAccountSwitchEnabled={
+                              providerAccountSwitchEnabled && !isWorking
+                            }
                             providerStatuses={providerStatuses as ServerProvider[]}
                             providerCatalogKnown={serverConfig !== null}
                             activeProjectDefaultModelSelection={activeProjectDefaultModelSelection}

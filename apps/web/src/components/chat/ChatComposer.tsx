@@ -1349,6 +1349,8 @@ export interface ChatComposerProps {
 
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
+  /** Environment accepts moving a started thread to another account of its driver. */
+  providerAccountSwitchEnabled: boolean;
   providerStatuses: ServerProvider[];
   /** False until the environment's server config has arrived at least once. */
   providerCatalogKnown: boolean;
@@ -1472,6 +1474,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     runtimeMode,
     interactionMode: requestedInteractionMode,
     lockedProvider,
+    providerAccountSwitchEnabled,
     providerStatuses,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
@@ -4916,6 +4919,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         lockedProvider={lockedProvider}
         lockedContinuationGroupKey={lockedContinuationGroupKey}
+        providerAccountSwitchEnabled={providerAccountSwitchEnabled}
         instanceEntries={providerInstanceEntries}
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}

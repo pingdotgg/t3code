@@ -39,9 +39,12 @@ from the other home.
 
 ## Switch accounts in an existing thread
 
-Choose the other account from the thread's model picker. T3 Code offers compatible
-Codex instances that share the thread's **CODEX_HOME path**. Changing accounts does
-not move the conversation into a separate Codex home.
+In the web and desktop apps, choose the other account from the thread's model
+picker. Codex instances that share the thread's **CODEX_HOME path** continue the
+conversation as it is. An instance with a different home cannot read it, so T3
+Code asks before switching and the thread starts fresh from the next message
+there. The transcript stays, but the earlier conversation cannot be resumed from
+that thread, even after switching back.
 
 If the account is missing from the picker, compare the home paths in provider
 settings. If two instances show the same unexpected account or models, check their

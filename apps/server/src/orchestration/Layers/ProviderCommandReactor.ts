@@ -42,6 +42,7 @@ import type { ProviderServiceError } from "../../provider/Errors.ts";
 import { TextGeneration } from "../../textGeneration/TextGeneration.ts";
 import { ProviderAuthService } from "../../provider/Services/ProviderAuthService.ts";
 import { ProviderService } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import { ProviderRegistry } from "../../provider/Services/ProviderRegistry.ts";
 import { OrchestrationEngineService } from "../Services/OrchestrationEngine.ts";
 import { ProjectionSnapshotQuery } from "../Services/ProjectionSnapshotQuery.ts";
@@ -74,6 +75,7 @@ type ProviderIntentEvent = Extract<
       | "thread.approval-response-requested"
       | "thread.user-input-response-requested"
       | "thread.session-stop-requested"
+      | "thread.provider-account-switch-requested"
       | "thread.settled";
   }
 >;
@@ -326,6 +328,7 @@ const make = Effect.gen(function* () {
   const providerAuthService = yield* ProviderAuthService;
   const providerService = yield* ProviderService;
   const providerRegistry = yield* ProviderRegistry;
+  const providerSessionDirectory = yield* ProviderSessionDirectory;
   const gitWorkflow = yield* GitWorkflowService;
   const fileSystem = yield* FileSystem.FileSystem;
   const vcsStatusBroadcaster = yield* VcsStatusBroadcaster;
@@ -381,7 +384,8 @@ const make = Effect.gen(function* () {
       | "provider.turn.interrupt.failed"
       | "provider.approval.respond.failed"
       | "provider.user-input.respond.failed"
-      | "provider.session.stop.failed";
+      | "provider.session.stop.failed"
+      | "provider.account.switch.failed";
     readonly summary: string;
     readonly detail: string;
     readonly turnId: TurnId | null;
@@ -1834,6 +1838,117 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const processProviderAccountSwitchRequested = Effect.fn("processProviderAccountSwitchRequested")(
+    function* (
+      event: Extract<ProviderIntentEvent, { type: "thread.provider-account-switch-requested" }>,
+    ) {
+      const thread = yield* resolveThreadShell(event.payload.threadId);
+      if (!thread) {
+        return;
+      }
+      const now = event.payload.createdAt;
+      const { fromInstanceId, modelSelection } = event.payload;
+      yield* Effect.gen(function* () {
+        // The durable binding owns the conversation; the projected session can lag behind it.
+        const binding = Option.getOrUndefined(
+          yield* providerSessionDirectory.getBinding(thread.id),
+        );
+        const currentInstanceId =
+          binding?.providerInstanceId ??
+          thread.session?.providerInstanceId ??
+          thread.modelSelection.instanceId;
+        // A retry after a failure past the rebind finds the binding already on the target.
+        const bindingAlreadyMoved = binding?.providerInstanceId === modelSelection.instanceId;
+        const method = "thread.provider-account.switch";
+        if (!bindingAlreadyMoved && currentInstanceId !== fromInstanceId) {
+          return yield* new ProviderAdapterRequestError({
+            provider: providerErrorLabel(
+              binding?.provider ?? thread.session?.providerName ?? undefined,
+            ),
+            method,
+            detail: `Thread '${thread.id}' is on '${currentInstanceId}', not '${fromInstanceId}'. Select the account again.`,
+          });
+        }
+        const nextInfo = yield* providerService.getInstanceInfo(modelSelection.instanceId).pipe(
+          Effect.mapError(
+            () =>
+              new ProviderAdapterRequestError({
+                provider: providerErrorLabelFromInstanceHint({
+                  instanceId: String(modelSelection.instanceId),
+                }),
+                method,
+                detail: `Requested provider instance '${modelSelection.instanceId}' is not configured in this build.`,
+              }),
+          ),
+        );
+        // A removed account cannot be looked up; its resume state is treated as unreadable.
+        const currentInfo = Option.getOrUndefined(
+          yield* Effect.option(providerService.getInstanceInfo(currentInstanceId)),
+        );
+        const currentDriverKind =
+          binding?.provider ?? currentInfo?.driverKind ?? thread.session?.providerName ?? undefined;
+        if (currentDriverKind !== undefined && currentDriverKind !== nextInfo.driverKind) {
+          return yield* new ProviderAdapterRequestError({
+            provider: nextInfo.driverKind,
+            method,
+            detail: `Thread '${thread.id}' is bound to driver '${currentDriverKind}' and cannot switch to '${nextInfo.driverKind}'.`,
+          });
+        }
+        const sharesConversation =
+          currentInfo !== undefined &&
+          currentInfo.continuationIdentity.continuationKey ===
+            nextInfo.continuationIdentity.continuationKey;
+        // Stop before rebinding so the next turn starts from the binding alone.
+        if (thread.session && thread.session.status !== "stopped") {
+          yield* providerService.stopSession({ threadId: thread.id });
+        }
+        if (binding && !bindingAlreadyMoved) {
+          yield* providerSessionDirectory.upsert({
+            threadId: thread.id,
+            provider: binding.provider,
+            providerInstanceId: modelSelection.instanceId,
+            status: "stopped",
+            ...(sharesConversation ? {} : { resumeCursor: null, runtimePayload: null }),
+          });
+        }
+        yield* orchestrationEngine.dispatch({
+          type: "thread.meta.update",
+          commandId: yield* serverCommandId("provider-account-switch"),
+          threadId: thread.id,
+          modelSelection,
+        });
+        yield* setThreadSession({
+          threadId: thread.id,
+          session: {
+            threadId: thread.id,
+            status: "stopped",
+            providerName: nextInfo.driverKind,
+            providerInstanceId: modelSelection.instanceId,
+            runtimeMode: thread.session?.runtimeMode ?? thread.runtimeMode,
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: now,
+          },
+          createdAt: now,
+        });
+      }).pipe(
+        Effect.catchCause((cause) => {
+          if (Cause.hasInterruptsOnly(cause)) {
+            return Effect.interrupt;
+          }
+          return appendProviderFailureActivity({
+            threadId: thread.id,
+            kind: "provider.account.switch.failed",
+            summary: "Provider account switch failed",
+            detail: formatFailureDetail(cause),
+            turnId: null,
+            createdAt: now,
+          });
+        }),
+      );
+    },
+  );
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1876,6 +1991,9 @@ const make = Effect.gen(function* () {
         return;
       case "thread.session-stop-requested":
         yield* processSessionStopRequested(event);
+        return;
+      case "thread.provider-account-switch-requested":
+        yield* processProviderAccountSwitchRequested(event);
         return;
       case "thread.settled": {
         const thread = yield* projectionSnapshotQuery.getThreadShellById(event.payload.threadId);
@@ -1942,6 +2060,7 @@ const make = Effect.gen(function* () {
         event.type === "thread.approval-response-requested" ||
         event.type === "thread.user-input-response-requested" ||
         event.type === "thread.session-stop-requested" ||
+        event.type === "thread.provider-account-switch-requested" ||
         event.type === "thread.settled"
       ) {
         return yield* worker.enqueue(event);

@@ -1707,6 +1707,55 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.provider-account.switch": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const currentInstanceId =
+        thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;
+      if (currentInstanceId !== command.fromInstanceId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is on '${currentInstanceId}', not '${command.fromInstanceId}'. Select the account again.`,
+        });
+      }
+      if (command.modelSelection.instanceId === command.fromInstanceId) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' already uses '${command.fromInstanceId}'.`,
+        });
+      }
+      if (
+        thread.session?.status === "starting" ||
+        thread.session?.status === "running" ||
+        thread.session?.activeTurnId != null ||
+        hasQueuedTurnStartForThread(thread, command.createdAt) ||
+        openRequests(thread).size > 0
+      ) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Thread '${command.threadId}' is still working. Wait for the turn to finish before switching accounts.`,
+        });
+      }
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt: command.createdAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.provider-account-switch-requested",
+        payload: {
+          threadId: command.threadId,
+          fromInstanceId: command.fromInstanceId,
+          modelSelection: command.modelSelection,
+          createdAt: command.createdAt,
+        },
+      };
+    }
+
     case "thread.session.set": {
       const thread = yield* requireThread({
         readModel,

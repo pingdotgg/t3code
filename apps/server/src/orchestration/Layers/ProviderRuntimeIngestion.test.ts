@@ -1049,6 +1049,51 @@ describe("ProviderRuntimeIngestion", () => {
     }),
   );
 
+  effectIt.effect("ignores the exit of an account the thread has since left", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const threadId = asThreadId("thread-1");
+      const switchedAt = "2026-01-01T00:00:02.000Z";
+      // A provider account switch stops the old account, then rebinds the thread.
+      yield* harness.engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("cmd-session-after-account-switch"),
+        threadId,
+        session: {
+          threadId,
+          status: "running",
+          providerName: "codex",
+          providerInstanceId: ProviderInstanceId.make("codex_personal"),
+          runtimeMode: "approval-required",
+          activeTurnId: asTurnId("turn-on-new-account"),
+          lastError: null,
+          updatedAt: switchedAt,
+        },
+        createdAt: switchedAt,
+      });
+
+      harness.emit({
+        type: "session.exited",
+        eventId: asEventId("evt-session-exited-old-account"),
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+        threadId,
+        createdAt: "2026-01-01T00:00:03.000Z",
+      });
+
+      yield* Effect.promise(() => harness.drain());
+      const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+        (entry) => entry.id === threadId,
+      );
+      expect(thread?.session).toMatchObject({
+        status: "running",
+        providerInstanceId: ProviderInstanceId.make("codex_personal"),
+        activeTurnId: asTurnId("turn-on-new-account"),
+        updatedAt: switchedAt,
+      });
+    }),
+  );
+
   it("does not clear active turn when session/thread started arrives mid-turn", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

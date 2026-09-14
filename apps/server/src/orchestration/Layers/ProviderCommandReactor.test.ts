@@ -42,12 +42,16 @@ import { deriveServerPaths, ServerConfig } from "../../config.ts";
 import { TextGenerationError } from "@t3tools/contracts";
 import {
   ProviderAdapterRequestError,
+  ProviderUnsupportedError,
   ProviderWorkspaceMissingError,
   type ProviderServiceError,
 } from "../../provider/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
+import * as ProviderSessionRuntime from "../../persistence/ProviderSessionRuntime.ts";
+import { ProviderSessionDirectoryLive } from "../../provider/Layers/ProviderSessionDirectory.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import {
   ProviderService,
   type ProviderServiceShape,
@@ -120,6 +124,7 @@ describe("ProviderCommandReactor", () => {
     | OrchestrationEngineService
     | ProviderCommandReactor
     | ProjectionSnapshotQuery
+    | ProviderSessionDirectory
     | SqlClient.SqlClient,
     unknown
   > | null = null;
@@ -369,6 +374,9 @@ describe("ProviderCommandReactor", () => {
       assertConversationRollbackSupported: () => unsupported(),
       getInstanceInfo: (instanceId) => {
         const raw = String(instanceId);
+        if (raw.startsWith("missing")) {
+          return Effect.fail(new ProviderUnsupportedError({ provider: instanceId }));
+        }
         const driverKind = ProviderDriverKind.make(
           raw.startsWith("claude")
             ? "claudeAgent"
@@ -489,6 +497,9 @@ describe("ProviderCommandReactor", () => {
         }),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(
+        ProviderSessionDirectoryLive.pipe(Layer.provide(ProviderSessionRuntime.layer)),
+      ),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -498,6 +509,7 @@ describe("ProviderCommandReactor", () => {
     const engine = await runtime.runPromise(Effect.service(OrchestrationEngineService));
     const snapshotQuery = await runtime.runPromise(Effect.service(ProjectionSnapshotQuery));
     const reactor = await runtime.runPromise(Effect.service(ProviderCommandReactor));
+    const sessionDirectory = await runtime.runPromise(Effect.service(ProviderSessionDirectory));
     const runEffect = <A, E>(effect: Effect.Effect<A, E>) => runtime!.runPromise(effect);
 
     await Effect.runPromise(
@@ -620,6 +632,7 @@ describe("ProviderCommandReactor", () => {
       generateBranchName,
       generateThreadTitle,
       runtimeSessions,
+      sessionDirectory,
       stateDir,
       drain,
       runEffect,
@@ -4221,4 +4234,235 @@ describe("ProviderCommandReactor", () => {
       expect(thread?.session?.providerInstanceId).toBe(ProviderInstanceId.make("codex_work"));
     }),
   );
+
+  describe("provider account switch", () => {
+    const threadId = ThreadId.make("thread-1");
+    const claudeWork = ProviderInstanceId.make("claude_work");
+    const claudePersonal = ProviderInstanceId.make("claude_personal");
+    const switchedAt = "2026-01-01T00:00:05.000Z";
+    type Harness = Awaited<ReturnType<typeof createHarness>>;
+
+    const bindThread = (
+      harness: Harness,
+      input: {
+        readonly provider: "claudeAgent" | "codex";
+        readonly sessionInstanceId: ProviderInstanceId;
+        readonly boundInstanceId?: ProviderInstanceId;
+      },
+    ) =>
+      Effect.gen(function* () {
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make(`cmd-bind-${input.sessionInstanceId}`),
+          threadId,
+          session: {
+            threadId,
+            status: "ready",
+            providerName: input.provider,
+            providerInstanceId: input.sessionInstanceId,
+            runtimeMode: "approval-required",
+            activeTurnId: null,
+            lastError: null,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+          },
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* harness.sessionDirectory.upsert({
+          threadId,
+          provider: ProviderDriverKind.make(input.provider),
+          providerInstanceId: input.boundInstanceId ?? input.sessionInstanceId,
+          resumeCursor: { opaque: "resume-before-switch" },
+          runtimePayload: { cwd: "/tmp/provider-project" },
+        });
+      });
+
+    const switchAccount = (
+      harness: Harness,
+      input: { readonly from: ProviderInstanceId; readonly to: ProviderInstanceId },
+    ) =>
+      harness.engine.dispatch({
+        type: "thread.provider-account.switch",
+        commandId: CommandId.make(`cmd-switch-${input.from}-${input.to}`),
+        threadId,
+        fromInstanceId: input.from,
+        modelSelection: { instanceId: input.to, model: "switched-model" },
+        createdAt: switchedAt,
+      });
+
+    const readState = (harness: Harness) =>
+      Effect.gen(function* () {
+        yield* Effect.promise(() => harness.drain());
+        const thread = (yield* Effect.promise(() => harness.readModel())).threads.find(
+          (entry) => entry.id === threadId,
+        );
+        const binding = Option.getOrUndefined(yield* harness.sessionDirectory.getBinding(threadId));
+        return {
+          thread,
+          binding,
+          failures: thread?.activities.filter(
+            (activity) => activity.kind === "provider.account.switch.failed",
+          ),
+        };
+      });
+
+    effectIt.effect("moves the thread and drops resume state the other account cannot read", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId: claudeWork, model: "claude-model" },
+          }),
+        );
+        yield* bindThread(harness, { provider: "claudeAgent", sessionInstanceId: claudeWork });
+
+        yield* switchAccount(harness, { from: claudeWork, to: claudePersonal });
+        const { thread, binding, failures } = yield* readState(harness);
+
+        expect(failures).toEqual([]);
+        expect(harness.stopSession).toHaveBeenCalledTimes(1);
+        expect(binding).toMatchObject({
+          providerInstanceId: claudePersonal,
+          resumeCursor: null,
+          runtimePayload: null,
+        });
+        expect(thread?.modelSelection).toEqual({
+          instanceId: claudePersonal,
+          model: "switched-model",
+        });
+        expect(thread?.session).toMatchObject({
+          status: "stopped",
+          providerName: "claudeAgent",
+          providerInstanceId: claudePersonal,
+        });
+      }),
+    );
+
+    effectIt.effect("keeps resume state for accounts that share the conversation", () =>
+      Effect.gen(function* () {
+        const codex = ProviderInstanceId.make("codex");
+        const codexPersonal = ProviderInstanceId.make("codex_personal");
+        const harness = yield* Effect.promise(() => createHarness());
+        yield* bindThread(harness, { provider: "codex", sessionInstanceId: codex });
+
+        yield* switchAccount(harness, { from: codex, to: codexPersonal });
+        const { thread, binding, failures } = yield* readState(harness);
+
+        expect(failures).toEqual([]);
+        expect(binding).toMatchObject({
+          providerInstanceId: codexPersonal,
+          resumeCursor: { opaque: "resume-before-switch" },
+          runtimePayload: { cwd: "/tmp/provider-project" },
+        });
+        expect(thread?.session?.providerInstanceId).toBe(codexPersonal);
+      }),
+    );
+
+    effectIt.effect("leaves a thread alone when its binding already moved elsewhere", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId: claudeWork, model: "claude-model" },
+          }),
+        );
+        // The projected session lags behind a move another client made.
+        yield* bindThread(harness, {
+          provider: "claudeAgent",
+          sessionInstanceId: claudeWork,
+          boundInstanceId: ProviderInstanceId.make("claude_other"),
+        });
+
+        yield* switchAccount(harness, { from: claudeWork, to: claudePersonal });
+        const { thread, binding, failures } = yield* readState(harness);
+
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0]?.payload).toMatchObject({
+          detail: expect.stringContaining("is on 'claude_other', not 'claude_work'"),
+        });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+        expect(binding).toMatchObject({
+          providerInstanceId: "claude_other",
+          resumeCursor: { opaque: "resume-before-switch" },
+        });
+        expect(thread?.modelSelection.instanceId).toBe(claudeWork);
+        expect(thread?.session?.providerInstanceId).toBe(claudeWork);
+      }),
+    );
+
+    effectIt.effect("finishes a retried switch whose binding already moved to the target", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId: claudeWork, model: "claude-model" },
+          }),
+        );
+        // An earlier attempt failed after rebinding and before the projection moved.
+        yield* bindThread(harness, {
+          provider: "claudeAgent",
+          sessionInstanceId: claudeWork,
+          boundInstanceId: claudePersonal,
+        });
+
+        yield* switchAccount(harness, { from: claudeWork, to: claudePersonal });
+        const { thread, binding, failures } = yield* readState(harness);
+
+        expect(failures).toEqual([]);
+        expect(binding).toMatchObject({
+          providerInstanceId: claudePersonal,
+          resumeCursor: { opaque: "resume-before-switch" },
+        });
+        expect(thread?.modelSelection).toEqual({
+          instanceId: claudePersonal,
+          model: "switched-model",
+        });
+        expect(thread?.session).toMatchObject({
+          status: "stopped",
+          providerInstanceId: claudePersonal,
+        });
+      }),
+    );
+
+    effectIt.effect("reports an unconfigured target account", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId: claudeWork, model: "claude-model" },
+          }),
+        );
+        yield* bindThread(harness, { provider: "claudeAgent", sessionInstanceId: claudeWork });
+
+        yield* switchAccount(harness, { from: claudeWork, to: ProviderInstanceId.make("missing") });
+        const { binding, failures } = yield* readState(harness);
+
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0]?.payload).toMatchObject({
+          detail: expect.stringContaining(
+            "Requested provider instance 'missing' is not configured in this build",
+          ),
+        });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+        expect(binding?.providerInstanceId).toBe(claudeWork);
+      }),
+    );
+
+    effectIt.effect("rejects a switch to another driver", () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            threadModelSelection: { instanceId: claudeWork, model: "claude-model" },
+          }),
+        );
+        yield* bindThread(harness, { provider: "claudeAgent", sessionInstanceId: claudeWork });
+
+        yield* switchAccount(harness, { from: claudeWork, to: ProviderInstanceId.make("codex") });
+        const { thread, binding, failures } = yield* readState(harness);
+
+        expect(failures).toHaveLength(1);
+        expect(failures?.[0]?.payload).toMatchObject({
+          detail: expect.stringContaining("cannot switch to 'codex'"),
+        });
+        expect(harness.stopSession).not.toHaveBeenCalled();
+        expect(binding?.providerInstanceId).toBe(claudeWork);
+        expect(thread?.modelSelection.instanceId).toBe(claudeWork);
+      }),
+    );
+  });
 });

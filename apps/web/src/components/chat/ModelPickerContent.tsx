@@ -161,6 +161,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   lockedProvider: ProviderDriverKind | null;
   lockedContinuationGroupKey?: string | null;
   /**
+   * Whether the environment can move a started thread to an account of the
+   * locked driver outside its continuation group. Without it those accounts
+   * stay listed but unselectable, since the server would reject the next turn.
+   */
+  providerAccountSwitchEnabled?: boolean;
+  /**
    * All configured provider instances in display order. Used to render
    * the sidebar (one button per instance) and to resolve display names
    * for the locked-mode header.
@@ -303,9 +309,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       if (props.lockedProvider === null) return true;
       if (entry.driverKind !== props.lockedProvider) return false;
       if (!props.lockedContinuationGroupKey) return true;
-      return entry.continuationGroupKey === props.lockedContinuationGroupKey;
+      if (entry.continuationGroupKey === props.lockedContinuationGroupKey) return true;
+      return props.providerAccountSwitchEnabled === true && Boolean(entry.continuationGroupKey);
     },
-    [props.lockedContinuationGroupKey, props.lockedProvider],
+    [props.lockedContinuationGroupKey, props.lockedProvider, props.providerAccountSwitchEnabled],
   );
 
   const selectableUnavailableInstanceIds = useMemo(() => {

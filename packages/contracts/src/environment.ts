@@ -137,6 +137,10 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       version-skew contract as threadSettlement. */
   threadPullRequests: Schema.optionalKey(Schema.Boolean),
   pullRequestStackActions: Schema.optionalKey(Schema.Boolean),
+  /** Server accepts `thread.provider-account.switch`, which moves a started
+      thread to another account of the same provider. Older servers reject the
+      move on the next turn, so clients keep those accounts unselectable. */
+  threadProviderAccountSwitch: Schema.optionalKey(Schema.Boolean),
   /** The update path clients should offer for this server. Absent on
       servers that must be relaunched manually (dev checkouts, Windows
       foreground runs, pre-update servers). */
