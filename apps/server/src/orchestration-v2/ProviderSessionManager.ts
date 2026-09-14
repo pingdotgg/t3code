@@ -382,6 +382,12 @@ export const layerWithOptions = (
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       // Keep ownership after removal from the live map until cleanup actually finishes.
       const releasing = new Map<string, PendingSessionRelease>();
+      // Adapter operations that may create native resources (ensureThread,
+      // resumeThread) register here before invoking the adapter and settle the
+      // deferred when they exit. A release drains the set before closing the
+      // session scope so a late adapter result can never be installed after
+      // the finalizer that would have closed it.
+      const inflightAdapterOps = new Map<string, Set<Deferred.Deferred<void, never>>>();
       // Startup ownership before a session entry exists: the open registers
       // here before any adapter work so a racing close/detach can mark it and
       // join its unwind instead of reporting success over a spawning provider
@@ -1237,6 +1243,15 @@ export const layerWithOptions = (
                 yield* Scope.close(entry.scope, Exit.void);
               }).pipe(Effect.ensuring(releaseCredentials));
               // Drain in-flight opens, then release their locks before closing the scope.
+              // The adapter-op drain runs inside sessionOpen: an admitted
+              // runtime.ensureThread/resumeThread registers in
+              // inflightAdapterOps before invoking the adapter, so it either
+              // settles before the scope closes or is refused by its ownership
+              // recheck — a provider resource created mid-close must never
+              // outlive the finalizer that would have closed it. The set is
+              // closed at claim time (registration requires the live entry),
+              // and the await is lock-free because an adapter call never joins
+              // this release — no drain deadlock.
               const waitForOpens =
                 input.alreadyLocked === true
                   ? Effect.void
@@ -1244,7 +1259,17 @@ export const layerWithOptions = (
                       .sort()
                       .reduceRight(
                         (effect, threadId) => threadLifecycle.withLock(threadId, effect),
-                        sessionOpen.withLock(input.providerSessionId, Effect.void),
+                        sessionOpen.withLock(
+                          input.providerSessionId,
+                          Effect.gen(function* () {
+                            const ops = inflightAdapterOps.get(key);
+                            if (ops === undefined) return;
+                            yield* Effect.forEach(ops, (done) => Deferred.await(done), {
+                              discard: true,
+                            });
+                            inflightAdapterOps.delete(key);
+                          }),
+                        ),
                       );
               const completeRelease = (exit: Exit.Exit<void, ProviderSessionReleaseError>) =>
                 releaseStatus.withLock(
@@ -2129,6 +2154,52 @@ export const layerWithOptions = (
           });
         });
 
+      /**
+       * Runs an adapter operation that can create native resources under an
+       * admission record the release path drains. Registration and the
+       * ownership check are one Ref.modify: the claim deletes the sessions
+       * entry and writes `releasing` atomically, so an operation admitted
+       * before the claim is always in the drained set and an operation after
+       * the claim is refused before the adapter runs.
+       */
+      const runResourceCreatingAdapterOp = <A, E>(input: {
+        readonly providerSessionId: ProviderSessionId;
+        readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
+        readonly driver: ProviderDriverKind;
+        readonly operation: Effect.Effect<A, E>;
+      }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
+        Effect.uninterruptibleMask((restore) =>
+          Effect.gen(function* () {
+            const key = sessionKey(input.providerSessionId);
+            const done = Deferred.makeUnsafe<void, never>();
+            const admitted = yield* Ref.modify(sessions, (current) => {
+              const entry = current.get(key);
+              if (entry === undefined || entry.runtime !== input.expectedRuntime) {
+                return [false, current] as const;
+              }
+              const ops = inflightAdapterOps.get(key) ?? new Set();
+              ops.add(done);
+              inflightAdapterOps.set(key, ops);
+              return [true, current] as const;
+            });
+            if (!admitted) {
+              return yield* new ProviderAdapterProtocolError({
+                driver: input.driver,
+                detail: releasing.has(key)
+                  ? "A previous provider session has not finished cleanup."
+                  : "The provider session is no longer running.",
+              });
+            }
+            return yield* restore(input.operation).pipe(
+              Effect.ensuring(
+                Effect.sync(() => {
+                  inflightAdapterOps.get(key)?.delete(done);
+                }).pipe(Effect.andThen(Deferred.done(done, Exit.void))),
+              ),
+            );
+          }),
+        );
+
       const makeEventSubscription = (
         subscribers: Ref.Ref<
           ReadonlyMap<number, Queue.Queue<ProviderSessionEventSignal, Cause.Done>>
@@ -2189,7 +2260,23 @@ export const layerWithOptions = (
               driver: runtime.driver,
               expectedRuntime: runtime,
             }).pipe(
-              Effect.andThen(runtime.ensureThread(input)),
+              Effect.andThen(
+                // The adapter call holds the attach lock so a detach cannot
+                // strip this thread's bookkeeping mid-call, and it runs under
+                // an admission record a release drains before closing the
+                // session scope — a resource the adapter creates (e.g.
+                // Cursor's late runner.open result) is never installed after
+                // the finalizer that would have closed it already ran.
+                threadAttach.withLock(
+                  threadAttachKey(providerSessionId, input.threadId),
+                  runResourceCreatingAdapterOp({
+                    providerSessionId,
+                    expectedRuntime: runtime,
+                    driver: runtime.driver,
+                    operation: runtime.ensureThread(input),
+                  }),
+                ),
+              ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
                   providerSessionId,
@@ -2206,11 +2293,18 @@ export const layerWithOptions = (
           resumeThread: (input) => {
             const threadId = input.threadId ?? input.providerThread.appThreadId;
             if (threadId === null || threadId === undefined) {
-              return requireLiveRuntime({
+              // No attach key exists without a thread, so the ownership check
+              // and the adapter call share the session-open lock a release
+              // drains before closing the scope.
+              return sessionOpen.withLock(
                 providerSessionId,
-                expectedRuntime: runtime,
-                driver: runtime.driver,
-              }).pipe(Effect.andThen(runtime.resumeThread(input)));
+                runResourceCreatingAdapterOp({
+                  providerSessionId,
+                  expectedRuntime: runtime,
+                  driver: runtime.driver,
+                  operation: runtime.resumeThread(input),
+                }),
+              );
             }
             const providerThreadKey = providerThreadLoadKey({
               providerThread: input.providerThread,
@@ -2235,7 +2329,17 @@ export const layerWithOptions = (
                 }),
               ),
               Effect.flatMap((loaded) =>
-                loaded ? Effect.succeed(input.providerThread) : runtime.resumeThread(input),
+                loaded
+                  ? Effect.succeed(input.providerThread)
+                  : threadAttach.withLock(
+                      threadAttachKey(providerSessionId, threadId),
+                      runResourceCreatingAdapterOp({
+                        providerSessionId,
+                        expectedRuntime: runtime,
+                        driver: runtime.driver,
+                        operation: runtime.resumeThread(input),
+                      }),
+                    ),
               ),
               Effect.tap((providerThread) =>
                 markProviderThreadLoaded({
