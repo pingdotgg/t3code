@@ -26,6 +26,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scheduler from "effect/Scheduler";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
 import { HttpServer } from "effect/unstable/http";
@@ -1783,6 +1784,65 @@ function makeThreadSessionFixture(threadId: ThreadId) {
         }),
     };
   });
+}
+
+// A scheduler that yields a fiber exactly once — when it reaches a chosen op
+// boundary — and queues the continuations it would run in `tasks`, so a test
+// can suspend a fiber between two adjacent runtime instructions and interrupt
+// it there. That is the only way to reach windows like "after `opening.set`
+// but before the unwind handler", which have no suspension for ordinary
+// fork/interrupt choreography to land in. `shouldYield` must fire once: the
+// resumed fiber rechecks it before evaluating the deferred op, so returning
+// true repeatedly would suspend the same op forever without making progress.
+function makeSteppingScheduler() {
+  const tasks: Array<() => void> = [];
+  const counts = new Map<Fiber.Fiber<unknown, unknown>, number>();
+  const targets = new Map<Fiber.Fiber<unknown, unknown>, number>();
+  const scheduler: Scheduler.Scheduler = {
+    executionMode: "sync",
+    shouldYield: (fiber) => {
+      const count = (counts.get(fiber) ?? 0) + 1;
+      counts.set(fiber, count);
+      return count === targets.get(fiber);
+    },
+    makeDispatcher: () => ({
+      scheduleTask: (task) => {
+        tasks.push(task);
+      },
+      flush: () => {
+        while (tasks.length > 0) tasks.shift()!();
+      },
+    }),
+  };
+  // Runs `fiber` until it has reached `ops` op checks — at which point it is
+  // suspended with its resume task queued — then returns. A fiber that parks
+  // or completes first ends the loop early.
+  const step = (fiber: Fiber.Fiber<unknown, unknown>, ops: number) =>
+    Effect.gen(function* () {
+      targets.set(fiber, ops);
+      while ((counts.get(fiber) ?? 0) < ops) {
+        const task = tasks.shift();
+        if (task !== undefined) {
+          task();
+          continue;
+        }
+        // The fiber's initial evaluation is dispatched through the forking
+        // fiber's scheduler, so give the default dispatcher a turn before
+        // concluding it is parked or done.
+        yield* Effect.yieldNow;
+        if (tasks.length === 0) break;
+      }
+    });
+  // Runs every queued continuation, yielding so default-scheduler work can
+  // resolve deferreds the stepped fibers are waiting on.
+  const drain = Effect.gen(function* () {
+    for (let round = 0; round < 64; round++) {
+      while (tasks.length > 0) tasks.shift()!();
+      yield* Effect.yieldNow;
+      if (tasks.length === 0) return;
+    }
+  });
+  return { scheduler, tasks, counts, step, drain };
 }
 
 for (const operation of ["close", "detach", "closeInstance"] as const) {
@@ -8398,7 +8458,7 @@ it.effect(
         };
         const firstA = yield* makeThreadSessionFixture(threadId);
         const holderA = yield* makeThreadSessionFixture(peerA);
-        const holderB = yield* makeThreadSessionFixture(peerB);
+        yield* makeThreadSessionFixture(peerB);
         const sessionA = yield* firstA.allocate;
         const sessionB = yield* idAllocator.allocate.providerSession({
           providerInstanceId: otherSelection.instanceId,
@@ -8506,7 +8566,7 @@ it.effect(
         };
         const firstA = yield* makeThreadSessionFixture(threadId);
         const holderA = yield* makeThreadSessionFixture(peerA);
-        const holderB = yield* makeThreadSessionFixture(threadB);
+        yield* makeThreadSessionFixture(threadB);
         const sessionA = yield* firstA.allocate;
         const sessionB = yield* idAllocator.allocate.providerSession({
           providerInstanceId: otherSelection.instanceId,
@@ -8619,8 +8679,8 @@ it.effect(
         };
         const firstA = yield* makeThreadSessionFixture(threadId);
         const holderA = yield* makeThreadSessionFixture(peerA);
-        const holderB = yield* makeThreadSessionFixture(peerB);
-        const holderC = yield* makeThreadSessionFixture(peerC);
+        yield* makeThreadSessionFixture(peerB);
+        yield* makeThreadSessionFixture(peerC);
         const sessionA = yield* firstA.allocate;
         const sessionB = yield* idAllocator.allocate.providerSession({
           providerInstanceId: otherSelection.instanceId,
@@ -8718,61 +8778,313 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
-      const closing = yield* Deferred.make<void>();
-      const closeGate = yield* Deferred.make<void>();
-      const closeCalls = yield* Ref.make(0);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      // Per-iteration gate: each close must stay parked inside its scope
+      // finalizer so the detach observes a pending release and takes the
+      // tracked-revocation path.
+      const closeGate = yield* Ref.make<
+        | {
+            readonly entered: Deferred.Deferred<void>;
+            readonly release: Deferred.Deferred<void>;
+          }
+        | undefined
+      >(undefined);
 
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;
-        const threadId = ThreadId.make("thread-detach-stranded-tail");
-        const peerId = ThreadId.make("thread-detach-stranded-tail-peer");
-        const first = yield* makeThreadSessionFixture(threadId);
-        const peer = yield* makeThreadSessionFixture(peerId);
-        const providerSessionId = yield* first.allocate;
-        yield* first.open(providerSessionId);
-        yield* peer.open(providerSessionId, peerId);
+        const stepper = makeSteppingScheduler();
 
-        const closingSession = yield* manager
-          .close(providerSessionId)
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* Deferred.await(closing);
+        // Interrupting between the tail registration and the worker fork
+        // used to leave a `done` that never settles. There is no suspension
+        // between the two, so only a per-op boundary reaches the window:
+        // sweep the interrupt across every op offset instead of racing it.
+        for (let ops = 0; ops < 128; ops++) {
+          const threadId = ThreadId.make(`thread-detach-stranded-tail-${ops}`);
+          const peerId = ThreadId.make(`thread-detach-stranded-tail-peer-${ops}`);
+          const first = yield* makeThreadSessionFixture(threadId);
+          const peer = yield* makeThreadSessionFixture(peerId);
+          const providerSessionId = yield* first.allocate;
+          yield* first.open(providerSessionId);
+          yield* peer.open(providerSessionId, peerId);
+          const entered = yield* Deferred.make<void>();
+          const release = yield* Deferred.make<void>();
+          yield* Ref.set(closeGate, { entered, release });
+          const closingSession = yield* manager
+            .close(providerSessionId)
+            .pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(entered);
+          const detaching = yield* manager
+            .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+            .pipe(
+              Effect.exit,
+              Effect.forkDetach,
+              Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+            );
+          yield* stepper.step(detaching, ops);
+          // Interrupt while the fiber is still suspended: the resumption is
+          // queued into the stepping dispatcher, so drain delivers the
+          // interrupt deterministically at this op boundary.
+          yield* Effect.sync(() => detaching.interruptUnsafe());
+          yield* stepper.drain;
+          yield* Fiber.await(detaching);
 
-        // Interrupt the detach before it runs: the registration of a tracked
-        // revocation and the worker fork must stay atomic so the tail's `done`
-        // always settles — otherwise every later join parks behind a dead
-        // record.
-        const detaching = yield* manager
-          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
-          .pipe(Effect.forkChild);
-        yield* Fiber.interrupt(detaching);
+          yield* Deferred.succeed(release, undefined);
+          assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
 
-        yield* Deferred.succeed(closeGate, undefined);
-        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
-
-        // If the interrupt stranded a registered tail, this join never
-        // settles and closeInstance fails at the 30s bound.
-        const closingInstance = yield* manager
-          .closeInstance(modelSelection.instanceId)
-          .pipe(Effect.exit, Effect.forkChild);
-        yield* TestClock.adjust("30 seconds");
-        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingInstance)));
+          // A stranded tail never settles; the next join parks until the 30s
+          // bound. A healthy tail settles during the drain above, so the join
+          // completes without any clock advance.
+          const closingInstance = yield* manager
+            .closeInstance(modelSelection.instanceId)
+            .pipe(Effect.exit, Effect.forkChild);
+          yield* stepper.drain;
+          if (closingInstance.pollUnsafe() === undefined) {
+            yield* TestClock.adjust("30 seconds");
+          }
+          assert.isTrue(
+            Exit.isSuccess(yield* Fiber.join(closingInstance)),
+            `interrupt at op ${ops} stranded the revocation tail`,
+          );
+        }
       }).pipe(
-        Effect.ensuring(Deferred.succeed(closeGate, undefined)),
         Effect.provide(
           makeTestLayer({
             state,
             idleTimeoutMs: 3_600_000,
-            beforeClose: Ref.modify(closeCalls, (n) => [n === 0, n + 1] as const).pipe(
-              Effect.andThen((firstClose) =>
-                firstClose
-                  ? Deferred.succeed(closing, undefined).pipe(
-                      Effect.andThen(Deferred.await(closeGate)),
-                    )
-                  : Effect.void,
+            mcpConfigs,
+            beforeClose: Ref.get(closeGate).pipe(
+              Effect.flatMap((gate) =>
+                gate === undefined
+                  ? Effect.void
+                  : Deferred.succeed(gate.entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(gate.release)),
+                    ),
               ),
             ),
           }),
         ),
       );
     }),
+);
+
+it.effect("ProviderSessionManagerV2 an interrupted startup cannot strand the opening record", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const stepper = makeSteppingScheduler();
+      const threadId = ThreadId.make("thread-open-stranded-record");
+      yield* makeThreadSessionFixture(threadId);
+
+      // Interrupting after `opening.set` but before the unwind handler is
+      // installed used to strand the record: a later close marked it and
+      // joined a `settled` that never completed, failing at the 30s bound
+      // while replacements stayed blocked. The gap has no suspension, so
+      // sweep the interrupt across every op offset.
+      for (let ops = 0; ops < 160; ops++) {
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        const opening = yield* manager
+          .open({ providerSessionId, threadId, modelSelection, runtimePolicy })
+          .pipe(
+            Effect.exit,
+            Effect.forkDetach,
+            Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+          );
+        yield* stepper.step(opening, ops);
+        // Interrupt while the fiber is still suspended: the resumption is
+        // queued into the stepping dispatcher, so drain delivers the
+        // interrupt deterministically at this op boundary.
+        yield* Effect.sync(() => opening.interruptUnsafe());
+        yield* stepper.drain;
+        yield* Fiber.await(opening);
+
+        // A stranded record keeps its `settled` pending forever; the close
+        // marks it and joins, so it only resolves at the 30s bound — and
+        // fails. A settled or absent record lets the close finish during
+        // the drain, before any clock advance.
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.exit, Effect.forkChild);
+        yield* stepper.drain;
+        if (closing.pollUnsafe() === undefined) {
+          yield* TestClock.adjust("30 seconds");
+        }
+        assert.isTrue(
+          Exit.isSuccess(yield* Fiber.join(closing)),
+          `interrupt at op ${ops} stranded the opening record`,
+        );
+      }
+    }).pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect("ProviderSessionManagerV2 closeInstance joins only its own unfinished sweeps", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const gateA = yield* Ref.make<string | undefined>(undefined);
+    const gateB = yield* Ref.make<string | undefined>(undefined);
+    const revokingA = yield* Deferred.make<void>();
+    const revokingB = yield* Deferred.make<void>();
+    const gateFirst = yield* Deferred.make<void>();
+    const gateSecond = yield* Deferred.make<void>();
+    const releaseArmed = yield* Ref.make(false);
+    const releaseStarted = yield* Deferred.make<void>();
+    const mcpRegistryLayer = Layer.effect(
+      McpSessionRegistry.McpSessionRegistry,
+      Effect.gen(function* () {
+        const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+        return McpSessionRegistry.McpSessionRegistry.of({
+          ...delegate,
+          revokeProviderSession: (providerSessionId) =>
+            Effect.gen(function* () {
+              const a = yield* Ref.get(gateA);
+              const b = yield* Ref.get(gateB);
+              if (providerSessionId === a) {
+                yield* Deferred.succeed(revokingA, undefined);
+                yield* Deferred.await(gateFirst);
+              } else if (providerSessionId === b) {
+                yield* Deferred.succeed(revokingB, undefined);
+                yield* Deferred.await(gateSecond);
+              }
+            }).pipe(Effect.andThen(delegate.revokeProviderSession(providerSessionId))),
+        });
+      }),
+    ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+    yield* Effect.gen(function* () {
+      const manager = yield* ProviderSessionManagerV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const threadId = ThreadId.make("thread-closeinstance-own-sweep");
+      const peerA = ThreadId.make("thread-closeinstance-own-sweep-a");
+      const peerB = ThreadId.make("thread-closeinstance-own-sweep-b");
+      const peerC = ThreadId.make("thread-closeinstance-own-sweep-c");
+      const otherSelection = {
+        ...modelSelection,
+        instanceId: ProviderInstanceId.make("codex_other"),
+      };
+      const firstA = yield* makeThreadSessionFixture(threadId);
+      const holderA = yield* makeThreadSessionFixture(peerA);
+      yield* makeThreadSessionFixture(peerB);
+      yield* makeThreadSessionFixture(peerC);
+      const sessionA = yield* firstA.allocate;
+      const sessionB = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: otherSelection.instanceId,
+        threadId: peerB,
+      });
+      const sessionC = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: peerC,
+      });
+      yield* firstA.open(sessionA);
+      yield* holderA.open(sessionA, peerA);
+      const credentialA = McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId;
+      yield* Ref.set(gateA, credentialA);
+      yield* manager.open({
+        threadId: peerB,
+        providerSessionId: sessionB,
+        modelSelection: otherSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId: sessionB,
+        modelSelection: otherSelection,
+        runtimePolicy,
+      });
+      const credentialB = McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId;
+      yield* Ref.set(gateB, credentialB);
+      yield* manager.open({
+        threadId: peerC,
+        providerSessionId: sessionC,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId: sessionC,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* manager.close(sessionC);
+
+      // Sweep A parks on its credential; B's detach chains a successor tail
+      // behind it.
+      const detachA = yield* manager
+        .detach({ providerSessionId: sessionA, threadId, revokeMcpCredential: true })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(revokingA);
+      const detachB = yield* manager
+        .detach({ providerSessionId: sessionB, threadId, revokeMcpCredential: true })
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      // closeInstance starts while A's sweep is still pending. The release
+      // handshake means it is parked on the revocation join by the time the
+      // test resumes.
+      yield* Ref.set(releaseArmed, true);
+      const closingA = yield* manager
+        .closeInstance(modelSelection.instanceId)
+        .pipe(Effect.exit, Effect.forkChild);
+      yield* Deferred.await(releaseStarted);
+      yield* Effect.yieldNow;
+      yield* Effect.yieldNow;
+
+      // A's sweep finishes while B's chained sweep stays parked on its own
+      // credential. Joining the matching record — not the tail — lets A's
+      // teardown complete now.
+      yield* Deferred.succeed(gateFirst, undefined);
+      yield* Deferred.await(revokingB);
+      yield* Effect.yieldNow;
+      const early = closingA.pollUnsafe();
+      assert.isTrue(early !== undefined && Exit.isSuccess(early));
+
+      // detachA joined its own tail, which settled when A's sweep finished;
+      // detachB is still parked behind B's sweep and fails at the bound.
+      yield* TestClock.adjust("30 seconds");
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(detachA)));
+      assert.equal((yield* Fiber.join(detachB))._tag, "Failure");
+      yield* Deferred.succeed(gateSecond, undefined);
+      assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingA)));
+    }).pipe(
+      Effect.ensuring(
+        Deferred.succeed(gateFirst, undefined).pipe(
+          Effect.andThen(Deferred.succeed(gateSecond, undefined)),
+        ),
+      ),
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 3_600_000,
+          mcpConfigs,
+          mcpRegistryLayer,
+          beforeClose: Ref.get(releaseArmed).pipe(
+            Effect.flatMap((armed) =>
+              armed ? Deferred.succeed(releaseStarted, undefined).pipe(Effect.asVoid) : Effect.void,
+            ),
+          ),
+          extraAdapters: [
+            makeProviderAdapter(state, {
+              instanceId: ProviderInstanceId.make("codex_other"),
+            }),
+          ],
+        }),
+      ),
+    );
+  }),
 );
