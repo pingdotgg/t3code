@@ -220,11 +220,16 @@ export function NewTaskDraftScreen(props: {
     reportFailure: false,
   });
   const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  // The delete is awaited; by then the picker may point somewhere else, and
+  // only the removed project's draft should leave the screen.
+  const selectedProjectRef = useRef(selectedProject);
+  selectedProjectRef.current = selectedProject;
   const removeClonedProject = async () => {
     if (!selectedProject) return;
+    const removed = selectedProject;
     const result = await deleteProject({
-      environmentId: selectedProject.environmentId,
-      input: { projectId: selectedProject.id },
+      environmentId: removed.environmentId,
+      input: { projectId: removed.id },
     });
     if (AsyncResult.isFailure(result)) {
       const error = Cause.squash(result.cause);
@@ -234,7 +239,10 @@ export function NewTaskDraftScreen(props: {
       );
       return;
     }
-    navigation.dispatch(StackActions.replace("Home"));
+    const current = selectedProjectRef.current;
+    if (current?.id === removed.id && current.environmentId === removed.environmentId) {
+      navigation.dispatch(StackActions.replace("Home"));
+    }
   };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
