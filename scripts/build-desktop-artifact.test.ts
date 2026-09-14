@@ -84,6 +84,7 @@ import {
   WindowsPrimaryNativeProbeError,
   WindowsDesktopBuildPrerequisitesMissingError,
   WindowsPackagedPayloadValidationError,
+  CUA_SDK_ASAR_UNPACK_GLOBS,
   WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
   WINDOWS_PACKAGED_PAYLOAD_FILE_LIMIT,
   WINDOWS_SERVER_ASAR_IGNORE_GLOBS,
@@ -768,13 +769,17 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       );
 
       // Windows unpacks native files explicitly so their JavaScript and metadata
-      // stay archived. Other platforms retain electron-builder's defaults.
+      // stay archived. Other platforms retain electron-builder's defaults. The
+      // Cua SDK is unpacked everywhere because it dlopens relative to its files.
       assert.notProperty(mac, "asar");
       assert.notProperty(linux, "asar");
-      assert.notProperty(mac, "asarUnpack");
-      assert.notProperty(linux, "asarUnpack");
+      assert.deepStrictEqual(mac.asarUnpack, CUA_SDK_ASAR_UNPACK_GLOBS);
+      assert.deepStrictEqual(linux.asarUnpack, CUA_SDK_ASAR_UNPACK_GLOBS);
       assert.deepStrictEqual(win.asar, { smartUnpack: false });
-      assert.deepStrictEqual(win.asarUnpack, [WINDOWS_NATIVE_ASAR_UNPACK_GLOB]);
+      assert.deepStrictEqual(win.asarUnpack, [
+        WINDOWS_NATIVE_ASAR_UNPACK_GLOB,
+        ...CUA_SDK_ASAR_UNPACK_GLOBS,
+      ]);
       assert.deepStrictEqual(winWithoutWslRuntime.asar, win.asar);
       assert.deepStrictEqual(winWithoutWslRuntime.asarUnpack, win.asarUnpack);
       assert.deepStrictEqual(mac.extraResources, DESKTOP_EXTRA_RESOURCES);

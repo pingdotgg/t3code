@@ -1,3 +1,5 @@
+import * as NodeUrl from "node:url";
+
 import { CuaDriverMcpConfiguration, type DesktopCuaDriverRequest } from "@t3tools/contracts";
 import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
 import * as Cause from "effect/Cause";
@@ -30,10 +32,46 @@ export interface DesktopCuaDriverDependencies {
 }
 const decodeMcpConfiguration = Schema.decodeEffect(CuaDriverMcpConfiguration);
 
-const defaultDependencies: DesktopCuaDriverDependencies = {
-  loadEmbedded: () => import("@trycua/cua-driver/embedded"),
-  loadElectron: () => import("@trycua/cua-driver/electron"),
+/**
+ * The SDK locates its native library relative to its own module file and hands
+ * that path to `dlopen`, which cannot read inside `app.asar`. Electron only
+ * redirects `.node` addons to the unpacked tree, so a packaged app must import
+ * the SDK from `app.asar.unpacked`, where the build also places its packages.
+ */
+export const resolveSdkEntry = (
+  desktop: Pick<
+    DesktopEnvironment.DesktopEnvironment["Service"],
+    "isPackaged" | "appPath" | "path"
+  >,
+  entry: "embedded" | "electron",
+): string => {
+  const asarSuffix = `${desktop.path.sep}app.asar`;
+  if (!desktop.isPackaged || !desktop.appPath.endsWith(asarSuffix)) {
+    return `@trycua/cua-driver/${entry}`;
+  }
+  const modulePath = desktop.path.join(
+    `${desktop.appPath}.unpacked`,
+    "node_modules",
+    "@trycua",
+    "cua-driver",
+    "dist",
+    `${entry}.js`,
+  );
+  return NodeUrl.pathToFileURL(modulePath).href;
 };
+
+const defaultDependencies = (
+  desktop: Parameters<typeof resolveSdkEntry>[0],
+): DesktopCuaDriverDependencies => ({
+  loadEmbedded: () =>
+    import(resolveSdkEntry(desktop, "embedded")) as Promise<
+      typeof import("@trycua/cua-driver/embedded")
+    >,
+  loadElectron: () =>
+    import(resolveSdkEntry(desktop, "electron")) as Promise<
+      typeof import("@trycua/cua-driver/electron")
+    >,
+});
 
 export const resolveEmbeddedDriverPath = (
   environment: NodeJS.ProcessEnv,
@@ -79,9 +117,10 @@ export class DesktopCuaDriver extends Context.Service<
 >()("@t3tools/desktop/cua/DesktopCuaDriver") {}
 
 export const make = Effect.fn("desktop.cuaDriver.make")(function* (
-  dependencies: DesktopCuaDriverDependencies = defaultDependencies,
+  dependencyOverrides?: DesktopCuaDriverDependencies,
 ) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
+  const dependencies = dependencyOverrides ?? defaultDependencies(environment);
   const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const scope = yield* Scope.Scope;
   const mutex = yield* Semaphore.make(1);

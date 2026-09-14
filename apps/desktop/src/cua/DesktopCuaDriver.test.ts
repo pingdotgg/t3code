@@ -11,6 +11,7 @@ import * as Scope from "effect/Scope";
 import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
@@ -18,7 +19,7 @@ import * as Stream from "effect/Stream";
 import * as DesktopConfig from "../app/DesktopConfig.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
-import { make, type DesktopCuaDriverDependencies } from "./DesktopCuaDriver.ts";
+import { make, resolveSdkEntry, type DesktopCuaDriverDependencies } from "./DesktopCuaDriver.ts";
 
 const encodeMessage = Schema.encodeEffect(Schema.fromJsonString(DesktopHostTelemetryMessage));
 const decodeMessage = Schema.decodeEffect(Schema.fromJsonString(DesktopHostTelemetryMessage));
@@ -133,6 +134,28 @@ const fixture = Effect.fn(function* (
     exits,
     counts: () => ({ starts, stops, destroys }),
   };
+});
+
+describe("resolveSdkEntry", () => {
+  it.effect("imports the SDK from app.asar.unpacked in a packaged app", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path;
+      const packaged = resolveSdkEntry(
+        { isPackaged: true, appPath: "/Applications/T3.app/Contents/Resources/app.asar", path },
+        "embedded",
+      );
+      assert.ok(packaged.startsWith("file://"));
+      assert.ok(
+        packaged.endsWith(
+          "/Resources/app.asar.unpacked/node_modules/@trycua/cua-driver/dist/embedded.js",
+        ),
+      );
+      assert.equal(
+        resolveSdkEntry({ isPackaged: false, appPath: "/repo/apps/desktop", path }, "electron"),
+        "@trycua/cua-driver/electron",
+      );
+    }).pipe(Effect.provide(NodePath.layer)),
+  );
 });
 
 describe("DesktopCuaDriver", () => {

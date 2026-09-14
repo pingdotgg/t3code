@@ -1088,6 +1088,14 @@ export const WINDOWS_SERVER_ASAR_RESOURCE = "server.asar";
 // asar redirect convention). Everything else stays packed.
 export const WINDOWS_NATIVE_ASAR_UNPACK_GLOB =
   "{**/*.node,**/*.dll,**/*.exe,**/*.so,**/*.so.*,**/*.dylib}";
+// The Cua SDK resolves its native library from its own module location and
+// dlopens it, which fails inside the archive. The desktop imports these
+// packages from app.asar.unpacked, so every file they resolve must be there.
+export const CUA_SDK_ASAR_UNPACK_GLOBS = [
+  "node_modules/@trycua/cua-driver/**/*",
+  "node_modules/@trycua/cua-driver-*/**/*",
+  "node_modules/@ubjs/**/*",
+];
 // Mirrors DESKTOP_FILE_EXCLUSIONS for the hand-packed sidecar: the Claude SDK
 // platform packages are dead weight (see above), and node_modules/.bin shims
 // are never spawned at runtime (and are symlinks on POSIX build hosts, which
@@ -2751,8 +2759,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     // metadata. Windows keeps those files archived so native dependencies do
     // not inflate the loose-file count and slow NSIS installation.
     ...(platform === "win"
-      ? { asar: { smartUnpack: false }, asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB] }
-      : {}),
+      ? {
+          asar: { smartUnpack: false },
+          asarUnpack: [WINDOWS_NATIVE_ASAR_UNPACK_GLOB, ...CUA_SDK_ASAR_UNPACK_GLOBS],
+        }
+      : { asarUnpack: CUA_SDK_ASAR_UNPACK_GLOBS }),
     extraResources: [
       ...DESKTOP_EXTRA_RESOURCES,
       ...(platform === "linux" ? LINUX_CAPTURE_EXTRA_RESOURCES : []),
