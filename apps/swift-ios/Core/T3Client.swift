@@ -1082,7 +1082,7 @@ public actor T3Client {
         uploadedAttachments: [JSONValue]?,
         supportsContext: Bool
     ) -> (text: String, context: OrchestrationMessageContext?) {
-        var records = context?.records ?? []
+        var records = ComposerContextReferences.referenced(context, text: text)?.records ?? []
         var prompt = text
         if supportsContext {
             for attachment in attachments where records.count < 200 {

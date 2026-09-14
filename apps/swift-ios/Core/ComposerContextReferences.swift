@@ -69,6 +69,19 @@ public enum ComposerContextReferences {
         return result
     }
 
+    /// Keep linked records and annotation screenshots, including unknown kinds.
+    public static func referenced(_ context: OrchestrationMessageContext?, text: String) -> OrchestrationMessageContext? {
+        guard let context else { return nil }
+        var ids = Set(collect(text).map(\.contextId))
+        for record in context.records where ids.contains(record.contextId) {
+            if case let .previewAnnotation(value) = record.payload, let screenshot = value.screenshotContextId {
+                ids.insert(screenshot)
+            }
+        }
+        let records = context.records.filter { ids.contains($0.contextId) }
+        return records.isEmpty ? nil : OrchestrationMessageContext(records: records)
+    }
+
     /// Attachment uploads replace client ids. Rebind payloads without changing link identity.
     public static func rebind(
         _ context: OrchestrationMessageContext?, attachmentIDs: [String: String]

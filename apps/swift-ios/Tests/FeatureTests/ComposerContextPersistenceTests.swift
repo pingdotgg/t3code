@@ -56,4 +56,13 @@ struct ComposerContextPersistenceTests {
         #expect(value.lineEnd == 20_000)
         #expect(value.lineStart == 7_200)
     }
+
+    @Test func longReviewCommentsKeepTheirFullTextOutsideTheBoundedRecord() {
+        let body = String(repeating: "🙂", count: 8_001) + " keep this instruction"
+        let draft = FeatureReviewCommentDraft(filePath: "file.swift", body: body)
+        let record = draft.contextRecord(diff: "")
+        #expect(draft.submissionText(contextRecord: record).contains(body))
+        guard case let .reviewComment(value) = record.payload else { Issue.record("Expected review context"); return }
+        #expect(value.text.utf16.count <= 16_000)
+    }
 }

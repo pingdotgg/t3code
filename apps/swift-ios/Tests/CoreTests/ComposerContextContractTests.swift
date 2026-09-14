@@ -101,4 +101,14 @@ struct ComposerContextContractTests {
         #expect(!legacy.text.contains("t3-context://"))
         #expect(legacy.text.contains("path: src/file.swift"))
     }
+
+    @Test func sendOmitsRecordsAfterTheirLinksAreDeleted() {
+        let deleted = ComposerContextRecord(contextId: "deleted", label: "source", payload: .mention(.init(path: "private.txt")))
+        let kept = ComposerContextRecord(contextId: "kept", label: "skill", payload: .skill(.init(name: "review")))
+        let prepared = T3Client.prepareMessageContext(
+            text: "Use " + ComposerContextReferences.format(kept), context: .init(records: [deleted, kept]),
+            attachments: [], uploadedAttachments: nil, supportsContext: true
+        )
+        #expect(prepared.context?.records == [kept])
+    }
 }

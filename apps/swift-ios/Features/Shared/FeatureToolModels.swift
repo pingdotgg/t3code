@@ -611,6 +611,15 @@ public struct FeatureReviewCommentDraft: Sendable, Equatable, Hashable {
         """
     }
 
+    public func submissionText(contextRecord: ComposerContextRecord) -> String {
+        let reference = ComposerContextReferences.format(contextRecord)
+        // The record has a smaller bound than a message. Keep the full comment
+        // in ordinary text when it does not fit instead of discarding instructions.
+        return body.utf16.count > 16_000
+            ? prompt + "\n\n" + reference
+            : "Address this review comment: " + reference
+    }
+
     public func contextRecord(diff: String) -> ComposerContextRecord {
         let range = line.map { "\($0.side.rawValue) line \($0.line)" } ?? "File"
         return ComposerContextRecord(label: "\(filePath) \(range)", payload: .reviewComment(.init(

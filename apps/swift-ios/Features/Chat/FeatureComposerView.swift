@@ -891,7 +891,7 @@ struct FeatureComposerView: View {
 
     private func contextReference(label: String, payload: ComposerContextRecord.Payload) -> String {
         let record = ComposerContextRecord(label: label, payload: payload)
-        context = FeatureComposerContext.merge(FeatureComposerContext.referenced(context, text: text), .init(records: [record]))
+        context = FeatureComposerContext.merge(ComposerContextReferences.referenced(context, text: text), .init(records: [record]))
         return ComposerContextReferences.format(record) + " "
     }
 

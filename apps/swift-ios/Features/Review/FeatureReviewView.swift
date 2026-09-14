@@ -432,7 +432,7 @@ private struct FeatureDiffView: View {
             return prefix + line.text
         }.joined(separator: "\n")
         let record = reviewDraft.contextRecord(diff: diff)
-        let prompt = "Address this review comment: " + ComposerContextReferences.format(record)
+        let prompt = reviewDraft.submissionText(contextRecord: record)
         isSending = true
         commentError = nil
         Task {

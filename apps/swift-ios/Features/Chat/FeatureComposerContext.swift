@@ -20,17 +20,4 @@ enum FeatureComposerContext {
         }
         return records.isEmpty ? nil : OrchestrationMessageContext(records: records)
     }
-
-    /// Keep linked records and annotation screenshots, including unknown kinds.
-    static func referenced(_ context: OrchestrationMessageContext?, text: String) -> OrchestrationMessageContext? {
-        guard let context else { return nil }
-        var ids = Set(ComposerContextReferences.collect(text).map(\.contextId))
-        for record in context.records where ids.contains(record.contextId) {
-            if case let .previewAnnotation(value) = record.payload, let screenshot = value.screenshotContextId {
-                ids.insert(screenshot)
-            }
-        }
-        let records = context.records.filter { ids.contains($0.contextId) }
-        return records.isEmpty ? nil : OrchestrationMessageContext(records: records)
-    }
 }
