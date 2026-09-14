@@ -350,7 +350,18 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         undefined,
       );
 
+      const previewChannel = yield* createBuildConfig(
+        "mac",
+        "dmg",
+        "0.0.41-preview.20260912.1589",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
       assert.notProperty(preview, "publish");
+      assert.notProperty(previewChannel, "publish");
       assert.deepStrictEqual(release.publish, [
         {
           provider: "github",
