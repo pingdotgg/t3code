@@ -55,7 +55,13 @@ export const runSpeechSocket = Effect.fn("speech.runSocket")(function* (
         busy = false;
         yield* send({ type: "update", ...update });
       }
-    }).pipe(Effect.catch(() => fail("Live transcription failed. Please try recording again.")));
+    }).pipe(
+      Effect.catch((cause) =>
+        Effect.logError("live transcription operation failed", { cause }).pipe(
+          Effect.andThen(fail("Live transcription failed. Please try recording again.")),
+        ),
+      ),
+    );
   };
   yield* socket
     .runRaw(receive, {

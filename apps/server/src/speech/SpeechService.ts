@@ -42,7 +42,9 @@ export function decodeSpeechPcm(pcmBytes: Uint8Array, preserveSilence = false): 
       message: "audio must contain at most five minutes of 16 kHz mono Float32 PCM",
     });
   }
-  const pcm = new Float32Array(pcmBytes.slice().buffer);
+  // WebSocket frames can be pooled Node Buffers whose backing storage is larger
+  // than the frame. Copy the view so only the received bytes are decoded.
+  const pcm = new Float32Array(Uint8Array.from(pcmBytes).buffer);
   let energy = 0;
   for (const sample of pcm) {
     if (!Number.isFinite(sample) || sample < -1 || sample > 1) {

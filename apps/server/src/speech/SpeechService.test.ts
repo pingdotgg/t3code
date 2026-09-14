@@ -5,6 +5,15 @@ import { decodeSpeechPcm, MAX_SPEECH_BYTES } from "./SpeechService.ts";
 const bytes = (samples: Float32Array) => new Uint8Array(samples.buffer);
 
 describe("environment speech PCM", () => {
+  it("decodes a pooled Node Buffer without reading adjacent bytes", () => {
+    const pool = Buffer.allocUnsafe(64);
+    pool.fill(0xff);
+    const sample = new Float32Array([0.25]);
+    Buffer.from(sample.buffer).copy(pool, 20);
+
+    expect([...decodeSpeechPcm(pool.subarray(20, 24))]).toEqual([0.25]);
+  });
+
   it("copies valid PCM and preserves its samples", () => {
     const input = new Float32Array([0.25, -0.5]);
     const decoded = decodeSpeechPcm(bytes(input));
