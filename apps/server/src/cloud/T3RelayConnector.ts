@@ -92,29 +92,36 @@ interface PendingLocalWebSocketMessage {
 }
 
 const CONNECT_ATTEMPT_TIMEOUT_MILLIS = 15_000;
+const RELAY_CONNECTOR_PATH = "/.well-known/t3-relay/connect";
 const MAX_PENDING_LOCAL_WEBSOCKET_MESSAGES = 1_024;
 
 const CONNECTING = 0;
 const OPEN = 1;
 const decodeConnectorTicketResponse = Schema.decodeUnknownSync(RelayConnectorTicketResponse);
 
+function isLoopbackHostname(hostname: string): boolean {
+  const normalized = hostname.replace(/^\[(.*)\]$/u, "$1").toLowerCase();
+  return normalized === "127.0.0.1" || normalized === "::1" || normalized === "localhost";
+}
+
+// The edge may mount the connector below a prefix (the canary Worker does),
+// so only the trailing reserved segment is fixed. A plaintext connector is
+// accepted only toward a loopback edge, which is how the local workerd canary
+// runs.
 function validateConnectorConfig(config: T3RelayConnectorConfig): void {
   const connector = new URL(config.connectorUrl);
+  const secure = connector.protocol === "wss:";
   if (
-    connector.protocol !== "wss:" ||
+    (!secure && !(connector.protocol === "ws:" && isLoopbackHostname(connector.hostname))) ||
     connector.username !== "" ||
     connector.password !== "" ||
-    connector.pathname !== "/.well-known/t3-relay/connect" ||
+    !connector.pathname.endsWith(RELAY_CONNECTOR_PATH) ||
     connector.hash !== ""
   ) {
     throw new TypeError("T3 relay connector URL must be a secure connector endpoint.");
   }
   const origin = new URL(config.originUrl);
-  const hostname = origin.hostname.replace(/^\[(.*)\]$/u, "$1").toLowerCase();
-  if (
-    origin.protocol !== "http:" ||
-    (hostname !== "127.0.0.1" && hostname !== "::1" && hostname !== "localhost")
-  ) {
+  if (origin.protocol !== "http:" || !isLoopbackHostname(origin.hostname)) {
     throw new TypeError("T3 relay origin must be a loopback HTTP endpoint.");
   }
 }
@@ -274,7 +281,7 @@ export class T3RelayConnectorSession {
     let failureReason = "ticket_exchange_failed";
     try {
       const ticketUrl = new URL(this.#config.connectorUrl);
-      ticketUrl.protocol = "https:";
+      ticketUrl.protocol = ticketUrl.protocol === "wss:" ? "https:" : "http:";
       const ticketResponse = await this.#fetch(ticketUrl, {
         method: "POST",
         headers: { authorization: `Bearer ${this.#config.connectorToken}` },

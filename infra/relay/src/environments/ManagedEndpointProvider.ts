@@ -24,6 +24,7 @@ import {
   managedEndpointTunnelName,
   t3RelayEndpointForHostname,
 } from "../deploymentConfig.ts";
+import { relayEndpointAddress } from "../transport/endpointAddress.ts";
 import { relayConnectorPath, relayEdgeEndpointHostname } from "../transport/routing.ts";
 import { T3RelayEndpointControl } from "../transport/T3RelayEndpointControl.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
@@ -494,27 +495,22 @@ export const make = Effect.gen(function* () {
         missingSettings,
       });
     }
-    const environmentHash = yield* crypto
-      .digest(
-        "SHA-256",
-        new TextEncoder().encode(
-          managedEndpointDigestInput(namespace, input.userId, input.environmentId),
-        ),
-      )
-      .pipe(
-        Effect.map(Encoding.encodeHex),
-        Effect.mapError(
-          (cause) =>
-            new ManagedEndpointDeprovisioningFailed({
-              ...input,
-              stage: "revoke-relay-endpoint",
-              cause,
-            }),
-        ),
-      );
-    const endpointKey = environmentHash.slice(0, 16);
+    const address = yield* relayEndpointAddress(crypto, {
+      namespace,
+      userId: input.userId,
+      environmentId: input.environmentId,
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new ManagedEndpointDeprovisioningFailed({
+            ...input,
+            stage: "revoke-relay-endpoint",
+            cause,
+          }),
+      ),
+    );
     return yield* t3RelayControl.value
-      .revoke({ endpointKey, connectorLeaseId: input.connectorLeaseId })
+      .revoke({ address, connectorLeaseId: input.connectorLeaseId })
       .pipe(
         Effect.mapError(
           (cause) =>
@@ -732,8 +728,22 @@ export const make = Effect.gen(function* () {
             stage: "validate-relay-connector-lease",
           });
         }
-        const hostname = relayEdgeEndpointHostname(cf.namespace, cf.baseDomain, environmentHash);
-        const endpointKey = environmentHash.slice(0, 16);
+        const address = yield* relayEndpointAddress(crypto, {
+          namespace: cf.namespace,
+          userId: input.userId,
+          environmentId: input.environmentId,
+        }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new ManagedEndpointProvisioningFailed({
+                userId: input.userId,
+                environmentId: input.environmentId,
+                stage: "derive-environment-hash",
+                cause,
+              }),
+          ),
+        );
+        const hostname = relayEdgeEndpointHostname(cf.namespace, cf.baseDomain, address);
         const connectorToken = yield* crypto.randomBytes(32).pipe(
           Effect.map(Encoding.encodeBase64Url),
           Effect.mapError(
@@ -749,7 +759,7 @@ export const make = Effect.gen(function* () {
         );
         yield* t3RelayControl.value
           .configure({
-            endpointKey,
+            address,
             connectorToken,
             connectorLeaseId: input.connectorLeaseId,
           })

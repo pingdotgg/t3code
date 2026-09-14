@@ -9,6 +9,7 @@ import * as Layer from "effect/Layer";
 import * as Redacted from "effect/Redacted";
 
 import * as RelayConfiguration from "../Config.ts";
+import type { RelayEndpointAddress } from "../transport/routing.ts";
 import { T3RelayEndpointControl } from "../transport/T3RelayEndpointControl.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
@@ -296,6 +297,15 @@ function providerLayer(
     : base.pipe(Layer.provide(Layer.succeed(T3RelayEndpointControl, t3RelayEndpointControl)));
 }
 
+function expectedRelayAddress(environmentId: string, userId = "user_ABC"): RelayEndpointAddress {
+  const digest = (input: string) =>
+    NodeCrypto.createHash("sha256").update(input).digest("hex").slice(0, 16);
+  return {
+    userKey: digest(`t3r-user:dev_julius:${userId}`),
+    endpointKey: digest(`dev_julius:${userId}:${environmentId}`),
+  };
+}
+
 function expectedManagedHostname(environmentId: string, userId = "user_ABC"): string {
   const hash = NodeCrypto.createHash("sha256")
     .update(`dev_julius:${userId}:${environmentId}`)
@@ -436,7 +446,7 @@ describe("ManagedEndpointProvider", () => {
     const tunnelCalls: TunnelCall[] = [];
     const dnsCalls: DnsCall[] = [];
     const configured: Array<{
-      readonly endpointKey: string;
+      readonly address: RelayEndpointAddress;
       readonly connectorToken: string;
       readonly connectorLeaseId: string;
     }> = [];
@@ -451,11 +461,8 @@ describe("ManagedEndpointProvider", () => {
         connectorLeaseId: "lease-edge-1",
       });
 
-      const hash = NodeCrypto.createHash("sha256")
-        .update("dev_julius:user_ABC:env_EDGE")
-        .digest("hex")
-        .slice(0, 16);
-      const hostname = `${hash}-t3r-dev-julius.t3code.test`;
+      const { userKey, endpointKey: hash } = expectedRelayAddress("env_EDGE");
+      const hostname = `${hash}-${userKey}-t3r-dev-julius.t3code.test`;
       expect(result.endpoint).toEqual({
         httpBaseUrl: `https://${hostname}/`,
         wsBaseUrl: `wss://${hostname}/ws`,
@@ -471,7 +478,7 @@ describe("ManagedEndpointProvider", () => {
       expect(result.runtime.connectorToken).toMatch(/^[A-Za-z0-9_-]{43}$/u);
       expect(configured).toEqual([
         {
-          endpointKey: hash,
+          address: { userKey, endpointKey: hash },
           connectorToken: result.runtime.connectorToken,
           connectorLeaseId: "lease-edge-1",
         },
@@ -928,7 +935,10 @@ describe("ManagedEndpointProvider", () => {
     const tunnelCalls: TunnelCall[] = [];
     const dnsCalls: DnsCall[] = [];
     const allocationCalls: AllocationCall[] = [];
-    const revoked: Array<{ readonly endpointKey: string; readonly connectorLeaseId?: string }> = [];
+    const revoked: Array<{
+      readonly address: RelayEndpointAddress;
+      readonly connectorLeaseId?: string;
+    }> = [];
     const layer = providerLayer(
       makePersistentTunnelClient(tunnelCalls),
       makeDnsClient(dnsCalls),
@@ -955,7 +965,7 @@ describe("ManagedEndpointProvider", () => {
 
       expect(revoked).toHaveLength(1);
       expect(revoked[0]).toMatchObject({ connectorLeaseId: "lease-edge-1" });
-      expect(revoked[0]?.endpointKey).toMatch(/^[a-f0-9]{16}$/u);
+      expect(revoked[0]?.address).toEqual(expectedRelayAddress("env_ABC"));
       expect(tunnelCalls.at(-1)?.operation).toBe("delete");
       expect(dnsCalls.at(-1)?.operation).toBe("deleteRecord");
     }).pipe(Effect.provide(layer));
@@ -1084,7 +1094,10 @@ describe("ManagedEndpointProvider", () => {
 
   it.effect("releases a T3 connector without deleting a retained Cloudflare canary tunnel", () => {
     const tunnelCalls: TunnelCall[] = [];
-    const revoked: Array<{ readonly endpointKey: string; readonly connectorLeaseId?: string }> = [];
+    const revoked: Array<{
+      readonly address: RelayEndpointAddress;
+      readonly connectorLeaseId?: string;
+    }> = [];
     const layer = providerLayer(
       makePersistentTunnelClient(tunnelCalls),
       makeDnsClient(),
@@ -1118,7 +1131,7 @@ describe("ManagedEndpointProvider", () => {
       expect(tunnelCalls).toHaveLength(callsBeforeRelease);
       expect(revoked).toEqual([
         {
-          endpointKey: expectedManagedHostname("env_ABC").split(".")[0]!.split("-").at(-1),
+          address: expectedRelayAddress("env_ABC"),
           connectorLeaseId: "lease-edge-1",
         },
       ]);
@@ -1128,7 +1141,7 @@ describe("ManagedEndpointProvider", () => {
   it.effect("keeps a newer T3 connector when a stale lease releases", () => {
     const tunnelCalls: TunnelCall[] = [];
     const revokeRequests: Array<{
-      readonly endpointKey: string;
+      readonly address: RelayEndpointAddress;
       readonly connectorLeaseId?: string;
     }> = [];
     const layer = providerLayer(

@@ -3,14 +3,16 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
+import type { RelayEndpointAddress } from "./routing.ts";
+
 interface RelayEdgeStub {
   readonly configureEndpoint: (
-    endpointKey: string,
+    address: RelayEndpointAddress,
     connectorToken: string,
     connectorLeaseId: string,
   ) => Effect.Effect<void, never, Alchemy.RuntimeContext>;
   readonly revokeEndpoint: (
-    endpointKey: string,
+    address: RelayEndpointAddress,
     connectorLeaseId?: string,
   ) => Effect.Effect<boolean, never, Alchemy.RuntimeContext>;
 }
@@ -19,12 +21,12 @@ export class T3RelayEndpointControl extends Context.Service<
   T3RelayEndpointControl,
   {
     readonly configure: (input: {
-      readonly endpointKey: string;
+      readonly address: RelayEndpointAddress;
       readonly connectorToken: string;
       readonly connectorLeaseId: string;
     }) => Effect.Effect<void>;
     readonly revoke: (input: {
-      readonly endpointKey: string;
+      readonly address: RelayEndpointAddress;
       readonly connectorLeaseId?: string;
     }) => Effect.Effect<boolean>;
   }
@@ -37,13 +39,13 @@ export const layerWorkerBinding = (
   Layer.succeed(
     T3RelayEndpointControl,
     T3RelayEndpointControl.of({
-      configure: ({ endpointKey, connectorToken, connectorLeaseId }) =>
+      configure: ({ address, connectorToken, connectorLeaseId }) =>
         edge
-          .configureEndpoint(endpointKey, connectorToken, connectorLeaseId)
+          .configureEndpoint(address, connectorToken, connectorLeaseId)
           .pipe(Effect.provideService(Alchemy.RuntimeContext, runtimeContext)),
-      revoke: ({ endpointKey, connectorLeaseId }) =>
+      revoke: ({ address, connectorLeaseId }) =>
         edge
-          .revokeEndpoint(endpointKey, connectorLeaseId)
+          .revokeEndpoint(address, connectorLeaseId)
           .pipe(Effect.provideService(Alchemy.RuntimeContext, runtimeContext)),
     }),
   );

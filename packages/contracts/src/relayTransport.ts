@@ -10,6 +10,10 @@ export const RELAY_TRANSPORT_MAX_MESSAGE_FRAGMENTS = 1024;
 export const RELAY_TRANSPORT_MAX_HTTP_REQUEST_BYTES = 16 * 1024 * 1024;
 export const RELAY_TRANSPORT_INITIAL_WINDOW_BYTES = 256 * 1024;
 export const RELAY_TRANSPORT_MAX_CONCURRENT_STREAMS = 256;
+// One Durable Object serves every endpoint of a user (or of a shard of users),
+// so it also bounds the total connectors and streams it will hold at once.
+export const RELAY_TRANSPORT_MAX_OBJECT_CONNECTORS = 64;
+export const RELAY_TRANSPORT_MAX_OBJECT_STREAMS = 2048;
 export const RELAY_CONNECTOR_TICKET_TTL_MILLIS = 30_000;
 
 export const RelayConnectorTicketResponse = Schema.Struct({

@@ -135,6 +135,17 @@ describe("T3RelayConnectorSession", () => {
     await Promise.resolve();
   });
 
+  it("accepts a plaintext connector only toward a loopback edge", () => {
+    expect(
+      () =>
+        new T3RelayConnectorSession({
+          connectorUrl: "ws://127.0.0.1:1337/u/0123456789abcdef/.well-known/t3-relay/connect",
+          connectorToken: "token",
+          originUrl: "http://127.0.0.1:7331",
+        }),
+    ).not.toThrow();
+  });
+
   it("rejects non-loopback origins and insecure connector URLs", () => {
     expect(
       () =>

@@ -379,11 +379,9 @@ describe("EnvironmentConnector", () => {
           Response.json(signHealthResponse(healthRequest), { status: 200 }),
         );
       });
-    const hash = NodeCrypto.createHash("sha256")
-      .update("dev:user_123:env-connector-test")
-      .digest("hex")
-      .slice(0, 16);
-    const hostname = `${hash}-t3r-dev.example.test`;
+    const digest = (input: string) =>
+      NodeCrypto.createHash("sha256").update(input).digest("hex").slice(0, 16);
+    const hostname = `${digest("dev:user_123:env-connector-test")}-${digest("t3r-user:dev:user_123")}-t3r-dev.example.test`;
 
     return Effect.gen(function* () {
       const connector = yield* EnvironmentConnector.EnvironmentConnector;

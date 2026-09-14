@@ -26,6 +26,8 @@ import {
   RELAY_TRANSPORT_MAX_CONCURRENT_STREAMS,
   RELAY_TRANSPORT_MAX_FRAME_PAYLOAD_BYTES,
   RELAY_TRANSPORT_MAX_HTTP_REQUEST_BYTES,
+  RELAY_TRANSPORT_MAX_OBJECT_CONNECTORS,
+  RELAY_TRANSPORT_MAX_OBJECT_STREAMS,
   RELAY_TRANSPORT_PROTOCOL_VERSION,
   RelayTransportFrameKind,
   RelayTransportMessageAssembler,
@@ -46,10 +48,13 @@ import {
   relayHttpResponseIdleWatchdog,
   type RelayHttpResponseBodyEvent,
 } from "./httpResponseBody.ts";
+import { isRelayRouteKey } from "./routing.ts";
 
+// Every hibernatable socket names the endpoint it belongs to, so a wake-up
+// can rebuild the per-endpoint tables from the attachments alone.
 type SocketAttachment =
-  | ({ readonly role: "connector" } & ConnectorSessionIdentity)
-  | { readonly role: "client"; readonly streamId: number };
+  | ({ readonly role: "connector"; readonly endpointKey: string } & ConnectorSessionIdentity)
+  | { readonly role: "client"; readonly endpointKey: string; readonly streamId: number };
 
 interface PendingHttpResponse {
   readonly metadata: Deferred.Deferred<{
@@ -61,10 +66,28 @@ interface PendingHttpResponse {
   completed: boolean;
 }
 
+/**
+ * In-memory state of one environment endpoint inside the hub. Stream ids are
+ * scoped to the endpoint because every frame travels over that endpoint's
+ * own connector socket.
+ */
+interface EndpointRuntime {
+  readonly key: string;
+  connector: Cloudflare.WebSocket | null;
+  readonly clients: Map<number, Cloudflare.WebSocket>;
+  // Active HTTP requests keep a Durable Object invocation alive, so only
+  // WebSocket identities need durable restoration across hibernation.
+  readonly pendingHttp: Map<number, PendingHttpResponse>;
+  readonly connectorMessages: RelayTransportMessageAssembler;
+  nextStreamId: number;
+}
+
 const CONNECTOR_TOKEN_HEADER = "x-t3-relay-connector-token";
 const CONNECTOR_TICKET_HEADER = "x-t3-relay-connector-ticket";
 const CONNECTION_ROLE_HEADER = "x-t3-relay-connection-role";
+const ENDPOINT_KEY_HEADER = "x-t3-relay-endpoint-key";
 const PUBLIC_URL_HEADER = "x-t3-relay-public-url";
+const STORAGE_PREFIX = "endpoint:";
 // Managed relay endpoints currently carry T3 RPC clients only, so their fixed
 // heartbeat can stay at the edge instead of waking the object and host.
 const EFFECT_RPC_PING = '{"_tag":"Ping"}';
@@ -75,11 +98,24 @@ interface StoredConnectorConfiguration {
   readonly leaseId: string;
 }
 
-export interface RelayEnvironmentDiagnostics {
-  readonly activationId: string;
+export interface RelayEndpointDiagnostics {
   readonly connectorConnected: boolean;
   readonly clientCount: number;
   readonly pendingHttpCount: number;
+}
+
+export interface RelayHubDiagnostics {
+  readonly activationId: string;
+  readonly configuredEndpointCount: number;
+  readonly endpoints: Record<string, RelayEndpointDiagnostics>;
+}
+
+function storageKeys(endpointKey: string) {
+  return {
+    configuration: `${STORAGE_PREFIX}${endpointKey}:configuration`,
+    ticket: `${STORAGE_PREFIX}${endpointKey}:ticket`,
+    activeSession: `${STORAGE_PREFIX}${endpointKey}:activeSession`,
+  } as const;
 }
 
 const webcryptoLayer = Layer.succeed(
@@ -107,8 +143,20 @@ function tryOrUndefined<A>(operation: () => A): A | undefined {
   }
 }
 
-export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvironment>()(
-  "RelayEnvironments",
+function forwardedHeaders(headers: Record<string, string>): Array<[string, string]> {
+  return Object.entries(headers).filter(
+    ([name]) => name !== PUBLIC_URL_HEADER && name !== ENDPOINT_KEY_HEADER,
+  );
+}
+
+/**
+ * One hibernating Durable Object per user (or per shard of users). It owns
+ * every relay endpoint of its users: each endpoint has its own connector
+ * credential, connector socket, and public client streams, isolated from the
+ * others by the endpoint key the edge Worker resolves from the hostname.
+ */
+export default class RelayHub extends Cloudflare.DurableObject<RelayHub>()(
+  "RelayHubs",
   Effect.gen(function* () {
     const state = yield* Cloudflare.DurableObjectState;
     const crypto = yield* Crypto.Crypto;
@@ -118,139 +166,233 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
         new WebSocketRequestResponsePair(EFFECT_RPC_PING, EFFECT_RPC_PONG),
       );
       const activationId = yield* crypto.randomUUIDv4.pipe(Effect.orDie);
-      const clients = new Map<number, Cloudflare.WebSocket>();
-      // Active HTTP requests keep a Durable Object invocation alive, so only
-      // WebSocket identities need durable restoration across hibernation.
-      const pendingHttp = new Map<number, PendingHttpResponse>();
-      const connectorMessages = new RelayTransportMessageAssembler();
-      let connector: Cloudflare.WebSocket | null = null;
-      let nextStreamId = 1;
+      const endpoints = new Map<string, EndpointRuntime>();
 
-      const isActiveConnector = (socket: Cloudflare.WebSocket): boolean => {
-        if (connector === null) return false;
-        const active = connector.deserializeAttachment<SocketAttachment>();
+      const endpointRuntime = (endpointKey: string): EndpointRuntime => {
+        const existing = endpoints.get(endpointKey);
+        if (existing !== undefined) return existing;
+        const created: EndpointRuntime = {
+          key: endpointKey,
+          connector: null,
+          clients: new Map(),
+          pendingHttp: new Map(),
+          connectorMessages: new RelayTransportMessageAssembler(),
+          nextStreamId: 1,
+        };
+        endpoints.set(endpointKey, created);
+        return created;
+      };
+
+      // Drop the table for an endpoint once nothing references it, so an
+      // object that serves many users does not retain every endpoint it has
+      // ever seen. A late cleanup from a superseded table must not remove the
+      // table a newer connector has since created under the same key.
+      const pruneEndpoint = (endpoint: EndpointRuntime) => {
+        if (
+          endpoint.connector === null &&
+          endpoint.clients.size === 0 &&
+          endpoint.pendingHttp.size === 0 &&
+          endpoints.get(endpoint.key) === endpoint
+        ) {
+          endpoints.delete(endpoint.key);
+        }
+      };
+
+      const isActiveConnector = (
+        endpoint: EndpointRuntime,
+        socket: Cloudflare.WebSocket,
+      ): boolean => {
+        if (endpoint.connector === null) return false;
+        const active = endpoint.connector.deserializeAttachment<SocketAttachment>();
         const presented = socket.deserializeAttachment<SocketAttachment>();
         return (
           active?.role === "connector" &&
           presented?.role === "connector" &&
+          active.endpointKey === endpoint.key &&
+          presented.endpointKey === endpoint.key &&
           connectorSessionIsCurrent(active.leaseId, active, presented)
         );
       };
 
-      const allocateStreamId = () => {
-        const firstCandidate = nextStreamId;
+      const allocateStreamId = (endpoint: EndpointRuntime) => {
+        const firstCandidate = endpoint.nextStreamId;
         do {
-          const streamId = nextStreamId;
-          nextStreamId = nextStreamId === 0xffff_ffff ? 1 : nextStreamId + 1;
-          if (!clients.has(streamId) && !pendingHttp.has(streamId)) return streamId;
-        } while (nextStreamId !== firstCandidate);
+          const streamId = endpoint.nextStreamId;
+          endpoint.nextStreamId =
+            endpoint.nextStreamId === 0xffff_ffff ? 1 : endpoint.nextStreamId + 1;
+          if (!endpoint.clients.has(streamId) && !endpoint.pendingHttp.has(streamId)) {
+            return streamId;
+          }
+        } while (endpoint.nextStreamId !== firstCandidate);
         throw new Error("Relay transport has exhausted its stream identifiers.");
       };
 
-      const closeClient = (streamId: number, code: number, reason: string) =>
+      const totalStreams = () => {
+        let count = 0;
+        for (const endpoint of endpoints.values()) {
+          count += endpoint.clients.size + endpoint.pendingHttp.size;
+        }
+        return count;
+      };
+
+      const connectedConnectors = () => {
+        let count = 0;
+        for (const endpoint of endpoints.values()) {
+          if (endpoint.connector !== null) count += 1;
+        }
+        return count;
+      };
+
+      const closeClient = (
+        endpoint: EndpointRuntime,
+        streamId: number,
+        code: number,
+        reason: string,
+      ) =>
         Effect.gen(function* () {
-          const client = clients.get(streamId);
-          clients.delete(streamId);
-          connectorMessages.delete(streamId);
+          const client = endpoint.clients.get(streamId);
+          endpoint.clients.delete(streamId);
+          endpoint.connectorMessages.delete(streamId);
           if (client !== undefined) {
             yield* client.close(code, reason);
           }
+          pruneEndpoint(endpoint);
         });
 
-      const failConnectorStreams = (reason: string) =>
+      const failConnectorStreams = (endpoint: EndpointRuntime, reason: string) =>
         Effect.gen(function* () {
-          for (const streamId of clients.keys()) {
-            yield* closeClient(streamId, 1013, reason);
+          for (const streamId of endpoint.clients.keys()) {
+            yield* closeClient(endpoint, streamId, 1013, reason);
           }
-          for (const pending of pendingHttp.values()) {
+          for (const pending of endpoint.pendingHttp.values()) {
             pending.completed = true;
             yield* Deferred.succeed(pending.metadata, null);
             yield* Queue.offer(pending.body, { type: "abort", reason });
           }
+          pruneEndpoint(endpoint);
         });
 
-      const disconnectConnector = (code: number, reason: string) =>
+      const disconnectConnector = (endpoint: EndpointRuntime, code: number, reason: string) =>
         Effect.gen(function* () {
-          const activeConnector = connector;
-          connector = null;
+          const activeConnector = endpoint.connector;
+          endpoint.connector = null;
           if (activeConnector !== null) {
             yield* activeConnector.close(code, reason);
           }
-          yield* failConnectorStreams(reason);
+          yield* failConnectorStreams(endpoint, reason);
         });
 
-      const restoredConfiguration =
-        yield* state.storage.get<StoredConnectorConfiguration>("connectorConfiguration");
-      const restoredActiveSession =
-        yield* state.storage.get<ConnectorSessionIdentity>("activeConnectorSession");
-      const staleConnectors: Array<Cloudflare.WebSocket> = [];
-      let highestRestoredStreamId = 0;
-      for (const socket of yield* state.getWebSockets()) {
-        const attachment = socket.deserializeAttachment<SocketAttachment>();
+      // Restore connector and client roles from the hibernated sockets. Only
+      // the endpoints that still hold a connector socket need their stored
+      // lease read, so a wake-up costs one batched read however many
+      // endpoints the object has configured.
+      const sockets = yield* state.getWebSockets();
+      const attachments = sockets.map((socket) => ({
+        socket,
+        attachment: socket.deserializeAttachment<SocketAttachment>(),
+      }));
+      const restoreKeys = new Set<string>();
+      for (const { attachment } of attachments) {
         if (attachment?.role === "connector") {
+          const keys = storageKeys(attachment.endpointKey);
+          restoreKeys.add(keys.configuration);
+          restoreKeys.add(keys.activeSession);
+        }
+      }
+      // Durable Object storage reads at most 128 keys per call.
+      const stored = new Map<string, unknown>();
+      const restoreKeyList = [...restoreKeys];
+      for (let offset = 0; offset < restoreKeyList.length; offset += 128) {
+        const batch = yield* state.storage.get<unknown>(restoreKeyList.slice(offset, offset + 128));
+        for (const [key, value] of batch) stored.set(key, value);
+      }
+      const staleConnectors: Array<Cloudflare.WebSocket> = [];
+      for (const { socket, attachment } of attachments) {
+        if (attachment?.role === "connector") {
+          const keys = storageKeys(attachment.endpointKey);
+          const configuration = stored.get(keys.configuration) as
+            | StoredConnectorConfiguration
+            | undefined;
+          const activeSession = stored.get(keys.activeSession) as
+            | ConnectorSessionIdentity
+            | undefined;
+          const endpoint = endpointRuntime(attachment.endpointKey);
           if (
-            connector === null &&
-            connectorSessionIsCurrent(
-              restoredConfiguration?.leaseId,
-              restoredActiveSession,
-              attachment,
-            )
+            endpoint.connector === null &&
+            connectorSessionIsCurrent(configuration?.leaseId, activeSession, attachment)
           ) {
-            connector = socket;
+            endpoint.connector = socket;
           } else {
             staleConnectors.push(socket);
           }
         } else if (attachment?.role === "client") {
-          clients.set(attachment.streamId, socket);
-          highestRestoredStreamId = Math.max(highestRestoredStreamId, attachment.streamId);
+          const endpoint = endpointRuntime(attachment.endpointKey);
+          endpoint.clients.set(attachment.streamId, socket);
+          endpoint.nextStreamId = Math.max(endpoint.nextStreamId, attachment.streamId + 1);
         }
       }
-      nextStreamId = highestRestoredStreamId === 0xffff_ffff ? 1 : highestRestoredStreamId + 1;
       for (const stale of staleConnectors) {
         yield* stale.close(4000, "Superseded connector session");
       }
-      if (connector === null) {
-        if (restoredActiveSession !== undefined) {
-          yield* state.storage.delete("activeConnectorSession");
-        }
-        if (clients.size > 0) {
-          yield* failConnectorStreams("Environment connector session was not restored");
+      for (const endpoint of endpoints.values()) {
+        if (endpoint.nextStreamId > 0xffff_ffff) endpoint.nextStreamId = 1;
+        if (endpoint.connector === null) {
+          yield* state.storage.delete(storageKeys(endpoint.key).activeSession);
+          yield* failConnectorStreams(endpoint, "Environment connector session was not restored");
         }
       }
 
       return {
         diagnostics: () =>
-          Effect.sync((): RelayEnvironmentDiagnostics => ({
-            activationId,
-            connectorConnected: connector !== null,
-            clientCount: clients.size,
-            pendingHttpCount: pendingHttp.size,
-          })),
-        setConnectorConfiguration: (token: string, leaseId: string) =>
           Effect.gen(function* () {
-            const previous =
-              yield* state.storage.get<StoredConnectorConfiguration>("connectorConfiguration");
-            yield* state.storage.put("connectorConfiguration", { token, leaseId });
-            yield* state.storage.delete("connectorTicket");
+            const configured = yield* state.storage.list({ prefix: STORAGE_PREFIX });
+            let configuredEndpointCount = 0;
+            for (const key of configured.keys()) {
+              if (key.endsWith(":configuration")) configuredEndpointCount += 1;
+            }
+            const report: Record<string, RelayEndpointDiagnostics> = {};
+            for (const endpoint of endpoints.values()) {
+              report[endpoint.key] = {
+                connectorConnected: endpoint.connector !== null,
+                clientCount: endpoint.clients.size,
+                pendingHttpCount: endpoint.pendingHttp.size,
+              };
+            }
+            return {
+              activationId,
+              configuredEndpointCount,
+              endpoints: report,
+            } satisfies RelayHubDiagnostics;
+          }),
+        setConnectorConfiguration: (endpointKey: string, token: string, leaseId: string) =>
+          Effect.gen(function* () {
+            const keys = storageKeys(endpointKey);
+            const previous = yield* state.storage.get<StoredConnectorConfiguration>(
+              keys.configuration,
+            );
+            yield* state.storage.put(keys.configuration, { token, leaseId });
+            yield* state.storage.delete(keys.ticket);
             if (previous?.leaseId !== leaseId) {
-              yield* state.storage.delete("activeConnectorSession");
-              if (connector !== null) {
-                yield* disconnectConnector(4000, "Connector lease superseded");
+              yield* state.storage.delete(keys.activeSession);
+              const endpoint = endpoints.get(endpointKey);
+              if (endpoint?.connector) {
+                yield* disconnectConnector(endpoint, 4000, "Connector lease superseded");
               }
             }
           }),
-        revokeConnector: (expectedLeaseId?: string) =>
+        revokeConnector: (endpointKey: string, expectedLeaseId?: string) =>
           Effect.gen(function* () {
-            const configuration =
-              yield* state.storage.get<StoredConnectorConfiguration>("connectorConfiguration");
+            const keys = storageKeys(endpointKey);
+            const configuration = yield* state.storage.get<StoredConnectorConfiguration>(
+              keys.configuration,
+            );
             if (!connectorLeaseCanBeRevoked(configuration?.leaseId, expectedLeaseId)) {
               return false;
             }
-            yield* state.storage.delete("connectorConfiguration");
-            yield* state.storage.delete("connectorTicket");
-            yield* state.storage.delete("activeConnectorSession");
-            if (connector !== null) {
-              yield* disconnectConnector(4001, "Connector revoked");
+            yield* state.storage.delete([keys.configuration, keys.ticket, keys.activeSession]);
+            const endpoint = endpoints.get(endpointKey);
+            if (endpoint?.connector) {
+              yield* disconnectConnector(endpoint, 4001, "Connector revoked");
             }
             return true;
           }),
@@ -263,7 +405,6 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             ...(forwardedUrl === undefined ? {} : { forwardedUrl }),
           });
           const role = request.headers[CONNECTION_ROLE_HEADER];
-          let connectingSession: ConnectorSessionIdentity | null = null;
           if (
             role !== "connector_ticket" &&
             role !== "connector" &&
@@ -272,10 +413,17 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           ) {
             return HttpServerResponse.text("Unknown relay connection role", { status: 400 });
           }
+          const endpointKey = request.headers[ENDPOINT_KEY_HEADER];
+          if (endpointKey === undefined || !isRelayRouteKey(endpointKey)) {
+            return HttpServerResponse.text("Unknown relay endpoint", { status: 400 });
+          }
+          const keys = storageKeys(endpointKey);
+          let connectingSession: ConnectorSessionIdentity | null = null;
 
           if (role === "connector_ticket") {
-            const configuration =
-              yield* state.storage.get<StoredConnectorConfiguration>("connectorConfiguration");
+            const configuration = yield* state.storage.get<StoredConnectorConfiguration>(
+              keys.configuration,
+            );
             const presentedToken = request.headers[CONNECTOR_TOKEN_HEADER];
             if (
               configuration === undefined ||
@@ -290,7 +438,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               milliseconds: RELAY_CONNECTOR_TICKET_TTL_MILLIS,
             });
             const expiresAtEpochMillis = expiresAt.epochMilliseconds;
-            yield* state.storage.put("connectorTicket", {
+            yield* state.storage.put(keys.ticket, {
               ticket,
               expiresAtEpochMillis,
             } satisfies ConnectorTicketRecord);
@@ -304,7 +452,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           }
 
           if (role === "connector") {
-            const storedTicket = yield* state.storage.get<ConnectorTicketRecord>("connectorTicket");
+            const storedTicket = yield* state.storage.get<ConnectorTicketRecord>(keys.ticket);
             const presentedTicket = request.headers[CONNECTOR_TICKET_HEADER];
             const disposition = connectorTicketDisposition({
               stored: storedTicket,
@@ -315,12 +463,23 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               return HttpServerResponse.text("Invalid connector ticket", { status: 401 });
             }
             if (disposition === "expired") {
-              yield* state.storage.delete("connectorTicket");
+              yield* state.storage.delete(keys.ticket);
               return HttpServerResponse.text("Invalid connector ticket", { status: 401 });
             }
-            yield* state.storage.delete("connectorTicket");
-            const configuration =
-              yield* state.storage.get<StoredConnectorConfiguration>("connectorConfiguration");
+            // Refuse before consuming the ticket so a host that hits the cap
+            // can retry the same ticket once capacity frees up.
+            if (
+              (endpoints.get(endpointKey)?.connector ?? null) === null &&
+              connectedConnectors() >= RELAY_TRANSPORT_MAX_OBJECT_CONNECTORS
+            ) {
+              return HttpServerResponse.text("Relay object is at connector capacity", {
+                status: 503,
+              });
+            }
+            yield* state.storage.delete(keys.ticket);
+            const configuration = yield* state.storage.get<StoredConnectorConfiguration>(
+              keys.configuration,
+            );
             if (configuration === undefined || presentedTicket === undefined) {
               return HttpServerResponse.text("Connector configuration is unavailable", {
                 status: 401,
@@ -330,17 +489,22 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               leaseId: configuration.leaseId,
               sessionId: presentedTicket,
             };
-          } else if (connector === null) {
-            return HttpServerResponse.text("Environment connector is offline", { status: 503 });
           }
 
-          if (
-            role !== "connector" &&
-            clients.size + pendingHttp.size >= RELAY_TRANSPORT_MAX_CONCURRENT_STREAMS
-          ) {
-            return HttpServerResponse.text("Environment relay is at stream capacity", {
-              status: 503,
-            });
+          const endpoint = endpoints.get(endpointKey);
+          if (role !== "connector") {
+            if (endpoint?.connector == null) {
+              return HttpServerResponse.text("Environment connector is offline", { status: 503 });
+            }
+            if (
+              endpoint.clients.size + endpoint.pendingHttp.size >=
+                RELAY_TRANSPORT_MAX_CONCURRENT_STREAMS ||
+              totalStreams() >= RELAY_TRANSPORT_MAX_OBJECT_STREAMS
+            ) {
+              return HttpServerResponse.text("Environment relay is at stream capacity", {
+                status: 503,
+              });
+            }
           }
 
           if (role === "http") {
@@ -353,16 +517,15 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
                 status: 413,
               });
             }
-            const streamId = allocateStreamId();
-            const requestConnector = connector!;
+            const httpEndpoint = endpoint!;
+            const streamId = allocateStreamId(httpEndpoint);
+            const requestConnector = httpEndpoint.connector!;
             const requestStartFrame = tryOrUndefined(() =>
               encodeRelayTransportControlFrame(streamId, {
                 type: "http_request_start",
                 method: request.method,
                 url: publicRequestUrl,
-                headers: Object.entries(request.headers).filter(
-                  ([name]) => name !== PUBLIC_URL_HEADER,
-                ),
+                headers: forwardedHeaders(request.headers),
               }),
             );
             if (requestStartFrame === undefined) {
@@ -381,16 +544,14 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               connector: requestConnector,
               completed: false,
             } satisfies PendingHttpResponse;
-            pendingHttp.set(streamId, pending);
+            httpEndpoint.pendingHttp.set(streamId, pending);
+            const releasePending = Effect.sync(() => {
+              httpEndpoint.pendingHttp.delete(streamId);
+              pruneEndpoint(httpEndpoint);
+            });
             yield* requestConnector
               .send(requestStartFrame)
-              .pipe(
-                Effect.onExit((exit) =>
-                  Exit.isFailure(exit)
-                    ? Effect.sync(() => pendingHttp.delete(streamId))
-                    : Effect.void,
-                ),
-              );
+              .pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? releasePending : Effect.void)));
             let requestBodyBytes = 0;
             let oversized = false;
             if (request.method !== "GET" && request.method !== "HEAD") {
@@ -431,13 +592,13 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
                 Effect.result,
               );
               if (oversized) {
-                pendingHttp.delete(streamId);
+                yield* releasePending;
                 return HttpServerResponse.text("HTTP request body exceeds the relay limit", {
                   status: 413,
                 });
               }
               if (Result.isFailure(streamed)) {
-                pendingHttp.delete(streamId);
+                yield* releasePending;
                 yield* requestConnector.send(
                   encodeRelayTransportControlFrame(streamId, {
                     type: "http_request_abort",
@@ -454,8 +615,8 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               Effect.timeoutOption("30 seconds"),
             );
             if (Option.isNone(responseOption)) {
-              pendingHttp.delete(streamId);
-              if (isActiveConnector(requestConnector)) {
+              yield* releasePending;
+              if (isActiveConnector(httpEndpoint, requestConnector)) {
                 yield* requestConnector.send(
                   encodeRelayTransportControlFrame(streamId, {
                     type: "http_request_abort",
@@ -467,7 +628,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             }
             const response = responseOption.value;
             if (response === null) {
-              pendingHttp.delete(streamId);
+              yield* releasePending;
               return HttpServerResponse.text("Environment request failed", { status: 502 });
             }
             // The body stream cannot see a client that stopped reading, so a
@@ -482,7 +643,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             );
             const responseStream = relayHttpResponseBodyStream(body, progress).pipe(
               Stream.tap((chunk) =>
-                !isActiveConnector(pending.connector)
+                !isActiveConnector(httpEndpoint, pending.connector)
                   ? Effect.void
                   : pending.connector.send(
                       encodeRelayTransportControlFrame(streamId, {
@@ -494,8 +655,8 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               Stream.ensuring(
                 Effect.gen(function* () {
                   yield* Fiber.interrupt(idleWatchdog);
-                  pendingHttp.delete(streamId);
-                  if (!pending.completed && isActiveConnector(pending.connector)) {
+                  yield* releasePending;
+                  if (!pending.completed && isActiveConnector(httpEndpoint, pending.connector)) {
                     yield* pending.connector.send(
                       encodeRelayTransportControlFrame(streamId, {
                         type: "http_request_abort",
@@ -529,14 +690,12 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             role === "connector"
               ? null
               : (() => {
-                  const streamId = allocateStreamId();
+                  const streamId = allocateStreamId(endpoint!);
                   const openFrame = tryOrUndefined(() =>
                     encodeRelayTransportControlFrame(streamId, {
                       type: "websocket_open",
                       url: publicRequestUrl,
-                      headers: Object.entries(request.headers).filter(
-                        ([name]) => name !== PUBLIC_URL_HEADER,
-                      ),
+                      headers: forwardedHeaders(request.headers),
                       protocols: [],
                     }),
                   );
@@ -547,18 +706,23 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               status: 431,
             });
           }
-          const upgradeConnector = role === "connector" ? null : connector;
+          const upgradeConnector = role === "connector" ? null : endpoint!.connector;
           const [response, socket] = yield* Cloudflare.upgrade();
           if (role === "connector") {
-            if (connector !== null) {
-              yield* disconnectConnector(4000, "Superseded by a newer connector");
+            const superseded = endpoints.get(endpointKey);
+            if (superseded?.connector) {
+              yield* disconnectConnector(superseded, 4000, "Superseded by a newer connector");
             }
-            yield* state.storage.put("activeConnectorSession", connectingSession!);
+            // Disconnecting the old connector may have pruned its table, so
+            // the new socket must attach to whatever table is live now.
+            const connectorEndpoint = endpointRuntime(endpointKey);
+            yield* state.storage.put(keys.activeSession, connectingSession!);
             socket.serializeAttachment({
               role: "connector",
+              endpointKey,
               ...connectingSession!,
             } satisfies SocketAttachment);
-            connector = socket;
+            connectorEndpoint.connector = socket;
             yield* socket.send(
               encodeRelayTransportControlFrame(0, {
                 type: "connector_ready",
@@ -566,19 +730,29 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
               }),
             );
           } else {
+            const clientEndpoint = endpoint!;
             const { streamId, openFrame } = publicWebSocket!;
-            if (upgradeConnector === null || !isActiveConnector(upgradeConnector)) {
+            if (upgradeConnector === null || !isActiveConnector(clientEndpoint, upgradeConnector)) {
               yield* socket.close(1013, "Environment connector changed during upgrade");
               return response;
             }
-            socket.serializeAttachment({ role: "client", streamId } satisfies SocketAttachment);
-            clients.set(streamId, socket);
+            socket.serializeAttachment({
+              role: "client",
+              endpointKey,
+              streamId,
+            } satisfies SocketAttachment);
+            clientEndpoint.clients.set(streamId, socket);
             yield* upgradeConnector
               .send(openFrame)
               .pipe(
                 Effect.onExit((exit) =>
                   Exit.isFailure(exit)
-                    ? closeClient(streamId, 1013, "Environment connector is offline")
+                    ? closeClient(
+                        clientEndpoint,
+                        streamId,
+                        1013,
+                        "Environment connector is offline",
+                      )
                     : Effect.void,
                 ),
               );
@@ -590,9 +764,16 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           message: string | ArrayBuffer,
         ) {
           const attachment = socket.deserializeAttachment<SocketAttachment>();
-          if (attachment?.role === "client") {
-            if (connector === null) {
+          if (attachment === null || attachment === undefined) return;
+          const endpoint = endpoints.get(attachment.endpointKey);
+          if (attachment.role === "client") {
+            if (endpoint === undefined) {
+              yield* socket.close(1013, "Environment connector is offline");
+              return;
+            }
+            if (endpoint.connector === null) {
               return yield* closeClient(
+                endpoint,
                 attachment.streamId,
                 1013,
                 "Environment connector is offline",
@@ -611,32 +792,33 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             );
             if (frames === undefined) {
               return yield* closeClient(
+                endpoint,
                 attachment.streamId,
                 1009,
                 "WebSocket message exceeds the relay limit",
               );
             }
-            for (const frame of frames) yield* connector.send(frame);
+            for (const frame of frames) yield* endpoint.connector.send(frame);
             return;
           }
           if (
-            attachment?.role !== "connector" ||
-            !isActiveConnector(socket) ||
+            endpoint === undefined ||
+            !isActiveConnector(endpoint, socket) ||
             typeof message === "string"
           ) {
             return;
           }
           // Hibernation events may carry a fresh JavaScript handle for the
           // same persisted WebSocket. Keep sends pinned to the current handle.
-          connector = socket;
+          endpoint.connector = socket;
 
           const decoded = decodeRelayTransportFrame(message);
           if (Result.isFailure(decoded) || decoded.success.streamId === 0) {
             return;
           }
           const frame = decoded.success;
-          const client = clients.get(frame.streamId);
-          const http = pendingHttp.get(frame.streamId);
+          const client = endpoint.clients.get(frame.streamId);
+          const http = endpoint.pendingHttp.get(frame.streamId);
           if (frame.kind === RelayTransportFrameKind.httpResponseBody && http !== undefined) {
             yield* Queue.offer(http.body, { type: "chunk", bytes: frame.payload.slice() });
             return;
@@ -674,9 +856,14 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
             frame.kind === RelayTransportFrameKind.websocketText ||
             frame.kind === RelayTransportFrameKind.websocketBinary
           ) {
-            const message = tryOrUndefined(() => connectorMessages.append(frame));
+            const message = tryOrUndefined(() => endpoint.connectorMessages.append(frame));
             if (message === undefined) {
-              yield* closeClient(frame.streamId, 1009, "Invalid fragmented relay message");
+              yield* closeClient(
+                endpoint,
+                frame.streamId,
+                1009,
+                "Invalid fragmented relay message",
+              );
             } else if (message !== null) {
               if (message.kind === RelayTransportFrameKind.websocketText) {
                 yield* client.send(new TextDecoder().decode(message.payload));
@@ -687,9 +874,14 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           } else if (frame.kind === RelayTransportFrameKind.control) {
             const control = decodeRelayTransportControlFrame(frame);
             if (Result.isSuccess(control) && control.success.type === "websocket_close") {
-              yield* closeClient(frame.streamId, control.success.code, control.success.reason);
+              yield* closeClient(
+                endpoint,
+                frame.streamId,
+                control.success.code,
+                control.success.reason,
+              );
             } else if (Result.isSuccess(control) && control.success.type === "websocket_reject") {
-              yield* closeClient(frame.streamId, 1011, control.success.reason);
+              yield* closeClient(endpoint, frame.streamId, 1011, control.success.reason);
             }
           }
         }),
@@ -699,17 +891,21 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
           reason: string,
         ) {
           const attachment = socket.deserializeAttachment<SocketAttachment>();
+          const endpoint =
+            attachment === null || attachment === undefined
+              ? undefined
+              : endpoints.get(attachment.endpointKey);
           if (attachment?.role === "connector") {
-            if (isActiveConnector(socket)) {
-              connector = null;
-              yield* state.storage.delete("activeConnectorSession");
-              yield* failConnectorStreams("Environment connector disconnected");
+            if (endpoint !== undefined && isActiveConnector(endpoint, socket)) {
+              endpoint.connector = null;
+              yield* state.storage.delete(storageKeys(endpoint.key).activeSession);
+              yield* failConnectorStreams(endpoint, "Environment connector disconnected");
             }
-          } else if (attachment?.role === "client") {
-            const wasActive = clients.delete(attachment.streamId);
-            connectorMessages.delete(attachment.streamId);
-            if (wasActive && connector !== null) {
-              yield* connector.send(
+          } else if (attachment?.role === "client" && endpoint !== undefined) {
+            const wasActive = endpoint.clients.delete(attachment.streamId);
+            endpoint.connectorMessages.delete(attachment.streamId);
+            if (wasActive && endpoint.connector !== null) {
+              yield* endpoint.connector.send(
                 encodeRelayTransportControlFrame(attachment.streamId, {
                   type: "websocket_close",
                   code: normalizeRelayWebSocketCloseCode(code),
@@ -717,6 +913,7 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
                 }),
               );
             }
+            pruneEndpoint(endpoint);
           }
           yield* socket.close(normalizeRelayWebSocketCloseCode(code), reason);
         }),
@@ -728,4 +925,5 @@ export default class RelayEnvironment extends Cloudflare.DurableObject<RelayEnvi
 export const relayConnectorTokenHeader = CONNECTOR_TOKEN_HEADER;
 export const relayConnectorTicketHeader = CONNECTOR_TICKET_HEADER;
 export const relayConnectionRoleHeader = CONNECTION_ROLE_HEADER;
+export const relayEndpointKeyHeader = ENDPOINT_KEY_HEADER;
 export const relayPublicUrlHeader = PUBLIC_URL_HEADER;

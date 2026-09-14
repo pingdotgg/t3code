@@ -32,7 +32,6 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
-import * as Encoding from "effect/Encoding";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Redacted from "effect/Redacted";
@@ -44,11 +43,8 @@ import * as HttpClientError from "effect/unstable/http/HttpClientError";
 import * as EnvironmentLinks from "./EnvironmentLinks.ts";
 import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as RelayConfiguration from "../Config.ts";
-import {
-  isManagedEndpointHostname,
-  managedEndpointDigestInput,
-  t3RelayEndpointForHostname,
-} from "../deploymentConfig.ts";
+import { isManagedEndpointHostname, t3RelayEndpointForHostname } from "../deploymentConfig.ts";
+import { relayEndpointAddress } from "../transport/endpointAddress.ts";
 import { relayEdgeEndpointHostname } from "../transport/routing.ts";
 
 function environmentConnectNotAuthorizedReasonMessage(
@@ -330,24 +326,17 @@ const make = Effect.gen(function* () {
             reason: "managed_endpoint_hostname_invalid",
           });
         }
-        const environmentHash = yield* crypto
-          .digest(
-            "SHA-256",
-            new TextEncoder().encode(
-              managedEndpointDigestInput(
-                settings.managedEndpointNamespace,
-                input.userId,
-                input.link.environmentId,
-              ),
-            ),
-          )
-          .pipe(Effect.map(Encoding.encodeHex), Effect.orDie);
+        const address = yield* relayEndpointAddress(crypto, {
+          namespace: settings.managedEndpointNamespace,
+          userId: input.userId,
+          environmentId: input.link.environmentId,
+        }).pipe(Effect.orDie);
         if (
           hostname !==
           relayEdgeEndpointHostname(
             settings.managedEndpointNamespace,
             settings.managedEndpointBaseDomain,
-            environmentHash,
+            address,
           )
         ) {
           return yield* new EnvironmentConnectNotAuthorized({
