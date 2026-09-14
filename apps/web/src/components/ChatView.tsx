@@ -7478,6 +7478,12 @@ export default function ChatView(props: ChatViewProps) {
           }),
         );
       }
+      // A queued message whose only content expired would retry on every
+      // boundary and block the rest of the queue. Hand it back instead.
+      if (queuedMessage && activeThreadKey) {
+        const taken = useQueuedMessageStore.getState().remove(activeThreadKey, queuedMessage.id);
+        if (taken) restoreQueuedMessagesToComposer([taken]);
+      }
       return;
     }
     if (!activeProject) {
