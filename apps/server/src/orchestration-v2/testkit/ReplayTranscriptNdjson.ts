@@ -6,6 +6,8 @@ import {
   type ProviderReplayTranscriptHeader,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
@@ -230,3 +232,17 @@ export function decodeProviderReplayNdjson(
     });
   });
 }
+
+/**
+ * Reads a provider replay transcript from a `file:` URL and decodes it.
+ * Conversion goes through the `Path` service so drive-letter and UNC fixture
+ * URLs resolve to native paths on Windows instead of `/C:/...` pathname strings.
+ */
+export const readProviderReplayTranscript = Effect.fn("readProviderReplayTranscript")(function* (
+  file: URL,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const text = yield* fs.readFileString(yield* path.fromFileUrl(file));
+  return yield* decodeProviderReplayNdjson(text);
+});
