@@ -184,45 +184,26 @@ enum TerminalText {
     }
 }
 
-/// Ghostty only accepts bytes to append, but the client hands the view its
-/// whole retained buffer after every output event. This works out which bytes
-/// the surface still needs. Everything is in UTF-8 offsets so no step walks
-/// the full string, and a client that trims the head of its buffer does not
-/// force a surface rebuild.
+/// Ghostty accepts appended bytes. Compare UTF-8 directly so unchanged buffers
+/// do not require a walk over Swift characters. A trimmed or replaced snapshot
+/// resets terminal content without rebuilding its native surface.
 enum TerminalBufferDelta: Equatable {
-    /// Feed these bytes after what the surface already shows.
     case append(Data)
-    /// Reset the surface, then feed these bytes.
     case replace(Data)
 
-    /// How many trailing bytes of applied content are kept to find the same
-    /// content again after the client trims the head of its buffer.
-    static let anchorLength = 4_096
-
-    /// What the surface has been fed so far: the byte count and the last
-    /// `anchorLength` bytes.
     struct Applied: Equatable {
-        private(set) var utf8Count = 0
-        private(set) var anchor = Data()
+        private(set) var bytes = Data()
 
         init() {}
 
         init(buffer: String) {
-            utf8Count = buffer.utf8.count
-            anchor = Data(buffer.utf8.suffix(TerminalBufferDelta.anchorLength))
+            bytes = Data(buffer.utf8)
         }
 
         mutating func apply(_ delta: TerminalBufferDelta) {
             switch delta {
-            case .append(let data):
-                guard !data.isEmpty else { return }
-                utf8Count += data.count
-                anchor = data.count >= TerminalBufferDelta.anchorLength
-                    ? Data(data.suffix(TerminalBufferDelta.anchorLength))
-                    : Data((anchor + data).suffix(TerminalBufferDelta.anchorLength))
-            case .replace(let data):
-                utf8Count = data.count
-                anchor = Data(data.suffix(TerminalBufferDelta.anchorLength))
+            case .append(let data): bytes.append(data)
+            case .replace(let data): bytes = data
             }
         }
     }
@@ -230,45 +211,17 @@ enum TerminalBufferDelta: Equatable {
     static func compute(previous: Applied, next: String) -> TerminalBufferDelta {
         var next = next
         return next.withUTF8 { bytes in
-            guard previous.utf8Count > 0 else { return .append(Data(buffer: bytes)) }
-            return previous.anchor.withUnsafeBytes { rawAnchor in
-                let anchor = rawAnchor.bindMemory(to: UInt8.self)
-                // The anchor cannot end after the applied count or after the
-                // buffer. When the buffer only grew it sits exactly there, so
-                // the first comparison matches. When the client trimmed the
-                // head it moved toward the start by the trimmed amount, which
-                // is about one output event, so the search stays short.
-                let searchEnd = min(previous.utf8Count, bytes.count)
-                if let anchorStart = lastOffset(of: anchor, in: bytes, before: searchEnd) {
-                    return .append(slice(bytes, from: anchorStart + anchor.count))
+            guard !previous.bytes.isEmpty else { return .append(Data(buffer: bytes)) }
+            return previous.bytes.withUnsafeBytes { oldBytes in
+                guard bytes.count >= oldBytes.count,
+                      let oldBase = oldBytes.baseAddress,
+                      let nextBase = bytes.baseAddress,
+                      memcmp(oldBase, nextBase, oldBytes.count) == 0 else {
+                    return .replace(Data(buffer: bytes))
                 }
-                return .replace(Data(buffer: bytes))
+                return .append(Data(buffer: UnsafeBufferPointer(rebasing: bytes[oldBytes.count...])))
             }
         }
-    }
-
-    private static func slice(_ bytes: UnsafeBufferPointer<UInt8>, from offset: Int) -> Data {
-        Data(buffer: UnsafeBufferPointer(rebasing: bytes[offset...]))
-    }
-
-    private static func lastOffset(
-        of needle: UnsafeBufferPointer<UInt8>,
-        in haystack: UnsafeBufferPointer<UInt8>,
-        before end: Int
-    ) -> Int? {
-        guard !needle.isEmpty, end <= haystack.count,
-              let needleBase = needle.baseAddress, let haystackBase = haystack.baseAddress else {
-            return nil
-        }
-        var offset = end - needle.count
-        while offset >= 0 {
-            if haystackBase[offset] == needleBase[0],
-               memcmp(haystackBase + offset, needleBase, needle.count) == 0 {
-                return offset
-            }
-            offset -= 1
-        }
-        return nil
     }
 }
 

@@ -50,7 +50,7 @@ struct TerminalBufferTests {
         #expect(delta == .append(Data("wörld 🚀\r\n".utf8)))
     }
 
-    @Test func headTrimmedBufferAppendsOnlyTheNewTail() {
+    @Test func headTrimmedBufferReplacesWithoutGuessingAnOverlap() {
         // A buffer already at the cap. The next output event pushes it over,
         // and the client trims the head instead of growing.
         var lines = [String]()
@@ -72,15 +72,22 @@ struct TerminalBufferTests {
         #expect(!next.hasPrefix(previous))
 
         let delta = TerminalBufferDelta.compute(previous: Self.applied(previous), next: next)
-        #expect(delta == .append(Data(output.utf8)))
+        #expect(delta == .replace(Data(next.utf8)))
     }
 
-    @Test func largeTrimStillFindsTheAnchor() {
+    @Test func repeatedOutputAfterTrimmingDoesNotDuplicateHistory() {
         let previous = String(repeating: "old line\n", count: 20_000)
-        let keptBytes = TerminalBufferDelta.anchorLength + 1_000
+        let keptBytes = 5_096
         let next = String(previous.suffix(keptBytes)) + "new\n"
         let delta = TerminalBufferDelta.compute(previous: Self.applied(previous), next: next)
-        #expect(delta == .append(Data("new\n".utf8)))
+        #expect(delta == .replace(Data(next.utf8)))
+    }
+
+    @Test func changedPrefixWithTheSameLongSuffixReplaces() {
+        let suffix = String(repeating: "shared output\n", count: 1_000)
+        let next = "new session\n" + suffix
+        let delta = TerminalBufferDelta.compute(previous: Self.applied("old session\n" + suffix), next: next)
+        #expect(delta == .replace(Data(next.utf8)))
     }
 
     @Test func unrelatedBufferReplaces() {

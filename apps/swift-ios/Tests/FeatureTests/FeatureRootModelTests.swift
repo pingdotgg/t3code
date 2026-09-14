@@ -1623,6 +1623,208 @@ struct FeatureRootModelTests {
     }
 
     @Test
+    func failedDiscardKeepsTheDurableAndOptimisticSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-discard-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o700))],
+                ofItemAtPath: directory.path
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Thread"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        client.beforeSendMessage = {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o500))],
+                ofItemAtPath: directory.path
+            )
+        }
+        client.sendMessageError = FeatureCapabilityUnavailable("Rejected message")
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let sent = await model.sendMessage(
+            FeatureMessageSubmission(threadID: thread.id, text: "Keep this queued", selection: nil)
+        )
+
+        #expect(!sent)
+        #expect(try await store.submissions().count == 1)
+        #expect(model.details[thread.id]?.messages.last?.text == "Keep this queued")
+        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+    }
+
+    @Test
+    func failedDeliveryCleanupKeepsTheDurableAndOptimisticSubmission() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-completion-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o700))],
+                ofItemAtPath: directory.path
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let thread = FeatureThread(
+            id: "thread-1",
+            projectID: "project-1",
+            environmentID: "environment-1",
+            title: "Thread"
+        )
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .connected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .connected
+                ),
+            ],
+            threads: [thread]
+        )
+        client.threadDetail = FeatureThreadDetail(thread: thread)
+        client.beforeSendMessage = {
+            try FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o500))],
+                ofItemAtPath: directory.path
+            )
+        }
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+
+        let sent = await model.sendMessage(
+            FeatureMessageSubmission(threadID: thread.id, text: "Already delivered", selection: nil)
+        )
+
+        #expect(sent)
+        #expect(client.sendMessageCallCount == 1)
+        #expect(try await store.submissions().count == 1)
+        #expect(model.details[thread.id]?.messages.last?.text == "Already delivered")
+        #expect(model.details[thread.id]?.messages.last?.state == .queued)
+        #expect(model.errorMessage?.contains("delivered") == true)
+    }
+
+    @Test
+    func failedEnvironmentOutboxCleanupKeepsPendingState() async throws {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("t3-root-environment-cleanup-failure-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer {
+            try? FileManager.default.setAttributes(
+                [.posixPermissions: NSNumber(value: Int16(0o700))],
+                ofItemAtPath: directory.path
+            )
+            try? FileManager.default.removeItem(at: directory)
+        }
+
+        let store = FeatureOutboxStore(fileURL: directory.appendingPathComponent("outbox.json"))
+        let identity = FeatureSubmissionIdentity(
+            threadID: "queued-thread",
+            commandID: "queued-command",
+            messageID: "queued-message"
+        )
+        let submission = FeatureQueuedSubmission(
+            environmentID: "environment-1",
+            identity: identity,
+            threadID: "environment-1::thread::queued-thread",
+            text: "Create from the outbox",
+            selection: .init(providerID: "codex", modelID: "gpt-5.6-sol"),
+            runtimeMode: .fullAccess,
+            interactionMode: .standard,
+            attachments: [],
+            creation: .init(
+                projectID: "project-1",
+                projectName: "Native",
+                workspaceMode: .local,
+                branch: nil,
+                worktreePath: nil,
+                startFromOrigin: false
+            )
+        )
+        try await store.enqueue(submission)
+
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            connection: .init(state: .disconnected),
+            environments: [
+                .init(
+                    id: "environment-1",
+                    name: "Studio",
+                    endpoint: "https://studio.example",
+                    isActive: true,
+                    connectionState: .disconnected
+                ),
+            ],
+            projects: [
+                .init(
+                    id: "project-1",
+                    environmentID: "environment-1",
+                    name: "Native",
+                    path: "/native"
+                ),
+            ]
+        )
+        client.snapshotAfterEnvironmentRemoval = FeatureSnapshot(
+            connection: .init(state: .disconnected)
+        )
+        client.finishEvents()
+        let model = FeatureRootModel(client: client, outboxStore: store)
+        await model.start()
+        try FileManager.default.setAttributes(
+            [.posixPermissions: NSNumber(value: Int16(0o500))],
+            ofItemAtPath: directory.path
+        )
+
+        await model.removeEnvironment("environment-1")
+
+        #expect(client.removedEnvironmentID == "environment-1")
+        #expect(model.snapshot.environments.isEmpty)
+        #expect(model.snapshot.threads.contains(where: { $0.id == submission.threadID }))
+        #expect(try await store.submissions() == [submission])
+        #expect(model.errorMessage?.contains("queued messages") == true)
+    }
+
+    @Test
     func testNewTaskStartsThreadAndFirstTurnAtomically() async {
         let client = FeatureClientStub()
         let created = FeatureThread(

@@ -6099,6 +6099,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         thread.settledAt = shell.settledAt.flatMap(parseValidDate)
         thread.unsettledAt = shell.unsettledAt.flatMap(parseValidDate)
         thread.activeOrderKey = shell.activeOrderKey
+        thread.pinnedAt = shell.pinnedAt.flatMap(parseValidDate)
+        thread.pinOrderKey = shell.pinOrderKey
         thread.linkedPullRequest = shell.linkedPullRequest
         thread.branchPullRequest = shell.branchPullRequest
         thread.settlementFacts = settlementFacts(
@@ -6144,6 +6146,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     /// Single write path for server configs so the provider catalog cache can
     /// never go stale against the config that feeds it.
     private func setServerConfig(_ config: ServerConfigSnapshot, environmentID: String) {
+        if serverConfigsByEnvironmentID[environmentID]?.environment?.capabilities
+            != config.environment?.capabilities {
+            shellProjectionCache[environmentID] = nil
+        }
         if serverConfigsByEnvironmentID[environmentID]?.providers != config.providers {
             providerCatalogCache[environmentID] = nil
         }

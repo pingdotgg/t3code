@@ -170,6 +170,7 @@ public actor WebSocketRPCClient {
 
     private enum SubscriptionYieldResult: Sendable {
         case enqueued
+        case dropped
         case terminated
     }
 
@@ -258,6 +259,7 @@ public actor WebSocketRPCClient {
     private let connectionWaitTimeout: Duration
     private let responseTimeout: Duration
     private let keepaliveInterval: Duration
+    private let subscriptionBufferLimit: Int
     private let reconnectBackoff: @Sendable (Int) -> Duration
     private var connection: (any WebSocketConnection)?
     private var connectionID: UUID?
@@ -281,7 +283,8 @@ public actor WebSocketRPCClient {
         connector: any WebSocketConnecting = URLSessionWebSocketConnector(),
         connectionWaitTimeout: Duration = .seconds(4),
         responseTimeout: Duration = .seconds(30),
-        keepaliveInterval: Duration = .seconds(20),
+        keepaliveInterval: Duration = .seconds(5),
+        subscriptionBufferLimit: Int = 1_024,
         reconnectBackoff: @escaping @Sendable (Int) -> Duration = { failureCount in
             // Fast first retries, then a 30s cap. Every attempt mints an HTTP
             // ticket, so a long outage must not hammer the ticket endpoint.
@@ -295,13 +298,15 @@ public actor WebSocketRPCClient {
         self.connector = connector
         self.connectionWaitTimeout = connectionWaitTimeout
         self.responseTimeout = responseTimeout
-        self.keepaliveInterval = keepaliveInterval > .zero ? keepaliveInterval : .seconds(20)
+        self.keepaliveInterval = keepaliveInterval > .zero ? keepaliveInterval : .seconds(5)
+        self.subscriptionBufferLimit = max(1, subscriptionBufferLimit)
         self.reconnectBackoff = reconnectBackoff
         self.endpointProvider = endpointProvider
     }
 
     deinit {
         loopTask?.cancel()
+        backoffSleepTask?.cancel()
         keepaliveTask?.cancel()
         pathMonitor?.cancel()
     }
@@ -416,25 +421,22 @@ public actor WebSocketRPCClient {
         }
     }
 
-    /// Preserve server batches for consumers that can apply several events at
-    /// once. Server chunks are split into batches of at most 64 values.
+    /// Preserve server batches for consumers that can apply several events at once.
+    /// The queue fits normal catch-up chunks. An overflow requests a resync
+    /// without acknowledging lost values. Enqueueing is not consumer progress,
+    /// so server acknowledgements alone cannot bound this queue.
     public func subscribeBatches<Value: Decodable & Sendable>(
         _ tag: String,
         payload: JSONValue = .object([:]),
         reconnect: Bool = true,
         as type: Value.Type
     ) -> AsyncThrowingStream<[Value], Error> {
-        subscribe(tag, payload: payload, reconnect: reconnect, batchSize: 64) { values in
+        subscribe(tag, payload: payload, reconnect: reconnect,
+                  batchSize: min(64, subscriptionBufferLimit)) { values in
             try values.map { try $0.decode(type) }
         }
     }
 
-    /// The stream buffer is unbounded on purpose. Effect RPC waits for an Ack
-    /// before it sends the next Chunk, and `handle` only Acks after a whole
-    /// chunk is queued, so the queue grows by one server chunk per socket
-    /// read, the same as the React Native client. A bounded buffer dropped
-    /// values from any chunk larger than the buffer: the yields in `handle`
-    /// are synchronous, so the consumer cannot drain between them.
     private func subscribe<Value: Sendable>(
         _ tag: String,
         payload: JSONValue,
@@ -443,7 +445,8 @@ public actor WebSocketRPCClient {
         decode: @escaping @Sendable ([JSONValue]) throws -> Value
     ) -> AsyncThrowingStream<Value, Error> {
         let subscriptionID = UUID()
-        return AsyncThrowingStream(bufferingPolicy: .unbounded) { continuation in
+        return AsyncThrowingStream(bufferingPolicy: .bufferingOldest(max(1, subscriptionBufferLimit / batchSize))) {
+            continuation in
             subscriptions[subscriptionID] = Subscription(
                 tag: tag,
                 payload: payload,
@@ -453,13 +456,14 @@ public actor WebSocketRPCClient {
                 yield: { value in
                     do {
                         switch continuation.yield(try decode(value)) {
+                        case .enqueued:
+                            return .enqueued
+                        case .dropped:
+                            return .dropped
                         case .terminated:
                             return .terminated
-                        case .enqueued, .dropped:
-                            // Unbounded buffering never reports `.dropped`.
-                            return .enqueued
                         @unknown default:
-                            return .enqueued
+                            return .dropped
                         }
                     } catch {
                         continuation.finish(throwing: error)
@@ -776,6 +780,16 @@ public actor WebSocketRPCClient {
                 switch subscription.yield(Array(values[start..<end])) {
                 case .enqueued:
                     continue
+                case .dropped:
+                    let error = RPCError.protocolViolation(
+                        "The live stream exceeded its buffered event limit."
+                    )
+                    if !subscription.reconnect {
+                        subscriptionByRequestID.removeValue(forKey: requestID)
+                        subscriptions.removeValue(forKey: subscriptionID)
+                        subscription.finish(error)
+                    }
+                    throw error
                 case .terminated:
                     await removeSubscription(subscriptionID)
                     return

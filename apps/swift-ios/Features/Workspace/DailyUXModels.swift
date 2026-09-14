@@ -827,6 +827,8 @@ struct DailyUXSidebarIndex {
 /// own row without re-sorting the whole list.
 struct HomeOrderKey: Equatable {
     let projectID: String
+    let environmentID: String?
+    let wireID: String?
     let isArchived: Bool
     let state: FeatureThreadState
     let createdAt: Date
@@ -853,6 +855,8 @@ struct HomeOrderKey: Equatable {
 
     init(_ thread: FeatureThread) {
         projectID = thread.projectID
+        environmentID = thread.environmentID
+        wireID = thread.wireID
         isArchived = thread.isArchived
         state = thread.state
         createdAt = thread.createdAt

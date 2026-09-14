@@ -218,9 +218,9 @@ struct UsageLimitsView: View {
         refreshErrors = [:]
         defer {
             isRefreshing = false
-            // A failed stream has ended. Only then does a manual refresh start a
-            // new subscription. A healthy stream keeps its sockets open.
-            if !Task.isCancelled, streamError != nil { subscriptionID = UUID() }
+            // Each environment can end its own stream without throwing from
+            // the combined stream. Refresh must reconnect those failed streams.
+            if !Task.isCancelled { subscriptionID = UUID() }
         }
         do {
             let result = try await client.refreshUsageLimits()

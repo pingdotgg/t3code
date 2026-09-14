@@ -44,14 +44,14 @@ final class PullRequestsModel {
     private var loadGeneration: UInt64 = 0
     private var loadedInput: PullRequestListInput?
 
-    /// Each push creates a new model, so the last result per input lives here.
-    /// Returning to an input shows those rows at once while the refresh runs.
+    /// Reuse filter results while this view is open. A new view must read its
+    /// current environments instead of restoring rows from a removed account.
     private struct CachedList {
         let input: PullRequestListInput
         let environments: [FeaturePullRequestEnvironmentList]
     }
 
-    private static var cache: [ObjectIdentifier: [CachedList]] = [:]
+    private var cache: [CachedList] = []
     private static let cacheLimit = 8
 
     init(client: any FeatureClient) {
@@ -104,18 +104,15 @@ final class PullRequestsModel {
         }
     }
 
-    private var cacheKey: ObjectIdentifier { ObjectIdentifier(client) }
-
     private func cachedEnvironments(for input: PullRequestListInput) -> [FeaturePullRequestEnvironmentList]? {
-        Self.cache[cacheKey]?.first { $0.input == input }?.environments
+        cache.first { $0.input == input }?.environments
     }
 
     private func remember() {
         guard let loadedInput else { return }
-        var entries = Self.cache[cacheKey] ?? []
-        entries.removeAll { $0.input == loadedInput }
-        entries.insert(CachedList(input: loadedInput, environments: environments), at: 0)
-        Self.cache[cacheKey] = Array(entries.prefix(Self.cacheLimit))
+        cache.removeAll { $0.input == loadedInput }
+        cache.insert(CachedList(input: loadedInput, environments: environments), at: 0)
+        cache = Array(cache.prefix(Self.cacheLimit))
     }
 
     var hasMorePages: Bool {

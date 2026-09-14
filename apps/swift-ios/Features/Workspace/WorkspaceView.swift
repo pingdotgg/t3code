@@ -678,6 +678,14 @@ struct HomePresentation {
     /// instead of the grouping and sorting passes in `init(snapshot:)`.
     func refreshingRows(from snapshot: FeatureSnapshot) -> HomePresentation {
         let byID = snapshot.threads.reduce(into: [String: FeatureThread]()) { $0[$1.id] = $1 }
+        let contextChanged = (pinned + active + snoozed + settled + archived).contains { previous in
+            guard let next = byID[previous.id] else { return false }
+            return previous.providerID != next.providerID
+                || previous.sessionProviderID != next.sessionProviderID
+                || previous.providerName != next.providerName
+                || previous.environmentID != next.environmentID
+                || previous.environmentName != next.environmentName
+        }
         func refresh(_ threads: [FeatureThread]) -> [FeatureThread] {
             threads.map { byID[$0.id] ?? $0 }
         }
@@ -688,7 +696,7 @@ struct HomePresentation {
             settled: refresh(settled),
             archived: refresh(archived),
             searchResults: refresh(searchResults),
-            rowContexts: rowContexts
+            rowContexts: contextChanged ? HomeThreadRowContext.index(snapshot: snapshot) : rowContexts
         )
     }
 
@@ -737,7 +745,7 @@ struct HomePresentation {
 /// many times a second; that path swaps in the latest thread values by id and
 /// keeps the computed order.
 @MainActor
-private final class HomePresentationCache {
+final class HomePresentationCache {
     private struct Key: Equatable {
         let revision: UInt64
         let query: String
@@ -768,10 +776,13 @@ private final class HomePresentationCache {
             if cachedRowRevision == rowRevision {
                 return cachedPresentation
             }
-            let refreshed = cachedPresentation.refreshingRows(from: snapshot)
-            self.cachedPresentation = refreshed
-            cachedRowRevision = rowRevision
-            return refreshed
+            // Search also matches previews, which can change without moving a row.
+            if query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                let refreshed = cachedPresentation.refreshingRows(from: snapshot)
+                self.cachedPresentation = refreshed
+                cachedRowRevision = rowRevision
+                return refreshed
+            }
         }
 
         let presentation = HomePresentation(
