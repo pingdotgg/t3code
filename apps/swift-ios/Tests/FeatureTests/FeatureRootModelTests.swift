@@ -160,6 +160,7 @@ struct FeatureRootModelTests {
         }
         await model.rewindConversation(threadID: thread.id, messageID: "user", draft: .init(text: "Current draft"))
         #expect(try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread)) == nil)
+        #expect(try await !drafts.hasRewindRecovery(for: FeatureComposerDraftStore.threadKey(thread)))
         #expect(model.recoveredRewindDrafts.isEmpty)
         #expect(model.pendingRewindRecoveryIDs.isEmpty)
     }

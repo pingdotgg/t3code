@@ -99,6 +99,20 @@ struct NativeConversationRewindTests {
     }
 
     @Test
+    func recoveryKeysDoNotOverwriteAnotherThreadsDraft() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let key = "environment:one:thread:foo"
+        let otherKey = key + ":rewind-recovery"
+        try await store.setDraft(.init(text: "Other thread's draft"), for: otherKey)
+        try await store.setDraft(.init(text: "Recovered prompt"), for: FeatureComposerDraftStore.rewindRecoveryKey(for: key))
+        let recovered = try await store.consumeRewindRecovery(for: key)
+        #expect(recovered?.text == "Recovered prompt")
+        #expect(try await store.draft(for: otherKey)?.text == "Other thread's draft")
+    }
+
+    @Test
     func completionIgnoresOldAndUnrelatedEvents() async throws {
         let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
         stream.continuation.yield([

@@ -338,7 +338,7 @@ public actor FeatureComposerDraftStore {
     }
 
     public static func rewindRecoveryKey(for threadKey: String) -> String {
-        threadKey + ":rewind-recovery"
+        "rewind-recovery:" + threadKey
     }
 
     public func hasRewindRecovery(for threadKey: String) throws -> Bool {
@@ -389,12 +389,14 @@ public actor FeatureComposerDraftStore {
     ) throws {
         var drafts = try loadIfNeeded()
         let environmentPrefix = "environment:\(environmentID):"
+        let rewindPrefix = Self.rewindRecoveryKey(for: environmentPrefix)
         let questionPrefix = FeatureQuestionAttachmentDraft.key(
             inputID: FeatureScopedID.input(environmentID: environmentID, wireID: "")
         )
         let logicalKeys = Set(logicalProjectIDs.map(Self.newTaskKey(logicalProjectID:)))
         drafts = drafts.filter {
-            !$0.key.hasPrefix(environmentPrefix) && !$0.key.hasPrefix(questionPrefix)
+            !$0.key.hasPrefix(environmentPrefix) && !$0.key.hasPrefix(rewindPrefix)
+                && !$0.key.hasPrefix(questionPrefix)
                 && !logicalKeys.contains($0.key)
         }
         try persist(drafts)
