@@ -1876,13 +1876,15 @@ export function ConnectionsSettings() {
     [savedServerUpdateStates],
   );
   // Switched-off machines never receive threads, so they stay out of the
-  // load balancing and GitHub sharing lists. This machine leads the list.
+  // load balancing and GitHub sharing lists. The WSL backend has no row in
+  // the Environments list but does take threads, so it stays in here. This
+  // machine leads the list.
   const loadBalancingEnvironments = useMemo(
     () => [
       ...(primaryEnvironment ? [primaryEnvironment] : []),
-      ...listedEnvironments.filter((environment) => environment.entry.enabled),
+      ...savedEnvironments.filter((environment) => environment.entry.enabled),
     ],
-    [listedEnvironments, primaryEnvironment],
+    [primaryEnvironment, savedEnvironments],
   );
   const savedDesktopSshEnvironmentKeys = useMemo(() => {
     const keys = new Set<string>();

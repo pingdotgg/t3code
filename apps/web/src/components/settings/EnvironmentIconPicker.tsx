@@ -88,7 +88,9 @@ export function EnvironmentIconMenu({
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const operateAccess = useEnvironmentOperateAccess(environmentId);
   const lock = resolveEnvironmentIconPickerLock({ serverConfig, operateAccess });
-  const detected = serverConfig?.environment.platform.machine ?? null;
+  // With no detection the server falls back to "server", so picking that
+  // kind clears the override the same way picking the detected kind does.
+  const detected = serverConfig?.environment.platform.machine ?? "server";
   const resolved = resolveEnvironmentMachineKind(serverConfig);
 
   return (
@@ -121,7 +123,9 @@ export function EnvironmentIconMenu({
                   {ENVIRONMENT_MACHINE_KIND_LABELS[kind]}
                 </span>
                 {kind === detected ? (
-                  <span className="shrink-0 text-xs text-muted-foreground">detected</span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {serverConfig?.environment.platform.machine ? "detected" : "default"}
+                  </span>
                 ) : null}
               </span>
             </MenuRadioItem>
