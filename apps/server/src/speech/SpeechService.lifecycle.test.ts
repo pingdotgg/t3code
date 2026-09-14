@@ -11,6 +11,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const native = vi.hoisted(() => ({
+  backend: "cpu",
   supportsStreaming: true,
   begin: vi.fn(async () => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({

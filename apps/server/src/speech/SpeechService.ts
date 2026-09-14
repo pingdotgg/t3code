@@ -343,14 +343,20 @@ export const make = Effect.gen(function* () {
           released.resolve();
         }),
       );
-      loaded = yield* attempt(operation, async () => {
+      const preparation = yield* attempt(operation, async () => {
+        const startedAt = performance.now();
         const prepared = await loadModel(signal);
         if (!prepared.supportsStreaming)
           throw new Error("The selected model does not support streaming.");
         await prepared.begin();
-        return prepared;
+        return { prepared, durationMs: performance.now() - startedAt };
       });
-      const streamModel = loaded;
+      const streamModel = preparation.prepared;
+      loaded = streamModel;
+      yield* Effect.logInfo("Speech stream prepared", {
+        backend: streamModel.backend,
+        durationMs: Math.round(preparation.durationMs),
+      });
       let byteLength = 0;
       let busy = false;
       const run = <A>(work: () => Promise<A>) =>
@@ -379,10 +385,19 @@ export const make = Effect.gen(function* () {
             return streamModel.feed(pcm);
           }),
         finish: run(async () => {
+          const startedAt = performance.now();
           const text = await streamModel.finish();
           finished = true;
-          return text.trim();
-        }),
+          return { text: text.trim(), durationMs: performance.now() - startedAt };
+        }).pipe(
+          Effect.tap(({ durationMs }) =>
+            Effect.logInfo("Speech stream finalized", {
+              backend: streamModel.backend,
+              durationMs: Math.round(durationMs),
+            }),
+          ),
+          Effect.map(({ text }) => text),
+        ),
       };
     }),
     status: attempt("status", currentStatus),
@@ -412,12 +427,16 @@ export const make = Effect.gen(function* () {
       exclusive("transcription", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
         const pcm = decodeSpeechPcm(pcmBytes);
-        if (pcm.length === 0) return "";
+        if (pcm.length === 0)
+          return { text: "", backend: "none", prepareDurationMs: 0, inferenceDurationMs: 0 };
         activeTranscriptions += 1;
         try {
+          const prepareStartedAt = performance.now();
           const loaded = await loadModel().catch((cause) => {
             throw new SpeechOperationError({ operation: "model preparation", cause });
           });
+          const prepareDurationMs = performance.now() - prepareStartedAt;
+          const inferenceStartedAt = performance.now();
           const result = await loaded.transcribe(pcm, { timestamps: "none" }).catch((cause) => {
             if (model === loaded) {
               model = undefined;
@@ -426,11 +445,25 @@ export const make = Effect.gen(function* () {
             }
             throw new SpeechOperationError({ operation: "inference", cause });
           });
-          return result.text.trim();
+          return {
+            text: result.text.trim(),
+            backend: loaded.backend,
+            prepareDurationMs,
+            inferenceDurationMs: performance.now() - inferenceStartedAt,
+          };
         } finally {
           activeTranscriptions -= 1;
         }
-      }),
+      }).pipe(
+        Effect.tap(({ backend, prepareDurationMs, inferenceDurationMs }) =>
+          Effect.logInfo("Speech transcription completed", {
+            backend,
+            prepareDurationMs: Math.round(prepareDurationMs),
+            inferenceDurationMs: Math.round(inferenceDurationMs),
+          }),
+        ),
+        Effect.map(({ text }) => text),
+      ),
     removeModel: (modelId) =>
       exclusive("model removal", async () => {
         const definition = getSpeechModel(modelId);

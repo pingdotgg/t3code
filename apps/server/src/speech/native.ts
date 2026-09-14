@@ -12,7 +12,8 @@ process.on("message", async (message) => {
     if (message.kind === "load") {
       const { TranscribeModel } = await import(message.moduleUrl);
       model = await TranscribeModel.load(message.path, { backend: "auto" });
-      process.send({ type: "t3-speech-reply", ok: true, supportsStreaming: model.capabilities.supportsStreaming });
+      process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
+        supportsStreaming: model.capabilities.supportsStreaming });
     } else if (message.kind === "begin") {
       session = model.createSession();
       stream = await session.stream({ timestamps: "none" });
@@ -50,6 +51,7 @@ type Reply = {
   readonly text?: string;
   readonly error?: string;
   readonly supportsStreaming?: boolean;
+  readonly backend?: string;
   readonly revision?: number;
   readonly preview?: SpeechStreamText | null;
 };
@@ -121,14 +123,17 @@ export async function loadNativeSpeechModel(
     await exited.promise;
   };
   let supportsStreaming: boolean;
+  let backend: string;
   try {
     const loaded = await send({ kind: "load", path, moduleUrl });
     supportsStreaming = loaded.supportsStreaming === true;
+    backend = loaded.backend ?? "unknown";
   } catch (error) {
     await dispose();
     throw error;
   }
   return {
+    backend,
     supportsStreaming,
     begin: async () => {
       await send({ kind: "begin" });
