@@ -8272,3 +8272,81 @@ it.effect("ProviderSessionManagerV2 bounds the detach wait on a stalled in-fligh
     );
   }),
 );
+
+it.effect(
+  "ProviderSessionManagerV2 shutdown joins a tracked credential revocation still running",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const revoking = yield* Deferred.make<void>();
+      const revokeGate = yield* Deferred.make<void>();
+      const pauseRevoke = yield* Ref.make(true);
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            revokeProviderSession: (providerSessionId) =>
+              Ref.getAndSet(pauseRevoke, false).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(revoking, undefined).pipe(
+                        Effect.andThen(Deferred.await(revokeGate)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const threadId = ThreadId.make("thread-shutdown-pending-revocation");
+        const peerThreadId = ThreadId.make("thread-shutdown-pending-revocation-peer");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const peer = yield* makeThreadSessionFixture(peerThreadId);
+        const providerSessionId = yield* first.allocate;
+        yield* first.open(providerSessionId);
+        yield* peer.open(providerSessionId, peerThreadId);
+        const issued = (yield* Ref.get(mcpConfigs)).find((config) => config?.threadId === threadId);
+        const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+
+        // The terminal detach prunes the thread's credential and parks inside
+        // the tracked revocation sweep — outliving the detach caller itself.
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(revoking);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(detaching))._tag, "Failure");
+
+        // Shutdown releases the session (still owned by the peer thread) but
+        // must not return while the tracked revocation is still running.
+        const shuttingDown = yield* manager.shutdown.pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("15 seconds");
+        assert.isUndefined(shuttingDown.pollUnsafe());
+
+        yield* Deferred.succeed(revokeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(shuttingDown)));
+        assert.isUndefined(yield* registry.resolve(token!));
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(revokeGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+          }),
+        ),
+      );
+    }),
+);

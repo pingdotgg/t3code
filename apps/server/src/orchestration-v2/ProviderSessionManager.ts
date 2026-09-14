@@ -403,12 +403,16 @@ export const layerWithOptions = (
       // captured set behind it instead of discarding or duplicating work.
       const pendingRevocations = new Map<
         ThreadId,
-        Deferred.Deferred<void, ProviderSessionReleaseError>
+        {
+          readonly instanceId: ProviderInstanceId | undefined;
+          readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
+        }
       >();
       const forkTrackedRevocation = <E>(
         providerSessionId: ProviderSessionId,
         threadId: ThreadId,
         revoke: Effect.Effect<void, E>,
+        instanceId: ProviderInstanceId | undefined,
       ) =>
         Effect.gen(function* () {
           // A tracked sweep captures only the credentials its caller pruned;
@@ -417,12 +421,13 @@ export const layerWithOptions = (
           // previous one, so a later retry always joins the newest tail.
           const predecessor = pendingRevocations.get(threadId);
           const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
-          pendingRevocations.set(threadId, done);
+          const record = { instanceId, done };
+          pendingRevocations.set(threadId, record);
           yield* Effect.gen(function* () {
             if (predecessor !== undefined) {
               // A failed predecessor reports on its own deferred; this
               // caller's captured credentials still need their sweep.
-              yield* Effect.ignore(Deferred.await(predecessor));
+              yield* Effect.ignore(Deferred.await(predecessor.done));
             }
             const exit = yield* Effect.exit(revoke);
             // The record must come down with its completion: a stale entry
@@ -431,7 +436,7 @@ export const layerWithOptions = (
             // may already have replaced the map entry — only delete our own.
             yield* Effect.uninterruptible(
               Effect.gen(function* () {
-                if (pendingRevocations.get(threadId) === done) {
+                if (pendingRevocations.get(threadId) === record) {
                   pendingRevocations.delete(threadId);
                 }
                 yield* Deferred.done(
@@ -2527,6 +2532,32 @@ export const layerWithOptions = (
             ),
           { discard: true },
         );
+        // Terminal-detach credential sweeps outlive their callers in
+        // pendingRevocations; join each tracked tail (bounded like every
+        // cleanup wait) so teardown does not return while a revocation is
+        // still running.
+        yield* Effect.forEach(
+          [...pendingRevocations],
+          ([threadId, record]) =>
+            Deferred.await(record.done).pipe(
+              Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+              Effect.flatMap((settled) =>
+                Option.isNone(settled)
+                  ? Effect.logWarning(
+                      "orchestration-v2.driver-session.shutdown-revocation-pending",
+                      { threadId },
+                    )
+                  : Effect.void,
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+          { discard: true },
+        );
         // In-flight startups own provider resources without a live entry;
         // they were marked above — join their bounded unwind during
         // shutdown too.
@@ -3031,7 +3062,37 @@ export const layerWithOptions = (
                 ),
               { concurrency: "unbounded" },
             );
-            const failure = [...outcomes, ...startupOutcomes].find(Exit.isFailure);
+            // Tracked credential sweeps outlive their detach callers; the
+            // ones owned by this instance's sessions (or unattributed, where
+            // the owning entry was already gone) still run under teardown.
+            const revocationOutcomes = yield* Effect.forEach(
+              [...pendingRevocations].filter(
+                ([, record]) => record.instanceId === undefined || record.instanceId === instanceId,
+              ),
+              ([threadId, record]) =>
+                Deferred.await(record.done).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.flatMap((settled) =>
+                    Option.isNone(settled)
+                      ? Effect.fail(
+                          new ProviderSessionReleaseError({
+                            providerSessionId: ProviderSessionId.make(
+                              `provider-session:thread:${threadId}`,
+                            ),
+                            reason: "manual_shutdown",
+                            cause:
+                              "MCP credential revocation did not finish within 30 seconds and is still running.",
+                          }),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.exit,
+                ),
+              { concurrency: "unbounded" },
+            );
+            const failure = [...outcomes, ...startupOutcomes, ...revocationOutcomes].find(
+              Exit.isFailure,
+            );
             if (failure !== undefined && Exit.isFailure(failure)) {
               return yield* Effect.failCause(failure.cause);
             }
@@ -3079,6 +3140,7 @@ export const layerWithOptions = (
                     input.threadId,
                     recorded === undefined ? [] : [recorded],
                   ),
+                  pendingRelease.entry.runtime.instanceId,
                 );
               }
               yield* releaseEntry({
@@ -3311,6 +3373,9 @@ export const layerWithOptions = (
                         input.providerSessionId,
                         input.threadId,
                         revoke,
+                        Option.isSome(detached)
+                          ? detached.value.entry.runtime.instanceId
+                          : sameInstancePending?.entry.runtime.instanceId,
                       );
                       if (Option.isSome(detached) && releaseFiber === undefined) {
                         // No release owns this credential's sweep (the session
