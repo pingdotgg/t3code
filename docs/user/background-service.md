@@ -25,6 +25,46 @@ Updating restarts the server. Finish active work first, and wait for any remote
 update already in progress. To match a remote client's version, follow
 [Updating T3 Code](./updating.md).
 
+Self-contained builds install as a download from the T3 Code GitHub release
+instead of through npm, so the machine running the service does not need
+Node.js or npm once the CLI is on it. To get the CLI onto a machine without
+Node, run the install script:
+
+```sh
+curl -fsSL https://t3.codes/install.sh | sh
+```
+
+On Windows, run `irm https://t3.codes/install.ps1 | iex` in PowerShell instead.
+
+It places `t3` in `~/.local/bin` and reuses the same download when you later
+run `t3 service install`. It follows the stable train by default; set
+`T3CODE_CHANNEL=nightly` for nightlies, `T3CODE_VERSION` to pin an exact
+version, or `T3CODE_RELEASE_BASE_URL` to download from a mirror.
+
+`preview` is a third train that maintainers cut from unreleased branches to
+exercise the release pipeline. Those builds can be broken, receive no fixes,
+and are never offered as updates; the installer and `t3 update` only take you
+there when you ask for the channel explicitly, and warn you when they do.
+
+Once a self-contained `t3` is installed, `t3 update` moves the machine to a
+newer one without npm: it downloads the newest release on the channel the
+running `t3` came from, verifies it, and points the `t3` launcher at it. When
+a background service is installed for the same T3 home it asks before
+restarting it, since a restart interrupts running agent turns, terminals, and
+remote clients; answer no and the service keeps the old version until you run
+`t3 service update`. From a script there is no prompt, so pass `--yes` to
+restart the service. A server you started by hand is never touched; the
+command tells you it is still on the old version so you can restart it
+yourself. Pass an exact version (`t3 update 0.0.41-preview.20260912.1595`) to
+pin one, `--channel` to follow a different release train (moving onto preview from stable or nightly asks for confirmation), or
+`--allow-downgrade` to move backwards.
+
+`t3 uninstall` reverses the install script: it shows what it found (the
+background service, the `t3` launcher, every downloaded version under
+`~/.t3/runtime`), asks once, and removes them. Your projects, threads, and
+settings under `~/.t3/userdata` are kept; delete that directory yourself if
+you want them gone too. Pass `--yes` from a script.
+
 ## Platform support
 
 Linux needs systemd user services. Setup enables lingering so T3 Code starts at

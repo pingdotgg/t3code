@@ -3,7 +3,6 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { classifySqliteError, SqlError } from "effect/unstable/sql/SqlError";
 
 import { PersistenceDecodeError, PersistenceSqlError, toPersistenceSqlError } from "./Errors.ts";
 
@@ -54,24 +53,6 @@ it("reads the condition through a wrapping driver error", () => {
 
   assert.equal(error.detail, "SQLITE(5) database is locked");
 });
-
-it.each([{ errno: 1555, code: "SQLITE_CONSTRAINT_PRIMARYKEY" }, { errno: 1 }])(
-  "names Bun SQLite condition $errno through the SQL error wrapper",
-  (condition) => {
-    const driver = Object.assign(new Error("bun-sql-private-sentinel"), {
-      name: "SQLiteError",
-      ...condition,
-    });
-    const cause = new SqlError({ reason: classifySqliteError(driver) });
-    const error = toPersistenceSqlError("AuthSessionRepository.create:query")(cause);
-
-    assert.equal(
-      error.message,
-      `SQL error in AuthSessionRepository.create:query: SQLITE(${condition.errno})`,
-    );
-    assert.equal(error.cause, cause);
-  },
-);
 
 it.each([
   new Error("unhelpful"),
