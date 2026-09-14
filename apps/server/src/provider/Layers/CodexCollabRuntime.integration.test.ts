@@ -168,80 +168,76 @@ const peerPath = NodePath.join(
 );
 
 describe("CodexSessionRuntime collab integration", () => {
-  for (const failuresBeforeSuccess of [0, 2]) {
-    it.live(
-      `reads child metadata after ${failuresBeforeSuccess} failures without duplicate lookups`,
-      () =>
-        Effect.gen(function* () {
-          const script = {
-            rootThreadId: ROOT,
-            recordRequests: true,
-            notifications: [
-              capturedStartedActivity(),
-              capturedStartedActivity(),
-              {
-                ...capturedStartedActivity(CHILD_B),
-                params: {
-                  ...capturedStartedActivity(CHILD_B).params,
-                  item: { ...capturedStartedActivity(CHILD_B).params.item, kind: "interacted" },
-                },
-              },
-              { method: "thread/closed", params: { threadId: CHILD_B } },
-              capturedSpawnedThread(ROOT),
-            ],
-            childResumeSnapshots: {
-              [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low", failuresBeforeSuccess },
+  it.live.each([0, 2])("reads child metadata after %i failures", (failuresBeforeSuccess) =>
+    Effect.gen(function* () {
+      const script = {
+        rootThreadId: ROOT,
+        recordRequests: true,
+        notifications: [
+          capturedStartedActivity(),
+          capturedStartedActivity(),
+          {
+            ...capturedStartedActivity(CHILD_B),
+            params: {
+              ...capturedStartedActivity(CHILD_B).params,
+              item: { ...capturedStartedActivity(CHILD_B).params.item, kind: "interacted" },
             },
-          };
-          // @effect-diagnostics-next-line preferSchemaOverJson:off
-          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          },
+          { method: "thread/closed", params: { threadId: CHILD_B } },
+          capturedSpawnedThread(ROOT),
+        ],
+        childResumeSnapshots: {
+          [CHILD_A]: { model: "gpt-5.6-luna", reasoningEffort: "low", failuresBeforeSuccess },
+        },
+      };
+      // @effect-diagnostics-next-line preferSchemaOverJson:off
+      NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+      NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          NodeFS.rmSync(scriptPath, { force: true });
           NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => {
-              NodeFS.rmSync(scriptPath, { force: true });
-              NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
-            }),
-          );
+        }),
+      );
 
-          const runtime = yield* makeCodexSessionRuntime({
-            threadId: ThreadId.make("thread-collab-model-activity"),
-            binaryPath: peerPath,
-            cwd: NodeOS.tmpdir(),
-            runtimeMode: "full-access",
-            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
-          });
-          const metadataFiber = yield* runtime.events.pipe(
-            Stream.filter(
-              (event) =>
-                event.method === "collabAgent/metadataUpdated" &&
-                (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
-            ),
-            Stream.take(1),
-            Stream.runCollect,
-            Effect.forkScoped,
-          );
+      const runtime = yield* makeCodexSessionRuntime({
+        threadId: ThreadId.make("thread-collab-model-activity"),
+        binaryPath: peerPath,
+        cwd: NodeOS.tmpdir(),
+        runtimeMode: "full-access",
+        environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+      });
+      const metadataFiber = yield* runtime.events.pipe(
+        Stream.filter(
+          (event) =>
+            event.method === "collabAgent/metadataUpdated" &&
+            (event.payload as { agentThreadId?: string }).agentThreadId === CHILD_A,
+        ),
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.forkScoped,
+      );
 
-          const session = yield* runtime.start();
-          assert.equal(session.model, "gpt-5.6-sol");
-          yield* runtime.sendTurn({ input: "start one child" });
-          const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
-          assert.deepInclude(metadataEvents[0]?.payload, {
-            agentThreadId: CHILD_A,
-            model: "gpt-5.6-luna",
-            effort: "low",
-          });
-          assert.deepEqual(
-            readRecordedRequests(),
-            Array.from({ length: failuresBeforeSuccess + 1 }, () => ({
-              method: "thread/resume",
-              params: { threadId: CHILD_A, excludeTurns: true },
-            })),
-          );
+      const session = yield* runtime.start();
+      assert.equal(session.model, "gpt-5.6-sol");
+      yield* runtime.sendTurn({ input: "start one child" });
+      const metadataEvents = Array.from(yield* Fiber.join(metadataFiber));
+      assert.deepInclude(metadataEvents[0]?.payload, {
+        agentThreadId: CHILD_A,
+        model: "gpt-5.6-luna",
+        effort: "low",
+      });
+      assert.deepEqual(
+        readRecordedRequests(),
+        Array.from({ length: failuresBeforeSuccess + 1 }, () => ({
+          method: "thread/resume",
+          params: { threadId: CHILD_A, excludeTurns: true },
+        })),
+      );
 
-          yield* runtime.close;
-        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-    );
-  }
+      yield* runtime.close;
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
 
   it.effect("keeps child settings and reroutes newer than the resume snapshot", () =>
     Effect.gen(function* () {
