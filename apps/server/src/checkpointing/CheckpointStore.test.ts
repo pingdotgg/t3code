@@ -7,6 +7,7 @@ import {
   ThreadId,
   VcsProcessExitError,
   VcsProcessSpawnError,
+  VcsProcessTimeoutError,
   VcsUnsupportedOperationError,
   type VcsError,
 } from "@t3tools/contracts";
@@ -575,6 +576,34 @@ describe("captureCheckpoint retry", () => {
           command: "git",
           cwd: RetryCwd,
           cause: new Error("spawn EAGAIN"),
+        });
+        const checkpointStore = yield* makeStoreWithCapture(() => {
+          attempts += 1;
+          return Effect.fail(error);
+        });
+
+        const failure = yield* Effect.flip(
+          checkpointStore.captureCheckpoint({
+            cwd: RetryCwd,
+            checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-capture-retry"), 0),
+          }),
+        );
+
+        expect(attempts).toBe(1);
+        expect(failure).toBe(error);
+      }),
+    ),
+  );
+
+  it.live("does not retry timeout failures", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const error = new VcsProcessTimeoutError({
+          operation: "CheckpointStore.captureCheckpoint",
+          command: "git",
+          cwd: RetryCwd,
+          timeoutMs: 30_000,
         });
         const checkpointStore = yield* makeStoreWithCapture(() => {
           attempts += 1;
