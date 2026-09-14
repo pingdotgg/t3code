@@ -495,15 +495,30 @@ public actor WebSocketRPCClient {
         payload: JSONValue = .object([:]),
         as type: Value.Type
     ) async throws -> (events: AsyncThrowingStream<Value, Error>, connectionID: UUID) {
+        try await subscribeOnCurrentConnection {
+            subscribe(tag, payload: payload, reconnect: false, as: type)
+        }
+    }
+
+    public func subscribeBatchesOnCurrentConnection<Value: Decodable & Sendable>(
+        _ tag: String,
+        payload: JSONValue = .object([:]),
+        as type: Value.Type
+    ) async throws -> (events: AsyncThrowingStream<[Value], Error>, connectionID: UUID) {
+        try await subscribeOnCurrentConnection {
+            subscribeBatches(tag, payload: payload, reconnect: false, as: type)
+        }
+    }
+
+    private func subscribeOnCurrentConnection<Value: Sendable>(
+        makeStream: () -> AsyncThrowingStream<Value, Error>
+    ) async throws -> (events: AsyncThrowingStream<Value, Error>, connectionID: UUID) {
         try Task.checkCancellation()
         start()
         while true {
             try Task.checkCancellation()
             if let id = connectionID {
-                return (
-                    subscribe(tag, payload: payload, reconnect: false, as: type),
-                    id
-                )
+                return (makeStream(), id)
             }
             _ = try await waitForConnection(after: nil)
         }

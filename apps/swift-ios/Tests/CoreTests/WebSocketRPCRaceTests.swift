@@ -31,11 +31,13 @@ final class WebSocketRPCRaceTests: XCTestCase {
             connector: SequencedConnector(connections: [connection]),
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
-        let stream = await client.subscribeBatches("thread.events", reconnect: false, as: Int.self)
+        let subscription = try await client.subscribeBatchesOnCurrentConnection("thread.events", as: Int.self)
+        let connectionID = await client.currentConnectionID()
+        XCTAssertEqual(subscription.connectionID, connectionID)
         await connection.waitUntilSubscriptionStarted()
         try await connection.sendSubscriptionValues((0..<600).map { .number(Double($0)) })
 
-        var iterator = stream.makeAsyncIterator()
+        var iterator = subscription.events.makeAsyncIterator()
         var received: [Int] = []
         var batchSizes: [Int] = []
         while received.count < 600, let batch = try await iterator.next() {
@@ -60,10 +62,10 @@ final class WebSocketRPCRaceTests: XCTestCase {
             subscriptionBufferLimit: 2,
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
-        let stream = await client.subscribeBatches("thread.events", reconnect: false, as: String.self)
+        let subscription = try await client.subscribeBatchesOnCurrentConnection("thread.events", as: String.self)
         // A unary request is not needed: the connection closes only after overflow.
         await connection.waitUntilClosed()
-        var iterator = stream.makeAsyncIterator()
+        var iterator = subscription.events.makeAsyncIterator()
         let buffered = try await iterator.next()
         XCTAssertEqual(buffered, ["first", "second"])
         do {
@@ -157,7 +159,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
     }
 
 
-    func testColdSubscriptionRetainsFailedSocketIdentity() async throws {
+    func testColdBatchSubscriptionRetainsFailedSocketIdentity() async throws {
         let connection = SubscriptionTrafficConnection(sendsInvalidSubscriptionValue: true)
         let connector = GatedConnector(connection: connection)
         let client = WebSocketRPCClient(
@@ -165,7 +167,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
             endpointProvider: { URL(string: "wss://studio.example/ws")! }
         )
         let pending = Task {
-            try await client.subscribeOnCurrentConnection("thread.events", as: Int.self)
+            try await client.subscribeBatchesOnCurrentConnection("thread.events", as: Int.self)
         }
         await connector.waitUntilConnectStarted()
         let beforeConnection = await client.currentConnectionID()

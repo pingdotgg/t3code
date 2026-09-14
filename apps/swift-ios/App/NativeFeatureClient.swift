@@ -3898,7 +3898,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     guard !Task.isCancelled,
                           self?.isCurrentDetail(route, generation: streamGeneration) == true,
                           self?.environmentGeneration == sessionGeneration else { return }
-                    let subscription = try await route.client.threadEvents(
+                    let subscription = try await route.client.threadEventBatches(
                         threadID: route.wireID,
                         after: sequence,
                         turnLimit: supportsPagination ? Self.initialThreadUserTurnLimit : nil
@@ -3914,8 +3914,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                         self?.continuation.yield(.threadSync(id: route.uiID, state: .catchingUp))
                     }
                     self?.activeDetailConnectionID = subscriptionConnectionID
-                    for try await item in subscription.events {
-                        if case .synchronized = item {
+                    for try await items in subscription.events {
+                        if items.contains(where: { if case .synchronized = $0 { true } else { false } }) {
                             let connectionID = await route.client.currentConnectionID()
                             guard !Task.isCancelled, let self,
                                   self.isCurrentDetail(route, generation: streamGeneration),
@@ -3933,8 +3933,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                             self.continuation.yield(.threadSync(id: route.uiID, state: .catchingUp))
                             self.ensureDetailCatchUpFallback(route, generation: streamGeneration)
                         }
-                        self.consumeDetailStreamItem(
-                            item, route: route, subscriptionEpoch: subscriptionEpoch
+                        self.consumeDetailStreamBatch(
+                            items, route: route, subscriptionEpoch: subscriptionEpoch
                         )
                     }
                     // A thread subscription stays open until its owner leaves.
@@ -4070,10 +4070,40 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         ensureDetailCatchUpFallback(route, generation: detailStreamGeneration)
     }
 
+    private func consumeDetailStreamBatch(
+        _ items: [ThreadStreamItem],
+        route: NativeThreadRoute,
+        subscriptionEpoch: Int
+    ) {
+        // Keep snapshot replacement and page-watermark merges at their event
+        // positions. Ordinary replay batches share one legacy sync publication.
+        let needsIndividualUpdates = items.count == 1 || activeRawThread == nil
+            || pendingOlderThreadPage != nil || items.contains { item in
+                switch item {
+                case .snapshot: true
+                case let .event(event):
+                    event["type"]?.stringValue == "thread.reverted"
+                        || event["type"]?.stringValue == "thread.deleted"
+                case .synchronized: false
+                }
+            }
+        for item in items {
+            consumeDetailStreamItem(
+                item, route: route, subscriptionEpoch: subscriptionEpoch,
+                synchronizeLegacy: needsIndividualUpdates
+            )
+        }
+        if !needsIndividualUpdates,
+           serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
+            markDetailSynchronized(route)
+        }
+    }
+
     private func consumeDetailStreamItem(
         _ item: ThreadStreamItem,
         route: NativeThreadRoute,
-        subscriptionEpoch: Int
+        subscriptionEpoch: Int,
+        synchronizeLegacy: Bool
     ) {
         switch item {
         case .synchronized:
@@ -4144,7 +4174,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 scheduleDetailRefresh(threadID: route.uiID, client: route.client, force: true)
             }
         }
-        if serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
+        if synchronizeLegacy,
+           serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
             markDetailSynchronized(route)
         }
     }

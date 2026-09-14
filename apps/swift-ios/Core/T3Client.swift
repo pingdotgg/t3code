@@ -625,18 +625,18 @@ public actor T3Client {
         )
     }
 
-    public func threadEvents(
+    public func threadEventBatches(
         threadID: String,
         after sequence: Int? = nil,
         turnLimit: Int? = nil
-    ) async throws -> (events: AsyncThrowingStream<ThreadStreamItem, Error>, connectionID: UUID) {
+    ) async throws -> (events: AsyncThrowingStream<[ThreadStreamItem], Error>, connectionID: UUID) {
         var payload: [String: JSONValue] = [
             "threadId": .string(threadID),
             "requestCompletionMarker": .bool(true),
         ]
         if let sequence { payload["afterSequence"] = .number(Double(sequence)) }
         if let turnLimit { payload["turnLimit"] = .number(Double(turnLimit)) }
-        return try await rpc.subscribeOnCurrentConnection(
+        return try await rpc.subscribeBatchesOnCurrentConnection(
             RPCMethod.subscribeThread.rawValue,
             payload: .object(payload),
             as: ThreadStreamItem.self
