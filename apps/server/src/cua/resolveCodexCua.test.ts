@@ -8,12 +8,18 @@ import * as Option from "effect/Option";
 import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { parse } from "smol-toml";
 
+import * as CuaDriver from "./CuaDriver.ts";
 import { resolveCodexCua } from "./resolveCodexCua.ts";
+
+const resolveWithDriver = (
+  driver: CuaDriver.CuaDriver["Service"],
+  input: Parameters<typeof resolveCodexCua>[0],
+) => resolveCodexCua(input).pipe(Effect.provideService(CuaDriver.CuaDriver, driver));
 
 const descriptor = { command: "cua-driver", args: ["mcp", "--proxy"], environment: [] };
 
 it.effect("does no config I/O or host startup while disabled", () =>
-  resolveCodexCua(
+  resolveWithDriver(
     { enabled: Effect.succeed(false), acquire: Effect.die("unexpected host startup") },
     { cwd: "/project", homePath: "/codex-home", launchArgs: "" },
   ).pipe(
@@ -24,7 +30,7 @@ it.effect("does no config I/O or host startup while disabled", () =>
 );
 
 it.effect("explicit user launch configuration avoids reading files or starting a host", () =>
-  resolveCodexCua(
+  resolveWithDriver(
     { enabled: Effect.succeed(true), acquire: Effect.die("unexpected host startup") },
     {
       cwd: "/project",
@@ -50,7 +56,7 @@ for (const location of ["home", "project", "parent", "malformed"] as const) {
             ".codex",
             "config.toml",
           );
-    return resolveCodexCua(
+    return resolveWithDriver(
       { enabled: Effect.succeed(true), acquire: Effect.die("unexpected host startup") },
       { cwd: project, homePath: home, launchArgs: "", environment: { CODEX_HOME: "/wrong-home" } },
     ).pipe(
@@ -75,7 +81,7 @@ for (const location of ["home", "project", "parent", "malformed"] as const) {
 it.effect("acquires once after reading the instance home and emits structured argv", () => {
   const paths: string[] = [];
   let acquired = 0;
-  return resolveCodexCua(
+  return resolveWithDriver(
     {
       enabled: Effect.succeed(true),
       acquire: Effect.sync(() => {

@@ -2,11 +2,143 @@ import * as NodeCrypto from "node:crypto";
 
 import type { CuaDriverMcpConfiguration, DesktopCuaDriverReport } from "@t3tools/contracts";
 import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
-import { Context, Deferred, Effect, Layer, Option, Schema, Scope, Semaphore, Stream } from "effect";
+import * as Context from "effect/Context";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
 
-import { ServerConfig } from "../config.ts";
-import { DesktopTelemetryReceiver } from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
-import { ServerSettingsService } from "../serverSettings.ts";
+import * as ServerConfig from "../config.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+import * as ServerSettings from "../serverSettings.ts";
+
+export class CuaDriverBusyError extends Schema.TaggedError<CuaDriverBusyError>()(
+  "CuaDriverBusyError",
+  {},
+) {
+  override get message() {
+    return "The previous Cua Driver is still stopping.";
+  }
+}
+
+export class CuaDriverSdkLoadError extends Schema.TaggedError<CuaDriverSdkLoadError>()(
+  "CuaDriverSdkLoadError",
+  {
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not load the Cua Driver SDK.";
+  }
+}
+
+export class CuaDriverHostCreateError extends Schema.TaggedError<CuaDriverHostCreateError>()(
+  "CuaDriverHostCreateError",
+  {
+    binaryPath: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not create the Cua Driver host.";
+  }
+}
+
+export class CuaDriverStopError extends Schema.TaggedError<CuaDriverStopError>()(
+  "CuaDriverStopError",
+  {
+    binaryPath: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not stop Cua Driver.";
+  }
+}
+
+export class CuaDriverStartError extends Schema.TaggedError<CuaDriverStartError>()(
+  "CuaDriverStartError",
+  {
+    binaryPath: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not start Cua Driver.";
+  }
+}
+
+export class CuaDriverExitError extends Schema.TaggedError<CuaDriverExitError>()(
+  "CuaDriverExitError",
+  {
+    binaryPath: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Cua Driver exited unexpectedly.";
+  }
+}
+
+export class CuaDriverDesktopRequestError extends Schema.TaggedError<CuaDriverDesktopRequestError>()(
+  "CuaDriverDesktopRequestError",
+  {
+    requestId: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not request desktop Cua Driver.";
+  }
+}
+
+export class CuaDriverDesktopStopError extends Schema.TaggedError<CuaDriverDesktopStopError>()(
+  "CuaDriverDesktopStopError",
+  {
+    requestId: Schema.String,
+    cause: Schema.Unknown,
+  },
+) {
+  override get message() {
+    return "Could not stop desktop Cua Driver.";
+  }
+}
+
+export class CuaDriverDesktopUnavailableError extends Schema.TaggedError<CuaDriverDesktopUnavailableError>()(
+  "CuaDriverDesktopUnavailableError",
+  {
+    requestId: Schema.String,
+  },
+) {
+  override get message() {
+    return "Desktop Cua Driver is unavailable.";
+  }
+}
+
+export class CuaDriverNotConfiguredError extends Schema.TaggedError<CuaDriverNotConfiguredError>()(
+  "CuaDriverNotConfiguredError",
+  {},
+) {
+  override get message() {
+    return "No Cua Driver host configured.";
+  }
+}
+
+export type CuaDriverError =
+  | CuaDriverBusyError
+  | CuaDriverSdkLoadError
+  | CuaDriverHostCreateError
+  | CuaDriverStopError
+  | CuaDriverStartError
+  | CuaDriverExitError
+  | CuaDriverDesktopRequestError
+  | CuaDriverDesktopStopError
+  | CuaDriverDesktopUnavailableError
+  | CuaDriverNotConfiguredError;
 
 export class CuaDriver extends Context.Service<
   CuaDriver,
@@ -16,27 +148,25 @@ export class CuaDriver extends Context.Service<
   }
 >()("t3/cua/CuaDriver") {}
 
-export class CuaDriverError extends Schema.TaggedError<CuaDriverError>()("CuaDriverError", {
-  message: Schema.String,
-}) {}
-
 export interface CuaDriverHost {
   readonly start: Effect.Effect<CuaDriverMcpConfiguration, CuaDriverError>;
   readonly stop: Effect.Effect<void, CuaDriverError>;
   readonly waitForExit: Effect.Effect<void, CuaDriverError>;
 }
 
-export interface CuaDriverOptions {
-  readonly createHost: Effect.Effect<CuaDriverHost, CuaDriverError>;
-  readonly enabled: Effect.Effect<boolean>;
-  readonly changes: Stream.Stream<boolean>;
-}
-
 const START_TIMEOUT = "30 seconds";
 const STOP_TIMEOUT = "5 seconds";
 
 /** One environment owns the host; cancelling a session only cancels its wait. */
-export const makeCuaDriver = Effect.fn("CuaDriver.make")(function* (options: CuaDriverOptions) {
+export const make = Effect.fn("CuaDriver.make")(function* (
+  createHost: Effect.Effect<CuaDriverHost, CuaDriverError>,
+) {
+  const settings = yield* ServerSettings.ServerSettingsService;
+  const changes = yield* settings.subscribeChanges;
+  const enabled = settings.getSettings.pipe(
+    Effect.map((value) => value.enableCua),
+    Effect.orElseSucceed(() => false),
+  );
   const scope = yield* Effect.scope;
   const workers = yield* Scope.fork(scope);
   const mutex = yield* Semaphore.make(1);
@@ -75,14 +205,15 @@ export const makeCuaDriver = Effect.fn("CuaDriver.make")(function* (options: Cua
       closed = true;
     }).pipe(Effect.andThen(revoke)),
   );
-  yield* options.changes.pipe(
+  yield* changes.pipe(
+    Stream.map((value) => value.enableCua),
     Stream.runForEach((enabled) => (enabled ? Effect.void : revoke)),
     Effect.forkIn(workers, { startImmediately: true }),
   );
 
   const launch = Effect.fn("CuaDriver.launch")(
     function* (attempt: Attempt) {
-      const host = yield* options.createHost.pipe(Effect.timeout(START_TIMEOUT));
+      const host = yield* createHost.pipe(Effect.timeout(START_TIMEOUT));
       attempt.host = host;
       if (closed || current !== attempt) {
         yield* stop(attempt);
@@ -91,7 +222,7 @@ export const makeCuaDriver = Effect.fn("CuaDriver.make")(function* (options: Cua
       const mcp = yield* host.start.pipe(Effect.timeout(START_TIMEOUT));
       yield* mutex.withPermits(1)(
         Effect.gen(function* () {
-          if (closed || current !== attempt || !(yield* options.enabled)) {
+          if (closed || current !== attempt || !(yield* enabled)) {
             yield* stop(attempt);
             yield* Deferred.succeed(attempt.ready, Option.none());
             if (current === attempt) current = undefined;
@@ -131,7 +262,7 @@ export const makeCuaDriver = Effect.fn("CuaDriver.make")(function* (options: Cua
     const attempt = yield* mutex
       .withPermits(1)(
         Effect.gen(function* () {
-          if (closed || !(yield* options.enabled)) return undefined;
+          if (closed || !(yield* enabled)) return undefined;
           if (current) return current;
           const next: Attempt = {
             ready: yield* Deferred.make<Option.Option<CuaDriverMcpConfiguration>>(),
@@ -145,7 +276,7 @@ export const makeCuaDriver = Effect.fn("CuaDriver.make")(function* (options: Cua
     return attempt ? yield* Deferred.await(attempt.ready) : Option.none();
   });
 
-  return CuaDriver.of({ enabled: options.enabled, acquire });
+  return CuaDriver.of({ enabled: enabled, acquire });
 });
 
 type StandaloneHostModule = {
@@ -162,19 +293,20 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
 ) {
   const mutex = yield* Semaphore.make(1);
   let occupied = false;
+  // Return a lazy acquisition effect so one factory owns all subsequent host attempts.
   // @effect-diagnostics-next-line returnEffectInGen:off
   return mutex.withPermits(1)(
     Effect.gen(function* () {
       if (occupied) {
-        return yield* new CuaDriverError({ message: "The previous Cua Driver is still stopping." });
+        return yield* new CuaDriverBusyError({});
       }
       const { EmbeddedCuaDriverHost } = yield* Effect.tryPromise({
         try: loadEmbedded,
-        catch: () => new CuaDriverError({ message: "Could not load the Cua Driver SDK." }),
+        catch: (cause) => new CuaDriverSdkLoadError({ cause }),
       });
       const host = yield* Effect.try({
         try: () => new EmbeddedCuaDriverHost(binaryPath, "com.t3tools.t3code.server"),
-        catch: () => new CuaDriverError({ message: "Could not create the Cua Driver host." }),
+        catch: (cause) => new CuaDriverHostCreateError({ binaryPath, cause }),
       });
       occupied = true;
       const abort = new AbortController();
@@ -212,7 +344,7 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
           }
           return releasing;
         },
-        catch: () => new CuaDriverError({ message: "Could not stop Cua Driver." }),
+        catch: (cause) => new CuaDriverStopError({ binaryPath, cause }),
       });
       return {
         start: Effect.tryPromise({
@@ -228,23 +360,22 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
             })();
             return (await starting).mcp;
           },
-          catch: () => new CuaDriverError({ message: "Could not start Cua Driver." }),
+          catch: (cause) => new CuaDriverStartError({ binaryPath, cause }),
         }),
         stop,
         waitForExit: Effect.tryPromise({
           try: async () => {
             await monitoring;
           },
-          catch: () => new CuaDriverError({ message: "Cua Driver exited unexpectedly." }),
+          catch: (cause) => new CuaDriverExitError({ binaryPath, cause }),
         }),
       } satisfies CuaDriverHost;
     }),
   );
 });
 
-export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(function* (
-  receiver: Pick<DesktopTelemetryReceiver["Service"], "cuaReports" | "requestCuaDriver">,
-) {
+export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(function* () {
+  const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const pending = new Map<string, Deferred.Deferred<DesktopCuaDriverReport>>();
   const exits = new Map<string, Deferred.Deferred<void>>();
   yield* receiver.cuaReports.pipe(
@@ -275,18 +406,14 @@ export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(
         requested = true;
         yield* receiver
           .requestCuaDriver(requestId, true)
-          .pipe(
-            Effect.mapError(
-              () => new CuaDriverError({ message: "Could not request desktop Cua Driver." }),
-            ),
-          );
+          .pipe(Effect.mapError((cause) => new CuaDriverDesktopRequestError({ requestId, cause })));
         const report = yield* Deferred.await(ready);
         if (report.status === "ready") return report.mcp;
         if (report.message)
           yield* Effect.logWarning("Cua Driver host reported unavailable.", {
             message: report.message,
           });
-        return yield* new CuaDriverError({ message: "Desktop Cua Driver is unavailable." });
+        return yield* new CuaDriverDesktopUnavailableError({ requestId });
       }),
       stop: Effect.gen(function* () {
         if (!requested) {
@@ -298,9 +425,7 @@ export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(
         const stopped = yield* Deferred.make<DesktopCuaDriverReport>();
         pending.set(stopId, stopped);
         yield* receiver.requestCuaDriver(stopId, false).pipe(
-          Effect.mapError(
-            () => new CuaDriverError({ message: "Could not stop desktop Cua Driver." }),
-          ),
+          Effect.mapError((cause) => new CuaDriverDesktopStopError({ requestId: stopId, cause })),
           Effect.andThen(Deferred.await(stopped)),
           Effect.ensuring(
             Effect.sync(() => {
@@ -319,30 +444,16 @@ export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(
 export const layer = Layer.effect(
   CuaDriver,
   Effect.gen(function* () {
-    const config = yield* ServerConfig;
-    const settings = yield* ServerSettingsService;
-    const receiver = yield* DesktopTelemetryReceiver;
-    const changes = yield* settings.subscribeChanges;
+    const config = yield* ServerConfig.ServerConfig;
     const binaryPath = process.env.T3CODE_CUA_DRIVER_PATH?.trim();
     const createHost =
       config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined
-        ? yield* makeDesktopHostFactory(receiver)
+        ? yield* makeDesktopHostFactory()
         : binaryPath
           ? yield* makeStandaloneHostFactory(binaryPath)
           : Effect.logWarning(
               "Cua Driver requires the T3 desktop host or an explicit T3CODE_CUA_DRIVER_PATH on this server.",
-            ).pipe(
-              Effect.andThen(
-                Effect.fail(new CuaDriverError({ message: "No Cua Driver host configured." })),
-              ),
-            );
-    return yield* makeCuaDriver({
-      createHost,
-      enabled: settings.getSettings.pipe(
-        Effect.map((value) => value.enableCua),
-        Effect.orElseSucceed(() => false),
-      ),
-      changes: changes.pipe(Stream.map((value) => value.enableCua)),
-    });
+            ).pipe(Effect.andThen(Effect.fail(new CuaDriverNotConfiguredError({}))));
+    return yield* make(createHost);
   }),
 );

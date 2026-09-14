@@ -5,12 +5,36 @@ import { Deferred, Effect, Exit, Fiber, Option, PubSub, Ref, Scope, Stream } fro
 import { TestClock } from "effect/testing";
 import { describe, expect } from "vite-plus/test";
 
-import {
-  CuaDriverError,
-  makeCuaDriver,
-  makeDesktopHostFactory,
-  makeStandaloneHostFactory,
-} from "./CuaDriver.ts";
+import * as CuaDriver from "./CuaDriver.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
+
+type CuaDriverError = CuaDriver.CuaDriverError;
+const makeStandaloneHostFactory = CuaDriver.makeStandaloneHostFactory;
+const makeCuaDriver = (options: {
+  readonly createHost: Parameters<typeof CuaDriver.make>[0];
+  readonly enabled: Effect.Effect<boolean>;
+  readonly changes: Stream.Stream<boolean>;
+}) =>
+  Effect.gen(function* () {
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const values = yield* settings.getSettings;
+    return yield* CuaDriver.make(options.createHost).pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        ...settings,
+        getSettings: options.enabled.pipe(Effect.map((enableCua) => ({ ...values, enableCua }))),
+        subscribeChanges: Effect.succeed(
+          options.changes.pipe(Stream.map((enableCua) => ({ ...values, enableCua }))),
+        ),
+      }),
+    );
+  }).pipe(Effect.provide(ServerSettings.layerTest()));
+const makeDesktopHostFactory = (
+  receiver: Partial<DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]>,
+) =>
+  CuaDriver.makeDesktopHostFactory().pipe(
+    Effect.provide(DesktopTelemetryReceiver.layerTest(receiver)),
+  );
 
 const mcp: CuaDriverMcpConfiguration = { command: "/driver", args: ["mcp"], environment: [] };
 
@@ -22,6 +46,7 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
   const stopped = Promise.withResolvers<void>();
   const watching = Promise.withResolvers<AbortSignal>();
   const destroyed = Promise.withResolvers<void>();
+  const destroyFailure = new Error("destroy failed");
   let creates = 0;
   let stops = 0;
   let destroys = 0;
@@ -46,7 +71,7 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
       uniffiDestroy() {
         destroys++;
         destroyed.resolve();
-        if (failFirstDestroy && destroys === 1) throw new Error("destroy failed");
+        if (failFirstDestroy && destroys === 1) throw destroyFailure;
       }
     },
   }));
@@ -61,6 +86,7 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
   };
   return {
     factory,
+    destroyFailure,
     start,
     stop,
     monitor,
@@ -73,6 +99,80 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
   };
 });
 
+describe("Cua Driver failure boundaries", () => {
+  it.effect("preserves SDK import failures without exposing their message", () =>
+    Effect.gen(function* () {
+      const cause = new Error("private SDK loader details");
+      const factory = yield* CuaDriver.makeStandaloneHostFactory("/driver", async () => {
+        throw cause;
+      });
+      const failure = yield* Effect.flip(factory);
+      expect(failure._tag).toBe("CuaDriverSdkLoadError");
+      expect(failure.message).toBe("Could not load the Cua Driver SDK.");
+      if (failure._tag !== "CuaDriverSdkLoadError") throw new Error("Expected SDK failure");
+      expect(failure.cause).toBe(cause);
+    }),
+  );
+
+  it.effect("preserves native constructor failures and identifies the binary", () =>
+    Effect.gen(function* () {
+      const cause = new Error("private constructor details");
+      const factory = yield* CuaDriver.makeStandaloneHostFactory("/driver", async () => ({
+        EmbeddedCuaDriverHost: class {
+          constructor() {
+            throw cause;
+          }
+          start() {
+            return Promise.reject(cause);
+          }
+          stop() {
+            return Promise.resolve();
+          }
+          waitForExit() {
+            return Promise.reject(cause);
+          }
+          uniffiDestroy() {}
+        },
+      }));
+      const failure = yield* Effect.flip(factory);
+      expect(failure._tag).toBe("CuaDriverHostCreateError");
+      expect(failure.message).toBe("Could not create the Cua Driver host.");
+      if (failure._tag !== "CuaDriverHostCreateError") throw new Error("Expected host failure");
+      expect(failure.binaryPath).toBe("/driver");
+      expect(failure.cause).toBe(cause);
+    }),
+  );
+
+  it.effect("preserves native start and exit failures at their own boundaries", () =>
+    Effect.gen(function* () {
+      const cause = new Error("private native details");
+      const starting = yield* standaloneFixture();
+      const failedHost = yield* starting.factory;
+      starting.start.reject(cause);
+      const startFailure = yield* Effect.flip(failedHost.start);
+      expect(startFailure._tag).toBe("CuaDriverStartError");
+      expect(startFailure.message).toBe("Could not start Cua Driver.");
+      if (startFailure._tag !== "CuaDriverStartError") throw new Error("Expected start failure");
+      expect(startFailure.cause).toBe(cause);
+      starting.stop.resolve();
+      yield* failedHost.stop;
+
+      const running = yield* standaloneFixture();
+      const host = yield* running.factory;
+      running.start.resolve(running.connection);
+      yield* host.start;
+      running.monitor.reject(cause);
+      const exitFailure = yield* Effect.flip(host.waitForExit);
+      expect(exitFailure._tag).toBe("CuaDriverExitError");
+      expect(exitFailure.message).toBe("Cua Driver exited unexpectedly.");
+      if (exitFailure._tag !== "CuaDriverExitError") throw new Error("Expected exit failure");
+      expect(exitFailure.cause).toBe(cause);
+      running.stop.resolve();
+      yield* host.stop;
+    }),
+  );
+});
+
 describe("standalone Cua Driver ownership", () => {
   it.effect("releases ownership after native destruction throws without retrying cleanup", () =>
     Effect.gen(function* () {
@@ -82,9 +182,12 @@ describe("standalone Cua Driver ownership", () => {
       yield* host.start;
       f.stop.resolve();
       f.monitor.reject(new Error("monitor cancelled"));
-      expect(yield* Effect.flip(host.stop)).toEqual(
-        new CuaDriverError({ message: "Could not stop Cua Driver." }),
-      );
+      const failure = yield* Effect.flip(host.stop);
+      expect(failure).toBeInstanceOf(CuaDriver.CuaDriverStopError);
+      expect(failure.message).toBe("Could not stop Cua Driver.");
+      if (failure._tag !== "CuaDriverStopError") throw new Error("Expected stop failure");
+      expect(failure.binaryPath).toBe("/driver");
+      expect(failure.cause).toBe(f.destroyFailure);
       expect(Exit.isFailure(yield* Effect.exit(host.stop))).toBe(true);
       expect(f.counts()).toEqual({ creates: 1, stops: 1, destroys: 1 });
       const replacement = yield* f.factory;
@@ -354,7 +457,13 @@ describe("CuaDriver", () => {
         const f = yield* fixture();
         const caller = yield* f.service.acquire.pipe(Effect.forkChild);
         yield* Deferred.await(f.started);
-        yield* Deferred.fail(f.result, new CuaDriverError({ message: "test failure" }));
+        yield* Deferred.fail(
+          f.result,
+          new CuaDriver.CuaDriverStartError({
+            binaryPath: "/driver",
+            cause: new Error("test failure"),
+          }),
+        );
         expect(yield* Fiber.join(caller)).toEqual(Option.none());
         expect(f.stops()).toBe(1);
         expect(yield* f.service.acquire).toEqual(Option.none());

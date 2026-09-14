@@ -12,7 +12,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
-import { DesktopTelemetryPublisher } from "../telemetry/DesktopTelemetryPublisher.ts";
+import * as DesktopTelemetryPublisher from "../telemetry/DesktopTelemetryPublisher.ts";
 
 export interface DesktopCuaDriverDependencies {
   readonly loadEmbedded: () => Promise<{
@@ -82,7 +82,7 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
   dependencies: DesktopCuaDriverDependencies = defaultDependencies,
 ) {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
-  const publisher = yield* DesktopTelemetryPublisher;
+  const publisher = yield* DesktopTelemetryPublisher.DesktopTelemetryPublisher;
   const scope = yield* Scope.Scope;
   const mutex = yield* Semaphore.make(1);
   let active: HostedDriver | undefined;

@@ -6,19 +6,17 @@ import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 
 import { expandHomePath } from "../pathExpansion.ts";
-import type { CuaDriver } from "./CuaDriver.ts";
+import * as CuaDriver from "./CuaDriver.ts";
 import { buildCuaDriverAppServerArgs, hasConfiguredCuaDriver } from "./codexCuaConfiguration.ts";
 
 /** Only interactive sessions acquire managed Cua; existing host/project configuration wins. */
-export const resolveCodexCua = Effect.fn("cua.resolveCodexCua")(function* (
-  driver: CuaDriver["Service"],
-  input: {
-    readonly cwd: string;
-    readonly homePath: string;
-    readonly launchArgs: string;
-    readonly environment?: NodeJS.ProcessEnv;
-  },
-) {
+export const resolveCodexCua = Effect.fn("cua.resolveCodexCua")(function* (input: {
+  readonly cwd: string;
+  readonly homePath: string;
+  readonly launchArgs: string;
+  readonly environment?: NodeJS.ProcessEnv;
+}) {
+  const driver = yield* CuaDriver.CuaDriver;
   if (!(yield* driver.enabled)) return [];
   const argv = tokenizeCliArgs(input.launchArgs);
   if (hasConfiguredCuaDriver(argv, undefined)) return [];
