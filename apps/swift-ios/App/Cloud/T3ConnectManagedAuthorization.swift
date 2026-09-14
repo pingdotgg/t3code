@@ -271,7 +271,11 @@ public actor T3ConnectManagedEnvironmentAuthorizer {
         components.queryItems = fields.keys.sorted().map {
             URLQueryItem(name: $0, value: fields[$0])
         }
-        return Data((components.percentEncodedQuery ?? "").utf8)
+        return Data(
+            (components.percentEncodedQuery ?? "")
+                .replacingOccurrences(of: "+", with: "%2B")
+                .utf8
+        )
     }
 }
 

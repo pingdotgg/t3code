@@ -150,6 +150,49 @@ final class T3ConnectRuntimeTests: XCTestCase {
         XCTAssertTrue(requests.allSatisfy { $0.url?.query == nil })
     }
 
+    func testManagedExchangePreservesLiteralPlusInBootstrapCredentialAndLabel() async throws {
+        let signer = try testSigner()
+        let transport = T3ConnectScriptedHTTPTransport { _, _ in
+            (
+                .token(
+                    scopes: T3ConnectManagedEnvironmentAuthorizer.standardScopes
+                        .joined(separator: " ")
+                ),
+                200
+            )
+        }
+        let authorizer = T3ConnectManagedEnvironmentAuthorizer(
+            transport: transport,
+            signer: signer
+        )
+        let endpoint = T3ConnectManagedEndpoint(
+            httpBaseUrl: "https://managed.example",
+            wsBaseUrl: "wss://managed.example/ws",
+            providerKind: .t3Relay
+        )
+        let bootstrap = T3ConnectManagedEnvironmentCredential(
+            environmentID: "managed-1",
+            label: "Managed Studio",
+            endpoint: endpoint,
+            bootstrapCredential: "bootstrap+once",
+            bootstrapExpiresAt: "2026-08-01T12:00:00.000Z",
+            proofKeyThumbprint: try await signer.thumbprint()
+        )
+
+        _ = try await authorizer.exchange(bootstrap, clientLabel: "Alex + iPhone")
+
+        let requests = await transport.requests
+        let request = try XCTUnwrap(requests.first { $0.url?.path == "/oauth/token" })
+        let data = try XCTUnwrap(request.httpBody)
+        let body = try XCTUnwrap(String(data: data, encoding: .utf8))
+        // Form decoding converts raw plus signs to spaces before percent decoding.
+        var form = URLComponents()
+        form.percentEncodedQuery = body.replacingOccurrences(of: "+", with: "%20")
+        let fields = try XCTUnwrap(form.queryItems)
+        XCTAssertEqual(fields.first { $0.name == "subject_token" }?.value, "bootstrap+once")
+        XCTAssertEqual(fields.first { $0.name == "client_label" }?.value, "Alex + iPhone")
+    }
+
     func testSixtySecondMarginRefreshesAndPersistsBeforeFirstRequest() async throws {
         let fixture = try await refreshFixture(
             savedThumbprint: nil,
