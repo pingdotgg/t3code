@@ -67,6 +67,40 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testUnavailableProjectProviderFallsBackForTheComposerAndThreadCreation() async throws {
+        let environmentDefault = ModelSelection(instanceId: "codex", model: "environment-model")
+        let projectDefault = ModelSelection(instanceId: "signed-out", model: "project-model")
+        let server = MultiEnvironmentConfigurationServer(
+            projectSettingsSupportHosts: ["two.example"],
+            settingsByHost: ["two.example": [
+                "projectSettingsFolded": .bool(true),
+                "defaultModelSelection": try JSONValue.encode(environmentDefault),
+                "projectSettingsOverrides": .object([
+                    "project-two": .object(["defaultModelSelection": try JSONValue.encode(projectDefault)]),
+                ]),
+            ]],
+            providersByHost: ["two.example": [.object([
+                "instanceId": .string("signed-out"), "driver": .string("codex"),
+                "enabled": .bool(true), "installed": .bool(true), "status": .string("ready"),
+                "auth": .object(["status": .string("unauthenticated")]),
+                "checkedAt": .string("2026-09-14T04:00:00.000Z"), "models": .array([]),
+            ])]]
+        )
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(1),
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let snapshot = try await fixture.client.initialSnapshot()
+        let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
+        XCTAssertEqual(project.defaultSelection?.modelID, environmentDefault.model)
+        _ = try await fixture.client.createThread(projectID: project.id, title: "Task", selection: nil)
+        let creates = await fixture.transport.dispatchRecords().filter { $0.command["type"] == .string("thread.create") }
+        XCTAssertEqual(creates.last?.command["modelSelection"], try JSONValue.encode(environmentDefault))
+        await fixture.client.disconnect()
+    }
+
     func testProjectSettingsPreserveOtherOverridesAndOnlyWriteToTheirEnvironment() async throws {
         let environmentDefault = ModelSelection(instanceId: "codex", model: "environment-default")
         let projectDefault = ModelSelection(instanceId: "codex", model: "project-default")
@@ -1768,19 +1802,22 @@ private actor MultiEnvironmentConfigurationServer {
     private let legacyEntries: ProjectEntriesResult?
     private var directoryRequests: [(host: String, input: JSONValue)] = []
     private let projectSettingsSupportHosts: Set<String>
+    private let providersByHost: [String: [JSONValue]]
 
     init(
         restartSupportHosts: Set<String> = [],
         directoryEntries: [String: ProjectEntriesResult] = [:],
         legacyEntries: ProjectEntriesResult? = nil,
         projectSettingsSupportHosts: Set<String> = [],
-        settingsByHost: [String: [String: JSONValue]] = [:]
+        settingsByHost: [String: [String: JSONValue]] = [:],
+        providersByHost: [String: [JSONValue]] = [:]
     ) {
         self.restartSupportHosts = restartSupportHosts
         self.directoryEntries = directoryEntries
         self.legacyEntries = legacyEntries
         self.projectSettingsSupportHosts = projectSettingsSupportHosts
         self.settingsByHost = settingsByHost
+        self.providersByHost = providersByHost
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
@@ -1848,7 +1885,7 @@ private actor MultiEnvironmentConfigurationServer {
     private func config(host: String) -> JSONValue {
         let environmentID = host == "one.example" ? "one" : "two"
         return .object([
-            "providers": .array([]), "settings": .object(settingsByHost[host] ?? [:]),
+            "providers": .array(providersByHost[host] ?? []), "settings": .object(settingsByHost[host] ?? [:]),
             "environment": .object([
                 "environmentId": .string(environmentID), "label": .string(host),
                 "platform": .object(["os": .string("darwin"), "arch": .string("arm64")]),

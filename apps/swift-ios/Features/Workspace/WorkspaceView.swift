@@ -644,6 +644,7 @@ public struct WorkspaceView: View {
     }
 
     private func dismissTransientPresentations() {
+        settingsProject = nil
         showingNewTask = false
         showingAddProject = false
         showingEnvironments = false

@@ -5228,7 +5228,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             for thread in cached { threadCountByProjectID[thread.projectID, default: 0] += 1 }
             let projectConfig = serverConfigsByEnvironmentID[environment.id]
             let projectSettings = projectConfig?.settings ?? ServerSettingsSnapshot()
-            let disabledProviderIDs = Set((projectConfig?.providers ?? []).filter { !$0.enabled }.map(\.instanceId))
+            let disabledProviderIDs = Set((projectConfig?.providers ?? []).filter { !providerCanRun($0) }.map(\.instanceId))
             let supportsProjectSettings = projectConfig?.environment?.capabilities.projectSettingsOverrides == true
             let mappedProjects = projection.mapProjects(
                 shellsByEnvironmentID[environment.id]?.projects ?? [],
@@ -6528,7 +6528,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let effective = settings.resolvingProject(
             id: projectID, legacyModelSelection: project?.defaultModelSelection,
             legacyWorkspaceMode: project?.defaultThreadEnvMode,
-            disabledProviderIDs: Set((config?.providers ?? []).filter { !$0.enabled }.map(\.instanceId))
+            disabledProviderIDs: Set((config?.providers ?? []).filter { !providerCanRun($0) }.map(\.instanceId))
         )
         if let projectDefault = effective.defaultModelSelection {
             return projectDefault

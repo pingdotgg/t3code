@@ -91,7 +91,7 @@ struct ProjectPreferencesView: View {
     private var effective: ServerSettingsSnapshot? {
         settings?.resolvingProject(
             id: wireID,
-            disabledProviderIDs: Set(providers.filter { $0.isEnabled == false }.map(\.id))
+            disabledProviderIDs: Set(providers.filter { !$0.isAvailable }.map(\.id))
         )
     }
     private var supportsRestartContinuation: Bool {
