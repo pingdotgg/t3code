@@ -20,6 +20,7 @@ import type {
   ProjectSearchEntriesResult,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { expandQueryAcrossKeyboardLayouts } from "@t3tools/shared/keyboardLayouts";
 import { isExplicitRelativePath, isWindowsAbsolutePath } from "@t3tools/shared/path";
 import { normalizeSearchQuery } from "@t3tools/shared/searchRanking";
 
@@ -240,7 +241,33 @@ export const make = Effect.gen(function* () {
       });
       return yield* Effect.gen(function* () {
         const searchIndex = yield* WorkspaceSearchIndex.WorkspaceSearchIndex;
-        return yield* searchIndex.search(normalizedQuery, input.limit, input.kind, input.imageOnly);
+        const result = yield* searchIndex.search(
+          normalizedQuery,
+          input.limit,
+          input.kind,
+          input.imageOnly,
+        );
+        if (result.entries.length > 0) {
+          return result;
+        }
+        // A query typed while a non-Latin keyboard layout was active finds
+        // nothing, so retry it as the US QWERTY characters its keys would have
+        // produced. The index search is a native call taking one query string
+        // and deriving its page size from `limit`, so merging several mapped
+        // results would leave `limit` and `truncated` ambiguous; take the first
+        // variant that finds anything instead.
+        for (const variant of expandQueryAcrossKeyboardLayouts(normalizedQuery)) {
+          const variantResult = yield* searchIndex.search(
+            variant,
+            input.limit,
+            input.kind,
+            input.imageOnly,
+          );
+          if (variantResult.entries.length > 0) {
+            return variantResult;
+          }
+        }
+        return result;
       }).pipe(
         Effect.provide(
           workspaceSearchIndexes.get(

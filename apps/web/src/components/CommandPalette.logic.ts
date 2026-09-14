@@ -12,7 +12,7 @@ import * as Arr from "effect/Array";
 import * as Result from "effect/Result";
 import { type ReactNode } from "react";
 import { sortThreads } from "../lib/threadSort";
-import { normalizeSearchText } from "../lib/utils";
+import { buildSearchQueryForms, normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
 
@@ -346,6 +346,9 @@ function rankSearchFieldMatch(
   return 0;
 }
 
+/** Ranks here are compared highest first and never exceed a few thousand. */
+const LAYOUT_MATCH_RANK_PENALTY = 10_000;
+
 function rankCommandPaletteItemMatch(
   item: CommandPaletteActionItem | CommandPaletteSubmenuItem,
   normalizedQuery: string,
@@ -384,7 +387,11 @@ export function filterCommandPaletteGroups(input: {
     }
     return [...input.activeGroups];
   }
-  const queryTokens = normalizedQuery.split(" ");
+  const searchForms = buildSearchQueryForms({
+    query: searchQuery,
+    normalizedQuery,
+    layoutRankPenalty: LAYOUT_MATCH_RANK_PENALTY,
+  });
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
@@ -421,14 +428,19 @@ export function filterCommandPaletteGroups(input: {
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
       const haystack = normalizeSearchText(item.searchTerms.join(" "));
-      if (!queryTokens.every((token) => haystack.includes(token))) {
+      const form = searchForms.find((candidate) =>
+        candidate.queryTokens.every((token) => haystack.includes(token)),
+      );
+      if (form === undefined) {
         return Result.failVoid;
       }
 
       return Result.succeed({
         item,
         index,
-        rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
+        rank:
+          rankCommandPaletteItemMatch(item, form.normalizedQuery, form.queryTokens) -
+          form.rankPenalty,
       });
     })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)

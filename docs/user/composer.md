@@ -125,6 +125,9 @@ Type `/` for commands or `$` to add a skill from the selected environment and
 provider. On mobile, both are also available before starting a thread on
 **New task**.
 
+Command, skill and file search also match what you typed on a non-Latin keyboard
+layout, so you do not need to switch layouts first.
+
 The slash menu also includes skills unless you turn off **Settings → General →
 Show skills in slash menu**. Only skills enabled for the provider are listed.
 

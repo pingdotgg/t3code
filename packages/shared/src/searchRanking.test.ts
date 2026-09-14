@@ -65,6 +65,16 @@ describe("scoreQueryMatch", () => {
     expect(containsScore).not.toBeNull();
     expect(boundaryScore!).toBeLessThan(containsScore!);
   });
+
+  it("ranks a direct match ahead of one found through a keyboard layout", () => {
+    const bases = { exactBase: 0, prefixBase: 10, includesBase: 20, fuzzyBase: 100 };
+    const directScore = scoreQueryMatch({ value: "кумшуц", query: "кумшуц", ...bases });
+    const layoutScore = scoreQueryMatch({ value: "review", query: "кумшуц", ...bases });
+
+    expect(directScore).not.toBeNull();
+    expect(layoutScore).not.toBeNull();
+    expect(directScore!).toBeLessThan(layoutScore!);
+  });
 });
 
 describe("scoreSubsequenceMatch", () => {

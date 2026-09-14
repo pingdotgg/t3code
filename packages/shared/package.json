@@ -163,6 +163,10 @@
       "types": "./src/searchRanking.ts",
       "import": "./src/searchRanking.ts"
     },
+    "./keyboardLayouts": {
+      "types": "./src/keyboardLayouts.ts",
+      "import": "./src/keyboardLayouts.ts"
+    },
     "./qrCode": {
       "types": "./src/qrCode.ts",
       "import": "./src/qrCode.ts"

@@ -177,6 +177,20 @@ describe("searchSlashCommandItems", () => {
     ]);
   });
 
+  it("finds a Latin command from a query typed on a Cyrillic layout", () => {
+    const items = [
+      {
+        id: "slash:model",
+        type: "slash-command",
+        command: "model",
+        label: "/model",
+        description: "Switch model",
+      },
+    ] satisfies Array<Extract<ComposerCommandItem, { type: "slash-command" }>>;
+
+    expect(searchSlashCommandItems(items, "ьщвуд").map((item) => item.id)).toEqual(["slash:model"]);
+  });
+
   it("hides provider commands from slash completion after the first message line", () => {
     const items = [
       {
