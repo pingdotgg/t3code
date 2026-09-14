@@ -732,11 +732,19 @@ export function applyToProjection(
 export interface ProjectionReplayState {
   readonly projections: Map<ThreadId, OrchestrationV2ThreadProjection>;
   readonly providerSessionThreadIds: Map<ProviderSessionId, ReadonlySet<ThreadId>>;
+  // Provider threads are globally keyed like the SQL provider_threads table:
+  // the same thread can appear in several per-thread projections at different
+  // versions, so the latest event — not first-seen projection order — wins.
+  readonly providerThreadsById: Map<
+    ProviderThreadId,
+    OrchestrationV2ThreadProjection["providerThreads"][number]
+  >;
 }
 
 function makeProjectionReplayState(): ProjectionReplayState {
   return {
     projections: new Map(),
+    providerThreadsById: new Map(),
     providerSessionThreadIds: new Map(),
   };
 }
@@ -805,6 +813,10 @@ function applyToProjectionReplayState(
       } else {
         state.providerSessionThreadIds.set(event.payload.providerSessionId, boundThreadIds);
       }
+      break;
+    }
+    case "provider-thread.updated": {
+      state.providerThreadsById.set(event.payload.id, event.payload);
       break;
     }
   }
@@ -2779,6 +2791,11 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   -- single long turn can exceed every policy bound. Bill each row
                   -- at most the per-row payload cap so oversized rows stay in the
                   -- window (compacted below) while their budget cost stays sane.
+                  -- The byte filter below keeps a newest-first prefix of this
+                  -- ordering and the row cap never exceeds maxWindowRows, so no
+                  -- row older than the newest maxWindowRows candidates can ever
+                  -- be selected. Limiting here keeps the payload-length reads
+                  -- and the suffix-sum scan O(window), not O(history).
                   SELECT eligible.*,
                     MIN(
                       LENGTH(CAST(eligible.payload_json AS BLOB)),
@@ -2786,6 +2803,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ) AS bill_bytes
                   FROM eligible
                   WHERE eligible.ordinal >= (SELECT ordinal FROM boundary)
+                  ORDER BY eligible.ordinal DESC, eligible.turn_item_id DESC
+                  LIMIT ${maxWindowRows}
                 ), selected AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type
                   FROM (
@@ -5822,6 +5841,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             const next: ProjectionReplayState = {
               projections: new Map(existing.projections),
               providerSessionThreadIds: new Map(existing.providerSessionThreadIds),
+              providerThreadsById: new Map(existing.providerThreadsById),
             };
             if (!applyToProjectionReplayState(next, event)) {
               return [
@@ -6477,6 +6497,235 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 encodeTurnItemPayloadValue,
                 decodeTurnItemPayload,
               );
+              // Mirror the SQL hydration cohorts: each collection carries only
+              // the rows the retained window can reference plus live/dependent
+              // rows — not the thread's whole stored history. Ids compare as
+              // decoded values here, so the SQL path's hex/rowid encoding
+              // bridges are unnecessary.
+              const itemFieldValue = (
+                item: (typeof turnItems)[number],
+                field: string,
+              ): string | null => {
+                const value = (item as Record<string, unknown>)[field];
+                return typeof value === "string" ? value : null;
+              };
+              const cohortItemIds = (field: string) => {
+                const ids = new Set<string>();
+                for (const item of turnItems) {
+                  const value = itemFieldValue(item, field);
+                  if (value !== null) ids.add(value);
+                }
+                return ids;
+              };
+              const runIds = new Set(snapshot.projection.runs.map((run) => String(run.id)));
+              const cohortRunIds = cohortItemIds("runId");
+              // SQL resolves run membership through the runs table: a retained
+              // item whose run row no longer exists seeds nothing.
+              for (const id of cohortRunIds) {
+                if (!runIds.has(id)) cohortRunIds.delete(id);
+              }
+              const requiredRunId =
+                options.requiredRunId !== undefined && runIds.has(String(options.requiredRunId))
+                  ? String(options.requiredRunId)
+                  : undefined;
+              const cohortProviderThreadIds = cohortItemIds("providerThreadId");
+              const cohortProviderTurnIds = cohortItemIds("providerTurnId");
+              const cohortMessageIds = cohortItemIds("messageId");
+              const cohortPlanIds = cohortItemIds("planId");
+              const cohortCheckpointIds = cohortItemIds("checkpointId");
+              const cohortHandoffIds = cohortItemIds("contextHandoffId");
+              const activeExecutionStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeRunStatuses: ReadonlySet<string> = new Set([
+                "queued",
+                "preparing",
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeProviderTurnStatuses: ReadonlySet<string> = new Set([
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeSessionStatuses: ReadonlySet<string> = new Set([
+                "starting",
+                "running",
+                "waiting",
+              ]);
+              const activeRequestStatuses: ReadonlySet<string> = new Set(["pending", "waiting"]);
+              const activeCheckpointStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "capturing",
+              ]);
+              const activeHandoffStatuses: ReadonlySet<string> = new Set(["pending", "ready"]);
+              const activeTransferStatuses: ReadonlySet<string> = new Set([
+                "pending",
+                "running",
+                "waiting",
+              ]);
+              // The node cohort mirrors the recursive SQL walk: retained items,
+              // live control rows, and run/attempt roots seed it, then only the
+              // ancestors of seeded nodes join.
+              const nodesById = new Map(
+                snapshot.projection.nodes.map((node) => [String(node.id), node] as const),
+              );
+              const cohortNodeIds = new Set<string>();
+              const seedNode = (id: string | null | undefined) => {
+                if (id !== null && id !== undefined && id !== "") {
+                  cohortNodeIds.add(String(id));
+                }
+              };
+              for (const item of turnItems) seedNode(itemFieldValue(item, "nodeId"));
+              for (const node of snapshot.projection.nodes) {
+                if (activeExecutionStatuses.has(node.status)) seedNode(node.id);
+              }
+              for (const attempt of snapshot.projection.attempts) {
+                if (
+                  activeExecutionStatuses.has(attempt.status) ||
+                  cohortRunIds.has(String(attempt.runId)) ||
+                  (requiredRunId !== undefined && String(attempt.runId) === requiredRunId)
+                ) {
+                  seedNode(attempt.rootNodeId);
+                }
+              }
+              for (const run of snapshot.projection.runs) {
+                if (
+                  activeRunStatuses.has(run.status) ||
+                  cohortRunIds.has(String(run.id)) ||
+                  (requiredRunId !== undefined && String(run.id) === requiredRunId)
+                ) {
+                  seedNode(run.rootNodeId);
+                }
+              }
+              for (const request of snapshot.projection.runtimeRequests) {
+                if (activeRequestStatuses.has(request.status)) seedNode(request.nodeId);
+              }
+              for (const subagent of snapshot.projection.subagents) {
+                if (activeExecutionStatuses.has(subagent.status)) {
+                  seedNode(subagent.parentNodeId);
+                }
+              }
+              for (const providerTurn of snapshot.projection.providerTurns) {
+                if (activeProviderTurnStatuses.has(providerTurn.status)) {
+                  seedNode(providerTurn.nodeId);
+                }
+              }
+              const nodeQueue = [...cohortNodeIds];
+              while (nodeQueue.length > 0) {
+                const parentId = nodesById.get(nodeQueue.pop()!)?.parentNodeId;
+                if (parentId !== null && parentId !== undefined) {
+                  const id = String(parentId);
+                  if (!cohortNodeIds.has(id)) {
+                    cohortNodeIds.add(id);
+                    nodeQueue.push(id);
+                  }
+                }
+              }
+              const inCohort = (ids: ReadonlySet<string>, id: string | null | undefined) =>
+                id !== null && id !== undefined && ids.has(String(id));
+              const liveRunIds = new Set(
+                snapshot.projection.runs.flatMap((run) =>
+                  activeRunStatuses.has(run.status) ? [String(run.id)] : [],
+                ),
+              );
+              const windowRuns = snapshot.projection.runs.filter(
+                (run) =>
+                  activeRunStatuses.has(run.status) ||
+                  cohortRunIds.has(String(run.id)) ||
+                  (requiredRunId !== undefined && String(run.id) === requiredRunId),
+              );
+              const windowAttempts = snapshot.projection.attempts.filter(
+                (attempt) =>
+                  activeExecutionStatuses.has(attempt.status) ||
+                  cohortRunIds.has(String(attempt.runId)) ||
+                  (requiredRunId !== undefined && String(attempt.runId) === requiredRunId),
+              );
+              const windowNodes = snapshot.projection.nodes.filter((node) =>
+                cohortNodeIds.has(String(node.id)),
+              );
+              const windowSubagents = snapshot.projection.subagents.filter(
+                (subagent) =>
+                  activeExecutionStatuses.has(subagent.status) ||
+                  inCohort(cohortRunIds, subagent.runId) ||
+                  cohortNodeIds.has(String(subagent.parentNodeId)),
+              );
+              // The SQL cohort arms join provider_threads globally: a retained
+              // item can reference a thread owned by another app thread, and
+              // its session still belongs in this snapshot. The replay index
+              // holds the latest event per provider thread id, matching the
+              // ON CONFLICT(provider_thread_id) global table.
+              const allProviderThreads = [
+                ...(yield* Ref.get(replayState)).providerThreadsById.values(),
+              ];
+              const windowProviderThreads = allProviderThreads.filter(
+                (providerThread) =>
+                  (providerThread.appThreadId !== null &&
+                    String(providerThread.appThreadId) === String(threadId) &&
+                    providerThread.status === "active") ||
+                  cohortProviderThreadIds.has(String(providerThread.id)) ||
+                  inCohort(cohortNodeIds, providerThread.ownerNodeId),
+              );
+              const cohortProviderThreadSessionIds = new Set(
+                allProviderThreads.flatMap((providerThread) =>
+                  cohortProviderThreadIds.has(String(providerThread.id)) &&
+                  providerThread.providerSessionId !== null
+                    ? [String(providerThread.providerSessionId)]
+                    : [],
+                ),
+              );
+              const windowProviderSessions = snapshot.projection.providerSessions.filter(
+                (session) =>
+                  activeSessionStatuses.has(session.status) ||
+                  cohortProviderThreadSessionIds.has(String(session.id)),
+              );
+              const windowProviderTurns = snapshot.projection.providerTurns.filter(
+                (providerTurn) =>
+                  activeProviderTurnStatuses.has(providerTurn.status) ||
+                  cohortProviderTurnIds.has(String(providerTurn.id)) ||
+                  cohortNodeIds.has(String(providerTurn.nodeId)),
+              );
+              const windowRuntimeRequests = snapshot.projection.runtimeRequests.filter(
+                (request) =>
+                  activeRequestStatuses.has(request.status) ||
+                  cohortNodeIds.has(String(request.nodeId)) ||
+                  inCohort(cohortProviderTurnIds, request.providerTurnId),
+              );
+              const windowMessages = snapshot.projection.messages.filter(
+                (message) =>
+                  cohortMessageIds.has(String(message.id)) || inCohort(liveRunIds, message.runId),
+              );
+              const windowPlans = snapshot.projection.plans.filter(
+                (plan) => plan.status === "active" || cohortPlanIds.has(String(plan.id)),
+              );
+              const windowCheckpointScopes = snapshot.projection.checkpointScopes.filter(
+                (scope) =>
+                  inCohort(cohortRunIds, scope.runId) || cohortNodeIds.has(String(scope.nodeId)),
+              );
+              const windowCheckpoints = snapshot.projection.checkpoints.filter(
+                (checkpoint) =>
+                  activeCheckpointStatuses.has(checkpoint.status) ||
+                  cohortCheckpointIds.has(String(checkpoint.id)) ||
+                  inCohort(cohortRunIds, checkpoint.runId) ||
+                  cohortNodeIds.has(String(checkpoint.nodeId)),
+              );
+              const windowContextHandoffs = snapshot.projection.contextHandoffs.filter(
+                (handoff) =>
+                  activeHandoffStatuses.has(handoff.status) ||
+                  cohortHandoffIds.has(String(handoff.id)),
+              );
+              const windowContextTransfers = snapshot.projection.contextTransfers.filter(
+                (transfer) =>
+                  activeTransferStatuses.has(transfer.status) ||
+                  inCohort(cohortRunIds, transfer.targetRunId) ||
+                  (transfer.resolution !== null &&
+                    "contextHandoffId" in transfer.resolution &&
+                    cohortHandoffIds.has(String(transfer.resolution.contextHandoffId))),
+              );
               const [
                 thread,
                 runs,
@@ -6495,61 +6744,45 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 contextTransfers,
               ] = yield* Effect.all([
                 boundRow(snapshot.projection.thread, encodeThreadPayloadValue, decodeThreadPayload),
-                boundRows(snapshot.projection.runs, encodeRunPayloadValue, decodeRunPayload),
+                boundRows(windowRuns, encodeRunPayloadValue, decodeRunPayload),
+                boundRows(windowAttempts, encodeRunAttemptPayloadValue, decodeRunAttemptPayload),
+                boundRows(windowNodes, encodeNodePayloadValue, decodeNodePayload),
+                boundRows(windowSubagents, encodeSubagentPayloadValue, decodeSubagentPayload),
                 boundRows(
-                  snapshot.projection.attempts,
-                  encodeRunAttemptPayloadValue,
-                  decodeRunAttemptPayload,
-                ),
-                boundRows(snapshot.projection.nodes, encodeNodePayloadValue, decodeNodePayload),
-                boundRows(
-                  snapshot.projection.subagents,
-                  encodeSubagentPayloadValue,
-                  decodeSubagentPayload,
-                ),
-                boundRows(
-                  snapshot.projection.providerSessions,
+                  windowProviderSessions,
                   encodeProviderSessionPayloadValue,
                   decodeProviderSessionPayload,
                 ),
                 boundRows(
-                  snapshot.projection.providerThreads,
+                  windowProviderThreads,
                   encodeProviderThreadPayloadValue,
                   decodeProviderThreadPayload,
                 ),
                 boundRows(
-                  snapshot.projection.providerTurns,
+                  windowProviderTurns,
                   encodeProviderTurnPayloadValue,
                   decodeProviderTurnPayload,
                 ),
                 boundRows(
-                  snapshot.projection.runtimeRequests,
+                  windowRuntimeRequests,
                   encodeRuntimeRequestPayloadValue,
                   decodeRuntimeRequestPayload,
                 ),
+                boundRows(windowMessages, encodeMessagePayloadValue, decodeMessagePayload),
+                boundRows(windowPlans, encodePlanPayloadValue, decodePlanPayload),
                 boundRows(
-                  snapshot.projection.messages,
-                  encodeMessagePayloadValue,
-                  decodeMessagePayload,
-                ),
-                boundRows(snapshot.projection.plans, encodePlanPayloadValue, decodePlanPayload),
-                boundRows(
-                  snapshot.projection.checkpointScopes,
+                  windowCheckpointScopes,
                   encodeCheckpointScopePayloadValue,
                   decodeCheckpointScopePayload,
                 ),
+                boundRows(windowCheckpoints, encodeCheckpointPayloadValue, decodeCheckpointPayload),
                 boundRows(
-                  snapshot.projection.checkpoints,
-                  encodeCheckpointPayloadValue,
-                  decodeCheckpointPayload,
-                ),
-                boundRows(
-                  snapshot.projection.contextHandoffs,
+                  windowContextHandoffs,
                   encodeContextHandoffPayloadValue,
                   decodeContextHandoffPayload,
                 ),
                 boundRows(
-                  snapshot.projection.contextTransfers,
+                  windowContextTransfers,
                   encodeContextTransferPayloadValue,
                   decodeContextTransferPayload,
                 ),
