@@ -373,6 +373,7 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+const CHECKPOINT_CAPTURE_TIMEOUT_MS = 120_000;
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -764,14 +765,41 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         .pipe(Effect.ignore);
 
       yield* Effect.gen(function* () {
-        const headExists = yield* hasHeadCommit(input.cwd);
-        if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+        const liveIndexResult = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["rev-parse", "--git-path", "index"],
+          timeoutMs: 5_000,
+          maxOutputBytes: 4_096,
+        });
+        const liveIndexPathRaw = liveIndexResult.stdout.trim();
+        const liveIndexPath = path.isAbsolute(liveIndexPathRaw)
+          ? liveIndexPathRaw
+          : path.resolve(input.cwd, liveIndexPathRaw);
+        // Copy the live index so `git add -A` can reuse its stat cache.
+        // `read-tree HEAD` drops those stats, so Git LFS re-cleans every
+        // hydrated working-tree object and times out on large game repos.
+        const copiedLiveIndex = yield* fileSystem.exists(liveIndexPath).pipe(
+          Effect.flatMap((exists) =>
+            exists
+              ? fileSystem.copyFile(liveIndexPath, tempIndexPath).pipe(
+                  Effect.as(true),
+                  Effect.catch(() => Effect.succeed(false)),
+                )
+              : Effect.succeed(false),
+          ),
+        );
+        if (!copiedLiveIndex) {
+          const headExists = yield* hasHeadCommit(input.cwd);
+          if (headExists) {
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "HEAD"],
+              env: commitEnv,
+              timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
+            });
+          }
         }
 
         yield* execute({
@@ -779,6 +807,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: ["add", "-A", "--", "."],
           env: commitEnv,
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
 
         const writeTreeResult = yield* execute({
@@ -786,6 +815,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: ["write-tree"],
           env: commitEnv,
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
         const treeOid = writeTreeResult.stdout.trim();
         if (treeOid.length === 0) {
@@ -804,6 +834,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           cwd: input.cwd,
           args: ["commit-tree", treeOid, "-m", message],
           env: commitEnv,
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
         const commitOid = commitTreeResult.stdout.trim();
         if (commitOid.length === 0) {
@@ -820,6 +851,7 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           operation,
           cwd: input.cwd,
           args: ["update-ref", input.checkpointRef, commitOid],
+          timeoutMs: CHECKPOINT_CAPTURE_TIMEOUT_MS,
         });
       }).pipe(Effect.ensuring(cleanupTempIndex));
     }),

@@ -129,6 +129,45 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("captureCheckpoint includes untracked files without mutating the live index", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-checkpoint-live-index-" });
+    yield* runGit(cwd, ["init"]);
+    yield* runGit(cwd, ["config", "user.email", "test@test.com"]);
+    yield* runGit(cwd, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "tracked.txt"), "committed\n");
+    yield* runGit(cwd, ["add", "tracked.txt"]);
+    yield* runGit(cwd, ["commit", "-m", "initial"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "staged.txt"), "staged\n");
+    yield* runGit(cwd, ["add", "staged.txt"]);
+    yield* fileSystem.writeFileString(path.join(cwd, "untracked.txt"), "untracked\n");
+
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/live-index");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    const tree = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["ls-tree", "-r", "--name-only", checkpointRef],
+    });
+    assert.deepStrictEqual(tree.stdout.trim().split("\n").sort(), [
+      "staged.txt",
+      "tracked.txt",
+      "untracked.txt",
+    ]);
+
+    const status = yield* driver.execute({
+      operation: "test",
+      cwd,
+      args: ["status", "--porcelain"],
+    });
+    assert.strictEqual(status.stdout, "A  staged.txt\n?? untracked.txt\n");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;
