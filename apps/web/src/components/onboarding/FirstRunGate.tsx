@@ -9,6 +9,7 @@ import {
   useClientSettings,
   useClientSettingsHydrationStatus,
 } from "../../hooks/useSettings";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
   isFirstRunWorkspaceProvenanceAuthoritative,
@@ -126,6 +127,7 @@ export function FirstRunGate({
 
   const { decision: nextDecision, persistCompletion } = hostedStatic
     ? resolveHostedFirstRunDecision({
+        localEnvironmentDisabled: isLocalEnvironmentDisabled(),
         hydrated,
         completed: onboardingCompletedAt !== null,
         catalogReady: environmentCatalogReady,

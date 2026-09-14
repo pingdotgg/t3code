@@ -57,3 +57,15 @@ capabilities and handle their absence, rather than assume their own version
 describes the server. Process replacement belongs to the launcher's
 [update protocol](./server-updates.md); the connection runtime handles the
 resulting disconnect.
+
+### Desktop without a local environment
+
+Desktop normally launches its own primary server, but the desktop setting `localEnvironmentEnabled`
+(`apps/desktop/src/settings/DesktopAppSettings.ts`) turns that off. Changing it relaunches the app;
+no local state is deleted. On the next start the main process skips port selection, server exposure,
+and the primary and WSL backends, and opens the window right away. The renderer sees this through
+`desktopBridge.getLocalEnvironmentEnabled()`: `readPrimaryEnvironmentTarget` returns null, so primary
+auth and platform-managed discovery are skipped and only saved environments (pairing, relay, SSH)
+connect. This is possible because the desktop renderer is not served by the backend: the `t3code://`
+scheme serves the bundled client from disk (Vite in development) and API traffic always goes to the
+environment's own URL.

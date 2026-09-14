@@ -173,6 +173,28 @@ describe("searchSettings", () => {
     expect(available.map((item) => item.id).filter((id) => gatedIds.has(id))).toEqual([]);
   });
 
+  it("keeps the local toggle searchable without offering hidden host publishing controls", () => {
+    const availability = {
+      hasCloudPublicConfig: true,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: true,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    };
+    const remoteOnly = filterAvailableSettingsSearchItems({
+      ...availability,
+      localEnvironmentDisabled: true,
+    }).map((item) => item.id);
+    expect(remoteOnly).toContain("local-environment");
+    expect(remoteOnly).not.toContain("t3-connect");
+    expect(remoteOnly).not.toContain("publish-agent-activity");
+    expect(remoteOnly).not.toContain("wsl-backend");
+    // Browsers without access:write still render CloudLinkRow for their host.
+    const browser = filterAvailableSettingsSearchItems(availability).map((item) => item.id);
+    expect(browser).toContain("publish-agent-activity");
+  });
+
   it("shows automatic settlement settings when the server supports them", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,

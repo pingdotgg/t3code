@@ -49,6 +49,7 @@ interface FirstRunDecisionInput {
 }
 
 interface HostedFirstRunDecisionInput {
+  readonly localEnvironmentDisabled?: boolean;
   readonly hydrated: boolean;
   readonly completed: boolean;
   readonly catalogReady: boolean;
@@ -178,7 +179,9 @@ export function resolveHostedFirstRunDecision(input: HostedFirstRunDecisionInput
     return { decision: "pending", persistCompletion: false };
   }
 
-  return input.environmentCount === 0
+  // An existing desktop may have disabled its server before onboarding existed.
+  // Keep Connections accessible so it can turn local execution back on.
+  return input.environmentCount === 0 && !input.localEnvironmentDisabled
     ? { decision: "wizard", persistCompletion: false }
     : { decision: "app", persistCompletion: true };
 }
