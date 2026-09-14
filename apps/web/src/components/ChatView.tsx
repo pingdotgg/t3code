@@ -309,6 +309,7 @@ import {
 import { type ReviewCommentContext } from "../reviewCommentContext";
 import { environmentCatalog } from "../connection/catalog";
 import { isDesktopLocalConnectionTarget } from "../connection/desktopLocal";
+import { useEnvironmentDisconnectDelay } from "../hooks/useEnvironmentDisconnectDelay";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useKnownTerminalSessions, useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useEnvironmentQuery } from "../state/query";
@@ -2212,7 +2213,11 @@ export default function ChatView(props: ChatViewProps) {
     },
     [retryEnvironment],
   );
+  const disconnectDelayElapsed = useEnvironmentDisconnectDelay(
+    activeEnvironmentUnavailable ? activeEnvironment.environmentId : null,
+  );
   const canDisconnectActiveEnvironment =
+    disconnectDelayElapsed &&
     activeEnvironment !== null &&
     activeEnvironment.entry.target._tag !== "PrimaryConnectionTarget" &&
     !isDesktopLocalConnectionTarget(activeEnvironment.entry.target);
