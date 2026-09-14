@@ -75,14 +75,16 @@ still-image stream and Android cannot show video.
 
 ## SSH device hosts
 
-In Settings → Integrations → Devices, select one connected environment
-and add a host under **Device hosts**. Enter an SSH alias or `user@host`, with
+In Settings → Integrations → Devices, choose the environments that should use
+the host and add it under **Device hosts**. Enter an SSH alias or `user@host`, with
 an optional identity file and port. These resolve on the environment server,
 so use the SSH configuration and keys available there. Password prompts are
 not supported.
 
 **Test connection** checks SSH, Node, npm, and platform tools without installing
-anything. The first device listing installs pinned device tools on the host.
+anything, with a result for each selected environment. Targets that resolve to
+the environment’s own machine are skipped, since its devices are already local.
+The first device listing installs pinned device tools on the host.
 Node 22 or newer and npm must be available to non-interactive SSH commands.
 T3 checks common Homebrew and Android SDK locations; custom installations need
 the appropriate PATH and ANDROID_HOME on the host.
