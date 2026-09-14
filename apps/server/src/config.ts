@@ -73,6 +73,7 @@ export class ServerConfig extends Context.Service<
     readonly otlpMetricsUrl: string | undefined;
     readonly otlpExportIntervalMs: number;
     readonly otlpServiceName: string;
+    readonly otlpHeaders: Readonly<Record<string, string>> | undefined;
     readonly mode: RuntimeMode;
     readonly port: number;
     readonly host: string | undefined;
@@ -197,6 +198,7 @@ const makeTest = Effect.fn("ServerConfig.makeTest")(function* (
     otlpMetricsUrl: undefined,
     otlpExportIntervalMs: 10_000,
     otlpServiceName: "t3-server",
+    otlpHeaders: undefined,
     cwd,
     baseDir,
     ...derivedPaths,
