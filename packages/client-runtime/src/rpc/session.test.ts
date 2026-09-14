@@ -1057,6 +1057,37 @@ describe("RpcSessionFactory", () => {
       ),
   );
 
+  it.effect("rejects a server config for a different environment", () =>
+    Effect.gen(function* () {
+      const { factory, sockets } = yield* makeFactory();
+      const session = yield* factory.connect(PREPARED);
+      const readyFiber = yield* Effect.forkChild(Effect.flip(session.ready));
+      const configFiber = yield* session
+        .subscribeServerConfig({})
+        .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
+      const customConfigFiber = yield* session
+        .subscribeServerConfig({ environmentThemes: true })
+        .pipe(Stream.runHead, Effect.flip, Effect.forkChild);
+      const socket = yield* awaitSocket(sockets);
+      socket.open();
+      yield* completeInitialConfig(socket, {
+        ...ENCODED_SERVER_CONFIG,
+        environment: {
+          ...ENCODED_SERVER_CONFIG.environment,
+          environmentId: "environment-2",
+        },
+      });
+
+      const error = yield* Fiber.join(readyFiber);
+      expect(error).toMatchObject({
+        reason: "configuration",
+        message: "Connected environment environment-2 does not match environment-1.",
+      });
+      expect((yield* Fiber.join(configFiber))._tag).toBe("RpcClientError");
+      expect((yield* Fiber.join(customConfigFiber))._tag).toBe("RpcClientError");
+    }),
+  );
+
   it.effect("tolerates two missed pong windows before closing the session", () =>
     Effect.gen(function* () {
       const { factory, sockets } = yield* makeFactory();

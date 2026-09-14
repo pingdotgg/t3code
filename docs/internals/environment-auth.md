@@ -37,6 +37,25 @@ transaction](../../apps/server/src/persistence/AuthSessions.ts); a failed
 replacement must leave the old credential usable. Pairing and browser sessions
 do not follow this replacement rule.
 
+### Reusable dev credential
+
+Web development environments can accept one `T3CODE_DEV_AUTH_TOKEN` across
+worktrees and ports on one hostname. The token and startup URLs that contain it
+grant administrative access. Desktop and non-development servers ignore it. See
+the [development runbook](../operations/development.md#reusable-dev-credential)
+for setup.
+
+Each environment hashes the value and seeds its own database record at startup.
+Environments do not share SQLite data, signing keys, environment IDs, session
+records, pairing grants, or revocation state. Local revocation persists after
+restart and does not affect another worktree. Removing or rotating the value
+and restarting invalidates the old credential and its WebSocket tickets.
+
+Normal credentials keep precedence. A rejected normal credential never falls
+back to the reusable credential. OAuth exchanges create ordinary local bearer
+or DPoP children with normal expiry and revocation. The reusable cookie expires
+after 30 days.
+
 ## The environment is the filesystem boundary
 
 Projects are organizational boundaries, not filesystem sandboxes.
