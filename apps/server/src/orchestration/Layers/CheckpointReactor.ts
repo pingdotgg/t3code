@@ -604,6 +604,36 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const refreshWorktreeBranchFromMessage = Effect.fn("refreshWorktreeBranchFromMessage")(function* (
+    threadId: ThreadId,
+  ) {
+    const thread = yield* projectionSnapshotQuery
+      .getThreadShellById(threadId)
+      .pipe(Effect.map(Option.getOrUndefined));
+    if (!thread?.worktreePath) {
+      return;
+    }
+
+    const local = yield* vcsStatusBroadcaster.refreshLocalStatus(thread.worktreePath).pipe(
+      Effect.catch((error) =>
+        Effect.logWarning("failed to refresh worktree branch after message", {
+          threadId,
+          cwd: thread.worktreePath,
+          detail: error.message,
+        }).pipe(Effect.as(null)),
+      ),
+    );
+    if (local === null) {
+      return;
+    }
+
+    yield* followWorktreeBranchDrift({
+      threadId,
+      cwd: thread.worktreePath,
+      local,
+    });
+  });
+
   // Refreshing git status ends in a remote PR lookup under the vcs status
   // write lock. Run it on its own worker so file capture for this turn (and
   // checkpoints for other threads) never wait behind that network call.
@@ -821,6 +851,15 @@ const make = Effect.gen(function* () {
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (event: OrchestrationEvent) {
     if (event.type === "thread.turn-start-requested" || event.type === "thread.message-sent") {
       if (event.type === "thread.turn-start-requested") pending.add(event.payload.threadId);
+      if (
+        event.type === "thread.message-sent" &&
+        event.metadata.historyImport !== true &&
+        event.payload.role === "user" &&
+        !event.payload.streaming &&
+        event.payload.turnId === null
+      ) {
+        yield* refreshWorktreeBranchFromMessage(event.payload.threadId);
+      }
       yield* ensurePreTurnBaselineFromDomainTurnStart(event);
       return;
     }
