@@ -965,6 +965,7 @@ const buildAppUnderTest = (options?: {
               }),
             dispatch: () => Effect.succeed({ sequence: 0 }),
             streamDomainEvents: Stream.empty,
+            subscribeDomainEvents: Effect.succeed(Stream.empty),
             latestSequence: Effect.succeed(0),
             ...options?.layers?.orchestrationEngine,
           }),
@@ -4913,6 +4914,42 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.isUndefined(response.shellRevealInFileManager);
       assert.isUndefined(response.shellRevealInFileManagerKind);
       assert.equal(response.threadResumeCompletionMarker, true);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("keeps voice handlers alive after the authenticated WebSocket upgrade", () =>
+    Effect.gen(function* () {
+      const subscriptionClosed = yield* Deferred.make<void>();
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            subscribeDomainEvents: Effect.acquireRelease(Effect.succeed(Stream.empty), () =>
+              Deferred.succeed(subscriptionClosed, undefined),
+            ),
+          },
+        },
+      });
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            // A missing thread must reach validation on each request, before any API key
+            // lookup or network call. A prematurely finalized layer instead says closed.
+            for (let attempt = 0; attempt < 2; attempt++) {
+              const failure = yield* client[WS_METHODS.voiceStart]({
+                threadId: ThreadId.make("missing-voice-thread"),
+                sdp: "test-offer",
+              }).pipe(Effect.flip);
+              assert.equal(failure._tag, "VoiceError");
+              assert.include(failure.message, "Open an existing active thread");
+            }
+            const config = yield* client[WS_METHODS.serverGetConfig]({});
+            assert.equal(config.environment.environmentId, testEnvironmentDescriptor.environmentId);
+            assert.isFalse(yield* Deferred.isDone(subscriptionClosed));
+          }),
+        ),
+      );
+      yield* Deferred.await(subscriptionClosed);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

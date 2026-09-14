@@ -26,6 +26,7 @@ import {
   ClientSurface,
   ClientWebDeployment,
   CommandId,
+  MessageId,
   type DiscoveredLocalServerList,
   EventId,
   type EditorId,
@@ -73,13 +74,20 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
+  VoiceError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
-import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
+import {
+  HttpClient,
+  HttpRouter,
+  HttpServerRequest,
+  HttpServerRespondable,
+} from "effect/unstable/http";
 import { RpcSerialization, RpcServer } from "effect/unstable/rpc";
 
 import * as CheckpointDiffQuery from "./checkpointing/CheckpointDiffQuery.ts";
 import * as ServerConfig from "./config.ts";
+import { makeVoiceSession, makeVoiceTransport } from "./voice/VoiceSession.ts";
 import * as EnvironmentTheme from "./environmentTheme.ts";
 import * as Keybindings from "./keybindings.ts";
 import * as ExternalLauncher from "./process/externalLauncher.ts";
@@ -1271,6 +1279,73 @@ const makeWsRpcLayer = (
           );
       };
 
+      const loadVoiceThread = Effect.fn("VoiceSession.loadThread")(function* (threadId: ThreadId) {
+        const snapshot = yield* projectionSnapshotQuery.getThreadDetailSnapshot(threadId, {
+          turnLimit: 8,
+        });
+        if (
+          Option.isNone(snapshot) ||
+          snapshot.value.thread.deletedAt !== null ||
+          snapshot.value.thread.archivedAt !== null
+        ) {
+          return yield* new VoiceError({
+            message: "Open an existing active thread to start live voice.",
+          });
+        }
+        return snapshot.value.thread;
+      });
+      const voiceHttpClient = yield* HttpClient.HttpClient;
+      const voice = makeVoiceSession({
+        transport: makeVoiceTransport(voiceHttpClient),
+        context: (threadId) =>
+          Effect.runPromise(
+            loadVoiceThread(threadId).pipe(
+              Effect.map((thread) =>
+                JSON.stringify({
+                  title: thread.title.slice(0, 300),
+                  model: thread.modelSelection,
+                  state: thread.latestTurn?.state ?? "idle",
+                  messages: thread.messages
+                    .slice(-12)
+                    .map((message) => ({ role: message.role, text: message.text.slice(-500) })),
+                }),
+              ),
+            ),
+          ),
+        dispatch: (threadId, delegationId, prompt, signal) =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              const thread = yield* loadVoiceThread(threadId);
+              const command: OrchestrationCommand = {
+                type: "thread.turn.start",
+                commandId: CommandId.make(`voice:${currentSessionId}:${delegationId}`),
+                threadId,
+                message: {
+                  messageId: MessageId.make(`voice:${currentSessionId}:${delegationId}`),
+                  role: "user",
+                  text: prompt,
+                  attachments: [],
+                },
+                modelSelection: thread.modelSelection,
+                runtimeMode: thread.runtimeMode,
+                interactionMode: thread.interactionMode,
+                createdAt: yield* nowIso,
+              };
+              yield* dispatchNormalizedCommand(command);
+              yield* recordClientCommandAnalytics(command);
+            }),
+            { signal },
+          ),
+      });
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => voice.dispose()).pipe(Effect.ignoreCause),
+      );
+      const voiceEvents = yield* orchestrationEngine.subscribeDomainEvents;
+      yield* voiceEvents.pipe(
+        Stream.runForEach((event) => Effect.sync(() => voice.observe(event))),
+        Effect.forkScoped,
+      );
+
       // Only clients that answer /usage-limits themselves see it in the catalogs;
       // an older client would send the injected command to the provider.
       const loadServerConfig = (options: { readonly usageLimitsCommand: boolean }) =>
@@ -1339,6 +1414,25 @@ const makeWsRpcLayer = (
           .pipe(Effect.ignoreCause({ log: true }), Effect.forkDetach, Effect.asVoid);
 
       return WsRpcGroup.of({
+        [WS_METHODS.voiceStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceStart,
+            Effect.tryPromise({
+              try: (signal) => voice.start(input, signal),
+              catch: (cause) =>
+                new VoiceError({
+                  message: cause instanceof Error ? cause.message : "Could not start live voice.",
+                }),
+            }),
+          ),
+        [WS_METHODS.voiceStop]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.voiceStop,
+            Effect.tryPromise({
+              try: () => voice.stop(input.sessionId),
+              catch: () => new VoiceError({ message: "Could not confirm that live voice ended." }),
+            }),
+          ),
         [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command) =>
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
@@ -3152,9 +3246,18 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         const clientAnalyticsProps = readClientAnalyticsProps(request);
         yield* sessions.recordClientConnection(session.sessionId, clientOrigin);
         yield* analytics.record("client.connected", clientAnalyticsProps);
-        const rpcWebSocketHttpEffect = yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
+        return yield* RpcServer.toHttpEffectWebsocket(WsRpcGroup, {
           disableTracing: true,
         }).pipe(
+          // The factory returns an HTTP effect. Keep the handler layer alive while
+          // that effect serves the socket, rather than finalizing it after setup.
+          Effect.flatMap((rpcWebSocketHttpEffect) =>
+            Effect.acquireUseRelease(
+              sessions.markConnected(session.sessionId),
+              () => rpcWebSocketHttpEffect,
+              () => sessions.markDisconnected(session.sessionId),
+            ),
+          ),
           Effect.provide(
             makeWsRpcLayer(
               session,
@@ -3193,11 +3296,6 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               ),
             ),
           ),
-        );
-        return yield* Effect.acquireUseRelease(
-          sessions.markConnected(session.sessionId),
-          () => rpcWebSocketHttpEffect,
-          () => sessions.markDisconnected(session.sessionId),
         );
       }).pipe(
         Effect.catchTags({

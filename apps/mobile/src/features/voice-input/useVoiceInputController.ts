@@ -8,7 +8,7 @@ import {
 } from "expo-audio";
 import { File } from "expo-file-system";
 import { useFocusEffect } from "@react-navigation/native";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { AppState } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 
@@ -24,6 +24,10 @@ import {
   type VoiceInputState,
 } from "@t3tools/client-runtime/voice-input";
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
+import {
+  isLiveVoiceMicrophoneReserved,
+  subscribeLiveVoiceMicrophone,
+} from "../live-voice/microphoneReservation";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
 const VOICE_METERING_INTERVAL_MS = 80;
@@ -69,6 +73,11 @@ export function useVoiceInputController(input: {
   readonly onChangeDraftMessage: (value: string) => void;
   readonly onChangeSelection: (selection: ComposerEditorSelection) => void;
 }) {
+  const microphoneReserved = useSyncExternalStore(
+    subscribeLiveVoiceMicrophone,
+    isLiveVoiceMicrophoneReserved,
+    isLiveVoiceMicrophoneReserved,
+  );
   const [state, setState] = useState<VoiceInputState>(INITIAL_STATE);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const elapsedSecondsRef = useRef(0);
@@ -198,7 +207,8 @@ export function useVoiceInputController(input: {
   }, [audioLevels, controller, recorder, state.phase]);
 
   const start = useCallback(() => {
-    if (!latestInputRef.current.disabled) void controller.start();
+    if (!latestInputRef.current.disabled && !isLiveVoiceMicrophoneReserved())
+      void controller.start();
   }, [controller]);
   const stop = useCallback(() => controller.stop(), [controller]);
   const cancel = useCallback(() => controller.cancel(), [controller]);
@@ -206,7 +216,9 @@ export function useVoiceInputController(input: {
   return {
     // Store screenshots show the dictation button even on simulators, whose
     // on-device transcription is unavailable.
-    isAvailable: getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null,
+    isAvailable:
+      !microphoneReserved &&
+      (getLocalVoiceTranscriber() !== null || getNativeShowcaseScene() !== null),
     state,
     audioLevels,
     elapsedSeconds,

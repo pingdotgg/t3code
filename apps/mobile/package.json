@@ -46,6 +46,7 @@
   },
   "dependencies": {
     "@clerk/expo": "catalog:",
+    "@config-plugins/react-native-webrtc": "15.0.2",
     "@effect/atom-react": "catalog:",
     "@expo-google-fonts/dm-sans": "^0.4.2",
     "@expo/metro-runtime": "~57.0.14",
@@ -120,6 +121,7 @@
     "react-native-screens": "~4.26.0",
     "react-native-shiki-engine": "^0.3.12",
     "react-native-svg": "15.15.4",
+    "react-native-webrtc": "124.0.8",
     "react-native-webview": "^13.16.1",
     "react-native-worklets": "0.10.1",
     "shiki": "4.2.0",
