@@ -6,6 +6,7 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface PendingActionState {
@@ -291,7 +292,14 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   );
 
   if (!isRunning) {
-    return sendButton;
+    return showContinueInterruptedTurn ? (
+      <Tooltip>
+        <TooltipTrigger render={sendButton} />
+        <TooltipPopup side="top">Continue generation</TooltipPopup>
+      </Tooltip>
+    ) : (
+      sendButton
+    );
   }
 
   return (
