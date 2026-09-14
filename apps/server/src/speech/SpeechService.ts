@@ -213,9 +213,14 @@ export const make = Effect.gen(function* () {
     }
   };
 
-  const loadModel = async (signal = lifetime.signal) => {
+  const loadModel = async (signal = lifetime.signal, backend: "auto" | "cpu" = "auto") => {
     const definition = await selectedModel();
-    if (model && loadedModelId === definition.id) return model;
+    if (
+      model &&
+      loadedModelId === definition.id &&
+      (backend === "auto" || model.backend.toLowerCase() === "cpu")
+    )
+      return model;
     if (model) {
       await model.dispose();
       model = undefined;
@@ -225,7 +230,7 @@ export const make = Effect.gen(function* () {
       loading ??
       download(definition.id, signal)
         .then(async (modelPath) => {
-          const loaded = await loadNativeSpeechModel(modelPath, signal);
+          const loaded = await loadNativeSpeechModel(modelPath, signal, undefined, backend);
           if (closing) {
             await loaded.dispose();
             throw new SpeechBusyError({ operation: "model preparation" });
@@ -351,13 +356,15 @@ export const make = Effect.gen(function* () {
         await prepared.begin();
         return { prepared, durationMs: performance.now() - startedAt };
       });
-      const streamModel = preparation.prepared;
+      let streamModel = preparation.prepared;
       loaded = streamModel;
       yield* Effect.logInfo("Speech stream prepared", {
         backend: streamModel.backend,
         durationMs: Math.round(preparation.durationMs),
       });
       let byteLength = 0;
+      const received: Float32Array[] = [];
+      let usedCpuFallback = false;
       let busy = false;
       const run = <A>(work: () => Promise<A>) =>
         attempt(operation, async () => {
@@ -382,7 +389,26 @@ export const make = Effect.gen(function* () {
               });
             const pcm = decodeSpeechPcm(bytes, true);
             byteLength += bytes.byteLength;
-            return streamModel.feed(pcm);
+            received.push(pcm);
+            try {
+              return await streamModel.feed(pcm);
+            } catch (cause) {
+              if (usedCpuFallback || streamModel.backend.toLowerCase() === "cpu") throw cause;
+              usedCpuFallback = true;
+              await streamModel.dispose();
+              if (model === streamModel) {
+                model = undefined;
+                loadedModelId = undefined;
+                loading = undefined;
+              }
+              streamModel = await loadModel(signal, "cpu");
+              loaded = streamModel;
+              await streamModel.begin();
+              let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
+              for (const chunk of received) update = await streamModel.feed(chunk);
+              if (!update) throw cause;
+              return update;
+            }
           }),
         finish: run(async () => {
           const startedAt = performance.now();
@@ -437,17 +463,34 @@ export const make = Effect.gen(function* () {
           });
           const prepareDurationMs = performance.now() - prepareStartedAt;
           const inferenceStartedAt = performance.now();
-          const result = await loaded.transcribe(pcm, { timestamps: "none" }).catch((cause) => {
-            if (model === loaded) {
+          let inferenceModel = loaded;
+          let result: Awaited<ReturnType<LoadedModel["transcribe"]>>;
+          try {
+            result = await inferenceModel.transcribe(pcm, { timestamps: "none" });
+          } catch (cause) {
+            if (model === inferenceModel) {
               model = undefined;
               loadedModelId = undefined;
               loading = undefined;
             }
-            throw new SpeechOperationError({ operation: "inference", cause });
-          });
+            if (inferenceModel.backend.toLowerCase() === "cpu")
+              throw new SpeechOperationError({ operation: "inference", cause });
+            await inferenceModel.dispose();
+            inferenceModel = await loadModel(lifetime.signal, "cpu");
+            result = await inferenceModel
+              .transcribe(pcm, { timestamps: "none" })
+              .catch((fallbackCause) => {
+                if (model === inferenceModel) {
+                  model = undefined;
+                  loadedModelId = undefined;
+                  loading = undefined;
+                }
+                throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
+              });
+          }
           return {
             text: result.text.trim(),
-            backend: loaded.backend,
+            backend: inferenceModel.backend,
             prepareDurationMs,
             inferenceDurationMs: performance.now() - inferenceStartedAt,
           };

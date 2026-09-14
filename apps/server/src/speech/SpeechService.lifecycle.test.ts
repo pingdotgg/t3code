@@ -11,7 +11,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as SpeechService from "./SpeechService.ts";
 
 const native = vi.hoisted(() => ({
-  backend: "cpu",
+  backend: "Vulkan0",
   supportsStreaming: true,
   begin: vi.fn(async () => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
@@ -22,7 +22,19 @@ const native = vi.hoisted(() => ({
   dispose: vi.fn(),
   transcribe: vi.fn(async () => ({ text: "hello" })),
 }));
-const loadNative = vi.hoisted(() => vi.fn(async () => native));
+const loadNative = vi.hoisted(() =>
+  vi.fn(
+    async (
+      _path: string,
+      _signal: AbortSignal,
+      _moduleUrl?: string,
+      backend: "auto" | "cpu" = "auto",
+    ) => {
+      native.backend = backend === "cpu" ? "CPU" : "Vulkan0";
+      return native;
+    },
+  ),
+);
 const downloadModel = vi.hoisted(() =>
   vi.fn(async (_directory: string, _model: unknown, _signal?: AbortSignal) => "test.gguf"),
 );
@@ -71,6 +83,7 @@ const layer = SpeechService.layer.pipe(
 const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 beforeEach(() => {
   vi.clearAllMocks();
+  native.backend = "Vulkan0";
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
@@ -142,15 +155,31 @@ it.effect("preserves invalid PCM errors through the service boundary", () =>
     });
   }),
 );
-it.effect("reloads the native model after inference fails", () =>
+it.effect("retries accelerated inference on CPU after the native process fails", () =>
   Effect.gen(function* () {
     native.transcribe.mockRejectedValueOnce(new Error("worker stopped"));
     yield* Effect.gen(function* () {
       const speech = yield* SpeechService.SpeechService;
-      expect(Result.isFailure(yield* Effect.result(speech.transcribe(pcm())))).toBe(true);
       expect(yield* speech.transcribe(pcm())).toBe("hello");
       expect(loadNative).toHaveBeenCalledTimes(2);
+      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("replays streaming audio on CPU after an accelerated feed crashes", () =>
+  Effect.gen(function* () {
+    native.feed.mockRejectedValueOnce(new Error("worker stopped"));
+    yield* Effect.gen(function* () {
+      const speech = yield* SpeechService.SpeechService;
+      const stream = yield* speech.startStream;
+      expect((yield* stream.feed(pcm())).text).toEqual({ committed: "", tentative: "hello" });
+      expect(loadNative).toHaveBeenCalledTimes(2);
+      expect(loadNative.mock.calls[1]?.[3]).toBe("cpu");
+      expect(native.begin).toHaveBeenCalledTimes(2);
+      expect(native.feed).toHaveBeenCalledTimes(2);
+      yield* stream.finish;
+    }).pipe(Effect.scoped, Effect.provide(layer));
   }),
 );
 it.effect(

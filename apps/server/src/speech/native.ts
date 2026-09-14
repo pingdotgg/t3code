@@ -11,7 +11,7 @@ process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
       const { TranscribeModel } = await import(message.moduleUrl);
-      model = await TranscribeModel.load(message.path, { backend: "auto" });
+      model = await TranscribeModel.load(message.path, { backend: message.backend });
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
         supportsStreaming: model.capabilities.supportsStreaming });
     } else if (message.kind === "begin") {
@@ -60,6 +60,7 @@ export async function loadNativeSpeechModel(
   path: string,
   signal: AbortSignal,
   moduleUrl = import.meta.resolve("transcribe-cpp"),
+  requestedBackend: "auto" | "cpu" = "auto",
 ) {
   signal.throwIfAborted();
   const child = NodeChildProcess.spawn(process.execPath, ["--input-type=module", "-e", entry], {
@@ -125,7 +126,7 @@ export async function loadNativeSpeechModel(
   let supportsStreaming: boolean;
   let backend: string;
   try {
-    const loaded = await send({ kind: "load", path, moduleUrl });
+    const loaded = await send({ kind: "load", path, moduleUrl, backend: requestedBackend });
     supportsStreaming = loaded.supportsStreaming === true;
     backend = loaded.backend ?? "unknown";
   } catch (error) {
