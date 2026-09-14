@@ -595,6 +595,113 @@ export const layer = Layer.effect(
       (rows) => rows[0]?.max ?? 0,
     );
 
+    // Optimistic authorization precondition: a caller that authorized against
+    // a separately loaded row pins the values that check depended on; a drift
+    // (rebind or privilege change committed in between) must fail the write
+    // instead of mutating a row the caller never saw.
+    const taskMatchesExpected = (
+      input: {
+        readonly expectedProjectId?: ScheduledTask["projectId"] | undefined;
+        readonly expectedThreadId?: ThreadId | null | undefined;
+        readonly expectedRuntimeMode?: ScheduledTask["runtimeMode"] | undefined;
+        readonly expectedInteractionMode?: ScheduledTask["interactionMode"] | undefined;
+      },
+      existing: ScheduledTask,
+    ) =>
+      (input.expectedProjectId === undefined || existing.projectId === input.expectedProjectId) &&
+      (input.expectedThreadId === undefined || existing.threadId === input.expectedThreadId) &&
+      (input.expectedRuntimeMode === undefined ||
+        existing.runtimeMode === input.expectedRuntimeMode) &&
+      (input.expectedInteractionMode === undefined ||
+        existing.interactionMode === input.expectedInteractionMode);
+
+    // The modes a task's runs execute under for a given binding: a bound
+    // task runs under its destination thread's modes (sendToThread carries
+    // no override), an unbound task under its stored modes. A destination
+    // that is missing, deleted, or owned by another project can never accept
+    // a dispatch, so its residual privilege is the stored modes — matching
+    // the fallback the MCP authorization layer applies.
+    const bindingExecutionModes = Effect.fn("ScheduledTaskService.bindingExecutionModes")(
+      function* (input: {
+        readonly projectId: ScheduledTask["projectId"];
+        readonly threadId: ThreadId | null;
+        readonly task: Pick<ScheduledTask, "runtimeMode" | "interactionMode">;
+      }) {
+        const stored = {
+          runtimeMode: input.task.runtimeMode,
+          interactionMode: input.task.interactionMode,
+        } as const;
+        if (input.threadId === null) return stored;
+        const row = yield* boundThreadRow(input.threadId);
+        return row === undefined || row.deleted_at !== null || row.project_id !== input.projectId
+          ? stored
+          : {
+              runtimeMode: row.runtime_mode as ScheduledTask["runtimeMode"],
+              interactionMode: row.interaction_mode as ScheduledTask["interactionMode"],
+            };
+      },
+    );
+
+    // Authorization runs against a separately loaded snapshot; a caller pins
+    // the effective execution modes it was checked against, and the write
+    // re-resolves them inside the transaction so a concurrent destination
+    // mode change fails instead of elevating the task past the caller.
+    const hasExpectedExecutionModes = (input: {
+      readonly expectedExecutionRuntimeMode?: ScheduledTask["runtimeMode"] | undefined;
+      readonly expectedExecutionInteractionMode?: ScheduledTask["interactionMode"] | undefined;
+    }) =>
+      input.expectedExecutionRuntimeMode !== undefined ||
+      input.expectedExecutionInteractionMode !== undefined;
+
+    const ensureExpectedExecutionModes = (input: {
+      readonly taskId: ScheduledTaskId;
+      readonly projectId: ScheduledTask["projectId"];
+      readonly threadId: ThreadId | null;
+      readonly task: ScheduledTask;
+      readonly expectedExecutionRuntimeMode?: ScheduledTask["runtimeMode"] | undefined;
+      readonly expectedExecutionInteractionMode?: ScheduledTask["interactionMode"] | undefined;
+    }) =>
+      Effect.gen(function* () {
+        if (!hasExpectedExecutionModes(input)) return;
+        const modes = yield* bindingExecutionModes({
+          projectId: input.projectId,
+          threadId: input.threadId,
+          task: input.task,
+        });
+        if (
+          (input.expectedExecutionRuntimeMode !== undefined &&
+            modes.runtimeMode !== input.expectedExecutionRuntimeMode) ||
+          (input.expectedExecutionInteractionMode !== undefined &&
+            modes.interactionMode !== input.expectedExecutionInteractionMode)
+        ) {
+          return yield* taskError(
+            "Scheduled task changed since it was loaded; retry the operation.",
+            { taskId: input.taskId },
+          );
+        }
+      });
+
+    // "A committed archive on the task's bound thread postdates its stored
+    // enablement." When this holds, an explicit enable affirmation is a
+    // resume — the row stayed enabled only because the archive's pause is
+    // still queued — so the caller paths below restart next_run_at from
+    // now instead of keeping the overdue due time the voided enablement
+    // left behind.
+    const enablementInvalidatedByArchive = (input: {
+      readonly id: ScheduledTaskId;
+      readonly threadId: ThreadId | null;
+    }) =>
+      input.threadId === null
+        ? Effect.succeed(false)
+        : Effect.map(
+            sql`
+              SELECT 1 AS stale FROM scheduled_tasks
+              WHERE task_id = ${input.id} AND enabled = 1
+                AND ${staleArchiveCommitted(input.threadId)}
+            `,
+            (rows) => rows.length > 0,
+          );
+
     // Run-state columns (last_run_*, run_count) are intentionally absent from
     // the conflict clause: they are owned by the run transitions below, and a
     // concurrent settings save must not overwrite an in-flight increment.
@@ -1289,8 +1396,27 @@ export const layer = Layer.effect(
                   yield* requireThreadInProject(task.id, task.projectId, task.threadId);
                 }
               }
-              yield* saveTask(task, input.requireExisting === true);
-              return task;
+              // An enabled upsert that re-affirms an enablement a committed
+              // archive already voided (pause still queued) is a resume:
+              // restart the interval rather than preserving the stale due
+              // time scheduleUnchanged carried over. Invalidation is judged
+              // on the *stored* binding — that is the enablement the archive
+              // may have voided, not the replacement target's history.
+              const toSave =
+                task.enabled &&
+                existingTask !== null &&
+                existingTask.enabled &&
+                (yield* enablementInvalidatedByArchive({
+                  id: task.id,
+                  threadId: existingTask.threadId,
+                }))
+                  ? {
+                      ...task,
+                      nextRunAt: nextRunAt({ enabled: true, schedule: task.schedule }, now),
+                    }
+                  : task;
+              yield* saveTask(toSave, input.requireExisting === true);
+              return toSave;
             }),
           ),
         ).pipe(
@@ -1322,6 +1448,15 @@ export const layer = Layer.effect(
               const row = rows[0];
               if (row === undefined) return null;
               const existing = yield* decodeRow(row);
+              // The caller authorized against a separately loaded row; if a
+              // rebind or privilege change landed since, the write must fail
+              // rather than apply to a row the check never saw.
+              if (!taskMatchesExpected(input, existing)) {
+                return yield* taskError(
+                  "Scheduled task changed since it was loaded; retry the operation.",
+                  { taskId: input.id },
+                );
+              }
               const nextEnabled = input.enabled ?? existing.enabled;
               const nextSchedule = input.schedule ?? existing.schedule;
               const nextThreadId =
@@ -1338,6 +1473,25 @@ export const layer = Layer.effect(
                   yield* requireThreadInProject(input.id, nextProjectId, nextThreadId);
                 }
               }
+              // The modes governing runs under the post-update binding are
+              // re-resolved here — a destination's mode change committed
+              // since the caller's authorization must fail the write, not
+              // silently elevate the task. The destination lives under the
+              // post-move project.
+              yield* ensureExpectedExecutionModes({
+                taskId: input.id,
+                projectId: nextProjectId,
+                threadId: nextThreadId,
+                task: existing,
+                ...(input.expectedExecutionRuntimeMode === undefined
+                  ? {}
+                  : { expectedExecutionRuntimeMode: input.expectedExecutionRuntimeMode }),
+                ...(input.expectedExecutionInteractionMode === undefined
+                  ? {}
+                  : {
+                      expectedExecutionInteractionMode: input.expectedExecutionInteractionMode,
+                    }),
+              });
               // An enabled task must additionally reject an archived (or
               // otherwise undispatchable) destination — including on edits
               // that leave the binding untouched, so a concurrent enable
@@ -1368,19 +1522,43 @@ export const layer = Layer.effect(
               if (input.nextProjectId !== undefined) patch.project_id = input.nextProjectId;
               if (Object.keys(patch).length === 0) return existing;
               const now = yield* localNow;
+              // An enabled row whose stored enablement a committed archive
+              // already voided (pause still queued) holds an overdue due
+              // time. Any update that escapes that pause — an explicit
+              // enabled:true re-affirmation, or a rebind/unbind that
+              // refreshes the watermark — is a resume: restart the interval
+              // rather than firing the stale due time. Invalidation is
+              // judged on the *stored* binding: an archive on the
+              // replacement thread says nothing about whether this task's
+              // enablement survived, and a move off a voided binding must
+              // not smuggle the overdue due time onto the new thread.
+              const resumeAfterArchive =
+                existing.enabled &&
+                nextEnabled &&
+                (input.enabled === true || nextThreadId !== existing.threadId) &&
+                (yield* enablementInvalidatedByArchive({
+                  id: input.id,
+                  threadId: existing.threadId,
+                }));
               // Mirror the upsert rule: only a real schedule/enabled change
               // restarts the run clock — other edits retain the pending due
               // time.
               if (input.enabled !== undefined || input.schedule !== undefined) {
                 if (
                   nextEnabled !== existing.enabled ||
-                  !isSameSchedule(existing.schedule, nextSchedule)
+                  !isSameSchedule(existing.schedule, nextSchedule) ||
+                  resumeAfterArchive
                 ) {
                   patch.next_run_at = nextRunAt(
                     { enabled: nextEnabled, schedule: nextSchedule },
                     now,
                   );
                 }
+              } else if (resumeAfterArchive) {
+                patch.next_run_at = nextRunAt(
+                  { enabled: nextEnabled, schedule: nextSchedule },
+                  now,
+                );
               }
               patch.updated_at = iso(now);
               const clauses = [sql`task_id = ${input.id}`, sql`project_id = ${input.projectId}`];
@@ -1486,9 +1664,36 @@ export const layer = Layer.effect(
                 // archive event is still queued, and the delayed pause must
                 // not undo an enable the user asked for after the unarchive.
                 if (input.enabled) {
+                  const enabledSeq = yield* latestEventSeq;
+                  if (yield* enablementInvalidatedByArchive(existing)) {
+                    // The stored enablement was already voided by that
+                    // committed archive — this affirmation is a resume, so
+                    // the interval restarts from now instead of firing the
+                    // overdue due time the voided enablement left behind.
+                    const now = yield* localNow;
+                    const next = nextRunAt({ enabled: true, schedule: existing.schedule }, now);
+                    yield* sql`
+                      UPDATE scheduled_tasks
+                      SET enabled_seq = ${enabledSeq},
+                          next_run_at = ${next},
+                          updated_at = ${iso(now)}
+                      WHERE task_id = ${input.id} AND enabled = 1
+                    `.pipe(
+                      Effect.mapError((cause) =>
+                        taskError("Could not update schedule task.", {
+                          taskId: input.id,
+                          cause,
+                        }),
+                      ),
+                    );
+                    return {
+                      task: { ...existing, nextRunAt: next, updatedAt: iso(now) },
+                      changed: true,
+                    } as const;
+                  }
                   yield* sql`
                     UPDATE scheduled_tasks
-                    SET enabled_seq = ${yield* latestEventSeq}
+                    SET enabled_seq = ${enabledSeq}
                     WHERE task_id = ${input.id} AND enabled = 1
                   `.pipe(
                     Effect.mapError((cause) =>
@@ -1557,7 +1762,50 @@ export const layer = Layer.effect(
       });
 
     const deleteTask: ScheduledTaskService["Service"]["delete"] = (input) =>
-      deleteRow(input.id).pipe(Effect.andThen(notifyChanged), Effect.as({ id: input.id }));
+      Effect.gen(function* () {
+        // Read and delete share one transaction so the expected* preconditions
+        // pin the row the caller authorized, not a concurrently drifted one.
+        yield* retryContended(
+          sql
+            .withTransaction(
+              Effect.gen(function* () {
+                const existing = yield* findTask(input.id);
+                if (existing !== null && !taskMatchesExpected(input, existing)) {
+                  return yield* taskError(
+                    "Scheduled task changed since it was loaded; retry the operation.",
+                    { taskId: input.id },
+                  );
+                }
+                if (existing !== null) {
+                  yield* ensureExpectedExecutionModes({
+                    taskId: input.id,
+                    projectId: existing.projectId,
+                    threadId: existing.threadId,
+                    task: existing,
+                    ...(input.expectedExecutionRuntimeMode === undefined
+                      ? {}
+                      : { expectedExecutionRuntimeMode: input.expectedExecutionRuntimeMode }),
+                    ...(input.expectedExecutionInteractionMode === undefined
+                      ? {}
+                      : {
+                          expectedExecutionInteractionMode: input.expectedExecutionInteractionMode,
+                        }),
+                  });
+                }
+                yield* deleteRow(input.id);
+              }),
+            )
+            .pipe(
+              Effect.mapError((cause) =>
+                isScheduledTaskError(cause)
+                  ? cause
+                  : taskError("Could not delete schedule task.", { taskId: input.id, cause }),
+              ),
+            ),
+        );
+        yield* notifyChanged;
+        return { id: input.id };
+      });
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {

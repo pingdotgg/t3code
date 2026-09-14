@@ -161,6 +161,20 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   modelSelection: Schema.optional(ModelSelection),
   /** Moves the task to another project; `projectId` stays the lookup scope. */
   nextProjectId: Schema.optional(ProjectId),
+  // Optimistic preconditions evaluated inside the write transaction: when
+  // provided, the update is rejected if the stored row no longer matches.
+  // Authorization evaluated against a separately loaded copy stays pinned to
+  // the row the write actually applies to.
+  expectedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
+  // The modes the task's runs will execute under after this mutation — the
+  // post-update destination thread's modes when bound, the task's stored
+  // modes when unbound. Re-resolved inside the transaction so a concurrent
+  // destination-mode change fails the write rather than elevating past the
+  // caller's authorization.
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
@@ -173,6 +187,15 @@ export type ScheduledTaskSetEnabledInput = typeof ScheduledTaskSetEnabledInput.T
 
 export const ScheduledTaskDeleteInput = Schema.Struct({
   id: ScheduledTaskId,
+  // Same optimistic preconditions as update: enforced inside the transaction
+  // so a delete authorized against a stale row cannot hit a drifted one —
+  // including a task moved to another project after the caller's scoped load.
+  expectedProjectId: Schema.optional(ProjectId),
+  expectedThreadId: Schema.optional(Schema.NullOr(ThreadId)),
+  expectedRuntimeMode: Schema.optional(RuntimeMode),
+  expectedInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 

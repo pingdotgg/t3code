@@ -1097,11 +1097,94 @@ const make = Effect.gen(function* () {
       return task;
     });
 
+  // Schedule mutations arm work that later executes unattended with the
+  // task's stored runtime/interaction modes, so they get the same caller
+  // authorization as delegation and thread sends: the caller must own a
+  // live run, and the task's execution modes must not exceed the caller's
+  // — otherwise a restricted caller could re-enable or rewrite a task that
+  // fires with settings the caller itself could never run with.
+  const requireActiveParentRun = (
+    scope: McpInvocationScope,
+    parent: OrchestrationV2ThreadProjection,
+  ) => {
+    const parentRun = parent.runs
+      .filter(isActiveRun)
+      .toSorted((left, right) => right.ordinal - left.ordinal)[0];
+    return parentRun === undefined ||
+      parentRun.rootNodeId === null ||
+      parentRun.providerInstanceId !== scope.providerInstanceId
+      ? Effect.fail(
+          failure(
+            "parent_not_active",
+            "Scheduled-task changes require an active run owned by this MCP provider session.",
+          ),
+        )
+      : Effect.void;
+  };
+
+  const requireTaskModeAccess = (
+    parent: OrchestrationV2ThreadProjection,
+    modes: Pick<ScheduledTask, "runtimeMode" | "interactionMode">,
+  ) =>
+    resolveRuntimeMode(parent.thread.runtimeMode, modes.runtimeMode).pipe(
+      Effect.andThen(resolveInteractionMode(parent.thread.interactionMode, modes.interactionMode)),
+      Effect.asVoid,
+    );
+
+  // A bound task runs under its *destination* thread's modes — sendToThread
+  // carries no runtime/interaction override — while an unbound task launches
+  // a fresh thread under the task's stored modes. Authorization therefore
+  // compares the caller against whichever modes govern the next run,
+  // resolved for the binding the mutation leaves in place.
+  const scheduledTaskExecutionModes = (
+    scope: McpInvocationScope,
+    parent: OrchestrationV2ThreadProjection,
+    task: Pick<ScheduledTask, "threadId" | "runtimeMode" | "interactionMode">,
+    bindToCurrentThread: boolean | undefined,
+  ): Effect.Effect<
+    Pick<ScheduledTask, "runtimeMode" | "interactionMode">,
+    OrchestratorMcpFailure
+  > =>
+    Effect.gen(function* () {
+      const destinationId =
+        bindToCurrentThread === true
+          ? scope.threadId
+          : bindToCurrentThread === false
+            ? null
+            : task.threadId;
+      if (destinationId === null || destinationId === scope.threadId) {
+        return destinationId === null
+          ? { runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }
+          : {
+              runtimeMode: parent.thread.runtimeMode,
+              interactionMode: parent.thread.interactionMode,
+            };
+      }
+      const shell = yield* threadManagement
+        .getThreadShell(destinationId)
+        .pipe(
+          Effect.mapError((error) =>
+            failure(
+              "orchestration_error",
+              `Unable to read thread ${destinationId}: ${errorMessage(error)}`,
+            ),
+          ),
+        );
+      // A missing or cross-project shell can never accept the run, so the
+      // residual privilege is the task's stored modes once rebound.
+      return shell === null || shell.projectId !== parent.thread.projectId
+        ? { runtimeMode: task.runtimeMode, interactionMode: task.interactionMode }
+        : { runtimeMode: shell.runtimeMode, interactionMode: shell.interactionMode };
+    });
+
   return OrchestratorMcpService.of({
     scheduleTask: (scope, input) =>
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        // The new task inherits this thread's runtime/interaction modes, so
+        // the only additional requirement is a live caller-owned run.
+        yield* requireActiveParentRun(scope, parent);
         const bindToCurrentThread = input.bindToCurrentThread ?? true;
         const derivedTitle = input.prompt.split("\n")[0]?.trim() ?? "";
         const title =
@@ -1162,14 +1245,39 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        yield* requireActiveParentRun(scope, parent);
+        const existing = yield* loadScopedScheduledTask(
+          parent.thread.projectId,
+          input.scheduledTaskId,
+        );
+        // The modes that will govern the task's next run — its bound
+        // destination thread's, or its stored modes once unbound — must not
+        // exceed the caller's, or a restricted caller could arm work it could
+        // never dispatch directly.
+        const executionModes = yield* scheduledTaskExecutionModes(
+          scope,
+          parent,
+          existing,
+          input.bindToCurrentThread,
+        );
+        yield* requireTaskModeAccess(parent, executionModes);
         // Atomic scoped partial update: only the fields the caller provided
         // are written, and only while the task still exists in this project.
         // A delete racing the edit surfaces as task_not_found instead of the
-        // task being resurrected by a stale full-row upsert.
+        // task being resurrected by a stale full-row upsert. The expected*
+        // fields pin the row this authorization ran against: a concurrent
+        // rebind or mode change between the lookup and the write transaction
+        // fails the update instead of mutating a privileged row the caller
+        // never saw.
         const updated = yield* scheduledTasks
           .update({
             id: input.scheduledTaskId,
             projectId: parent.thread.projectId,
+            expectedThreadId: existing.threadId,
+            expectedRuntimeMode: existing.runtimeMode,
+            expectedInteractionMode: existing.interactionMode,
+            expectedExecutionRuntimeMode: executionModes.runtimeMode,
+            expectedExecutionInteractionMode: executionModes.interactionMode,
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -1201,12 +1309,28 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
+        yield* requireActiveParentRun(scope, parent);
         const existing = yield* loadScopedScheduledTask(
           parent.thread.projectId,
           input.scheduledTaskId,
         );
+        const executionModes = yield* scheduledTaskExecutionModes(
+          scope,
+          parent,
+          existing,
+          undefined,
+        );
+        yield* requireTaskModeAccess(parent, executionModes);
         yield* scheduledTasks
-          .delete({ id: existing.id })
+          .delete({
+            id: existing.id,
+            expectedProjectId: existing.projectId,
+            expectedThreadId: existing.threadId,
+            expectedRuntimeMode: existing.runtimeMode,
+            expectedInteractionMode: existing.interactionMode,
+            expectedExecutionRuntimeMode: executionModes.runtimeMode,
+            expectedExecutionInteractionMode: executionModes.interactionMode,
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not delete scheduled task: ${error.message}`),
