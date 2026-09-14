@@ -49,7 +49,7 @@ import * as Order from "effect/Order";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { cn } from "../../lib/cn";
 
-import { useProjects, useServerConfigs } from "../../state/entities";
+import { useProjects, useServerConfigs, waitForProject } from "../../state/entities";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
@@ -972,10 +972,15 @@ export function AddProjectDestinationScreen(props: {
       if (AsyncResult.isFailure(startResult)) {
         setError(errorMessage(Cause.squash(startResult.cause)));
       } else {
+        // The create event usually lands before the RPC returns; give the
+        // shell stream a moment so the draft opens on the new project rather
+        // than falling back to its picker.
+        await waitForProject({ environmentId: environment.environmentId, projectId }, 3_000);
         openNewTaskDraft(navigation, {
           environmentId: environment.environmentId,
           projectId,
           title,
+          cloning: "1",
         });
       }
       setIsSubmitting(false);
