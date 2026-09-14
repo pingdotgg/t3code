@@ -8113,12 +8113,30 @@ export default function ChatView(props: ChatViewProps) {
   // user resolves them.
   const queueBlockedByPendingRequest =
     activePendingApproval !== null || pendingUserInputs.length > 0;
+  // onSend bails early on transient gates (environment offline, settings not
+  // hydrated, checkpoint rewinding, messages loading, machine not chosen) and
+  // leaves the message queued. Re-run when any of them clear so a due message
+  // does not wait for an unrelated phase change.
+  const queueSendGate =
+    activeEnvironmentUnavailable ||
+    !clientSettingsHydrated ||
+    isRevertingCheckpoint ||
+    threadDetailLoading ||
+    needsLoadBalancing ||
+    activeProviderStatus === null;
   useEffect(() => {
-    if (!nextQueuedMessage || isSendBusy || queueBlockedByPendingRequest) return;
+    if (!nextQueuedMessage || isSendBusy || queueBlockedByPendingRequest || queueSendGate) return;
     if (sendInFlightRef.current) return;
     if (!isQueuedMessageDue({ message: nextQueuedMessage, phase, latestToolActivityId })) return;
     sendQueuedMessage(nextQueuedMessage);
-  }, [isSendBusy, latestToolActivityId, nextQueuedMessage, phase, queueBlockedByPendingRequest]);
+  }, [
+    isSendBusy,
+    latestToolActivityId,
+    nextQueuedMessage,
+    phase,
+    queueBlockedByPendingRequest,
+    queueSendGate,
+  ]);
 
   const onSteerQueuedMessage = (id: string) => {
     const message = queuedMessages.find((entry) => entry.id === id);
