@@ -4077,6 +4077,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ) {
         // Keep snapshot replacement and page-watermark merges at their event
         // positions. Ordinary replay batches share one legacy sync publication.
+        let previousSequence = activeThreadSequence
         let needsIndividualUpdates = items.count == 1 || activeRawThread == nil
             || pendingOlderThreadPage != nil || items.contains { item in
                 switch item {
@@ -4093,7 +4094,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 synchronizeLegacy: needsIndividualUpdates
             )
         }
-        if !needsIndividualUpdates,
+        if !needsIndividualUpdates, activeThreadSequence != previousSequence,
            serverConfigsByEnvironmentID[route.environmentID]?.threadResumeCompletionMarker != true {
             markDetailSynchronized(route)
         }
