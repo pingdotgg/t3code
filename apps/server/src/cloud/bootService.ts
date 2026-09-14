@@ -56,6 +56,28 @@ function quoteSystemdValue(value: string): string {
     : escaped;
 }
 
+/**
+ * Reads `T3CODE_HOME` back out of a rendered unit or plist. Only values this
+ * file writes are expected, so a quoted systemd value is unquoted and
+ * unescaped the same way `quoteSystemdValue` produced it.
+ */
+export function bootServiceBaseDirOf(contents: string): string | undefined {
+  const systemd = /^Environment=T3CODE_HOME=(.*)$/m.exec(contents)?.[1];
+  if (systemd !== undefined) {
+    const raw = systemd.trim();
+    const unquoted =
+      raw.startsWith('"') && raw.endsWith('"')
+        ? raw.slice(1, -1).replaceAll('\\"', '"').replaceAll("\\\\", "\\")
+        : raw;
+    return unquoted.replaceAll("%%", "%");
+  }
+  const plist = /<key>T3CODE_HOME<\/key>\s*<string>([^<]*)<\/string>/.exec(contents)?.[1];
+  if (plist !== undefined) {
+    return plist.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
+  }
+  return undefined;
+}
+
 export interface BootServicePlan {
   /**
    * What the service manager executes. npm-distributed runtimes run the
@@ -486,6 +508,13 @@ export interface BootServiceStatus {
   readonly installed: boolean;
   readonly current: boolean;
   readonly installedVersion?: string;
+  /**
+   * The T3 home the installed unit serves. The unit name is fixed per user,
+   * so a caller working against another base dir must not treat this service
+   * as its own; `t3 update --base-dir` learned that by restarting the live
+   * server of the machine it ran on.
+   */
+  readonly installedBaseDir?: string;
   readonly problems?: ReadonlyArray<BootServiceProblem>;
   readonly unitPath: string;
   readonly logPath: string;
@@ -876,6 +905,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installedVersion = Option.isSome(stateText)
       ? serviceStateActiveVersion(stateText.value)
       : undefined;
+    const installedBaseDir = bootServiceBaseDirOf(unit);
     const normalizeUnit = (contents: string) =>
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
@@ -885,6 +915,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       supported: true,
       installed: true,
       ...(installedVersion === undefined ? {} : { installedVersion }),
+      ...(installedBaseDir === undefined ? {} : { installedBaseDir }),
       problems,
       current:
         problems.length === 0 &&

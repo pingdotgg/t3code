@@ -62,6 +62,25 @@ describe("serverRuntimeState", () => {
     }),
   );
 
+  it.effect("marks a service-supervised server so CLIs can tell it from a manual one", () =>
+    Effect.gen(function* () {
+      const managed = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 13_773,
+        serviceManaged: true,
+      });
+      const manual = yield* ServerRuntimeState.makePersistedServerRuntimeState({
+        config: { host: undefined, devUrl: undefined },
+        port: 13_773,
+      });
+
+      assert.isTrue(managed.serviceManaged);
+      // Older readers decode the file without the field, so it is omitted
+      // rather than written as false.
+      assert.isFalse("serviceManaged" in manual);
+    }),
+  );
+
   it.effect("treats a missing runtime state file as absent", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;

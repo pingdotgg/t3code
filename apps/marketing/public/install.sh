@@ -5,7 +5,9 @@
 #   curl -fsSL https://t3.codes/install.sh | sh
 #
 # Environment:
-#   T3CODE_VERSION           exact version to install (default: latest preview release)
+#   T3CODE_CHANNEL           release train to follow: stable, nightly, or preview
+#                            (default: stable; preview is a maintainers' test train)
+#   T3CODE_VERSION           exact version to install (overrides T3CODE_CHANNEL)
 #   T3CODE_HOME              T3 home directory (default: ~/.t3)
 #   T3CODE_INSTALL_BIN_DIR   where the `t3` symlink goes (default: ~/.local/bin)
 #   T3CODE_RELEASE_BASE_URL  mirror for releases/download (default: GitHub)
@@ -25,11 +27,19 @@ fail() {
   exit 1
 }
 
+# Exit 44 on a 404 so callers can tell "no such asset" from a network failure.
 fetch() {
   if command -v curl >/dev/null 2>&1; then
-    curl -fsSL "$1" -o "$2"
+    status="$(curl -sSL -w '%{http_code}' "$1" -o "$2")" || return 1
+    case "$status" in
+      2??) return 0 ;;
+      404) return 44 ;;
+      *) printf 'GET %s returned HTTP %s\n' "$1" "$status" >&2; return 1 ;;
+    esac
   elif command -v wget >/dev/null 2>&1; then
-    wget -q "$1" -O "$2"
+    wget -q --server-response "$1" -O "$2" 2>"$2.headers" && rm -f "$2.headers" && return 0
+    if grep -q ' 404 ' "$2.headers" 2>/dev/null; then rm -f "$2.headers"; return 44; fi
+    cat "$2.headers" >&2; rm -f "$2.headers"; return 1
   else
     fail "curl or wget is required"
   fi
@@ -54,15 +64,35 @@ else
   fail "sha256sum or shasum is required"
 fi
 
+channel="${T3CODE_CHANNEL:-stable}"
 version="${T3CODE_VERSION:-}"
 if [ -z "$version" ]; then
-  # Preview is the only train shipping archives while they are being dogfooded.
+  # Tags are v<semver>; the channel is the prerelease identifier, or none for
+  # stable. Only tags of the requested train are considered, so a stable
+  # install can never pick up a nightly or preview build by accident.
+  case "$channel" in
+    stable) tag_pattern='v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)' ;;
+    nightly | preview) tag_pattern="v\([0-9][^\"]*-${channel}\.[0-9]*\.[0-9]*\)" ;;
+    *) fail "T3CODE_CHANNEL must be stable, nightly, or preview" ;;
+  esac
   tmp_index="$(mktemp)"
-  fetch "https://api.github.com/repos/${repo}/releases?per_page=50" "$tmp_index"
-  version="$(sed -n 's/.*"tag_name": *"v\([0-9][^"]*-preview\.[0-9]*\.[0-9]*\)".*/\1/p' "$tmp_index" | head -n 1)"
+  fetch "https://api.github.com/repos/${repo}/releases?per_page=100" "$tmp_index"
+  version="$(sed -n "s/.*\"tag_name\": *\"${tag_pattern}\".*/\1/p" "$tmp_index" | head -n 1)"
   rm -f "$tmp_index"
-  [ -n "$version" ] || fail "could not find a preview release; set T3CODE_VERSION"
+  [ -n "$version" ] || fail "could not find a ${channel} release; set T3CODE_VERSION"
 fi
+case "$version" in
+  *-preview.*)
+    printf '%s\n' \
+      "t3 ${version} is a preview build." \
+      "  Preview builds are cut by maintainers from unreleased branches to exercise the release" \
+      "  pipeline. They can be broken, receive no fixes, and are never offered as updates." \
+      "  Set T3CODE_CHANNEL=stable (the default) for a supported build." >&2
+    if [ "$channel" != "preview" ] && [ -z "${T3CODE_VERSION:-}" ]; then
+      fail "refusing a preview build that was not explicitly requested"
+    fi
+    ;;
+esac
 
 stem="t3-${version}-${platform}-${arch}"
 archive="${stem}.tar.gz"
@@ -77,7 +107,13 @@ else
   trap 'rm -rf "$staging"' EXIT
 
   printf 'Downloading %s...\n' "$archive"
-  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS"
+  fetch_status=0
+  fetch "${base_url}/v${version}/SHA256SUMS" "${staging}/SHA256SUMS" || fetch_status=$?
+  if [ "$fetch_status" -eq 44 ]; then
+    fail "t3 ${version} has no self-contained archive; install it with \`npm install -g t3@${version}\` instead"
+  elif [ "$fetch_status" -ne 0 ]; then
+    fail "could not download the release checksums"
+  fi
   fetch "${base_url}/v${version}/${archive}" "${staging}/${archive}"
 
   expected="$(grep " \*\{0,1\}${archive}\$" "${staging}/SHA256SUMS" | cut -d' ' -f1)"
