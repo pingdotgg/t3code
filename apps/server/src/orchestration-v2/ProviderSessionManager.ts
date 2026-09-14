@@ -422,67 +422,101 @@ export const layerWithOptions = (
       // being created.
       interface InflightDetach {
         readonly providerSessionId: ProviderSessionId;
+        readonly threadId: ThreadId;
         readonly detached: Deferred.Deferred<void, never>;
+        // Captured once the detach's body resolves which instance's entry it
+        // is detaching from: the maps can re-resolve the session id to a
+        // same-id replacement owned by another instance, so drain attribution
+        // reads what the detach observed, not what owns the key now.
+        instanceId: ProviderInstanceId | undefined;
+        // Published when the detach registers its tracked sweep. The record
+        // leaves pendingRevocations on settle, so a tail that registers and
+        // finishes while teardown is draining this marker is joined through
+        // this deferred instead.
+        revokeDone: Deferred.Deferred<void, ProviderSessionReleaseError> | undefined;
       }
       const inflightDetaches = new Set<InflightDetach>();
-      // Drains in-flight detaches that may still register a matching sweep
-      // (each marker awaited once, bounded like every cleanup wait), then
-      // joins every unfinished revocation record matching `owned` — repeating
-      // until a pass finds no new records and no un-awaited markers, so a tail
-      // registered while the previous pass was joining is still awaited rather
-      // than left running past teardown. A marker that outlives its own bound
-      // is not awaited again: its detach is already past the contract, and
-      // re-waiting would make teardown unbounded.
+      // Joins every unfinished revocation record matching `owned` and drains
+      // in-flight detaches that may still register a matching sweep — a tail
+      // registered while an earlier pass was joining is still awaited rather
+      // than left running past teardown. Each marker is awaited at most once:
+      // one that outlives its bound is reported through `awaitInflight`, not
+      // re-waited — the detach is already past the contract and re-waiting
+      // would make teardown unbounded. Every pass collects records, markers,
+      // and published tails in one synchronous stretch before deciding, so
+      // nothing can register between the last scan and the return.
       const joinTrackedRevocations = (
         owned: (record: PendingRevocation) => boolean,
         join: (
           threadId: ThreadId,
-          record: PendingRevocation,
+          done: Deferred.Deferred<void, ProviderSessionReleaseError>,
         ) => Effect.Effect<void, ProviderSessionReleaseError>,
+        awaitInflight: (marker: InflightDetach) => Effect.Effect<void, ProviderSessionReleaseError>,
         ownsInflight: (
-          providerSessionId: ProviderSessionId,
+          marker: InflightDetach,
           live: ReadonlyMap<string, LiveSessionEntry>,
         ) => boolean,
       ) =>
         Effect.gen(function* () {
           const outcomes: Array<Exit.Exit<void, ProviderSessionReleaseError>> = [];
-          const joined = new Set<PendingRevocation>();
+          const joined = new Set<Deferred.Deferred<void, ProviderSessionReleaseError>>();
           const awaited = new Set<InflightDetach>();
           for (;;) {
             const live = yield* Ref.get(sessions);
-            const pending = [...inflightDetaches].filter(
-              (marker) => !awaited.has(marker) && ownsInflight(marker.providerSessionId, live),
-            );
-            for (const marker of pending) awaited.add(marker);
-            yield* Effect.forEach(
-              pending,
-              (marker) =>
-                Deferred.await(marker.detached).pipe(
-                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-                  Effect.ignore,
-                ),
-              { concurrency: "unbounded", discard: true },
-            );
-            const fresh: Array<readonly [ThreadId, PendingRevocation]> = [];
+            const fresh: Array<
+              readonly [ThreadId, Deferred.Deferred<void, ProviderSessionReleaseError>]
+            > = [];
             for (const [threadId, record] of pendingRevocations) {
               for (
                 let current: PendingRevocation | undefined = record;
                 current !== undefined;
                 current = current.predecessor
               ) {
-                if (!current.settled && !joined.has(current) && owned(current)) {
-                  joined.add(current);
-                  fresh.push([threadId, current]);
+                if (!current.settled && owned(current) && !joined.has(current.done)) {
+                  joined.add(current.done);
+                  fresh.push([threadId, current.done]);
                 }
               }
             }
-            if (fresh.length === 0 && pending.length === 0) return outcomes;
-            const pass = yield* Effect.forEach(
-              fresh,
-              ([threadId, record]) => join(threadId, record).pipe(Effect.exit),
-              { concurrency: "unbounded" },
-            );
+            const pending: Array<InflightDetach> = [];
+            const lateTails: Array<
+              readonly [ThreadId, Deferred.Deferred<void, ProviderSessionReleaseError>]
+            > = [];
+            for (const marker of inflightDetaches) {
+              if (!ownsInflight(marker, live)) continue;
+              if (!awaited.has(marker)) {
+                awaited.add(marker);
+                pending.push(marker);
+              }
+              const tail = marker.revokeDone;
+              if (tail !== undefined && !joined.has(tail)) {
+                joined.add(tail);
+                lateTails.push([marker.threadId, tail]);
+              }
+            }
+            if (fresh.length === 0 && pending.length === 0 && lateTails.length === 0) {
+              return outcomes;
+            }
+            const joins: Array<Effect.Effect<Exit.Exit<void, ProviderSessionReleaseError>>> = [
+              ...[...fresh, ...lateTails].map(([threadId, done]) =>
+                join(threadId, done).pipe(Effect.exit),
+              ),
+              ...pending.map((marker) => awaitInflight(marker).pipe(Effect.exit)),
+            ];
+            const pass = yield* Effect.all(joins, { concurrency: "unbounded" });
             outcomes.push(...pass);
+            // A marker that just exited published its tail at most once; join
+            // it here, while the detach's completion has made the field final.
+            const tailJoins: Array<Effect.Effect<Exit.Exit<void, ProviderSessionReleaseError>>> =
+              [];
+            for (const marker of pending) {
+              const tail = marker.revokeDone;
+              if (tail !== undefined && !joined.has(tail)) {
+                joined.add(tail);
+                tailJoins.push(join(marker.threadId, tail).pipe(Effect.exit));
+              }
+            }
+            outcomes.push(...(yield* Effect.all(tailJoins, { concurrency: "unbounded" })));
           }
         });
       const forkTrackedRevocation = <E>(
@@ -2626,8 +2660,8 @@ export const layerWithOptions = (
             // inside its lock can register a tail after a single snapshot.
             joinTrackedRevocations(
               () => true,
-              (threadId, record) =>
-                Deferred.await(record.done).pipe(
+              (threadId, done) =>
+                Deferred.await(done).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
                   Effect.flatMap((settled) =>
                     Option.isNone(settled)
@@ -2642,6 +2676,21 @@ export const layerWithOptions = (
                       threadId,
                       cause,
                     }),
+                  ),
+                ),
+              (marker) =>
+                Deferred.await(marker.detached).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.flatMap((settled) =>
+                    Option.isNone(settled)
+                      ? Effect.logWarning(
+                          "orchestration-v2.driver-session.shutdown-detach-pending",
+                          {
+                            providerSessionId: marker.providerSessionId,
+                            threadId: marker.threadId,
+                          },
+                        )
+                      : Effect.void,
                   ),
                 ),
               () => true,
@@ -3208,8 +3257,8 @@ export const layerWithOptions = (
             // inside its lock can register a tail after a single snapshot.
             const revocationOutcomes = yield* joinTrackedRevocations(
               (record) => record.instanceId === undefined || record.instanceId === instanceId,
-              (threadId, record) =>
-                Deferred.await(record.done).pipe(
+              (threadId, done) =>
+                Deferred.await(done).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
                   Effect.flatMap((settled) =>
                     Option.isNone(settled)
@@ -3226,13 +3275,32 @@ export const layerWithOptions = (
                       : Effect.void,
                   ),
                 ),
+              (marker) =>
+                Deferred.await(marker.detached).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.flatMap((settled) =>
+                    Option.isNone(settled)
+                      ? Effect.fail(
+                          new ProviderSessionReleaseError({
+                            providerSessionId: marker.providerSessionId,
+                            reason: "manual_shutdown",
+                            cause:
+                              "An in-flight detach did not finish within 30 seconds and is still running.",
+                          }),
+                        )
+                      : Effect.void,
+                  ),
+                ),
               // Drain only detaches whose sweep could match `owned` above: a
               // detach on a session provably owned by another instance cannot
               // register a tail this close must join, and waiting on one would
-              // only stretch logout behind an unrelated stuck detach.
-              (providerSessionId, live) => {
-                const key = sessionKey(providerSessionId);
+              // only stretch logout behind an unrelated stuck detach. The
+              // marker's captured owner wins over a map re-resolution — the
+              // session id may already name a same-id replacement.
+              (marker, live) => {
+                const key = sessionKey(marker.providerSessionId);
                 const ownerInstance =
+                  marker.instanceId ??
                   live.get(key)?.runtime.instanceId ??
                   releasing.get(key)?.entry.runtime.instanceId ??
                   opening.get(key)?.instanceId;
@@ -3276,7 +3344,10 @@ export const layerWithOptions = (
               // flight cannot register a credential sweep the join misses.
               const inflight: InflightDetach = {
                 providerSessionId: input.providerSessionId,
+                threadId: input.threadId,
                 detached: Deferred.makeUnsafe<void, never>(),
+                instanceId: undefined,
+                revokeDone: undefined,
               };
               inflightDetaches.add(inflight);
               return restore(
@@ -3284,6 +3355,7 @@ export const layerWithOptions = (
                   const key = sessionKey(input.providerSessionId);
                   const pendingRelease = releasing.get(key);
                   if (pendingRelease !== undefined) {
+                    inflight.instanceId = pendingRelease.entry.runtime.instanceId;
                     let revokeDone:
                       | Deferred.Deferred<void, ProviderSessionReleaseError>
                       | undefined;
@@ -3305,6 +3377,7 @@ export const layerWithOptions = (
                         ),
                         pendingRelease.entry.runtime.instanceId,
                       );
+                      inflight.revokeDone = revokeDone;
                     }
                     yield* releaseEntry({
                       providerSessionId: input.providerSessionId,
@@ -3330,6 +3403,8 @@ export const layerWithOptions = (
                     return;
                   }
                   const currentEntry = (yield* Ref.get(sessions)).get(key);
+                  inflight.instanceId =
+                    currentEntry?.runtime.instanceId ?? opening.get(key)?.instanceId;
                   const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
                   if (openingRecord !== undefined && openingRecord.threadId === input.threadId) {
                     // Detaching the thread an in-flight startup belongs to aborts
@@ -3552,6 +3627,7 @@ export const layerWithOptions = (
                                 : (sameInstancePending?.entry.runtime.instanceId ??
                                     currentEntry?.runtime.instanceId),
                             );
+                            inflight.revokeDone = revokeDone;
                             if (Option.isSome(detached) && releaseFiber === undefined) {
                               // No release owns this credential's sweep (the session
                               // stays live for other threads), so this join is the

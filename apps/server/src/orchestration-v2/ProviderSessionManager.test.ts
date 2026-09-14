@@ -8745,7 +8745,11 @@ for (const operation of ["shutdown", "closeInstance"] as const) {
               detaching.pollUnsafe(),
               `${operation} returned before the in-flight detach settled (op ${ops})`,
             );
-            yield* Fiber.join(detaching);
+            const detachExit = yield* Fiber.join(detaching);
+            assert.isTrue(
+              Exit.isSuccess(detachExit),
+              `${operation}: in-flight detach returned ${detachExit._tag} (op ${ops})`,
+            );
           }).pipe(
             Effect.provide(
               makeTestLayer({
@@ -8834,6 +8838,226 @@ it.effect(
                 instanceId: ProviderInstanceId.make("codex_other"),
               }),
             ],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance drains an in-flight detach across a same-id replacement",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const issueStarted = yield* Deferred.make<void>();
+      const issueGate = yield* Deferred.make<void>();
+      const armIssue = yield* Ref.make(false);
+      const detachedThread = ThreadId.make("thread-replaced-detach");
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            issue: (request) =>
+              request.threadId === detachedThread
+                ? Ref.get(armIssue).pipe(
+                    Effect.flatMap((armed) =>
+                      armed
+                        ? Deferred.succeed(issueStarted, undefined).pipe(
+                            Effect.andThen(Deferred.await(issueGate)),
+                            Effect.andThen(delegate.issue(request)),
+                          )
+                        : delegate.issue(request),
+                    ),
+                  )
+                : delegate.issue(request),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const stepper = makeSteppingScheduler();
+        const otherSelection = {
+          ...modelSelection,
+          instanceId: ProviderInstanceId.make("codex_other"),
+        };
+        const first = yield* makeThreadSessionFixture(detachedThread);
+        const providerSessionId = yield* first.allocate;
+        yield* first.open(providerSessionId);
+
+        // Suspend the detach after it recorded which instance's entry it
+        // observed (the capture lands around op 10) but before its
+        // [session, thread] lock section, so its marker attributes this
+        // instance while the session id is about to change hands.
+        const detaching = yield* manager
+          .detach({
+            providerSessionId,
+            threadId: detachedThread,
+            revokeMcpCredential: true,
+          })
+          .pipe(
+            Effect.exit,
+            Effect.forkDetach,
+            Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+          );
+        yield* stepper.step(detaching, 15);
+
+        // Release the observed session, then reopen the same session id under
+        // another instance: map lookups now resolve the marker's session to
+        // codex_other, and only the marker's captured owner still attributes
+        // the detach to this instance.
+        yield* manager.close(providerSessionId);
+        const replacementThread = ThreadId.make("thread-replaced-owner");
+        yield* makeThreadSessionFixture(replacementThread);
+        yield* manager.open({
+          threadId: replacementThread,
+          providerSessionId,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+
+        // A credential prepare for the detached thread on a third session id
+        // parks inside mcpPrepareLock[thread] once armed, so the detach's
+        // late-registered revocation tail is observably still running below.
+        const holderSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherSelection.instanceId,
+          threadId: detachedThread,
+        });
+        yield* manager.open({
+          threadId: ThreadId.make("thread-lock-session-owner"),
+          providerSessionId: holderSessionId,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+        yield* Ref.set(armIssue, true);
+        const holding = yield* manager
+          .open({
+            threadId: detachedThread,
+            providerSessionId: holderSessionId,
+            modelSelection: otherSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.exit, Effect.forkChild);
+        // Mandatory handshake: the prepare must be parked inside the prepare
+        // lock before the detach's tail can be expected to queue behind it.
+        yield* Deferred.await(issueStarted);
+
+        const closing = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 16; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        // Captured rather than asserted here: a premature teardown exit must
+        // still be followed by draining the suspended detach, or the layer's
+        // own shutdown waits on it forever and masks the real failure.
+        const skippedDetach = closing.pollUnsafe();
+
+        yield* stepper.drain;
+        for (let i = 0; i < 16; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        const skippedTail = closing.pollUnsafe();
+
+        yield* Deferred.succeed(issueGate, undefined);
+        const closeExit = yield* Fiber.join(closing);
+        const detachExit = yield* Fiber.join(detaching);
+        yield* Fiber.join(holding);
+
+        // The marker attributes the in-flight detach to this instance even
+        // though its session id now belongs to codex_other — resolving
+        // ownership through the current maps returns Success here instead.
+        assert.isUndefined(
+          skippedDetach,
+          `closeInstance skipped an in-flight detach that observed its own instance (${skippedDetach?._tag})`,
+        );
+        // The resumed detach registered its revocation tail, which was then
+        // parked behind the held prepare lock — teardown must still be
+        // waiting rather than reporting over a live sweep.
+        assert.isUndefined(
+          skippedTail,
+          `closeInstance returned while the detached thread's revocation tail was still running (${skippedTail?._tag})`,
+        );
+        assert.isTrue(
+          Exit.isSuccess(closeExit),
+          `closeInstance returned ${closeExit._tag} instead of Success`,
+        );
+        assert.isTrue(
+          Exit.isSuccess(detachExit),
+          `in-flight detach returned ${detachExit._tag} instead of Success`,
+        );
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(issueGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+            extraAdapters: [
+              makeProviderAdapter(state, {
+                instanceId: ProviderInstanceId.make("codex_other"),
+              }),
+            ],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance reports an in-flight detach that outlives the cleanup bound",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const stepper = makeSteppingScheduler();
+        const threadId = ThreadId.make("thread-stuck-detach");
+        const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* allocate;
+        yield* open(providerSessionId);
+
+        // The detach never resumes: its in-flight marker outlives the cleanup
+        // bound, and teardown must report that instead of discarding the
+        // timeout and returning success over a still-running detach.
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(
+            Effect.exit,
+            Effect.forkDetach,
+            Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
+          );
+        yield* stepper.step(detaching, 8);
+
+        const closing = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        const closeExit = yield* Fiber.join(closing);
+        // Drain and join before asserting: a teardown that wrongly reported
+        // success still leaves the suspended detach for the layer's own
+        // shutdown, which would hang and mask this failure.
+        yield* stepper.drain;
+        yield* Fiber.join(detaching);
+        assert.isTrue(
+          Exit.isFailure(closeExit),
+          `closeInstance returned ${closeExit._tag} instead of Failure`,
+        );
+      }).pipe(
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
           }),
         ),
       );
