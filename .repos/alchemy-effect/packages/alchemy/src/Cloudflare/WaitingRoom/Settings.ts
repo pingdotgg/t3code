@@ -63,11 +63,8 @@ export type Settings = Resource<
  * (Business/Enterprise) every PUT fails with the typed `ZoneNotEntitled`
  * error (Cloudflare code 1034). Reads work on every plan, and a no-op
  * reconcile (desired equals observed) skips the API call entirely.
- * @resource
- * @product Waiting Rooms
- * @category Performance & Reliability
- * @section Managing settings
- * @example Let search engine crawlers bypass waiting rooms
+ * ### Managing settings
+ * **Example:** Let search engine crawlers bypass waiting rooms
  * ```typescript
  * yield* Cloudflare.WaitingRoom.Settings("CrawlerBypass", {
  *   zoneId: zone.zoneId,
@@ -75,7 +72,7 @@ export type Settings = Resource<
  * });
  * ```
  *
- * @example Pin the settings to their defaults
+ * **Example:** Pin the settings to their defaults
  * ```typescript
  * yield* Cloudflare.WaitingRoom.Settings("Defaults", {
  *   zoneId: zone.zoneId,
@@ -84,6 +81,10 @@ export type Settings = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/waiting-room/
+ *
+ * @resource
+ * @product Waiting Rooms
+ * @category Performance & Reliability
  */
 export const Settings = Resource<Settings>(TypeId);
 

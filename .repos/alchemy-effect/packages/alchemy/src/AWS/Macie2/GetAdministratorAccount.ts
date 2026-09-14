@@ -9,9 +9,8 @@ import * as Binding from "../../Binding.ts";
  * Account-level operation — invoked with the caller's request as-is.
  * Provide the implementation with
  * `Effect.provide(AWS.Macie2.GetAdministratorAccountHttp)`.
- * @binding
- * @section Administrator & Invitations
- * @example Read This Account's Administrator
+ * ### Administrator & Invitations
+ * **Example:** Read This Account's Administrator
  * ```typescript
  * // init — account-level binding, no resource argument
  * const getAdministratorAccount = yield* AWS.Macie2.GetAdministratorAccount();
@@ -19,6 +18,8 @@ import * as Binding from "../../Binding.ts";
  * // runtime
  * const { administrator } = yield* getAdministratorAccount();
  * ```
+ *
+ * @binding
  */
 export interface GetAdministratorAccount extends Binding.Service<
   GetAdministratorAccount,

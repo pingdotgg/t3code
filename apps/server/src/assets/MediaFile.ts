@@ -7,25 +7,28 @@ import * as NodeStream from "@effect/platform-node/NodeStream";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-class MediaFileOpenError extends Schema.TaggedErrorClass<MediaFileOpenError>()(
-  "MediaFileOpenError",
-  {
-    path: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
+class MediaFileOpenError extends Schema.TaggedError<MediaFileOpenError>()("MediaFileOpenError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to open media file '${this.path}'.`;
   }
 }
 
-class MediaFileStatError extends Schema.TaggedErrorClass<MediaFileStatError>()(
-  "MediaFileStatError",
-  {
-    path: Schema.String,
-    cause: Schema.Defect(),
-  },
-) {
+class MediaFileReadError extends Schema.TaggedError<MediaFileReadError>()("MediaFileReadError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
+  override get message(): string {
+    return `Failed to read media file '${this.path}'.`;
+  }
+}
+
+class MediaFileStatError extends Schema.TaggedError<MediaFileStatError>()("MediaFileStatError", {
+  path: Schema.String,
+  cause: Schema.Defect(),
+}) {
   override get message(): string {
     return `Failed to read metadata for media file '${this.path}'.`;
   }
@@ -94,6 +97,17 @@ export const openMediaFile = Effect.fn("openMediaFile")(function* (
     (file) => (file ? Effect.promise(() => file.handle.close()) : Effect.void),
   );
 });
+
+/** Reads the leading bytes of an already-validated media file, never past the end. */
+export const readMediaFileHeader = (filePath: string, file: OpenMediaFile, byteCount: number) =>
+  Effect.tryPromise({
+    try: async () => {
+      const buffer = new Uint8Array(byteCount);
+      const { bytesRead } = await file.handle.read(buffer, 0, byteCount, 0);
+      return buffer.subarray(0, bytesRead);
+    },
+    catch: (cause) => new MediaFileReadError({ path: filePath, cause }),
+  });
 
 export const statMediaFile = Effect.fn("statMediaFile")(function* (
   filePath: string,

@@ -85,11 +85,8 @@ export type Index = Resource<
  * A Vectorize index is identified by its name and is immutable: its
  * dimensions, metric, preset, and description are all fixed at creation.
  * Changing any of them triggers a replacement.
- * @resource
- * @product Vectorize
- * @category AI
- * @section Creating an Index
- * @example Index with explicit dimensions and metric
+ * ### Creating an Index
+ * **Example:** Index with explicit dimensions and metric
  * ```typescript
  * const index = yield* Cloudflare.Vectorize.Index("my-index", {
  *   dimensions: 768,
@@ -97,7 +94,7 @@ export type Index = Resource<
  * });
  * ```
  *
- * @example Index from a managed embedding model preset
+ * **Example:** Index from a managed embedding model preset
  * A preset fixes the dimensions and metric to match the named model.
  * ```typescript
  * const index = yield* Cloudflare.Vectorize.Index("my-index", {
@@ -105,7 +102,7 @@ export type Index = Resource<
  * });
  * ```
  *
- * @example Index with a description
+ * **Example:** Index with a description
  * ```typescript
  * const index = yield* Cloudflare.Vectorize.Index("my-index", {
  *   dimensions: 1536,
@@ -114,8 +111,8 @@ export type Index = Resource<
  * });
  * ```
  *
- * @section Binding to a Worker
- * @example Querying an index inside a Worker
+ * ### Binding to a Worker
+ * **Example:** Querying an index inside a Worker
  * ```typescript
  * const index = yield* Cloudflare.Vectorize.SearchIndex(MyIndex);
  *
@@ -129,6 +126,10 @@ export type Index = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/vectorize/
+ *
+ * @resource
+ * @product Vectorize
+ * @category AI
  */
 export const Index = Resource<Index>(TypeId);
 

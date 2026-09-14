@@ -150,9 +150,8 @@ export interface Pipeline extends Resource<
  * Defining and updating the pipeline is instant. Pipelines that use a git
  * source require a CodeConnections connection whose OAuth handshake is
  * completed manually — use an S3 source to avoid the handshake.
- * @resource
- * @section Creating a Pipeline
- * @example S3-Source → CodeBuild Pipeline
+ * ### Creating a Pipeline
+ * **Example:** S3-Source → CodeBuild Pipeline
  * ```typescript
  * const pipeline = yield* CodePipeline.Pipeline("Release", {
  *   roleArn: role.roleArn,
@@ -187,6 +186,8 @@ export interface Pipeline extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const Pipeline = Resource<Pipeline>("AWS.CodePipeline.Pipeline");
 

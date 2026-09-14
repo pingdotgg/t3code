@@ -15,9 +15,8 @@ export interface GenerateRandomRequest extends kms.GenerateRandomRequest {}
  * never leaks into logs — unwrap with `Redacted.value(...)` at the point of
  * use.
  *
- * @binding
- * @section Random Bytes
- * @example Generate 32 Random Bytes
+ * ### Random Bytes
+ * **Example:** Generate 32 Random Bytes
  * ```typescript
  * import * as Redacted from "effect/Redacted";
  *
@@ -28,6 +27,8 @@ export interface GenerateRandomRequest extends kms.GenerateRandomRequest {}
  *   ? Redacted.value(Plaintext)
  *   : Plaintext;
  * ```
+ *
+ * @binding
  */
 export interface GenerateRandom extends Binding.Service<
   GenerateRandom,

@@ -82,9 +82,8 @@ export interface AccessEntry extends Resource<
  * `AccessEntry` owns both the entry itself and the exact set of associated EKS
  * access policies, making cluster access explicit and updatable after initial
  * cluster bootstrap.
- * @resource
- * @section Managing Cluster Access
- * @example Grant Read Access to a Role
+ * ### Managing Cluster Access
+ * **Example:** Grant Read Access to a Role
  * ```typescript
  * const viewer = yield* AccessEntry("ViewerAccess", {
  *   clusterName: cluster.clusterName,
@@ -100,6 +99,8 @@ export interface AccessEntry extends Resource<
  *   ],
  * });
  * ```
+ *
+ * @resource
  */
 export const AccessEntry = Resource<AccessEntry>("AWS.EKS.AccessEntry");
 

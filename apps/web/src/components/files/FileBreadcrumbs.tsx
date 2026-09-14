@@ -1,5 +1,7 @@
+import { RefreshIcon } from "~/components/ui/refresh-icon";
+import { Spinner } from "~/components/ui/spinner";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { ArrowLeftIcon, ChevronRightIcon, LoaderCircleIcon, RotateCwIcon } from "lucide-react";
+import { ArrowLeftIcon, ChevronRightIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { PierreEntryIcon } from "~/components/chat/PierreEntryIcon";
@@ -76,7 +78,7 @@ function BreadcrumbMenuContent(props: {
   readonly rootPath: string;
   readonly workspaceMutationId: string | null;
 }) {
-  const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd);
+  const entriesQuery = useProjectEntriesQuery(props.environmentId, props.cwd, props.directoryPath);
   useWorkspaceMutationRefresh({
     mutationId: props.workspaceMutationId,
     refresh: entriesQuery.refresh,
@@ -89,9 +91,7 @@ function BreadcrumbMenuContent(props: {
     () => fileBreadcrumbChildren(entries, props.directoryPath),
     [entries, props.directoryPath],
   );
-  const directoryAvailable =
-    props.directoryPath === "" ||
-    entries.some((entry) => entry.kind === "directory" && entry.path === props.directoryPath);
+  const directoryAvailable = entriesQuery.data !== null;
   const parentPath = fileBreadcrumbParent(props.directoryPath);
   const canGoBack =
     props.directoryPath !== props.rootPath &&
@@ -124,12 +124,12 @@ function BreadcrumbMenuContent(props: {
       <MenuGroup key={props.directoryPath}>
         {entriesQuery.isPending && entriesQuery.data === null ? (
           <MenuItem disabled>
-            <LoaderCircleIcon className="animate-spin" />
+            <Spinner />
             Loading folder…
           </MenuItem>
         ) : entriesQuery.error && entriesQuery.data === null ? (
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
-            <RotateCwIcon />
+            <RefreshIcon refreshing={entriesQuery.isPending} />
             <span className="min-w-0 flex-1 truncate">Retry loading folder</span>
           </MenuItem>
         ) : !directoryAvailable && !entriesTruncated ? (
@@ -148,7 +148,10 @@ function BreadcrumbMenuContent(props: {
                 key={entry.path}
                 closeOnClick={entry.kind === "file"}
                 aria-current={isCurrentFile ? "page" : undefined}
-                className={cn(isCurrentFile && "bg-foreground/[0.08]")}
+                className={cn(
+                  isCurrentFile && "bg-foreground/[0.08]",
+                  entry.ignored && "text-muted-foreground",
+                )}
                 onClick={() => {
                   if (entry.kind === "directory") {
                     props.onDirectoryChange(entry.path);
@@ -177,7 +180,7 @@ function BreadcrumbMenuContent(props: {
         <>
           <MenuSeparator />
           <MenuItem closeOnClick={false} onClick={entriesQuery.refresh}>
-            <RotateCwIcon />
+            <RefreshIcon refreshing={entriesQuery.isPending} />
             Refresh failed — retry
           </MenuItem>
         </>

@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const testState = vi.hoisted(() => ({
   useUsage: vi.fn(),
-  metric: "cost" as "cost" | "tokens",
+  metric: "cost" as "cost" | "tokens" | "limits",
   breakdown: "time" as "model" | "time",
 }));
 
@@ -14,23 +14,25 @@ vi.mock("react", async (importOriginal) => {
   return {
     ...actual,
     useState: vi.fn((initial: unknown) => [
-      typeof initial === "function"
-        ? {
-            days: 1,
-            window: {
-              sinceDay: "2026-08-10",
-              untilDay: "2026-08-11",
-              timeZone: "UTC",
-              resolution: "hour",
-              sinceTime: "2026-08-10T12:37:00.000Z",
-              untilTime: "2026-08-11T12:37:00.000Z",
-            },
-          }
-        : initial === "cost"
-          ? testState.metric
-          : initial === "model"
-            ? testState.breakdown
-            : initial,
+      initial === readUsagePagePreferences
+        ? { metric: testState.metric, windowDays: 30 }
+        : typeof initial === "function"
+          ? {
+              days: 1,
+              window: {
+                sinceDay: "2026-08-10",
+                untilDay: "2026-08-11",
+                timeZone: "UTC",
+                resolution: "hour",
+                sinceTime: "2026-08-10T12:37:00.000Z",
+                untilTime: "2026-08-11T12:37:00.000Z",
+              },
+            }
+          : initial === "cost"
+            ? testState.metric
+            : initial === "model"
+              ? testState.breakdown
+              : initial,
       vi.fn(),
     ]),
   };
@@ -70,6 +72,7 @@ vi.mock("./usageProviders", async (importOriginal) => {
 });
 
 import { UsagePage } from "./UsagePage";
+import { readUsagePagePreferences } from "./usagePagePreferences";
 
 const providerTotals = (codex: number, claude: number) =>
   new Map([
@@ -84,6 +87,7 @@ const modelTotals = Object.freeze([
     costUsd: 10,
     totalTokens: 100,
     records: 1,
+    unpricedRecords: 0,
     costShare: 10 / 16,
   },
   {
@@ -92,6 +96,7 @@ const modelTotals = Object.freeze([
     costUsd: 5,
     totalTokens: 1_000,
     records: 1,
+    unpricedRecords: 0,
     costShare: 5 / 16,
   },
   {
@@ -100,7 +105,17 @@ const modelTotals = Object.freeze([
     costUsd: 1,
     totalTokens: 1_000,
     records: 1,
+    unpricedRecords: 0,
     costShare: 1 / 16,
+  },
+  {
+    model: "unpriced-model",
+    provider: "codex" as const,
+    costUsd: 0,
+    totalTokens: 500,
+    records: 2,
+    unpricedRecords: 2,
+    costShare: 0,
   },
 ]);
 
@@ -187,6 +202,17 @@ describe("UsagePage model breakdown", () => {
     expect(body).toMatch(/expensive-model.*token-heavy-model.*token-heavy-cheaper-model/);
   });
 
+  it("flags a model with no known rates instead of showing it as free", () => {
+    testState.breakdown = "model";
+
+    const markup = renderToStaticMarkup(<UsagePage />);
+    const body = markup.match(/<tbody>(.*?)<\/tbody>/)?.[1] ?? "";
+    const unpricedRow = body.split("<tr").find((row) => row.includes("unpriced-model")) ?? "";
+
+    expect(unpricedRow).toContain("Unpriced");
+    expect(unpricedRow).not.toContain("$0.00");
+  });
+
   it("sorts models by token usage when the token metric is selected", () => {
     testState.metric = "tokens";
     testState.breakdown = "model";
@@ -199,6 +225,7 @@ describe("UsagePage model breakdown", () => {
       "expensive-model",
       "token-heavy-model",
       "token-heavy-cheaper-model",
+      "unpriced-model",
     ]);
   });
 });

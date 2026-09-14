@@ -10,15 +10,16 @@ import * as Binding from "../../Binding.ts";
  * Converts an automatic recovery point into a manual snapshot so it
  * outlives the 24-hour recovery-point window. Provide the implementation with
  * `Effect.provide(AWS.RedshiftServerless.ConvertRecoveryPointToSnapshotHttp)`.
- * @binding
- * @section Working with Recovery Points
- * @example Preserve a Recovery Point as a Snapshot
+ * ### Working with Recovery Points
+ * **Example:** Preserve a Recovery Point as a Snapshot
  * ```typescript
  * // init — resolve the runtime client
  * const convert = yield* AWS.RedshiftServerless.ConvertRecoveryPointToSnapshot();
  *
  * yield* convert({ recoveryPointId, snapshotName: `preserved-${runId}` });
  * ```
+ *
+ * @binding
  */
 export interface ConvertRecoveryPointToSnapshot extends Binding.Service<
   ConvertRecoveryPointToSnapshot,

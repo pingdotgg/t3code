@@ -49,7 +49,7 @@ const TRIAGE_AGENTS: ReadonlyArray<TriageAgent> = [
   { id: "codex", command: "codex", label: "Codex" },
 ];
 
-export class TriageAgentUnavailableError extends Schema.TaggedErrorClass<TriageAgentUnavailableError>()(
+export class TriageAgentUnavailableError extends Schema.TaggedError<TriageAgentUnavailableError>()(
   "TriageAgentUnavailableError",
   { agent: Schema.String },
 ) {
@@ -58,7 +58,7 @@ export class TriageAgentUnavailableError extends Schema.TaggedErrorClass<TriageA
   }
 }
 
-export class TriageAgentChoiceRequiredError extends Schema.TaggedErrorClass<TriageAgentChoiceRequiredError>()(
+export class TriageAgentChoiceRequiredError extends Schema.TaggedError<TriageAgentChoiceRequiredError>()(
   "TriageAgentChoiceRequiredError",
   {},
 ) {
@@ -67,7 +67,7 @@ export class TriageAgentChoiceRequiredError extends Schema.TaggedErrorClass<Tria
   }
 }
 
-export class TriageAgentSpawnError extends Schema.TaggedErrorClass<TriageAgentSpawnError>()(
+export class TriageAgentSpawnError extends Schema.TaggedError<TriageAgentSpawnError>()(
   "TriageAgentSpawnError",
   { command: Schema.String, cause: Schema.Defect() },
 ) {
@@ -189,8 +189,8 @@ export const triageCommand = Command.make("triage", {
         buildTriageContext({
           generatedAt: DateTime.formatIso(now),
           version,
-          releaseTag: version.includes("-nightly.")
-            ? `v${version} (nightly build; if this tag does not exist, clone main)`
+          releaseTag: /^[^-+]+-(?:nightly|preview)\./.test(version)
+            ? `v${version} (prerelease build; if this tag does not exist, clone main)`
             : `v${version}`,
           os: `${yield* HostProcessPlatform} ${yield* HostProcessArchitecture} (${NodeOS.release()})`,
           nodeVersion: process.version,

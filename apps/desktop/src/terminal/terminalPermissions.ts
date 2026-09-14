@@ -11,7 +11,7 @@ export function terminalAutomationApp(terminal: ExternalTerminalId, platform: st
   return null;
 }
 
-export class TerminalPermissionError extends Schema.TaggedErrorClass<TerminalPermissionError>()(
+export class TerminalPermissionError extends Schema.TaggedError<TerminalPermissionError>()(
   "TerminalPermissionError",
   {
     reason: Schema.Literals(["denied", "timeout", "unavailable"]),

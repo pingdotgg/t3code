@@ -15,9 +15,8 @@ export interface ListManagedNotificationEventsRequest
  * operations, billing and issue notifications), optionally filtered by time
  * range, source, or related account. Provide the implementation with
  * `Effect.provide(AWS.Notifications.ListManagedNotificationEventsHttp)`.
- * @binding
- * @section Reading AWS-Managed Notifications
- * @example List Recent Managed Notification Events
+ * ### Reading AWS-Managed Notifications
+ * **Example:** List Recent Managed Notification Events
  * ```typescript
  * // init — account-level binding takes no resource
  * const listManagedNotificationEvents =
@@ -29,6 +28,8 @@ export interface ListManagedNotificationEventsRequest
  * });
  * const count = result.managedNotificationEvents.length;
  * ```
+ *
+ * @binding
  */
 export interface ListManagedNotificationEvents extends Binding.Service<
   ListManagedNotificationEvents,

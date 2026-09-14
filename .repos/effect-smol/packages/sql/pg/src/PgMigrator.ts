@@ -29,7 +29,7 @@ export * from "effect/unstable/sql/Migrator"
 /**
  * Runs PostgreSQL SQL migrations using the configured clients. Schema dumps use `pg_dump` and require child process, filesystem, and path services.
  *
- * @category constructors
+ * @category running
  * @since 4.0.0
  */
 export const run: <R2 = never>(

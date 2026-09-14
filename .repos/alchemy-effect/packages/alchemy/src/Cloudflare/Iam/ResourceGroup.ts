@@ -85,11 +85,8 @@ export type ResourceGroup = Resource<
  *
  * Account-scoped IAM (resource groups, user groups) is an Enterprise
  * feature.
- * @resource
- * @product IAM
- * @category Account & Identity
- * @section Creating a Resource Group
- * @example Scope a group to the whole account
+ * ### Creating a Resource Group
+ * **Example:** Scope a group to the whole account
  * ```typescript
  * const { accountId } = yield* yield* Cloudflare.CloudflareEnvironment;
  * const group = yield* Cloudflare.Iam.ResourceGroup("AllResources", {
@@ -100,7 +97,7 @@ export type ResourceGroup = Resource<
  * });
  * ```
  *
- * @example Scope a group to a single zone
+ * **Example:** Scope a group to a single zone
  * ```typescript
  * const group = yield* Cloudflare.Iam.ResourceGroup("ZoneOnly", {
  *   name: "my-zone-resources",
@@ -113,8 +110,8 @@ export type ResourceGroup = Resource<
  * });
  * ```
  *
- * @section Using with User Groups
- * @example Attach to a user group policy
+ * ### Using with User Groups
+ * **Example:** Attach to a user group policy
  * ```typescript
  * yield* Cloudflare.Iam.UserGroup("Readers", {
  *   policies: [
@@ -128,6 +125,10 @@ export type ResourceGroup = Resource<
  * ```
  *
  * @see https://developers.cloudflare.com/fundamentals/manage-members/scoped-roles/
+ *
+ * @resource
+ * @product IAM
+ * @category Account & Identity
  */
 export const ResourceGroup = Resource<ResourceGroup>(TypeId);
 
@@ -240,7 +241,7 @@ export const ResourceGroupProvider = () =>
 type ObservedResourceGroup = {
   id: string;
   name?: string | null;
-  scope: unknown;
+  scope: iam.ResourceGroupsListResultItemScopeList;
 };
 
 /**

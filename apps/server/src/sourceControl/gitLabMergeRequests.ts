@@ -5,7 +5,7 @@ import * as Option from "effect/Option";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import { PositiveInt, TrimmedNonEmptyString } from "@t3tools/contracts";
-import { decodeJsonResult, formatSchemaError } from "@t3tools/shared/schemaJson";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 
 export interface NormalizedGitLabMergeRequestRecord {
   readonly number: number;
@@ -15,6 +15,8 @@ export interface NormalizedGitLabMergeRequestRecord {
   readonly headRefName: string;
   readonly state: "open" | "closed" | "merged";
   readonly isDraft?: boolean;
+  readonly closedAt?: string | null;
+  readonly mergedAt?: string | null;
   readonly updatedAt: Option.Option<DateTime.Utc>;
   readonly isCrossRepository?: boolean;
   readonly headRepositoryNameWithOwner?: string | null;
@@ -44,6 +46,8 @@ const GitLabMergeRequestSchema = Schema.Struct({
   state: Schema.optional(Schema.NullOr(Schema.String)),
   draft: Schema.optional(Schema.Boolean),
   work_in_progress: Schema.optional(Schema.Boolean),
+  closed_at: Schema.optional(Schema.NullOr(Schema.String)),
+  merged_at: Schema.optional(Schema.NullOr(Schema.String)),
   updated_at: Schema.optional(Schema.OptionFromNullOr(Schema.DateTimeUtcFromString)),
   source_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
   target_project_id: Schema.optional(Schema.NullOr(Schema.Number)),
@@ -112,6 +116,8 @@ function normalizeGitLabMergeRequestRecord(
     headRefName: raw.source_branch,
     state: normalizeGitLabMergeRequestState(raw.state),
     ...(raw.draft === true || raw.work_in_progress === true ? { isDraft: true } : {}),
+    closedAt: raw.closed_at ?? null,
+    mergedAt: raw.merged_at ?? null,
     updatedAt: raw.updated_at ?? Option.none(),
     ...(typeof isCrossRepository === "boolean" ? { isCrossRepository } : {}),
     ...(sourceProjectPath ? { headRepositoryNameWithOwner: sourceProjectPath } : {}),
@@ -122,8 +128,6 @@ function normalizeGitLabMergeRequestRecord(
 const decodeGitLabMergeRequestList = decodeJsonResult(Schema.Array(Schema.Unknown));
 const decodeGitLabMergeRequest = decodeJsonResult(GitLabMergeRequestSchema);
 const decodeGitLabMergeRequestEntry = Schema.decodeUnknownExit(GitLabMergeRequestSchema);
-
-export const formatGitLabJsonDecodeError = formatSchemaError;
 
 export function decodeGitLabMergeRequestListJson(
   raw: string,

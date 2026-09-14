@@ -37,7 +37,6 @@ export function UsageProviderSettings({
     <>
       <SettingsSection
         {...searchableSetting("usage-providers")}
-        description="Connect a CLIProxyAPI hub to show its accounts on Usage → Limits."
         headerAction={
           !readOnly ? (
             <Button size="xs" variant="outline" onClick={() => setAdding(true)}>

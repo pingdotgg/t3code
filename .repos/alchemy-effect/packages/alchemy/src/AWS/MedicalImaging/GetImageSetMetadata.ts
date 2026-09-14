@@ -22,15 +22,16 @@ export interface GetImageSetMetadataRequest extends Omit<
  * Provide the implementation with
  * `Effect.provide(AWS.MedicalImaging.GetImageSetMetadataHttp)`.
  *
- * @binding
- * @section Reading Image Sets
- * @example Read Image Set Metadata
+ * ### Reading Image Sets
+ * **Example:** Read Image Set Metadata
  * ```typescript
  * const getMetadata = yield* MedicalImaging.GetImageSetMetadata(datastore);
  *
  * const metadata = yield* getMetadata({ imageSetId });
  * // metadata.imageSetMetadataBlob (streaming body), metadata.contentEncoding === "gzip"
  * ```
+ *
+ * @binding
  */
 export interface GetImageSetMetadata extends Binding.Service<
   GetImageSetMetadata,

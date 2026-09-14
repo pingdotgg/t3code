@@ -1,11 +1,17 @@
 import * as Cloudflare from "@/Cloudflare";
+import { CloudflareEnvironment } from "@/Cloudflare/CloudflareEnvironment";
 import * as Provider from "@/Provider";
 import * as Test from "@/Test/Alchemy";
+import * as workers from "@distilled.cloud/cloudflare/workers";
+import * as workflows from "@distilled.cloud/cloudflare/workflows";
 import { expect } from "alchemy-test";
 import * as Effect from "effect/Effect";
 import { MinimumLogLevel } from "effect/References";
 import * as Schedule from "effect/Schedule";
+import * as Stream from "effect/Stream";
 import * as HttpClient from "effect/unstable/http/HttpClient";
+import LimitsWorkflowWorker from "./fixtures/workflow-limits/limits-worker.ts";
+import { STEP_LIMIT } from "./fixtures/workflow-limits/limits-workflow.ts";
 import Stack from "./fixtures/workflow/stack.ts";
 import WorkflowTestWorker from "./fixtures/workflow/workflow-worker.ts";
 
@@ -274,6 +280,71 @@ test.provider.skipIf(!process.env.CLOUDFLARE_TEST_WORKFLOW_LIST)(
       ).toBe(true);
 
       yield* stack.destroy();
+    }).pipe(logLevel),
+  { timeout: 120_000 },
+);
+
+// ---------------------------------------------------------------------------
+// Per-workflow limits: deploy a workflow declared with a step limit through the
+// Effect-native form, then read it back out-of-band from the versions API (the
+// only read that surfaces `limits`) to confirm it was applied.
+// ---------------------------------------------------------------------------
+
+// Physical workflow names are derived from the host Worker name and class, so
+// read the name off the deployed binding rather than assuming the class name.
+const readWorkflowName = (scriptName: string) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const settings = yield* workers.getScriptScriptAndVersionSetting({
+      accountId,
+      scriptName,
+    });
+    const binding = (settings.bindings ?? []).find(
+      (b): b is Extract<typeof b, { type: "workflow" }> =>
+        b.type === "workflow",
+    );
+    return binding === undefined
+      ? yield* Effect.fail(new Error(`no workflow binding on '${scriptName}'`))
+      : binding.workflowName;
+  });
+
+// Read the applied step limit out-of-band via the versions API, retrying until
+// it propagates (bounded, so a missing limit fails fast).
+const waitForAppliedStepLimit = (workflowName: string, expected: number) =>
+  Effect.gen(function* () {
+    const { accountId } = yield* yield* CloudflareEnvironment;
+    const versions = yield* workflows.listVersions
+      .items({ accountId, workflowName })
+      .pipe(Stream.runCollect);
+    return Array.from(versions)
+      .map((v) => v.limits?.steps ?? undefined)
+      .find((steps) => steps !== undefined);
+  }).pipe(
+    Effect.flatMap((steps) =>
+      steps === expected
+        ? Effect.succeed(steps)
+        : Effect.fail(new Error(`steps limit not applied yet: ${steps}`)),
+    ),
+    Effect.retry({ schedule: Schedule.spaced("2 seconds"), times: 15 }),
+  );
+
+test.provider(
+  "effect-native workflow applies a per-workflow step limit",
+  (scratch) =>
+    Effect.gen(function* () {
+      yield* scratch.destroy();
+
+      const deployed = yield* scratch.deploy(
+        Effect.gen(function* () {
+          return { worker: yield* LimitsWorkflowWorker };
+        }),
+      );
+
+      const workflowName = yield* readWorkflowName(deployed.worker.workerName);
+      const applied = yield* waitForAppliedStepLimit(workflowName, STEP_LIMIT);
+      expect(applied).toBe(STEP_LIMIT);
+
+      yield* scratch.destroy();
     }).pipe(logLevel),
   { timeout: 120_000 },
 );

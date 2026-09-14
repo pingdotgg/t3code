@@ -104,7 +104,7 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
 };
 
 let nextKey = 0;
-export function newEditorKey(): string {
+function newEditorKey(): string {
   nextKey += 1;
   return `k${nextKey}`;
 }
@@ -140,7 +140,7 @@ export function emptyEditorChoice(): EditorChoice {
  * by built-in runtime profiles a custom entry does not have, so they are
  * dropped rather than stored as a plain option value.
  */
-export function descriptorToEditor(descriptor: ProviderOptionDescriptor): EditorDescriptor {
+function descriptorToEditor(descriptor: ProviderOptionDescriptor): EditorDescriptor {
   const promptInjected = new Set(
     descriptor.type === "select" ? (descriptor.promptInjectedValues ?? []) : [],
   );

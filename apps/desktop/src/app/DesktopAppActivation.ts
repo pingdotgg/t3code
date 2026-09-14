@@ -31,7 +31,7 @@ const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
 
-export class DesktopAppActivationStartError extends Schema.TaggedErrorClass<DesktopAppActivationStartError>()(
+export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
   "DesktopAppActivationStartError",
   {
     address: Schema.String,
@@ -213,6 +213,7 @@ export class DesktopAppActivation extends Context.Service<
 
 const { logWarning } = makeComponentLogger("desktop-app-activation");
 
+/** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const desktopEnvironment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;

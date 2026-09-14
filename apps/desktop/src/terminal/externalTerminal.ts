@@ -88,7 +88,7 @@ export function terminalLaunch(input: OpenExternalTerminalInput, platform: strin
   }
 }
 
-export class TerminalLaunchError extends Schema.TaggedErrorClass<TerminalLaunchError>()(
+export class TerminalLaunchError extends Schema.TaggedError<TerminalLaunchError>()(
   "TerminalLaunchError",
   {
     cause: Schema.Defect(),

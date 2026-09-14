@@ -82,9 +82,8 @@ export interface DataAutomationLibrary extends Resource<
  * Entities are loaded into the library with ingestion jobs — see the
  * `InvokeDataAutomationLibraryIngestionJob` binding.
  *
- * @resource
- * @section Creating Libraries
- * @example Library with a description
+ * ### Creating Libraries
+ * **Example:** Library with a description
  * ```typescript
  * import * as BDA from "alchemy/AWS/BedrockDataAutomation";
  *
@@ -93,7 +92,7 @@ export interface DataAutomationLibrary extends Resource<
  * });
  * ```
  *
- * @example Reference the library from a project
+ * **Example:** Reference the library from a project
  * ```typescript
  * const project = yield* BDA.DataAutomationProject("Docs", {
  *   standardOutputConfiguration: {},
@@ -102,6 +101,8 @@ export interface DataAutomationLibrary extends Resource<
  *   },
  * });
  * ```
+ *
+ * @resource
  */
 export const DataAutomationLibrary = Resource<DataAutomationLibrary>(
   "AWS.BedrockDataAutomation.DataAutomationLibrary",

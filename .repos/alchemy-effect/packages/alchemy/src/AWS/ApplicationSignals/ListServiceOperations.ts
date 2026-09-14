@@ -8,9 +8,8 @@ import * as Binding from "../../Binding.ts";
  * Lists the operations of a discovered service that were invoked during a
  * time range. Provide the implementation with
  * `Effect.provide(AWS.ApplicationSignals.ListServiceOperationsHttp)`.
- * @binding
- * @section Exploring the Service Topology
- * @example List a Service's Operations
+ * ### Exploring the Service Topology
+ * **Example:** List a Service's Operations
  * ```typescript
  * // init — account-level, no resource argument
  * const listServiceOperations =
@@ -27,6 +26,8 @@ import * as Binding from "../../Binding.ts";
  *   },
  * });
  * ```
+ *
+ * @binding
  */
 export interface ListServiceOperations extends Binding.Service<
   ListServiceOperations,

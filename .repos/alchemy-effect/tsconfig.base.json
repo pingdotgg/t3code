@@ -1,5 +1,19 @@
 {
   "exclude": ["node_modules", "dist", "vendor"],
+  // For `tsc -b -w` / classic-tsserver editors (the Cursor/tsgo LSP watches via
+  // the client, gated by .vscode/settings.json `files.watcherExclude`).
+  "watchOptions": {
+    "watchFile": "useFsEvents",
+    "watchDirectory": "useFsEvents",
+    "excludeDirectories": [
+      "**/node_modules",
+      "**/.git",
+      "**/.claude",
+      "**/.vendor",
+      "**/.alchemy",
+      "**/dist"
+    ]
+  },
   "compilerOptions": {
     "types": ["bun"],
     // Enable latest features
@@ -20,6 +34,19 @@
     // Best practices
     "strict": true,
     "skipLibCheck": true,
+    // Resolve project references (notably every `distilled/packages/*`)
+    // through their emitted `lib/*.d.ts` instead of redirecting to their
+    // sources. Without this, editors and `tsc` pull distilled's generated
+    // SDK sources — hundreds of thousands of lines across 20 packages —
+    // into the program, which is what makes intellisense crawl. distilled
+    // builds with `noCheck: true` and gates its own typechecking in its
+    // own CI, so re-checking its sources from here buys nothing.
+    "disableSourceOfProjectReferenceRedirect": true,
+    // Don't eagerly load every referenced composite project into the language
+    // server on find-all-references/rename — with 6 distilled projects and ~36
+    // examples in the solution, eager loading is a multi-GB memory spike.
+    // Editor-only; no effect on `tsc -b`.
+    "disableReferencedProjectLoad": true,
     "noFallthroughCasesInSwitch": true,
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,

@@ -56,6 +56,42 @@ test.provider("list enumerates the deployed repository", (stack) =>
   }),
 );
 
+test.provider(
+  "reconciles tag mutability and scan-on-push on an existing repository",
+  (stack) =>
+    Effect.gen(function* () {
+      yield* stack.destroy();
+
+      const deployRepository = (
+        imageTagMutability: "MUTABLE" | "IMMUTABLE",
+        scanOnPush: boolean,
+      ) =>
+        stack.deploy(
+          Repository("SettingsRepository", {
+            repositoryName: "alchemy-test-ecr-repo-settings",
+            imageTagMutability,
+            scanOnPush,
+          }),
+        );
+
+      yield* deployRepository("MUTABLE", false);
+      const updated = yield* deployRepository("IMMUTABLE", true);
+
+      const described = yield* ecr.describeRepositories({
+        repositoryNames: [updated.repositoryName],
+      });
+      const observed = described.repositories?.[0];
+      expect(observed?.imageTagMutability).toBe("IMMUTABLE");
+      expect(observed?.imageScanningConfiguration?.scanOnPush).toBe(true);
+      expect(updated.imageTagMutability).toBe("IMMUTABLE");
+      expect(updated.scanOnPush).toBe(true);
+
+      yield* stack.destroy();
+      yield* assertRepositoryDeleted(updated.repositoryName);
+    }),
+  { timeout: 120_000 },
+);
+
 const repositoryPolicy: PolicyDocument = {
   Version: "2012-10-17",
   Statement: [

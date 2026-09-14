@@ -1,14 +1,11 @@
-import { createFileRoute, redirect, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, redirect, useLocation, useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 
+import { NoProjectsHero } from "../components/NoProjectsHero";
 import { WelcomeWizard } from "../components/onboarding/WelcomeWizard";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 
-/**
- * First-run welcome wizard. Full-screen, outside the sidebar shell (the root
- * route mounts this path bare, like /pair). Reached only via the first-run
- * gate on the index route; visiting it directly after onboarding is harmless —
- * finishing again just refreshes the completion flag.
- */
+/** Onboarding overlays the workspace. Visiting /welcome reopens setup. */
 export const Route = createFileRoute("/welcome")({
   beforeLoad: ({ context }) => {
     const { authGateState } = context;
@@ -22,6 +19,10 @@ export const Route = createFileRoute("/welcome")({
 function WelcomeRouteView() {
   const { authGateState } = Route.useRouteContext();
   const navigate = useNavigate();
+  // The root shell can remount this pending outlet after the location changes.
+  // Never reopen setup while the destination route is still loading.
+  const isWelcomeRoute = useLocation({ select: (location) => location.pathname === "/welcome" });
+  const [dismissed, setDismissed] = useState(false);
   const openNewThread = useNewThreadHandler();
   // An authenticated gate means a primary server is serving this app —
   // desktop, `npx t3`, or a dev server — and that server is "this machine"
@@ -29,17 +30,23 @@ function WelcomeRouteView() {
   // local server to offer.
   const localAvailable = authGateState.status === "authenticated";
   return (
-    <WelcomeWizard
-      localAvailable={localAvailable}
-      onDone={(projectRef) => {
-        if (projectRef !== undefined) {
-          void openNewThread(projectRef, { replace: true }).catch(() => {
+    <>
+      <NoProjectsHero />
+      {isWelcomeRoute && !dismissed ? (
+        <WelcomeWizard
+          localAvailable={localAvailable}
+          onDone={(projectRef) => {
+            setDismissed(true);
+            if (projectRef !== undefined) {
+              void openNewThread(projectRef, { replace: true }).catch(() => {
+                void navigate({ to: "/", replace: true });
+              });
+              return;
+            }
             void navigate({ to: "/", replace: true });
-          });
-          return;
-        }
-        void navigate({ to: "/", replace: true });
-      }}
-    />
+          }}
+        />
+      ) : null}
+    </>
   );
 }

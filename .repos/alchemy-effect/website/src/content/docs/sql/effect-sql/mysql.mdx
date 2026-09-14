@@ -1,0 +1,187 @@
+---
+title: MySQL
+description: SQL.MySQL turns a connection string into an @effect/sql-mysql2 client — tagged-template queries with typed errors, one pool per execution, Workers-safe defaults for Hyperdrive.
+---
+
+import { Code, Tabs, TabItem } from "@astrojs/starlight/components";
+
+export const deps = `@effect/sql-mysql2 mysql2`;
+
+`SQL.MySQL` opens an `@effect/sql-mysql2` client (a connection pool)
+from a connection URL. Queries are Effects: they carry `SqlError` in
+the error channel, participate in interruption, and trace like
+everything else in your program.
+
+Install the driver — both are optional peers of alchemy:
+
+<Tabs syncKey="pkgManager">
+  <TabItem label="bun" icon="bun">
+    <Code code={`bun add ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="npm" icon="npm">
+    <Code code={`npm install ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="pnpm" icon="pnpm">
+    <Code code={`pnpm add ${deps}`} lang="sh" />
+  </TabItem>
+  <TabItem label="yarn" icon="seti:yarn">
+    <Code code={`yarn add ${deps}`} lang="sh" />
+  </TabItem>
+</Tabs>
+
+## Connect
+
+The `url` may be a plain `Redacted` string or an Effect of one —
+Hyperdrive's `connectionString` resolves from the Worker environment
+at runtime, so it slots straight in:
+
+```typescript
+import * as Cloudflare from "alchemy/Cloudflare";
+import * as SQL from "alchemy/SQL/MySQL";
+import * as Effect from "effect/Effect";
+import * as HttpServerResponse from "effect/unstable/http/HttpServerResponse";
+import { Hyperdrive } from "./db.ts";
+
+export default class Api extends Cloudflare.Worker<Api>()(
+  "Api",
+  { main: import.meta.url },
+  Effect.gen(function* () {
+    const hd = yield* Cloudflare.Hyperdrive.Connect(Hyperdrive);
+    const sql = yield* SQL.MySQL({ url: hd.connectionString });
+
+    return {
+      fetch: Effect.gen(function* () {
+        const users = yield* sql`SELECT * FROM users`;
+        return yield* HttpServerResponse.json({ users });
+      }),
+    };
+  }).pipe(Effect.provide(Cloudflare.Hyperdrive.ConnectBinding)),
+) {}
+```
+
+Everything else in `@effect/sql-mysql2`'s client config passes
+through — `maxConnections`, `connectionTTL`, `poolConfig`, and
+friends. The pool is built lazily on the first query of an execution
+and closed when the event settles — see
+[Connection lifecycle](/sql/effect-sql/lifecycle).
+
+## Workers defaults
+
+mysql2 has two habits that break on Cloudflare Workers, and
+`SQL.MySQL` defaults both away when it detects workerd:
+
+- **Prepared statements are disabled** (`disablePreparedStatements`)
+  — Hyperdrive's MySQL proxy speaks only the text protocol; a
+  `COM_STMT_PREPARE` round-trip fails.
+- **Eval-based row parsers are disabled**
+  (`poolConfig.disableEval`) — mysql2 compiles its fast parsers via
+  `new Function(...)`, which the Workers isolate forbids.
+
+To make those flags reach the driver, `SQL.MySQL` always parses the
+`url` into discrete `host`/`port`/`database`/`username`/`password`
+fields (mysql2's URI code path ignores `poolConfig`). Query-string
+parameters like `?ssl={"rejectUnauthorized":true}` are folded into
+`poolConfig`, matching mysql2's own URI convention.
+
+Outside workerd — a Lambda or container connecting directly — the
+defaults stay off, so you keep prepared statements and the fast
+parsers. The config always wins over detection, in either direction:
+
+```typescript
+const sql = yield* SQL.MySQL({
+  url: connectionString,
+  // e.g. a non-Hyperdrive proxy that also lacks COM_STMT_PREPARE
+  disablePreparedStatements: true,
+  // e.g. direct TLS to PlanetScale from a Lambda
+  poolConfig: { ssl: { rejectUnauthorized: true } },
+});
+```
+
+## Queries
+
+Interpolated values are parameters, never string concatenation:
+
+```typescript
+const user = yield* sql`SELECT * FROM users WHERE id = ${id}`;
+
+yield* sql`INSERT INTO users ${sql.insert({ name, email })}`;
+
+const rows = yield* sql`
+  SELECT * FROM users WHERE id IN ${sql.in(ids)}
+`;
+```
+
+Rows come back as plain objects typed by your annotation:
+`sql<{ id: number; name: string }>\`...\``. The full statement API —
+fragments, `sql.csv`, `sql.and`, identifier escaping (backticks on
+MySQL) — is
+[`effect/unstable/sql/Statement`](https://effect.website).
+
+## Errors
+
+Failures surface as `SqlError` in the typed error channel:
+
+```typescript
+const users = yield* sql`SELECT * FROM users`.pipe(
+  Effect.catchTag("SqlError", (e) =>
+    Effect.succeed([]).pipe(Effect.tap(() => Effect.logWarning(e))),
+  ),
+);
+```
+
+Uncaught, the error propagates like any Effect failure — no
+try/catch, no unhandled rejection.
+
+## Transactions
+
+Wrap a group of queries in `sql.withTransaction` — the whole effect
+commits or rolls back together:
+
+```typescript
+yield* sql.withTransaction(
+  Effect.gen(function* () {
+    yield* sql`UPDATE accounts SET balance = balance - ${amount} WHERE id = ${from}`;
+    yield* sql`UPDATE accounts SET balance = balance + ${amount} WHERE id = ${to}`;
+  }),
+);
+```
+
+## Provide as a service
+
+For services that shouldn't know which database they run on, depend
+on the generic `SqlClient` tag and provide the database with
+`SQL.MySQLLayer`:
+
+```typescript
+import * as SqlClient from "effect/unstable/sql/SqlClient";
+
+const makeUsers = Effect.gen(function* () {
+  const sql = yield* SqlClient.SqlClient;
+  return {
+    find: (id: number) => sql<User>`SELECT * FROM users WHERE id = ${id}`,
+  };
+});
+
+const users = yield* makeUsers.pipe(
+  Effect.provide(SQL.MySQLLayer({ url: hd.connectionString })),
+);
+```
+
+The layer provides two tags from one per-execution pool: the generic
+`SqlClient.SqlClient`, and `@effect/sql-mysql2`'s `MysqlClient` for
+code that needs MySQL-specific capabilities — including drizzle's
+`effect-mysql2` driver. Swapping `SQL.MySQLLayer` for
+[`SQL.PostgresLayer`](/sql/effect-sql/postgres#provide-as-a-service)
+or [`SQL.D1Layer`](/sql/effect-sql/d1#provide-as-a-service) moves
+the same service graph to another database unchanged.
+
+## Where next
+
+- [Migrations](/sql/effect-sql/migrations) — apply `.sql` files as
+  part of deploy.
+- [Connection lifecycle](/sql/effect-sql/lifecycle) — when the pool
+  is built and torn down.
+- [Drizzle on MySQL](/sql/drizzle/mysql) — the same driver behind a
+  typed schema.
+- [PlanetScale MySQL](/planetscale/data/mysql) — databases,
+  branches, and passwords as resources.

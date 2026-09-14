@@ -69,10 +69,11 @@ const services = Layer.mergeAll(
 );
 
 const program = Effect.gen(function* () {
-  // Best-effort, non-blocking check for a newer published version. If the
-  // CLI command finishes before the registry responds, the fiber is
-  // interrupted on scope close — that's intentional.
-  yield* checkLatestVersion.pipe(Effect.forkScoped);
+  // Best-effort check for a newer published version. Runs to completion
+  // before the command so the warning prints before any interactive
+  // prompts; the registry response is cached for a day and the fetch is
+  // bounded by a short timeout, so this stays fast.
+  yield* checkLatestVersion;
   return yield* cli;
 });
 

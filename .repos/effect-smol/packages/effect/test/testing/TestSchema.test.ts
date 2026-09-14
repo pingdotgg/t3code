@@ -1,4 +1,4 @@
-import { Context, Effect, Option, Schema, SchemaGetter, SchemaIssue } from "effect"
+import { Context, Effect, Schema, SchemaGetter, SchemaIssue } from "effect"
 import { TestSchema } from "effect/testing"
 import { describe, it } from "vitest"
 
@@ -8,8 +8,8 @@ describe("TestSchema", () => {
     const assert = new TestSchema.Asserts(schema)
     const decoding = assert.decoding()
     await decoding.succeed("1", 1)
-    await decoding.fail("-1", `Expected a value greater than 0, got -1`)
-    await decoding.fail("a", `Expected a finite number, got NaN`)
+    await decoding.fail("-1", `Expected a value greater than 0`)
+    await decoding.fail("a", `Expected a finite number`)
   })
 
   it("decoding.provide", async () => {
@@ -21,7 +21,7 @@ describe("TestSchema", () => {
           Effect.gen(function*() {
             yield* Service
             if (s.length === 0) {
-              return new SchemaIssue.InvalidValue(Option.some(s), {
+              return new SchemaIssue.InvalidValue({
                 message: "input should not be empty string"
               })
             }
@@ -42,7 +42,7 @@ describe("TestSchema", () => {
     const assert = new TestSchema.Asserts(schema)
     const encoding = assert.encoding()
     await encoding.succeed(1, "1")
-    await encoding.fail(-1, `Expected a value greater than 0, got -1`)
+    await encoding.fail(-1, `Expected a value greater than 0`)
   })
 
   it("encoding.provide", async () => {
@@ -55,7 +55,7 @@ describe("TestSchema", () => {
           Effect.gen(function*() {
             yield* Service
             if (s.length === 0) {
-              return new SchemaIssue.InvalidValue(Option.some(s), {
+              return new SchemaIssue.InvalidValue({
                 message: "input should not be empty string"
               })
             }

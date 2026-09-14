@@ -1,0 +1,31 @@
+{
+  "name": "@fixtures/sveltekit",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts dev --port 3103",
+    "build": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts build",
+    "preview": "bun run ../../packages/cloudflare-test-tools/src/e2e/Cli.ts preview",
+    "test": "node scripts/e2e.mjs",
+    "test:update-snapshots": "playwright test --update-snapshots",
+    "pretest": "playwright install chromium",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "cookie": "^2.0.1",
+    "devalue": "5.8.1",
+    "uuid": "^14.0.1"
+  },
+  "devDependencies": {
+    "@alchemy.run/cloudflare-runtime": "workspace:*",
+    "@alchemy.run/cloudflare-test-tools": "workspace:*",
+    "@alchemy.run/frontend-frameworks": "workspace:*",
+    "@playwright/test": "catalog:testing",
+    "@sveltejs/kit": "catalog:frontend",
+    "@sveltejs/vite-plugin-svelte": "catalog:frontend",
+    "@types/node": "^24.12.0",
+    "effect": "catalog:effect",
+    "svelte": "catalog:frontend",
+    "vite": "catalog:build"
+  }
+}
