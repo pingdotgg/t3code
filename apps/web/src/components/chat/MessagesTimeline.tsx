@@ -1538,10 +1538,11 @@ function QueuedMessageTimelineRow({
       >
         <Tooltip>
           <TooltipTrigger
-            render={<span className="inline-flex size-6 items-center justify-center" />}
+            render={<span className="inline-flex h-6 items-center gap-1 px-1 text-xs" />}
             aria-label={statusLabel}
           >
             <ClockIcon className="size-3.5" aria-hidden />
+            Queued
           </TooltipTrigger>
           <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
         </Tooltip>
