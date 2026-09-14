@@ -1,6 +1,11 @@
 import { useParams } from "@tanstack/react-router";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import {
+  type AtomCommandResult,
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   projectCloneDisplayName,
   projectCloneProgressSummary,
   type EnvironmentId,
@@ -56,6 +61,24 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
   const retryClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
     reportFailure: false,
   });
+  // The toast mirrors the server's clone state, so a request that never got
+  // there needs its own feedback.
+  const runCloneAction = useCallback(
+    async (title: string, action: () => Promise<AtomCommandResult<unknown, unknown>>) => {
+      const result = await action();
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [],
+  );
   const removeClonedProject = useRemoveClonedProject();
   const toasts = useRef(new Map<ProjectId, TrackedToast>());
 
@@ -107,7 +130,9 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
           actionProps: {
             children: "Cancel",
             onClick: () => {
-              void cancelClone({ environmentId, input: { projectId: clone.projectId } });
+              void runCloneAction("Failed to cancel clone", () =>
+                cancelClone({ environmentId, input: { projectId: clone.projectId } }),
+              );
             },
           },
           data: { hideCopyButton: true },
@@ -158,7 +183,9 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
         actionProps: {
           children: "Retry",
           onClick: () => {
-            void retryClone({ environmentId, input: { projectId: clone.projectId } });
+            void runCloneAction("Failed to retry clone", () =>
+              retryClone({ environmentId, input: { projectId: clone.projectId } }),
+            );
           },
         },
         data: {
@@ -198,6 +225,7 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
     openProject,
     removeClonedProject,
     retryClone,
+    runCloneAction,
   ]);
 
   useEffect(
