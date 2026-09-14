@@ -4,6 +4,7 @@ import { ThreadId } from "@t3tools/contracts";
 import { describe, it } from "vite-plus/test";
 
 import {
+  CUA_TOOL_TITLES,
   clearCuaToolContext,
   cuaToolPresentation,
   isCuaServerName,
@@ -175,5 +176,102 @@ describe("cuaToolPresentation", () => {
       }),
       undefined,
     );
+  });
+});
+
+/** Tools advertised by Cua Driver 0.24 (`cua-driver mcp`), plus the history pair its instructions name. */
+const CUA_DRIVER_TOOLS = [
+  "bring_to_front",
+  "browser_click",
+  "browser_dialog",
+  "browser_download",
+  "browser_navigate",
+  "browser_pointer",
+  "browser_prepare",
+  "browser_set_input_files",
+  "browser_type",
+  "check_for_update",
+  "check_permissions",
+  "click",
+  "clipboard_read",
+  "clipboard_write",
+  "double_click",
+  "drag",
+  "end_session",
+  "escalate_session",
+  "get_accessibility_tree",
+  "get_agent_cursor_state",
+  "get_browser_state",
+  "get_config",
+  "get_cursor_position",
+  "get_desktop_state",
+  "get_recording_state",
+  "get_screen_size",
+  "get_session",
+  "get_session_state",
+  "get_window_state",
+  "health_report",
+  "history_query",
+  "history_status",
+  "hotkey",
+  "install_ffmpeg",
+  "invoke_menu",
+  "kill_app",
+  "launch_app",
+  "list_apps",
+  "list_sessions",
+  "list_windows",
+  "move_cursor",
+  "page",
+  "press_key",
+  "replay_trajectory",
+  "right_click",
+  "scroll",
+  "set_agent_cursor_enabled",
+  "set_agent_cursor_motion",
+  "set_agent_cursor_theme",
+  "set_config",
+  "set_value",
+  "set_window_frame",
+  "start_recording",
+  "start_session",
+  "stop_recording",
+  "type_text",
+  "verify_state",
+  "zoom",
+];
+
+describe("CUA_TOOL_TITLES", () => {
+  it("names every tool the driver exposes", () => {
+    const missing = CUA_DRIVER_TOOLS.filter((tool) => !(tool in CUA_TOOL_TITLES));
+    NodeAssert.deepEqual(missing, []);
+    for (const tool of CUA_DRIVER_TOOLS) {
+      const title = CUA_TOOL_TITLES[tool]!({ args: {}, appName: undefined, inProgress: false });
+      NodeAssert.ok(title.length > 0 && !title.includes("_"), `${tool}: ${title}`);
+    }
+  });
+
+  it("targets the last app in the thread when a call only carries an element token", () => {
+    clearCuaToolContext(threadId);
+    rememberCuaToolResult(
+      threadId,
+      "list_apps",
+      {},
+      '{"apps":[{"pid":1252,"name":"Calendar","bundle_id":"com.apple.iCal"}]}',
+    );
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "mcp__cua-driver__get_window_state",
+      args: { pid: 1252, window_id: 61 },
+      status: "completed",
+    });
+    const clicked = cuaToolPresentation({
+      threadId,
+      rawToolName: "mcp__cua-driver__click",
+      args: { element_token: "s00000001:119", session: "cal" },
+      status: "failed",
+    });
+    NodeAssert.equal(clicked?.title, "Clicked in Calendar");
+    NodeAssert.equal(clicked?.toolSource.key, "native-app:com.apple.ical");
   });
 });

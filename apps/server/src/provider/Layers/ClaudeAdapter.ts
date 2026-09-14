@@ -2867,7 +2867,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             itemType: nextTool.itemType,
             status: "inProgress",
             title: nextTool.title,
-            ...(nextTool.detail ? { detail: nextTool.detail } : {}),
+            ...cuaAwareDetail(context, nextTool, "inProgress"),
             ...(nextTool.agentId ? { agentId: nextTool.agentId } : {}),
             ...(nextTool.parentToolUseId ? { parentToolUseId: nextTool.parentToolUseId } : {}),
             data: {

@@ -206,7 +206,9 @@ function resolveApp(
     }
     return app;
   }
-  return undefined;
+  // Element tokens and session labels address a window the agent already
+  // resolved, so the app it last touched in this thread is the target.
+  return pid === undefined ? directory?.lastApp : undefined;
 }
 
 const TOOLS_WITHOUT_APP = new Set([
@@ -272,120 +274,121 @@ function keyLabel(keys: unknown): string | undefined {
   return labels.join(labels.every((label) => label.length === 1) ? "" : "+");
 }
 
+interface TitleInput {
+  readonly args: Record<string, unknown> | undefined;
+  readonly appName: string | undefined;
+  readonly inProgress: boolean;
+}
+
+const verb = (inProgress: boolean, doing: string, done: string) => (inProgress ? doing : done);
+
+/** Every tool Cua Driver 0.24 exposes; the test pins this list against the server's catalogue. */
+export const CUA_TOOL_TITLES: Readonly<Record<string, (input: TitleInput) => string>> = (() => {
+  const withApp = (label: string, appName: string | undefined) =>
+    appName ? `${label} in ${appName}` : label;
+  const inApp = (doing: string, done: string) => (input: TitleInput) =>
+    withApp(verb(input.inProgress, doing, done), input.appName);
+  const onApp = (doing: string, done: string, fallback: string) => (input: TitleInput) =>
+    input.appName
+      ? `${verb(input.inProgress, doing, done)} ${input.appName}`
+      : `${verb(input.inProgress, doing, done)} ${fallback}`;
+  const plain = (doing: string, done: string) => (input: TitleInput) =>
+    verb(input.inProgress, doing, done);
+  const looked = (input: TitleInput) =>
+    input.appName
+      ? `${verb(input.inProgress, "Looking at", "Looked at")} ${input.appName}`
+      : verb(input.inProgress, "Looking at the screen", "Looked at the screen");
+  const configured = plain("Configuring computer use", "Configured computer use");
+  return {
+    list_apps: plain("Listing apps", "Listed apps"),
+    list_windows: inApp("Listing windows", "Listed windows"),
+    launch_app: onApp("Launching", "Launched", "app"),
+    kill_app: onApp("Quitting", "Quit", "app"),
+    bring_to_front: onApp("Focusing", "Focused", "window"),
+    get_window_state: looked,
+    get_desktop_state: looked,
+    get_accessibility_tree: looked,
+    get_browser_state: looked,
+    verify_state: looked,
+    get_screen_size: looked,
+    get_cursor_position: looked,
+    click: inApp("Clicking", "Clicked"),
+    double_click: inApp("Double-clicking", "Double-clicked"),
+    right_click: inApp("Right-clicking", "Right-clicked"),
+    drag: inApp("Dragging", "Dragged"),
+    move_cursor: inApp("Moving cursor", "Moved cursor"),
+    scroll: (input) => {
+      const direction = asText(input.args?.direction, 16)?.toLowerCase();
+      return withApp(
+        `${verb(input.inProgress, "Scrolling", "Scrolled")}${direction ? ` ${direction}` : ""}`,
+        input.appName,
+      );
+    },
+    type_text: inApp("Typing text", "Typed text"),
+    browser_type: inApp("Typing text", "Typed text"),
+    set_value: inApp("Setting value", "Set value"),
+    press_key: (input) =>
+      withApp(
+        `${verb(input.inProgress, "Pressing", "Pressed")} ${keyLabel(input.args?.keys ?? input.args?.key) ?? "key"}`,
+        input.appName,
+      ),
+    hotkey: (input) =>
+      withApp(
+        `${verb(input.inProgress, "Pressing", "Pressed")} ${keyLabel(input.args?.keys ?? input.args?.key) ?? "shortcut"}`,
+        input.appName,
+      ),
+    invoke_menu: inApp("Choosing menu item", "Chose menu item"),
+    set_window_frame: inApp("Resizing window", "Resized window"),
+    zoom: inApp("Zooming", "Zoomed"),
+    page: inApp("Reading page", "Read page"),
+    browser_navigate: (input) =>
+      withApp(
+        `${verb(input.inProgress, "Opening", "Opened")} ${asText(input.args?.url, 200) ?? "page"}`,
+        input.appName,
+      ),
+    browser_click: inApp("Clicking", "Clicked"),
+    browser_pointer: inApp("Clicking", "Clicked"),
+    browser_prepare: inApp("Preparing browser", "Prepared browser"),
+    browser_dialog: inApp("Answering dialog", "Answered dialog"),
+    browser_download: inApp("Downloading file", "Downloaded file"),
+    browser_set_input_files: inApp("Attaching files", "Attached files"),
+    clipboard_read: plain("Reading clipboard", "Read clipboard"),
+    clipboard_write: plain("Writing clipboard", "Wrote clipboard"),
+    start_recording: plain("Starting recording", "Started recording"),
+    stop_recording: plain("Stopping recording", "Stopped recording"),
+    get_recording_state: plain("Checking recording", "Checked recording"),
+    replay_trajectory: plain("Replaying actions", "Replayed actions"),
+    check_permissions: plain("Checking permissions", "Checked permissions"),
+    history_status: plain("Checking history", "Checked history"),
+    history_query: plain("Searching history", "Searched history"),
+    start_session: plain("Starting computer use session", "Started computer use session"),
+    end_session: plain("Ending computer use session", "Ended computer use session"),
+    escalate_session: plain("Escalating computer use session", "Escalated computer use session"),
+    get_session: configured,
+    get_session_state: configured,
+    list_sessions: configured,
+    get_config: configured,
+    set_config: configured,
+    get_agent_cursor_state: configured,
+    set_agent_cursor_enabled: configured,
+    set_agent_cursor_motion: configured,
+    set_agent_cursor_theme: configured,
+    health_report: configured,
+    check_for_update: configured,
+    install_ffmpeg: configured,
+  };
+})();
+
 function cuaToolTitle(
   tool: string,
   args: Record<string, unknown> | undefined,
   appName: string | undefined,
   inProgress: boolean,
 ): string {
-  const withApp = (label: string) => (appName ? `${label} in ${appName}` : label);
-  const looked = appName
-    ? `${inProgress ? "Looking at" : "Looked at"} ${appName}`
-    : inProgress
-      ? "Looking at the screen"
-      : "Looked at the screen";
-  switch (tool) {
-    case "list_apps":
-      return inProgress ? "Listing apps" : "Listed apps";
-    case "list_windows":
-      return withApp(inProgress ? "Listing windows" : "Listed windows");
-    case "launch_app":
-      return appName
-        ? `${inProgress ? "Launching" : "Launched"} ${appName}`
-        : inProgress
-          ? "Launching app"
-          : "Launched app";
-    case "kill_app":
-      return appName
-        ? `${inProgress ? "Quitting" : "Quit"} ${appName}`
-        : inProgress
-          ? "Quitting app"
-          : "Quit app";
-    case "bring_to_front":
-      return appName
-        ? `${inProgress ? "Focusing" : "Focused"} ${appName}`
-        : inProgress
-          ? "Focusing window"
-          : "Focused window";
-    case "get_window_state":
-    case "get_desktop_state":
-    case "get_accessibility_tree":
-    case "get_browser_state":
-    case "verify_state":
-    case "get_screen_size":
-    case "get_cursor_position":
-      return looked;
-    case "click":
-      return withApp(inProgress ? "Clicking" : "Clicked");
-    case "double_click":
-      return withApp(inProgress ? "Double-clicking" : "Double-clicked");
-    case "right_click":
-      return withApp(inProgress ? "Right-clicking" : "Right-clicked");
-    case "drag":
-      return withApp(inProgress ? "Dragging" : "Dragged");
-    case "move_cursor":
-      return withApp(inProgress ? "Moving cursor" : "Moved cursor");
-    case "scroll": {
-      const direction = asText(args?.direction, 16)?.toLowerCase();
-      return withApp(`${inProgress ? "Scrolling" : "Scrolled"}${direction ? ` ${direction}` : ""}`);
-    }
-    case "type_text":
-    case "browser_type":
-      return withApp(inProgress ? "Typing text" : "Typed text");
-    case "set_value":
-      return withApp(inProgress ? "Setting value" : "Set value");
-    case "press_key":
-    case "hotkey": {
-      const keys = keyLabel(args?.keys ?? args?.key);
-      return withApp(`${inProgress ? "Pressing" : "Pressed"} ${keys ?? "key"}`);
-    }
-    case "invoke_menu":
-      return withApp(inProgress ? "Choosing menu item" : "Chose menu item");
-    case "set_window_frame":
-      return withApp(inProgress ? "Resizing window" : "Resized window");
-    case "zoom":
-      return withApp(inProgress ? "Zooming" : "Zoomed");
-    case "page":
-      return withApp(inProgress ? "Reading page" : "Read page");
-    case "browser_navigate": {
-      const url = asText(args?.url, 200);
-      return withApp(`${inProgress ? "Opening" : "Opened"} ${url ?? "page"}`);
-    }
-    case "browser_click":
-    case "browser_pointer":
-      return withApp(inProgress ? "Clicking" : "Clicked");
-    case "browser_prepare":
-      return withApp(inProgress ? "Preparing browser" : "Prepared browser");
-    case "clipboard_read":
-      return inProgress ? "Reading clipboard" : "Read clipboard";
-    case "clipboard_write":
-      return inProgress ? "Writing clipboard" : "Wrote clipboard";
-    case "start_recording":
-      return inProgress ? "Starting recording" : "Started recording";
-    case "stop_recording":
-      return inProgress ? "Stopping recording" : "Stopped recording";
-    case "check_permissions":
-      return inProgress ? "Checking permissions" : "Checked permissions";
-    case "start_session":
-    case "end_session":
-    case "get_session":
-    case "get_session_state":
-    case "list_sessions":
-    case "escalate_session":
-    case "get_config":
-    case "set_config":
-    case "get_agent_cursor_state":
-    case "set_agent_cursor_enabled":
-    case "set_agent_cursor_motion":
-    case "set_agent_cursor_theme":
-    case "health_report":
-    case "check_for_update":
-    case "install_ffmpeg":
-    case "get_recording_state":
-      return inProgress ? "Configuring computer use" : "Configured computer use";
-    default:
-      return withApp(humanizeTool(tool, inProgress));
-  }
+  const known = CUA_TOOL_TITLES[tool];
+  if (known) return known({ args, appName, inProgress });
+  const label = humanizeTool(tool, inProgress);
+  return appName ? `${label} in ${appName}` : label;
 }
 
 function nativeApp(app: CuaApp): ToolActivityNativeAppReference | undefined {
