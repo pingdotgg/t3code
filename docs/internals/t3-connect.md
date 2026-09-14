@@ -84,7 +84,7 @@ two-minute deadline, and an early stop on a Cloudflare rate limit. See the
 
 A host registers recovery at startup by sending its tunnel ID and loopback
 origin with a short-lived signature from the environment key. Registration
-touches Cloudflare only when the local port changed. The host stores a
+touches Cloudflare only when the local host or port changed. The host stores a
 confirmed-origin marker with the connector config, and a later boot starts the
 connector before registration only when that marker matches the current config
 and port. If the connector exits, or `cloudflared` reports repeated tunnel
