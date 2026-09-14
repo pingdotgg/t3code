@@ -469,6 +469,48 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
+  it.effect("install with start=false rewrites the files and leaves the service alone", () =>
+    Effect.gen(function* () {
+      const { service, fs, statePath, commands } = yield* makeHarness();
+      yield* service.install();
+      commands.length = 0;
+
+      const plan = yield* service.install({ start: false });
+
+      expect(parseServiceState(yield* fs.readFileString(statePath))).toEqual({
+        protocol: SERVICE_LAUNCHER_PROTOCOL,
+        activeVersion: "1.2.3",
+      });
+      expect(yield* fs.exists(plan.unitPath)).toBe(true);
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([]);
+    }),
+  );
+
+  it.effect("restart stops and starts an installed service, and is a no-op otherwise", () =>
+    Effect.gen(function* () {
+      const { service, commands } = yield* makeHarness();
+      expect(yield* service.restart).toBe(false);
+      yield* service.install();
+      commands.length = 0;
+
+      expect(yield* service.restart).toBe(true);
+      expect(
+        commands.filter(
+          (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
+        ),
+      ).toEqual([
+        "systemctl --user stop t3code.service",
+        "systemctl --user daemon-reload",
+        "systemctl --user enable t3code.service",
+        "systemctl --user restart t3code.service",
+      ]);
+    }),
+  );
+
   it.effect("restarts an installed service when repair fails", () =>
     Effect.gen(function* () {
       const { service, commands, control } = yield* makeHarness();

@@ -523,7 +523,15 @@ export class BootService extends Context.Service<
   {
     readonly install: (options?: {
       readonly allowDowngrade?: boolean;
+      /**
+       * Write the unit for this version but leave the service on whatever it
+       * is running now. `t3 update` uses this when the user declines the
+       * restart, so a later `t3 service restart` lands on the new version.
+       */
+      readonly start?: boolean;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
+    /** Stop and start the installed service on the version its unit names. */
+    readonly restart: Effect.Effect<boolean, BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
@@ -728,6 +736,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
+    readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
     yield* fs
@@ -795,7 +804,11 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (installed) {
+    // Leaving the service running while its files change is only safe when
+    // the running launcher is not asked to act on them: it reads the state
+    // file once at startup, and the unit only matters on the next start.
+    const start = options?.start !== false;
+    if (installed && start) {
       yield* runSteps(manager.stop);
     }
 
@@ -838,14 +851,27 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       );
       yield* writeDurably(unitPath, manager.render(plan));
 
-      yield* runSteps(manager.activate);
+      if (start) yield* runSteps(manager.activate);
     }).pipe(
       Effect.tapError(() =>
-        installed ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
     return plan;
   });
+
+  const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
+    const manager = yield* requireManager;
+    if (
+      !(yield* fs
+        .exists(unitPath)
+        .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause }))))
+    )
+      return false;
+    yield* runSteps(manager.stop);
+    yield* runSteps(manager.activate);
+    return true;
+  }).pipe(Effect.withSpan("cloud.boot_service.restart"));
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
@@ -908,7 +934,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  return BootService.of({ install, restart, uninstall, status });
 });
 
 export const layer = (input: {
