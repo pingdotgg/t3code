@@ -263,6 +263,7 @@ export const updateCommand = Command.make("update", {
       const config = yield* resolveCliAuthConfig(flags, logLevel);
       return yield* runUpdate({
         baseDir: config.baseDir,
+        logsDir: config.logsDir,
         serverRuntimeStatePath: config.serverRuntimeStatePath,
         channel: Option.getOrUndefined(flags.channel),
         requestedVersion: Option.getOrUndefined(flags.version),
@@ -333,6 +334,7 @@ const belongsToBootService = Effect.fn("cli.update.belongs_to_boot_service")(fun
 
 const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   readonly baseDir: string;
+  readonly logsDir: string;
   readonly serverRuntimeStatePath: string;
   readonly channel: CliReleaseChannel | undefined;
   readonly requestedVersion: string | undefined;
@@ -408,8 +410,16 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
   const serviceVersion = serviceInstalled ? status.installedVersion : undefined;
   const executableCurrent = targetVersion === currentVersion;
   // A service whose recorded version is missing or unreadable is not known
-  // to be current, so it gets the update rather than being skipped.
-  const serviceCurrent = !serviceInstalled || serviceVersion === targetVersion;
+  // to be current, so it gets the update rather than being skipped. Nor is
+  // one on the right version that is stopped, disabled, or still running the
+  // version before it (an earlier update where the restart was declined):
+  // `status.current` covers all of that when the target is this executable,
+  // and the problem list is what can be judged for any other target.
+  const restartPending = status.problems?.includes("restart-pending") === true;
+  const serviceCurrent =
+    !serviceInstalled ||
+    (serviceVersion === targetVersion &&
+      (executableCurrent ? status.current : (status.problems ?? []).length === 0));
   const newestInstalled =
     serviceVersion !== undefined && compareExactServiceVersions(serviceVersion, currentVersion) > 0
       ? serviceVersion
@@ -437,11 +447,13 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     );
 
   yield* Console.log(
-    executableCurrent
-      ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
-      : alreadyOnDisk
-        ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
-        : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
+    executableCurrent && restartPending
+      ? `The background service is still running the version before ${targetVersion} (${targetChannel}).`
+      : executableCurrent
+        ? `Updating the background service ${serviceVersion ?? "(unknown version)"} -> ${targetVersion} (${targetChannel}).`
+        : alreadyOnDisk
+          ? `Switching t3 ${currentVersion} -> ${targetVersion} (${targetChannel}, already downloaded).`
+          : `Updating t3 ${currentVersion} -> ${targetVersion} (${targetChannel}).`,
   );
   let restartService = false;
   if (serviceInstalled && !serviceCurrent) {
@@ -459,7 +471,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
       ).pipe(Effect.catchTag("QuitError", () => Effect.succeed(false)));
     } else {
       yield* Console.log(
-        "  Not a terminal, so the service is left on its current version. Rerun with --yes to restart it, or run `t3 service update` later.",
+        "  Not a terminal, so the service keeps running its current version. Rerun with --yes to restart it now, or run `t3 service restart` later.",
       );
     }
   }
@@ -519,27 +531,33 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     targetEntryPath: runtime.entryPath,
   });
 
-  // The new executable owns the service switch: it verifies itself, writes its
-  // own version into the unit, and restarts the service on it.
+  // The service switch runs in this process against the target version: the
+  // downloaded runtime has already proven it runs (the `--version` check
+  // above), and doing it here rather than through the target's own CLI means
+  // a downgrade to a version without today's commands still works. The unit
+  // is rewritten either way so a later `t3 service restart` lands on the new
+  // version; only the restart itself waits for the user's answer.
   let serviceUpdated = false;
-  if (restartService) {
-    const result = yield* runner.run({
-      command: runtime.entryPath,
-      args: [
-        "service",
-        "update",
-        "--base-dir",
-        input.baseDir,
-        ...(input.allowDowngrade ? ["--allow-downgrade"] : []),
-      ],
-      timeout: Duration.minutes(5),
-    });
-    if (result.code !== 0) {
-      return yield* new CliUpdateError({
-        reason: `t3@${targetVersion} is installed but the background service could not be updated (exit ${String(result.code)}).\n${result.stderr.trim() || result.stdout.trim()}`,
-      });
-    }
-    serviceUpdated = true;
+  if (serviceInstalled && !serviceCurrent) {
+    yield* BootService.BootService.pipe(
+      Effect.flatMap((target) =>
+        target.install({ allowDowngrade: input.allowDowngrade, start: restartService }),
+      ),
+      Effect.provide(
+        BootService.layer({
+          baseDir: input.baseDir,
+          logsDir: input.logsDir,
+          cliVersion: targetVersion,
+        }),
+      ),
+      Effect.mapError(
+        (error) =>
+          new CliUpdateError({
+            reason: `t3@${targetVersion} is installed but the background service could not be ${restartService ? "updated" : "pointed at it"}: ${error.message}`,
+          }),
+      ),
+    );
+    serviceUpdated = restartService;
   }
 
   yield* Console.log("");
@@ -555,7 +573,7 @@ const runUpdate = Effect.fn("cli.update.run")(function* (input: {
     yield* Console.log(`  Background service already on ${targetVersion}`);
   } else if (serviceInstalled) {
     yield* Console.log(
-      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service update\` when you are ready to restart it.`,
+      `  Background service still running ${serviceVersion ?? "an unknown version"}. Run \`t3 service restart\` when you are ready to switch it to ${targetVersion}.`,
     );
   } else if (status.installed && !servesThisHome) {
     yield* Console.log(

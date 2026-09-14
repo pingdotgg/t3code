@@ -27,6 +27,7 @@ import {
 } from "./pinnedRuntime.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
+  SERVICE_RESTART_PENDING_FILE,
   SERVICE_STATE_FILE,
   compareExactServiceVersions,
   parseServiceState,
@@ -444,6 +445,7 @@ const BootServiceProblem = Schema.Literals([
   "linger-disabled",
   "service-disabled",
   "service-stopped",
+  "restart-pending",
 ]);
 type BootServiceProblem = typeof BootServiceProblem.Type;
 
@@ -457,9 +459,11 @@ export function formatBootServiceProblem(problem: BootServiceProblem): string {
     case "linger-disabled":
       return 'Lingering is disabled. T3 Code will stop when your last login session ends and will not start at boot. Run `sudo loginctl enable-linger "$(id -un)"` on this machine, then retry the service command as your normal user.';
     case "service-disabled":
-      return "The service is not enabled to start automatically. Run `t3 service update` to repair it.";
+      return "The service is not enabled to start automatically. Run `t3 service install` to repair it.";
     case "service-stopped":
-      return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `t3 service update`.";
+      return "The service is not running. Check the service log and `systemctl --user status t3code.service`, then run `t3 service install`.";
+    case "restart-pending":
+      return "A newer version is installed but the service is still running the previous one. Run `t3 service restart` to switch.";
   }
 }
 
@@ -523,7 +527,20 @@ export class BootService extends Context.Service<
   {
     readonly install: (options?: {
       readonly allowDowngrade?: boolean;
+      /**
+       * Write the unit for this version but leave the service on whatever it
+       * is running now. `t3 update` uses this when the user declines the
+       * restart, so a later `t3 service restart` lands on the new version.
+       */
+      readonly start?: boolean;
     }) => Effect.Effect<BootServicePlan, BootServiceError>;
+    /**
+     * Stop and start the installed service on the version its unit names.
+     * Only when the unit serves this base dir: the unit name is per user, so
+     * another home's service is left alone. Resolves false when nothing was
+     * restarted.
+     */
+    readonly restart: Effect.Effect<boolean, BootServiceError>;
     readonly uninstall: Effect.Effect<boolean, BootServiceError>;
     readonly status: Effect.Effect<BootServiceStatus, BootServiceError>;
   }
@@ -584,6 +601,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const unitPath = detectedManager?.unitPath ?? "";
   const logPath = path.join(input.logsDir, "boot-service.log");
   const statePath = path.join(input.baseDir, "runtime", SERVICE_STATE_FILE);
+  const restartPendingPath = path.join(input.baseDir, "runtime", SERVICE_RESTART_PENDING_FILE);
   const runtimePaths = pinnedRuntimePaths(path, input.baseDir, input.cliVersion, platform);
   const writeDurably = (filePath: string, contents: string) =>
     Effect.scoped(
@@ -728,6 +746,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
 
   const install = Effect.fn("cloud.boot_service.install")(function* (options?: {
     readonly allowDowngrade?: boolean;
+    readonly start?: boolean;
   }) {
     const manager = yield* requireManager;
     yield* fs
@@ -795,7 +814,15 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     const installed = yield* fs
       .exists(unitPath)
       .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
-    if (installed) {
+    // With start=false the service keeps running while its files change. The
+    // launcher reads the state file once at startup and the unit only matters
+    // on the next start, so that is safe as long as the launcher is not in
+    // the middle of a remote update, which is the one time it writes the
+    // state file itself. That case is refused below, before anything is
+    // written, from the same read the downgrade check uses; the stop that
+    // normally serialises against the launcher is skipped on purpose.
+    const start = options?.start !== false;
+    if (installed && start) {
       yield* runSteps(manager.stop);
     }
 
@@ -824,6 +851,13 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       yield* fs
         .makeDirectory(path.dirname(unitPath), { recursive: true })
         .pipe(Effect.mapError((cause) => new BootServiceInstallError({ cause })));
+      if (!start && installed) {
+        // Written first: once the files below name the new version, the
+        // running service is behind them, and a failure between the two
+        // writes must not leave it looking current. The launcher removes the
+        // marker when it starts, `restart` and a started install do too.
+        yield* fs.writeFileString(restartPendingPath, `${input.cliVersion}\n`, { mode: 0o600 });
+      }
       yield* writeDurably(
         statePath,
         // @effect-diagnostics-next-line preferSchemaOverJson:off - fixed launcher-owned document.
@@ -836,16 +870,60 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
           2,
         )}\n`,
       );
+      if (!start && installed) {
+        // The launcher only writes this file while a remote update is in
+        // flight. One that began after the check above lands either before
+        // this write (then the launcher's copy in memory is what it keeps
+        // acting on, and its next write puts its own outcome back) or after
+        // it, which this read catches: the file no longer says what was just
+        // written, so stop here before repointing the unit.
+        const written = yield* fs.readFileString(statePath);
+        if (serviceStateActiveVersion(written) !== input.cliVersion) {
+          return yield* new BootServiceUpdatePendingError();
+        }
+      }
       yield* writeDurably(unitPath, manager.render(plan));
 
-      yield* runSteps(manager.activate);
+      if (start) {
+        yield* runSteps(manager.activate);
+        yield* fs.remove(restartPendingPath, { force: true });
+      }
     }).pipe(
+      Effect.mapError((cause) =>
+        cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
+      ),
       Effect.tapError(() =>
-        installed ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
+        installed && start ? runSteps(manager.restart).pipe(Effect.ignore) : Effect.void,
       ),
     );
     return plan;
   });
+
+  const restart: BootService["Service"]["restart"] = Effect.gen(function* () {
+    const manager = yield* requireManager;
+    const unit = yield* fs.readFileString(unitPath).pipe(Effect.option);
+    if (Option.isNone(unit)) return false;
+    const installedBaseDir = bootServiceBaseDirOf(unit.value);
+    if (
+      installedBaseDir === undefined ||
+      path.resolve(installedBaseDir) !== path.resolve(input.baseDir)
+    ) {
+      return false;
+    }
+    yield* runSteps(manager.stop);
+    yield* runSteps(manager.activate).pipe(
+      // Same recovery as a failed repair: a service that was running should
+      // not be left stopped because daemon-reload or enable failed.
+      Effect.tapError(() => runSteps(manager.restart).pipe(Effect.ignore)),
+    );
+    yield* fs.remove(restartPendingPath, { force: true });
+    return true;
+  }).pipe(
+    Effect.mapError((cause) =>
+      cause._tag === "PlatformError" ? new BootServiceInstallError({ cause }) : cause,
+    ),
+    Effect.withSpan("cloud.boot_service.restart"),
+  );
 
   const uninstall: BootService["Service"]["uninstall"] = Effect.gen(function* () {
     const manager = yield* requireManager;
@@ -885,7 +963,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
       detectedManager.kind === "launchd"
         ? contents.replace(/(<key>PATH<\/key>\n\s*<string>)[^<]*(<\/string>)/, "$1$2")
         : contents;
-    const problems = detectedManager.kind === "systemd" ? yield* readSystemdProblems(true) : [];
+    const problems: BootServiceProblem[] =
+      detectedManager.kind === "systemd" ? [...(yield* readSystemdProblems(true))] : [];
+    if (yield* fs.exists(restartPendingPath)) problems.push("restart-pending");
     return {
       supported: true,
       installed: true,
@@ -908,7 +988,7 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     Effect.withSpan("cloud.boot_service.status"),
   );
 
-  return BootService.of({ install, uninstall, status });
+  return BootService.of({ install, restart, uninstall, status });
 });
 
 export const layer = (input: {
