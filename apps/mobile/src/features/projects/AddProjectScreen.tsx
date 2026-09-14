@@ -109,6 +109,7 @@ function sourceFromParam(value: string | string[] | undefined): AddProjectRemote
   if (
     source === "url" ||
     source === "github" ||
+    source === "gitcafe" ||
     source === "gitlab" ||
     source === "forgejo" ||
     source === "bitbucket" ||

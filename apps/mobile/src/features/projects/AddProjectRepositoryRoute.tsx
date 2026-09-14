@@ -16,6 +16,7 @@ export function AddProjectRepositoryRoute({
   const source = Array.isArray(params.source) ? params.source[0] : params.source;
   const title =
     source === "github" ||
+    source === "gitcafe" ||
     source === "gitlab" ||
     source === "forgejo" ||
     source === "bitbucket" ||

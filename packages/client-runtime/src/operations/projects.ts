@@ -25,7 +25,7 @@ import type { EnvironmentProject } from "../state/models.ts";
 
 export type AddProjectRemoteProviderKind = Extract<
   SourceControlProviderKind,
-  "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops"
+  "github" | "gitlab" | "gitcafe" | "forgejo" | "bitbucket" | "azure-devops"
 >;
 export type AddProjectRemoteSource = AddProjectRemoteProviderKind | "url";
 
@@ -61,6 +61,7 @@ const ADD_PROJECT_REMOTE_SOURCES: ReadonlyArray<AddProjectRemoteSource> = [
   "gitlab",
   "forgejo",
   "bitbucket",
+  "gitcafe",
   "azure-devops",
 ];
 
@@ -69,11 +70,14 @@ const ADD_PROJECT_REMOTE_PROVIDER_SOURCES: ReadonlyArray<AddProjectRemoteProvide
   "gitlab",
   "forgejo",
   "bitbucket",
+  "gitcafe",
   "azure-devops",
 ];
 
 export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): string {
   switch (source) {
+    case "gitcafe":
+      return "GitCafe";
     case "github":
       return "GitHub";
     case "forgejo":
@@ -92,6 +96,7 @@ export function addProjectRemoteSourceLabel(source: AddProjectRemoteSource): str
 export function addProjectRemoteSourcePathHint(source: AddProjectRemoteSource): string {
   switch (source) {
     case "forgejo":
+    case "gitcafe":
     case "github":
       return "owner/repo";
     case "gitlab":
@@ -122,11 +127,13 @@ export function normalizePastedCloneUrl(input: string): string {
   return `https://github.com/${repository}`;
 }
 
-/** GitHub and Forgejo default to HTTPS; other providers retain their existing SSH default. */
+/** GitHub, Forgejo, and GitCafe default to HTTPS; other providers retain their existing SSH default. */
 export function getDefaultCloneUrl(
   repository: Pick<SourceControlRepositoryInfo, "provider" | "url" | "sshUrl">,
 ): string {
-  return repository.provider === "github" || repository.provider === "forgejo"
+  return repository.provider === "github" ||
+    repository.provider === "forgejo" ||
+    repository.provider === "gitcafe"
     ? repository.url
     : repository.sshUrl;
 }
@@ -162,6 +169,7 @@ export function buildAddProjectRemoteSourceReadiness(
     gitlab: unavailable,
     forgejo: unavailable,
     bitbucket: unavailable,
+    gitcafe: unavailable,
     "azure-devops": unavailable,
   };
 

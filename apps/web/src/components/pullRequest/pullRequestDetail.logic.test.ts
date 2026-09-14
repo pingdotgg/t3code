@@ -56,6 +56,7 @@ describe("pull request checkout commands", () => {
     ["github", "feature", null, "gh pr checkout 42"],
     ["gitlab", "feature", null, "glab mr checkout 42"],
     ["forgejo", "feature", null, null],
+    ["gitcafe", "feature", null, "cafe pr checkout 42"],
     ["azure-devops", "feature", null, "az repos pr checkout --id 42"],
     [
       "bitbucket",

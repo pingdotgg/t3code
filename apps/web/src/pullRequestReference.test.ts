@@ -9,6 +9,13 @@ describe("parsePullRequestReference", () => {
     );
   });
 
+  it("accepts GitCafe URLs and checkout commands", () => {
+    const url = "https://git.cafe/acme/t3code/pulls/42";
+    expect(parsePullRequestReference(url)).toBe(url);
+    expect(parsePullRequestReference("cafe pr checkout 42")).toBe("42");
+    expect(parsePullRequestReference(`cafe pr checkout ${url}`)).toBe(url);
+  });
+
   it("accepts Azure DevOps pull request URLs", () => {
     expect(
       parsePullRequestReference("https://dev.azure.com/acme/project/_git/t3code/pullrequest/42"),

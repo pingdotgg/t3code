@@ -1168,6 +1168,11 @@ const PROVIDER_REQUIREMENT: Partial<
     unauthenticated:
       "Authenticate your Forgejo or Gitea server with `fj --host <server-url> auth add-token` on the T3 Code server. If fj is missing or unconfigured for that server, use `tea login add`. A configured fj account must be repaired with fj.",
   },
+  gitcafe: {
+    missing:
+      "GitCafe CLI (`cafe`) is required to browse change requests on this host. Install it from https://git.cafe/ and reload.",
+    unauthenticated: "GitCafe CLI is not authenticated. Run `cafe auth login` and retry.",
+  },
   gitlab: {
     missing:
       "GitLab CLI (`glab`) is required to browse change requests on this host. Install it from https://gitlab.com/gitlab-org/cli and reload.",

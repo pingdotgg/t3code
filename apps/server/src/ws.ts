@@ -159,6 +159,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitCafeCli from "./sourceControl/GitCafeCli.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -3482,6 +3483,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
                           GitHubCli.layer,
                           GitLabCli.layer,
                           ForgejoCli.layer,
+                          GitCafeCli.layer,
                         ),
                       ),
                       Layer.provideMerge(GitVcsDriver.layer),

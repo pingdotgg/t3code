@@ -115,6 +115,8 @@ export function pullRequestCheckoutCommand(
       return repositoryUrl
         ? `git fetch '${repositoryUrl.replaceAll("'", "'\\''")}' refs/pull/${number}/head && git checkout -B pulls/${number} FETCH_HEAD`
         : null;
+    case "gitcafe":
+      return `cafe pr checkout ${number}`;
     case "azure-devops":
       return `az repos pr checkout --id ${number}`;
     case "bitbucket": {
@@ -1004,7 +1006,7 @@ const OPERATION_PREFIX = /^Pull request operation \w+ failed:\s*/iu;
  * host says is worth more than what this page could invent, so only these are replaced.
  */
 const TOOL_NOISE = [
-  /^(github|gitlab|bitbucket|azure devops)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
+  /^(github|gitlab|gitcafe|bitbucket|azure devops)?\s*(cli|api)?\s*(command\s*)?failed\.?$/iu,
   /^exited? with (code|status) \d+\.?$/iu,
   /^unknown error\.?$/iu,
 ];

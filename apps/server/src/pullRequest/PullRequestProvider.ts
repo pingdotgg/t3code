@@ -128,7 +128,7 @@ export interface ProviderChangeRequestStackLayer {
 
 /**
  * A host-native stack: an ordered set of change requests the host itself merges and retargets as
- * a unit. Only GitHub offers one today; the neutral shape lets the sync reactor and the UI stay
+ * a unit. The neutral shape lets the sync reactor and the UI stay
  * ignorant of which host said so.
  */
 export interface ProviderChangeRequestStack {

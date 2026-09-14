@@ -3,7 +3,13 @@ import { withUniwind } from "uniwind";
 
 const ThemedSvg = withUniwind(Svg);
 
-export type SourceControlIconKind = "github" | "gitlab" | "forgejo" | "bitbucket" | "azure-devops";
+export type SourceControlIconKind =
+  | "github"
+  | "gitlab"
+  | "gitcafe"
+  | "forgejo"
+  | "bitbucket"
+  | "azure-devops";
 
 export function SourceControlIcon(props: {
   readonly kind: SourceControlIconKind;
@@ -26,6 +32,23 @@ export function SourceControlIcon(props: {
             <Circle cx={58} cy={180} r={18} stroke="#d40000" strokeWidth={15} />
           </G>
         </Svg>
+      );
+    case "gitcafe":
+      return (
+        <ThemedSvg
+          width={size}
+          height={size}
+          viewBox="0 0 24 24"
+          color={props.color}
+          colorClassName={props.colorClassName}
+          fill="none"
+          stroke="currentColor"
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        >
+          <Path d="M10 2v2M14 2v2M16 8a1 1 0 0 1 1 1v8a4 4 0 0 1-4 4H7a4 4 0 0 1-4-4V9a1 1 0 0 1 1-1h14a4 4 0 1 1 0 8h-1M6 2v2" />
+        </ThemedSvg>
       );
     case "github":
       return (

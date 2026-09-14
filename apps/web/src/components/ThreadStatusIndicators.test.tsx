@@ -52,6 +52,25 @@ describe("linked pull request snapshots", () => {
   it("keeps unsynced links unknown", () => {
     expect(linkedPullRequestSnapshotStatus(link)).toBeNull();
   });
+  it.each(["git.cafe", "staging.git.cafe"])("retains %s identity in a linked snapshot", (host) => {
+    const result = linkedPullRequestSnapshotStatus({
+      ...link,
+      host,
+      url: `https://${host}/acme/web/pulls/42`,
+      snapshot: {
+        state: "open",
+        title: "Change",
+        headBranch: "feature",
+        baseBranch: "main",
+        isDraft: false,
+        updatedAt: null,
+        syncedAt: "2026-01-03T00:00:00Z",
+      },
+    });
+    expect(result?.sourceControlProvider.kind).toBe("gitcafe");
+    expect(result?.pr.state).toBe("open");
+  });
+
   it("uses the snapshot state and branches with the linked identity", () => {
     const result = linkedPullRequestSnapshotStatus({
       ...link,
