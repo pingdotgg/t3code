@@ -1707,6 +1707,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       label: "Settle",
       icon: <CheckIcon aria-hidden className="size-4" />,
       className: "bg-blue-600 dark:bg-blue-500",
+      primary: true,
       onPress: () => onSettle(threadRef),
     });
   } else if (swipeKinds.primary === "unsettle") {
@@ -1715,6 +1716,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       label: "Un-settle",
       icon: <Undo2Icon aria-hidden className="size-4" />,
       className: "bg-blue-600 dark:bg-blue-500",
+      primary: true,
       onPress: () => onUnsettle(threadRef),
     });
   } else if (swipeKinds.primary === "unsnooze") {
@@ -1723,6 +1725,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       label: "Wake",
       icon: <AlarmClockOffIcon aria-hidden className="size-4" />,
       className: "bg-blue-600 dark:bg-blue-500",
+      primary: true,
       onPress: () => onUnsnooze(threadRef),
     });
   }
