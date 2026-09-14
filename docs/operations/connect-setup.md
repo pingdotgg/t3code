@@ -39,11 +39,12 @@ depend on. The deploy wrapper writes the resulting relay URL back to the root `.
 In Clerk's OAuth applications settings:
 
 1. Create a public OAuth application for the T3 CLI, using authorization-code exchange with PKCE.
-2. Allow both redirect URIs: `http://127.0.0.1:34338/callback` and
-   `https://app.t3.codes/connect/callback`. A custom `T3CODE_HOSTED_APP_URL` needs its own
-   `/connect/callback` URL. Headless and SSH authorization depend on the hosted redirect.
+2. Allow the redirect URI `http://127.0.0.1:34338/callback`.
 3. Enable the `openid`, `profile`, and `email` scopes.
-4. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` to the generated public client ID in local and release
+4. Enable **Device authorization grant** on the application. Headless and SSH authorization use
+   it, and Clerk only advertises the device endpoint once it is on. The feature is in beta and
+   Clerk enables it per account on request.
+5. Set `T3CODE_CLERK_CLI_OAUTH_CLIENT_ID` to the generated public client ID in local and release
    build environments.
 
 ## JWT template
