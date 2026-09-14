@@ -4,10 +4,12 @@ import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as ServerSettings from "../serverSettings.ts";
+import * as CuaDriver from "./CuaDriver.ts";
 
 /**
  * Applications the composer can mention for computer use. Only the host that
@@ -62,6 +64,7 @@ export const make = Effect.fn("InstalledApps.make")(function* () {
   const platform = yield* HostProcessPlatform;
   const settings = yield* ServerSettings.ServerSettingsService;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const driver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
   const cache = yield* Ref.make<{
     readonly at: number;
     readonly apps: ReadonlyArray<InstalledApp>;
@@ -95,6 +98,12 @@ export const make = Effect.fn("InstalledApps.make")(function* () {
       Effect.orElseSucceed(() => false),
     );
     if (!enabled) return UNSUPPORTED;
+    // A driver that failed to start, usually for missing host permissions,
+    // cannot act on any app, so the picker should not offer them.
+    const failure = Option.isSome(driver) ? yield* driver.value.lastFailure : Option.none();
+    if (Option.isSome(failure)) {
+      return { supported: false, apps: [], unavailableReason: failure.value };
+    }
     const now = yield* Clock.currentTimeMillis;
     const cached = yield* Ref.get(cache);
     if (cached && now - cached.at < CACHE_TTL_MS) return { supported: true, apps: cached.apps };

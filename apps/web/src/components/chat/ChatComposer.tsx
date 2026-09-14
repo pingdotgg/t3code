@@ -241,6 +241,8 @@ import { useEnvironmentQuery } from "~/state/query";
 import { installedAppsQuery } from "~/state/apps";
 import { useEnvironmentSettings } from "~/hooks/useSettings";
 import { matchInstalledApps } from "~/lib/composerApps";
+import { useCuaHostPermissions } from "~/lib/cuaHostPermissions";
+import { useEnvironment } from "~/state/environments";
 import { appContextIdForBundleId } from "@t3tools/shared/composerAppContext";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
@@ -2212,6 +2214,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const installedApps = useEnvironmentQuery(
     isPathTrigger && cuaEnabled ? installedAppsQuery({ environmentId, input: {} }) : null,
   );
+  // When this desktop is the host, its own permission state is the freshest
+  // readiness signal; the server only learns of a denial after a failed start.
+  const composerEnvironment = useEnvironment(environmentId);
+  const cuaHost = useCuaHostPermissions(
+    isPathTrigger &&
+      cuaEnabled &&
+      composerEnvironment?.entry.target._tag === "PrimaryConnectionTarget",
+  );
   const compactSlashCommandAvailable =
     composerTrigger?.kind === "slash-command" &&
     prompt.slice(0, composerTrigger.rangeStart).trim() === "" &&
@@ -2288,16 +2298,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const composerMenuItems = useMemo<ComposerCommandItem[]>(() => {
     if (!composerTrigger) return [];
     if (composerTrigger.kind === "path") {
-      const appItems: ComposerCommandItem[] = installedApps.data?.supported
-        ? matchInstalledApps(installedApps.data.apps, composerTrigger.query).map((app) => ({
-            id: `app:${app.bundleId}`,
-            type: "app",
-            app,
-            environmentId,
-            label: app.name,
-            description: "Computer use",
-          }))
-        : [];
+      const appItems: ComposerCommandItem[] =
+        installedApps.data?.supported && cuaHost.ready
+          ? matchInstalledApps(installedApps.data.apps, composerTrigger.query).map((app) => ({
+              id: `app:${app.bundleId}`,
+              type: "app",
+              app,
+              environmentId,
+              label: app.name,
+              description: "Computer use",
+            }))
+          : [];
       return [
         ...appItems,
         ...workspaceEntries.entries.map((entry) => ({

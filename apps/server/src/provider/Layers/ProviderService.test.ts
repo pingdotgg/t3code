@@ -5045,6 +5045,7 @@ describe("agent browser access", () => {
             ? Layer.succeed(CuaDriver.CuaDriver, {
                 enabled: Effect.succeed(Option.isSome(cuaDriver)),
                 acquire: Effect.succeed(cuaDriver),
+                lastFailure: Effect.succeedNone,
               })
             : Layer.empty,
         ),

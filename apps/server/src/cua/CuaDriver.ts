@@ -115,10 +115,11 @@ export class CuaDriverDesktopUnavailableError extends Schema.TaggedError<CuaDriv
   "CuaDriverDesktopUnavailableError",
   {
     requestId: Schema.String,
+    detail: Schema.optional(Schema.String),
   },
 ) {
   override get message() {
-    return "Desktop Cua Driver is unavailable.";
+    return this.detail ?? "Desktop Cua Driver is unavailable.";
   }
 }
 
@@ -148,6 +149,8 @@ export class CuaDriver extends Context.Service<
   {
     readonly enabled: Effect.Effect<boolean>;
     readonly acquire: Effect.Effect<Option.Option<CuaDriverMcpConfiguration>>;
+    /** Why the last start failed, until a later start succeeds. */
+    readonly lastFailure: Effect.Effect<Option.Option<string>>;
   }
 >()("t3/cua/CuaDriver") {}
 
@@ -177,9 +180,12 @@ export const make = Effect.fn("CuaDriver.make")(function* (
     readonly ready: Deferred.Deferred<Option.Option<CuaDriverMcpConfiguration>>;
     host?: CuaDriverHost;
     stopped?: boolean;
+    /** Message of the typed error that ended this attempt, for the readiness signal. */
+    failure?: string;
   };
   let current: Attempt | undefined;
   let closed = false;
+  let lastFailure: string | undefined;
 
   const stop = (attempt: Attempt) =>
     Effect.suspend(() => {
@@ -216,13 +222,23 @@ export const make = Effect.fn("CuaDriver.make")(function* (
 
   const launch = Effect.fn("CuaDriver.launch")(
     function* (attempt: Attempt) {
-      const host = yield* createHost.pipe(Effect.timeout(START_TIMEOUT));
+      const rememberFailure = (error: { readonly message: string }) =>
+        Effect.sync(() => {
+          attempt.failure = error.message;
+        });
+      const host = yield* createHost.pipe(
+        Effect.tapError(rememberFailure),
+        Effect.timeout(START_TIMEOUT),
+      );
       attempt.host = host;
       if (closed || current !== attempt) {
         yield* stop(attempt);
         return;
       }
-      const mcp = yield* host.start.pipe(Effect.timeout(START_TIMEOUT));
+      const mcp = yield* host.start.pipe(
+        Effect.tapError(rememberFailure),
+        Effect.timeout(START_TIMEOUT),
+      );
       yield* mutex.withPermits(1)(
         Effect.gen(function* () {
           if (closed || current !== attempt || !(yield* enabled)) {
@@ -231,6 +247,7 @@ export const make = Effect.fn("CuaDriver.make")(function* (
             if (current === attempt) current = undefined;
             return;
           }
+          lastFailure = undefined;
           yield* Deferred.succeed(attempt.ready, Option.some(mcp));
         }),
       );
@@ -250,6 +267,7 @@ export const make = Effect.fn("CuaDriver.make")(function* (
           mutex.withPermits(1)(
             Effect.gen(function* () {
               if (current === attempt) current = undefined;
+              lastFailure = attempt.failure ?? "Cua Driver could not start.";
               yield* stop(attempt);
               yield* Deferred.succeed(attempt.ready, Option.none());
               yield* Effect.logWarning(
@@ -279,7 +297,11 @@ export const make = Effect.fn("CuaDriver.make")(function* (
     return attempt ? yield* Deferred.await(attempt.ready) : Option.none();
   });
 
-  return CuaDriver.of({ enabled: enabled, acquire });
+  return CuaDriver.of({
+    enabled: enabled,
+    acquire,
+    lastFailure: Effect.sync(() => Option.fromNullishOr(lastFailure)),
+  });
 });
 
 type StandaloneHostModule = {
@@ -442,7 +464,10 @@ export const makeDesktopHostFactory = Effect.fn("CuaDriver.desktopHostFactory")(
           yield* Effect.logWarning("Cua Driver host reported unavailable.", {
             message: report.message,
           });
-        return yield* new CuaDriverDesktopUnavailableError({ requestId });
+        return yield* new CuaDriverDesktopUnavailableError({
+          requestId,
+          ...(report.message ? { detail: report.message } : {}),
+        });
       }),
       stop: Effect.gen(function* () {
         if (!requested) {

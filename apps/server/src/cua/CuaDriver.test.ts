@@ -540,3 +540,39 @@ describe("CuaDriver", () => {
     ),
   );
 });
+
+describe("Cua Driver readiness", () => {
+  it.effect("remembers why the last start failed until a start succeeds", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        let attempts = 0;
+        const service = yield* makeCuaDriver({
+          enabled: Effect.succeed(true),
+          changes: Stream.empty,
+          createHost: Effect.suspend(() => {
+            attempts++;
+            return attempts === 1
+              ? Effect.fail(
+                  new CuaDriver.CuaDriverDesktopUnavailableError({
+                    requestId: "first",
+                    detail: "T3 Code needs Accessibility and Screen Recording access.",
+                  }),
+                )
+              : Effect.succeed({
+                  start: Effect.succeed(mcp),
+                  stop: Effect.void,
+                  waitForExit: Effect.never,
+                });
+          }),
+        });
+        expect(yield* service.lastFailure).toEqual(Option.none());
+        expect(yield* service.acquire).toEqual(Option.none());
+        expect(yield* service.lastFailure).toEqual(
+          Option.some("T3 Code needs Accessibility and Screen Recording access."),
+        );
+        expect(yield* service.acquire).toEqual(Option.some(mcp));
+        expect(yield* service.lastFailure).toEqual(Option.none());
+      }),
+    ),
+  );
+});

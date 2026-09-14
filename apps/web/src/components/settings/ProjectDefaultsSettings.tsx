@@ -11,6 +11,7 @@ import { useState } from "react";
 import { isElectron } from "../../env";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
 import { readLocalApi } from "../../localApi";
+import { useCuaHostPermissions } from "../../lib/cuaHostPermissions";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -85,6 +86,7 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
     typeof window.desktopBridge.checkSystemPermission === "function" &&
     representative?.entry.target._tag === "PrimaryConnectionTarget";
   const [cuaSetupOpen, setCuaSetupOpen] = useState(false);
+  const cuaHost = useCuaHostPermissions(cuaSetupAvailable && settings.enableCua && !cuaSetupOpen);
   const checkCuaPermission = (permission: CuaPermission) =>
     window.desktopBridge?.checkSystemPermission?.(permission) ?? Promise.resolve(false);
   const allowCuaPermission = async (permission: CuaPermission) => {
@@ -481,9 +483,11 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             {...searchableSetting("cua-computer-use")}
             description="Let agents control the selected machine through Cua Driver. Applies to agent sessions started afterwards. Turning it off revokes managed access."
             status={
-              cuaSetupAvailable
-                ? undefined
-                : "Grant Accessibility and Screen Recording to T3 Code on the host machine."
+              !cuaSetupAvailable
+                ? "Grant Accessibility and Screen Recording to T3 Code on the host machine."
+                : settings.enableCua && !cuaHost.ready
+                  ? "On, but this Mac has not granted Accessibility and Screen Recording. Agents cannot control it until you allow both."
+                  : undefined
             }
             resetAction={
               !isProjectScope && settings.enableCua !== DEFAULT_SERVER_SETTINGS.enableCua ? (
@@ -523,7 +527,10 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
                 // A host started before the grants keeps macOS's cached denial.
                 await window.desktopBridge?.restartCuaDriver?.();
               }}
-              onClose={() => setCuaSetupOpen(false)}
+              onClose={() => {
+                setCuaSetupOpen(false);
+                cuaHost.refresh();
+              }}
             />
           ) : null}
         </>

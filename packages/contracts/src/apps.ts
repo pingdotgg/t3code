@@ -23,6 +23,8 @@ export type AppsListInput = typeof AppsListInput.Type;
 export const AppsListResult = Schema.Struct({
   supported: Schema.Boolean,
   apps: Schema.Array(InstalledApp),
+  /** Why the host cannot act right now, when computer use is on but the driver last failed. */
+  unavailableReason: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(512))),
 });
 export type AppsListResult = typeof AppsListResult.Type;
 

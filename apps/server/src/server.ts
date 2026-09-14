@@ -525,7 +525,12 @@ const RuntimeCoreDependenciesLive = ReactorLayerLive.pipe(
   // keeps a single Live for all opencode consumers.
   Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
   Layer.provideMerge(WorkspaceLayerLive),
-  Layer.provideMerge(InstalledApps.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
+  Layer.provideMerge(
+    InstalledApps.layer.pipe(
+      Layer.provide(ServerSettingsLayerLive),
+      Layer.provide(CuaDriverLayerLive),
+    ),
+  ),
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, ProjectFaviconResolverLayerLive)),
   Layer.provideMerge(RepositoryIdentityResolverLayerLive),
   Layer.provideMerge(ServerEnvironmentLayerLive),
