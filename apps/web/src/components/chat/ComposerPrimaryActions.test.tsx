@@ -15,7 +15,7 @@ vi.mock("../SidebarStageBackdrop", () => ({
   useSidebarStageBackdropVariant: (enabled = true) => (enabled ? stageArtworkState.variant : null),
 }));
 
-import { ComposerPrimaryActions } from "./ComposerPrimaryActions";
+import { ComposerPrimaryActions, resolveComposerIdlePrimaryAction } from "./ComposerPrimaryActions";
 
 function renderPendingActions(isRunning: boolean) {
   return renderToStaticMarkup(
@@ -145,5 +145,23 @@ describe("ComposerPrimaryActions", () => {
 
     expect(markup).toContain('aria-label="Stop generation"');
     expect(markup).not.toContain('aria-label="Send message"');
+  });
+
+  it("continues an interrupted turn when the composer is empty", () => {
+    expect(
+      resolveComposerIdlePrimaryAction({
+        canContinueInterruptedTurn: true,
+        hasSendableContent: false,
+      }),
+    ).toBe("continue");
+  });
+
+  it("sends the draft instead when the interrupted turn composer has content", () => {
+    expect(
+      resolveComposerIdlePrimaryAction({
+        canContinueInterruptedTurn: true,
+        hasSendableContent: true,
+      }),
+    ).toBe("send");
   });
 });

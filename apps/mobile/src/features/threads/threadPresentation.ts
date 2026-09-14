@@ -1,5 +1,9 @@
 import type { StatusTone } from "../../components/StatusPill";
-import type { OrchestrationLatestTurn, OrchestrationSession } from "@t3tools/contracts";
+import type {
+  OrchestrationLatestTurn,
+  OrchestrationLatestTurnState,
+  OrchestrationSession,
+} from "@t3tools/contracts";
 import { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
 export type ThreadStatusKind =
@@ -18,6 +22,23 @@ export interface ThreadStatusPresentation extends StatusTone {
   readonly iconBackground: string;
   /** Whether the indicator represents in-flight activity. */
   readonly pulse: boolean;
+}
+
+export function resolveThreadComposerPrimaryAction(input: {
+  readonly hasContent: boolean;
+  readonly latestTurnState: OrchestrationLatestTurnState | null;
+  readonly sessionStatus: OrchestrationSession["status"] | null;
+}): "continue" | "send" | "stop" {
+  if (
+    !input.hasContent &&
+    (input.sessionStatus === "running" || input.sessionStatus === "starting")
+  ) {
+    return "stop";
+  }
+  if (!input.hasContent && input.latestTurnState === "interrupted") {
+    return "continue";
+  }
+  return "send";
 }
 
 function isLatestTurnSettled(

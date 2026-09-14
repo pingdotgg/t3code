@@ -1164,8 +1164,10 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   hasSendableContent: boolean;
   preserveComposerFocusOnPointerDown?: boolean;
   showSendWhileRunning?: boolean;
+  canContinueInterruptedTurn?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
+  onContinueInterruptedTurn?: (() => void) | undefined;
   onImplementPlanInNewThread: () => void;
   onCompactContext?: (() => void) | undefined;
   compactDisabled: boolean;
@@ -1198,8 +1200,10 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         hasSendableContent={props.hasSendableContent}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         showSendWhileRunning={props.showSendWhileRunning ?? false}
+        canContinueInterruptedTurn={props.canContinueInterruptedTurn ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
+        onContinueInterruptedTurn={props.onContinueInterruptedTurn}
         onImplementPlanInNewThread={props.onImplementPlanInNewThread}
       />
     </>
@@ -5602,6 +5606,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const handleInterruptPrimaryAction = useCallback(() => {
     void onInterrupt();
   }, [onInterrupt]);
+  const handleContinueInterruptedTurnPrimaryAction = useCallback(() => {
+    const prompt = "Continue";
+    promptRef.current = prompt;
+    setComposerDraftPrompt(composerDraftTarget, prompt);
+    void onSend();
+  }, [composerDraftTarget, onSend, promptRef, setComposerDraftPrompt]);
   const handleImplementPlanInNewThreadPrimaryAction = useCallback(() => {
     void onImplementPlanInNewThread();
   }, [onImplementPlanInNewThread]);
@@ -6803,8 +6813,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     hasSendableContent={composerSendState.hasSendableContent}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     showSendWhileRunning={isMobileViewport}
+                    canContinueInterruptedTurn={activeThread?.latestTurn?.state === "interrupted"}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}
+                    onContinueInterruptedTurn={handleContinueInterruptedTurnPrimaryAction}
                     onImplementPlanInNewThread={handleImplementPlanInNewThreadPrimaryAction}
                     compactDisabled={
                       compactDisabled || noProviderAvailable || isSendBusy || isConnecting
