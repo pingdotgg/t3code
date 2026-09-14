@@ -75,6 +75,27 @@ final class NativeThreadCatchUpTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testLegacyStaleBatchDoesNotPublishLiveBeforeNewMessages() async throws {
+        let fixture = try await CatchUpFixture.make(completionMarker: false)
+        defer { fixture.cleanUp() }
+        var requests = fixture.requests.makeAsyncIterator()
+        var events = fixture.client.events().makeAsyncIterator()
+        _ = try await fixture.client.loadThread(id: fixture.firstID)
+        let stream = try await nextThreadRequest(&requests)
+        try await stream.synchronize()
+        _ = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        try await stream.socket.chunk(id: stream.id, values: [
+            stream.messageValue(text: "Stale", sequence: 1),
+            stream.messageValue(text: "Stale", sequence: 2),
+        ])
+        try await stream.socket.chunk(id: stream.id, values: [
+            stream.messageValue(text: "New", sequence: 3),
+        ])
+        let messages = await messagesBeforeLive(&events, threadID: fixture.firstID)
+        XCTAssertEqual(messages, ["New"], "Stale batches must not emit an earlier live receipt.")
+        await fixture.client.disconnect()
+    }
+
     func testBatchKeepsRevertSnapshotAndLaterDeltaInOrder() async throws {
         let fixture = try await CatchUpFixture.make()
         defer { fixture.cleanUp() }
