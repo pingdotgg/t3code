@@ -67,6 +67,7 @@ import {
   setSnapShotAnimationDestination,
   setSnapShotShortcutSuppressed,
 } from "./methods/snapShot.ts";
+import { restartCuaDriver } from "./methods/cua.ts";
 import * as PreviewIpc from "./methods/preview.ts";
 import * as AppActivationIpc from "./methods/appActivation.ts";
 import { getWslState, setWslBackendEnabled, setWslDistro, setWslOnly } from "./methods/wsl.ts";
@@ -92,6 +93,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
   yield* ipc.handle(getConnectionCatalog);
   yield* ipc.handle(getSnapShotState);
   yield* ipc.handle(setupSnapShot);
+  yield* ipc.handle(restartCuaDriver);
   yield* ipc.handle(previewSnapShotConfig);
   yield* ipc.handle(applySnapShotConfig);
   yield* ipc.handle(requestSnapShotPermissions);

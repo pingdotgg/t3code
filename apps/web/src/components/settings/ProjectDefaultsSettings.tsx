@@ -520,6 +520,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               onAllow={allowCuaPermission}
               onEnable={async () => {
                 if (!settings.enableCua) await updateSettings({ enableCua: true });
+                // A host started before the grants keeps macOS's cached denial.
+                await window.desktopBridge?.restartCuaDriver?.();
               }}
               onClose={() => setCuaSetupOpen(false)}
             />

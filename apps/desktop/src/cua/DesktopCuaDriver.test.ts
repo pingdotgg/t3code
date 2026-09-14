@@ -123,6 +123,7 @@ const fixture = Effect.fn(function* (
   );
   yield* driver.listen;
   return {
+    restart: driver.restart,
     request: (requestId: string, enabled: boolean) =>
       Queue.offer(requests, { version: 1, type: "cuaDriverRequest", requestId, enabled }),
     next: Queue.take(reports),
@@ -180,6 +181,28 @@ describe("DesktopCuaDriver", () => {
         yield* test.request("stop-again", false);
         yield* test.next;
         assert.deepEqual(test.counts(), { starts: 1, stops: 1, destroys: 1 });
+      }),
+    ),
+  );
+
+  it.effect("restart stops the active host, reports it, and lets a new session start one", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const test = yield* fixture();
+        yield* test.request("start", true);
+        assert.equal((yield* test.next).status, "ready");
+        yield* test.restart;
+        const report = yield* test.next;
+        assert.deepEqual(report, {
+          version: 1,
+          type: "cuaDriverReport",
+          requestId: "start",
+          status: "stopped",
+        });
+        yield* test.restart;
+        yield* test.request("again", true);
+        assert.equal((yield* test.next).status, "ready");
+        assert.deepEqual(test.counts(), { starts: 2, stops: 1, destroys: 1 });
       }),
     ),
   );

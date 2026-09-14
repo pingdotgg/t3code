@@ -113,6 +113,12 @@ export class DesktopCuaDriver extends Context.Service<
   DesktopCuaDriver,
   {
     readonly listen: Effect.Effect<void, never, Scope.Scope>;
+    /**
+     * Stops the running host so the next agent session starts a fresh one.
+     * macOS caches TCC decisions per process, so a driver started before the
+     * user granted access keeps seeing the old answer until it restarts.
+     */
+    readonly restart: Effect.Effect<void>;
   }
 >()("@t3tools/desktop/cua/DesktopCuaDriver") {}
 
@@ -297,7 +303,25 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
       );
     }).pipe(Effect.onExit((exit) => (Exit.isFailure(exit) ? cleanup(owned) : Effect.void)));
   });
+  const restart = mutex.withPermits(1)(
+    Effect.suspend(() => {
+      const requestId = active?.requestId;
+      return stop.pipe(
+        Effect.andThen(
+          requestId === undefined
+            ? Effect.void
+            : publisher.publishCuaReport({
+                version: 1,
+                type: "cuaDriverReport",
+                requestId,
+                status: "stopped",
+              }),
+        ),
+      );
+    }),
+  );
   return DesktopCuaDriver.of({
+    restart,
     listen: publisher.cuaRequests.pipe(
       Stream.runForEach((request) =>
         mutex.withPermits(1)(
