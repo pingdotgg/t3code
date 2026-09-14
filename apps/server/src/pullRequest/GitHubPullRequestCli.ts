@@ -1,11 +1,19 @@
+import { runGitHubStackAction, type GitHubStackActionError } from "./githubStackActions.ts";
 import * as Context from "effect/Context";
+import * as Clock from "effect/Clock";
+import * as NodeCrypto from "node:crypto";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import {
   resolvePullRequestAuthorFilter,
+  PositiveInt,
+  TrimmedNonEmptyString,
   type PullRequestAction,
+  type PullRequestStackHead,
   type PullRequestActor,
   type PullRequestInvolvement,
   type PullRequestListFilters,
@@ -39,6 +47,7 @@ import {
   decodePullRequestListJson,
   decodePullRequestNodeIdJson,
   decodePullRequestSearchJson,
+  decodePullRequestStacksJson,
   decodePullRequestStatsJson,
   decodeReactionSubjectScopeJson,
   decodeRepositoryAccessJson,
@@ -50,6 +59,8 @@ import {
   decodeReviewThreadCommentsJson,
   decodeReviewThreadsJson,
   buildPullRequestStatsGraphQlQuery,
+  buildPullRequestStackMembershipsGraphQlQuery,
+  decodePullRequestStackMembershipsJson,
   encodeGraphQlRequestJson,
   pullRequestSearchGraphQlQuery,
   PULL_REQUEST_SEARCH_MAX_ROWS,
@@ -84,6 +95,7 @@ import {
   type GitHubPullRequestHead,
   type GitHubPullRequestListItem,
   type GitHubPullRequestSearchItem,
+  type GitHubPullRequestStack,
   type GitHubReviewThreadComments,
   type GitHubRepositoryAccess,
   type GitHubWorkflowRunApproval,
@@ -91,7 +103,7 @@ import {
   type GitHubReviewThreadPage,
   type GitHubViewerAccess,
 } from "./gitHubPullRequestJson.ts";
-import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import type { ProviderChangeRequestSummary, ProviderListCursor } from "./PullRequestProvider.ts";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from
@@ -332,6 +344,7 @@ export class GitHubWorkflowApprovalHeadChangedError extends Schema.TaggedError<G
 }
 
 export type GitHubPullRequestCliError =
+  | GitHubStackActionError
   | GitHubCli.GitHubCliError
   | GitHubPullRequestReadError
   | GitHubDiffCursorError
@@ -406,8 +419,24 @@ export interface GitHubPullRequestDiffSlice {
 export class GitHubPullRequestCli extends Context.Service<
   GitHubPullRequestCli,
   {
+    readonly withVerifiedCredential: <A, E, R>(
+      input: { readonly cwd: string; readonly host: string },
+      use: (identity: {
+        readonly accountId: string;
+        readonly viewer: string;
+        readonly credentialFingerprint: string;
+      }) => Effect.Effect<A, E, R>,
+    ) => Effect.Effect<A, E | GitHubPullRequestCliError, R>;
+    readonly getRoutingIdentity: (input: {
+      readonly cwd: string;
+      readonly host: string;
+    }) => Effect.Effect<
+      { readonly accountId: string; readonly viewer: string },
+      GitHubPullRequestCliError
+    >;
     readonly getViewerLogin: (input: {
       readonly cwd: string;
+      readonly host: string;
     }) => Effect.Effect<string, GitHubPullRequestCliError>;
 
     readonly listPullRequests: (input: {
@@ -460,21 +489,7 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly repository: string;
       readonly host: string;
       readonly number: number;
-    }) => Effect.Effect<
-      {
-        readonly number: number;
-        readonly title: string;
-        readonly url: string;
-        readonly headBranch: string;
-        readonly baseBranch: string;
-        readonly state: "open" | "closed" | "merged";
-        readonly isDraft?: boolean;
-        readonly closedAt?: string | null;
-        readonly mergedAt?: string | null;
-        readonly updatedAt: string;
-      },
-      GitHubPullRequestCliError
-    >;
+    }) => Effect.Effect<ProviderChangeRequestSummary, GitHubPullRequestCliError>;
 
     readonly getPullRequestDetail: (input: {
       readonly cwd: string;
@@ -493,6 +508,18 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly headRepositoryOwner: string;
       readonly isCrossRepository: true;
     }) => Effect.Effect<ReadonlyArray<GitHubWorkflowRunApproval>, GitHubPullRequestCliError>;
+
+    /**
+     * The host-native stack this pull request is in, or null when it is in none — which is also
+     * the answer for a host that refuses the stacks preview altogether.
+     */
+    readonly getPullRequestStack: (input: {
+      readonly cwd: string;
+      readonly includeDetails?: boolean;
+      readonly repository: string;
+      readonly host: string;
+      readonly number: number;
+    }) => Effect.Effect<GitHubPullRequestStack | null, GitHubPullRequestCliError>;
 
     /**
      * How far the branch trails its base, and whether this viewer may update it. Its own read
@@ -628,6 +655,8 @@ export class GitHubPullRequestCli extends Context.Service<
       readonly host: string;
       readonly number: number;
       readonly action: PullRequestAction;
+      readonly stackNumber?: number;
+      readonly expectedStackHeads?: ReadonlyArray<PullRequestStackHead>;
       readonly mergeMethod?: PullRequestMergeMethod;
       readonly updateMethod?: PullRequestUpdateMethod;
     }) => Effect.Effect<void, GitHubPullRequestCliError>;
@@ -807,8 +836,8 @@ function matchesFilters(
   viewer: string,
 ): boolean {
   if (filters === undefined) return true;
-  const labels = item.labels.map((label) => label.name.trim().toLowerCase());
-  const holds = (label: string) => labels.includes(label.trim().toLowerCase());
+  const labels = new Set(item.labels.map((label) => label.name.trim().toLowerCase()));
+  const holds = (label: string) => labels.has(label.trim().toLowerCase());
   return (
     (filters.draft === undefined || item.isDraft === (filters.draft === "only")) &&
     (filters.review === undefined ||
@@ -984,6 +1013,111 @@ function actionArgs(
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
   const graphQlBudget = yield* GitHubGraphQlBudget.GitHubGraphQlBudget;
+  const routingIdentities = new Map<
+    string,
+    {
+      at: number;
+      value: { accountId: string; viewer: string };
+    }
+  >();
+  const identityLocks = new Map<string, { gate: Semaphore.Semaphore; users: number }>();
+  const decodeRoutingIdentity = Schema.decodeUnknownEffect(
+    Schema.fromJsonString(
+      Schema.Struct({
+        id: PositiveInt,
+        login: TrimmedNonEmptyString,
+      }),
+    ),
+  );
+  const captureVerifiedCredential = Effect.fn("GitHubPullRequestCli.captureVerifiedCredential")(
+    function* (input: { readonly cwd: string; readonly host: string }) {
+      const unavailable = () =>
+        new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd });
+      const host = input.host.toLowerCase();
+      const pinned = yield* GitHubCli.PinnedGitHubCredential;
+      if (pinned !== null && pinned.host !== host) return yield* unavailable();
+      // Only the digest is retained. Never attach credential lookup output to an error.
+      const token =
+        pinned !== null
+          ? Redacted.value(pinned.token)
+          : (yield* github
+              .execute({
+                cwd: input.cwd,
+                args: ["auth", "token", "--hostname", host],
+                env: { GH_DEBUG: "" },
+              })
+              .pipe(Effect.mapError(unavailable))).stdout.trim();
+      if (!token) return yield* unavailable();
+      const key = `${host}:${NodeCrypto.createHash("sha256").update(token).digest("hex")}`;
+      const credential = { host, token: Redacted.make(token), credentialFingerprint: key };
+      // A cold page may ask several times. Wait per credential and check again after the
+      // first verification; cancellation releases the next waiter without losing its request.
+      return yield* Effect.acquireUseRelease(
+        Effect.sync(() => {
+          const lock = identityLocks.get(key) ?? { gate: Semaphore.makeUnsafe(1), users: 0 };
+          lock.users++;
+          identityLocks.set(key, lock);
+          return lock;
+        }),
+        (lock) =>
+          lock.gate.withPermit(
+            Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
+              const cached = routingIdentities.get(key);
+              if (cached !== undefined && now - cached.at < 10 * 60_000)
+                return { ...credential, ...cached.value };
+              // Pin this read so an auth switch cannot poison its cache entry.
+              const response = yield* github
+                .execute({
+                  cwd: input.cwd,
+                  args: ["api", "user", "--hostname", host],
+                  env: {
+                    GH_HOST: host,
+                    GH_TOKEN: token,
+                    GITHUB_TOKEN: token,
+                    GH_ENTERPRISE_TOKEN: token,
+                    GITHUB_ENTERPRISE_TOKEN: token,
+                    GH_DEBUG: "",
+                  },
+                })
+                .pipe(Effect.mapError(unavailable));
+              const identity = yield* decodeRoutingIdentity(response.stdout).pipe(
+                Effect.mapError(unavailable),
+              );
+              const value = { accountId: String(identity.id), viewer: identity.login };
+              if (routingIdentities.size >= 128)
+                routingIdentities.delete(routingIdentities.keys().next().value!);
+              routingIdentities.set(key, { at: now, value });
+              return { ...credential, ...value };
+            }),
+          ),
+        (lock) =>
+          Effect.sync(() => {
+            lock.users--;
+            if (lock.users === 0) identityLocks.delete(key);
+          }),
+      );
+    },
+  );
+  const withVerifiedCredential: GitHubPullRequestCli["Service"]["withVerifiedCredential"] = (
+    input,
+    use,
+  ) =>
+    captureVerifiedCredential(input).pipe(
+      Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
+        use({ accountId, viewer, credentialFingerprint }).pipe(
+          Effect.provideService(GitHubCli.PinnedGitHubCredential, {
+            host,
+            token,
+            credentialFingerprint,
+          }),
+        ),
+      ),
+    );
+  const getRoutingIdentity: GitHubPullRequestCli["Service"]["getRoutingIdentity"] = (input) =>
+    captureVerifiedCredential(input).pipe(
+      Effect.map(({ accountId, viewer }) => ({ accountId, viewer })),
+    );
 
   /**
    * The pull request's own node id, which is what a mutation against the pull request itself is
@@ -1461,15 +1595,10 @@ export const make = Effect.gen(function* () {
         );
 
   return GitHubPullRequestCli.of({
+    withVerifiedCredential,
+    getRoutingIdentity,
     getViewerLogin: (input) =>
-      github.execute({ cwd: input.cwd, args: ["api", "user", "--jq", ".login"] }).pipe(
-        Effect.flatMap((result) => {
-          const login = result.stdout.trim();
-          return login.length > 0
-            ? Effect.succeed(login)
-            : Effect.fail(new GitHubViewerLoginUnavailableError({ command: "gh", cwd: input.cwd }));
-        }),
-      ),
+      getRoutingIdentity(input).pipe(Effect.map((identity) => identity.viewer)),
 
     listPullRequests: (input) => {
       const fallbackMaxRows = Math.max(input.limit + 1, PULL_REQUEST_FALLBACK_MAX_ROWS);
@@ -1558,6 +1687,47 @@ export const make = Effect.gen(function* () {
             ? read(false)
             : Effect.succeed(batch),
         ),
+        Effect.flatMap((batch) => {
+          // Match the search query's host support, and enrich only rows that survived paging.
+          if (input.host !== "github.com" || batch.items.length === 0) return Effect.succeed(batch);
+          const chunks: Array<ReadonlyArray<GitHubPullRequestListItem>> = [];
+          for (let start = 0; start < batch.items.length; start += STAT_ALIASES_PER_REQUEST) {
+            chunks.push(batch.items.slice(start, start + STAT_ALIASES_PER_REQUEST));
+          }
+          return Effect.forEach(
+            chunks,
+            (chunk) => {
+              const query = buildPullRequestStackMembershipsGraphQlQuery(
+                input.repository,
+                chunk.map((item) => item.number),
+              );
+              if (query === null) return Effect.succeed(chunk);
+              return graphqlRead({
+                cwd: input.cwd,
+                host: input.host,
+                operation: "listPullRequestStackMemberships",
+                query,
+                decode: decodePullRequestStackMembershipsJson,
+              }).pipe(
+                Effect.map((memberships) =>
+                  chunk.map((item, index) => {
+                    const stack = memberships.get(index);
+                    return stack === undefined ? item : { ...item, stack };
+                  }),
+                ),
+                // Optional badges must not take down a listing that already read successfully.
+                Effect.catch(() =>
+                  Effect.logWarning("Pull request stack membership enrichment failed", {
+                    operation: "listPullRequestStackMemberships",
+                    host: input.host,
+                    rows: chunk.length,
+                  }).pipe(Effect.as(chunk)),
+                ),
+              );
+            },
+            { concurrency: STAT_REQUEST_CONCURRENCY },
+          ).pipe(Effect.map((chunks) => ({ ...batch, items: chunks.flat() })));
+        }),
       );
     },
 
@@ -1582,7 +1752,7 @@ export const make = Effect.gen(function* () {
         operation: "searchPullRequests",
         // The reader's own words are in the query, so it travels over stdin rather than in argv.
         privateVariables: { q: query },
-        query: pullRequestSearchGraphQlQuery(rows),
+        query: pullRequestSearchGraphQlQuery(rows, input.host === "github.com"),
         decode: decodePullRequestSearchJson,
       }).pipe(
         Effect.map((batch) => ({
@@ -1630,40 +1800,121 @@ export const make = Effect.gen(function* () {
       ).pipe(Effect.map((results) => results.flat()));
     },
 
+    // One `gh pr view` either way; asking for the detail fields costs nothing extra and hands
+    // the thread overview its author, diff stat, review decision and checks in the same read.
     getPullRequestSummary: (input) =>
       github
-        .getPullRequest({
+        .execute({
           cwd: input.cwd,
-          reference: `https://${input.host}/${input.repository}/pull/${input.number}`,
+          args: [
+            "pr",
+            "view",
+            String(input.number),
+            ...repositoryArgs(input),
+            "--json",
+            PULL_REQUEST_DETAIL_JSON_FIELDS,
+          ],
         })
         .pipe(
-          Effect.flatMap((summary) =>
-            summary.updatedAt === undefined
-              ? Effect.fail(
-                  new GitHubPullRequestUpdatedAtUnavailableError({
-                    command: "gh",
-                    cwd: input.cwd,
-                    repository: input.repository,
-                    number: input.number,
-                  }),
-                )
-              : Effect.succeed({
-                  number: summary.number,
-                  title: summary.title,
-                  url: summary.url,
-                  headBranch: summary.headRefName,
-                  baseBranch: summary.baseRefName,
-                  state: summary.state ?? "open",
-                  ...(summary.isDraft === true ? { isDraft: true } : {}),
-                  closedAt: summary.closedAt ?? null,
-                  mergedAt: summary.mergedAt ?? null,
-                  updatedAt: summary.updatedAt,
+          Effect.flatMap((result) => {
+            const decoded = decodePullRequestDetailJson(result.stdout.trim());
+            if (!Result.isSuccess(decoded)) {
+              return Effect.fail(
+                new GitHubPullRequestReadError({
+                  command: "gh",
+                  cwd: input.cwd,
+                  operation: "getPullRequestSummary",
+                  cause: decoded.failure,
                 }),
-          ),
+              );
+            }
+            const detail = decoded.success;
+            return Effect.succeed({
+              number: detail.number,
+              title: detail.title,
+              url: detail.url,
+              headBranch: detail.headBranch,
+              baseBranch: detail.baseBranch,
+              state: detail.state,
+              updatedAt: detail.updatedAt,
+              closedAt: detail.closedAt ?? null,
+              mergedAt: detail.mergedAt ?? null,
+              isDraft: detail.isDraft,
+              author: detail.author,
+              additions: detail.additions,
+              deletions: detail.deletions,
+              changedFiles: detail.changedFiles,
+              reviewDecision: detail.reviewDecision,
+              checksState: detail.checksState,
+              mergeability: detail.mergeability,
+            });
+          }),
         ),
 
     getPullRequestDetail,
     listWorkflowRunsRequiringApproval,
+
+    getPullRequestStack: (input) => {
+      const { owner, name } = parseRepositorySelector(input.repository);
+      return github
+        .execute({
+          cwd: input.cwd,
+          args: [
+            "api",
+            "--hostname",
+            input.host,
+            `repos/${owner}/${name}/stacks?pull_request=${input.number}`,
+          ],
+        })
+        .pipe(
+          Effect.flatMap((result) => {
+            const decoded = decodePullRequestStacksJson(result.stdout.trim());
+            return Result.isSuccess(decoded)
+              ? Effect.succeed(decoded.success)
+              : Effect.fail(
+                  new GitHubPullRequestReadError({
+                    command: "gh",
+                    cwd: input.cwd,
+                    operation: "getPullRequestStack",
+                    cause: decoded.failure,
+                  }),
+                );
+          }),
+          Effect.flatMap((stack) => {
+            if (!input.includeDetails || stack === null) return Effect.succeed(stack);
+            return github
+              .execute({
+                cwd: input.cwd,
+                args: [
+                  "api",
+                  "--hostname",
+                  input.host,
+                  `repos/${owner}/${name}/stacks/${stack.number}`,
+                ],
+              })
+              .pipe(
+                Effect.flatMap((result) => {
+                  const decoded = decodePullRequestStacksJson(`[${result.stdout.trim()}]`);
+                  return Result.isSuccess(decoded)
+                    ? Effect.succeed(decoded.success)
+                    : Effect.fail(
+                        new GitHubPullRequestReadError({
+                          command: "gh",
+                          cwd: input.cwd,
+                          operation: "getPullRequestStack",
+                          cause: decoded.failure,
+                        }),
+                      );
+                }),
+              );
+          }),
+          // Hosts without the stacks preview return 404. Other failures must preserve the
+          // previously synced stack and let the caller retry.
+          Effect.catchTags({
+            GitHubPullRequestNotFoundError: () => Effect.succeed(null),
+          }),
+        );
+    },
 
     getPullRequestBaseComparison: (input) => {
       const { owner, name } = parseRepositorySelector(input.repository);
@@ -2057,6 +2308,10 @@ export const make = Effect.gen(function* () {
     },
 
     runPullRequestAction: (input) => {
+      if (input.stackNumber !== undefined)
+        return runGitHubStackAction({ ...input, stackNumber: input.stackNumber }).pipe(
+          Effect.provideService(GitHubCli.GitHubCli, github),
+        );
       if (input.action === "revert") {
         return pullRequestNodeId({ ...input, operation: "revertPullRequest" }).pipe(
           Effect.flatMap((pullRequestId) =>

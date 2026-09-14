@@ -1,14 +1,19 @@
+import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  EnvironmentId,
-  MessageId,
-  ModelSelection,
-  OrchestrationThreadShell,
-  ProviderInteractionMode,
-  RuntimeMode,
-  ServerConfig as T3ServerConfig,
-  UsageLimitsReport,
+import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
+import { pastedTextDisposition, replaceTextSelection } from "@t3tools/client-runtime/text-paste";
+import {
+  PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
+  PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
+  type EnvironmentId,
+  type MessageId,
+  type ModelSelection,
+  type OrchestrationThreadShell,
+  type ProviderInteractionMode,
+  type RuntimeMode,
+  type ServerConfig as T3ServerConfig,
+  type UsageLimitsReport,
 } from "@t3tools/contracts";
 import {
   collectProviderUsageLimits,
@@ -27,7 +32,7 @@ import {
   useState,
   type RefObject,
 } from "react";
-import { Alert, Platform, Pressable, View, type ViewStyle } from "react-native";
+import { Alert, Keyboard, Platform, Pressable, View, type ViewStyle } from "react-native";
 import { FilePreviewModal, type FilePreviewSource } from "../../components/FilePreviewModal";
 import {
   composerAttachmentUploadBlockReason,
@@ -37,7 +42,7 @@ import {
 import Animated, {
   FadeIn,
   FadeOut,
-  LinearTransition,
+  type LayoutAnimationFunction,
   ReduceMotion,
   useAnimatedStyle,
   useSharedValue,
@@ -46,6 +51,13 @@ import Animated, {
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { armAgentAwarenessLiveActivityForLocalWork } from "../agent-awareness/remoteRegistration";
 import { scopedThreadKey } from "../../lib/scopedEntities";
+import {
+  composerContextImportsAtom,
+  countComposerDraftAttachmentsAfterSelection,
+} from "../../state/use-composer-drafts";
+import type { ComposerDocumentAttachment } from "../../lib/composerContext";
+import { useProject } from "../../state/entities";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 
 import { AppText as Text } from "../../components/AppText";
 import { ComposerAttachmentButton } from "../../components/ComposerAttachmentButton";
@@ -56,15 +68,17 @@ import {
 import { VideoPreviewModal, type VideoPreviewSource } from "../../components/VideoPreviewModal";
 import { GlassSurface } from "../../components/GlassSurface";
 import { ComposerEditor, type ComposerEditorHandle } from "../../components/ComposerEditor";
+import { fileRoutePathSegments } from "../files/filePath";
 import {
   ComposerActionButton,
   ComposerInlineControl,
   ComposerToolbarRow,
 } from "../../components/ComposerToolbar";
 import { ProviderIcon } from "../../components/ProviderIcon";
-import type {
-  DraftComposerAttachment,
-  DraftComposerFileAttachment,
+import {
+  composerStripAttachments,
+  type DraftComposerAttachment,
+  type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import {
   buildModelOptions,
@@ -128,6 +142,7 @@ export interface ThreadComposerProps {
   readonly onPickDraftMedia: () => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
+  readonly onNativePasteText: (paste: ComposerTextPaste) => Promise<void>;
   readonly onRemoveDraftImage: (imageId: string) => void;
   readonly onStopThread: () => void;
   readonly onSendMessage: () => Promise<MessageId | null>;
@@ -143,7 +158,7 @@ export interface ThreadComposerProps {
 
 /**
  * The pill / card container — renders with Expo's native GlassView on supported
- * iOS 26+ devices and keeps the existing opaque fallback elsewhere.
+ * iOS 26+ devices, with a frosted blur fallback where supported.
  * Exported so NewTaskDraftScreen can render the same composer chrome.
  */
 // The bottom-anchored dock position and clipped surface height use the same
@@ -153,10 +168,32 @@ export interface ThreadComposerProps {
 // running alongside that translate reads as jitter. Snapping the layout and
 // letting the keyboard-synced slide be the only motion looks native there.
 export const COMPOSER_TRANSITION_DURATION_MS = 220;
+// Side panes already animate the dock's width. Nested horizontal layout
+// transitions would leave the surface trailing its toolbar's new position.
+// Keep the vertical pill/card morph while horizontal layout follows the dock.
+const composerHeightTransition: LayoutAnimationFunction = (values) => {
+  "worklet";
+  const timing = {
+    duration: COMPOSER_TRANSITION_DURATION_MS,
+    reduceMotion: ReduceMotion.System,
+  };
+  return {
+    initialValues: {
+      originX: values.targetOriginX,
+      originY: values.currentOriginY,
+      width: values.targetWidth,
+      height: values.currentHeight,
+    },
+    animations: {
+      originX: values.targetOriginX,
+      originY: withTiming(values.targetOriginY, timing),
+      width: values.targetWidth,
+      height: withTiming(values.targetHeight, timing),
+    },
+  };
+};
 export const COMPOSER_LAYOUT_TRANSITION =
-  Platform.OS === "android"
-    ? undefined
-    : LinearTransition.duration(COMPOSER_TRANSITION_DURATION_MS).reduceMotion(ReduceMotion.System);
+  Platform.OS === "android" ? undefined : composerHeightTransition;
 
 const COMPOSER_ATTACHMENT_ENTERING =
   Platform.OS === "android"
@@ -172,6 +209,7 @@ export function ComposerSurface(props: {
   readonly animateLayout?: boolean;
 }) {
   const { materialYouStyleLayoutActive } = useAppearancePreferences();
+  const colors = useUniwindTheme();
   const targetBorderRadius =
     typeof props.style.borderRadius === "number" ? props.style.borderRadius : 0;
   const animatedBorderRadius = useSharedValue(targetBorderRadius);
@@ -210,10 +248,11 @@ export function ComposerSurface(props: {
     >
       <AnimatedGlassSurface
         chrome="none"
+        fallbackColor={
+          materialYouStyleLayoutActive ? colors["--color-composer-surface"] : colors["--color-card"]
+        }
         fallbackClassName={
-          materialYouStyleLayoutActive
-            ? "border border-composer-border bg-composer-surface"
-            : "border border-border bg-card-translucent"
+          materialYouStyleLayoutActive ? "border border-composer-border" : "border border-border"
         }
         glassEffectStyle="regular"
         // The composer is a passive material containing interactive controls.
@@ -237,6 +276,7 @@ export function ComposerSurface(props: {
 }
 
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
+  const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { materialYouStyleLayoutActive, themeVariables: materialTheme } =
     useAppearancePreferences();
   const composerPanel = materialTheme["--color-composer-panel"];
@@ -246,6 +286,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const fallbackInputRef = useRef<ComposerEditorHandle>(null);
   const inputRef = props.editorRef ?? fallbackInputRef;
   const [isFocused, setIsFocused] = useState(false);
+  const pendingPastedTextAttachmentCountRef = useRef(0);
+  const [pendingPastedTextAttachmentCount, setPendingPastedTextAttachmentCount] = useState(0);
   const settingsSheetPresentation = useThreadSettingsSheetPresentation({
     editorRef: inputRef,
     isEditorFocused: isFocused,
@@ -259,6 +301,11 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const [previewFile, setPreviewFile] = useState<FilePreviewSource | null>(null);
   const [previewVideo, setPreviewVideo] = useState<VideoPreviewSource | null>(null);
   const hasContent = props.draftMessage.trim().length > 0 || props.draftAttachments.length > 0;
+  // Only media belongs above the composer; every other file reads as its inline chip.
+  const stripAttachments = useMemo(
+    () => composerStripAttachments(props.draftAttachments),
+    [props.draftAttachments],
+  );
   const showStopAction =
     !hasContent &&
     (props.selectedThread.session?.status === "running" ||
@@ -293,6 +340,18 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     );
   }, [props.serverConfig, props.selectedThread.modelSelection.instanceId]);
   const composerOwnerKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
+  const openDraftDocument = (attachment: ComposerDocumentAttachment) => {
+    Keyboard.dismiss();
+    navigation.navigate("ThreadAttachment", {
+      environmentId: String(props.environmentId),
+      threadId: String(props.selectedThread.id),
+      attachmentId: attachment.attachmentId,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: String(attachment.sizeBytes),
+      draftKey: composerOwnerKey,
+    });
+  };
   const { onSendMessage, onChangeDraftMessage, onShowUsageLimits } = props;
   // T3 owns /usage-limits only where Limits has data for the selected provider;
   // elsewhere the name stays the provider's own and is sent through untouched.
@@ -323,6 +382,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     ownerKey: composerOwnerKey,
     environmentId: props.environmentId,
     projectCwd: props.projectCwd,
+    pullRequestProjectId: props.serverConfig?.environment.capabilities.pullRequests
+      ? (project?.id ?? null)
+      : null,
+    pullRequestRepository: project?.repositoryIdentity?.displayName ?? null,
     selectedProviderStatus,
     hasThread: true,
     hasCompactableConversation: props.hasCompactableConversation,
@@ -349,7 +412,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
   const isVoiceInputPresented = voicePresentation.statusLabel !== null;
   // An open draft stays visible; only a collapsed composer becomes a voice strip.
-  const isExpanded = isFocused || settingsSheetPresentation.isActive;
+  const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
@@ -359,9 +422,17 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     serverConfig: props.serverConfig,
     states: uploadStates,
   });
-  const sendBlockedReason = props.sendBlockedReason ?? attachmentBlockReason;
+  const contextImports = useAtomValue(composerContextImportsAtom);
+  const sendBlockedReason =
+    props.sendBlockedReason ??
+    (pendingPastedTextAttachmentCount > 0 ? "Attaching pasted text" : null) ??
+    attachmentBlockReason;
   const canSend =
-    hasContent && !voiceInput.blocksSubmission && sendBlockedReason === null && !modelUnavailable;
+    hasContent &&
+    !contextImports[composerOwnerKey] &&
+    !voiceInput.blocksSubmission &&
+    sendBlockedReason === null &&
+    !modelUnavailable;
 
   // Keep the feed inset aligned with the card or compact dictation strip.
   useEffect(() => {
@@ -405,12 +476,13 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
 
   const handleBlur = useCallback(() => {
     setIsFocused(false);
-    if (!settingsSheetPresentation.isActive) {
+    if (!settingsSheetPresentation.keepsComposerExpanded) {
       onExpandedChange?.(false);
     }
     onEditorFocusChange?.(false);
-  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.isActive]);
+  }, [onEditorFocusChange, onExpandedChange, settingsSheetPresentation.keepsComposerExpanded]);
   const handleSend = useCallback(async () => {
+    if (voiceInput.blocksSubmission || pendingPastedTextAttachmentCountRef.current > 0) return;
     // Typed out in full rather than picked from the menu. Attachments mean the
     // user is sending a prompt, so those go through as usual.
     if (
@@ -421,7 +493,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       if (openUsageLimits()) onChangeDraftMessage("");
       return;
     }
-    if (voiceInput.blocksSubmission) return;
     const threadKey = scopedThreadKey(props.environmentId, props.selectedThread.id);
     if (inFlightThreadIdsRef.current.has(threadKey)) return;
     inFlightThreadIdsRef.current.add(threadKey);
@@ -574,12 +645,15 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
         className="relative w-full self-center"
         style={{ maxWidth: props.contentMaxWidth }}
       >
-        {!voiceInput.isBusy && composerMenu.trigger && composerMenu.items.length > 0 ? (
+        {!voiceInput.isBusy &&
+        composerMenu.trigger &&
+        (composerMenu.items.length > 0 || composerMenu.trigger.kind === "pull-request") ? (
           <View className="absolute inset-x-0 bottom-full z-10 mb-2">
             <ComposerCommandPopover
               items={composerMenu.items}
               triggerKind={composerMenu.trigger.kind}
               isLoading={composerMenu.isLoading}
+              error={composerMenu.error}
               onSelect={composerMenu.onSelect}
             />
           </View>
@@ -624,7 +698,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onPickFiles={props.onPickDraftFiles}
               />
             ) : null}
-            {isExpanded && props.draftAttachments.length > 0 ? (
+            {isExpanded && stripAttachments.length > 0 ? (
               <Animated.View
                 className="px-[14px] pb-2.5"
                 entering={COMPOSER_ATTACHMENT_ENTERING}
@@ -632,10 +706,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               >
                 <ComposerAttachmentStrip
                   environmentId={props.environmentId}
-                  attachments={props.draftAttachments}
+                  attachments={stripAttachments}
                   onRemove={voiceInput.isBusy ? () => undefined : props.onRemoveDraftImage}
                   onPressPreview={voiceInput.isBusy ? undefined : onPressPreview}
                   onPressVideo={voiceInput.isBusy ? undefined : onPressVideo}
+                  onPressDocument={
+                    voiceInput.isBusy
+                      ? undefined
+                      : (attachment) =>
+                          openDraftDocument({
+                            attachmentId: attachment.id,
+                            name: attachment.name,
+                            mimeType: attachment.mimeType,
+                            sizeBytes: attachment.sizeBytes,
+                          })
+                  }
                 />
               </Animated.View>
             ) : null}
@@ -644,6 +729,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               layout={COMPOSER_LAYOUT_TRANSITION}
             >
               <ComposerEditor
+                draftKey={composerOwnerKey}
+                environmentId={props.environmentId}
+                onOpenMention={(path) => {
+                  Keyboard.dismiss();
+                  navigation.navigate("ThreadFile", {
+                    environmentId: String(props.environmentId),
+                    threadId: String(props.selectedThread.id),
+                    path: fileRoutePathSegments(path),
+                  });
+                }}
+                onOpenAttachment={openDraftDocument}
+                // A rested composer full of chips left almost nowhere to tap to start typing:
+                // every chip opened its file instead. Collapsed, they focus the editor.
+                chipsInert={!isExpanded}
+                onInertChipPress={() => inputRef.current?.focus()}
                 ref={inputRef}
                 multiline
                 value={props.draftMessage}
@@ -653,6 +753,76 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onChangeText={props.onChangeDraftMessage}
                 onSelectionChange={composerMenu.onSelectionChange}
                 onPasteImages={(uris) => void props.onNativePasteImages(uris)}
+                onPasteText={(paste) => {
+                  const insertPaste = () => {
+                    const insertion = replaceTextSelection({
+                      value: paste.value,
+                      selection: paste.selection,
+                      text: paste.text,
+                    });
+                    const selection = { start: insertion.cursor, end: insertion.cursor };
+                    props.onChangeDraftMessage(insertion.value);
+                    composerMenu.onSelectionChange(selection);
+                  };
+                  const capabilities = props.serverConfig?.environment.capabilities;
+                  const advertisedMax =
+                    capabilities?.attachmentUploads === true
+                      ? capabilities.fileAttachments?.maxUploadBytes
+                      : undefined;
+                  const maxBytes =
+                    advertisedMax === undefined
+                      ? null
+                      : clampFileAttachmentUploadBytes(advertisedMax);
+                  const wouldExceedInputLimit =
+                    paste.value.length -
+                      Math.max(0, paste.selection.end - paste.selection.start) +
+                      paste.text.length >
+                    PROVIDER_SEND_TURN_MAX_INPUT_CHARS;
+                  const canAttach =
+                    maxBytes !== null &&
+                    countComposerDraftAttachmentsAfterSelection(composerOwnerKey, {
+                      text: paste.value,
+                      ...paste.selection,
+                    }) < PROVIDER_SEND_TURN_MAX_ATTACHMENTS &&
+                    new TextEncoder().encode(paste.text).byteLength <= maxBytes;
+                  if (
+                    pastedTextDisposition({
+                      text: paste.text,
+                      wouldExceedInputLimit,
+                      canAttach: true,
+                    }) === "attachment"
+                  ) {
+                    if (canAttach) {
+                      pendingPastedTextAttachmentCountRef.current += 1;
+                      setPendingPastedTextAttachmentCount(
+                        pendingPastedTextAttachmentCountRef.current,
+                      );
+                      const finishAttachment = () => {
+                        pendingPastedTextAttachmentCountRef.current = Math.max(
+                          0,
+                          pendingPastedTextAttachmentCountRef.current - 1,
+                        );
+                        setPendingPastedTextAttachmentCount(
+                          pendingPastedTextAttachmentCountRef.current,
+                        );
+                      };
+                      void props.onNativePasteText(paste).then(finishAttachment, finishAttachment);
+                    } else if (!wouldExceedInputLimit) {
+                      insertPaste();
+                    } else {
+                      Alert.alert(
+                        wouldExceedInputLimit
+                          ? "Pasted text is too large for this message"
+                          : "Could not attach pasted text",
+                        wouldExceedInputLimit
+                          ? "Remove some text or an attachment, then paste again."
+                          : "Remove an attachment or use a smaller paste, then try again.",
+                      );
+                    }
+                    return;
+                  }
+                  insertPaste();
+                }}
                 placeholder={props.placeholder}
                 onFocus={handleFocus}
                 onBlur={handleBlur}
@@ -679,9 +849,9 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 }}
               />
             </Animated.View>
-            {!isExpanded && props.draftAttachments.length > 0 ? (
+            {!isExpanded && stripAttachments.length > 0 ? (
               <View className="flex-row gap-1 pl-1">
-                {props.draftAttachments.slice(0, 3).map((attachment) => (
+                {stripAttachments.slice(0, 3).map((attachment) => (
                   <ComposerAttachmentThumbnail
                     environmentId={props.environmentId}
                     key={attachment.id}
@@ -693,10 +863,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                     onPressVideo={onPressVideo}
                   />
                 ))}
-                {props.draftAttachments.length > 3 ? (
+                {stripAttachments.length > 3 ? (
                   <View className="size-[30px] items-center justify-center rounded-lg bg-subtle-strong">
                     <Text className="text-foreground-muted text-2xs font-t3-bold">
-                      +{props.draftAttachments.length - 3}
+                      +{stripAttachments.length - 3}
                     </Text>
                   </View>
                 ) : null}
@@ -778,7 +948,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                       onPickMedia={props.onPickDraftMedia}
                       onPickFiles={props.onPickDraftFiles}
                     />
-                    <View className="min-w-0 shrink" style={{ maxWidth: 152 }}>
+                    <View className="min-w-0 shrink">
                       <ComposerInlineControl
                         accessibilityLabel="Model and reasoning settings"
                         emphasized
@@ -786,7 +956,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                           <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
                         }
                         label={currentModelOption?.label ?? currentModelSelection.model}
-                        maxWidth={152}
+                        maxWidth="100%"
                         onPress={openSettings}
                       />
                     </View>

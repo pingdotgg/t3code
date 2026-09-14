@@ -18,9 +18,37 @@ versioned clients and servers. Subscriptions send the state a client needs, so a
 thread does not pay for every thread's history. Authentication of a socket does not authorize every
 method on it. See [environment auth](./environment-auth.md).
 
+### Pull request linking compatibility
+
+Web, desktop, mobile, and environments upgrade independently. Negotiate linking through the
+environment descriptor, never through a client version or an assumed coordinated release:
+
+| Environment capability                | Client behavior                                                                                                   |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `threadPullRequests: true`            | Use persisted `pullRequests[]`, multi-link commands, stack UI, and reverse thread lookup.                         |
+| Only `threadPullRequestLinking: true` | Use `linkedPullRequest` and the existing `thread.meta.update` single-link operation. Do not call multi-link RPCs. |
+| Neither flag                          | Hide linking actions; existing branch-discovered PR display remains available.                                    |
+
+New environments continue advertising the legacy flag, accepting legacy metadata commands, and
+emitting the derived `linkedPullRequest` field for older clients. That hostless field includes only
+links in the thread project's own repository; cross-host and cross-repository links require the
+multi-link protocol. New clients accept snapshots that
+omit `pullRequests`. Retain the legacy wire fields, projection column, and replay support; this feature
+does not schedule their removal. Missing new capabilities must also override cached multi-link data
+after an environment downgrade.
+
 Provider-specific behavior belongs behind an adapter. Orchestration works with normalized commands
 and events, so adding a provider should not require branches throughout the domain or clients.
 See [provider constraints](./providers.md).
+
+## Settings ownership
+
+Client preferences stay in the current client; environment defaults and project overrides stay
+on their owning server. The web and desktop settings target is URL state, resolved against current
+connections and project membership. An unavailable target must not fall back to another environment.
+**All environments** is an explicit bulk edit of connected, loaded servers, not a durable global
+default or a promise to synchronize offline or future environments. Project-group targets similarly
+select known environment-local checkouts; the group itself does not store inherited defaults.
 
 ## Durable intent and side effects
 

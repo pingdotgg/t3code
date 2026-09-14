@@ -11,6 +11,7 @@ import type {
 } from "@t3tools/contracts";
 
 import * as GitHubPullRequestCli from "./GitHubPullRequestCli.ts";
+import { PinnedGitHubCredential } from "../sourceControl/GitHubCli.ts";
 import {
   PullRequestProviderError,
   type PullRequestProviderFailure,
@@ -47,6 +48,8 @@ const CAPABILITIES: PullRequestCapabilities = {
   },
   reviewers: { request: true, listCandidates: true },
   edit: { changeRequest: true, comment: true },
+  stacks: true,
+  stackActions: true,
   labels: true,
 };
 
@@ -69,6 +72,7 @@ const CAPABILITIES: PullRequestCapabilities = {
  */
 export function gitHubViewerPermissions(access: GitHubViewerAccess): PullRequestViewerPermissions {
   return {
+    ...(access.canWrite ? { stackRebase: true } : {}),
     actions: [
       // Arming a merge and taking the arming back are the merge, deferred: whoever may not
       // merge here may not leave an instruction to merge later either.
@@ -195,7 +199,20 @@ export const make = Effect.gen(function* () {
     readonly cwd: string;
     readonly repository: string;
     readonly host: string;
-  }) => Cache.get(repositoryAccessCache, JSON.stringify([input.cwd, input.repository, input.host]));
+  }) =>
+    PinnedGitHubCredential.pipe(
+      Effect.flatMap((credential) =>
+        Cache.get(
+          repositoryAccessCache,
+          JSON.stringify([
+            input.cwd,
+            input.repository,
+            input.host,
+            credential?.credentialFingerprint ?? null,
+          ]),
+        ),
+      ),
+    );
 
   const fail = (operation: string) => (error: GitHubPullRequestCli.GitHubPullRequestCliError) =>
     new PullRequestProviderError({
@@ -209,9 +226,17 @@ export const make = Effect.gen(function* () {
   const provider: PullRequestProviderApi = {
     kind: "github",
     capabilities: CAPABILITIES,
+    getRoutingIdentity: (input) =>
+      cli.getRoutingIdentity(input).pipe(Effect.mapError(fail("routeIdentity"))),
+    withVerifiedCredential: (input, use) =>
+      cli
+        .withVerifiedCredential(input, (identity) => use(identity).pipe(Effect.result))
+        .pipe(Effect.mapError(fail("routeIdentity")), Effect.flatMap(Effect.fromResult)),
 
     getViewer: (input) =>
-      cli.getViewerLogin({ cwd: input.cwd }).pipe(Effect.mapError(fail("getViewer"))),
+      cli
+        .getViewerLogin({ cwd: input.cwd, host: input.host ?? "github.com" })
+        .pipe(Effect.mapError(fail("getViewer"))),
 
     listChangeRequests: (input) =>
       cli
@@ -292,7 +317,20 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.mapError(fail("listChangeRequestStats"))),
 
     getChangeRequestSummary: (input) =>
-      cli.getPullRequestSummary(input).pipe(Effect.mapError(fail("getChangeRequestSummary"))),
+      cli.getPullRequestSummary(input).pipe(
+        // `gh pr view` names the author without an avatar; the login-shaped URL every user
+        // has stands in, without the second request the listing spends on it.
+        Effect.map((summary) => ({
+          ...summary,
+          ...(summary.author === undefined
+            ? {}
+            : { author: withAvatar(summary.author, new Map(), input.host) }),
+        })),
+        Effect.mapError(fail("getChangeRequestSummary")),
+      ),
+
+    getChangeRequestStack: (input) =>
+      cli.getPullRequestStack(input).pipe(Effect.mapError(fail("getChangeRequestStack"))),
 
     getChangeRequest: (input) =>
       Effect.all(
@@ -478,20 +516,22 @@ export const make = Effect.gen(function* () {
           // comparison only resolves through the head ref the detail carries. A failure here
           // withholds that one action rather than the whole answer, the way the detail path
           // leaves the banner unknown.
-          cli.getPullRequestDetail(input).pipe(
-            Effect.flatMap((pullRequest) =>
-              pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
-                ? Effect.succeed(false)
-                : cli
-                    .getPullRequestBaseComparison({
-                      ...input,
-                      headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
-                      allowReserve: true,
-                    })
-                    .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
-            ),
-            Effect.orElseSucceed(() => false),
-          ),
+          input.includeUpdateBranch === false
+            ? Effect.succeed(false)
+            : cli.getPullRequestDetail(input).pipe(
+                Effect.flatMap((pullRequest) =>
+                  pullRequest.state !== "open" || pullRequest.headRepositoryOwner === null
+                    ? Effect.succeed(false)
+                    : cli
+                        .getPullRequestBaseComparison({
+                          ...input,
+                          headRef: `${pullRequest.headRepositoryOwner}:${pullRequest.headBranch}`,
+                          allowReserve: true,
+                        })
+                        .pipe(Effect.map((comparison) => comparison.viewerCanUpdate === true)),
+                ),
+                Effect.orElseSucceed(() => false),
+              ),
         ],
         { concurrency: 2 },
       ).pipe(
@@ -544,6 +584,10 @@ export const make = Effect.gen(function* () {
           host: input.host,
           number: input.number,
           action: input.action,
+          ...(input.stackNumber === undefined ? {} : { stackNumber: input.stackNumber }),
+          ...(input.expectedStackHeads === undefined
+            ? {}
+            : { expectedStackHeads: input.expectedStackHeads }),
           ...(input.mergeMethod === undefined ? {} : { mergeMethod: input.mergeMethod }),
           ...(input.updateMethod === undefined ? {} : { updateMethod: input.updateMethod }),
         })

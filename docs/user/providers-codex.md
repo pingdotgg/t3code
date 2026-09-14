@@ -77,8 +77,8 @@ Complete setup on the host machine using T3 Code desktop or web:
    executable before starting the server.
 2. Grant the required operating-system permissions on that host. Connecting from
    another computer or phone does not grant permission to control the host.
-3. Open **Settings > Projects**, select the host machine, and enable
-   **Cua computer use** in its defaults. Start a new Codex session to use it.
+3. Open **Settings > Integrations > Agent access** for the host machine and enable
+   **Cua computer use**. Start a new Codex session to use it.
 
 Once the host is configured, you can direct its Codex sessions from web, desktop,
 or mobile. The setting applies to the selected environment, with no per-project

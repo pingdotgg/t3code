@@ -556,6 +556,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
               providerSessionId: "cua-test-provider-session",
               endpoint: "http://127.0.0.1:1234/mcp",
               authorizationHeader: "Bearer synthetic-test-token",
+              capabilities: new Set(["preview"]),
             });
           }
           const adapter = yield* CodexAdapter;

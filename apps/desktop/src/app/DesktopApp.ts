@@ -1,4 +1,5 @@
 import * as Cause from "effect/Cause";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -143,18 +144,57 @@ const handleFatalStartupError = Effect.fn("desktop.startup.handleFatalStartupErr
 const fatalStartupCause = <E>(stage: string, cause: Cause.Cause<E>) =>
   handleFatalStartupError(stage, Cause.pretty(cause)).pipe(Effect.andThen(Effect.failCause(cause)));
 
+export const stopAllPoolInstances = Effect.fn("desktop.app.stopAllPoolInstances")(
+  function* (): Effect.fn.Return<void, never, DesktopBackendPool.DesktopBackendPool> {
+    // Stop every backend in the pool with a timeout to guarantee the quit
+    // path makes progress even if a backend hangs during teardown.
+    const pool = yield* DesktopBackendPool.DesktopBackendPool;
+    const instances = yield* pool.list;
+    yield* Effect.forEach(
+      instances,
+      (instance) => instance.stop({ timeout: Duration.seconds(5) }),
+      { concurrency: "unbounded" },
+    );
+  },
+);
+
 const bootstrap = Effect.gen(function* () {
-  const pool = yield* DesktopBackendPool.DesktopBackendPool;
-  const primaryBackend = yield* pool.primary;
   const state = yield* DesktopState.DesktopState;
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
-  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
-  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
   const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const snapShot = yield* DesktopSnapShot.DesktopSnapShot;
   const appActivation = yield* DesktopAppActivation.DesktopAppActivation;
   yield* logBootstrapInfo("bootstrap start");
+
+  const settings = yield* desktopSettings.get;
+  // The renderer is served from the bundled client (or Vite in development)
+  // rather than through the local backend, so the window can open without one.
+  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
+  yield* electronProtocol.registerDesktopProtocol({
+    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
+    ...(environment.isDevelopment
+      ? { targetOrigin: Option.getOrThrow(environment.devServerUrl) }
+      : { assetDirectory: environment.clientAssetsDir }),
+    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
+  });
+  yield* installDesktopIpcHandlers();
+  yield* logBootstrapInfo("bootstrap ipc handlers registered");
+
+  yield* snapShot.initialize;
+
+  if (!settings.localEnvironmentEnabled) {
+    yield* logBootstrapInfo("bootstrap skipping local environment (disabled in settings)");
+    if (!(yield* Ref.get(state.quitting))) {
+      yield* desktopWindow.createMainIfBackendReady;
+    }
+    return;
+  }
+
+  const pool = yield* DesktopBackendPool.DesktopBackendPool;
+  const primaryBackend = yield* pool.primary;
+  const serverExposure = yield* DesktopServerExposure.DesktopServerExposure;
+  const wslBackend = yield* DesktopWslBackend.DesktopWslBackend;
 
   if (environment.isDevelopment && Option.isNone(environment.configuredBackendPort)) {
     return yield* new DesktopDevelopmentBackendPortRequiredError();
@@ -172,7 +212,6 @@ const bootstrap = Effect.gen(function* () {
     },
   );
 
-  const settings = yield* desktopSettings.get;
   if (settings.serverExposureMode !== environment.defaultDesktopSettings.serverExposureMode) {
     yield* logBootstrapInfo("bootstrap restoring persisted server exposure mode", {
       mode: settings.serverExposureMode,
@@ -180,16 +219,6 @@ const bootstrap = Effect.gen(function* () {
   }
   const serverExposureState = yield* serverExposure.configureFromSettings({ port: backendPort });
   const backendConfig = yield* serverExposure.backendConfig;
-  const electronProtocol = yield* ElectronProtocol.ElectronProtocol;
-  const rendererTarget = environment.isDevelopment
-    ? Option.getOrThrow(environment.devServerUrl)
-    : backendConfig.httpBaseUrl;
-  yield* electronProtocol.registerDesktopProtocol({
-    scheme: ElectronProtocol.getDesktopScheme(environment.isDevelopment),
-    targetOrigin: rendererTarget,
-    backendOrigin: backendConfig.httpBaseUrl,
-    clerkFrontendApiHostname: DesktopClerk.desktopClerkFrontendApiHostname,
-  });
   yield* logBootstrapInfo("bootstrap resolved backend endpoint", {
     baseUrl: backendConfig.httpBaseUrl.href,
   });
@@ -205,16 +234,13 @@ const bootstrap = Effect.gen(function* () {
       "bootstrap fell back to local-only because no advertised network host was available",
     );
   }
-  yield* snapShot.initialize;
-
-  yield* installDesktopIpcHandlers();
-  yield* logBootstrapInfo("bootstrap ipc handlers registered");
 
   if (!(yield* Ref.get(state.quitting))) {
-    // In wsl-only mode the renderer is served by the WSL backend, which can be
-    // slow to cold-boot — show a "Connecting to WSL" splash immediately so the
-    // app feels responsive instead of presenting no window until WSL is ready.
-    // (Dual mode opens fast off the Windows primary, so no splash there.)
+    // The main window waits for the primary backend. In wsl-only mode that is
+    // the WSL backend, which can be slow to cold-boot — show a "Connecting to
+    // WSL" splash immediately so the app feels responsive instead of presenting
+    // no window until WSL is ready. (Dual mode opens fast off the Windows
+    // primary, so no splash there.)
     if (settings.wslOnly === true && settings.wslBackendEnabled === true) {
       yield* desktopWindow.showConnectingSplash;
     }
@@ -316,18 +342,12 @@ const scopedProgram = Effect.scoped(
     const shutdown = yield* DesktopShutdown.DesktopShutdown;
 
     yield* Effect.addFinalizer(() =>
-      Effect.gen(function* () {
-        const pool = yield* DesktopBackendPool.DesktopBackendPool;
-        // Stop every backend in the pool, not just the primary. The
-        // electronApp.quit() path can race ahead of the layer-scope
-        // cascade, so leaving the WSL instance for its parent scope
-        // finalizer means it gets hard-killed by the OS instead of
-        // receiving SIGTERM + grace. Stops run concurrently.
-        const instances = yield* pool.list;
-        yield* Effect.forEach(instances, (instance) => instance.stop(), {
-          concurrency: "unbounded",
-        });
-      }).pipe(Effect.ensuring(shutdown.markComplete)),
+      // Stop every backend in the pool, not just the primary. The
+      // electronApp.quit() path can race ahead of the layer-scope
+      // cascade, so leaving the WSL instance for its parent scope
+      // finalizer means it gets hard-killed by the OS instead of
+      // receiving SIGTERM + grace.
+      stopAllPoolInstances().pipe(Effect.ensuring(shutdown.markComplete)),
     );
 
     yield* startup;
