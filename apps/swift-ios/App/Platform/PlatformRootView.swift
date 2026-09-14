@@ -6,7 +6,7 @@ struct PlatformRootView: View {
 
     @State private var navigationRequest: FeatureWorkspaceNavigationRequest?
     @State private var pendingRoute: PlatformRoute?
-    @State private var previousThreadMembership: [String] = []
+    @State private var previousThreadMembership: [PlatformRecentThreadChangeKey] = []
     @State private var previousThreadStates: [String: FeatureThreadState]?
     @State private var lastNotificationPreference: Bool?
     @State private var incomingShareCoordinator = PlatformIncomingShareCoordinator()
@@ -368,9 +368,12 @@ struct PlatformRootView: View {
         // Streaming turns advance the row revision several times a second
         // without changing any thread's state. The recent-thread store and
         // the Live Activity only care about state and membership.
-        let membership = model.snapshot.threads.map { "\($0.id):\($0.title)" }
+        let membership = model.snapshot.threads.map(PlatformRecentThreadChangeKey.init)
         let membershipChanged = membership != previousThreadMembership
         previousThreadMembership = membership
+        // The awareness coordinator compares its own visible fields and limits
+        // writes. Project names and provider changes must reach that comparison.
+        synchronizeAgentAwareness()
         guard statesChanged || membershipChanged else { return }
         recentThreadsPersistenceTask?.cancel()
         let threads = model.snapshot.threads
@@ -378,8 +381,6 @@ struct PlatformRootView: View {
             guard !Task.isCancelled else { return }
             PlatformRecentThreadStore.shared.update(from: threads)
         }
-        synchronizeAgentAwareness()
-
         for signal in signals {
             if scenePhase == .active {
                 PlatformHapticEngine.shared.emit(

@@ -1227,6 +1227,7 @@ enum ThreadRefreshPresentation: Equatable {
         isOpening: Bool,
         syncState: FeatureThreadSyncState? = nil
     ) -> Self? {
+        if connectionState == .needsPairing { return .needsPairing }
         switch syncState {
         case .catchingUp: return .catchingUp
         case .reconnecting: return .reconnecting

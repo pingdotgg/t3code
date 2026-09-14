@@ -98,6 +98,11 @@ struct FeatureRootModelTests {
 
     @Test
     func liveThreadSyncOutranksStaleLoadingAndEnvironmentReachability() {
+        for syncState in [FeatureThreadSyncState.live, .catchingUp, .reconnecting] {
+            #expect(ThreadRefreshPresentation.resolve(
+                loadState: nil, connectionState: .needsPairing, isOpening: false, syncState: syncState
+            ) == .needsPairing)
+        }
         for connectionState in [FeatureConnection.State.connected, .disconnected, .reconnecting] {
             #expect(ThreadRefreshPresentation.resolve(
                 loadState: nil, connectionState: connectionState, isOpening: false, syncState: .live

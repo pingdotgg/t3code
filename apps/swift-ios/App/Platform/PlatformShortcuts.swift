@@ -10,6 +10,27 @@ struct PlatformRecentThreadRecord: Codable, Equatable, Sendable {
     let updatedAt: Date
 }
 
+struct PlatformRecentThreadChangeKey: Equatable {
+    let id: String
+    let environmentID: String?
+    let wireID: String
+    let title: String
+    let environmentName: String?
+    let isArchived: Bool
+    let activityMinute: Double
+
+    init(_ thread: FeatureThread) {
+        id = thread.id
+        environmentID = thread.environmentID
+        wireID = thread.wireID ?? thread.id
+        title = thread.title
+        environmentName = thread.environmentName
+        isArchived = thread.isArchived
+        // Refresh recency during long turns without persisting every token.
+        activityMinute = floor(thread.updatedAt.timeIntervalSince1970 / 60)
+    }
+}
+
 final class PlatformRecentThreadStore: @unchecked Sendable {
     static let shared = PlatformRecentThreadStore()
 

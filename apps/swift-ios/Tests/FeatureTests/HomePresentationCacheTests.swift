@@ -4,6 +4,22 @@ import Testing
 
 @MainActor
 struct HomePresentationCacheTests {
+    @Test func shortcutChangesTrackArchiveAndRoutingWithoutEveryToken() {
+        var thread = FeatureThread(
+            id: "thread", wireID: "wire", projectID: "project", environmentID: "computer",
+            environmentName: "Studio", title: "Task", updatedAt: Date(timeIntervalSince1970: 120)
+        )
+        let initial = PlatformRecentThreadChangeKey(thread)
+        thread.updatedAt = Date(timeIntervalSince1970: 125)
+        thread.preview = "More output"
+        #expect(PlatformRecentThreadChangeKey(thread) == initial)
+        thread.isArchived = true
+        #expect(PlatformRecentThreadChangeKey(thread) != initial)
+        thread.isArchived = false
+        thread.environmentName = "Workstation"
+        #expect(PlatformRecentThreadChangeKey(thread) != initial)
+    }
+
     private func presentation(
         _ cache: HomePresentationCache, _ snapshot: FeatureSnapshot, rowRevision: UInt64, query: String = ""
     ) -> HomePresentation {

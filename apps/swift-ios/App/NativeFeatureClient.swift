@@ -1132,34 +1132,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         destinationPath: String
     ) async throws -> SourceControlCloneResult {
         let client = try await projectCreationClient(environmentID: environmentID)
-        do {
-            return try await client.cloneRepository(
-                remoteURL: remoteURL,
-                destinationPath: destinationPath
-            )
-        } catch let error as RPCError {
-            switch error {
-            case .connectionUnavailable, .disconnected, .responseTimedOut:
-                // The clone RPC is not receipt-bearing, so a lost reply is
-                // ambiguous. Confirm the requested destination became a Git
-                // repository with a primary remote before moving on to the
-                // independently retryable project-registration step.
-                if let refs = try? await client.listVCSRefs(
-                    cwd: destinationPath,
-                    refresh: true,
-                    limit: 1
-                ), refs.isRepo, refs.hasPrimaryRemote {
-                    return SourceControlCloneResult(
-                        cwd: destinationPath,
-                        remoteUrl: remoteURL,
-                        repository: nil
-                    )
-                }
-                throw error
-            case .remote, .protocolViolation:
-                throw error
-            }
-        }
+        // An existing repository does not prove this clone succeeded. A lost
+        // reply must remain an error until the server confirms the destination.
+        return try await client.cloneRepository(remoteURL: remoteURL, destinationPath: destinationPath)
     }
 
     private func createProject(client: T3Client, path: String) async throws {
@@ -4739,6 +4714,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
 
         let backgroundLiveness = shellThread.backgroundLiveness
         let backgroundWorkIsActive = backgroundLiveness == .working
+        let capabilities = threadCapabilities(for: environment)
+        detail.thread.supportsSettlement = capabilities?.threadSettlement
+        detail.thread.supportsSnooze = capabilities?.threadSnooze
+        detail.thread.supportsPinning = capabilities?.threadPinning
+        detail.thread.supportsTitleRegeneration = capabilities?.threadTitleRegeneration
+        detail.thread.supportsPullRequestLinking = capabilities?.threadPullRequestLinking
         let sessionIsLive = shellThread.session?.status == "starting"
             || shellThread.session?.status == "running"
         detail.thread.state = Self.resolveThreadState(
