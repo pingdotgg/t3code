@@ -95,6 +95,7 @@ export const BranchToolbarEnvironmentSelector = memo(function BranchToolbarEnvir
         size="xs"
         className="min-w-0 max-w-full font-normal text-xs!"
         aria-label="Run on"
+        data-composer-shortcut="composer.host"
         data-composer-context-control
       >
         {autoEnvironmentLabel ? (

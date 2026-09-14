@@ -93,6 +93,7 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
         size="xs"
         className="min-w-0 shrink font-normal text-xs!"
         aria-label="Workspace"
+        data-composer-shortcut="composer.workspace"
         data-composer-context-control
       >
         {effectiveEnvMode === "worktree" ? (
