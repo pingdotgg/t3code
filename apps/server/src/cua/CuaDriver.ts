@@ -1,16 +1,15 @@
-// @effect-diagnostics nodeBuiltinImport:off - createRequire is the only way the single-executable reaches a file-backed package.
 import * as NodeCrypto from "node:crypto";
-import * as NodeFS from "node:fs";
 import * as NodeModule from "node:module";
-import * as NodePath from "node:path";
 
 import type { CuaDriverMcpConfiguration, DesktopCuaDriverReport } from "@t3tools/contracts";
 import type { EmbeddedCuaDriverHost, EmbeddedDriverConnection } from "@trycua/cua-driver/embedded";
 import * as Context from "effect/Context";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
@@ -297,23 +296,32 @@ type StandaloneHostModule = {
 // package through the same lookup paths and require its entry file directly.
 const requireForCuaDriver = NodeModule.createRequire(import.meta.url);
 
-const loadEmbeddedCuaDriver = (): Promise<StandaloneHostModule> =>
-  Promise.resolve().then(() => {
-    for (const lookupPath of requireForCuaDriver.resolve.paths("@trycua/cua-driver") ?? []) {
-      const packageDir = NodePath.join(lookupPath, "@trycua", "cua-driver");
-      if (NodeFS.existsSync(NodePath.join(packageDir, "package.json"))) {
-        return requireForCuaDriver(
-          NodePath.join(packageDir, "dist", "embedded.js"),
-        ) as StandaloneHostModule;
-      }
+const loadEmbeddedCuaDriver = Effect.fn("CuaDriver.loadEmbeddedSdk")(function* () {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  for (const lookupPath of requireForCuaDriver.resolve.paths("@trycua/cua-driver") ?? []) {
+    const packageDir = path.join(lookupPath, "@trycua", "cua-driver");
+    if (
+      yield* fs
+        .exists(path.join(packageDir, "package.json"))
+        .pipe(Effect.orElseSucceed(() => false))
+    ) {
+      return yield* Effect.try({
+        try: () =>
+          requireForCuaDriver(path.join(packageDir, "dist", "embedded.js")) as StandaloneHostModule,
+        catch: (cause) => new CuaDriverSdkLoadError({ cause }),
+      });
     }
-    throw new Error("@trycua/cua-driver is not installed beside this server.");
+  }
+  return yield* new CuaDriverSdkLoadError({
+    cause: "@trycua/cua-driver is not installed beside this server.",
   });
+});
 
 /** A timed-out native cleanup still owns the factory until every call settles. */
 export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFactory")(function* (
   binaryPath: string,
-  loadEmbedded: () => Promise<StandaloneHostModule> = loadEmbeddedCuaDriver,
+  loadEmbedded: Effect.Effect<StandaloneHostModule, CuaDriverSdkLoadError>,
 ) {
   const mutex = yield* Semaphore.make(1);
   let occupied = false;
@@ -324,10 +332,7 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
       if (occupied) {
         return yield* new CuaDriverBusyError({});
       }
-      const { EmbeddedCuaDriverHost } = yield* Effect.tryPromise({
-        try: loadEmbedded,
-        catch: (cause) => new CuaDriverSdkLoadError({ cause }),
-      });
+      const { EmbeddedCuaDriverHost } = yield* loadEmbedded;
       const host = yield* Effect.try({
         try: () => new EmbeddedCuaDriverHost(binaryPath, "com.t3tools.t3code.server"),
         catch: (cause) => new CuaDriverHostCreateError({ binaryPath, cause }),
@@ -469,12 +474,20 @@ export const layer = Layer.effect(
   CuaDriver,
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const binaryPath = process.env.T3CODE_CUA_DRIVER_PATH?.trim();
     const createHost =
       config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined
         ? yield* makeDesktopHostFactory()
         : binaryPath
-          ? yield* makeStandaloneHostFactory(binaryPath)
+          ? yield* makeStandaloneHostFactory(
+              binaryPath,
+              loadEmbeddedCuaDriver().pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+              ),
+            )
           : Effect.logWarning(
               "Cua Driver requires the T3 desktop host or an explicit T3CODE_CUA_DRIVER_PATH on this server.",
             ).pipe(Effect.andThen(Effect.fail(new CuaDriverNotConfiguredError({}))));

@@ -50,31 +50,34 @@ const standaloneFixture = Effect.fn(function* (failFirstDestroy = false) {
   let creates = 0;
   let stops = 0;
   let destroys = 0;
-  const factory = yield* makeStandaloneHostFactory("/driver", async () => ({
-    EmbeddedCuaDriverHost: class {
-      constructor() {
-        creates++;
-      }
-      start() {
-        started.resolve();
-        return start.promise;
-      }
-      stop() {
-        stops++;
-        stopped.resolve();
-        return stop.promise;
-      }
-      waitForExit(_generation: string, options?: { signal: AbortSignal }) {
-        watching.resolve(options!.signal);
-        return monitor.promise;
-      }
-      uniffiDestroy() {
-        destroys++;
-        destroyed.resolve();
-        if (failFirstDestroy && destroys === 1) throw destroyFailure;
-      }
-    },
-  }));
+  const factory = yield* makeStandaloneHostFactory(
+    "/driver",
+    Effect.succeed({
+      EmbeddedCuaDriverHost: class {
+        constructor() {
+          creates++;
+        }
+        start() {
+          started.resolve();
+          return start.promise;
+        }
+        stop() {
+          stops++;
+          stopped.resolve();
+          return stop.promise;
+        }
+        waitForExit(_generation: string, options?: { signal: AbortSignal }) {
+          watching.resolve(options!.signal);
+          return monitor.promise;
+        }
+        uniffiDestroy() {
+          destroys++;
+          destroyed.resolve();
+          if (failFirstDestroy && destroys === 1) throw destroyFailure;
+        }
+      },
+    }),
+  );
   const connection: EmbeddedDriverConnection = {
     socketPath: "/socket",
     pid: 1,
@@ -103,9 +106,10 @@ describe("Cua Driver failure boundaries", () => {
   it.effect("preserves SDK import failures without exposing their message", () =>
     Effect.gen(function* () {
       const cause = new Error("private SDK loader details");
-      const factory = yield* CuaDriver.makeStandaloneHostFactory("/driver", async () => {
-        throw cause;
-      });
+      const factory = yield* CuaDriver.makeStandaloneHostFactory(
+        "/driver",
+        Effect.fail(new CuaDriver.CuaDriverSdkLoadError({ cause })),
+      );
       const failure = yield* Effect.flip(factory);
       expect(failure._tag).toBe("CuaDriverSdkLoadError");
       expect(failure.message).toBe("Could not load the Cua Driver SDK.");
@@ -117,23 +121,26 @@ describe("Cua Driver failure boundaries", () => {
   it.effect("preserves native constructor failures and identifies the binary", () =>
     Effect.gen(function* () {
       const cause = new Error("private constructor details");
-      const factory = yield* CuaDriver.makeStandaloneHostFactory("/driver", async () => ({
-        EmbeddedCuaDriverHost: class {
-          constructor() {
-            throw cause;
-          }
-          start() {
-            return Promise.reject(cause);
-          }
-          stop() {
-            return Promise.resolve();
-          }
-          waitForExit() {
-            return Promise.reject(cause);
-          }
-          uniffiDestroy() {}
-        },
-      }));
+      const factory = yield* CuaDriver.makeStandaloneHostFactory(
+        "/driver",
+        Effect.succeed({
+          EmbeddedCuaDriverHost: class {
+            constructor() {
+              throw cause;
+            }
+            start() {
+              return Promise.reject(cause);
+            }
+            stop() {
+              return Promise.resolve();
+            }
+            waitForExit() {
+              return Promise.reject(cause);
+            }
+            uniffiDestroy() {}
+          },
+        }),
+      );
       const failure = yield* Effect.flip(factory);
       expect(failure._tag).toBe("CuaDriverHostCreateError");
       expect(failure.message).toBe("Could not create the Cua Driver host.");
