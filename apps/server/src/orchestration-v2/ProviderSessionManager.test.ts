@@ -1815,23 +1815,28 @@ function makeSteppingScheduler() {
     }),
   };
   // Runs `fiber` until it has reached `ops` op checks — at which point it is
-  // suspended with its resume task queued — then returns. A fiber that parks
-  // or completes first ends the loop early.
+  // suspended with its resume task queued — then returns true. Returns true
+  // for a fiber that exits before `ops`; returns false when the fiber parks
+  // on work outside this dispatcher (e.g. an async fileSystem call or a
+  // deferred nobody completes), which caps the sweep at that boundary.
   const step = (fiber: Fiber.Fiber<unknown, unknown>, ops: number) =>
     Effect.gen(function* () {
       targets.set(fiber, ops);
-      while ((counts.get(fiber) ?? 0) < ops) {
+      for (let emptyRounds = 0; (counts.get(fiber) ?? 0) < ops;) {
         const task = tasks.shift();
         if (task !== undefined) {
           task();
+          emptyRounds = 0;
           continue;
         }
+        if (fiber.pollUnsafe() !== undefined) return true;
         // The fiber's initial evaluation is dispatched through the forking
-        // fiber's scheduler, so give the default dispatcher a turn before
-        // concluding it is parked or done.
+        // fiber's scheduler, so give the default dispatcher turns before
+        // concluding it is parked.
         yield* Effect.yieldNow;
-        if (tasks.length === 0) break;
+        if (tasks.length === 0 && ++emptyRounds > 32) return false;
       }
+      return true;
     });
   // Runs every queued continuation, yielding so default-scheduler work can
   // resolve deferreds the stepped fibers are waiting on.
@@ -8822,7 +8827,10 @@ it.effect(
               Effect.forkDetach,
               Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
             );
-          yield* stepper.step(detaching, ops);
+          // A detach legitimately parks once it joins the parked release;
+          // interrupt wherever the fiber stopped, then end the sweep when the
+          // target boundary was not reached — later offsets are unreachable.
+          const reached = yield* stepper.step(detaching, ops);
           // Interrupt while the fiber is still suspended: the resumption is
           // queued into the stepping dispatcher, so drain delivers the
           // interrupt deterministically at this op boundary.
@@ -8847,6 +8855,7 @@ it.effect(
             Exit.isSuccess(yield* Fiber.join(closingInstance)),
             `interrupt at op ${ops} stranded the revocation tail`,
           );
+          if (!reached) break;
         }
       }).pipe(
         Effect.provide(
@@ -8884,20 +8893,30 @@ it.effect("ProviderSessionManagerV2 an interrupted startup cannot strand the ope
       // installed used to strand the record: a later close marked it and
       // joined a `settled` that never completed, failing at the 30s bound
       // while replacements stayed blocked. The gap has no suspension, so
-      // sweep the interrupt across every op offset.
+      // sweep the interrupt across every op offset. `cwd: null` skips the
+      // async `fileSystem.stat`, which would park the fiber mid-sweep and
+      // leave offsets past the park unreachable.
+      const startupPolicy = { ...runtimePolicy, cwd: null };
       for (let ops = 0; ops < 160; ops++) {
         const providerSessionId = yield* idAllocator.allocate.providerSession({
           providerInstanceId: modelSelection.instanceId,
           threadId,
         });
         const opening = yield* manager
-          .open({ providerSessionId, threadId, modelSelection, runtimePolicy })
+          .open({
+            providerSessionId,
+            threadId,
+            modelSelection,
+            runtimePolicy: startupPolicy,
+          })
           .pipe(
             Effect.exit,
             Effect.forkDetach,
             Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
           );
-        yield* stepper.step(opening, ops);
+        // Interrupt wherever the fiber stopped, then end the sweep when the
+        // target boundary was not reached — later offsets are unreachable.
+        const reached = yield* stepper.step(opening, ops);
         // Interrupt while the fiber is still suspended: the resumption is
         // queued into the stepping dispatcher, so drain delivers the
         // interrupt deterministically at this op boundary.
@@ -8918,6 +8937,7 @@ it.effect("ProviderSessionManagerV2 an interrupted startup cannot strand the ope
           Exit.isSuccess(yield* Fiber.join(closing)),
           `interrupt at op ${ops} stranded the opening record`,
         );
+        if (!reached) break;
       }
     }).pipe(
       Effect.provide(
