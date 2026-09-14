@@ -56,7 +56,7 @@ describe("connectAuth", () => {
         authorizationEndpoint: "https://clerk.t3.codes/oauth/authorize",
         clientId: "oauthapp_123",
         redirectUri: connectLoopbackRedirectUri(34338),
-        scopes: ["openid", "profile", "email"],
+        scopes: ["openid", "profile", "email", "offline_access"],
         state: "state-1",
         challenge: "challenge-1",
       }),
@@ -67,7 +67,7 @@ describe("connectAuth", () => {
     expect(url.searchParams.get("client_id")).toBe("oauthapp_123");
     expect(url.searchParams.get("redirect_uri")).toBe("http://127.0.0.1:34338/callback");
     expect(url.searchParams.get("response_type")).toBe("code");
-    expect(url.searchParams.get("scope")).toBe("openid profile email");
+    expect(url.searchParams.get("scope")).toBe("openid profile email offline_access");
     expect(url.searchParams.get("state")).toBe("state-1");
     expect(url.searchParams.get("code_challenge")).toBe("challenge-1");
     expect(url.searchParams.get("code_challenge_method")).toBe("S256");

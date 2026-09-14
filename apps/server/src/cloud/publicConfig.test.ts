@@ -95,7 +95,7 @@ it.effect("derives direct Clerk OAuth endpoints from statically injected public 
       clientId: "oauth_client_embedded",
       loopbackPort: 34338,
       redirectUri: "http://127.0.0.1:34338/callback",
-      scopes: ["openid", "profile", "email"],
+      scopes: ["openid", "profile", "email", "offline_access"],
     });
   }),
 );

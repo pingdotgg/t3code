@@ -200,7 +200,7 @@ it.layer(NodeServices.layer)("CliTokenManager.deviceAuthorizationLogin", (it) =>
       const authorization = server.requests[0]!;
       assert.equal(authorization.url, "https://clerk.example.test/oauth/device_authorization");
       assert.equal(authorization.params.get("client_id"), "oauth_client_test");
-      assert.equal(authorization.params.get("scope"), "openid profile email");
+      assert.equal(authorization.params.get("scope"), "openid profile email offline_access");
 
       const polls = tokenRequests(server.requests);
       assert.lengthOf(polls, 2);

@@ -15,10 +15,11 @@ const CONNECT_AUTHORIZE_PATH = "/connect";
 export const DEFAULT_HOSTED_APP_URL = "https://app.t3.codes";
 
 /**
- * Requested at authorize time by the hosted page and honored by the CLI's
- * token exchange; keep both sides on this single definition.
+ * Requested at authorize time by the hosted page and by the CLI's device
+ * authorization request; keep both sides on this single definition.
+ * `offline_access` asks Clerk for the refresh token the CLI relies on.
  */
-export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email"] as const;
+export const CONNECT_OAUTH_SCOPES = ["openid", "profile", "email", "offline_access"] as const;
 
 export interface ConnectAuthorizeRequest {
   readonly state: string;
