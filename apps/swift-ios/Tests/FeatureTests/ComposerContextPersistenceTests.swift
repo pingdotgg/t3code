@@ -96,7 +96,9 @@ struct ComposerContextPersistenceTests {
         #expect(value.startIndex == 2)
         #expect(value.diff.contains("-old\n+new"))
 
-        let lines = (1...10_000).map { FeatureDiffLine(id: "\($0)", kind: .context, oldLine: $0, newLine: $0, text: "source line \($0)") }
+        let lines = (1...10_000).map { (number: Int) in
+            FeatureDiffLine(id: "\(number)", kind: .context, oldLine: number, newLine: number, text: "source line \(number)")
+        }
         let late = FeatureReviewCommentDraft(filePath: "file.swift", line: .init(side: .new, line: 9_000), body: "Check this")
         guard case let .reviewComment(window) = late.contextRecord(lines: lines).payload else {
             Issue.record("Expected review context"); return
