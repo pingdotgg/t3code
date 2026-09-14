@@ -65,7 +65,7 @@ const isIdentityMemberKey = (key: string): boolean =>
 const THREAD_HISTORY_PREVIEW_SOFT_DEPTH = 256;
 export const THREAD_HISTORY_PREVIEW_HARD_DEPTH = 512;
 
-export const serializedJsonBytes = (value: unknown): number =>
+const serializedJsonBytes = (value: unknown): number =>
   Buffer.byteLength(JSON.stringify(value), "utf8");
 
 const truncateUtf8 = (value: string, maxBytes: number): string => {
