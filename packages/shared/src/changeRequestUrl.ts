@@ -96,7 +96,8 @@ export function changeRequestUrlFor(
   switch (kind) {
     case "github":
       return `https://${host}/${repository}/pull/${number}`;
-    case "forgejo": {
+    case "forgejo":
+    case "gitea": {
       try {
         const remote = new URL(remoteUrl ?? "");
         if (

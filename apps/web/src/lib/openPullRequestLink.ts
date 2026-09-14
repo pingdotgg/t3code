@@ -28,7 +28,8 @@ export {
 
 function resolvedForgejoRepository(project: EnvironmentProject): URL | null {
   const identity = project.repositoryIdentity;
-  if (identity?.provider !== "forgejo" || !identity.webUrl) return null;
+  if ((identity?.provider !== "forgejo" && identity?.provider !== "gitea") || !identity.webUrl)
+    return null;
   try {
     const url = new URL(identity.webUrl);
     return url.protocol === "http:" || url.protocol === "https:" ? url : null;

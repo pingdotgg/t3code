@@ -14,6 +14,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -93,6 +94,7 @@ function makeRegistry(input: {
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)({}),
         Layer.mock(GitHubCli.GitHubCli)({}),
+        Layer.mock(GiteaCli.GiteaCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         ServerConfig.layerTest(process.cwd(), {
@@ -294,5 +296,60 @@ it.effect("falls back to a non-origin remote when origin is not configured", () 
     const provider = yield* registry.resolve({ cwd: "/repo" });
 
     assert.strictEqual(provider.kind, "azure-devops");
+  }),
+);
+
+const teaLoginsProcess = (logins: ReadonlyArray<Record<string, string>>) => ({
+  run: (input: VcsProcess.VcsProcessInput) =>
+    input.command === "tea"
+      ? Effect.succeed(processOutput(JSON.stringify(logins)))
+      : Effect.succeed(processOutput("")),
+});
+
+it.effect("routes gitea.com remotes to the Gitea provider", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@gitea.com:owner/repo.git" }],
+    });
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    assert.strictEqual(provider.kind, "gitea");
+  }),
+);
+
+it.effect("refines an unmarked self-hosted remote to Gitea from tea authentication", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@git.example.com:owner/repo.git" }],
+      process: teaLoginsProcess([
+        {
+          name: "self-hosted",
+          url: "https://git.example.com",
+          ssh_host: "git.example.com",
+          user: "mario",
+          default: "true",
+        },
+      ]),
+    });
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    assert.strictEqual(provider.kind, "gitea");
+  }),
+);
+
+it.effect("leaves an unrelated remote unknown when tea has no matching login", () =>
+  Effect.gen(function* () {
+    const registry = yield* makeRegistry({
+      remotes: [{ name: "origin", url: "git@git.unrelated.example:owner/repo.git" }],
+      process: teaLoginsProcess([
+        {
+          name: "self-hosted",
+          url: "https://git.example.com",
+          ssh_host: "git.example.com",
+          user: "mario",
+          default: "true",
+        },
+      ]),
+    });
+    const provider = yield* registry.resolve({ cwd: "/repo" });
+    assert.strictEqual(provider.kind, "unknown");
   }),
 );

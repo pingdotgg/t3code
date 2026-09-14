@@ -17,6 +17,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as AzureDevOpsCli from "./AzureDevOpsCli.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as GitHubCli from "./GitHubCli.ts";
+import * as GiteaCli from "./GiteaCli.ts";
 import * as GitLabCli from "./GitLabCli.ts";
 import * as ForgejoCli from "./ForgejoCli.ts";
 import * as ForgejoSourceControlProvider from "./ForgejoSourceControlProvider.ts";
@@ -38,6 +39,7 @@ const sourceControlProviderRegistryTestLayer = (input: {
         Layer.mock(AzureDevOpsCli.AzureDevOpsCli)({}),
         Layer.mock(BitbucketApi.BitbucketApi)(input.bitbucket),
         Layer.mock(GitHubCli.GitHubCli)({}),
+        Layer.mock(GiteaCli.GiteaCli)({}),
         Layer.mock(GitLabCli.GitLabCli)({}),
         Layer.mock(ForgejoCli.ForgejoCli)({ listLogins: () => Effect.succeed([]) }),
         Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({}),
@@ -480,6 +482,12 @@ it.effect("reports implemented tools separately from locally available executabl
           account: Option.none(),
         },
         {
+          kind: "gitea",
+          status: "missing",
+          auth: "unknown",
+          account: Option.none(),
+        },
+        {
           kind: "forgejo",
           status: "missing",
           auth: "unknown",
@@ -524,6 +532,21 @@ it.effect("probes provider authentication without exposing token details", () =>
           processOutput(`gitlab.com
 Logged in to gitlab.com as gitlab-user
 `),
+        );
+      }
+      if (input.command === "tea" && input.args.join(" ") === "logins list --output json") {
+        return Effect.succeed(
+          processOutput(
+            JSON.stringify([
+              {
+                name: "gitea",
+                url: "https://gitea.example.com",
+                ssh_host: "gitea.example.com",
+                user: "gitea-user",
+                default: "true",
+              },
+            ]),
+          ),
         );
       }
       if (input.command === "tea" && input.args[0] === "login") {
@@ -615,6 +638,12 @@ Logged in to gitlab.com as gitlab-user
           kind: "bitbucket",
           auth: "authenticated",
           account: Option.some("bitbucket-user"),
+          detail: Option.none(),
+        },
+        {
+          kind: "gitea",
+          auth: "authenticated",
+          account: Option.some("gitea-user"),
           detail: Option.none(),
         },
         {

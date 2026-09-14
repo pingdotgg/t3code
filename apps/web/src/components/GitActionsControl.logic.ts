@@ -43,6 +43,13 @@ export type DefaultBranchConfirmableAction =
   | "commit_push"
   | "commit_push_pr";
 
+export function resolvePublishHost(input: {
+  discoveredHost: string | null | undefined;
+  fallbackHost: string | null;
+}): string | null {
+  return input.discoveredHost ?? input.fallbackHost;
+}
+
 function resolveChangeRequestTerminology(
   gitStatus: VcsStatusResult | null,
 ): ChangeRequestTerminology {
