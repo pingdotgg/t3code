@@ -8317,7 +8317,7 @@ it.effect("ProviderSessionManagerV2 shutdown releases wedged sessions concurrent
       yield* TestClock.adjust("2 seconds");
       yield* Effect.yieldNow;
       const exit = stopping.pollUnsafe();
-      assert.isTrue(exit !== undefined && Exit.isSuccess(exit));
+      assert.isTrue(exit !== undefined && Exit.isSuccess(exit) && Exit.isSuccess(exit.value));
     }).pipe(
       Effect.ensuring(Deferred.succeed(hangClose, undefined)),
       Effect.provide(
