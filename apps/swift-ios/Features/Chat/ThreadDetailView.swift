@@ -59,7 +59,7 @@ public struct ThreadDetailView: View {
         self.draftStore = draftStore
     }
 
-    public var body: some View {
+    private var threadContent: some View {
         Group {
             if let detail {
                 timeline(detail)
@@ -192,6 +192,10 @@ public struct ThreadDetailView: View {
             .presentationDragIndicator(.visible)
             .t3CodeSizing(steps: codeSizeSteps)
         }
+    }
+
+    public var body: some View {
+        threadContent
         .alert("Message not sent", isPresented: $sendFailed) {
             // Refocusing happens here rather than when the send fails: the
             // alert takes first responder from the composer, so a refocus
