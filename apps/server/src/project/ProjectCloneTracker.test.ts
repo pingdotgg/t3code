@@ -174,6 +174,43 @@ describe("ProjectCloneTracker", () => {
     }).pipe(Effect.provide(harness.layer));
   });
 
+  it.effect("hands git the credential-bearing URL while snapshots carry the redacted one", () => {
+    const cloneUrls: Array<string> = [];
+    const harness = makeHarness({
+      clone: (input) =>
+        Effect.sync(() => {
+          cloneUrls.push(input.remoteUrl ?? "");
+          return { cwd: input.destinationPath, remoteUrl: "", repository: null };
+        }),
+    });
+    const layer = ProjectCloneTracker.layer.pipe(
+      Layer.provide(
+        Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+          prepareClone: (input) =>
+            Effect.succeed({
+              destinationPath: input.destinationPath,
+              remoteUrl: "https://github.com/octocat/t3code.git",
+              cloneUrl: "https://user:s3cret@github.com/octocat/t3code.git",
+              repository: null,
+            }),
+          cloneRepository: (input) =>
+            Effect.sync(() => {
+              cloneUrls.push(input.remoteUrl ?? "");
+              return { cwd: input.destinationPath, remoteUrl: "", repository: null };
+            }),
+          discardClone: () => Effect.void,
+        }),
+      ),
+    );
+    return Effect.gen(function* () {
+      const tracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const result = yield* tracker.start(startInput, harness.hooks);
+      yield* Effect.yieldNow;
+      expect(result.remoteUrl).toBe("https://github.com/octocat/t3code.git");
+      expect(cloneUrls).toEqual(["https://user:s3cret@github.com/octocat/t3code.git"]);
+    }).pipe(Effect.provide(layer));
+  });
+
   it.effect("discard forgets a project's clone when the project is deleted", () => {
     const harness = makeHarness({ clone: () => Effect.never });
     return Effect.gen(function* () {

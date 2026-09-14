@@ -105,7 +105,8 @@ interface TrackedClone {
   readonly fiber: Fiber.Fiber<unknown, unknown> | null;
   readonly hooks: ProjectCloneHooks;
   readonly input: {
-    readonly remoteUrl: string;
+    /** What git is given; may carry credentials and never leaves the server. */
+    readonly cloneUrl: string;
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
   };
@@ -224,7 +225,7 @@ export const make = Effect.gen(function* () {
   const runClone = (projectId: ProjectId, tracked: TrackedClone) =>
     repositories
       .cloneRepository(
-        { remoteUrl: tracked.input.remoteUrl, destinationPath: tracked.input.destinationPath },
+        { remoteUrl: tracked.input.cloneUrl, destinationPath: tracked.input.destinationPath },
         { onProgress: (update) => progress(projectId, update), timeoutMs: null },
       )
       .pipe(
@@ -291,7 +292,7 @@ export const make = Effect.gen(function* () {
           fiber: null,
           hooks,
           input: {
-            remoteUrl: prepared.remoteUrl,
+            cloneUrl: prepared.cloneUrl,
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
           },
