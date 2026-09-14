@@ -1,14 +1,35 @@
 import { type CSSProperties, memo } from "react";
-import { type ProviderDriverKind } from "@t3tools/contracts";
+
 import { providerInstanceInitials } from "@t3tools/client-runtime/state/provider-instance-display";
 
-import { PROVIDER_ICON_BY_PROVIDER } from "./providerIconUtils";
+import { ProviderDriverKind } from "@t3tools/contracts";
+import {
+  AntigravityIcon,
+  ClaudeAI,
+  CursorIcon,
+  GrokIcon,
+  Icon,
+  OpenAI,
+  OpenCodeIcon,
+  PiAgentIcon,
+} from "../Icons";
+
 import { cn } from "~/lib/utils";
 import {
   AcpRegistryAgentIcon,
   officialAcpRegistryIconUrlForAgentId,
   resolveOfficialAcpRegistryIconUrl,
 } from "../settings/AcpRegistryIcon";
+
+const PROVIDER_ICON_BY_PROVIDER: Partial<Record<ProviderDriverKind, Icon>> = {
+  [ProviderDriverKind.make("codex")]: OpenAI,
+  [ProviderDriverKind.make("claudeAgent")]: ClaudeAI,
+  [ProviderDriverKind.make("opencode")]: OpenCodeIcon,
+  [ProviderDriverKind.make("cursor")]: CursorIcon,
+  [ProviderDriverKind.make("grok")]: GrokIcon,
+  [ProviderDriverKind.make("antigravity")]: AntigravityIcon,
+  [ProviderDriverKind.make("pi")]: PiAgentIcon,
+};
 
 export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   readonly driverKind: ProviderDriverKind;
