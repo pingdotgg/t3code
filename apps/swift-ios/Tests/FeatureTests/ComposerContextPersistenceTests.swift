@@ -37,11 +37,11 @@ struct ComposerContextPersistenceTests {
         #expect(attachment.upload?.data == Data("paste".utf8))
     }
 
-    @Test func draftRestoreDoesNotReplaceContextAddedDuringRead() {
+    @Test func draftRestoreDoesNotReplaceContextAddedDuringRead() throws {
         let savedRecord = ComposerContextRecord(label: "old", payload: .skill(.init(name: "old")))
         let newRecord = ComposerContextRecord(label: "new", payload: .skill(.init(name: "new")))
         let current = FeatureComposerDraft(text: ComposerContextReferences.format(newRecord), context: .init(records: [newRecord]))
-        let restored = FeatureComposerDraftRestoration.merge(
+        let restored = try FeatureComposerDraftRestoration.merge(
             saved: .init(text: ComposerContextReferences.format(savedRecord), context: .init(records: [savedRecord])),
             baseline: .init(), current: current
         )

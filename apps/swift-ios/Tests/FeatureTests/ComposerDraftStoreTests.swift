@@ -349,7 +349,7 @@ struct ComposerDraftStoreTests {
         #expect(persisted?["version"] as? Int == 2)
     }
 
-    @Test func restorationPreservesLiveEditsAndRestoresUntouchedFields() {
+    @Test func restorationPreservesLiveEditsAndRestoresUntouchedFields() throws {
         let baseline = FeatureComposerDraft(
             selection: FeatureSelection(providerID: "openai", modelID: "gpt-default"),
             workspace: FeatureComposerWorkspaceDraft(
@@ -387,7 +387,7 @@ struct ComposerDraftStoreTests {
             )
         )
 
-        let merged = FeatureComposerDraftRestoration.merge(
+        let merged = try FeatureComposerDraftRestoration.merge(
             saved: saved,
             baseline: baseline,
             current: current
@@ -402,7 +402,7 @@ struct ComposerDraftStoreTests {
         #expect(merged.workspace?.startFromOrigin == false)
     }
 
-    @Test func restorationUsesFallbacksWithoutOverwritingLiveChoices() {
+    @Test func restorationUsesFallbacksWithoutOverwritingLiveChoices() throws {
         let baseline = FeatureComposerDraft()
         let liveSelection = FeatureSelection(providerID: "anthropic", modelID: "claude-sonnet")
         let current = FeatureComposerDraft(selection: liveSelection)
@@ -414,7 +414,7 @@ struct ComposerDraftStoreTests {
             startFromOrigin: true
         )
 
-        let merged = FeatureComposerDraftRestoration.merge(
+        let merged = try FeatureComposerDraftRestoration.merge(
             saved: nil,
             baseline: baseline,
             current: current,

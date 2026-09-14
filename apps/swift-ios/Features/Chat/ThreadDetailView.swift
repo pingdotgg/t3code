@@ -31,6 +31,7 @@ public struct ThreadDetailView: View {
     @State private var feedbackAlertMessage: String?
     @State private var feedbackIdentifier: String?
     @State private var didRestoreDraft = false
+    @State private var draftRestoreBaseline: FeatureComposerDraft?
     @State private var draftSaveTask: Task<Void, Never>?
     @State private var draftSaveError: String?
     @State private var toolSurface: FeatureThreadToolSurface?
@@ -841,7 +842,7 @@ public struct ThreadDetailView: View {
                     providers: threadProviders,
                     threadSelection: currentSelection,
                     materializesDefaultSelection: false,
-                    isSending: isSending || isRewinding,
+                    isSending: isSending || isRewinding || !didRestoreDraft,
                     isWorking: detail.thread.state == .working || detail.thread.state == .queued
                         || isCompacting,
                     focused: $composerFocused,
@@ -866,7 +867,13 @@ public struct ThreadDetailView: View {
                     },
                     onRefreshModels: refreshThreadEnvironmentModels,
                     draftSaveError: draftSaveError,
-                    onRetryDraftSave: persistDraftImmediately,
+                    onRetryDraftSave: {
+                        if didRestoreDraft {
+                            persistDraftImmediately()
+                        } else {
+                            Task { await restoreDraft(from: draftRestoreBaseline ?? composerDraft, key: draftKey) }
+                        }
+                    },
                     context: contextBinding,
                     onInputPreparationChange: { isPreparingInput = $0 },
                     contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
@@ -1033,7 +1040,7 @@ public struct ThreadDetailView: View {
     }
 
     private func send() {
-        guard !isRewinding else { return }
+        guard !isRewinding, didRestoreDraft else { return }
         let message = draft
         let pendingContext = composerContext
         let pendingAttachments = currentThread.environmentID.map {
@@ -1225,6 +1232,7 @@ public struct ThreadDetailView: View {
             restoreRewindDraft()
             return
         }
+        draftRestoreBaseline = baseline
         let saved = try? await draftStore.draft(for: key)
         guard !Task.isCancelled else { return }
         if model.recoveredRewindDrafts[thread.id] != nil {
@@ -1233,11 +1241,13 @@ public struct ThreadDetailView: View {
         }
 
         let liveDraft = composerDraft
-        var restored = FeatureComposerDraftRestoration.merge(
-            saved: saved,
-            baseline: baseline,
-            current: liveDraft
-        )
+        var restored: FeatureComposerDraft
+        do {
+            restored = try FeatureComposerDraftRestoration.merge(saved: saved, baseline: baseline, current: liveDraft)
+        } catch {
+            draftSaveError = error.localizedDescription
+            return
+        }
         restored.selection = ThreadComposerModelSelectionPolicy.explicitSelection(
             restored.selection,
             inherited: currentSelection,
@@ -1248,6 +1258,7 @@ public struct ThreadDetailView: View {
         attachments = restored.attachments
         selection = restored.selection
         didRestoreDraft = true
+        draftSaveError = nil
 
         // Changes made while the file read or thread refresh was in flight did
         // not pass the didRestoreDraft gate, so enqueue their first save now.
@@ -1502,18 +1513,30 @@ struct ThreadPullRequestDestination: Equatable {
     }
 }
 
-/// Merges a stored draft with edits made while that draft was loading. Each
-/// field is restored only if its live value still matches the value captured
-/// before the asynchronous read began.
+/// Keep live edits, but restore file context only with the attachments it needs.
 enum FeatureComposerDraftRestoration {
+    enum RestorationError: LocalizedError {
+        case attachmentLimit
+        case missingAttachment
+
+        var errorDescription: String? {
+            switch self {
+            case .attachmentLimit:
+                "Remove an attachment, then retry restoring the draft. The saved draft has not changed."
+            case .missingAttachment:
+                "The saved draft has a context link without its file. The saved draft has not changed."
+            }
+        }
+    }
+
     static func merge(
         saved: FeatureComposerDraft?,
         baseline: FeatureComposerDraft,
         current: FeatureComposerDraft,
         fallbackSelection: FeatureSelection? = nil,
         fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil
-    ) -> FeatureComposerDraft {
-        FeatureComposerDraft(
+    ) throws -> FeatureComposerDraft {
+        var restored = FeatureComposerDraft(
             text: current.text == baseline.text
                 ? saved?.text ?? ""
                 : current.text,
@@ -1530,6 +1553,25 @@ enum FeatureComposerDraftRestoration {
             ),
             context: current.context == baseline.context ? saved?.context : current.context
         )
+        restored.context = ComposerContextReferences.referenced(restored.context, text: restored.text)
+        if current.text == baseline.text {
+            func matches(_ attachment: FeatureDraftAttachment, id: String) -> Bool {
+                attachment.id.uuidString.caseInsensitiveCompare(id) == .orderedSame
+                    || attachment.uploadedReference?.attachmentID == id
+            }
+            for record in restored.context?.records ?? [] {
+                guard let binding = record.attachment,
+                      !restored.attachments.contains(where: { matches($0, id: binding.attachmentId) }) else { continue }
+                guard let attachment = saved?.attachments.first(where: { matches($0, id: binding.attachmentId) }) else {
+                    throw RestorationError.missingAttachment
+                }
+                guard restored.attachments.count < FeatureImageAttachmentLimits.maximumCount else {
+                    throw RestorationError.attachmentLimit
+                }
+                restored.attachments.append(attachment)
+            }
+        }
+        return restored
     }
 
     private static func mergeWorkspace(

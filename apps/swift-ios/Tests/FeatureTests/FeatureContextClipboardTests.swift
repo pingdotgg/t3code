@@ -80,7 +80,7 @@ struct FeatureContextClipboardTests {
             == "[screen](t3-context://v1/image/shot)")
     }
 
-    @Test(arguments: ["environment:local-source:thread:one", "logical-project:repo:new-task"])
+    @Test(arguments: ["environment:local-source:thread:one", "logical-project:repo:new-task", "rewind-recovery:environment:local-source:thread:one"])
     func localDraftBytesAreCopiedWithNewIDsAndPastedTextSource(key: String) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -214,6 +214,56 @@ struct FeatureContextClipboardTests {
         #expect(replaced.context?.records.contains(incoming) == true)
         #expect(throws: FeatureComposerContext.MergeError.self) {
             try FeatureContextClipboardEdit.apply(text: text, selection: NSRange(location: text.utf16.count, length: 0), context: .init(records: records), attachments: [], imported: imported)
+        }
+    }
+
+    @Test(arguments: [1, 8])
+    func attachmentEditsDuringDraftReadRestoreContextTogetherOrKeepTheSavedDraft(liveAttachmentCount: Int) async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let attachment = FeatureDraftAttachment(data: Data("saved".utf8), filename: "file.txt", mimeType: "text/plain")
+        let record = file("saved", attachmentID: attachment.id.uuidString, size: attachment.byteCount)
+        let saved = FeatureComposerDraft(text: "Review \(ComposerContextReferences.format(record))", attachments: [attachment], context: .init(records: [record]))
+        let key = "environment:source:thread:one"
+        try await store.setDraft(saved, for: key)
+        let baseline = FeatureComposerDraft()
+        var live = baseline
+        let readStarted = AsyncStream<Void>.makeStream()
+        let resumeRead = AsyncStream<Void>.makeStream()
+        let restoration = Task { @MainActor in
+            defer { readStarted.continuation.finish() }
+            let loaded = try await store.draft(for: key)
+            readStarted.continuation.yield(())
+            readStarted.continuation.finish()
+            for await _ in resumeRead.stream { break }
+            return try FeatureComposerDraftRestoration.merge(saved: loaded, baseline: baseline, current: live)
+        }
+        for await _ in readStarted.stream { break }
+        live.attachments = (0 ..< liveAttachmentCount).map {
+            FeatureDraftAttachment(data: Data("live \($0)".utf8), filename: "live-\($0).txt", mimeType: "text/plain")
+        }
+        let edited = live
+        resumeRead.continuation.yield(())
+        resumeRead.continuation.finish()
+
+        if liveAttachmentCount == 8 {
+            await #expect(throws: FeatureComposerDraftRestoration.RestorationError.self) { try await restoration.value }
+            #expect(live == edited)
+            #expect(try await store.draft(for: key) == saved)
+            live.attachments.removeLast()
+            let savedForRetry = try await store.draft(for: key)
+            let retried = try FeatureComposerDraftRestoration.merge(saved: savedForRetry, baseline: baseline, current: live)
+            #expect(retried.attachments == live.attachments + [attachment])
+            #expect(retried.context == saved.context)
+            #expect(retried.text == saved.text)
+        } else {
+            let restored = try await restoration.value
+            #expect(restored.text == saved.text)
+            #expect(restored.context == saved.context)
+            #expect(restored.attachments == edited.attachments + [attachment])
+            #expect(live == edited)
+            #expect(try await store.draft(for: key) == saved)
         }
     }
 

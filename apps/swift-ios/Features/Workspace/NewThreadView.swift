@@ -121,7 +121,13 @@ public struct NewThreadView: View {
                         onDismissKeyboard: { promptFocused = false },
                         onRefreshModels: refreshSelectedEnvironmentModels,
                         draftSaveError: draftSaveError,
-                        onRetryDraftSave: persistCurrentDraftImmediately,
+                        onRetryDraftSave: {
+                            if restoredDraftProjectID == projectID {
+                                persistCurrentDraftImmediately()
+                            } else {
+                                Task { await restoreDraftAndLoadBranches() }
+                            }
+                        },
                         context: contextBinding,
                         contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
                     )
@@ -1101,17 +1107,23 @@ public struct NewThreadView: View {
         let liveDraft = composerDraft
         let liveSelectionIsExplicit = selectionIsExplicit
         let liveWorkspaceSelectionIsExplicit = workspaceSelectionIsExplicit
-        let restored = context.merging(
-            saved: saved,
-            current: liveDraft,
-            fallbackSelection: initialSelection,
-            fallbackWorkspace: FeatureComposerWorkspaceDraft(
-                mode: environmentPreferences.defaultWorkspaceMode,
-                branch: nil,
-                worktreePath: nil,
-                startFromOrigin: environmentPreferences.newWorktreesStartFromOrigin
+        let restored: FeatureComposerDraft
+        do {
+            restored = try context.merging(
+                saved: saved,
+                current: liveDraft,
+                fallbackSelection: initialSelection,
+                fallbackWorkspace: FeatureComposerWorkspaceDraft(
+                    mode: environmentPreferences.defaultWorkspaceMode,
+                    branch: nil,
+                    worktreePath: nil,
+                    startFromOrigin: environmentPreferences.newWorktreesStartFromOrigin
+                )
             )
-        )
+        } catch {
+            draftSaveError = error.localizedDescription
+            return
+        }
         prompt = restored.text
         attachments = restored.attachments
         composerContext = restored.context
@@ -1134,6 +1146,7 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
+        draftSaveError = nil
         if context.shouldCarryContent(into: saved) {
             persistCurrentDraftImmediately()
         } else if liveDraft != context.baseline {
@@ -1262,8 +1275,8 @@ public struct NewThreadView: View {
                restoreContext.projectID == draftProjectID {
                 let saved = try? await draftStore.draft(for: key)
                 guard !Task.isCancelled else { return }
-                let merged = restoreContext.merging(saved: saved, current: snapshot)
                 do {
+                    let merged = try restoreContext.merging(saved: saved, current: snapshot)
                     try await draftStore.setDraft(merged, for: key)
                     guard !Task.isCancelled else { return }
                     if currentDraftKey == key { draftSaveError = nil }
@@ -1373,7 +1386,7 @@ struct NewTaskDraftRestoreContext: Equatable {
         current: FeatureComposerDraft,
         fallbackSelection: FeatureSelection? = nil,
         fallbackWorkspace: FeatureComposerWorkspaceDraft? = nil
-    ) -> FeatureComposerDraft {
+    ) throws -> FeatureComposerDraft {
         var target = saved
         if shouldCarryContent(into: saved) {
             target = saved ?? FeatureComposerDraft()
@@ -1381,7 +1394,7 @@ struct NewTaskDraftRestoreContext: Equatable {
             target?.attachments = baseline.attachments
             target?.context = baseline.context
         }
-        var restored = FeatureComposerDraftRestoration.merge(
+        var restored = try FeatureComposerDraftRestoration.merge(
             saved: target,
             baseline: baseline,
             current: current,

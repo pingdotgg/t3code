@@ -446,7 +446,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func projectDraftRestoreNeverOverwritesTypingMadeWhileLoading() {
+    func projectDraftRestoreNeverOverwritesTypingMadeWhileLoading() throws {
         let savedAttachment = FeatureDraftAttachment(
             data: Data([0x01]),
             filename: "saved.png",
@@ -457,7 +457,7 @@ struct DailyUXNewTaskTests {
             baseline: FeatureComposerDraft()
         )
 
-        let merged = context.merging(
+        let merged = try context.merging(
             saved: FeatureComposerDraft(
                 text: "Old saved prompt",
                 attachments: [savedAttachment]
@@ -471,7 +471,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func computerSwitchCarriesLocalContentAndDropsAnotherServersUpload() {
+    func computerSwitchCarriesLocalContentAndDropsAnotherServersUpload() throws {
         let oldUpload = FeatureUploadedAttachmentReference(
             environmentID: "source", attachmentID: "old-upload"
         )
@@ -508,7 +508,7 @@ struct DailyUXNewTaskTests {
         let targetWorkspace = FeatureComposerWorkspaceDraft(
             mode: .local, branch: nil, worktreePath: nil, startFromOrigin: true
         )
-        let restored = context.merging(
+        let restored = try context.merging(
             saved: FeatureComposerDraft(selection: targetSelection, workspace: targetWorkspace),
             current: content
         )
@@ -526,7 +526,7 @@ struct DailyUXNewTaskTests {
     }
 
     @Test
-    func computerSwitchKeepsExistingTargetDraftAndLiveEdits() {
+    func computerSwitchKeepsExistingTargetDraftAndLiveEdits() throws {
         let content = FeatureComposerDraft(text: "Prompt from the first computer")
         let context = NewTaskDraftRestoreContext(projectID: "target-project", baseline: content)
         let targetAttachment = FeatureDraftAttachment(
@@ -537,22 +537,22 @@ struct DailyUXNewTaskTests {
         )
 
         #expect(!context.shouldCarryContent(into: saved))
-        #expect(context.merging(saved: saved, current: content) == saved)
+        #expect(try context.merging(saved: saved, current: content) == saved)
         #expect(!context.shouldCarryContent(into: FeatureComposerDraft(attachments: [targetAttachment])))
 
-        let edited = context.merging(
+        let edited = try context.merging(
             saved: saved,
             current: FeatureComposerDraft(text: "Typed while the target draft loaded")
         )
         #expect(edited.text == "Typed while the target draft loaded")
         #expect(edited.attachments == [targetAttachment])
 
-        let cleared = context.merging(saved: nil, current: FeatureComposerDraft())
+        let cleared = try context.merging(saved: nil, current: FeatureComposerDraft())
         #expect(cleared.text.isEmpty)
     }
 
     @Test
-    func sharedProjectDraftRestorationDoesNotReuseAnotherEnvironmentsUpload() {
+    func sharedProjectDraftRestorationDoesNotReuseAnotherEnvironmentsUpload() throws {
         let source = FeatureComposerDraft(
             text: "Shared repo draft",
             attachments: [FeatureDraftAttachment(
@@ -566,7 +566,7 @@ struct DailyUXNewTaskTests {
         let context = NewTaskDraftRestoreContext(
             projectID: "target-project", baseline: content, environmentID: "target"
         )
-        let restored = context.merging(saved: source, current: content)
+        let restored = try context.merging(saved: source, current: content)
 
         #expect(restored.text == source.text)
         #expect(restored.attachments[0].id == source.attachments[0].id)
