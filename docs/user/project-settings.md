@@ -28,8 +28,11 @@ one until you pick another. Every other setting fans out to the selection.
 
 ## Defaults and inheritance
 
-General contains the model and workspace for new threads. Integrations controls agent browser
-access. Source Control contains automatic pull, the default pull request merge method and text
+General contains the model and workspace for new threads, the text generation model, and title
+instructions. Title instructions are extra guidance for generated and regenerated thread titles,
+such as asking for a ticket prefix like `[COMPASS 4437]` when the request names one; a project
+override keeps other projects on the default titles. Integrations controls agent browser access.
+Source Control contains automatic pull, the default pull request merge method and text
 generation. The same rows edit environment defaults or project overrides depending on the
 project crumb.
 

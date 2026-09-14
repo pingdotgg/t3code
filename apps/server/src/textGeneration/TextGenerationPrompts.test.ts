@@ -176,6 +176,28 @@ describe("buildThreadTitlePrompt", () => {
     expect(result.prompt).toContain("67890 bytes");
   });
 
+  it("appends project title instructions after the message and omits them when blank", () => {
+    const instructions = "Start the title with the ticket, such as [COMPASS 4437].";
+    const initial = buildThreadTitlePrompt({
+      message: "Fix compass-4437 login redirect loop",
+      instructions,
+    });
+    const regenerated = buildThreadTitlePrompt({
+      message: "USER:\nFix compass-4437 login redirect loop",
+      previousTitle: "Fix login redirect loop",
+      instructions,
+    });
+    const blank = buildThreadTitlePrompt({ message: "Fix the redirect loop", instructions: "  " });
+
+    for (const result of [initial, regenerated]) {
+      expect(result.prompt).toContain("Project title instructions.");
+      expect(result.prompt.indexOf(instructions)).toBeGreaterThan(
+        result.prompt.indexOf("compass-4437"),
+      );
+    }
+    expect(blank.prompt).not.toContain("Project title instructions.");
+  });
+
   it("regenerates from recent thread contents and identifies the previous title", () => {
     const result = buildThreadTitlePrompt({
       message: `USER:\nInvestigate reconnect regressions\n\nASSISTANT:\nThe remaining issue is stale session state`,

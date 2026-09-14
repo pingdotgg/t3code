@@ -211,7 +211,8 @@ export interface ThreadTitlePromptInput {
   message: string;
   previousTitle?: string | undefined;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
-  policy?: TextGenerationPolicy | undefined;
+  /** Project-level guidance from settings; applies to first titles and regeneration alike. */
+  instructions?: string | undefined;
 }
 
 // Keep shared editorial rules in these two prompts in sync. Regeneration
@@ -290,14 +291,16 @@ function preserveMessageEnd(message: string): string {
 }
 
 function threadTitlePromptSuffix(input: ThreadTitlePromptInput): string {
-  const additionalInstructions = policyInstruction(input.policy?.threadTitleInstructions);
+  const instructions = input.instructions?.trim();
   const attachmentLines = (input.attachments ?? []).map(
     (attachment) => `- ${attachment.name} (${attachment.mimeType}, ${attachment.sizeBytes} bytes)`,
   );
 
   let suffix = "";
-  if (additionalInstructions.length > 0) {
-    suffix = `\n${additionalInstructions.join("\n")}`;
+  if (instructions) {
+    // Project instructions exist to change the title shape, so they outrank
+    // the editorial rules where the two disagree (length, ticket numbers).
+    suffix = `\n\nProject title instructions. Follow them even where they conflict with the editorial rules above:\n${limitSection(instructions, 20_000)}`;
   }
   if (attachmentLines.length > 0) {
     suffix += `\n\nAttachment metadata:\n${limitSection(attachmentLines.join("\n"), 4_000)}`;

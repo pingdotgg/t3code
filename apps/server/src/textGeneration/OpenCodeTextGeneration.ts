@@ -436,6 +436,7 @@ export const makeOpenCodeTextGeneration = Effect.fn("makeOpenCodeTextGeneration"
         message: input.message,
         previousTitle: input.previousTitle,
         attachments: input.attachments,
+        instructions: input.instructions,
       });
       const generated = yield* runOpenCodeJson({
         operation: "generateThreadTitle",

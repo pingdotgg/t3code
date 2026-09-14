@@ -377,6 +377,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
+    id: "thread-title-instructions",
+    title: "Title instructions",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["thread title generation regenerate custom prompt ticket prefix project"],
+  },
+  {
     id: "diagnostics",
     title: "Diagnostics",
     to: "/settings/general",

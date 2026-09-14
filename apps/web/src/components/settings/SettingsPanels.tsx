@@ -138,6 +138,7 @@ import {
 } from "../ui/number-field";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { Textarea } from "../ui/textarea";
 import { ScopedSwitch } from "./ScopedSwitch";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
@@ -2151,6 +2152,7 @@ export function GeneralSettingsPanel() {
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
+  const mixedThreadTitleInstructions = useScopedSettingsMixed(["threadTitleInstructions"]);
   const backgroundActivityDescription =
     backgroundActivityProfileOption === "advanced"
       ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Shared policy: ${
@@ -3046,6 +3048,46 @@ export function GeneralSettingsPanel() {
             )
           }
         />
+        <SettingsRow
+          serverScoped
+          settingKeys={["threadTitleInstructions"]}
+          mixed={mixedThreadTitleInstructions}
+          {...searchableSetting("thread-title-instructions")}
+          description="Extra guidance for generated and regenerated thread titles, such as a ticket prefix. Set it per project to keep other projects on the default."
+          resetAction={
+            hasServerTargets &&
+            (mixedThreadTitleInstructions || settings.threadTitleInstructions !== "") ? (
+              <SettingResetButton
+                label="title instructions"
+                onClick={() => updateSettings({ threadTitleInstructions: "" })}
+              />
+            ) : null
+          }
+        >
+          {hasServerTargets ? (
+            <div className="mt-3 max-w-2xl pb-3.5">
+              <Textarea
+                key={mixedThreadTitleInstructions ? "mixed" : settings.threadTitleInstructions}
+                defaultValue={mixedThreadTitleInstructions ? "" : settings.threadTitleInstructions}
+                onBlur={(event) => {
+                  const threadTitleInstructions = event.target.value.trim();
+                  // A mixed field starts blank; leaving it blank must not clear every environment.
+                  const changed = mixedThreadTitleInstructions
+                    ? threadTitleInstructions !== ""
+                    : threadTitleInstructions !== settings.threadTitleInstructions;
+                  if (changed) updateSettings({ threadTitleInstructions });
+                }}
+                rows={3}
+                placeholder={
+                  mixedThreadTitleInstructions
+                    ? "Mixed. Write instructions to apply them to every selected environment."
+                    : "When the request names a ticket like compass-4437, start the title with [COMPASS 4437]."
+                }
+                aria-label="Thread title instructions"
+              />
+            </div>
+          ) : null}
+        </SettingsRow>
       </SettingsSection>
 
       <SettingsSection id="about" title="About">

@@ -246,6 +246,7 @@ export const makeGrokTextGeneration = Effect.fn("makeGrokTextGeneration")(functi
         message: input.message,
         previousTitle: input.previousTitle,
         attachments: input.attachments,
+        instructions: input.instructions,
       });
 
       const generated = yield* runGrokJson({

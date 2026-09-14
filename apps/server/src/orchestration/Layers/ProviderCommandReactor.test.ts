@@ -10,8 +10,10 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   ProviderSetupError,
+  type ServerSettings,
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
+import type { DeepPartial } from "@t3tools/shared/Struct";
 import {
   ApprovalRequestId,
   CommandId,
@@ -172,6 +174,7 @@ describe("ProviderCommandReactor", () => {
     readonly sessionModelSwitch?: "unsupported" | "in-session";
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
+    readonly settings?: DeepPartial<ServerSettings>;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
@@ -488,7 +491,7 @@ describe("ProviderCommandReactor", () => {
           generateThreadTitle,
         }),
       ),
-      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(ServerSettingsService.layerTest(input?.settings)),
       Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), baseDir)),
       Layer.provideMerge(NodeServices.layer),
@@ -1642,6 +1645,69 @@ describe("ProviderCommandReactor", () => {
     const thread = readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"));
     expect(thread?.title).toBe("Generated title");
     expect(attempts).toBe(2);
+  });
+
+  it("passes the project's title instructions to first-turn and regenerated titles", async () => {
+    const instructions = "Start the title with the ticket, such as [COMPASS 4437].";
+    const harness = await createHarness({
+      settings: {
+        projectSettingsOverrides: {
+          [asProjectId("project-1")]: { threadTitleInstructions: instructions },
+        },
+      },
+    });
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "[COMPASS 4437] Login redirect loop" }),
+    );
+
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.turn.start",
+        commandId: CommandId.make("cmd-turn-start-title-instructions"),
+        threadId: ThreadId.make("thread-1"),
+        message: {
+          messageId: asMessageId("user-message-title-instructions"),
+          role: "user",
+          text: "Fix compass-4437 login redirect loop",
+          attachments: [],
+        },
+        titleSeed: "Thread",
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "approval-required",
+        createdAt: "2026-01-01T00:00:00.000Z",
+      }),
+    );
+    await waitFor(() => harness.generateThreadTitle.mock.calls.length === 1);
+    expect(harness.generateThreadTitle.mock.calls[0]?.[0]).toMatchObject({
+      message: "Fix compass-4437 login redirect loop",
+      instructions,
+    });
+    await waitFor(async () => {
+      const readModel = await harness.readModel();
+      return (
+        readModel.threads.find((entry) => entry.id === ThreadId.make("thread-1"))?.title ===
+        "[COMPASS 4437] Login redirect loop"
+      );
+    });
+
+    harness.generateThreadTitle.mockReturnValue(
+      Effect.succeed({ title: "[COMPASS 4437] Login redirect" }),
+    );
+    await harness.runEffect(
+      harness.engine.dispatch({
+        type: "thread.meta.update",
+        commandId: CommandId.make("cmd-thread-title-regenerate-instructions"),
+        threadId: ThreadId.make("thread-1"),
+        regenerateTitle: true,
+      }),
+    );
+    await harness.drain();
+
+    expect(harness.generateThreadTitle).toHaveBeenCalledTimes(2);
+    expect(harness.generateThreadTitle.mock.calls[1]?.[0]).toMatchObject({
+      previousTitle: "[COMPASS 4437] Login redirect loop",
+      instructions,
+    });
   });
 
   it("regenerates a thread title from the current conversation", async () => {
