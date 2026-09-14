@@ -397,10 +397,10 @@ export const layerWithOptions = (
       // straight-line gen code), where no other fiber can interleave.
       const closingInstanceCounts = new Map<ProviderInstanceId, number>();
       let shutdownInitiated = false;
-      // Terminal-detach revocations outlive the call that started them: the
-      // detached sweep still owns the thread's credential cleanup, so a
-      // retry joins this record (bounded like any cleanup wait) instead of
-      // forking a second sweep or reporting success while it runs.
+      // Terminal-detach revocations outlive the call that started them: each
+      // tracked sweep owns the credentials its caller pruned, so a retry
+      // joins this record (bounded like any cleanup wait) and queues its own
+      // captured set behind it instead of discarding or duplicating work.
       const pendingRevocations = new Map<
         ThreadId,
         Deferred.Deferred<void, ProviderSessionReleaseError>
@@ -411,20 +411,29 @@ export const layerWithOptions = (
         revoke: Effect.Effect<void, E>,
       ) =>
         Effect.gen(function* () {
-          const existing = pendingRevocations.get(threadId);
-          if (existing !== undefined) {
-            return existing;
-          }
+          // A tracked sweep captures only the credentials its caller pruned;
+          // joining it must not discard this caller's own set. Every call
+          // registers its own completion and chains its sweep behind the
+          // previous one, so a later retry always joins the newest tail.
+          const predecessor = pendingRevocations.get(threadId);
           const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
           pendingRevocations.set(threadId, done);
           yield* Effect.gen(function* () {
+            if (predecessor !== undefined) {
+              // A failed predecessor reports on its own deferred; this
+              // caller's captured credentials still need their sweep.
+              yield* Effect.ignore(Deferred.await(predecessor));
+            }
             const exit = yield* Effect.exit(revoke);
             // The record must come down with its completion: a stale entry
             // would let a later retry join a finished sweep and skip
-            // revoking a freshly configured binding.
+            // revoking a freshly configured binding. A chained successor
+            // may already have replaced the map entry — only delete our own.
             yield* Effect.uninterruptible(
               Effect.gen(function* () {
-                pendingRevocations.delete(threadId);
+                if (pendingRevocations.get(threadId) === done) {
+                  pendingRevocations.delete(threadId);
+                }
                 yield* Deferred.done(
                   done,
                   Exit.isSuccess(exit)
@@ -3016,15 +3025,17 @@ export const layerWithOptions = (
             const key = sessionKey(input.providerSessionId);
             const pendingRelease = releasing.get(key);
             if (pendingRelease !== undefined) {
+              let revokeDone: Deferred.Deferred<void, ProviderSessionReleaseError> | undefined;
               if (input.revokeMcpCredential === true) {
                 const recorded = pendingRelease.mcpCredentialIdByThread.get(input.threadId);
                 // The claim-aware revocation can wait on a peer's stalled
                 // prepare; run it detached so this retry reaches the bounded
                 // join instead of blocking indefinitely first. The pending
-                // release's own sweep is the primary revocation path for the
-                // recorded credential anyway. Tracked so later retries join
-                // this sweep instead of piling on duplicates.
-                yield* forkTrackedRevocation(
+                // release's own sweep is the primary revocation path for a
+                // credential it still records — but a credential an earlier
+                // detach already pruned is absent from its record, so this
+                // tracked sweep is the only owner for that work.
+                revokeDone = yield* forkTrackedRevocation(
                   input.providerSessionId,
                   input.threadId,
                   revokeUnclaimedThreadCredentials(
@@ -3033,11 +3044,28 @@ export const layerWithOptions = (
                   ),
                 );
               }
-              return yield* releaseEntry({
+              yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
                 reason: "manual_shutdown",
                 joinRelease: pendingRelease,
               });
+              // The release's sweep does not cover a credential pruned before
+              // its record was captured — joining only the release would
+              // report success while that revocation is still running.
+              if (revokeDone !== undefined) {
+                const settled = yield* Deferred.await(revokeDone).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                );
+                if (Option.isNone(settled)) {
+                  return yield* new ProviderSessionReleaseError({
+                    providerSessionId: input.providerSessionId,
+                    reason: "runtime_error",
+                    cause:
+                      "MCP credential revocation did not finish within 30 seconds and is still running.",
+                  });
+                }
+              }
+              return;
             }
             const currentEntry = (yield* Ref.get(sessions)).get(key);
             const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
