@@ -1,4 +1,12 @@
-import { EnvironmentId } from "@t3tools/contracts";
+import { makeThreadFixture } from "../test-fixtures";
+import * as DateTime from "effect/DateTime";
+import {
+  EnvironmentId,
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -57,14 +65,11 @@ class TestNotification extends EventTarget {
   }
 }
 
-const thread = {
-  id: "thread",
-  title: "Test thread",
-  archivedAt: null as string | null,
-  hasPendingApprovals: false,
-  hasPendingUserInput: false,
-  session: null,
-  latestTurn: { turnId: "turn", state: "running", completedAt: null as string | null },
+const thread: OrchestrationV2ThreadShell = {
+  ...makeThreadFixture({ id: ThreadId.make("thread"), title: "Test thread" }).source,
+  latestRunId: RunId.make("run"),
+  status: "running",
+  latestRunCompletedAt: null,
 };
 let renderer: ReactTestRenderer | undefined;
 let focused = false;
@@ -76,7 +81,7 @@ function shell(overrides: Partial<typeof thread> = {}) {
 function complete(environment = "one", completedAt = "2026-09-13T08:00:00Z") {
   state.shells.set(
     environment,
-    shell({ latestTurn: { turnId: "turn", state: "completed", completedAt } }),
+    shell({ status: "completed", latestRunCompletedAt: DateTime.makeUnsafe(completedAt) }),
   );
 }
 async function render() {
@@ -207,8 +212,12 @@ it.each(["off", "sound", "focused", "denied", "archived"])(
       state.shells.set(
         "one",
         shell({
-          archivedAt: "2026-09-13T08:00:00Z",
-          hasPendingApprovals: true,
+          archivedAt: DateTime.makeUnsafe("2026-09-13T08:00:00Z"),
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("request"),
+            kind: "command",
+            createdAt: thread.createdAt,
+          },
         }),
       );
     await render();
@@ -221,7 +230,16 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "badges %s and clears when notifications are disabled",
   async (flag) => {
     await render();
-    state.shells.set("one", shell({ [flag]: true }));
+    state.shells.set(
+      "one",
+      shell({
+        pendingRuntimeRequest: {
+          id: RuntimeRequestId.make("request"),
+          kind: flag === "hasPendingUserInput" ? "user_input" : "command",
+          createdAt: thread.createdAt,
+        },
+      }),
+    );
     await render();
     expect(state.badge).toHaveBeenLastCalledWith(1);
     const notification = TestNotification.sent[0]!;
@@ -251,7 +269,7 @@ it("shows in-app alerts without adding a badge while focused", async () => {
 it("badges background failures with in-app notifications enabled", async () => {
   state.inApp = true;
   await render();
-  state.shells.set("one", shell({ latestTurn: { ...thread.latestTurn, state: "error" } }));
+  state.shells.set("one", shell({ status: "failed" }));
   await render();
   expect(TestNotification.sent[0]?.title).toBe("Thread failed");
   expect(state.badge).toHaveBeenLastCalledWith(1);

@@ -1,3 +1,11 @@
+import {
+  RunId,
+  RuntimeRequestId,
+  ThreadId,
+  type OrchestrationV2ThreadShell,
+} from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
+import { makeThreadFixture } from "../test-fixtures";
 import type { ClientSettings } from "@t3tools/contracts/settings";
 import * as Option from "effect/Option";
 import { act } from "react";
@@ -35,18 +43,26 @@ vi.mock("@effect/atom-react", () => ({
     snapshot: Option.some({
       threads: [
         {
-          id: "thread-1",
+          ...makeThreadFixture({ id: ThreadId.make("thread-1") }).source,
           title: "Fix the login form",
-          archivedAt: state.archivedAt,
-          hasPendingUserInput: state.input,
-          hasPendingApprovals: state.approval,
-          session: state.sessionError ? { status: "error" } : null,
-          latestTurn: {
-            turnId: "turn-1",
-            state: state.turnError ? "error" : state.completedAt ? "completed" : "running",
-            completedAt: state.completedAt,
-          },
-        },
+          archivedAt: state.archivedAt ? DateTime.makeUnsafe(state.archivedAt) : null,
+          pendingRuntimeRequest:
+            state.input || state.approval
+              ? {
+                  id: RuntimeRequestId.make("request-1"),
+                  kind: state.input ? "user_input" : "command",
+                  createdAt: DateTime.makeUnsafe("2026-09-13T09:00:00.000Z"),
+                }
+              : null,
+          latestRunId: RunId.make("run-1"),
+          status:
+            state.turnError || state.sessionError
+              ? "failed"
+              : state.completedAt
+                ? "completed"
+                : "running",
+          latestRunCompletedAt: state.completedAt ? DateTime.makeUnsafe(state.completedAt) : null,
+        } satisfies OrchestrationV2ThreadShell,
       ],
     }),
   }),
