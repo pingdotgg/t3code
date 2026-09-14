@@ -8,6 +8,10 @@ android {
   namespace 'expo.modules.t3composereditor'
   compileSdk rootProject.ext.compileSdkVersion
 
+  testOptions {
+    unitTests.includeAndroidResources = true
+  }
+
   defaultConfig {
     minSdkVersion rootProject.ext.minSdkVersion
     targetSdkVersion rootProject.ext.targetSdkVersion
@@ -17,4 +21,12 @@ android {
 dependencies {
   implementation project(':expo-modules-core')
   implementation project(':t3tools-mobile-markdown-text')
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.robolectric:robolectric:4.16.1'
+}
+
+tasks.withType(Test).configureEach {
+  javaLauncher = javaToolchains.launcherFor {
+    languageVersion = JavaLanguageVersion.of(21)
+  }
 }

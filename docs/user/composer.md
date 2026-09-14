@@ -6,6 +6,12 @@ include a skill when the task needs more context.
 Messages can contain up to 120,000 characters. Longer drafts stay in the composer
 so you can shorten them or split them into several messages.
 
+Pasting 32 KiB or more of text adds that fragment as a text-file attachment so
+the agent can inspect it without filling the model context. A smaller paste also
+becomes an attachment when inserting it would exceed the message limit. On a
+hardware keyboard, use `Cmd+Shift+V` on Apple devices or `Ctrl+Shift+V` elsewhere
+to keep a large paste editable in the composer instead.
+
 ## Attach files
 
 Attach up to eight files per message. Images can be up to 10 MB; other files can
@@ -17,9 +23,9 @@ message can send. Retry or remove a failed upload. On web and desktop, reloading
 before an upload finishes requires you to attach that file again.
 
 You can drag or paste images into the web or desktop composer. HEIC and HEIF
-photos are converted to JPEG there and when selected from the iOS photo library;
-the image limit applies after conversion. On mobile, you can also send files to
-T3 Code through another app's system share sheet.
+photos are converted to JPEG there and when selected from the mobile photo
+library; photos over the image limit are also resized to fit. On mobile, you can
+also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 

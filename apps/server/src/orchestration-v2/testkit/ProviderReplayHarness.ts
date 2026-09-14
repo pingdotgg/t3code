@@ -262,7 +262,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
         );
   const databaseLayer = options.databaseLayer ?? SqlitePersistenceMemory;
   const serverSettingsLayer = ServerSettingsService.layerTest({
-    enableLegacyTokenStreaming: options.enableLegacyTokenStreaming ?? false,
+    responseStreamingMode: options.enableLegacyTokenStreaming ? "token" : "turn",
   }).pipe(Layer.orDie);
   const storesLayer = Layer.mergeAll(
     eventStoreLayer,

@@ -1,4 +1,5 @@
 import {
+  ApprovalRequestId,
   CheckpointRef,
   TurnItemId,
   RuntimeRequestId,
@@ -1890,7 +1891,7 @@ describe("deriveMessagesTimelineRows", () => {
   it.each([
     [undefined, true],
     ["inProgress", true],
-    ["completed", false],
+    ["completed", true],
     ["failed", null],
     ["declined", false],
     ["stopped", false],
@@ -1933,6 +1934,7 @@ describe("deriveMessagesTimelineRows", () => {
         expect(rows.at(-1)).toMatchObject({ kind: "thinking", id: "live-activity-row" });
       } else {
         expect(workLiveRow).toMatchObject({ active });
+        if (active) expect(rows.some((row) => row.kind === "thinking")).toBe(false);
       }
     },
   );

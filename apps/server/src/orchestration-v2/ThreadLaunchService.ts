@@ -247,7 +247,12 @@ const make = Effect.gen(function* () {
       input.workspaceStrategy.type === "existing_worktree"
         ? input.workspaceStrategy.worktreePath
         : null;
-    if (input.workspaceStrategy.type === "worktree") {
+    if (
+      input.workspaceStrategy.type === "worktree" &&
+      (yield* git
+        .isRepository(project.workspaceRoot)
+        .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId))))
+    ) {
       if (runId !== null) {
         yield* threads
           .dispatch({
@@ -291,17 +296,23 @@ const make = Effect.gen(function* () {
             );
         }
       }
-      const worktree = yield* git
-        .createWorktree({
-          cwd: project.workspaceRoot,
-          refName: startRef,
-          newRefName: branch!,
-          baseRefName: input.workspaceStrategy.baseRef,
-          path: null,
-        })
-        .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
-      worktreePath = worktree.worktree.path;
-      branch = worktree.worktree.refName;
+      if (
+        yield* git
+          .hasCommit({ cwd: project.workspaceRoot, refName: startRef })
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)))
+      ) {
+        const worktree = yield* git
+          .createWorktree({
+            cwd: project.workspaceRoot,
+            refName: startRef,
+            newRefName: branch!,
+            baseRefName: input.workspaceStrategy.baseRef,
+            path: null,
+          })
+          .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
+        worktreePath = worktree.worktree.path;
+        branch = worktree.worktree.refName;
+      }
     }
 
     yield* threads

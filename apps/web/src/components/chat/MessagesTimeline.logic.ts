@@ -936,6 +936,7 @@ export function deriveMessagesTimelineRows(input: {
   activeTurnStartedAt?: string | null;
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   supportsConversationRollback: boolean;
+  /** Task ids of subagents still working, used by the active tool indicator. */
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
@@ -1042,7 +1043,9 @@ export function deriveMessagesTimelineRows(input: {
   const latestToolKeepsActivityLive =
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
-      workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
+      (workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry) ||
+        (latestVisibleToolEntry.entry.toolLifecycleStatus === "completed" &&
+          !workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry))));
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&

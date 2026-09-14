@@ -84,6 +84,8 @@ const adapter = {
 } as ProviderAdapterV2Shape;
 
 interface HarnessOptions {
+  readonly repositoryExists?: boolean;
+  readonly baseCommitExists?: boolean;
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchRemote?: GitWorkflow.GitWorkflowService["Service"]["fetchRemote"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
@@ -136,6 +138,8 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      isRepository: () => Effect.succeed(options.repositoryExists ?? true),
+      hasCommit: () => Effect.succeed(options.baseCommitExists ?? true),
       renameBranch,
       fetchRemote: options.fetchRemote ?? (() => Effect.void),
       remoteExists: () => Effect.succeed(true),
@@ -1660,3 +1664,35 @@ it.effect("shared intake preserves durable attachment bytes after a lost launch 
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, files)));
 });
+
+for (const missing of ["repository", "base commit"] as const) {
+  it.effect(`launches in the project directory when the ${missing} is unavailable`, () =>
+    Effect.gen(function* () {
+      const setupReached = yield* Deferred.make<void>();
+      const harness = makeHarness({
+        repositoryExists: missing !== "repository",
+        baseCommitExists: missing !== "base commit",
+        runSetup: () =>
+          Deferred.succeed(setupReached, undefined).pipe(
+            Effect.as({ status: "no-script" as const }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        const threads = yield* ThreadManagement.ThreadManagementService;
+        const launched = yield* launches.launch(
+          launchInput({
+            command: `command:fallback:${missing}`,
+            thread: `thread:fallback:${missing}`,
+            workspace: { type: "worktree", baseRef: "main" },
+          }),
+        );
+        yield* Deferred.await(setupReached);
+        const projection = yield* threads.getThreadProjection(launched.threadId);
+        assert.isNull(projection.thread.worktreePath);
+        assert.equal(harness.createWorktree.mock.calls.length, 0);
+        assert.equal(harness.runSetup.mock.calls[0]?.[0].worktreePath, project.workspaceRoot);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+}

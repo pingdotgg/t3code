@@ -44,6 +44,7 @@ import { projectEnvironment } from "../../state/projects";
 import { useEnvironmentQuery } from "../../state/query";
 import {
   appendComposerDraftAttachments,
+  type ComposerDraftInsertion,
   clearComposerDraft,
   composerDraftsAtom,
   createNewTaskDraft,
@@ -207,7 +208,10 @@ type NewTaskFlowContextValue = {
   readonly setPrompt: (value: string) => void;
   readonly replaceAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => void;
   /** Appends draft attachments; returns how many the live cap rejected. */
-  readonly appendAttachments: (attachments: ReadonlyArray<DraftComposerAttachment>) => number;
+  readonly appendAttachments: (
+    attachments: ReadonlyArray<DraftComposerAttachment>,
+    insertion?: ComposerDraftInsertion,
+  ) => number;
   readonly removeAttachment: (imageId: string) => void;
   readonly clearAttachments: () => void;
   readonly setSubmitting: (value: boolean) => void;
@@ -608,12 +612,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // Returns how many attachments the live cap rejected so the caller can
   // tell the user (a concurrent add can fill the draft mid-pick).
   const appendAttachments = useCallback(
-    (nextAttachments: ReadonlyArray<DraftComposerAttachment>): number => {
+    (
+      nextAttachments: ReadonlyArray<DraftComposerAttachment>,
+      insertion?: ComposerDraftInsertion,
+    ): number => {
       if (!selectedProjectDraftKey) {
         return 0;
       }
       return appendComposerDraftAttachments(selectedProjectDraftKey, nextAttachments, {
         appendReference: true,
+        insertion,
       });
     },
     [selectedProjectDraftKey],

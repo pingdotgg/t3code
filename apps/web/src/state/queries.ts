@@ -254,6 +254,7 @@ export function useProjectPathSearch(
     isPending:
       !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
     searchedQuery: debouncedTarget.query ?? "",
+    truncated: result.data?.truncated ?? false,
     refresh: result.refresh,
   };
 }

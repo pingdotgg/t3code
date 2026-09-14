@@ -15,6 +15,7 @@ import {
   PROVIDER_SEND_TURN_MAX_ATTACHMENTS,
   ProviderOptionSelections,
   PreviewAnnotationPayloadSchema,
+  PastedTextAttachmentSource,
   type PreviewAnnotationPayload,
   RuntimeMode,
   type ServerProvider,
@@ -193,6 +194,7 @@ export const PersistedComposerFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.String,
   environmentId: EnvironmentId,
+  source: Schema.optional(PastedTextAttachmentSource),
 });
 export type PersistedComposerFileAttachment = typeof PersistedComposerFileAttachment.Type;
 
@@ -209,6 +211,7 @@ export const PersistedComposerDraftFileAttachment = Schema.Struct({
   sizeBytes: Schema.Number,
   attachmentId: Schema.optionalKey(Schema.String),
   environmentId: Schema.optionalKey(EnvironmentId),
+  source: Schema.optional(PastedTextAttachmentSource),
 });
 export type PersistedComposerDraftFileAttachment = typeof PersistedComposerDraftFileAttachment.Type;
 const isPersistedComposerDraftFileAttachment = Schema.is(PersistedComposerDraftFileAttachment);
@@ -2201,6 +2204,7 @@ export function partializeComposerDraftStoreState(
               name: file.name,
               mimeType: file.mimeType,
               sizeBytes: file.sizeBytes,
+              ...(file.source ? { source: file.source } : {}),
               ...(file.uploadedAttachmentId && file.uploadEnvironmentId
                 ? {
                     attachmentId: file.uploadedAttachmentId,
@@ -2487,6 +2491,7 @@ function toHydratedThreadDraft(
       mimeType: file.mimeType,
       sizeBytes: file.sizeBytes,
       file: null,
+      ...(file.source ? { source: file.source } : {}),
       // A marker without an attachment id hydrates as needs-reattach: no
       // bytes, no server-side upload, only the metadata to tell the user
       // what to attach again.
