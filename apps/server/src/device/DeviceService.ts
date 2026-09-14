@@ -918,8 +918,11 @@ export const make = Effect.gen(function* () {
   const hostContext =
     yield* Effect.context<Effect.Services<ReturnType<typeof SshDeviceHost.make>>>();
   const configured = new Map<string, { config: SshDeviceHostConfig; scope: Scope.Closeable }>();
+  let lastHostsConfig: string | undefined;
   const reconcile = (configuredHosts: ReadonlyArray<SshDeviceHostConfig>) =>
     Effect.gen(function* () {
+      const hostsConfig = JSON.stringify(configuredHosts);
+      if (hostsConfig === lastHostsConfig) return;
       const next = yield* remoteSshDeviceHosts(configuredHosts).pipe(
         Effect.provide(localTargetContext),
       );
@@ -988,6 +991,7 @@ export const make = Effect.gen(function* () {
           yield* service.refreshHosts;
         }),
       );
+      lastHostsConfig = hostsConfig;
     });
   const changes = yield* settings.subscribeChanges;
   yield* reconcile((yield* settings.getSettings).deviceHosts);
