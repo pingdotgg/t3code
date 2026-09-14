@@ -399,10 +399,10 @@ describe("DesktopBackendConfiguration", () => {
             observedProbeRoots.push(root);
             return { ok: true, resolvedPath };
           },
-          // The staged runtime carries its own Node, so the preflight must not
-          // go looking for one in the distro.
+          // The staged runtime carries its own Node and node-pty, so it must
+          // not require the mounted server tree's native dependency check.
           ensureNodePty: () => {
-            throw new Error("the staged runtime must not probe for Node");
+            throw new Error("the staged runtime must not probe for node-pty");
           },
         }),
       },

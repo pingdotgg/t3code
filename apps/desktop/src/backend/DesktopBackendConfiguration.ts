@@ -384,8 +384,8 @@ const runWslPreflight = Effect.fn("desktop.backendConfiguration.wslPreflight")(f
   if (input.runtimeArchive !== null) {
     const runtime = yield* wslEnv.prepareRuntime(runningDistro, input.runtimeArchive);
     if (runtime.ok) {
-      // The staged runtime is self-contained, so the only question is whether
-      // it runs here; there is no Node to find or node-pty to load.
+      // The staged runtime supplies its own Node and node-pty. Provider PATH
+      // discovery must not require either dependency for runtime readiness.
       const stagedProbe = yield* wslEnv.probeRuntime(runningDistro, runtime.linuxAppRoot);
       if (stagedProbe.ok) {
         yield* wslServerTree.cleanupLegacy;
