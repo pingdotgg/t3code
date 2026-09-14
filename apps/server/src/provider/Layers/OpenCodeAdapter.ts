@@ -2487,17 +2487,19 @@ export function makeOpenCodeAdapter(
                 part.state.output,
               );
             }
+            const cuaPresentation = cuaToolPresentation({
+              threadId: context.session.threadId,
+              rawToolName: part.tool,
+              args: part.state.input,
+              status: partStatus,
+            });
             const payload = {
               itemType,
               status: partStatus,
               ...(title ? { title } : {}),
-              ...(detail ? { detail } : {}),
-              ...cuaToolPresentation({
-                threadId: context.session.threadId,
-                rawToolName: part.tool,
-                args: part.state.input,
-                status: partStatus,
-              }),
+              // Clients label rows by detail first; Cua rows keep the shared title.
+              ...(detail && !cuaPresentation ? { detail } : {}),
+              ...cuaPresentation,
               data: {
                 tool: part.tool,
                 state: part.state,

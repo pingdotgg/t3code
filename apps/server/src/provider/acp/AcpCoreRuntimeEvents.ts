@@ -194,7 +194,7 @@ export function makeAcpToolCallEvent(input: {
       itemType: canonicalItemTypeFromAcpToolKind(input.toolCall.kind),
       ...(runtimeStatus ? { status: runtimeStatus } : {}),
       ...(input.toolCall.title ? { title: input.toolCall.title } : {}),
-      ...(input.toolCall.detail ? { detail: input.toolCall.detail } : {}),
+      ...(input.toolCall.detail && !cuaTool ? { detail: input.toolCall.detail } : {}),
       ...cuaPresentation,
       ...(Object.keys(input.toolCall.data).length > 0 ? { data: input.toolCall.data } : {}),
     },

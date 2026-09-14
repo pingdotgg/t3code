@@ -3646,7 +3646,7 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={cn("block size-full object-contain", props.muted && "light:brightness-[.6]")}
+            className="block size-full object-contain"
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>

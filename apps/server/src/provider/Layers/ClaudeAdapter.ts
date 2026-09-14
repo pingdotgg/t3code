@@ -263,20 +263,24 @@ interface ToolInFlight {
   readonly parentToolUseId?: string;
 }
 
-/** Cua Driver calls take the shared computer-use title and app icon. */
-function cuaPresentationFor(
+/**
+ * Cua Driver calls take the shared computer-use title and app icon. Clients
+ * label a row by its detail before its title, so the raw request summary
+ * stays out of the payload for them; the expanded row still shows the call.
+ */
+function cuaAwareDetail(
   context: ClaudeSessionContext,
   tool: ToolInFlight,
   status: "inProgress" | "completed" | "failed",
 ) {
-  return (
-    cuaToolPresentation({
-      threadId: context.session.threadId,
-      rawToolName: tool.toolName,
-      args: tool.input,
-      status,
-    }) ?? {}
-  );
+  const presentation = cuaToolPresentation({
+    threadId: context.session.threadId,
+    rawToolName: tool.toolName,
+    args: tool.input,
+    status,
+  });
+  if (presentation) return presentation;
+  return tool.detail ? { detail: tool.detail } : {};
 }
 
 interface ClaudeTaskState {
@@ -2970,10 +2974,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: "inProgress",
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, "inProgress"),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
-          ...cuaPresentationFor(context, tool, "inProgress"),
           data: {
             toolName: tool.toolName,
             input: toolInput,
@@ -3055,10 +3058,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, toolResult.isError ? "failed" : "inProgress"),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
-          ...cuaPresentationFor(context, tool, toolResult.isError ? "failed" : "inProgress"),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
@@ -3110,10 +3112,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: itemStatus,
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, itemStatus),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
-          ...cuaPresentationFor(context, tool, itemStatus),
           data: toolData,
         },
         providerRefs: nativeProviderRefs(context, {
