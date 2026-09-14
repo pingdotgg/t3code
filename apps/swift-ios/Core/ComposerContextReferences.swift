@@ -26,8 +26,13 @@ public enum ComposerContextReferences {
     public static func sanitizeLabel(_ label: String, kind: String) -> String {
         let clean = label.replacingOccurrences(of: #"[\[\]\\\r\n]"#, with: " ", options: .regularExpression)
             .split(whereSeparator: \.isWhitespace).joined(separator: " ")
-        let bounded = String(decoding: clean.utf16.prefix(200), as: UTF16.self)
+        let bounded = boundedPrefix(clean, maximumUTF16: 200)
         return bounded.isEmpty ? kind : bounded
+    }
+
+    public static func boundedPrefix(_ text: String, maximumUTF16: Int) -> String {
+        let units = text.utf16.prefix(max(0, maximumUTF16))
+        return String(decoding: units.last.map { (0xD800...0xDBFF).contains($0) } == true ? units.dropLast() : units, as: UTF16.self)
     }
 
     public static func format(_ record: ComposerContextRecord) -> String {

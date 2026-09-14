@@ -635,8 +635,10 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
         super.paste(sender)
     }
 
+    var readClipboardText: () -> String? = { UIPasteboard.general.string }
+
     @objc func pasteAsText(_ sender: Any?) {
-        guard !isReadOnly, let pastedText = UIPasteboard.general.string else { return }
+        guard !isReadOnly, let pastedText = readClipboardText() else { return }
         if !foldPastedText(pastedText, bypassAutoAttachment: true) {
             insertText(pastedText)
         }

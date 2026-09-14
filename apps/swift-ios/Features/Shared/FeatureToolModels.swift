@@ -620,13 +620,48 @@ public struct FeatureReviewCommentDraft: Sendable, Equatable, Hashable {
             : "Address this review comment: " + reference
     }
 
-    public func contextRecord(diff: String) -> ComposerContextRecord {
+    public func contextRecord(lines: [FeatureDiffLine]) -> ComposerContextRecord {
         let range = line.map { "\($0.side.rawValue) line \($0.line)" } ?? "File"
+        let selectedIndex = line.flatMap { selected in
+            lines.firstIndex {
+                selected.side == .new ? $0.newLine == selected.line : $0.oldLine == selected.line
+            }
+        } ?? 0
+        func formatted(_ index: Int) -> String {
+            let line = lines[index]
+            let prefix = switch line.kind {
+            case .addition: "+"
+            case .deletion: "-"
+            case .context: " "
+            case .hunk: ""
+            }
+            return prefix + line.text
+        }
+        // Build outward from the selected row so a large file never clips away
+        // the code the comment is about. Indices still refer to the full diff.
+        var lower = min(selectedIndex, max(0, lines.count - 1))
+        var upper = min(lines.count, lower + 1)
+        let selectedText = lines.isEmpty ? "" : ComposerContextReferences.boundedPrefix(formatted(lower), maximumUTF16: 32_000)
+        var remaining = 32_000 - selectedText.utf16.count
+        while remaining > 0, lower > 0 || upper < lines.count {
+            var added = false
+            if lower > 0, formatted(lower - 1).utf16.count + 1 <= remaining {
+                lower -= 1
+                remaining -= formatted(lower).utf16.count + 1
+                added = true
+            }
+            if upper < lines.count, formatted(upper).utf16.count + 1 <= remaining {
+                remaining -= formatted(upper).utf16.count + 1
+                upper += 1
+                added = true
+            }
+            if !added { break }
+        }
         return ComposerContextRecord(label: "\(filePath) \(range)", payload: .reviewComment(.init(
             sectionId: "working-tree", sectionTitle: "Working changes", filePath: filePath,
-            startIndex: max(0, (line?.line ?? 1) - 1), endIndex: max(0, (line?.line ?? 1) - 1),
-            rangeLabel: range, text: String(decoding: body.utf16.prefix(16_000), as: UTF16.self),
-            diff: String(decoding: diff.utf16.prefix(32_000), as: UTF16.self),
+            startIndex: selectedIndex, endIndex: selectedIndex,
+            rangeLabel: range, text: ComposerContextReferences.boundedPrefix(body, maximumUTF16: 16_000),
+            diff: (lower..<upper).map { $0 == selectedIndex ? selectedText : formatted($0) }.joined(separator: "\n"),
             fenceLanguage: "diff", pullRequest: nil
         )))
     }

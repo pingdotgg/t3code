@@ -164,7 +164,9 @@ public struct ThreadDetailView: View {
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:
                         FeatureTerminalView(client: model.client, threadID: thread.id) { record in
-                            composerContext = FeatureComposerContext.merge(composerContext, .init(records: [record]))
+                            composerContext = try FeatureComposerContext.merge(
+                                ComposerContextReferences.referenced(composerContext, text: draft), .init(records: [record])
+                            )
                             draft = ComposerContextReferences.ensureReferences(draft, records: [record])
                             persistDraftImmediately()
                             composerFocused = true
@@ -987,17 +989,24 @@ public struct ThreadDetailView: View {
                 }
             } else {
                 let currentDraft = draft
-                let restoredMessage = message.trimmingCharacters(in: .whitespacesAndNewlines)
+                let restoredMessage: String
+                do {
+                    composerContext = try FeatureComposerContext.merge(pendingContext, composerContext)
+                    restoredMessage = message
+                } catch {
+                    // The failed turn and the new draft can each contain 200 items.
+                    // Retain the failed turn as readable text if their records cannot fit together.
+                    restoredMessage = ComposerContextReferences.providerProjection(message, context: pendingContext)
+                }
                 if currentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    draft = message
+                    draft = restoredMessage
                 } else if !restoredMessage.isEmpty {
-                    draft = "\(message)\n\(currentDraft)"
+                    draft = "\(restoredMessage)\n\(currentDraft)"
                 }
                 let pendingIDs = Set(pendingAttachments.map(\.id))
                 attachments = pendingAttachments + attachments.filter {
                     !pendingIDs.contains($0.id)
                 }
-                composerContext = FeatureComposerContext.merge(pendingContext, composerContext)
                 sendFailed = true
             }
             submittingCompaction = false
@@ -2610,7 +2619,7 @@ struct FeatureMessageView: View {
                     contextUnavailable = true
                     return .handled
                 }
-                if case let .mention(value) = record.payload, let path = URL(string: value.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value.path) {
+                if case let .mention(value) = record.payload, let path = FeatureComposerFileLinkSerializer.url(for: value.path) {
                     openURL(path)
                 } else {
                     previewedContext = record

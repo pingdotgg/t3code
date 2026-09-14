@@ -153,7 +153,7 @@ final class TerminalInputSession {
 public struct FeatureTerminalView: View {
     let client: any FeatureClient
     let threadID: String
-    let onAttachContext: ((ComposerContextRecord) -> Void)?
+    let onAttachContext: ((ComposerContextRecord) throws -> Void)?
 
     @SwiftUI.Environment(\.dismiss) private var dismiss
     @AppStorage("terminalFontSize") private var storedFontSize = TerminalFontSize.defaultValue
@@ -169,7 +169,7 @@ public struct FeatureTerminalView: View {
     @State private var errorMessage: String?
     @State private var inputSession = TerminalInputSession()
 
-    public init(client: any FeatureClient, threadID: String, onAttachContext: ((ComposerContextRecord) -> Void)? = nil) {
+    public init(client: any FeatureClient, threadID: String, onAttachContext: ((ComposerContextRecord) throws -> Void)? = nil) {
         self.client = client
         self.threadID = threadID
         self.onAttachContext = onAttachContext
@@ -207,11 +207,15 @@ public struct FeatureTerminalView: View {
                 onAttachOutput: onAttachContext.map { attach in
                     { output in
                         guard !output.isEmpty else { return }
-                        attach(FeatureComposerContext.terminalRecord(
-                            text: output, terminalID: activeTerminalID,
-                            label: terminal.map(TerminalSessionList.displayTitle) ?? "Terminal"
-                        ))
-                        dismiss()
+                        do {
+                            try attach(FeatureComposerContext.terminalRecord(
+                                text: output, terminalID: activeTerminalID,
+                                label: terminal.map(TerminalSessionList.displayTitle) ?? "Terminal"
+                            ))
+                            dismiss()
+                        } catch {
+                            errorMessage = error.localizedDescription
+                        }
                     }
                 }
             )

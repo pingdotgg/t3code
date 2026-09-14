@@ -422,16 +422,7 @@ private struct FeatureDiffView: View {
 
     private func sendComment() {
         guard !trimmedComment.isEmpty, !isSending else { return }
-        let diff = renderedLines.map { line in
-            let prefix = switch line.kind {
-            case .addition: "+"
-            case .deletion: "-"
-            case .context: " "
-            case .hunk: ""
-            }
-            return prefix + line.text
-        }.joined(separator: "\n")
-        let record = reviewDraft.contextRecord(diff: diff)
+        let record = reviewDraft.contextRecord(lines: renderedLines)
         let prompt = reviewDraft.submissionText(contextRecord: record)
         isSending = true
         commentError = nil

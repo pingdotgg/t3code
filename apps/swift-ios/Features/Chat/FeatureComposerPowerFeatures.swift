@@ -280,6 +280,12 @@ enum FeatureComposerTriggerParser {
 }
 
 enum FeatureComposerFileLinkSerializer {
+    static func url(for path: String) -> URL? {
+        // Keep a Windows drive followed by a slash so the workspace router
+        // recognizes it as a file path instead of an external URL scheme.
+        URL(string: encodeDestination(path.replacingOccurrences(of: "\\", with: "/")))
+    }
+
     static func markdownLink(for path: String) -> String {
         let normalized = path.replacingOccurrences(of: "\\", with: "/")
         let basename = normalized.split(separator: "/", omittingEmptySubsequences: true)

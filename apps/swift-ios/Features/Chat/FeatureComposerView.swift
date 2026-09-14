@@ -889,29 +889,36 @@ struct FeatureComposerView: View {
         }
     }
 
-    private func contextReference(label: String, payload: ComposerContextRecord.Payload) -> String {
+    private func contextReference(label: String, payload: ComposerContextRecord.Payload) throws -> String {
         let record = ComposerContextRecord(label: label, payload: payload)
-        context = FeatureComposerContext.merge(ComposerContextReferences.referenced(context, text: text), .init(records: [record]))
+        context = try FeatureComposerContext.merge(ComposerContextReferences.referenced(context, text: text), .init(records: [record]))
         return ComposerContextReferences.format(record) + " "
     }
 
     private func selectCommandItem(_ item: FeatureComposerMenuItem) {
         guard let trigger = composerTrigger else { return }
         let replacement: String
-        switch item {
-        case .modelCommand:
-            replacement = "/model "
-        case let .model(nextSelection, _, _):
-            selection = nextSelection
-            replacement = ""
-        case let .providerCommand(command):
-            replacement = "/\(command.name) "
-        case let .skill(skill):
-            replacement = skill.userInvocationOnly == true
-                ? skill.invocation
-                : contextReference(label: skill.invocationDisplayName, payload: .skill(.init(name: skill.name)))
-        case let .path(entry):
-            replacement = contextReference(label: entry.name, payload: .mention(.init(path: entry.path)))
+        do {
+            switch item {
+            case .modelCommand:
+                replacement = "/model "
+            case let .model(nextSelection, _, _):
+                selection = nextSelection
+                replacement = ""
+            case let .providerCommand(command):
+                replacement = "/\(command.name) "
+            case let .skill(skill):
+                if skill.userInvocationOnly == true {
+                    replacement = skill.invocation
+                } else {
+                    replacement = try contextReference(label: skill.invocationDisplayName, payload: .skill(.init(name: skill.name)))
+                }
+            case let .path(entry):
+                replacement = try contextReference(label: entry.name, payload: .mention(.init(path: entry.path)))
+            }
+        } catch {
+            pathSearchError = error.localizedDescription
+            return
         }
         let nextCursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
             afterReplacing: trigger.range,

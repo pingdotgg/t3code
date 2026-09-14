@@ -84,11 +84,9 @@ struct FeaturePastedTextTests {
 
     @Test @MainActor
     func pasteAsTextShortcutInsertsTheClipboardAtTheSelection() throws {
-        let originalPasteboardItems = UIPasteboard.general.items
-        defer { UIPasteboard.general.items = originalPasteboardItems }
         let pastedText = String(repeating: "x", count: 32 * 1024)
-        UIPasteboard.general.string = pastedText
         let editor = FeatureComposerUITextView()
+        editor.readClipboardText = { pastedText }
         editor.text = "Before selected after"
         editor.selectedRange = NSRange(location: 7, length: 8)
         editor.maximumPastedTextBytes = 50 * 1024 * 1024
