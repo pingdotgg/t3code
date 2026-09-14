@@ -79,13 +79,13 @@ public struct UploadChatAttachment: Equatable, Sendable {
         uploadedReference: UploadedAttachmentReference? = nil,
         contextSource: PastedTextAttachmentSource? = nil
     ) throws {
-        if !mimeType.lowercased().hasPrefix("image/") {
+        let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if !normalizedMIME.hasPrefix("image/") {
             guard !data.isEmpty else { throw FileAttachmentError.empty }
             guard data.count <= Self.maximumFileBytes else {
                 throw FileAttachmentError.tooLarge(actualBytes: data.count, maximumBytes: Self.maximumFileBytes)
             }
             let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
-            let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
             guard !normalizedName.isEmpty, normalizedName.count <= 255 else { throw FileAttachmentError.invalidName }
             guard !normalizedMIME.isEmpty, normalizedMIME.count <= 100,
                   !normalizedMIME.contains(where: { $0.isWhitespace || $0.isNewline }) else { throw FileAttachmentError.invalidMIMEType }
@@ -110,7 +110,6 @@ public struct UploadChatAttachment: Equatable, Sendable {
         guard !normalizedName.isEmpty, normalizedName.count <= 255 else {
             throw ImageAttachmentError.invalidName
         }
-        let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard normalizedMIME.hasPrefix("image/"), normalizedMIME.count <= 100 else {
             throw ImageAttachmentError.invalidMIMEType
         }

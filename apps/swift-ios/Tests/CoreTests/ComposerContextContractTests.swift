@@ -85,6 +85,13 @@ struct ComposerContextContractTests {
         #expect(attachment.uploadedJSONValue(id: "server-id")["dataUrl"] == nil)
     }
 
+    @Test func imageMIMEIsNormalizedBeforeSelectingTheAttachmentType() throws {
+        let image = try UploadChatAttachment(data: Data([1]), name: "image.png", mimeType: " IMAGE/PNG ")
+        #expect(image.type == "image")
+        #expect(image.mimeType == "image/png")
+        #expect(image.jsonValue["dataUrl"]?.stringValue == "data:image/png;base64,AQ==")
+    }
+
     @Test func sendPreparationUsesCapabilitiesAndUploadedIDs() throws {
         let attachment = try UploadChatAttachment(data: Data("paste".utf8), name: "pasted-text.txt", mimeType: "text/plain", contextSource: .pastedText)
         let record = ComposerContextRecord(contextId: "mention", label: "source", payload: .mention(.init(path: "src/file.swift")))
