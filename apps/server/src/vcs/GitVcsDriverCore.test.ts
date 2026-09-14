@@ -1704,12 +1704,19 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
         const seen = yield* Ref.make<Array<{ percent: number; completed: number; total: number }>>(
           [],
         );
+        const resolvedPath = yield* Ref.make<string | null>(null);
 
         yield* driver.createWorktree(
           { cwd, path: worktreePath, refName: initialBranch, newRefName: "feature/progress" },
           {
             progress: {
-              onCheckoutProgress: (update) => Ref.update(seen, (all) => [...all, update]),
+              onWorktreePathResolved: (path) => Ref.set(resolvedPath, path),
+              onCheckoutProgress: (update) =>
+                Effect.gen(function* () {
+                  // The path is known before the first progress line arrives.
+                  assert.equal(yield* Ref.get(resolvedPath), worktreePath);
+                  yield* Ref.update(seen, (all) => [...all, update]);
+                }),
             },
           },
         );

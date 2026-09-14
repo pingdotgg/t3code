@@ -1312,6 +1312,12 @@ const makeWsRpcLayer = (
                 },
                 {
                   progress: {
+                    // Known before git writes anything, so a cancel during the
+                    // checkout still removes the half-made directory.
+                    onWorktreePathResolved: (path) =>
+                      Effect.sync(() => {
+                        targetWorktreePath = path;
+                      }),
                     onCheckoutProgress: ({ percent, completed, total }) => {
                       checkoutTotal = total;
                       return worktreeSetupTracker.stage(threadId, "checkout", {
@@ -1389,7 +1395,12 @@ const makeWsRpcLayer = (
             yield* runSetupProgram();
 
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "running"));
-            const started = yield* dispatchFromClient(finalTurnStartCommand);
+            // Past this point a cancel would roll back a thread whose turn has
+            // started. Drop the cancel handle and make the handoff atomic.
+            yield* track(worktreeSetupTracker.markUncancellable(threadId));
+            const started = yield* Effect.uninterruptible(
+              dispatchFromClient(finalTurnStartCommand),
+            );
             yield* track(
               worktreeSetupTracker
                 .stageStatus(threadId, "agent", "done")

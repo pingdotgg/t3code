@@ -7,6 +7,11 @@ import { IsoDateTime, NonNegativeInt, ThreadId, TrimmedNonEmptyString } from "./
  * server keeps this in memory only; a client that reconnects mid-setup gets a
  * fresh snapshot, and a finished setup is dropped once its turn starts.
  */
+/** Producers clamp free text to these before publishing so encoding never fails. */
+export const WORKTREE_SETUP_DETAIL_MAX_LENGTH = 200;
+export const WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH = 400;
+export const WORKTREE_SETUP_ERROR_MAX_LENGTH = 1000;
+
 export const WorktreeSetupStageId = Schema.Literals([
   "fetch",
   "checkout",
@@ -34,9 +39,9 @@ export const WorktreeSetupStage = Schema.Struct({
   /** Only the checkout stage reports a real percentage, parsed from git's `Updating files` lines. */
   percent: Schema.NullOr(Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
   /** Short trailing text for the row: a file count, an exit code, a submodule name. */
-  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(200))),
+  detail: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_DETAIL_MAX_LENGTH))),
   /** Last few output lines from the setup script, ANSI stripped, newest last. */
-  tail: Schema.Array(Schema.String.check(Schema.isMaxLength(400))),
+  tail: Schema.Array(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH))),
 });
 export type WorktreeSetupStage = typeof WorktreeSetupStage.Type;
 
@@ -61,7 +66,7 @@ export const WorktreeSetupSnapshot = Schema.Struct({
   ),
   stages: Schema.Array(WorktreeSetupStage),
   /** Human readable reason when phase is failed. */
-  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(1000))),
+  error: Schema.NullOr(Schema.String.check(Schema.isMaxLength(WORKTREE_SETUP_ERROR_MAX_LENGTH))),
   sequence: NonNegativeInt,
 });
 export type WorktreeSetupSnapshot = typeof WorktreeSetupSnapshot.Type;

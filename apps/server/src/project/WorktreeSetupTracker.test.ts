@@ -1,10 +1,11 @@
 import { describe, expect, it } from "@effect/vitest";
-import { ThreadId } from "@t3tools/contracts";
+import { ThreadId, WorktreeSetupSnapshot } from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -180,6 +181,46 @@ describe("WorktreeSetupTracker", () => {
       yield* tracker.finish(threadId, "cancelled");
       expect(yield* tracker.cancel(threadId)).toBe(false);
       expect(yield* tracker.cancel(ThreadId.make("unknown"))).toBe(false);
+    }),
+  );
+
+  it.effect("markUncancellable makes a later cancel a no-op while the setup keeps running", () =>
+    Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      const fiber = yield* Effect.forkChild(Effect.never);
+      yield* tracker.begin({ threadId, branch: null, baseRef: null, stages: ["agent"], fiber });
+
+      yield* tracker.markUncancellable(threadId);
+      expect(yield* tracker.cancel(threadId)).toBe(false);
+      expect((yield* tracker.get(threadId))?.phase).toBe("running");
+      yield* Fiber.interrupt(fiber);
+    }),
+  );
+
+  it.effect("clamps free text to the contract limits before publishing", () =>
+    Effect.gen(function* () {
+      const tracker = yield* WorktreeSetupTracker.make;
+      yield* tracker.begin({
+        threadId,
+        branch: null,
+        baseRef: null,
+        stages: ["checkout", "setup-script"],
+        fiber: null,
+      });
+      const long = "x".repeat(2_000);
+
+      yield* tracker.stageStatus(threadId, "checkout", "done", long);
+      yield* tracker.stage(threadId, "setup-script", { detail: long });
+      yield* tracker.appendTail(threadId, "setup-script", long);
+      yield* tracker.finish(threadId, "failed", long);
+
+      const snapshot = yield* tracker.get(threadId);
+      expect(snapshot?.stages[0]?.detail?.length).toBe(200);
+      expect(snapshot?.stages[1]?.detail?.length).toBe(200);
+      expect(snapshot?.stages[1]?.tail[0]?.length).toBe(400);
+      expect(snapshot?.error?.length).toBe(1000);
+      // The wire schema must accept what the tracker publishes.
+      expect(Schema.is(WorktreeSetupSnapshot)(snapshot)).toBe(true);
     }),
   );
 });

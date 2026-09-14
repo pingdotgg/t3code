@@ -5,7 +5,12 @@ import type {
   WorktreeSetupStageId,
   WorktreeSetupStageStatus,
 } from "@t3tools/contracts";
-import { WORKTREE_SETUP_STAGE_ORDER } from "@t3tools/contracts";
+import {
+  WORKTREE_SETUP_DETAIL_MAX_LENGTH,
+  WORKTREE_SETUP_ERROR_MAX_LENGTH,
+  WORKTREE_SETUP_STAGE_ORDER,
+  WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH,
+} from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -64,9 +69,14 @@ export class WorktreeSetupTracker extends Context.Service<
       error?: string | null,
     ) => Effect.Effect<void>;
     /**
+     * Drops the cancel handle. Called right before the turn is dispatched so a
+     * late cancel cannot roll back a thread whose agent has already started.
+     */
+    readonly markUncancellable: (threadId: ThreadId) => Effect.Effect<void>;
+    /**
      * Interrupts the running bootstrap and waits for it to unwind, so the
      * caller's dispatch has already failed and rolled back when this returns.
-     * Returns false when nothing is running.
+     * Returns false when nothing is running or the setup is past cancellation.
      */
     readonly cancel: (threadId: ThreadId) => Effect.Effect<boolean>;
     readonly get: (threadId: ThreadId) => Effect.Effect<WorktreeSetupSnapshot | null>;
@@ -76,6 +86,14 @@ export class WorktreeSetupTracker extends Context.Service<
 >()("t3/project/WorktreeSetupTracker") {}
 
 const TAIL_LINE_LIMIT = 4;
+
+/** Keeps free text inside the contract limit, ending in an ellipsis when cut. */
+function clampText(text: string, maxLength: number): string {
+  return text.length <= maxLength ? text : `${text.slice(0, maxLength - 1)}\u2026`;
+}
+
+const clampDetail = (detail: string | null): string | null =>
+  detail === null ? null : clampText(detail, WORKTREE_SETUP_DETAIL_MAX_LENGTH);
 /** Finished snapshots stay visible this long so a late subscriber sees the outcome. */
 const FINISHED_RETENTION = "30 seconds";
 
@@ -185,7 +203,13 @@ export const make = Effect.gen(function* () {
     update(threadId, (snapshot) => ({
       ...snapshot,
       stages: snapshot.stages.map((entry) =>
-        entry.id === stageId ? { ...entry, ...patch } : entry,
+        entry.id === stageId
+          ? {
+              ...entry,
+              ...patch,
+              ...(patch.detail === undefined ? {} : { detail: clampDetail(patch.detail ?? null) }),
+            }
+          : entry,
       ),
     }));
 
@@ -209,7 +233,7 @@ export const make = Effect.gen(function* () {
               status,
               startedAt,
               endedAt,
-              ...(detail === undefined ? {} : { detail }),
+              ...(detail === undefined ? {} : { detail: clampDetail(detail ?? null) }),
             };
           }),
         })),
@@ -221,7 +245,12 @@ export const make = Effect.gen(function* () {
       ...snapshot,
       stages: snapshot.stages.map((entry) =>
         entry.id === stageId
-          ? { ...entry, tail: [...entry.tail, line.slice(0, 400)].slice(-TAIL_LINE_LIMIT) }
+          ? {
+              ...entry,
+              tail: [...entry.tail, clampText(line, WORKTREE_SETUP_TAIL_LINE_MAX_LENGTH)].slice(
+                -TAIL_LINE_LIMIT,
+              ),
+            }
           : entry,
       ),
     }));
@@ -235,7 +264,10 @@ export const make = Effect.gen(function* () {
           ...tracked.snapshot,
           phase,
           endedAt,
-          error: error ?? null,
+          error:
+            error === undefined || error === null
+              ? null
+              : clampText(error, WORKTREE_SETUP_ERROR_MAX_LENGTH),
           stages: tracked.snapshot.stages.map((entry) =>
             entry.status === "running"
               ? {
@@ -260,6 +292,15 @@ export const make = Effect.gen(function* () {
         Effect.forkDetach,
       );
       retentionFibers.set(threadId, fiber);
+    });
+
+  const markUncancellable: WorktreeSetupTracker["Service"]["markUncancellable"] = (threadId) =>
+    Ref.update(setups, (current) => {
+      const existing = current.get(threadId);
+      if (!existing || existing.fiber === null) return current;
+      const next = new Map(current);
+      next.set(threadId, { ...existing, fiber: null });
+      return next;
     });
 
   const cancel: WorktreeSetupTracker["Service"]["cancel"] = (threadId) =>
@@ -313,6 +354,7 @@ export const make = Effect.gen(function* () {
     stageStatus,
     appendTail,
     finish,
+    markUncancellable,
     cancel,
     get,
     stream,

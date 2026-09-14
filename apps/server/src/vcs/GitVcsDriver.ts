@@ -108,6 +108,8 @@ export interface ExecuteGitProgress {
  * submodule init. The tracker uses these to drive the worktree setup card.
  */
 export interface CreateWorktreeProgress {
+  /** Fires with the resolved path before `git worktree add` starts, so a cancel mid-checkout can clean it up. */
+  readonly onWorktreePathResolved?: (path: string) => Effect.Effect<void, never>;
   readonly onCheckoutProgress?: (input: {
     percent: number;
     completed: number;
