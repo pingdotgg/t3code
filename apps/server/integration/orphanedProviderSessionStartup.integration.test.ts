@@ -276,12 +276,13 @@ it.effect(
         const restartedStoppedBindingThread = Option.getOrThrow(
           yield* query.getThreadDetailById(stoppedBindingThreadId),
         );
-        const pendingRows = yield* sql<{ readonly threadId: string }>`
-          SELECT thread_id AS "threadId"
+        const pendingRows = yield* sql<{ readonly messageId: string }>`
+          SELECT pending_message_id AS "messageId"
           FROM projection_turns
           WHERE thread_id IN (${threadId}, ${stoppedBindingThreadId})
             AND turn_id IS NULL
             AND state = 'pending'
+          ORDER BY pending_message_id ASC
         `;
         const settleExit = yield* Effect.exit(
           engine.dispatch({
@@ -323,7 +324,11 @@ it.effect(
           sessionStatus: restartedThread.session?.status,
           activeTurnId: restartedThread.session?.activeTurnId,
           latestTurn: restartedThread.latestTurn,
-          pendingTurnCount: pendingRows.length,
+          // This seam mocks OrchestrationReactor, so the provider reactor that
+          // emits correlated restart failures does not consume these requests.
+          // Session reconciliation must leave them intact instead of clearing
+          // unrelated pending work with an uncorrelated terminal status.
+          pendingTurnMessageIds: pendingRows.map((row) => row.messageId),
           settleSucceeded: Exit.isSuccess(settleExit),
           snoozeSucceeded: Exit.isSuccess(snoozeExit),
           newTurnSucceeded: Exit.isSuccess(newTurnExit),
@@ -341,7 +346,10 @@ it.effect(
         sessionStatus: "error",
         activeTurnId: null,
         latestTurn: null,
-        pendingTurnCount: 0,
+        pendingTurnMessageIds: [
+          "message-pending-before-restart",
+          "message-stopped-binding-pending-before-restart",
+        ],
         settleSucceeded: true,
         snoozeSucceeded: true,
         newTurnSucceeded: true,

@@ -30,6 +30,8 @@ export interface CaptureCheckpointInput {
 export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
+  /** Current checkpoint whose added files should be removed by the rollback. */
+  readonly fromCheckpointRef?: CheckpointRef;
   readonly fallbackToHead?: boolean;
 }
 

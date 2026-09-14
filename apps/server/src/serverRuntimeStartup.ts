@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
+  EventId,
   type ServerSettings as ServerSettingsValue,
   type ModelSelection,
   type OrchestrationProjectShell,
@@ -539,6 +540,47 @@ export const reconcileProviderSessions = Effect.gen(function* () {
       !liveThreadIds.has(thread.id),
   );
 
+  const clearSubmittedTurnStarts = (orphanedThread: (typeof threads)[number]) =>
+    Effect.forEach(
+      orphanedThread.submittedTurnStarts ?? [],
+      (submitted) =>
+        Effect.gen(function* () {
+          const createdAt = DateTime.formatIso(yield* DateTime.now);
+          const commandId = CommandId.make(yield* crypto.randomUUIDv4);
+          const eventId = EventId.make(yield* crypto.randomUUIDv4);
+          yield* orchestrationEngine.dispatch({
+            type: "thread.activity.append",
+            commandId,
+            threadId: orphanedThread.id,
+            activity: {
+              id: eventId,
+              tone: "error",
+              kind: "provider.turn.start.failed",
+              summary: "Provider turn start failed",
+              payload: {
+                detail:
+                  "The server restarted after the provider accepted this turn but before it started.",
+                requestId: submitted.messageId,
+              },
+              turnId: submitted.turnId,
+              createdAt,
+            },
+            createdAt,
+          });
+        }).pipe(
+          Effect.as(true),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause)
+              ? Effect.failCause(cause)
+              : Effect.logWarning(
+                  "failed to clear an acknowledged turn start during orphan reconciliation",
+                  { threadId: orphanedThread.id, messageId: submitted.messageId, cause },
+                ).pipe(Effect.as(false)),
+          ),
+        ),
+      { concurrency: 1 },
+    );
+
   for (const thread of orphanedThreads) {
     const session = thread.session;
     if (session === null) {
@@ -611,6 +653,11 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 ),
           ),
         );
+
+        const submittedStartCleanup = yield* clearSubmittedTurnStarts(thread);
+        if (submittedStartCleanup.some((cleared) => !cleared)) {
+          return;
+        }
 
         yield* Effect.gen(function* () {
           const reconciledAt = DateTime.formatIso(yield* DateTime.now);
@@ -733,6 +780,21 @@ export const reconcileProviderSessions = Effect.gen(function* () {
     }
 
     yield* settleAsError(ORPHANED_PROVIDER_SESSION_ERROR);
+  }
+
+  // Threads whose provider session is gone without being orphaned above can
+  // still hold acknowledged starts that will never surface their turn; fail
+  // them out so the stale submission cannot block reverts indefinitely.
+  const orphanedThreadIds = new Set(orphanedThreads.map((thread) => thread.id));
+  for (const thread of threads) {
+    if (
+      liveThreadIds.has(thread.id) ||
+      orphanedThreadIds.has(thread.id) ||
+      (thread.submittedTurnStarts?.length ?? 0) === 0
+    ) {
+      continue;
+    }
+    yield* clearSubmittedTurnStarts(thread);
   }
 }).pipe(
   Effect.catchCause((cause) =>

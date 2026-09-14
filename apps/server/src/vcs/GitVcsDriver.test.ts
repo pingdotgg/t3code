@@ -99,7 +99,9 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
             fallbackToHead: false,
           }),
         );
-        assert.isFalse(yield* fileSystem.exists(addedPath));
+        // Restores never delete untracked files; staged additions are index
+        // state and return to the checkpoint's tracked set.
+        assert.strictEqual(yield* fileSystem.exists(addedPath), !staged);
       }
       yield* fileSystem.writeFileString(
         path.join(root, ".git", "info", "exclude"),
@@ -112,7 +114,7 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
       );
       assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "ignored.txt")), "keep\n");
-      assert.isFalse(yield* fileSystem.exists(path.join(cwd, "untracked")));
+      assert.isTrue(yield* fileSystem.exists(path.join(cwd, "untracked")));
       if (nested) {
         assert.strictEqual(
           yield* fileSystem.readFileString(path.join(root, "outside.txt")),
@@ -126,6 +128,38 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
         assert.strictEqual(staged.stdout.trim(), "outside.txt");
       }
     }
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
+it.effect("recreates a nested workspace directory emptied by restore before resetting", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-nested-restore-" });
+    yield* runGit(root, ["init"]);
+    yield* runGit(root, ["config", "user.email", "test@test.com"]);
+    yield* runGit(root, ["config", "user.name", "Test"]);
+    yield* fileSystem.writeFileString(path.join(root, "root.txt"), "root\n");
+    yield* runGit(root, ["add", "."]);
+    yield* runGit(root, ["commit", "-m", "initial"]);
+
+    const cwd = path.join(root, "nested");
+    yield* fileSystem.makeDirectory(cwd, { recursive: true });
+    const checkpointRef = CheckpointRef.make("refs/t3/checkpoints/nested-empty");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+
+    // Tracking the nested workspace's only file and restoring to a checkpoint
+    // without it removes the directory itself; the driver must recreate it
+    // before the follow-up reset runs.
+    yield* fileSystem.writeFileString(path.join(cwd, "only.txt"), "new\n");
+    yield* runGit(root, ["add", "nested/only.txt"]);
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({ cwd, checkpointRef, fallbackToHead: false }),
+    );
+    assert.isTrue(yield* fileSystem.exists(cwd));
+    assert.isFalse(yield* fileSystem.exists(path.join(cwd, "only.txt")));
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
