@@ -41,6 +41,26 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## Let agents use the host computer
+
+**Cua computer use** lets agents control the machine running your T3 Code server
+through Cua Driver. It is off by default, applies to the whole environment with no
+project override, and is separate from **Agent browser access**. Every provider
+receives it, unless you already configured a `cua-driver` MCP server of your own
+for that provider.
+
+Turn it on in **Settings > Integrations** with the host machine selected. On the
+desktop app that owns the machine, T3 Code walks you through granting Accessibility
+and Screen Recording before the switch turns on. The **Permissions** button next to
+the switch reopens that check later. From another computer or phone, the switch turns
+on immediately, but you still have to grant those permissions to T3 Code on the host.
+
+Packaged T3 Code desktop includes Cua Driver. For a standalone server, set
+`T3CODE_CUA_DRIVER_PATH` to the absolute path of your Cua Driver executable before
+starting the server. Agent sessions started after enabling get the computer use tools.
+Turning the switch off revokes T3 Code's managed access without touching MCP servers
+you configured yourself.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, or image. The choice applies to

@@ -6,8 +6,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import { useNavigate } from "@tanstack/react-router";
+import { useState } from "react";
 
+import { isElectron } from "../../env";
 import { useT3ProjectFileState } from "../../hooks/useT3ProjectFileScripts";
+import { readLocalApi } from "../../localApi";
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
 import {
   applyProviderInstanceSettings,
@@ -22,9 +25,11 @@ import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { TraitsPicker } from "../chat/TraitsPicker";
+import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { Switch } from "../ui/switch";
+import { CuaSetupDialog, type CuaPermission } from "./CuaSetupDialog";
 import type { ProjectSettingsCategory } from "./ProjectSettingsPanel";
 import { searchableSetting } from "./settingsSearch";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -71,6 +76,22 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
   const mixedPermissions = useScopedSettingsMixed(["defaultRuntimeMode"]);
   const PermissionIcon = runtimeModeConfig[settings.defaultRuntimeMode].icon;
   const mixedWorkspace = useScopedSettingsMixed(["defaultThreadEnvMode"]);
+  // Host permissions can only be granted on the machine that runs the
+  // driver: this desktop, for its own primary environment. Other clients
+  // enable the setting and tell the user where to grant access.
+  const cuaSetupAvailable =
+    isElectron &&
+    window.desktopBridge?.getClientPlatform?.() === "darwin" &&
+    typeof window.desktopBridge.checkSystemPermission === "function" &&
+    representative?.entry.target._tag === "PrimaryConnectionTarget";
+  const [cuaSetupOpen, setCuaSetupOpen] = useState(false);
+  const checkCuaPermission = (permission: CuaPermission) =>
+    window.desktopBridge?.checkSystemPermission?.(permission) ?? Promise.resolve(false);
+  const allowCuaPermission = async (permission: CuaPermission) => {
+    const api = readLocalApi();
+    if (!api) throw new Error("Unable to open System Settings.");
+    await api.shell.openSystemSettings(permission);
+  };
   const mixedBrowser = useScopedSettingsMixed(["enableAgentBrowserAccess"]);
   const mixedCua = useScopedSettingsMixed(["enableCua"]);
   const mixedAutoPull = useScopedSettingsMixed(["defaultAutoPull"]);
@@ -458,7 +479,12 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             settingKeys={["enableCua"]}
             mixed={mixedCua}
             {...searchableSetting("cua-computer-use")}
-            description="Let Codex control the environment through Cua Driver. Host permissions are required. Start a new session after enabling. Disabling revokes managed access."
+            description="Let agents control the selected machine through Cua Driver. Applies to agent sessions started afterwards. Turning it off revokes managed access."
+            status={
+              cuaSetupAvailable
+                ? undefined
+                : "Grant Accessibility and Screen Recording to T3 Code on the host machine."
+            }
             resetAction={
               !isProjectScope && settings.enableCua !== DEFAULT_SERVER_SETTINGS.enableCua ? (
                 <SettingResetButton
@@ -469,14 +495,35 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
               ) : null
             }
             control={
-              <Switch
-                aria-label="Cua computer use"
-                mixed={mixedCua}
-                checked={mixedCua ? false : settings.enableCua}
-                onCheckedChange={(enabled) => updateSettings({ enableCua: enabled })}
-              />
+              <>
+                {cuaSetupAvailable && settings.enableCua && !mixedCua ? (
+                  <Button size="xs" variant="outline" onClick={() => setCuaSetupOpen(true)}>
+                    Permissions
+                  </Button>
+                ) : null}
+                <Switch
+                  aria-label="Cua computer use"
+                  mixed={mixedCua}
+                  checked={mixedCua ? false : settings.enableCua || cuaSetupOpen}
+                  onCheckedChange={(enabled) => {
+                    if (enabled && cuaSetupAvailable) setCuaSetupOpen(true);
+                    else void updateSettings({ enableCua: enabled });
+                  }}
+                />
+              </>
             }
           />
+          {cuaSetupOpen ? (
+            <CuaSetupDialog
+              enabled={settings.enableCua}
+              onCheck={checkCuaPermission}
+              onAllow={allowCuaPermission}
+              onEnable={async () => {
+                if (!settings.enableCua) await updateSettings({ enableCua: true });
+              }}
+              onClose={() => setCuaSetupOpen(false)}
+            />
+          ) : null}
         </>
       )}
     </SettingsSection>

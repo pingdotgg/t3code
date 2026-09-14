@@ -1208,7 +1208,11 @@ export const DesktopPreviewAutomationWaitForInputSchema = Schema.Struct({
  * A System Settings pane the app can deep-link to. The identifier crosses IPC
  * rather than a URL, so the renderer can only reach these known destinations.
  */
-export const SystemSettingsPaneSchema = Schema.Literals(["full-disk-access"]);
+export const SystemSettingsPaneSchema = Schema.Literals([
+  "full-disk-access",
+  "accessibility",
+  "screen-recording",
+]);
 export type SystemSettingsPane = typeof SystemSettingsPaneSchema.Type;
 
 export interface DesktopBridge {

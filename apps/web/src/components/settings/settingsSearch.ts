@@ -513,9 +513,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Cua computer use",
     to: "/settings/integrations",
     scope: "environment-defaults",
-    searchTerms: [
-      "Codex Cua Driver computer machine host permissions accessibility screen capture",
-    ],
+    searchTerms: ["Cua Driver computer machine host permissions accessibility screen recording"],
   },
   {
     id: "browser-profiles",
