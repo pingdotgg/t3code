@@ -1,6 +1,5 @@
 import {
   ApprovalRequestId,
-  type AssistantDeliveryMode,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -14,7 +13,9 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationThreadActivity,
+  type ProjectId,
   type ProviderRuntimeEvent,
+  type ResponseStreamingMode,
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -1167,7 +1168,19 @@ const make = Effect.gen(function* () {
       });
     });
 
-  const appendBufferedAssistantText = (messageId: MessageId, delta: string, atMillis: number) =>
+  const resolveResponseStreamingMode = (projectId: ProjectId) =>
+    Effect.map(
+      serverSettingsService.getSettings,
+      (settings) => resolveProjectSettings(settings, projectId).settings.responseStreamingMode,
+    );
+
+  // `mode` is "turn" or "paragraph"; token mode never buffers.
+  const appendBufferedAssistantText = (
+    messageId: MessageId,
+    delta: string,
+    mode: Exclude<ResponseStreamingMode, "token">,
+    atMillis: number,
+  ) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
         Effect.gen(function* () {
@@ -1176,9 +1189,13 @@ const make = Effect.gen(function* () {
             onSome: (text) => `${text}${delta}`,
           });
 
-          // Deliver finished paragraphs and closed code blocks early so the
-          // user sees progress without token-by-token repaints.
-          const { ready, rest } = splitBufferedAssistantText(nextText);
+          // Paragraph mode delivers finished paragraphs and closed code blocks
+          // early so the user sees progress without token-by-token repaints.
+          // Turn mode holds everything until the turn finishes or pauses.
+          const { ready, rest } =
+            mode === "paragraph"
+              ? splitBufferedAssistantText(nextText)
+              : { ready: "", rest: nextText };
           const lastDeliveredAt = Option.getOrUndefined(
             yield* Cache.getOption(lastAssistantDeliveryAtByMessageId, messageId),
           );
@@ -1757,19 +1774,14 @@ const make = Effect.gen(function* () {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
-        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
-          serverSettingsService.getSettings,
-          (settings) =>
-            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
-              ? "streaming"
-              : "buffered",
-        );
-        if (assistantDeliveryMode === "buffered") {
+        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
+        if (streamingMode !== "token") {
           // Pace on the server clock. OpenCode stamps every delta of a part
           // with the part's start time, so the event time cannot measure gaps.
           const spillChunk = yield* appendBufferedAssistantText(
             assistantMessageId,
             assistantDelta,
+            streamingMode,
             yield* Clock.currentTimeMillis,
           );
           if (spillChunk.length > 0) {
@@ -1807,15 +1819,9 @@ const make = Effect.gen(function* () {
           turnId: pauseForUserTurnId,
           streamingOnly: true,
         });
-        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
-          serverSettingsService.getSettings,
-          (settings) =>
-            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
-              ? "streaming"
-              : "buffered",
-        );
+        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
         const flushedMessageIds =
-          assistantDeliveryMode === "buffered"
+          streamingMode !== "token"
             ? yield* flushBufferedAssistantMessagesForTurn({
                 event,
                 threadId: thread.id,
