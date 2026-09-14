@@ -8569,3 +8569,210 @@ it.effect(
       );
     }),
 );
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance does not inherit a finished predecessor's pending successor",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const gateA = yield* Ref.make<string | undefined>(undefined);
+      const gateB = yield* Ref.make<string | undefined>(undefined);
+      const revokingA = yield* Deferred.make<void>();
+      const revokingB = yield* Deferred.make<void>();
+      const gateFirst = yield* Deferred.make<void>();
+      const gateSecond = yield* Deferred.make<void>();
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            revokeProviderSession: (providerSessionId) =>
+              Effect.gen(function* () {
+                const a = yield* Ref.get(gateA);
+                const b = yield* Ref.get(gateB);
+                if (providerSessionId === a) {
+                  yield* Deferred.succeed(revokingA, undefined);
+                  yield* Deferred.await(gateFirst);
+                } else if (providerSessionId === b) {
+                  yield* Deferred.succeed(revokingB, undefined);
+                  yield* Deferred.await(gateSecond);
+                }
+              }).pipe(Effect.andThen(delegate.revokeProviderSession(providerSessionId))),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadId = ThreadId.make("thread-closeinstance-settled-predecessor");
+        const peerA = ThreadId.make("thread-closeinstance-settled-predecessor-a");
+        const peerB = ThreadId.make("thread-closeinstance-settled-predecessor-b");
+        const peerC = ThreadId.make("thread-closeinstance-settled-predecessor-c");
+        const otherSelection = {
+          ...modelSelection,
+          instanceId: ProviderInstanceId.make("codex_other"),
+        };
+        const firstA = yield* makeThreadSessionFixture(threadId);
+        const holderA = yield* makeThreadSessionFixture(peerA);
+        const holderB = yield* makeThreadSessionFixture(peerB);
+        const holderC = yield* makeThreadSessionFixture(peerC);
+        const sessionA = yield* firstA.allocate;
+        const sessionB = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: otherSelection.instanceId,
+          threadId: peerB,
+        });
+        const sessionC = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: peerC,
+        });
+        yield* firstA.open(sessionA);
+        yield* holderA.open(sessionA, peerA);
+        const credentialA = McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId;
+        yield* Ref.set(gateA, credentialA);
+        yield* manager.open({
+          threadId: peerB,
+          providerSessionId: sessionB,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+        // The instance mismatch rotates the thread's credential so B's
+        // session claims its own.
+        yield* manager.open({
+          threadId,
+          providerSessionId: sessionB,
+          modelSelection: otherSelection,
+          runtimePolicy,
+        });
+        const credentialB = McpProviderSession.readMcpProviderSession(threadId)?.providerSessionId;
+        yield* Ref.set(gateB, credentialB);
+        // A third session re-rotates the binding, then closes so the binding
+        // is cleared: the first sweep then only carries A's credential and
+        // can finish while B's own sweep stays parked.
+        yield* manager.open({
+          threadId: peerC,
+          providerSessionId: sessionC,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: sessionC,
+          modelSelection,
+          runtimePolicy,
+        });
+        yield* manager.close(sessionC);
+
+        const detachA = yield* manager
+          .detach({ providerSessionId: sessionA, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(revokingA);
+        const detachB = yield* manager
+          .detach({ providerSessionId: sessionB, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(detachA))._tag, "Failure");
+        assert.equal((yield* Fiber.join(detachB))._tag, "Failure");
+
+        // A's sweep finishes; B's chained sweep parks on its own credential.
+        yield* Deferred.succeed(gateFirst, undefined);
+        yield* Deferred.await(revokingB);
+
+        // A's teardown must not wait on — or fail on — B's still-running sweep.
+        const closingA = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingA)));
+
+        yield* Deferred.succeed(gateSecond, undefined);
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(gateFirst, undefined).pipe(
+            Effect.andThen(Deferred.succeed(gateSecond, undefined)),
+          ),
+        ),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+            extraAdapters: [
+              makeProviderAdapter(state, {
+                instanceId: ProviderInstanceId.make("codex_other"),
+              }),
+            ],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 an interrupted pending-release detach cannot strand the revocation tail",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const closing = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      const closeCalls = yield* Ref.make(0);
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const threadId = ThreadId.make("thread-detach-stranded-tail");
+        const peerId = ThreadId.make("thread-detach-stranded-tail-peer");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const peer = yield* makeThreadSessionFixture(peerId);
+        const providerSessionId = yield* first.allocate;
+        yield* first.open(providerSessionId);
+        yield* peer.open(providerSessionId, peerId);
+
+        const closingSession = yield* manager
+          .close(providerSessionId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(closing);
+
+        // Interrupt the detach before it runs: the registration of a tracked
+        // revocation and the worker fork must stay atomic so the tail's `done`
+        // always settles — otherwise every later join parks behind a dead
+        // record.
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.forkChild);
+        yield* Fiber.interrupt(detaching);
+
+        yield* Deferred.succeed(closeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
+
+        // If the interrupt stranded a registered tail, this join never
+        // settles and closeInstance fails at the 30s bound.
+        const closingInstance = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("30 seconds");
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingInstance)));
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(closeGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            beforeClose: Ref.modify(closeCalls, (n) => [n === 0, n + 1] as const).pipe(
+              Effect.andThen((firstClose) =>
+                firstClose
+                  ? Deferred.succeed(closing, undefined).pipe(
+                      Effect.andThen(Deferred.await(closeGate)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+          }),
+        ),
+      );
+    }),
+);
