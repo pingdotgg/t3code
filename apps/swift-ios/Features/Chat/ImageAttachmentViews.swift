@@ -715,6 +715,16 @@ enum FeatureImageProcessor {
     private static let maximumDimension: CGFloat = 2_048
     private static let maximumEncodedBytes = 10 * 1_024 * 1_024
 
+    static func thumbnail(fileURL: URL) -> Data? {
+        guard let source = CGImageSourceCreateWithURL(fileURL as CFURL, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                  kCGImageSourceCreateThumbnailFromImageAlways: true,
+                  kCGImageSourceCreateThumbnailWithTransform: true,
+                  kCGImageSourceThumbnailMaxPixelSize: 160,
+              ] as CFDictionary) else { return nil }
+        return UIImage(cgImage: image).jpegData(compressionQuality: 0.72)
+    }
+
     static func attachment(
         from sourceData: Data,
         ordinal: Int

@@ -389,7 +389,11 @@ enum FeatureInlineSkillPillRenderer {
 /// Makes selected pill text portable. UIKit otherwise copies an attachment as
 /// rich image data or the object-replacement character instead of `$skill`.
 class FeatureInlineSkillTextView: UITextView {
+    var onCopySelection: ((NSAttributedString) throws -> Bool)?
+    var onCopyError: ((String) -> Void)?
+
     override func copy(_ sender: Any?) {
+        if copyContextSelection() != nil { return }
         guard let selectedPlainText else {
             super.copy(sender)
             return
@@ -398,12 +402,28 @@ class FeatureInlineSkillTextView: UITextView {
     }
 
     override func cut(_ sender: Any?) {
+        if let copied = copyContextSelection() {
+            if copied { insertText("") }
+            return
+        }
         guard let selectedPlainText else {
             super.cut(sender)
             return
         }
         super.cut(sender)
         UIPasteboard.general.string = selectedPlainText
+    }
+
+    /// A failed rich copy claims the action but must not delete the selected text during Cut.
+    private func copyContextSelection() -> Bool? {
+        guard let onCopySelection, selectedRange.location != NSNotFound,
+              selectedRange.length > 0, NSMaxRange(selectedRange) <= attributedText.length else { return nil }
+        do {
+            return try onCopySelection(attributedText.attributedSubstring(from: selectedRange)) ? true : nil
+        } catch {
+            onCopyError?(error.localizedDescription)
+            return false
+        }
     }
 
     private var selectedPlainText: String? {

@@ -28,6 +28,10 @@ struct MarkdownMessageView: View {
     private let copyActionTitle: String
     private let imageContext: MarkdownImageContext?
     private let skills: [FeatureProviderSkill]
+    private let clipboardSource: ComposerContextClipboardFragment.Source?
+    private let messageContext: OrchestrationMessageContext?
+    private let copyText: String?
+    @State private var copyError: String?
     @State private var selectionSource: MarkdownSelectionSource
     @State private var renderedDocument: MarkdownRenderedDocument?
     @State private var streamingRenderer = StreamingMarkdownRenderer()
@@ -37,13 +41,19 @@ struct MarkdownMessageView: View {
         isStreaming: Bool = false,
         copyActionTitle: String = "Copy message",
         imageContext: MarkdownImageContext? = nil,
-        skills: [FeatureProviderSkill] = []
+        skills: [FeatureProviderSkill] = [],
+        clipboardSource: ComposerContextClipboardFragment.Source? = nil,
+        messageContext: OrchestrationMessageContext? = nil,
+        copyText: String? = nil
     ) {
         self.source = source
         self.isStreaming = isStreaming
         self.copyActionTitle = copyActionTitle
         self.imageContext = imageContext
         self.skills = skills
+        self.clipboardSource = clipboardSource
+        self.messageContext = messageContext
+        self.copyText = copyText
         _selectionSource = State(initialValue: MarkdownSelectionSource(source))
         let revision = MarkdownContentRevision(source)
         self.revision = revision
@@ -76,8 +86,13 @@ struct MarkdownMessageView: View {
             }
         }
         .accessibilityAction(named: copyActionTitle) {
-            UIPasteboard.general.string = source
+            selectionSource.copyMessage()
         }
+        .alert("Could not copy context", isPresented: Binding(
+            get: { copyError != nil }, set: { if !$0 { copyError = nil } }
+        )) {
+            Button("OK") { copyError = nil }
+        } message: { Text(copyError ?? "") }
         .task(id: RenderRequest(revision: revision, isStreaming: isStreaming)) {
             if !isStreaming {
                 streamingRenderer.cancel()
@@ -130,6 +145,10 @@ struct MarkdownMessageView: View {
 
     private var selectionContext: MarkdownSelectionContext {
         selectionSource.text = source
+        selectionSource.originalText = copyText ?? source
+        selectionSource.clipboardSource = clipboardSource
+        selectionSource.messageContext = messageContext
+        selectionSource.onCopyError = { copyError = $0 }
         return MarkdownSelectionContext(
             source: selectionSource,
             copyActionTitle: copyActionTitle,
@@ -205,9 +224,22 @@ private final class StreamingMarkdownRenderer {
 
 private final class MarkdownSelectionSource: @unchecked Sendable {
     var text: String
+    var originalText: String
+    var clipboardSource: ComposerContextClipboardFragment.Source?
+    var messageContext: OrchestrationMessageContext?
+    var onCopyError: ((String) -> Void)?
 
     init(_ text: String) {
         self.text = text
+        originalText = text
+    }
+
+    @MainActor func copyMessage() {
+        do {
+            if try !FeatureContextClipboard.write(text: originalText, source: clipboardSource, context: messageContext) {
+                UIPasteboard.general.string = originalText
+            }
+        } catch { onCopyError?(error.localizedDescription) }
     }
 }
 
@@ -851,6 +883,16 @@ private struct MarkdownInlineText: UIViewRepresentable {
             context.coordinator.didApply(attributedText)
         }
         context.coordinator.selectionContext = selectionContext
+        if let textView = textView as? FeatureInlineSkillTextView {
+            let source = selectionContext.source
+            textView.onCopySelection = { selected in
+                try FeatureContextClipboard.write(
+                    text: FeatureContextClipboard.selectionText(selected, originalSource: source.originalText),
+                    source: source.clipboardSource, context: source.messageContext
+                )
+            }
+            textView.onCopyError = source.onCopyError
+        }
         context.coordinator.onOpenURL = { url in
             openURL(url)
         }
@@ -1056,7 +1098,7 @@ private struct MarkdownInlineText: UIViewRepresentable {
         }
 
         private func copyMessage() {
-            UIPasteboard.general.string = selectionContext.source.text
+            selectionContext.source.copyMessage()
         }
     }
 }

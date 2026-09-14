@@ -4,7 +4,7 @@ import Foundation
 public struct ComposerContextRecord: Codable, Equatable, Hashable, Sendable, Identifiable {
     public var id: String { contextId }
     public let version: Int
-    public let contextId: String
+    public var contextId: String
     public let label: String
     public var payload: Payload
 
@@ -103,7 +103,7 @@ public struct ComposerContextRecord: Codable, Equatable, Hashable, Sendable, Ide
         public let regionCount: Int?
         public let strokeCount: Int?
         public let styleChangeDetails: [StyleChange]?
-        public let screenshotContextId: String?
+        public var screenshotContextId: String?
 
         private enum CodingKeys: String, CodingKey {
             case annotationId, pageUrl, pageTitle, comment, targetSummary, styleChanges

@@ -13,8 +13,11 @@ public protocol FeatureAttachmentAssetResolving: AnyObject {
 struct FeatureAttachmentContext: Equatable {
     let threadID: String
     let resolver: any FeatureAttachmentAssetResolving
+    var environmentID: String? = nil
+    var wireThreadID: String? = nil
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         lhs.threadID == rhs.threadID && lhs.resolver === rhs.resolver
+            && lhs.environmentID == rhs.environmentID && lhs.wireThreadID == rhs.wireThreadID
     }
 }

@@ -26,6 +26,8 @@ struct FeatureComposerTextInput: UIViewRepresentable {
     var onPasteTextAttachment: ((String, @escaping @MainActor () -> Bool) -> Void)? = nil
     var onPasteTextError: ((String) -> Void)? = nil
     var draftOwnerID: String = ""
+    var onCopyContext: ((String) throws -> Bool)? = nil
+    var onPasteContext: ((ComposerContextClipboard.Content, String, NSRange) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -42,6 +44,11 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.onPasteTextAttachment = onPasteTextAttachment
         textView.draftOwnerID = draftOwnerID
         textView.onPasteTextError = onPasteTextError
+        textView.onCopySelection = { selected in
+            try onCopyContext?(FeatureInlineSkillProjection.plainText(from: selected)) ?? false
+        }
+        textView.onCopyError = onPasteTextError
+        textView.onPasteContext = onPasteContext
         if onDismissKeyboard != nil {
             textView.installDismissPanRecognizer()
         }
@@ -76,6 +83,11 @@ struct FeatureComposerTextInput: UIViewRepresentable {
         textView.onPasteTextAttachment = onPasteTextAttachment
         textView.draftOwnerID = draftOwnerID
         textView.onPasteTextError = onPasteTextError
+        textView.onCopySelection = { selected in
+            try onCopyContext?(FeatureInlineSkillProjection.plainText(from: selected)) ?? false
+        }
+        textView.onCopyError = onPasteTextError
+        textView.onPasteContext = onPasteContext
         textView.isReadOnly = isReadOnly
 
         let previousAttributedText = textView.attributedText ?? NSAttributedString()
@@ -488,6 +500,7 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
     var draftOwnerID = ""
     private var pastedTextRequestID = UUID()
     var onPasteTextError: ((String) -> Void)?
+    var onPasteContext: ((ComposerContextClipboard.Content, String, NSRange) -> Void)?
     private var wantsFirstResponderOnAttach = false
 
     override var keyCommands: [UIKeyCommand]? {
@@ -625,6 +638,22 @@ final class FeatureComposerUITextView: FeatureInlineSkillTextView {
     // attached screenshot reads as a bug.
     override func paste(_ sender: Any?) {
         guard !isReadOnly else { return }
+        do {
+            if let content = try FeatureContextClipboard.read() {
+                guard let onPasteContext, markedTextRange == nil else {
+                    throw ComposerContextClipboardError.draftChanged
+                }
+                onPasteContext(
+                    content,
+                    FeatureInlineSkillProjection.plainText(from: attributedText),
+                    FeatureInlineSkillProjection.plainRange(for: selectedRange, in: attributedText)
+                )
+                return
+            }
+        } catch {
+            onPasteTextError?(error.localizedDescription)
+            return
+        }
         if acceptsImages {
             let imageProviders = UIPasteboard.general.itemProviders.filter {
                 $0.hasItemConformingToTypeIdentifier(UTType.image.identifier)

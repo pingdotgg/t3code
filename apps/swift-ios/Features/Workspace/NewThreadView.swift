@@ -122,7 +122,8 @@ public struct NewThreadView: View {
                         onRefreshModels: refreshSelectedEnvironmentModels,
                         draftSaveError: draftSaveError,
                         onRetryDraftSave: persistCurrentDraftImmediately,
-                        context: contextBinding
+                        context: contextBinding,
+                        contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
                     )
                 }
                 .background(T3Colors.background)

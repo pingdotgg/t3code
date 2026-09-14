@@ -44,6 +44,8 @@ struct FeatureComposerView: View {
     @State private var pastedTextErrorMessage: String?
     @State private var pastedTextTask: Task<Void, Never>?
     @State private var pastedTextGeneration = UUID()
+    @State private var contextImportTask: Task<Void, Never>?
+    @State private var contextImportID: UUID?
     @State private var textRevision: UInt64 = 0
     @State private var textObservation = FeatureComposerTextObservation()
     @State private var voiceInputController = FeatureVoiceInputController()
@@ -57,6 +59,7 @@ struct FeatureComposerView: View {
     private let environmentID: String?
     private let draftStorageKey: String?
     private let environmentIsConnected: Bool
+    private let contextAttachmentResolver: (any FeatureContextAttachmentResolving)?
     private let attachmentUploads: FeatureAttachmentUploadCoordinator
     private let attachmentPreferences: FeatureEnvironmentPreferences
     private let onRefreshModels: (() async throws -> Void)?
@@ -115,12 +118,14 @@ struct FeatureComposerView: View {
         draftSaveError: String? = nil,
         onRetryDraftSave: (() -> Void)? = nil,
         context: Binding<OrchestrationMessageContext?> = .constant(nil),
-        onInputPreparationChange: ((Bool) -> Void)? = nil
+        onInputPreparationChange: ((Bool) -> Void)? = nil,
+        contextAttachmentResolver: (any FeatureContextAttachmentResolving)? = nil
     ) {
         _text = text
         _selection = selection
         _attachments = attachments
         _context = context
+        self.contextAttachmentResolver = contextAttachmentResolver
         self.draftOwnerID = draftOwnerID
         self.environmentID = environmentID
         self.draftStorageKey = draftStorageKey
@@ -214,13 +219,24 @@ struct FeatureComposerView: View {
                 voiceInputController.cancel()
                 pastedTextTask?.cancel()
                 pastedTextGeneration = UUID()
+                contextImportTask?.cancel()
             }
-            .onChange(of: text) {
+            .onChange(of: text) { previous, _ in
                 textRevision &+= 1
                 synchronizeVoiceDraft(ownerChanged: false)
+                removeUnlinkedContextAttachments(previousText: previous)
+            }
+            .onChange(of: attachments) { previous, _ in
+                removeDeletedAttachmentReferences(previousAttachments: previous)
             }
             .onChange(of: draftOwnerID) {
                 synchronizeVoiceDraft(ownerChanged: true)
+                pastedTextTask?.cancel()
+                pastedTextGeneration = UUID()
+                contextImportTask?.cancel()
+            }
+            .onChange(of: environmentID) {
+                contextImportTask?.cancel()
                 pastedTextTask?.cancel()
                 pastedTextGeneration = UUID()
             }
@@ -252,7 +268,7 @@ struct FeatureComposerView: View {
                 Text(imageIntakeErrorMessage ?? "")
             }
             .alert(
-                "Could not paste text",
+                "Clipboard error",
                 isPresented: Binding(
                     get: { pastedTextErrorMessage != nil },
                     set: { if !$0 { pastedTextErrorMessage = nil } }
@@ -306,12 +322,12 @@ struct FeatureComposerView: View {
                 .stroke(T3Colors.inputBorder, lineWidth: 1)
         }
         .clipShape(composerShape)
-        .onChange(of: attachmentPreparation.isPreparing || isAttachmentFlowActive || voiceInputController.isBusy, initial: true) { _, busy in
+        .onChange(of: attachmentPreparation.isPreparing || isAttachmentFlowActive || voiceInputController.isBusy || contextImportID != nil, initial: true) { _, busy in
             onInputPreparationChange?(busy)
         }
         .modifier(
             FeatureComposerImageDrop(
-                isEnabled: imagesAllowed && !voiceInputController.isBusy,
+                isEnabled: imagesAllowed && !voiceInputController.isBusy && contextImportID == nil,
                 shape: composerShape,
                 onDropImages: attachDroppedImages
             )
@@ -372,7 +388,7 @@ struct FeatureComposerView: View {
                     focused: $focused,
                     placeholder: composerPlaceholder,
                     acceptsImages: imagesAllowed,
-                    isReadOnly: voiceInputController.isBusy || !isEnabled,
+                    isReadOnly: voiceInputController.isBusy || !isEnabled || contextImportID != nil,
                     skills: powerFeatures.enabledSkills,
                     selectionRequest: textSelectionRequest,
                     onSelectionChange: handleTextSelectionChange,
@@ -381,7 +397,9 @@ struct FeatureComposerView: View {
                     maximumPastedTextBytes: maximumPastedTextBytes,
                     onPasteTextAttachment: attachPastedText,
                     onPasteTextError: { pastedTextErrorMessage = $0 },
-                    draftOwnerID: draftOwnerID
+                    draftOwnerID: draftOwnerID,
+                    onCopyContext: copyContext,
+                    onPasteContext: pasteContext
                 )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -420,6 +438,17 @@ struct FeatureComposerView: View {
                     .accessibilityIdentifier("attachment-preparing")
             }
 
+            if contextImportID != nil {
+                HStack {
+                    Text("Importing context")
+                    Spacer()
+                    Button("Cancel paste") { contextImportTask?.cancel() }
+                }
+                .font(T3Typography.supporting)
+                .padding(.horizontal, 15)
+                .padding(.bottom, 4)
+            }
+
             if let draftSaveError {
                 HStack(spacing: 8) {
                     Text(draftSaveError).lineLimit(3)
@@ -442,6 +471,7 @@ struct FeatureComposerView: View {
             }
 
             composerFooter
+                .disabled(contextImportID != nil)
                 .fixedSize(horizontal: false, vertical: true)
                 .layoutPriority(1)
         }
@@ -1027,7 +1057,7 @@ struct FeatureComposerView: View {
     /// from another app through the same preparation pipeline the attachment
     /// picker uses, so sending stays blocked until every image is processed.
     private func attachImageProviders(_ providers: [NSItemProvider]) {
-        guard imagesAllowed, !providers.isEmpty else { return }
+        guard imagesAllowed, !providers.isEmpty, contextImportID == nil else { return }
 
         guard let plan = FeatureComposerImageIntakePlan.forProviders(
             providerCount: providers.count,
@@ -1077,6 +1107,110 @@ struct FeatureComposerView: View {
         )
     }
 
+    private func copyContext(_ selectedText: String) throws -> Bool {
+        try FeatureContextClipboard.write(
+            text: selectedText,
+            source: environmentID.map { .init(environmentId: $0) },
+            context: context, attachments: attachments
+        )
+    }
+
+    private func pasteContext(_ content: ComposerContextClipboard.Content, _ originalText: String, _ range: NSRange) {
+        guard contextImportID == nil, !voiceInputController.isBusy else { return }
+        let originalContext = context
+        let originalAttachments = attachments
+        let owner = draftOwnerID
+        let environment = environmentID
+        let importID = UUID()
+        contextImportID = importID
+        let importer = FeatureContextClipboardImporter(resolver: contextAttachmentResolver)
+        contextImportTask = Task { @MainActor in
+            defer {
+                if contextImportID == importID {
+                    contextImportID = nil
+                    contextImportTask = nil
+                }
+            }
+            do {
+                guard range.location != NSNotFound, NSMaxRange(range) <= originalText.utf16.count else {
+                    throw ComposerContextClipboardError.draftChanged
+                }
+                let remainingText = (originalText as NSString).replacingCharacters(in: range, with: "")
+                let remainingContext = ComposerContextReferences.referenced(originalContext, text: remainingText)
+                let removedIDs = FeatureContextClipboardEdit.unlinkedAttachmentIDs(
+                    context: originalContext, previousText: originalText, text: remainingText
+                )
+                let remainingAttachmentCount = originalAttachments.filter {
+                    !removedIDs.contains($0.id.uuidString.lowercased())
+                }.count
+                let result = try await importer.importContent(
+                    content, attachmentCount: remainingAttachmentCount + attachmentPreparation.pendingItemCount,
+                    contextCount: remainingContext?.records.count ?? 0,
+                    imagesAllowed: imagesAllowed,
+                    maximumFileBytes: attachmentPreferences.maxFileAttachmentBytes
+                )
+                var committed = false
+                defer { if !committed { result.discardFiles(using: importer.fileStore) } }
+                try Task.checkCancellation()
+                guard owner == draftOwnerID, environment == environmentID, text == originalText,
+                      context == originalContext, attachments == originalAttachments,
+                      textObservation.selection == range else { throw ComposerContextClipboardError.draftChanged }
+                for attachment in result.attachments {
+                    if attachment.mimeType.hasPrefix("image/") {
+                        guard imagesAllowed else { throw FeatureAttachmentIntakeError.imagesUnsupported }
+                    } else {
+                        guard let maximum = attachmentPreferences.maxFileAttachmentBytes else { throw FileAttachmentError.unsupported }
+                        guard attachment.byteCount <= maximum else {
+                            throw FileAttachmentError.tooLarge(actualBytes: attachment.byteCount, maximumBytes: maximum)
+                        }
+                    }
+                }
+                let edit = try FeatureContextClipboardEdit.apply(
+                    text: originalText, selection: range, context: originalContext,
+                    attachments: originalAttachments, imported: result
+                )
+                context = edit.context
+                text = edit.text
+                textSelectionRequest = FeatureComposerTextSelectionRequest(location: edit.cursor)
+                attachments = edit.attachments
+                committed = true
+            } catch {
+                if owner == draftOwnerID, environment == environmentID {
+                    pastedTextErrorMessage = error is CancellationError
+                        ? "Paste cancelled. Your draft has not changed."
+                        : error.localizedDescription
+                }
+            }
+        }
+    }
+
+    private func removeUnlinkedContextAttachments(previousText: String) {
+        let removedIDs = FeatureContextClipboardEdit.unlinkedAttachmentIDs(
+            context: context, previousText: previousText, text: text
+        )
+        guard !removedIDs.isEmpty else { return }
+        attachments.removeAll { removedIDs.contains($0.id.uuidString.lowercased()) }
+    }
+
+    private func removeDeletedAttachmentReferences(previousAttachments: [FeatureDraftAttachment]) {
+        let removedIDs = Set(previousAttachments.map { $0.id.uuidString.lowercased() })
+            .subtracting(attachments.map { $0.id.uuidString.lowercased() })
+        guard !removedIDs.isEmpty else { return }
+        var removedContextIDs = Set((context?.records ?? []).filter {
+            $0.attachment.map { removedIDs.contains($0.attachmentId.lowercased()) } ?? false
+        }.map(\.contextId))
+        for record in context?.records ?? [] {
+            if case let .previewAnnotation(annotation) = record.payload,
+               let screenshot = annotation.screenshotContextId, removedContextIDs.contains(screenshot) {
+                removedContextIDs.insert(record.contextId)
+            }
+        }
+        guard !removedContextIDs.isEmpty else { return }
+        text = ComposerContextReferences.replace(text) { reference in
+            removedContextIDs.contains(reference.contextId) ? "" : (text as NSString).substring(with: reference.range)
+        }
+    }
+
     private func attachPastedText(_ pastedText: String, commitSelection: @escaping @MainActor () -> Bool) {
         guard !voiceInputController.isBusy, !pastedText.isEmpty,
               let maximumPastedTextBytes,
@@ -1124,7 +1258,7 @@ struct FeatureComposerView: View {
     /// A drop is refused outright when images are not accepted, so the drag
     /// session shows the system's "not allowed" badge instead of a dead drop.
     private func attachDroppedImages(_ providers: [NSItemProvider]) -> Bool {
-        guard imagesAllowed, !providers.isEmpty else { return false }
+        guard imagesAllowed, !providers.isEmpty, contextImportID == nil else { return false }
         attachImageProviders(providers)
         return true
     }

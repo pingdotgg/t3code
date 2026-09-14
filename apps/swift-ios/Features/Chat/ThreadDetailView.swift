@@ -773,7 +773,11 @@ public struct ThreadDetailView: View {
                     openURL: transcriptOpenURL,
                     imageContext: markdownImageContext,
                     attachmentContext: (model.client as? any FeatureAttachmentAssetResolving).map {
-                        FeatureAttachmentContext(threadID: thread.id, resolver: $0)
+                        FeatureAttachmentContext(
+                            threadID: thread.id, resolver: $0,
+                            environmentID: currentThread.environmentID,
+                            wireThreadID: currentThread.wireID ?? currentThread.id
+                        )
                     },
                     skills: threadProviderSkills,
                     renderUpdate: timelineRenderUpdate,
@@ -864,7 +868,8 @@ public struct ThreadDetailView: View {
                     draftSaveError: draftSaveError,
                     onRetryDraftSave: persistDraftImmediately,
                     context: contextBinding,
-                    onInputPreparationChange: { isPreparingInput = $0 }
+                    onInputPreparationChange: { isPreparingInput = $0 },
+                    contextAttachmentResolver: model.client as? any FeatureContextAttachmentResolving
                 )
                 .disabled(isRewinding)
             }
@@ -2811,6 +2816,12 @@ struct FeatureMessageView: View {
         }
     }
 
+    private var clipboardSource: ComposerContextClipboardFragment.Source? {
+        attachmentContext?.environmentID.map {
+            .init(environmentId: $0, threadId: attachmentContext?.wireThreadID, messageId: message.id)
+        }
+    }
+
     @ViewBuilder private var messageBody: some View {
         switch message.role {
         case .user:
@@ -2823,7 +2834,10 @@ struct FeatureMessageView: View {
                             renderedText,
                             isStreaming: message.state == .streaming,
                             imageContext: imageContext,
-                            skills: skills
+                            skills: skills,
+                            clipboardSource: clipboardSource,
+                            messageContext: message.context,
+                            copyText: message.text
                         )
                     }
                     if message.state == .queued {
@@ -2860,7 +2874,10 @@ struct FeatureMessageView: View {
                         renderedText,
                         isStreaming: message.state == .streaming,
                         imageContext: imageContext,
-                        skills: skills
+                        skills: skills,
+                        clipboardSource: clipboardSource,
+                        messageContext: message.context,
+                        copyText: message.text
                     )
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }

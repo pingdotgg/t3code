@@ -231,6 +231,19 @@ public actor FeatureComposerDraftStore {
         return draft
     }
 
+    public func clipboardAttachment(environmentID: String, attachmentID: String) throws -> FeatureDraftAttachment? {
+        for (key, draft) in try loadIfNeeded() {
+            for attachment in draft.attachments {
+                let localMatch = key.hasPrefix("environment:\(environmentID):")
+                    && attachment.id.uuidString.caseInsensitiveCompare(attachmentID) == .orderedSame
+                let uploadedMatch = attachment.uploadedReference?.environmentID == environmentID
+                    && attachment.uploadedReference?.attachmentID == attachmentID
+                if localMatch || uploadedMatch { return attachment.featureValue(fileStore: attachmentFileStore) }
+            }
+        }
+        return nil
+    }
+
     public func setDraft(_ draft: FeatureComposerDraft, for key: String) throws {
         var drafts = try loadIfNeeded()
         let existingReferences = Dictionary(

@@ -25,7 +25,7 @@ private struct T3ConnectManagedCleanupError: LocalizedError {
 @MainActor
 final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     FeatureProjectCreationClient, FeatureWorkspaceAssetResolving, FeatureAttachmentAssetResolving,
-    FeatureFeedbackSubmitting, T3ConnectCapable
+    FeatureFeedbackSubmitting, FeatureContextAttachmentResolving, T3ConnectCapable
 {
     private static let maximumRetainedThreadDetails = 6
     private static let t3ConnectLogger = Logger(
@@ -7097,6 +7097,25 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return resolved.url
     }
 
+    func contextAttachmentAssetURL(
+        environmentID: String, attachment: ComposerContextRecord.Attachment
+    ) async throws -> URL {
+        try Task.checkCancellation()
+        guard try await runtime.environments().contains(where: { $0.id == environmentID && $0.isEnabled }) else {
+            throw ComposerContextClipboardError.sourceUnavailable
+        }
+        let client = try await projectCreationClient(environmentID: environmentID)
+        let generation = environmentGeneration
+        let resolved = try await client.resolvedAsset(resource: .attachment(
+            id: attachment.attachmentId, fileName: attachment.name, mimeType: attachment.mimeType
+        ))
+        try Task.checkCancellation()
+        guard isKnownClient(client, environmentID: environmentID, generation: generation) else {
+            throw CancellationError()
+        }
+        return resolved.url
+    }
+
     private func lastActivityDate(
         latestUserMessageAt: String?,
         latestTurn: OrchestrationLatestTurn?
@@ -7173,6 +7192,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 )
             }
             if let ownedFile = $0.ownedFile {
+                if $0.mimeType.hasPrefix("image/") {
+                    return try UploadChatAttachment(
+                        id: $0.id, data: Data(contentsOf: ownedFile.url),
+                        name: $0.name, mimeType: $0.mimeType, uploadedReference: reference
+                    )
+                }
                 return try UploadChatAttachment(
                     id: $0.id,
                     fileURL: ownedFile.url,
