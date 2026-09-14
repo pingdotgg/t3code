@@ -234,7 +234,9 @@ public actor FeatureComposerDraftStore {
     public func clipboardAttachment(environmentID: String, attachmentID: String) throws -> FeatureDraftAttachment? {
         for (key, draft) in try loadIfNeeded() {
             for attachment in draft.attachments {
-                let localMatch = key.hasPrefix("environment:\(environmentID):")
+                // Logical-project drafts move between environments. Their local UUID identifies
+                // the bytes. Server attachment IDs still require the matching upload environment.
+                let localMatch = (key.hasPrefix("environment:\(environmentID):") || key.hasPrefix("logical-project:"))
                     && attachment.id.uuidString.caseInsensitiveCompare(attachmentID) == .orderedSame
                 let uploadedMatch = attachment.uploadedReference?.environmentID == environmentID
                     && attachment.uploadedReference?.attachmentID == attachmentID

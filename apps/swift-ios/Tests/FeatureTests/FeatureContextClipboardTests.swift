@@ -64,6 +64,14 @@ struct FeatureContextClipboardTests {
         #expect(try FeatureContextClipboard.read(from: pasteboard)?.fragment == fragment)
     }
 
+    @Test func aMarkdownViewWithoutAnEnvironmentKeepsPlainCopyAvailable() throws {
+        let pasteboard = UIPasteboard.withUniqueName()
+        let record = mention("source")
+        let text = ComposerContextReferences.format(record)
+        #expect(try !FeatureContextClipboard.write(text: text, source: nil, context: nil, pasteboard: pasteboard))
+        #expect(pasteboard.data(forPasteboardType: ComposerContextClipboard.mimeType) == nil)
+    }
+
     @Test func historySelectionUsesTheOriginalImageReferenceAndKeepsPartialLabels() {
         let source = "Before ![screenshot](t3-context://v1/image/shot) after"
         let selected = NSAttributedString(string: "screenshot", attributes: [.link: URL(string: "t3-context://v1/image/shot")!])
@@ -72,14 +80,16 @@ struct FeatureContextClipboardTests {
             == "[screen](t3-context://v1/image/shot)")
     }
 
-    @Test func localDraftBytesAreCopiedWithNewIDsAndPastedTextSource() async throws {
+    @Test(arguments: ["environment:local-source:thread:one", "logical-project:repo:new-task"])
+    func localDraftBytesAreCopiedWithNewIDsAndPastedTextSource(key: String) async throws {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
         let local = FeatureDraftAttachment(data: Data("retained paste bytes".utf8), filename: "pasted-text.txt", mimeType: "text/plain", source: .pastedText)
         let record = file("source-record", attachmentID: local.id.uuidString, size: local.byteCount)
-        try await store.setDraft(.init(attachments: [local]), for: "environment:local-source:thread:one")
-        let importer = importer(directory: directory, draftStore: store)
+        try await store.setDraft(.init(attachments: [local]), for: key)
+        let reloaded = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let importer = importer(directory: directory, draftStore: reloaded)
 
         let result = try await importer.importContent(content(record, environment: "local-source"), attachmentCount: 0, contextCount: 0, imagesAllowed: true, maximumFileBytes: 1_000)
         let attachment = try #require(result.attachments.first)
@@ -92,7 +102,7 @@ struct FeatureContextClipboardTests {
         #expect(attachment.source == .pastedText)
         #expect(result.context.records.first?.attachment?.attachmentId == attachment.id.uuidString)
         #expect(result.context.records.first?.contextId != record.contextId)
-        #expect(try await store.draft(for: "environment:local-source:thread:one")?.attachments == [local])
+        #expect(try await reloaded.draft(for: key)?.attachments == [local])
     }
 
     @Test func remoteImportResolvesTheSourceAndMakesAnOwnedDestinationFile() async throws {

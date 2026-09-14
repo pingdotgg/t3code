@@ -16,7 +16,7 @@ enum FeatureContextClipboard {
         pasteboard: UIPasteboard = .general
     ) throws -> Bool {
         guard !ComposerContextReferences.collect(text).isEmpty else { return false }
-        guard let source else { throw ComposerContextClipboardError.sourceUnavailable }
+        guard let source else { return false }
         let content = try ComposerContextClipboard.selected(
             text: text, fragment: .init(source: source, records: context?.records ?? [])
         )
