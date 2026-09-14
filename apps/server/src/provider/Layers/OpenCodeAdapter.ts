@@ -1487,7 +1487,9 @@ export function makeOpenCodeAdapter(
           Effect.option,
         );
         if (
-          Option.isSome(eventObserved) &&
+          (Option.isSome(eventObserved) ||
+            promptAdmission.messageObserved ||
+            promptAdmission.busyObserved) &&
           context.promptAdmission === promptAdmission &&
           context.activeTurnId === promptAdmission.turnId &&
           context.promptGeneration === promptAdmission.generation &&

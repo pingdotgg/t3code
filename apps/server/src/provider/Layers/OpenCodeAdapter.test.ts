@@ -2114,6 +2114,106 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("keeps the turn admitted when the fifth probe finds the exact user message", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-message-on-fifth-admission-probe");
+      const sessionId = "ses_message_on_fifth_admission_probe";
+      const pushEvent = makeOpenCodeEventQueue();
+      const fifthProbeObserved = promiseWithResolvers<void>();
+      const terminalObserved = promiseWithResolvers<void>();
+      const terminalEvents: Array<ProviderRuntimeEvent> = [];
+      runtimeMock.state.autoPromptEcho = false;
+      runtimeMock.state.createdSessionIds.push(sessionId);
+      runtimeMock.state.messageFailures = 4;
+      runtimeMock.state.promptAsyncImplementation = async () => {
+        const prompt = runtimeMock.state.promptCalls.at(-1) as { messageID?: string } | undefined;
+        if (prompt?.messageID) {
+          runtimeMock.state.messages.push({
+            info: { id: prompt.messageID, role: "user" },
+            parts: [],
+          });
+        }
+      };
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (runtimeMock.state.sessionStatusCalls === 5) {
+          fifthProbeObserved.resolve(undefined);
+        }
+        throw new Error("status unavailable");
+      };
+
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "runtime.error"),
+        ),
+        Stream.runForEach((event) =>
+          Effect.sync(() => {
+            terminalEvents.push(event);
+            if (event.type === "turn.completed") {
+              terminalObserved.resolve(undefined);
+            }
+          }),
+        ),
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const turn = yield* adapter.sendTurn({
+        threadId,
+        input: "Recover from the exact fifth-probe message",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+
+      for (const delayMs of [250, 500, 1_000, 2_000]) {
+        yield* advanceTestClock(delayMs);
+      }
+      yield* Effect.promise(() => fifthProbeObserved.promise);
+      yield* advanceTestClock(3_000);
+
+      NodeAssert.equal(runtimeMock.state.messageCalls.length, 5);
+      NodeAssert.equal(
+        runtimeMock.state.abortCalls.filter((candidate) => candidate === sessionId).length,
+        0,
+      );
+      pushEvent({
+        id: "evt-busy-after-fifth-message-probe",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "busy" },
+        },
+      });
+      pushEvent({
+        id: "evt-idle-after-fifth-message-probe",
+        type: "session.status",
+        properties: {
+          sessionID: sessionId,
+          status: { type: "idle" },
+        },
+      });
+      yield* Effect.promise(() => terminalObserved.promise);
+
+      const turnCompleted = terminalEvents.find((event) => event.type === "turn.completed");
+      NodeAssert.equal(turnCompleted?.payload.state, "completed");
+      NodeAssert.equal(turnCompleted?.turnId, turn.turnId);
+      NodeAssert.equal(
+        terminalEvents.some((event) => event.type === "runtime.error"),
+        false,
+      );
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("fails admission after bounded probes and grace produce no evidence", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
