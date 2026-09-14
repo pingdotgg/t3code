@@ -1490,7 +1490,7 @@ function attachCreatedThreadSummaries(
   });
 }
 
-export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
+const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
 type MessagesTimelineRowsInput = Parameters<typeof deriveMessagesTimelineRows>[0];
 
