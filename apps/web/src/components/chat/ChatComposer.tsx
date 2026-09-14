@@ -242,6 +242,7 @@ import { ProviderModelPicker } from "./ProviderModelPicker";
 import { type ComposerCommandItem, ComposerCommandMenu } from "./ComposerCommandMenu";
 import { ComposerPendingApprovalActions } from "./ComposerPendingApprovalActions";
 import { CompactComposerControlsMenu } from "./CompactComposerControlsMenu";
+import { ComposerImageThumbnail } from "./ComposerImageThumbnail";
 import { ComposerPrimaryActions, resolveComposerIdlePrimaryAction } from "./ComposerPrimaryActions";
 import { ComposerPendingApprovalPanel } from "./ComposerPendingApprovalPanel";
 import { ComposerPendingUserInputPanel } from "./ComposerPendingUserInputPanel";
@@ -4685,7 +4686,19 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }}
           >
             {image.previewUrl ? (
-              <img src={image.previewUrl} alt="" className="size-full object-cover" />
+              <ComposerImageThumbnail
+                file={image.file}
+                alt=""
+                className="size-full object-cover"
+                fallback={
+                  <PierreEntryIcon
+                    pathValue={image.name}
+                    kind="file"
+                    theme={resolvedTheme}
+                    className="m-auto size-3.5"
+                  />
+                }
+              />
             ) : (
               <PierreEntryIcon
                 pathValue={image.name}
@@ -6313,10 +6326,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                   onExpandImage(preview);
                                 }}
                               >
-                                <img
-                                  src={image.previewUrl}
+                                <ComposerImageThumbnail
+                                  file={image.file}
                                   alt={image.name}
                                   className="h-full w-full object-cover"
+                                  fallback={
+                                    <span className="flex h-full items-center justify-center px-1 text-[10px] text-secondary-label">
+                                      {image.name}
+                                    </span>
+                                  }
                                 />
                               </button>
                             ) : (
