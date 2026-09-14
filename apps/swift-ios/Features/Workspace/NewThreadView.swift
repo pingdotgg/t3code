@@ -564,6 +564,7 @@ public struct NewThreadView: View {
                 if workspaceMode == .worktree {
                     Button {
                         workspaceSelectionIsExplicit = true
+                        missingFileRecoverySnapshot = nil
                         startFromOrigin.toggle()
                     } label: {
                         Label(
@@ -695,6 +696,7 @@ public struct NewThreadView: View {
                     && value == initialSelection
                 selection = value
                 guard !materializesProjectDefault else { return }
+                missingFileRecoverySnapshot = nil
                 selectionIsExplicit = true
                 preferredSelection = value
             }
@@ -1008,6 +1010,7 @@ public struct NewThreadView: View {
     }
 
     private func setWorkspaceMode(_ mode: FeatureWorkspaceMode) {
+        missingFileRecoverySnapshot = nil
         workspaceSelectionIsExplicit = true
         workspaceMode = mode
         selectedBranch = switch mode {
@@ -1029,6 +1032,7 @@ public struct NewThreadView: View {
                 projectID: requestedProjectID, branch: branch, mode: requestedMode
             )
             guard projectID == requestedProjectID, workspaceMode == requestedMode else { return }
+            missingFileRecoverySnapshot = nil
             workspaceSelectionIsExplicit = true
             selectedBranch = selected
             // A checkout can change a remote ref into a local one.
@@ -1150,7 +1154,9 @@ public struct NewThreadView: View {
         workspaceSelectionIsExplicit = liveWorkspaceSelectionIsExplicit
             || saved?.workspace != nil
         restoredDraftProjectID = requestedProjectID
-        missingFileRecoverySnapshot = recoveredMissingFiles ? composerDraft : nil
+        missingFileRecoverySnapshot = context.recoverySnapshot(
+            restored: composerDraft, saved: saved, hasMissingFiles: recoveredMissingFiles
+        )
         draftSaveError = recoveredMissingFiles ? FeatureComposerDraftRestoration.missingFilesWarning : nil
         if context.shouldCarryContent(into: saved) {
             persistCurrentDraftImmediately()
@@ -1394,6 +1400,13 @@ struct NewTaskDraftRestoreContext: Equatable {
             !baseline.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                 || !baseline.attachments.isEmpty
         )
+    }
+
+    /// A carry writes to the new target, not the source draft that still owns the recovery copy.
+    func recoverySnapshot(
+        restored: FeatureComposerDraft, saved: FeatureComposerDraft?, hasMissingFiles: Bool
+    ) -> FeatureComposerDraft? {
+        hasMissingFiles && !shouldCarryContent(into: saved) ? restored : nil
     }
 
     func merging(

@@ -317,6 +317,30 @@ struct FeatureContextClipboardTests {
         #expect(try await store.draft(for: key) == saved)
     }
 
+    @Test func carryingMissingFileRecoverySavesTheNewTargetAndKeepsTheSourceDraft() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let record = file("missing", attachmentID: UUID().uuidString, size: 123)
+        let source = FeatureComposerDraft(text: "Keep this task. \(ComposerContextReferences.format(record))", context: .init(records: [record]))
+        let sourceKey = "environment:source:new-task:source"
+        let targetKey = "environment:target:new-task:target"
+        try await store.setDraft(source, for: sourceKey)
+        let restore = NewTaskDraftRestoreContext(projectID: "target", baseline: source, environmentID: "target")
+        let savedTarget = try await store.draft(for: targetKey)
+        var hasMissingFiles = false
+        let recovered = try restore.merging(saved: savedTarget, current: source, onMissingAttachments: { hasMissingFiles = true })
+        let snapshot = restore.recoverySnapshot(restored: recovered, saved: savedTarget, hasMissingFiles: hasMissingFiles)
+        #expect(snapshot == nil)
+        #expect(!FeatureComposerDraftRestoration.keepsSavedRecovery(snapshot, current: recovered))
+        try await store.setDraft(recovered, for: targetKey)
+        let reloaded = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        #expect(try await reloaded.draft(for: sourceKey) == source)
+        #expect(try await reloaded.draft(for: targetKey) == recovered)
+        #expect(recovered.text.contains("[Missing attachment: File]"))
+        #expect(recovered.context == nil)
+    }
+
     private func mention(_ id: String) -> ComposerContextRecord {
         .init(contextId: id, label: id, payload: .mention(.init(path: "src/\(id).swift")))
     }
