@@ -62,3 +62,10 @@ it("preserves upstream's nonnumeric PR metadata search", () => {
     expect(createThreadPullRequestMatcher(query)({ pullRequests: [link] })).toBe(true);
   }
 });
+
+it("matches a branch PR alongside a different manually linked PR", () => {
+  const thread = { pullRequests: [link], branchPullRequest: { ...pr, number: 456 } };
+  expect(createThreadPullRequestMatcher("456")(thread)).toBe(true);
+  expect(createThreadPullRequestMatcher("#456")(thread)).toBe(true);
+  expect(createThreadPullRequestMatcher("45")(thread)).toBe(false);
+});

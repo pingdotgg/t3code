@@ -25,7 +25,10 @@ export function createThreadPullRequestMatcher(query: string) {
       );
     }
     if (thread.pullRequests && thread.pullRequests.length > 0) {
-      return visibleThreadPullRequests(thread.pullRequests).some((pr) => pr.number === number);
+      return (
+        visibleThreadPullRequests(thread.pullRequests).some((pr) => pr.number === number) ||
+        thread.branchPullRequest?.number === number
+      );
     }
     return (
       thread.linkedPullRequest?.number === number || thread.branchPullRequest?.number === number
