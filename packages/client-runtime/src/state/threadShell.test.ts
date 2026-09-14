@@ -34,6 +34,7 @@ function makeHarness(environmentIds: ReadonlyArray<EnvironmentId> = [environment
             wsBaseUrl: "wss://example.test",
           }),
           profile: Option.none(),
+          enabled: true,
         },
       ]),
     ),
