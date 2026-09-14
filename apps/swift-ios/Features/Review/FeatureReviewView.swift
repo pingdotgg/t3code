@@ -12,6 +12,7 @@ public struct FeatureReviewView: View {
     @State private var review: FeatureReview?
     @State private var isLoading = true
     @State private var errorMessage: String?
+    @State private var loadGeneration = FeatureAsyncGeneration()
 
     public init(
         client: any FeatureClient,
@@ -60,6 +61,14 @@ public struct FeatureReviewView: View {
 
     private func reviewList(_ review: FeatureReview) -> some View {
         List {
+            if let errorMessage {
+                Section {
+                    FeatureRefreshFailureRow(message: errorMessage) {
+                        Task { await load() }
+                    }
+                }
+            }
+
             Section {
                 HStack {
                     VStack(alignment: .leading, spacing: 3) {
@@ -112,12 +121,18 @@ public struct FeatureReviewView: View {
     }
 
     private func load() async {
+        let generation = loadGeneration.begin()
         isLoading = true
-        defer { isLoading = false }
+        defer {
+            if loadGeneration.accepts(generation) { isLoading = false }
+        }
         do {
-            review = try await client.loadReview(threadID: threadID)
+            let loaded = try await client.loadReview(threadID: threadID)
+            guard loadGeneration.accepts(generation) else { return }
+            review = loaded
             errorMessage = nil
         } catch {
+            guard loadGeneration.accepts(generation) else { return }
             errorMessage = error.localizedDescription
         }
     }
@@ -206,6 +221,8 @@ private struct FeatureDiffView: View {
 
     @State private var renderedLines: [FeatureDiffLine]
     @State private var isHydrating = false
+    @State private var hydrationError: String?
+    @State private var hydrationGeneration = FeatureAsyncGeneration()
     @State private var selectedLine: FeatureReviewLineSelection?
     @State private var isCommenting = false
     @State private var comment = ""
@@ -231,6 +248,15 @@ private struct FeatureDiffView: View {
             if renderedLines.isEmpty, isHydrating {
                 ProgressView("Loading full diff…")
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let hydrationError, renderedLines.isEmpty {
+                ContentUnavailableView {
+                    Label("Couldn’t load this diff", systemImage: "exclamationmark.circle")
+                } description: {
+                    Text(hydrationError)
+                } actions: {
+                    Button("Try again") { Task { await hydrate() } }
+                        .buttonStyle(.borderedProminent)
+                }
             } else if renderedLines.isEmpty {
                 ContentUnavailableView(
                     file.change == .binary ? "Binary file" : "Diff unavailable",
@@ -276,6 +302,16 @@ private struct FeatureDiffView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if isCommenting {
                 commentComposer
+            }
+        }
+        .safeAreaInset(edge: .top, spacing: 0) {
+            if let hydrationError, !renderedLines.isEmpty {
+                FeatureRefreshFailureRow(message: hydrationError) {
+                    Task { await hydrate() }
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(T3Colors.surface)
             }
         }
         .task(id: file.id) { await hydrate() }
@@ -409,15 +445,27 @@ private struct FeatureDiffView: View {
     }
 
     private func hydrate() async {
+        let generation = hydrationGeneration.begin()
+        hydrationError = nil
         isHydrating = true
-        defer { isHydrating = false }
-        guard let contents = try? await client.loadReviewFileContents(
-            threadID: threadID,
-            file: file
-        ) else {
-            return
+        defer {
+            if hydrationGeneration.accepts(generation) { isHydrating = false }
         }
-        renderedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+        do {
+            guard let contents = try await client.loadReviewFileContents(
+                threadID: threadID,
+                file: file
+            ) else {
+                return
+            }
+            guard hydrationGeneration.accepts(generation) else { return }
+            renderedLines = FeatureFullDiffHydrator.lines(for: file, contents: contents)
+        } catch is CancellationError {
+            return
+        } catch {
+            guard hydrationGeneration.accepts(generation) else { return }
+            hydrationError = error.localizedDescription
+        }
     }
 
     private func sendComment() {
