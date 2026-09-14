@@ -3,15 +3,20 @@ name: Desktop macOS Preview
 # Untrusted half of the macOS preview. This runs PR code (including fork PRs)
 # with a read-only token and no secrets, and only produces the JS bundle. The
 # trusted half, desktop-macos-preview-publish.yml, runs on workflow_run from
-# main, verifies the PR is labeled and its author is vouched, then packages,
-# signs, notarizes, and publishes the bundle without ever executing it.
+# main, verifies the PR author is vouched, then packages, signs, notarizes, and
+# publishes the bundle without ever executing it.
 #
-# Removing the label or closing the PR is handled by the publish workflow too,
-# since deleting the download needs a write token.
+# The label is a one-shot request for the commit it was applied to, not a
+# standing subscription: the trusted half removes it once this run completes,
+# and later pushes do not build until a maintainer applies it again. Each
+# signed preview is therefore an explicit per-commit decision.
+#
+# Closing the PR is handled by the publish workflow too, since deleting the
+# download needs a write token.
 
 on:
   pull_request:
-    types: [labeled, synchronize, reopened]
+    types: [labeled]
 
 permissions:
   contents: read
@@ -19,14 +24,12 @@ permissions:
 concurrency:
   group: desktop-macos-preview-${{ github.event.pull_request.number }}
   # Adding an unrelated label skips the job and must not cancel a build.
-  cancel-in-progress: ${{ github.event.action != 'labeled' || github.event.label.name == 'preview:mac' }}
+  cancel-in-progress: ${{ github.event.label.name == 'preview:mac' }}
 
 jobs:
   build:
     name: Build preview JS bundle
-    if: >-
-      contains(github.event.pull_request.labels.*.name, 'preview:mac') &&
-      (github.event.action != 'labeled' || github.event.label.name == 'preview:mac')
+    if: github.event.label.name == 'preview:mac'
     runs-on: blacksmith-32vcpu-ubuntu-2404
     timeout-minutes: 30
     steps:

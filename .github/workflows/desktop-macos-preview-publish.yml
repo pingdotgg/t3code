@@ -9,14 +9,18 @@ name: Desktop macOS Preview Publish
 # carries the preview:mac label and whose head is the built commit, and the PR
 # author is trusted by the vouch list. A maintainer applying the label alone is
 # not enough, since the bundle gets signed with the Developer ID certificate.
+#
+# The label is consumed here once the gate passes, so it only ever covers the
+# one commit a maintainer applied it to. A later push builds nothing until the
+# label is applied again.
 
 on:
   workflow_run:
     workflows: [Desktop macOS Preview]
     types: [completed]
-  # The way out: closing the PR or removing the label deletes its download.
-  # pull_request_target gives this a write token for fork PRs; it never checks
-  # out PR code.
+  # The way out: closing the PR deletes its download, and removing the label
+  # before it is consumed cancels the preview. pull_request_target gives this a
+  # write token for fork PRs; it never checks out PR code.
   pull_request_target:
     types: [closed, unlabeled]
 
@@ -37,7 +41,8 @@ jobs:
     permissions:
       actions: read
       contents: read
-      pull-requests: read
+      # write only to consume the label; nothing here runs PR code.
+      pull-requests: write
     outputs:
       eligible: ${{ steps.gate.outputs.eligible }}
       pr_number: ${{ steps.pr.outputs.pr_number }}
@@ -133,16 +138,44 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # The label authorized exactly this build, so take it now, before the
+      # long signing job. Removing it with GITHUB_TOKEN does not fire the
+      # unlabeled cleanup below (workflow-token events never start runs), so
+      # the download this run publishes survives. If a maintainer removed the
+      # label first, that removal wins: the 404 makes this run ineligible.
+      - id: consume
+        name: Consume the preview label
+        if: steps.pr.outputs.eligible == 'true'
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        env:
+          PR_NUMBER: ${{ steps.pr.outputs.pr_number }}
+        with:
+          script: |
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: Number(process.env.PR_NUMBER),
+                name: "preview:mac",
+              });
+              core.setOutput("consumed", "true");
+            } catch (error) {
+              if (error.status !== 404) throw error;
+              core.info("The preview:mac label was removed before this build could consume it. Skipping.");
+              core.setOutput("consumed", "false");
+            }
+
       - id: gate
         name: Decide eligibility
         shell: bash
         env:
           PR_ELIGIBLE: ${{ steps.pr.outputs.eligible }}
+          LABEL_CONSUMED: ${{ steps.consume.outputs.consumed }}
           VOUCH_STATUS: ${{ steps.vouch.outputs.status }}
           AUTHOR: ${{ steps.pr.outputs.author }}
         run: |
           set -euo pipefail
-          if [[ "$PR_ELIGIBLE" != "true" ]]; then
+          if [[ "$PR_ELIGIBLE" != "true" || "$LABEL_CONSUMED" != "true" ]]; then
             echo "eligible=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -316,22 +349,23 @@ jobs:
 
           tag="desktop-preview"
 
-          # True while the PR is open, still carries the preview label, and
-          # still points at the commit this build came from. A push cancels
-          # the untrusted build but not an already-running signing job, so
-          # this is what keeps a superseded commit's DMG off the release.
+          # True while the PR is open and still points at the commit this
+          # build came from. The label was consumed in resolve, so it is not
+          # part of this check. A push does not cancel an already-running
+          # signing job, so this is what keeps a superseded commit's DMG off
+          # the release.
           preview_eligible() {
             [[ "$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
-              --json state,labels,headRefOid \
-              --jq '.state + " " + (.labels | map(.name) | contains(["preview:mac"]) | tostring) + " " + .headRefOid')" == "OPEN true $HEAD_SHA" ]]
+              --json state,headRefOid \
+              --jq '.state + " " + .headRefOid')" == "OPEN $HEAD_SHA" ]]
           }
 
-          # The build ran for many minutes. If the PR closed, lost the label,
-          # or moved on meanwhile, cleanup already ran in its own concurrency
-          # group or a newer build owns the asset, so publishing now would
-          # resurrect a deleted download or clobber a newer one.
+          # The build ran for many minutes. If the PR closed or moved on
+          # meanwhile, cleanup already ran in its own concurrency group or a
+          # newer build owns the asset, so publishing now would resurrect a
+          # deleted download or clobber a newer one.
           if ! preview_eligible; then
-            echo "PR closed, preview label removed, or head moved while building. Skipping publish."
+            echo "PR closed or head moved while building. Skipping publish."
             exit 0
           fi
 
@@ -381,7 +415,7 @@ jobs:
           if ! preview_eligible; then
             gh release delete-asset "$tag" "$(basename "$dmg_path")" --repo "$GITHUB_REPOSITORY" --yes \
               || echo "Asset was already removed by a concurrent run."
-            echo "PR closed, preview label removed, or head moved during upload. Removed the download."
+            echo "PR closed or head moved during upload. Removed the download."
             exit 0
           fi
 
@@ -404,11 +438,7 @@ jobs:
               repo: context.repo.repo,
               pull_number: prNumber,
             });
-            if (
-              pullRequest.head.sha !== process.env.HEAD_SHA ||
-              pullRequest.state !== "open" ||
-              !pullRequest.labels.some((label) => label.name === "preview:mac")
-            ) {
+            if (pullRequest.head.sha !== process.env.HEAD_SHA || pullRequest.state !== "open") {
               core.info("Skipping the outdated macOS preview comment.");
               return;
             }
@@ -425,7 +455,7 @@ jobs:
               "",
               "Signed and notarized, with T3 Connect enabled. The app bundle (server, web client, Electron main) is built from this PR; packaging, native helpers, and desktop dependencies come from `main`.",
               "",
-              "No GitHub sign-in is needed. The download stays available until this PR closes or the preview label is removed.",
+              "No GitHub sign-in is needed. The download stays available until this PR closes. The `preview:mac` label was consumed by this build; a maintainer applies it again to build a newer commit.",
             ].join("\n");
 
             const comments = await github.paginate(github.rest.issues.listComments, {
@@ -456,11 +486,17 @@ jobs:
 
   cleanup:
     name: Remove preview download
+    # A published preview no longer carries the label (resolve consumed it),
+    # so every close must look for assets; the -pr.N. filter below makes
+    # that a cheap no-op for PRs that never had one. A manual unlabel before
+    # the build consumed it withdraws the request and drops any older
+    # download too.
     if: >-
       github.event_name == 'pull_request_target' &&
-      ((github.event.action == 'closed' && contains(github.event.pull_request.labels.*.name, 'preview:mac')) ||
+      (github.event.action == 'closed' ||
       (github.event.action == 'unlabeled' && github.event.label.name == 'preview:mac'))
-    runs-on: blacksmith-8vcpu-ubuntu-2404
+    # Runs on every PR close and usually finds nothing. Keep it cheap.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Cleanup runs must complete: a close event right after an unlabel queues
     # behind the running cleanup instead of canceling it mid-delete.

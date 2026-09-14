@@ -53,8 +53,12 @@ This document covers the unified release workflow for stable and nightly desktop
 ## Pull request macOS previews
 
 Labeling a PR `preview:mac` publishes a signed, notarized Apple Silicon DMG with T3 Connect enabled
-to the rolling `desktop-preview` prerelease, and works for fork PRs. The build is split so the
-Developer ID certificate never shares a job with PR code:
+to the rolling `desktop-preview` prerelease, and works for fork PRs. The label is a one-shot request
+for the commit it is applied to: the trusted workflow removes it once the build is in hand, and later
+pushes do not build until a maintainer applies it again. Every signed preview is therefore a
+per-commit maintainer decision, which matters because the result carries the Developer ID signature.
+Vouching a contributor lets their labeled commits be signed; it is not a standing grant. The build is
+split so the Developer ID certificate never shares a job with PR code:
 
 - `.github/workflows/desktop-macos-preview.yml` runs on `pull_request` with no secrets and builds
   only the JS bundle from the PR (the same `js-bundle` artifact `release.yml` produces).
@@ -71,8 +75,8 @@ Before handing the bundle to the signing runner, the trusted workflow validates 
 and accepts only regular files under `server/dist` and `desktop/dist-electron`. The artifact cannot
 overwrite packaging code or installed dependencies. The bundle is copied into the app, never executed,
 on the signing runner. The
-`pull_request_target` cleanup job in the publish workflow removes the download when the PR closes or
-loses the label, and never checks out PR code.
+`pull_request_target` cleanup job in the publish workflow removes the download when the PR closes, or
+when the label is removed by hand before a build consumed it, and never checks out PR code.
 
 ## Required release credentials
 
