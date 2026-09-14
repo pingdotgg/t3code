@@ -38,10 +38,11 @@ t3 update <client-version>
 ```
 
 Replace `<client-version>` with the version shown in the notice. The command
-offers to restart the background service when one is installed. For a server
-you started by hand, stop it and start it again afterwards with your usual
-options such as `--host` or `--tailscale-serve`. If you run the server with
-`npx`, the copied command is `npx t3@<client-version>`.
+asks before restarting the background service; if you decline, run
+`t3 service restart` when you are ready. For a server you started by hand,
+stop it and start it again afterwards with your usual options such as `--host`
+or `--tailscale-serve`. If you run the server with `npx`, the copied command is
+`npx t3@<client-version>`.
 
 ## If an update fails
 
