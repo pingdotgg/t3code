@@ -178,9 +178,52 @@ it.effect("clones a looked-up repository into the requested destination", () =>
       assert.deepStrictEqual(cloneCalls, [
         {
           cwd: parent,
-          args: ["clone", CLONE_URLS.url, "t3code"],
+          args: ["clone", "--", CLONE_URLS.url, "t3code"],
         },
       ]);
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                cloneCalls.push({ cwd: input.cwd, args: input.args });
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("passes a dash-leading destination name to git as a path, not an option", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const parent = yield* fs.makeTempDirectoryScoped({
+      prefix: "t3-source-control-clone-dash-",
+    });
+    // Reachable from the mobile add-project deep link, which supplies both the
+    // remote URL and the final path segment.
+    const destinationPath = `${parent}/--upload-pack=touch pwned`;
+    const cloneCalls: Array<{ cwd: string; args: ReadonlyArray<string> }> = [];
+
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      yield* service.cloneRepository({
+        remoteUrl: CLONE_URLS.url,
+        destinationPath,
+      });
+
+      assert.deepStrictEqual(cloneCalls, [
+        {
+          cwd: parent,
+          args: ["clone", "--", CLONE_URLS.url, "--upload-pack=touch pwned"],
+        },
+      ]);
+      const [call] = cloneCalls;
+      assert.isDefined(call);
+      assert.strictEqual(call.args[1], "--", "every positional must follow the -- terminator");
     }).pipe(
       Effect.provide(
         makeLayer({
