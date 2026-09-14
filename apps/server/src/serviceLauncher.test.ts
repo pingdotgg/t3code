@@ -133,15 +133,27 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
           activeVersion: "1.0.0",
         }),
       );
-      yield* fs.writeFileString(restartPending, "1.0.0\n");
+      const run = () =>
+        Effect.gen(function* () {
+          const launcher = new Launcher(
+            root,
+            yield* Effect.promise(() => readServiceState(statePath)),
+          );
+          const running = launcher.run();
+          yield* Effect.promise(() => launcher.stop("SIGTERM"));
+          yield* Effect.promise(() => running);
+        });
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
-      const running = launcher.run();
-      const stopping = launcher.stop("SIGTERM");
-      yield* Effect.promise(() => stopping);
-      yield* Effect.promise(() => running);
+      // A launcher that is still the old version leaves a marker that waits
+      // for a newer one.
+      yield* fs.writeFileString(restartPending, "1.0.1\n");
+      yield* run();
+      assert.isTrue(yield* fs.exists(restartPending));
+
       // Whoever restarted the service, the launcher now runs what the unit
       // names, so the deferred-restart marker is gone.
+      yield* fs.writeFileString(restartPending, "1.0.0\n");
+      yield* run();
       assert.isFalse(yield* fs.exists(restartPending));
     }),
   );

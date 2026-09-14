@@ -368,11 +368,17 @@ export class Launcher {
   async #recover(): Promise<void> {
     // A fresh launcher means servers are running again: any stop marker from
     // a previous explicit stop is stale and must not make a future update
-    // handoff release its tunnel. A fresh launcher is also, by definition,
-    // the one the unit names, so a restart deferred by `t3 update` is done
-    // no matter who restarted the service.
+    // handoff release its tunnel. A restart deferred by `t3 update` is done
+    // no matter who restarted the service, but only once this launcher is
+    // the version the marker waits for: a launcher that came up between the
+    // CLI writing the marker and writing the new state still runs the old
+    // version, and the marker has to outlive it.
     await NodeFSP.rm(stopMarkerPath(this.#baseDir), { force: true }).catch(() => undefined);
-    await NodeFSP.rm(restartPendingPath(this.#baseDir), { force: true }).catch(() => undefined);
+    const restartPending = restartPendingPath(this.#baseDir);
+    const awaitedVersion = await NodeFSP.readFile(restartPending, "utf8").catch(() => undefined);
+    if (awaitedVersion?.trim() === this.#state.activeVersion) {
+      await NodeFSP.rm(restartPending, { force: true }).catch(() => undefined);
+    }
     const update = this.#state.update;
     if (update?.status !== "pending") {
       if (update !== undefined) {
