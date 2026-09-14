@@ -99,11 +99,18 @@ computer.
 | Grok Build  | Install [Grok Build CLI](https://x.ai/cli), then run `grok login`.                           |
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
+| Auggie      | Install [Auggie CLI](https://docs.augmentcode.com), then run `auggie login`.                 |
 
 Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Antigravity can use its managed runtime without a `PATH` entry.
+
+Auggie indexes a workspace to answer questions about it, which sends code to
+Augment. T3 Code allows this by default; turn off **Allow workspace indexing**
+in its provider settings to be asked for approval on each new session instead.
+Auggie does not generate thread titles or commit messages — pick another
+provider under **Settings → General** for those.
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** appears only when T3 Code can tell which

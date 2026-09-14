@@ -273,6 +273,12 @@ export const GrokIcon: Icon = ({ className, ...props }) => (
   </svg>
 );
 
+export const AuggieIcon: Icon = ({ className, ...props }) => (
+  <svg {...props} viewBox="0 0 24 24" fill="none" className={cn("fill-[#654FF0]", className)}>
+    <path d="M12 2 22 20h-4.8l-1.75-3.25h-6.9L6.8 20H2L12 2Zm0 7.42-1.65 3.08h3.3L12 9.42Z" />
+  </svg>
+);
+
 export const TraeIcon: Icon = (props) => (
   <svg {...props} viewBox="0 0 24 24" fill="currentColor">
     {/* Back rectangle: left strip + bottom strip drawn separately — empty bottom-left corner is the gap between them */}

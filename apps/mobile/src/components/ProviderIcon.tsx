@@ -64,6 +64,17 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "auggie") {
+    return (
+      <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+        <Path
+          fill="#654FF0"
+          d="M12 2 22 20h-4.8l-1.75-3.25h-6.9L6.8 20H2L12 2Zm0 7.42-1.65 3.08h3.3L12 9.42Z"
+        />
+      </Svg>
+    );
+  }
+
   if (props.provider === "opencode") {
     return (
       <Svg width={size} height={size} viewBox="0 0 32 40" fill="none">
