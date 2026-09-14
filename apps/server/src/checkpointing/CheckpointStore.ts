@@ -25,6 +25,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schedule from "effect/Schedule";
+import * as Schema from "effect/Schema";
 
 import type { CheckpointStoreError } from "./Errors.ts";
 import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
@@ -112,8 +113,11 @@ export class CheckpointStore extends Context.Service<
  * git failures can be transient. These are the only errors worth retrying;
  * unsupported drivers and repository detection failures are permanent.
  */
+const isVcsProcessExitError = Schema.is(VcsProcessExitError);
+const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
+
 const isTransientCaptureError = (error: VcsError): boolean =>
-  error instanceof VcsProcessExitError || error instanceof VcsProcessTimeoutError;
+  isVcsProcessExitError(error) || isVcsProcessTimeoutError(error);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
