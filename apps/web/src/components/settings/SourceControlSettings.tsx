@@ -397,6 +397,7 @@ function HostingCliPathSettings({
     setDraft(savedPath);
   }
 
+  /** Trims the draft on blur and saves only changed overrides to the target environment. */
   const commit = (value: string) => {
     const next = value.trim();
     setDraft(next);

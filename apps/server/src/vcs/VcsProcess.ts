@@ -110,9 +110,11 @@ export const make = Effect.gen(function* () {
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
   const githubProcesses = yield* Semaphore.make(GITHUB_PROCESS_CONCURRENCY);
 
+  /**
+   * Executes the resolved binary and translates process failures into VCS errors
+   * keyed by the logical command. Call through `run` to apply concurrency limits.
+   */
   const runUnbounded = Effect.fn("VcsProcess.runUnbounded")(function* (input: VcsProcessInput) {
-    // Errors and the process limiter keep reporting the logical command, so a
-    // configured path never leaks into diagnostics or changes how we throttle.
     const executable = yield* executables.resolve(input.command);
     const baseError = {
       operation: input.operation,

@@ -38,8 +38,11 @@ export const make = Effect.gen(function* () {
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const path = yield* Path.Path;
 
-  // Only the hosting CLIs are configurable, so Git — the hot path — never pays
-  // for a settings read.
+  /**
+   * Resolves hosting CLI overrides from current settings and expands home paths.
+   * Blank overrides or lookup failures retain PATH resolution; other commands
+   * bypass settings reads entirely.
+   */
   const resolve = (command: string): Effect.Effect<string> =>
     isOverridable(command)
       ? serverSettings.getSettings.pipe(
