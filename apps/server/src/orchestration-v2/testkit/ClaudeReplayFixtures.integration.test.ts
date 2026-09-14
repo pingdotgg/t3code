@@ -2,7 +2,6 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 
 import { classifyClaudeNativeTool } from "../Adapters/ClaudeAdapterV2.ts";
 import {
@@ -27,12 +26,10 @@ import {
   THREAD_MERGE_BACK_SOURCE_MARKER,
 } from "./fixtures/shared.ts";
 import { checkpointWorkspace } from "./ReplayFixtureWorkspace.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import { readProviderReplayTranscript } from "./ReplayTranscriptNdjson.ts";
 
 const readTranscript = Effect.fn("readClaudeReplayFixture")(function* (file: URL) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
-  return yield* decodeProviderReplayNdjson(text);
+  return yield* readProviderReplayTranscript(file);
 }, Effect.provide(NodeServices.layer));
 
 function claudeFixture(name: string) {
