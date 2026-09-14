@@ -5,6 +5,68 @@ import XCTest
 
 @MainActor
 final class NativeMultiEnvironmentTests: XCTestCase {
+    func testFolderBrowsingUsesItsOwningEnvironmentAndWindowsWorktree() async throws {
+        let server = MultiEnvironmentConfigurationServer(directoryEntries: [
+            "": ProjectEntriesResult(entries: [
+                .init(path: "node_modules", kind: .directory, ignored: true),
+            ], truncated: false),
+            "node_modules/package": ProjectEntriesResult(entries: [
+                .init(path: "node_modules/package/index.js", kind: .file, ignored: true),
+            ], truncated: false),
+        ])
+        let fixture = try await Self.makeFixture(
+            duplicateIDs: true,
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(2)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        await fixture.transport.setShell(multiEnvironmentShell(
+            projectID: "project-shared", threadID: "thread-shared", title: "Remote files",
+            workspaceRoot: #"C:\work\project"#, worktreePath: #"D:\worktrees\feature"#
+        ), host: "two.example")
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "two" })
+
+        let root = try await fixture.client.listFiles(threadID: thread.id, path: nil)
+        let nested = try await fixture.client.listFiles(threadID: thread.id, path: #"node_modules\package"#)
+
+        XCTAssertEqual(root.map(\.path), ["node_modules"])
+        XCTAssertEqual(root.first?.isIgnored, true)
+        XCTAssertEqual(nested.map(\.path), ["node_modules/package/index.js"])
+        XCTAssertEqual(nested.first?.isIgnored, true)
+        let requests = await server.fileRequests()
+        XCTAssertEqual(requests.map(\.host), ["two.example", "two.example"])
+        XCTAssertEqual(requests.map { $0.input["cwd"]?.stringValue }, [
+            #"D:\worktrees\feature"#, #"D:\worktrees\feature"#,
+        ])
+        XCTAssertEqual(requests.map { $0.input["directoryPath"]?.stringValue }, [
+            "", "node_modules/package",
+        ])
+        await fixture.client.disconnect()
+    }
+
+    func testFolderBrowsingAcceptsAnOlderServersRecursiveIndex() async throws {
+        let server = MultiEnvironmentConfigurationServer(legacyEntries: ProjectEntriesResult(entries: [
+            .init(path: "README.md", kind: .file),
+            .init(path: "src/main.swift", kind: .file),
+            .init(path: "src/nested/helper.swift", kind: .file),
+        ], truncated: false))
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(2)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let snapshot = try await fixture.client.initialSnapshot()
+        let thread = try XCTUnwrap(snapshot.threads.first { $0.environmentID == "one" })
+
+        let root = try await fixture.client.listFiles(threadID: thread.id, path: nil)
+        let nested = try await fixture.client.listFiles(threadID: thread.id, path: "src")
+        XCTAssertEqual(root.map(\.path), ["src", "README.md"])
+        XCTAssertEqual(nested.map(\.path), ["src/nested", "src/main.swift"])
+        XCTAssertTrue(nested.allSatisfy { !$0.isIgnored })
+        await fixture.client.disconnect()
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -1585,19 +1647,36 @@ private actor MultiEnvironmentConfigurationServer {
     private var settingsByHost: [String: [String: JSONValue]] = [:]
     private var settingsUpdateHosts: [String] = []
     private let restartSupportHosts: Set<String>
+    private let directoryEntries: [String: ProjectEntriesResult]
+    private let legacyEntries: ProjectEntriesResult?
+    private var directoryRequests: [(host: String, input: JSONValue)] = []
 
-    init(restartSupportHosts: Set<String> = []) {
+    init(
+        restartSupportHosts: Set<String> = [],
+        directoryEntries: [String: ProjectEntriesResult] = [:],
+        legacyEntries: ProjectEntriesResult? = nil
+    ) {
         self.restartSupportHosts = restartSupportHosts
+        self.directoryEntries = directoryEntries
+        self.legacyEntries = legacyEntries
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
     func settings(host: String) -> [String: JSONValue] { settingsByHost[host] ?? [:] }
+    func fileRequests() -> [(host: String, input: JSONValue)] { directoryRequests }
 
     func response(to request: JSONValue, host: String) throws -> JSONValue? {
         guard let tag = request["tag"]?.stringValue,
               case let .number(id)? = request["id"] else { return nil }
         let value: JSONValue
         switch tag {
+        case RPCMethod.projectsListEntries.rawValue:
+            let input = request["payload"] ?? .object([:])
+            directoryRequests.append((host, input))
+            value = try JSONValue.encode(
+                legacyEntries ?? directoryEntries[input["directoryPath"]?.stringValue ?? ""]
+                    ?? ProjectEntriesResult(entries: [], truncated: false)
+            )
         case RPCMethod.subscribeServerConfig.rawValue:
             return .object([
                 "_tag": .string("Chunk"), "requestId": .number(id),
@@ -1812,7 +1891,9 @@ func multiEnvironmentShell(
     snapshotSequence: Int = 1,
     settledOverride: String? = nil,
     settledAt: String? = nil,
-    titleRegeneration: ThreadTitleRegeneration? = nil
+    titleRegeneration: ThreadTitleRegeneration? = nil,
+    workspaceRoot: String? = nil,
+    worktreePath: String? = nil
 ) -> OrchestrationShellSnapshot {
     let timestamp = "2026-07-31T12:00:00.000Z"
     let model = ModelSelection(instanceId: providerID, model: modelID)
@@ -1822,7 +1903,7 @@ func multiEnvironmentShell(
             OrchestrationProject(
                 id: projectID,
                 title: title,
-                workspaceRoot: "/work/\(projectID)",
+                workspaceRoot: workspaceRoot ?? "/work/\(projectID)",
                 repositoryIdentity: repositoryIdentity,
                 defaultModelSelection: model,
                 scripts: [],
@@ -1840,7 +1921,7 @@ func multiEnvironmentShell(
                 runtimeMode: .fullAccess,
                 interactionMode: .default,
                 branch: "feat/multi-device",
-                worktreePath: nil,
+                worktreePath: worktreePath,
                 latestTurn: nil,
                 createdAt: timestamp,
                 updatedAt: timestamp,

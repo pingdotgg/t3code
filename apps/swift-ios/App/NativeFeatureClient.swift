@@ -2370,8 +2370,17 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     func listFiles(threadID: String, path: String?) async throws -> [FeatureFileEntry] {
         let route = try threadRoute(for: threadID)
         let context = try workspaceContext(route: route)
-        let result = try await route.client.listProjectEntries(cwd: context.cwd)
-        return NativeWorkspaceMapper.files(result.entries, directory: path)
+        let generation = environmentGeneration
+        let directory = NativeWorkspaceMapper.directoryPath(path, workspaceRoot: context.cwd)
+        let result = try await route.client.listProjectEntries(
+            cwd: context.cwd,
+            directoryPath: directory
+        )
+        guard isKnownClient(route.client, environmentID: route.environmentID, generation: generation),
+              try workspaceContext(route: route).cwd == context.cwd else {
+            throw CancellationError()
+        }
+        return NativeWorkspaceMapper.files(result.entries, directory: directory, workspaceRoot: context.cwd)
     }
 
     func searchProjectFiles(

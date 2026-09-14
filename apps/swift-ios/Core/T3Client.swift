@@ -899,10 +899,17 @@ public actor T3Client {
 
     // MARK: Workspace files
 
-    public func listProjectEntries(cwd: String) async throws -> ProjectEntriesResult {
-        try await rpc.request(
+    public func listProjectEntries(
+        cwd: String,
+        directoryPath: String? = nil
+    ) async throws -> ProjectEntriesResult {
+        var payload: [String: JSONValue] = ["cwd": .string(cwd)]
+        if let directoryPath {
+            payload["directoryPath"] = .string(directoryPath)
+        }
+        return try await rpc.request(
             RPCMethod.projectsListEntries.rawValue,
-            payload: .object(["cwd": .string(cwd)]),
+            payload: .object(payload),
             as: ProjectEntriesResult.self
         )
     }

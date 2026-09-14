@@ -57,19 +57,32 @@ public struct FeatureFileEntry: Identifiable, Sendable, Equatable, Hashable, Cod
     public var kind: FeatureFileKind
     public var sizeBytes: Int?
     public var isHidden: Bool
+    public var isIgnored: Bool
 
     public init(
         path: String,
         name: String,
         kind: FeatureFileKind,
         sizeBytes: Int? = nil,
-        isHidden: Bool = false
+        isHidden: Bool = false,
+        isIgnored: Bool = false
     ) {
         self.path = path
         self.name = name
         self.kind = kind
         self.sizeBytes = sizeBytes
         self.isHidden = isHidden
+        self.isIgnored = isIgnored
+    }
+
+    public init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        path = try values.decode(String.self, forKey: .path)
+        name = try values.decode(String.self, forKey: .name)
+        kind = try values.decode(FeatureFileKind.self, forKey: .kind)
+        sizeBytes = try values.decodeIfPresent(Int.self, forKey: .sizeBytes)
+        isHidden = try values.decode(Bool.self, forKey: .isHidden)
+        isIgnored = try values.decodeIfPresent(Bool.self, forKey: .isIgnored) ?? false
     }
 }
 

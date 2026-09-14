@@ -8,6 +8,8 @@ public struct FeatureFilesView: View {
     let initialPath: String?
     let workspaceRoot: String?
 
+    @State private var browser = FeatureFileBrowserState()
+
     public init(
         client: any FeatureClient,
         threadID: String,
@@ -36,6 +38,7 @@ public struct FeatureFilesView: View {
             } else {
                 FeatureFileDirectoryView(
                     client: client,
+                    browser: browser,
                     threadID: threadID,
                     path: nil,
                     title: "Files",
@@ -49,47 +52,70 @@ public struct FeatureFilesView: View {
 
 private struct FeatureFileDirectoryView: View {
     let client: any FeatureClient
+    let browser: FeatureFileBrowserState
     let threadID: String
     let path: String?
     let title: String
     let workspaceRoot: String?
 
-    @State private var entries: [FeatureFileEntry] = []
     @State private var searchText = ""
     @State private var includesHidden = false
-    @State private var isLoading = true
-    @State private var errorMessage: String?
+
+    private var directory: FeatureFileBrowserState.Directory {
+        .init(threadID: threadID, workspaceRoot: workspaceRoot, path: path)
+    }
+
+    private var listing: FeatureFileBrowserState.Listing {
+        browser.listing(for: directory)
+    }
 
     var body: some View {
-        Group {
-            if isLoading, entries.isEmpty {
-                ProgressView("Loading files…")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let errorMessage, entries.isEmpty {
+        let filteredEntries = self.filteredEntries
+        List {
+            if let errorMessage = listing.errorMessage {
+                HStack(alignment: .top, spacing: 10) {
+                    Image(systemName: "exclamationmark.circle")
+                        .foregroundStyle(T3Colors.warning)
+                    Text(errorMessage)
+                        .font(T3Typography.supporting)
+                        .foregroundStyle(T3Colors.textSecondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Retry") { Task { await load(refresh: true) } }
+                        .buttonStyle(.borderless)
+                        .disabled(listing.isLoading)
+                }
+            }
+            if listing.isLoading {
+                Label("Loading files…", systemImage: "folder")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+                    .listRowBackground(Color.clear)
+            } else if listing.entries == nil, listing.errorMessage != nil {
                 ContentUnavailableView(
                     "Files unavailable",
-                    systemImage: "folder.badge.questionmark",
-                    description: Text(errorMessage)
+                    systemImage: "folder.badge.questionmark"
                 )
-            } else if filteredEntries.isEmpty {
+                .listRowBackground(Color.clear)
+            }
+            if listing.entries != nil, filteredEntries.isEmpty {
                 ContentUnavailableView(
                     searchText.isEmpty ? "Empty folder" : "No matches",
                     systemImage: "folder",
                     description: Text(searchText.isEmpty ? "This folder has no visible files." : "Try another search.")
                 )
-            } else {
-                List(filteredEntries) { entry in
-                    NavigationLink {
-                        destination(for: entry)
-                    } label: {
-                        FeatureFileRow(entry: entry)
-                    }
+                .listRowBackground(Color.clear)
+            }
+            ForEach(filteredEntries) { entry in
+                NavigationLink {
+                    destination(for: entry)
+                } label: {
+                    FeatureFileRow(entry: entry)
                 }
-                .listStyle(.plain)
-                .scrollContentBackground(.hidden)
-                .refreshable { await load() }
             }
         }
+        .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .refreshable { await load(refresh: true) }
         .background(T3Colors.background)
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
@@ -99,7 +125,7 @@ private struct FeatureFileDirectoryView: View {
                 Menu {
                     Toggle("Show hidden files", isOn: $includesHidden)
                     Button {
-                        Task { await load() }
+                        Task { await load(refresh: true) }
                     } label: {
                         Label("Reload", systemImage: "arrow.clockwise")
                     }
@@ -109,7 +135,7 @@ private struct FeatureFileDirectoryView: View {
                 .accessibilityLabel("File browser options")
             }
         }
-        .task(id: path) { await load() }
+        .task(id: directory) { await load() }
     }
 
     @ViewBuilder
@@ -117,6 +143,7 @@ private struct FeatureFileDirectoryView: View {
         if entry.kind == .directory {
             FeatureFileDirectoryView(
                 client: client,
+                browser: browser,
                 threadID: threadID,
                 path: entry.path,
                 title: entry.name,
@@ -133,17 +160,12 @@ private struct FeatureFileDirectoryView: View {
     }
 
     private var filteredEntries: [FeatureFileEntry] {
-        entries.featureFiltered(by: searchText, includesHidden: includesHidden)
+        (listing.entries ?? []).featureFiltered(by: searchText, includesHidden: includesHidden)
     }
 
-    private func load() async {
-        isLoading = true
-        defer { isLoading = false }
-        do {
-            entries = try await client.listFiles(threadID: threadID, path: path)
-            errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+    private func load(refresh: Bool = false) async {
+        await browser.load(directory, refresh: refresh) {
+            try await client.listFiles(threadID: threadID, path: path)
         }
     }
 }
@@ -168,7 +190,9 @@ private struct FeatureFileRow: View {
             }
         }
         .padding(.vertical, 3)
+        .opacity(entry.isIgnored ? 0.55 : 1)
         .accessibilityElement(children: .combine)
+        .accessibilityValue(entry.isIgnored ? "Ignored by Git" : "")
     }
 
     private var icon: String {

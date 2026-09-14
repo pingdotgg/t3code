@@ -3,6 +3,20 @@ import XCTest
 
 @MainActor
 final class WorkspaceContractTests: XCTestCase {
+    func testDirectoryEntriesDecodeIgnoredAndLegacyEntries() throws {
+        let data = Data(#"""
+        {"entries":[
+          {"path":"node_modules","kind":"directory","ignored":true},
+          {"path":"README.md","kind":"file","ignored":false},
+          {"path":"src","kind":"directory"}
+        ],"truncated":false}
+        """#.utf8)
+
+        let result = try JSONDecoder.t3.decode(ProjectEntriesResult.self, from: data)
+        XCTAssertEqual(result.entries.map(\.ignored), [true, false, nil])
+        XCTAssertFalse(result.truncated)
+    }
+
     func testVCSStatusSnapshotDecodesTaggedEffectRPCShape() throws {
         let data = Data(
             """

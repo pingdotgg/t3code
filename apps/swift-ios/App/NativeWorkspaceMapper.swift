@@ -3,14 +3,15 @@ import Foundation
 enum NativeWorkspaceMapper {
     static func files(
         _ entries: [ProjectEntry],
-        directory: String?
+        directory: String?,
+        workspaceRoot: String
     ) -> [FeatureFileEntry] {
-        let directory = normalize(directory ?? "")
+        let directory = directoryPath(directory, workspaceRoot: workspaceRoot)
         let prefix = directory.isEmpty ? "" : "\(directory)/"
         var children: [String: FeatureFileEntry] = [:]
 
         for entry in entries {
-            let fullPath = normalize(entry.path)
+            let fullPath = directoryPath(entry.path, workspaceRoot: workspaceRoot)
             guard fullPath.hasPrefix(prefix) else { continue }
             let remainder = String(fullPath.dropFirst(prefix.count))
             guard !remainder.isEmpty else { continue }
@@ -21,14 +22,17 @@ enum NativeWorkspaceMapper {
             let kind: FeatureFileKind = isNested || entry.kind == .directory
                 ? .directory
                 : .file
-            if children[childPath]?.kind == .directory {
+            // Older servers ignore directoryPath and return the recursive index.
+            // Infer its immediate folders, but prefer each folder's own metadata.
+            if isNested, children[childPath] != nil {
                 continue
             }
             children[childPath] = FeatureFileEntry(
                 path: childPath,
                 name: component,
                 kind: kind,
-                isHidden: component.hasPrefix(".")
+                isHidden: component.hasPrefix("."),
+                isIgnored: !isNested && entry.ignored == true
             )
         }
 
@@ -191,8 +195,11 @@ enum NativeWorkspaceMapper {
         }
     }
 
-    private static func normalize(_ path: String) -> String {
-        path.replacingOccurrences(of: "\\", with: "/")
+    static func directoryPath(_ path: String?, workspaceRoot: String) -> String {
+        let isWindows = workspaceRoot.hasPrefix("\\\\") || workspaceRoot.hasPrefix("//")
+            || workspaceRoot.range(of: #"^[A-Za-z]:[/\\]"#, options: .regularExpression) != nil
+        let path = path ?? ""
+        return (isWindows ? path.replacingOccurrences(of: "\\", with: "/") : path)
             .split(separator: "/", omittingEmptySubsequences: true)
             .joined(separator: "/")
     }

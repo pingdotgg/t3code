@@ -10,6 +10,7 @@ public enum ProjectEntryKind: String, Codable, Sendable {
 public struct ProjectEntry: Codable, Equatable, Sendable {
     public let path: String
     public let kind: ProjectEntryKind
+    public var ignored: Bool? = nil
 }
 
 public struct ProjectEntriesResult: Codable, Equatable, Sendable {
