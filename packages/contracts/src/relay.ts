@@ -127,6 +127,7 @@ export const RelayAgentActivityState = Schema.Struct({
   phase: RelayAgentAwarenessPhase,
   headline: TrimmedNonEmptyString,
   detail: Schema.optional(TrimmedNonEmptyString),
+  completionResponse: Schema.optional(TrimmedNonEmptyString),
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
@@ -141,6 +142,7 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   phase: RelayAgentAwarenessPhase,
   status: TrimmedNonEmptyString,
+  completionBody: Schema.optional(TrimmedNonEmptyString),
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
 });

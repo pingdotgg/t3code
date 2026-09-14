@@ -1595,6 +1595,7 @@ const make = Effect.gen(function* () {
       const eventTurnId = toTurnId(event.turnId);
       const activeTurnId = thread.session?.activeTurnId ?? null;
       const isTerminalTurn = event.type === "turn.completed" || event.type === "turn.aborted";
+      let terminalSessionUpdate: ReturnType<typeof orchestrationEngine.dispatch> | undefined;
       const isCompactedThreadState =
         event.type === "thread.state.changed" && event.payload.state === "compacted";
       const pendingTurnStart =
@@ -1735,7 +1736,7 @@ const make = Effect.gen(function* () {
             );
           }
 
-          yield* orchestrationEngine.dispatch({
+          const updateSession = orchestrationEngine.dispatch({
             type: "thread.session.set",
             commandId: yield* providerCommandId(event, "thread-session-set"),
             threadId: thread.id,
@@ -1753,6 +1754,10 @@ const make = Effect.gen(function* () {
             },
             createdAt: now,
           });
+          // Completion consumers must see the saved final answer, including
+          // buffered deltas, before they see the session leave running.
+          if (isTerminalTurn) terminalSessionUpdate = updateSession;
+          else yield* updateSession;
         }
       }
 
@@ -2018,6 +2023,8 @@ const make = Effect.gen(function* () {
           });
         }
       }
+
+      if (terminalSessionUpdate) yield* terminalSessionUpdate;
 
       if (event.type === "session.exited") {
         yield* clearTurnStateForSession(thread.id);

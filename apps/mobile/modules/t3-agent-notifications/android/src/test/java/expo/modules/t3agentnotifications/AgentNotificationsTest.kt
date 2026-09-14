@@ -143,6 +143,19 @@ class AgentNotificationsTest {
   }
 
   @Test
+  fun completionAlertDisplaysLongFinalAnswer() {
+    val answer = "The change is complete.\n\n" + "Tests pass. ".repeat(120)
+    AgentNotifications.receive(context, update("long-answer", false) + ("alert_body" to answer))
+
+    val alert = manager.activeNotifications.single()
+    assertEquals(answer, alert.notification.extras.getString(Notification.EXTRA_BIG_TEXT))
+    assertEquals(
+      "t3code-dev://threads/environment/thread",
+      shadowOf(alert.notification.contentIntent).savedIntent.dataString
+    )
+  }
+
+  @Test
   fun groupedAlertDisplaysEveryThreadAndRetriesStaySilent() {
     val titles = (1..5).map { "Thread $it " + "x".repeat(111) }.joinToString(", ")
     val grouped = update("group-completion", false) + mapOf(
