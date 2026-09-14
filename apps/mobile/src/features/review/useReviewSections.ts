@@ -54,10 +54,14 @@ export function useReviewSections(input: {
   const selectedThread = useSelectedThreadProjection();
   const { selectedThreadCwd } = useSelectedThreadWorktree();
   const diffPreview = useEnvironmentQuery(
-    canReadFiles && enabled && environmentId !== undefined && selectedThreadCwd !== null
+    canReadFiles &&
+      enabled &&
+      environmentId !== undefined &&
+      threadId !== undefined &&
+      selectedThreadCwd !== null
       ? reviewEnvironment.diffPreview({
           environmentId,
-          input: { cwd: selectedThreadCwd },
+          input: { threadId, cwd: selectedThreadCwd },
         })
       : null,
   );

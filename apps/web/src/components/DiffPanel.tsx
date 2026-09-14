@@ -404,6 +404,7 @@ export default function DiffPanel({
       ? reviewEnvironment.branchCommits({
           environmentId: activeThread.environmentId,
           input: {
+            threadId: activeThread.id,
             cwd: activeCwd,
             ...(rememberedBaseRef ? { baseRef: rememberedBaseRef } : {}),
           },
@@ -537,6 +538,7 @@ export default function DiffPanel({
     isGitSelection && activeThread && preview && selectedGitSource && canReadFiles
       ? createGitDiffFileContentsLoader(getDiffFileContents, {
           environmentId: activeThread.environmentId,
+          threadId: activeThread.id,
           cwd: preview.cwd,
           sourceKind: selectedGitSource.kind,
           baseRef: selectedGitSource.baseRef,

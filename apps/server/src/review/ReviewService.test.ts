@@ -1,15 +1,19 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as DateTime from "effect/DateTime";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as SqlClient from "effect/sql/SqlClient";
-import { ProjectId } from "@t3tools/contracts";
+import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
+import { ProjectId, ThreadId, DEFAULT_SERVER_SETTINGS } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
@@ -24,6 +28,11 @@ function layer(input: {
   readonly projectRoots?: ReadonlyArray<string> | "unavailable";
   readonly threadWorktrees?: ReadonlyArray<{ worktreePath: string; deleted?: boolean }>;
   readonly gitWorktrees?: ReadonlyArray<string>;
+  readonly threadWorkspace?: {
+    readonly threadId: ThreadId;
+    readonly workspaceRoot: string;
+    readonly worktreePath: string | null;
+  };
 }) {
   const projectRoots = input.projectRoots ?? [];
   return ReviewService.layer.pipe(
@@ -50,6 +59,27 @@ function layer(input: {
     ),
     Layer.provide(
       Layer.mock(ProjectStore.ProjectStoreV2)({
+        get: (projectId) =>
+          Effect.succeed(
+            input.threadWorkspace
+              ? Option.some({
+                  projectId,
+                  pinnedAt: null,
+                  archivedAt: null,
+                  title: "Review project",
+                  workspaceRoot: input.threadWorkspace.workspaceRoot,
+                  defaultModelSelection: null,
+                  defaultThreadEnvMode: null,
+                  autoPull: false,
+                  faviconPath: null,
+                  projectIcon: null,
+                  scripts: [],
+                  createdAt: "2026-10-07T00:00:00.000Z",
+                  updatedAt: "2026-10-07T00:00:00.000Z",
+                  deletedAt: null,
+                })
+              : Option.none(),
+          ),
         listShells: () =>
           projectRoots === "unavailable"
             ? Effect.fail(
@@ -85,6 +115,40 @@ function layer(input: {
       }),
     ),
     Layer.provide(
+      Layer.mock(ProjectionStore.ProjectionStoreV2)({
+        getThread: (threadId) =>
+          input.threadWorkspace?.threadId === threadId
+            ? Effect.succeed({
+                id: threadId,
+                projectId: ProjectId.make("project-review"),
+                title: "Review",
+                createdBy: "user",
+                creationSource: "server",
+                providerInstanceId: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection.instanceId,
+                modelSelection: DEFAULT_SERVER_SETTINGS.textGenerationModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: input.threadWorkspace.worktreePath,
+                activeProviderThreadId: null,
+                lineage: {
+                  parentThreadId: null,
+                  relationshipToParent: null,
+                  rootThreadId: threadId,
+                },
+                forkedFrom: null,
+                createdAt: DateTime.makeUnsafe("2026-10-07"),
+                updatedAt: DateTime.makeUnsafe("2026-10-07"),
+                archivedAt: null,
+                settledOverride: null,
+                settledAt: null,
+                lastVisitedAt: null,
+                deletedAt: null,
+              })
+            : Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+      }),
+    ),
+    Layer.provide(
       ServerSettings.ServerSettingsService.layerTest({
         worktreesDirectory: input.worktreesDirectory ?? "",
         previousWorktreesDirectories: [...(input.previousWorktreesDirectories ?? [])],
@@ -96,6 +160,93 @@ function layer(input: {
 }
 
 describe("ReviewService", () => {
+  it.effect("allows the exact worktree registered to the requesting thread", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const serverRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-server-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const worktreeRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-worktree-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const threadId = ThreadId.make("thread-review");
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ threadId, cwd: worktreeRoot });
+      }).pipe(
+        Effect.provide(
+          layer({
+            workspaceRoot: serverRoot,
+            baseDir,
+            detectCalls,
+            threadWorkspace: { threadId, workspaceRoot: projectRoot, worktreePath: worktreeRoot },
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.cwd, worktreeRoot);
+      assert.deepStrictEqual(detectCalls, [{ cwd: worktreeRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("allows the project root registered to a thread without a worktree", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const serverRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-server-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const threadId = ThreadId.make("thread-review");
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const result = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ threadId, cwd: projectRoot });
+      }).pipe(
+        Effect.provide(
+          layer({
+            workspaceRoot: serverRoot,
+            baseDir,
+            detectCalls,
+            threadWorkspace: { threadId, workspaceRoot: projectRoot, worktreePath: null },
+          }),
+        ),
+      );
+
+      assert.strictEqual(result.cwd, projectRoot);
+      assert.deepStrictEqual(detectCalls, [{ cwd: projectRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("rejects a cwd that does not match the requesting thread workspace", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const serverRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-server-" });
+      const projectRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-project-" });
+      const worktreeRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-worktree-" });
+      const otherRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-other-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-review-base-" });
+      const threadId = ThreadId.make("thread-review");
+      const detectCalls: Array<{ readonly cwd: string }> = [];
+
+      const error = yield* Effect.gen(function* () {
+        const review = yield* ReviewService.ReviewService;
+        return yield* review.getDiffPreview({ threadId, cwd: otherRoot }).pipe(Effect.flip);
+      }).pipe(
+        Effect.provide(
+          layer({
+            workspaceRoot: serverRoot,
+            baseDir,
+            detectCalls,
+            threadWorkspace: { threadId, workspaceRoot: projectRoot, worktreePath: worktreeRoot },
+          }),
+        ),
+      );
+
+      assert.strictEqual(error._tag, "VcsRepositoryDetectionError");
+      assert.deepStrictEqual(detectCalls, []);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
   it.effect("rejects diff preview cwd outside the configured workspace roots", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

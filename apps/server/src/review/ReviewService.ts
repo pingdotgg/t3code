@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import {
@@ -18,6 +19,8 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as KnownWorkspaces from "../workspace/KnownWorkspaces.ts";
@@ -51,6 +54,8 @@ export const make = Effect.gen(function* () {
   const vcsRegistry = yield* VcsDriverRegistry.VcsDriverRegistry;
   const git = yield* GitVcsDriver.GitVcsDriver;
   const knownWorkspaces = yield* KnownWorkspaces.KnownWorkspaces;
+  const projectStore = yield* ProjectStore.ProjectStoreV2;
+  const threads = yield* ProjectionStore.ProjectionStoreV2;
 
   const canonicalizePath = (value: string) => {
     const resolvedPath = path.resolve(value);
@@ -74,7 +79,36 @@ export const make = Effect.gen(function* () {
   const assertWorkspaceBoundCwd = Effect.fn("ReviewService.assertWorkspaceBoundCwd")(function* (
     operation: keyof typeof WORKSPACE_BOUND_SUBJECTS,
     cwd: string,
+    threadId?: ReviewDiffPreviewInput["threadId"],
   ) {
+    if (threadId !== undefined) {
+      const registeredCwd = yield* Effect.gen(function* () {
+        const thread = yield* threads.getThread(threadId);
+        if (thread.deletedAt !== null) return null;
+        const project = yield* projectStore.get(thread.projectId);
+        return Option.isSome(project) ? (thread.worktreePath ?? project.value.workspaceRoot) : null;
+      }).pipe(
+        Effect.mapError(
+          (cause) =>
+            new VcsRepositoryDetectionError({
+              operation,
+              cwd,
+              detail: "Failed to resolve the registered workspace for the review thread.",
+              cause,
+            }),
+        ),
+      );
+      if (
+        registeredCwd !== null &&
+        (yield* canonicalizePath(cwd)) === (yield* canonicalizePath(registeredCwd))
+      )
+        return;
+      return yield* new VcsRepositoryDetectionError({
+        operation,
+        cwd,
+        detail: "Review cwd must match the workspace registered to the requesting thread.",
+      });
+    }
     const [candidate, workspaceRoot] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
@@ -113,7 +147,7 @@ export const make = Effect.gen(function* () {
   const getDiffPreview: ReviewService["Service"]["getDiffPreview"] = Effect.fn(
     "ReviewService.getDiffPreview",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd);
+    yield* assertWorkspaceBoundCwd("ReviewService.getDiffPreview", input.cwd, input.threadId);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (!handle) {
@@ -130,7 +164,7 @@ export const make = Effect.gen(function* () {
   const getDiffFileContents: ReviewService["Service"]["getDiffFileContents"] = Effect.fn(
     "ReviewService.getDiffFileContents",
   )(function* (input) {
-    yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd);
+    yield* assertWorkspaceBoundCwd("ReviewService.getDiffFileContents", input.cwd, input.threadId);
 
     const handle = yield* vcsRegistry.detect({ cwd: input.cwd, requestedKind: "auto" });
     if (handle?.kind !== "git") {

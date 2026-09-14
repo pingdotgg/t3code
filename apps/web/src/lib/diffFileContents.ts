@@ -11,12 +11,14 @@ import type {
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
   ReviewDiffPreviewSourceKind,
+  ThreadId,
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
 
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
   readonly cwd: string;
   readonly sourceKind: ReviewDiffPreviewSourceKind;
   readonly baseRef: string | null;
@@ -82,6 +84,7 @@ export function createGitDiffFileContentsLoader<E>(
     const result = await getDiffFileContents({
       environmentId: source.environmentId,
       input: {
+        threadId: source.threadId,
         cwd: source.cwd,
         sourceKind: source.sourceKind,
         changeType,
