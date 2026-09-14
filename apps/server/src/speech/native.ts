@@ -11,7 +11,7 @@ process.on("message", async (message) => {
   try {
     if (message.kind === "load") {
       const { TranscribeModel } = await import(message.moduleUrl);
-      model = await TranscribeModel.load(message.path, { backend: "cpu" });
+      model = await TranscribeModel.load(message.path, { backend: "auto" });
       process.send({ type: "t3-speech-reply", ok: true, supportsStreaming: model.capabilities.supportsStreaming });
     } else if (message.kind === "begin") {
       session = model.createSession();
