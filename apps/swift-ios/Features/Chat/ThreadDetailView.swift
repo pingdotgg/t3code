@@ -107,6 +107,7 @@ public struct ThreadDetailView: View {
         .task(id: thread.id) {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
+            await model.checkRewindRecovery(for: currentThread)
             guard !didRestoreDraft else { return }
             await restoreDraft(from: composerDraft, key: draftKey)
         }
@@ -308,6 +309,20 @@ public struct ThreadDetailView: View {
         attachments = recovered.attachments
         selection = recovered.selection
         didRestoreDraft = true
+    }
+
+    private func recoverSavedRewind() {
+        guard !isRewinding && !isSending && !isPreparingInput else { return }
+        isPreparingRewind = true
+        let pendingSave = draftSaveTask
+        pendingSave?.cancel()
+        draftSaveTask = nil
+        let saved = composerDraft
+        Task {
+            await pendingSave?.value
+            await model.recoverSavedRewind(threadID: thread.id, draft: saved)
+            isPreparingRewind = false
+        }
     }
 
     private var currentSelection: FeatureSelection? {
@@ -791,6 +806,16 @@ public struct ThreadDetailView: View {
                         .foregroundStyle(T3Colors.danger)
                         .padding(.horizontal, 18)
                         .padding(.vertical, 8)
+                }
+                if model.pendingRewindRecoveryIDs.contains(thread.id), !isRewinding {
+                    VStack(spacing: 4) {
+                        Text("A prompt is saved from an unconfirmed rewind. Reload the thread to check its history.")
+                            .font(T3Typography.supporting)
+                        Button("Recover saved prompt", action: recoverSavedRewind)
+                            .disabled(isSending || isPreparingInput || !didRestoreDraft)
+                    }
+                    .padding(.horizontal, 18)
+                    .padding(.vertical, 8)
                 }
                 FeatureComposerView(
                     text: $draft,

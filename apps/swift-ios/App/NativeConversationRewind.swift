@@ -30,7 +30,7 @@ enum NativeConversationRewind {
     /// Command acceptance precedes provider rollback. Wait for its completion event
     /// or an authoritative replacement snapshot, including while another thread is open.
     static func waitForCompletion(
-        events: AsyncThrowingStream<ThreadStreamItem, Error>,
+        batches: AsyncThrowingStream<[ThreadStreamItem], Error>,
         threadID: String,
         messageID: String,
         turnCount: Int,
@@ -40,35 +40,41 @@ enum NativeConversationRewind {
     ) async throws {
         try await withThrowingTaskGroup(of: Void.self) { group in
             group.addTask {
-                for try await item in events {
-                    switch item {
-                    case .synchronized:
-                        continue
-                    case let .snapshot(snapshot):
-                        guard snapshot.thread.id == threadID,
-                              snapshot.snapshotSequence > afterSequence else { continue }
-                        if let failure = snapshot.thread.activities.last(where: {
-                            $0.kind == "checkpoint.revert.failed" && !previousFailureIDs.contains($0.id)
-                        }) {
-                            throw FeatureConversationRewindError(
-                                message: failure.payload["detail"]?.stringValue ?? failure.summary
-                            )
+                for try await batch in batches {
+                    for item in batch {
+                        switch item {
+                        case .synchronized:
+                            continue
+                        case let .snapshot(snapshot):
+                            guard snapshot.thread.id == threadID,
+                                  snapshot.snapshotSequence > afterSequence else { continue }
+                            if isComplete(snapshot.thread, messageID: messageID, turnCount: turnCount) { return }
+                            if let failure = snapshot.thread.activities.last(where: {
+                                $0.kind == "checkpoint.revert.failed" && !previousFailureIDs.contains($0.id)
+                                    && $0.payload["turnCount"] == .number(Double(turnCount))
+                            }) {
+                                throw FeatureConversationRewindError(
+                                    message: failure.payload["detail"]?.stringValue ?? failure.summary,
+                                    didNotRevert: true
+                                )
+                            }
+                        case let .event(event):
+                            guard event["payload"]?["threadId"]?.stringValue == threadID,
+                                  case let .number(sequence)? = event["sequence"],
+                                  sequence > Double(afterSequence) else { continue }
+                            if event["type"]?.stringValue == "thread.activity-appended",
+                               let activity = event["payload"]?["activity"],
+                               activity["kind"]?.stringValue == "checkpoint.revert.failed",
+                               activity["payload"]?["turnCount"] == .number(Double(turnCount)) {
+                                throw FeatureConversationRewindError(
+                                    message: activity["payload"]?["detail"]?.stringValue
+                                        ?? activity["summary"]?.stringValue ?? "Conversation rewind failed.",
+                                    didNotRevert: true
+                                )
+                            }
+                            if event["type"]?.stringValue == "thread.reverted",
+                               event["payload"]?["turnCount"] == .number(Double(turnCount)) { return }
                         }
-                        if isComplete(snapshot.thread, messageID: messageID, turnCount: turnCount) { return }
-                    case let .event(event):
-                        guard event["payload"]?["threadId"]?.stringValue == threadID,
-                              case let .number(sequence)? = event["sequence"],
-                              sequence > Double(afterSequence) else { continue }
-                        if event["type"]?.stringValue == "thread.activity-appended",
-                           let activity = event["payload"]?["activity"],
-                           activity["kind"]?.stringValue == "checkpoint.revert.failed" {
-                            throw FeatureConversationRewindError(
-                                message: activity["payload"]?["detail"]?.stringValue
-                                    ?? activity["summary"]?.stringValue ?? "Conversation rewind failed."
-                            )
-                        }
-                        if event["type"]?.stringValue == "thread.reverted",
-                           event["payload"]?["turnCount"] == .number(Double(turnCount)) { return }
                     }
                 }
                 throw FeatureConversationRewindError(message: "The connection closed before rewind finished. Reload the thread before trying again.")

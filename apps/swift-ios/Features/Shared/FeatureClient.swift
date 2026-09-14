@@ -86,7 +86,10 @@ public protocol FeatureClient: AnyObject {
     func cancelTurn(threadID: String) async throws
     func canRewindConversation(threadID: String, messageID: String) -> Bool
     /// Returns only after provider history is rewound. Attachment bytes are copied first.
-    func rewindConversation(threadID: String, messageID: String) async throws -> FeatureRevertedMessage
+    func rewindConversation(
+        threadID: String, messageID: String,
+        prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
+    ) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws
     func resolveUserInput(
         id: String, answers: [String: FeatureInputAnswer],
@@ -242,7 +245,10 @@ public extension FeatureClient {
     }
     func canRewindConversation(threadID: String, messageID: String) -> Bool { false }
 
-    func rewindConversation(threadID: String, messageID: String) async throws -> FeatureRevertedMessage {
+    func rewindConversation(
+        threadID: String, messageID: String,
+        prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
+    ) async throws {
         throw FeatureCapabilityUnavailable("Conversation rewind")
     }
 

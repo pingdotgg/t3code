@@ -337,6 +337,43 @@ public actor FeatureComposerDraftStore {
         loadedDrafts = drafts
     }
 
+    public static func rewindRecoveryKey(for threadKey: String) -> String {
+        threadKey + ":rewind-recovery"
+    }
+
+    /// Moving recovery into the composer is one disk write. A crash cannot
+    /// leave the same recovered message available to append a second time.
+    public func consumeRewindRecovery(for threadKey: String) throws -> FeatureComposerDraft? {
+        var drafts = try loadIfNeeded()
+        let recoveryKey = Self.rewindRecoveryKey(for: threadKey)
+        guard let recovery = drafts[recoveryKey]?.featureValue(fileStore: attachmentFileStore) else { return nil }
+        let current = drafts[threadKey]?.featureValue(fileStore: attachmentFileStore) ?? FeatureComposerDraft()
+        guard current.attachments.count + recovery.attachments.count <= 8 else {
+            throw FeatureConversationRewindError(message: "Make room for the saved prompt's attachments before recovering it.")
+        }
+        let recovered = FeatureConversationRewind.merge(recovery: recovery, into: current)
+        var persisted = PersistedDraft(recovered)
+        persisted.importedShareIDs = drafts[threadKey]?.importedShareIDs
+        drafts[threadKey] = persisted
+        drafts.removeValue(forKey: recoveryKey)
+        try persist(drafts)
+        loadedDrafts = drafts
+        return recovered
+    }
+
+    /// Call only when the command was rejected or never sent. Recovery copies
+    /// have fresh IDs and are not shared with the outbox or existing drafts.
+    public func discardRewindRecovery(for threadKey: String) throws {
+        let recoveryKey = Self.rewindRecoveryKey(for: threadKey)
+        let attachments = try loadIfNeeded()[recoveryKey]?.attachments ?? []
+        try removeDraft(for: recoveryKey)
+        for attachment in attachments {
+            if let fileName = attachment.ownedFileName {
+                try? attachmentFileStore.removeOwnedFile(fileName: fileName)
+            }
+        }
+    }
+
     public func removeDrafts(
         environmentID: String,
         logicalProjectIDs: Set<String> = []

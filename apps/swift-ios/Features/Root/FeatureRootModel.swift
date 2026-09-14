@@ -73,6 +73,7 @@ public final class FeatureRootModel {
     public private(set) var rewindingThreadIDs: Set<String> = []
     public private(set) var recoveredRewindDrafts: [String: FeatureComposerDraft] = [:]
     public private(set) var rewindErrors: [String: String] = [:]
+    public private(set) var pendingRewindRecoveryIDs: Set<String> = []
     /// Approval and question IDs with a response in flight. Views disable
     /// only that request, not every request in every thread.
     public private(set) var resolvingRequestIDs: Set<String> = []
@@ -896,6 +897,7 @@ public final class FeatureRootModel {
 
     public func canRewindConversation(threadID: String, messageID: String) -> Bool {
         guard !rewindingThreadIDs.contains(threadID),
+              !pendingRewindRecoveryIDs.contains(threadID),
               activeSubmissionCounts[threadID] == nil,
               let detail = details[threadID],
               FeatureConversationRewind.canStart(in: detail),
@@ -924,25 +926,78 @@ public final class FeatureRootModel {
         rewindErrors[threadID] = nil
         recoveredRewindDrafts[threadID] = nil
         defer { rewindingThreadIDs.remove(threadID) }
+        let key = FeatureComposerDraftStore.threadKey(detail.thread)
+        let recoveryKey = FeatureComposerDraftStore.rewindRecoveryKey(for: key)
         do {
-            let key = FeatureComposerDraftStore.threadKey(detail.thread)
-            try await draftStore.setDraft(draft, for: key)
-            let reverted = try await client.rewindConversation(threadID: threadID, messageID: messageID)
-            let recovered = FeatureConversationRewind.recover(reverted, draft: draft)
-            recoveredRewindDrafts[threadID] = recovered
-            do {
-                try await draftStore.setDraft(recovered, for: key)
-                if let environmentID = detail.thread.environmentID {
-                    attachmentUploads.syncOwner(
-                        draftKey: key, environmentID: environmentID, attachments: recovered.attachments
-                    )
-                }
-            } catch {
-                rewindErrors[threadID] = "Rewind finished, but the draft could not be saved. \(error.localizedDescription)"
+            guard try await draftStore.draft(for: recoveryKey) == nil else {
+                pendingRewindRecoveryIDs.insert(threadID)
+                rewindErrors[threadID] = "Recover the saved prompt before starting another rewind."
+                return
             }
+            try await draftStore.setDraft(draft, for: key)
+            try await client.rewindConversation(threadID: threadID, messageID: messageID) { reverted in
+                guard self.snapshot.environments.contains(where: { $0.id == detail.thread.environmentID }) else {
+                    throw FeatureConversationRewindError(message: "The computer was removed before rewind started.", didNotRevert: true)
+                }
+                let recovery = FeatureConversationRewind.recover(reverted, draft: FeatureComposerDraft())
+                try await self.draftStore.setDraft(recovery, for: recoveryKey)
+                self.pendingRewindRecoveryIDs.insert(threadID)
+            }
+            try await finishRewindRecovery(thread: detail.thread)
+        } catch {
+            rewindErrors[threadID] = error.localizedDescription
+            if (error as? FeatureConversationRewindError)?.didNotRevert == true {
+                do {
+                    try await draftStore.discardRewindRecovery(for: key)
+                    pendingRewindRecoveryIDs.remove(threadID)
+                } catch {
+                    rewindErrors[threadID] = "The saved prompt could not be cleared. \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    public func checkRewindRecovery(for thread: FeatureThread) async {
+        guard !rewindingThreadIDs.contains(thread.id) else { return }
+        do {
+            let key = FeatureComposerDraftStore.rewindRecoveryKey(for: FeatureComposerDraftStore.threadKey(thread))
+            let saved = try await draftStore.draft(for: key)
+            guard !rewindingThreadIDs.contains(thread.id) else { return }
+            if saved != nil { pendingRewindRecoveryIDs.insert(thread.id) }
+            else { pendingRewindRecoveryIDs.remove(thread.id) }
+        } catch {
+            rewindErrors[thread.id] = "Could not read the saved rewind prompt. \(error.localizedDescription)"
+        }
+    }
+
+    /// Recovery changes only the local composer. It never sends another rewind.
+    public func recoverSavedRewind(threadID: String, draft: FeatureComposerDraft) async {
+        guard let thread = details[threadID]?.thread ?? snapshot.threads.first(where: { $0.id == threadID }),
+              rewindingThreadIDs.insert(threadID).inserted else { return }
+        defer { rewindingThreadIDs.remove(threadID) }
+        do {
+            try await draftStore.setDraft(draft, for: FeatureComposerDraftStore.threadKey(thread))
+            try await finishRewindRecovery(thread: thread)
         } catch {
             rewindErrors[threadID] = error.localizedDescription
         }
+    }
+
+    private func finishRewindRecovery(thread: FeatureThread) async throws {
+        guard snapshot.environments.contains(where: { $0.id == thread.environmentID }) else { return }
+        let key = FeatureComposerDraftStore.threadKey(thread)
+        if let recovered = try await draftStore.consumeRewindRecovery(for: key) {
+            guard snapshot.environments.contains(where: { $0.id == thread.environmentID }) else {
+                try await draftStore.removeDraft(for: key)
+                return
+            }
+            recoveredRewindDrafts[thread.id] = recovered
+            if let environmentID = thread.environmentID {
+                attachmentUploads.syncOwner(draftKey: key, environmentID: environmentID, attachments: recovered.attachments)
+            }
+        }
+        pendingRewindRecoveryIDs.remove(thread.id)
+        rewindErrors[thread.id] = nil
     }
 
     public func consumeRewindDraft(threadID: String) -> FeatureComposerDraft? {
@@ -1277,6 +1332,12 @@ public final class FeatureRootModel {
 
     private func install(_ value: FeatureSnapshot) {
         var value = value
+        let environmentIDs = Set(value.environments.map(\.id))
+        for thread in snapshot.threads where thread.environmentID.map({ !environmentIDs.contains($0) }) == true {
+            recoveredRewindDrafts[thread.id] = nil
+            pendingRewindRecoveryIDs.remove(thread.id)
+            rewindErrors[thread.id] = nil
+        }
         if settingsWriteTask != nil {
             // A shell refresh can still contain the settings from before a
             // queued write. Keep both the visible choice and its rollback point.

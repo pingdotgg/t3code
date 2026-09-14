@@ -12,6 +12,7 @@ public struct FeatureRevertedMessage: Sendable {
 
 struct FeatureConversationRewindError: LocalizedError {
     let message: String
+    var didNotRevert = false
     var errorDescription: String? { message }
 }
 
@@ -28,14 +29,22 @@ enum FeatureConversationRewind {
 
     /// Append recovered input without changing the current model or workspace.
     static func recover(_ reverted: FeatureRevertedMessage, draft: FeatureComposerDraft) -> FeatureComposerDraft {
-        var recovered = draft
         let original = reverted.message.text
-        let prompt = original == "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]"
+        let prompt = !reverted.attachments.isEmpty
+            && original == "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]"
             ? "" : original
-        if !prompt.isEmpty {
-            recovered.text = draft.text.isEmpty ? prompt : draft.text + "\n\n" + prompt
+        return merge(
+            recovery: FeatureComposerDraft(text: prompt, attachments: reverted.attachments),
+            into: draft
+        )
+    }
+
+    static func merge(recovery: FeatureComposerDraft, into draft: FeatureComposerDraft) -> FeatureComposerDraft {
+        var recovered = draft
+        if !recovery.text.isEmpty {
+            recovered.text = draft.text.isEmpty ? recovery.text : draft.text + "\n\n" + recovery.text
         }
-        recovered.attachments.append(contentsOf: reverted.attachments)
+        recovered.attachments.append(contentsOf: recovery.attachments)
         return recovered
     }
 }

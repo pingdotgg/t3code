@@ -2329,7 +2329,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return NativeConversationRewind.turnCount(before: messageID, in: thread) != nil
     }
 
-    func rewindConversation(threadID: String, messageID: String) async throws -> FeatureRevertedMessage {
+    func rewindConversation(
+        threadID: String, messageID: String,
+        prepareRecovery: @MainActor (FeatureRevertedMessage) async throws -> Void
+    ) async throws {
         let route = try threadRoute(for: threadID)
         let generation = environmentGeneration
         // The visible page can omit checkpoints. Validate against the whole thread.
@@ -2349,9 +2352,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         let message = mapMessage(original, environmentID: route.environmentID)
         let fileStore = ManagedAttachmentFileStore()
         var attachments: [FeatureDraftAttachment] = []
-        var completed = false
+        var recoveryIsStored = false
         defer {
-            if !completed {
+            if !recoveryIsStored {
                 for attachment in attachments {
                     if let file = attachment.ownedFile {
                         try? fileStore.removeOwnedFile(fileName: file.fileName)
@@ -2378,16 +2381,23 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 id: id, ownedFile: file, filename: attachment.name, mimeType: attachment.mimeType
             ))
         }
-        try Task.checkCancellation()
-        guard isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
-            throw CancellationError()
+        try await prepareRecovery(FeatureRevertedMessage(message: message, attachments: attachments))
+        recoveryIsStored = true
+        let subscription: (events: AsyncThrowingStream<[ThreadStreamItem], Error>, connectionID: UUID)
+        do {
+            try Task.checkCancellation()
+            guard isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
+                throw CancellationError()
+            }
+            subscription = try await route.client.threadEventBatches(
+                threadID: route.wireID, after: snapshot.snapshotSequence
+            )
+        } catch {
+            throw FeatureConversationRewindError(message: error.localizedDescription, didNotRevert: true)
         }
-        let subscription = try await route.client.threadEvents(
-            threadID: route.wireID, after: snapshot.snapshotSequence
-        )
         let completion = Task {
             try await NativeConversationRewind.waitForCompletion(
-                events: subscription.events,
+                batches: subscription.events,
                 threadID: route.wireID,
                 messageID: messageID,
                 turnCount: turnCount,
@@ -2398,11 +2408,33 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
         }
         defer { completion.cancel() }
-        _ = try await route.client.dispatch(OrchestrationCommands.revertConversation(
-            threadID: route.wireID, turnCount: turnCount
-        ))
-        try await completion.value
-        completed = true
+        do {
+            do {
+                _ = try await route.client.dispatch(OrchestrationCommands.revertConversation(
+                    threadID: route.wireID, turnCount: turnCount
+                ))
+            } catch let error as RPCError {
+                if case .remote = error {
+                    throw FeatureConversationRewindError(message: error.localizedDescription, didNotRevert: true)
+                }
+                throw error
+            } catch let error as HTTPError {
+                if case let .status(code, _, _) = error, (400..<500).contains(code) {
+                    throw FeatureConversationRewindError(message: error.localizedDescription, didNotRevert: true)
+                }
+                throw error
+            }
+            try await completion.value
+        } catch {
+            if (error as? FeatureConversationRewindError)?.didNotRevert == true { throw error }
+            // A lost socket does not mean rollback failed. An HTTP read can
+            // confirm completion without submitting the destructive command again.
+            guard let current = try? await route.client.threadSnapshot(id: route.wireID),
+                  current.snapshotSequence > snapshot.snapshotSequence,
+                  NativeConversationRewind.isComplete(current.thread, messageID: messageID, turnCount: turnCount) else {
+                throw error
+            }
+        }
         // Do not turn a failed refresh into a failed rewind. The receipt confirms
         // that history changed, so the recovered prompt must still reach the draft.
         threadResumeStates[route.uiID] = nil
@@ -2411,7 +2443,6 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         } catch {
             continuation.yield(.threadSync(id: route.uiID, state: .failed(error.localizedDescription)))
         }
-        return FeatureRevertedMessage(message: message, attachments: attachments)
     }
 
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws {

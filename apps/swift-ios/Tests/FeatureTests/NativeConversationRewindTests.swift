@@ -69,11 +69,20 @@ struct NativeConversationRewindTests {
     }
 
     @Test
+    func literalBootstrapSentenceWithoutAttachmentsIsPreserved() {
+        let message = FeatureMessage(id: "user", role: .user, text: "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]")
+        let result = FeatureConversationRewind.recover(.init(message: message, attachments: []), draft: .init())
+        #expect(result.text == message.text)
+    }
+
+    @Test
     func completionIgnoresOldAndUnrelatedEvents() async throws {
-        let stream = AsyncThrowingStream<ThreadStreamItem, Error>.makeStream()
-        stream.continuation.yield(.event(event("thread.reverted", sequence: 10, threadID: "thread", turnCount: 0)))
-        stream.continuation.yield(.event(event("thread.reverted", sequence: 11, threadID: "other", turnCount: 0)))
-        stream.continuation.yield(.event(event("thread.reverted", sequence: 12, threadID: "thread", turnCount: 2)))
+        let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
+        stream.continuation.yield([
+            .event(event("thread.reverted", sequence: 10, threadID: "thread", turnCount: 0)),
+            .event(event("thread.reverted", sequence: 11, threadID: "other", turnCount: 0)),
+            .event(event("thread.reverted", sequence: 12, threadID: "thread", turnCount: 2)),
+        ])
         stream.continuation.finish()
         do {
             try await wait(stream.stream)
@@ -85,24 +94,24 @@ struct NativeConversationRewindTests {
 
     @Test
     func completionAcceptsTheRevertedEvent() async throws {
-        let stream = AsyncThrowingStream<ThreadStreamItem, Error>.makeStream()
-        stream.continuation.yield(.event(event("thread.reverted", sequence: 11, threadID: "thread", turnCount: 0)))
+        let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
+        stream.continuation.yield([.event(event("thread.reverted", sequence: 11, threadID: "thread", turnCount: 0))])
         try await wait(stream.stream)
     }
 
     @Test
     func providerFailureDoesNotBecomeSuccessfulRecovery() async throws {
-        let stream = AsyncThrowingStream<ThreadStreamItem, Error>.makeStream()
-        stream.continuation.yield(.event(.object([
+        let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
+        stream.continuation.yield([.event(.object([
             "type": .string("thread.activity-appended"), "sequence": .number(11),
             "payload": .object([
                 "threadId": .string("thread"),
                 "activity": .object([
                     "kind": .string("checkpoint.revert.failed"),
-                    "payload": .object(["detail": .string("History boundary is unavailable")]),
+                    "payload": .object(["detail": .string("History boundary is unavailable"), "turnCount": .number(0)]),
                 ]),
             ]),
-        ])))
+        ]))])
         do {
             try await wait(stream.stream)
             Issue.record("Provider failure must reject the rewind")
@@ -113,14 +122,14 @@ struct NativeConversationRewindTests {
 
     @Test
     func replacementSnapshotConfirmsHistoryWasRemoved() async throws {
-        let stream = AsyncThrowingStream<ThreadStreamItem, Error>.makeStream()
-        stream.continuation.yield(.snapshot(.init(snapshotSequence: 11, thread: thread(), page: nil)))
+        let stream = AsyncThrowingStream<[ThreadStreamItem], Error>.makeStream()
+        stream.continuation.yield([.snapshot(.init(snapshotSequence: 11, thread: thread(), page: nil))])
         try await wait(stream.stream)
     }
 
-    private func wait(_ events: AsyncThrowingStream<ThreadStreamItem, Error>) async throws {
+    private func wait(_ events: AsyncThrowingStream<[ThreadStreamItem], Error>) async throws {
         try await NativeConversationRewind.waitForCompletion(
-            events: events, threadID: "thread", messageID: "user", turnCount: 0,
+            batches: events, threadID: "thread", messageID: "user", turnCount: 0,
             afterSequence: 10, previousFailureIDs: []
         )
     }
