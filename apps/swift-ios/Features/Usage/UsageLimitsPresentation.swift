@@ -149,7 +149,7 @@ enum UsageLimitsPresentation {
     }
 }
 
-enum UsageLimitPace: Equatable {
+enum UsageLimitPace: Equatable, Sendable {
     case ahead
     case on
     case under

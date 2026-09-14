@@ -1,0 +1,123 @@
+import Foundation
+import Testing
+@testable import T3Code
+
+@Suite("Subscription usage widget snapshots")
+struct PlatformSubscriptionUsageTests {
+    @Test
+    func publishesOnePooledQuotaWithoutAccountOrEnvironmentIdentity() throws {
+        let environments = [
+            FeatureEnvironmentUsageLimits(environmentID: "private-server", label: "Private machine", providers: [
+                try UsageLimitTestFixtures.provider(email: "private@example.com", used: 80),
+            ]),
+            .init(environmentID: "other-server", label: "Other machine", providers: [
+                try UsageLimitTestFixtures.provider(email: "private@example.com", used: 80),
+                try UsageLimitTestFixtures.provider(id: "second", email: "second@example.com", used: 20),
+            ]),
+        ]
+        let snapshot = PlatformSubscriptionUsageSnapshot.make(environments)
+        let provider = try #require(snapshot.providers.first)
+        #expect(provider.accountCount == 2)
+        #expect(provider.windows.first?.remaining == 50)
+        #expect(provider.detail(at: UsageLimitTestFixtures.now) == "2 accounts · pooled")
+        let data = try JSONEncoder().encode(snapshot)
+        let text = try #require(String(data: data, encoding: .utf8))
+        #expect(!text.contains("example.com"))
+        #expect(!text.contains("private-server"))
+        #expect(!text.contains("Private machine"))
+        #expect(try JSONDecoder().decode(T3SubscriptionUsageSnapshot.self, from: data) == snapshot)
+    }
+
+    @Test
+    func timelineExpiresAtOldestCheckOrNextResetWithoutInventingFreshQuota() throws {
+        let now = UsageLimitTestFixtures.now
+        let limits = UsageLimitTestFixtures.limits(windows: [
+            .init(id: "primary", kind: .session, label: "Session", usedPercent: 80, resetsAt: "2026-09-13T12:05:00Z"),
+        ])
+        let snapshot = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(limits: limits),
+        ])])
+        let provider = try #require(snapshot.providers.first)
+        #expect(provider.expiresAt == now.addingTimeInterval(5 * 60))
+        #expect(snapshot.timelineDates(from: now) == [now, now.addingTimeInterval(5 * 60)])
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: now).count == 1)
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: now.addingTimeInterval(5 * 60)).isEmpty)
+        #expect(provider.detail(at: now.addingTimeInterval(5 * 60)) == "Open T3 to refresh")
+        #expect(provider.windows.first?.remaining == 20)
+        #expect(snapshot.timelineDates(from: now.addingTimeInterval(20 * 60)) == [now.addingTimeInterval(20 * 60)])
+    }
+
+    @Test
+    func freshAccountCannotHideAnOlderAccountsExpiredSnapshot() throws {
+        let snapshot = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(id: "old", email: "old@example.com", limits: UsageLimitTestFixtures.limits(checkedAt: "2026-09-13T11:44:00Z")),
+            try UsageLimitTestFixtures.provider(id: "fresh", email: "fresh@example.com"),
+        ])])
+        let provider = try #require(snapshot.providers.first)
+        #expect(provider.expiresAt == UsageLimitTestFixtures.now.addingTimeInterval(-60))
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: UsageLimitTestFixtures.now).isEmpty)
+    }
+
+    @Test
+    func missingAndInvalidChecksNeverShowPercentages() throws {
+        let empty = PlatformSubscriptionUsageSnapshot.make([])
+        #expect(empty.providers.map(\.name) == ["Codex", "Claude"])
+        #expect(empty.checkedAt == nil)
+        #expect(empty.providers.allSatisfy { !$0.isFresh(at: UsageLimitTestFixtures.now) })
+        let invalid = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(limits: UsageLimitTestFixtures.limits(checkedAt: "invalid")),
+        ])])
+        #expect(invalid.providers.first?.expiresAt == nil)
+        #expect(invalid.providers.first?.detail(at: UsageLimitTestFixtures.now) == "Open T3 to refresh")
+    }
+
+    @Test
+    func pendingAndFailedEnvironmentsMarkAnOtherwiseFreshPoolAsPartial() throws {
+        let current = FeatureEnvironmentUsageLimits(environmentID: "a", label: "A", providers: [try UsageLimitTestFixtures.provider()])
+        for other in [
+            FeatureEnvironmentUsageLimits(environmentID: "pending", label: "Pending", isPending: true),
+            FeatureEnvironmentUsageLimits(environmentID: "failed", label: "Failed", isConnected: false, errorMessage: "Offline"),
+        ] {
+            let snapshot = PlatformSubscriptionUsageSnapshot.make([current, other])
+            let provider = try #require(snapshot.providers.first)
+            #expect(provider.hasPartialData)
+            #expect(provider.detail(at: UsageLimitTestFixtures.now) == "Some limits unavailable")
+            #expect(provider.windows.first?.remaining == 80)
+        }
+    }
+
+    @Test
+    func storageBudgetRetainsSessionAndWeeklyAndSelectionsStayIndependent() throws {
+        let windows: [ServerProviderUsageWindow] = (0..<8).map {
+            .init(id: "other-\($0)", kind: .other, label: "Other \($0)", usedPercent: Double(90 - $0))
+        } + [
+            .init(id: "session", kind: .session, label: "Session", usedPercent: 10),
+            .init(id: "weekly", kind: .weekly, label: "Weekly", usedPercent: 20),
+        ]
+        let snapshot = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(limits: UsageLimitTestFixtures.limits(windows: windows)),
+        ])])
+        let provider = try #require(snapshot.providers.first)
+        #expect(provider.windows.count == 6)
+        #expect(provider.totalWindows == 10)
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: UsageLimitTestFixtures.now).map(\.kind) == ["session", "weekly"])
+        #expect(provider.visibleWindows(period: "session", limit: 2, at: UsageLimitTestFixtures.now).map(\.kind) == ["session"])
+        #expect(provider.visibleWindows(period: "weekly", limit: 2, at: UsageLimitTestFixtures.now).map(\.kind) == ["weekly"])
+        #expect(provider.visibleWindows(period: "both", limit: 2, at: UsageLimitTestFixtures.now, tightestOnly: true).first?.remaining == 10)
+        #expect(snapshot.providers.last?.windows.isEmpty == true)
+    }
+
+    @Test
+    func sameProviderWithDifferentWindowKindsDoesNotPoolMonthlyIntoSession() throws {
+        let snapshot = PlatformSubscriptionUsageSnapshot.make([.init(environmentID: "a", label: "A", providers: [
+            try UsageLimitTestFixtures.provider(id: "paid", limits: UsageLimitTestFixtures.limits(used: 80)),
+            try UsageLimitTestFixtures.provider(id: "free", limits: UsageLimitTestFixtures.limits(windows: [
+                .init(id: "primary", kind: .monthly, label: "Monthly", usedPercent: 0),
+            ])),
+        ])])
+        let provider = try #require(snapshot.providers.first)
+        #expect(provider.windows.count == 2)
+        #expect(provider.windows.first(where: { $0.kind == "session" })?.remaining == 20)
+        #expect(provider.windows.first(where: { $0.kind == "monthly" })?.remaining == 100)
+    }
+}

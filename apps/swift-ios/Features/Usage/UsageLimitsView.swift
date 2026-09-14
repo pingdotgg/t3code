@@ -9,6 +9,8 @@ struct UsageLimitsView: View {
 
     @State private var environments: [FeatureEnvironmentUsageLimits] = []
     @State private var groups: [UsageLimitsGroup] = []
+    @State private var pools: [UsageLimitPool] = []
+    @State private var showEnvironments = false
     @State private var hasSnapshot = false
     @State private var isRefreshing = false
     @State private var streamError: String?
@@ -29,6 +31,11 @@ struct UsageLimitsView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 24) {
+                Picker("Limits grouping", selection: $showEnvironments) {
+                    Text("Pooled").tag(false)
+                    Text("By environment").tag(true)
+                }
+                .pickerStyle(.segmented)
                 if let streamError { notice(streamError) }
                 if let refreshError { notice(refreshError) }
                 if isRefreshing {
@@ -49,9 +56,19 @@ struct UsageLimitsView: View {
                     } description: {
                         Text("Connect an environment to see subscription limits.")
                     }
-                } else {
+                } else if showEnvironments {
                     ForEach(groups) { group in
                         environmentSection(group)
+                    }
+                } else {
+                    ForEach(Array(UsageLimitPooling.notices(environments).enumerated()), id: \.offset) { _, message in
+                        notice(message)
+                    }
+                    ForEach(pools) { pool in
+                        pooledSection(pool)
+                    }
+                    if pools.isEmpty {
+                        notice("No provider reports subscription limits.")
                     }
                 }
             }
@@ -90,6 +107,79 @@ struct UsageLimitsView: View {
                 streamError = "Could not load live limits. Refresh to check the latest values."
             }
         }
+    }
+
+    private func pooledSection(_ pool: UsageLimitPool) -> some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(UsageLimitsPresentation.providerLabel(driver: pool.driver))
+                    .font(T3Typography.threadHeading3)
+                Spacer()
+                Text("\(pool.accounts.count) \(pool.accounts.count == 1 ? "account" : "accounts")")
+                    .font(T3Typography.supporting)
+                    .foregroundStyle(T3Colors.textSecondary)
+            }
+            ForEach(pool.windows) { window in
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text(window.label)
+                        Spacer()
+                        Text("\(window.remainingPercent)% left").monospacedDigit()
+                    }
+                    .font(T3Typography.supporting)
+                    GeometryReader { geometry in
+                        ZStack(alignment: .leading) {
+                            Rectangle().fill(T3Colors.subtleStrong)
+                            Rectangle().fill(window.remainingPercent <= 10 ? T3Colors.danger : T3Colors.textPrimary)
+                                .frame(width: geometry.size.width * Double(window.remainingPercent) / 100)
+                        }
+                    }
+                    .frame(height: 6)
+                    .accessibilityHidden(true)
+                    HStack {
+                        if let pace = window.pace { Text(pace.label) }
+                        Spacer()
+                        if let reset = window.resets.first {
+                            Text("Next reset \(reset.at.formatted(date: .abbreviated, time: .shortened))")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(T3Colors.textSecondary)
+                }
+                .accessibilityElement(children: .combine)
+            }
+            ForEach(pool.accounts) { account in
+                DisclosureGroup {
+                    UsageLimitsAccountView(
+                        driver: account.driver, instanceID: account.id,
+                        label: account.label, detail: account.plan,
+                        limits: account.limits, now: now
+                    )
+                    if let credits = account.limits.resetCredits {
+                        if let redeem = account.redeem {
+                            UsageResetCreditsView(
+                                client: client, environmentID: redeem.environmentID,
+                                input: redeem.input, isConnected: redeem.isConnected,
+                                credits: credits, now: now,
+                                state: resetState(environmentID: redeem.target.environmentID, account: redeem.target.account)
+                            )
+                        } else {
+                            notice(UsageLimitsMath.creditSummary(credits, now: now))
+                        }
+                    }
+                } label: {
+                    VStack(alignment: .leading, spacing: 2) {
+                        UsageAccountLabel(value: account.label)
+                            .font(T3Typography.control)
+                        Text(account.locationLabel)
+                            .font(T3Typography.supporting)
+                            .foregroundStyle(T3Colors.textSecondary)
+                    }
+                }
+                .tint(T3Colors.textPrimary)
+            }
+        }
+        .foregroundStyle(T3Colors.textPrimary)
     }
 
     private func environmentSection(_ group: UsageLimitsGroup) -> some View {
@@ -207,6 +297,7 @@ struct UsageLimitsView: View {
         groups = UsageLimitsPresentation.groups(environments)
         hasSnapshot = true
         now = Date()
+        pools = UsageLimitPooling.pools(UsageLimitPooling.accounts(environments), now: now)
         let ids = Set(snapshot.map(\.environmentID))
         refreshErrors = refreshErrors.filter { ids.contains($0.key) }
     }

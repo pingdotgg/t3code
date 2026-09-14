@@ -42,8 +42,14 @@ struct UsageModelTotals: Identifiable, Equatable {
     let totalTokens: Int
     let records: Int
     let costShare: Double
+    var unpricedRecords = 0
 
     var id: String { "\(provider.rawValue):\(model)" }
+    var isCostUnknown: Bool { records > 0 && unpricedRecords >= records }
+    var costLabel: String { isCostUnknown ? "Unpriced" : UsageFormat.usd(costUsd) }
+    var costShareLabel: String {
+        isCostUnknown ? "No known rates" : "\(UsageFormat.percent(costShare)) of cost"
+    }
 }
 
 struct UsageProviderValue: Equatable {
@@ -237,6 +243,7 @@ enum UsageMerger {
         var costUsd = 0.0
         var totalTokens = 0
         var records = 0
+        var unpricedRecords = 0
     }
 
     private struct DailyAccumulator {
@@ -312,6 +319,7 @@ enum UsageMerger {
                 model.costUsd += bucket.costUsd
                 model.totalTokens += tokens
                 model.records += bucket.records
+                model.unpricedRecords += bucket.unpricedRecords
                 models[modelKey] = model
 
                 var day = daily[bucket.day] ?? DailyAccumulator()
@@ -360,7 +368,8 @@ enum UsageMerger {
                 costUsd: totals.costUsd,
                 totalTokens: totals.totalTokens,
                 records: totals.records,
-                costShare: result.costUsd == 0 ? 0 : totals.costUsd / result.costUsd
+                costShare: result.costUsd == 0 ? 0 : totals.costUsd / result.costUsd,
+                unpricedRecords: totals.unpricedRecords
             )
         }
         .sorted {

@@ -5,6 +5,13 @@ import Testing
 @Suite("Platform deep links")
 struct PlatformDeepLinkTests {
     @Test
+    func subscriptionWidgetOpensLimitsWithTheCurrentAppScheme() throws {
+        let url = try #require(URL(string: "\(T3SharedContainer.urlScheme)://usage/limits"))
+        #expect(try PlatformDeepLinkParser.parse(url) == .usageLimits)
+        #expect(PlatformRoute.usageLimits.url == url)
+    }
+
+    @Test
     func parsesWidgetThreadRoute() throws {
         let route = try PlatformDeepLinkParser.parse(
             "t3code://threads/environment-1/thread-7"
@@ -66,6 +73,7 @@ struct PlatformDeepLinkTests {
     @Test
     func routeURLsRoundTrip() throws {
         let routes: [PlatformRoute] = [
+            .usageLimits,
             .environment(id: "environment 1"),
             .project(environmentID: "environment 1", projectID: "project/1"),
             .thread(environmentID: "environment 1", threadID: "thread 1"),

@@ -13,6 +13,7 @@ struct PlatformRootView: View {
     @State private var incomingShareNeedsProject = false
     @State private var importedShareProjectID: String?
     @State private var recentThreadsPersistenceTask: Task<Void, Never>?
+    @State private var subscriptionUsage = PlatformSubscriptionUsageCoordinator()
 
     init(model: FeatureRootModel) {
         self.model = model
@@ -39,6 +40,13 @@ struct PlatformRootView: View {
         })
         .onOpenURL { url in
             handle(url: url, letOnboardingConfirmConnection: true)
+        }
+        .task(id: subscriptionUsageKey) {
+            guard subscriptionUsageKey.isActive else { return }
+            await subscriptionUsage.observe(
+                client: model.client,
+                environmentIDs: subscriptionUsageKey.environments.map(\.id)
+            )
         }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
             guard let url = activity.webpageURL else { return }
@@ -132,6 +140,13 @@ struct PlatformRootView: View {
     ) -> Bool {
         guard !isSigningOut, let previousAccountID else { return false }
         return previousAccountID != accountID
+    }
+
+    private var subscriptionUsageKey: PlatformSubscriptionUsageObservationKey {
+        .init(
+            isActive: scenePhase == .active && !model.isLoading,
+            environments: model.snapshot.environments.filter(\.isEnabled)
+        )
     }
 
     private var incomingShareProjects: [FeatureProject] {
@@ -274,6 +289,8 @@ struct PlatformRootView: View {
     @MainActor
     private func consume(_ route: PlatformRoute) async {
         switch route {
+        case .usageLimits:
+            navigationRequest = FeatureWorkspaceNavigationRequest(destination: .usageLimits)
         case let .connection(endpoint, token):
             if await model.pair(endpoint: endpoint, token: token) {
                 PlatformHapticEngine.shared.emit(

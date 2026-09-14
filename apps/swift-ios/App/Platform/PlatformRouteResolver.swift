@@ -40,6 +40,8 @@ enum PlatformInAppLinkRouter {
         guard let route = try? PlatformDeepLinkParser.parse(url) else { return nil }
 
         switch route {
+        case .usageLimits:
+            return route
         case .connection:
             return nil
         case let .thread(environmentID, threadID):

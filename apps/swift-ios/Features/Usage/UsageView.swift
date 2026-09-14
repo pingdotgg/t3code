@@ -26,10 +26,12 @@ public struct UsageView: View {
     @State private var metric = UsageMetric.cost
     @State private var breakdown = UsageBreakdown.model
     @State private var tab = UsageTab.usage
+    @State private var hasActivatedUsage = false
     @State private var resetCreditStates: [UsageResetCreditTarget: UsageResetCreditState] = [:]
 
-    public init(client: any FeatureClient) {
+    public init(client: any FeatureClient, initiallyShowsLimits: Bool = false) {
         self.client = client
+        _tab = State(initialValue: initiallyShowsLimits ? .limits : .usage)
     }
 
     private var windowInput: UsageSummaryInput { loadState.windowInput }
@@ -89,7 +91,11 @@ public struct UsageView: View {
             }
         }
         .t3NavigationChrome()
-        .task(id: loadState.windowDays) {
+        .onChange(of: tab, initial: true) { _, selected in
+            if selected == .usage { hasActivatedUsage = true }
+        }
+        .task(id: hasActivatedUsage ? loadState.windowDays : nil) {
+            guard hasActivatedUsage else { return }
             await load()
         }
     }
@@ -222,6 +228,9 @@ public struct UsageView: View {
                     Text(
                         metric == .cost
                             ? "* if billed at full API rate"
+                                + (merged.costQuality.unpricedShare > 0
+                                    ? ". Excludes \(UsageFormat.percent(merged.costQuality.unpricedShare)) unpriced records."
+                                    : "")
                             : "Across \(UsageFormat.count(merged.sessions)) sessions"
                     )
                     .font(T3Typography.supporting)
@@ -400,14 +409,14 @@ public struct UsageView: View {
                                 .foregroundStyle(T3Colors.textPrimary)
                                 .lineLimit(1)
                             Text(
-                                "\(UsageFormat.percent(model.costShare)) of cost · "
+                                "\(model.costShareLabel) · "
                                     + "\(UsageFormat.tokens(model.totalTokens)) tokens"
                             )
                             .font(T3Typography.supporting)
                             .foregroundStyle(T3Colors.textSecondary)
                         }
                         Spacer(minLength: 8)
-                        Text(UsageFormat.usd(model.costUsd))
+                        Text(model.costLabel)
                             .font(T3Typography.threadBody)
                             .monospacedDigit()
                             .foregroundStyle(T3Colors.textPrimary)

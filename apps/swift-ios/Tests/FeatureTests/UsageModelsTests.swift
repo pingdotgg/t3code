@@ -5,6 +5,38 @@ import Testing
 @Suite("Usage reporting")
 struct UsageModelsTests {
     @Test
+    func missingRatesStayUnpricedWhileProviderReportedZeroStaysZero() throws {
+        let environments = [
+            FeatureEnvironmentUsage(environmentID: "unknown", label: "Unknown", summary: summary(
+                provider: .codex, costUsd: 0, costSource: .unpriced, unpricedRecords: 1
+            )),
+            FeatureEnvironmentUsage(environmentID: "reported", label: "Reported", summary: summary(
+                provider: .claude, costUsd: 0, costSource: .providerReported
+            )),
+        ]
+        let merged = UsageMerger.merge(environments)
+        let unknown = try #require(merged.models.first { $0.provider == .codex })
+        let reported = try #require(merged.models.first { $0.provider == .claude })
+        #expect(unknown.unpricedRecords == 1)
+        #expect(unknown.costLabel == "Unpriced")
+        #expect(unknown.costShareLabel == "No known rates")
+        #expect(unknown.totalTokens == 120)
+        #expect(reported.costLabel == "$0.00")
+        #expect(!reported.isCostUnknown)
+        #expect(merged.costQuality.unpricedShare == 0.5)
+    }
+
+    @Test
+    func partiallyPricedModelKeepsItsKnownCost() {
+        let model = UsageModelTotals(
+            model: "mixed", provider: .codex, costUsd: 2, totalTokens: 100,
+            records: 2, costShare: 1, unpricedRecords: 1
+        )
+        #expect(!model.isCostUnknown)
+        #expect(model.costLabel == "$2.00")
+    }
+
+    @Test
     func pastDayRequestsTwentyFourMinuteAlignedHourlyBuckets() throws {
         let timeZone = try #require(TimeZone(identifier: "America/Los_Angeles"))
         let now = try #require(
@@ -530,7 +562,9 @@ struct UsageModelsTests {
         output: Int = 20,
         reasoning: Int = 0,
         sourceStatus: UsageSourceStatus = .ok,
-        hourStart: String? = nil
+        hourStart: String? = nil,
+        costSource: UsageCostSource = .modelPriced,
+        unpricedRecords: Int = 0
     ) -> UsageSummary {
         let path = "/Users/theo/.\(provider.rawValue)"
         return UsageSummary(
@@ -554,9 +588,9 @@ struct UsageModelsTests {
                     ),
                     costUsd: costUsd,
                     cacheSavingsUsd: 0,
-                    costSource: .modelPriced,
+                    costSource: costSource,
                     records: 1,
-                    unpricedRecords: 0,
+                    unpricedRecords: unpricedRecords,
                     sessions: 1
                 ),
             ],

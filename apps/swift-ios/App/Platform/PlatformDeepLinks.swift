@@ -12,9 +12,12 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
     case project(environmentID: String?, projectID: String)
     case thread(environmentID: String?, threadID: String)
     case newTask(environmentID: String?, projectID: String?)
+    case usageLimits
 
     var id: String {
         switch self {
+        case .usageLimits:
+            "usage-limits"
         case let .connection(endpoint, token):
             "connection:\(endpoint):\(token ?? "")"
         case let .environment(id):
@@ -33,6 +36,9 @@ enum PlatformRoute: Codable, Hashable, Identifiable, Sendable {
         components.scheme = Self.nativeScheme
 
         switch self {
+        case .usageLimits:
+            components.host = "usage"
+            components.path = "/limits"
         case let .connection(endpoint, token):
             components.host = "connect"
             components.queryItems = [URLQueryItem(name: "endpoint", value: endpoint)]
@@ -150,6 +156,8 @@ enum PlatformDeepLinkParser {
         let queryThread = query["thread"] ?? query["threadid"]
 
         switch head {
+        case "usage" where tail == ["limits"]:
+            return .usageLimits
         case "thread", "threads":
             let values = try routeIdentifiers(
                 tail: tail,
