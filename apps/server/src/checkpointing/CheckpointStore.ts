@@ -15,7 +15,6 @@
  */
 import {
   VcsProcessExitError,
-  VcsProcessTimeoutError,
   VcsUnsupportedOperationError,
   type CheckpointRef,
   type VcsError,
@@ -109,15 +108,15 @@ export class CheckpointStore extends Context.Service<
 
 /**
  * Checkpoint capture runs alongside concurrent git activity in the workspace
- * (agents writing files, colocated VCS exports, lock churn), so process-level
- * git failures can be transient. These are the only errors worth retrying;
- * unsupported drivers and repository detection failures are permanent.
+ * (agents writing files, colocated VCS exports, lock churn), so a non-zero git
+ * exit during capture can be transient. Exit failures are the only errors worth
+ * retrying: timeouts are repo-size problems whose 30s budget would triple at
+ * the sequential checkpoint worker, and unsupported-driver and detection
+ * failures are permanent.
  */
 const isVcsProcessExitError = Schema.is(VcsProcessExitError);
-const isVcsProcessTimeoutError = Schema.is(VcsProcessTimeoutError);
 
-const isTransientCaptureError = (error: VcsError): boolean =>
-  isVcsProcessExitError(error) || isVcsProcessTimeoutError(error);
+const isTransientCaptureError = (error: VcsError): boolean => isVcsProcessExitError(error);
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -153,7 +152,15 @@ export const make = Effect.gen(function* () {
           input.cwd,
         );
         return yield* checkpoints.captureCheckpoint(input);
-      }),
+      }).pipe(
+        Effect.tapError((error) =>
+          Effect.logDebug("checkpoint capture attempt failed", {
+            cwd: input.cwd,
+            checkpointRef: input.checkpointRef,
+            detail: error.message,
+          }),
+        ),
+      ),
       {
         times: 2,
         while: isTransientCaptureError,
