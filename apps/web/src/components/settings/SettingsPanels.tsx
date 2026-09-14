@@ -835,7 +835,7 @@ function TokenStreamingWarningDialog({
 }) {
   return (
     <AlertDialog open={open} onOpenChange={onOpenChange}>
-      <AlertDialogPopup className="max-w-md">
+      <AlertDialogPopup className="max-w-lg">
         <AlertDialogHeader>
           <AlertDialogTitle>Token by token is a worse experience</AlertDialogTitle>
           <AlertDialogDescription>
@@ -845,11 +845,11 @@ function TokenStreamingWarningDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <AlertDialogFooter>
-          <Button variant="ghost-muted" onClick={onConfirm}>
-            Use token by token anyway
+          <Button variant="ghost-muted" className="sm:mr-auto" onClick={onConfirm}>
+            Use token by token
           </Button>
           <AlertDialogClose render={<Button variant="outline" />}>Cancel</AlertDialogClose>
-          <Button onClick={onUseParagraphs}>Use paragraph streaming</Button>
+          <Button onClick={onUseParagraphs}>Use paragraphs</Button>
         </AlertDialogFooter>
       </AlertDialogPopup>
     </AlertDialog>
