@@ -296,11 +296,20 @@ enum DailyUXCreationContext {
         return .addProject
     }
 
+    /// Task creation targets one physical workspace. Repository grouping can
+    /// merge several independently configured checkouts on one machine, so the
+    /// picker keeps every checkout separate and names it after its project.
     static func projectGroups(in snapshot: FeatureSnapshot) -> [DailyUXProjectGroup] {
-        return DailyUXProjectGrouping.groups(
-            projects: projects(in: snapshot),
-            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
-        )
+        DailyUXProjectGrouping.groups(projects: projects(in: snapshot), mode: .separate)
+            .map { group in
+                DailyUXProjectGroup(
+                    id: group.id,
+                    name: group.projects.first?.name ?? group.name,
+                    projects: group.projects,
+                    memberProjectIDs: group.memberProjectIDs
+                )
+            }
+            .sorted(by: DailyUXProjectGrouping.displayOrder)
     }
 
     static func recentProjects(in snapshot: FeatureSnapshot) -> [DailyUXRecentProject] {
@@ -354,22 +363,10 @@ enum DailyUXCreationContext {
             ?? projectGroups(in: snapshot).first?.projects.first
     }
 
-    static func logicalProjectID(
-        for project: FeatureProject,
-        in snapshot: FeatureSnapshot
-    ) -> String {
-        let groups = DailyUXProjectGrouping.groups(
-            projects: snapshot.projects,
-            preferencesByEnvironment: snapshot.preferencesByEnvironment ?? [:]
-        )
-        return DailyUXProjectGrouping.group(containing: project.id, in: groups)?.id
-            ?? DailyUXProjectGrouping.logicalProjectID(
-                for: project,
-                mode: snapshot.preferencesByEnvironment?[project.environmentID]?
-                    .projectGroupingMode ?? .repository,
-                overrides: snapshot.preferencesByEnvironment?[project.environmentID]?
-                    .projectGroupingOverrides ?? [:]
-            )
+    /// The identity a new task is created against: the physical workspace,
+    /// whatever grouping mode the sidebar uses.
+    static func logicalProjectID(for project: FeatureProject) -> String {
+        DailyUXProjectGrouping.logicalProjectID(for: project, mode: .separate)
     }
 
     private static func recentUseOrder(_ lhs: FeatureThread, _ rhs: FeatureThread) -> Bool {
@@ -552,10 +549,12 @@ enum DailyUXProjectGrouping {
                     memberProjectIDs: memberIDsByLogicalKey[key] ?? []
                 )
             }
-            .sorted { lhs, rhs in
-                let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
-                return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
-            }
+            .sorted(by: displayOrder)
+    }
+
+    static func displayOrder(_ lhs: DailyUXProjectGroup, _ rhs: DailyUXProjectGroup) -> Bool {
+        let comparison = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+        return comparison == .orderedSame ? lhs.id < rhs.id : comparison == .orderedAscending
     }
 
     static func group(containing projectID: String, in groups: [DailyUXProjectGroup])
