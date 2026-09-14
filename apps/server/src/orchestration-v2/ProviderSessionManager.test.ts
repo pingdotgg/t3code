@@ -7464,9 +7464,12 @@ it.effect(
         // release claim its forked worker performs. Stepping the outer detach
         // fiber cannot reach it — the mutation and the fork share one op
         // boundary and the worker's claim then runs during the same task
-        // drain. The discriminating pause is inside the spawned worker: hold
-        // it at each of its own op offsets, let a racing close claim first,
-        // then check the pending record still covers this thread.
+        // drain. The discriminating pause is inside the fibers the detach
+        // spawns: hold the first spawned fiber at each of its own op offsets
+        // (offset 19 parks the detach's timeout worker after the mutation and
+        // before the release claim; later offsets hold the scope-close
+        // worker), let a racing close claim first, then check the pending
+        // record still covers this thread.
         for (let childOps = 0; childOps < 48; childOps++) {
           const threadId = ThreadId.make(`thread-detach-close-claim-${childOps}`);
           const fixture = yield* makeThreadSessionFixture(threadId);
