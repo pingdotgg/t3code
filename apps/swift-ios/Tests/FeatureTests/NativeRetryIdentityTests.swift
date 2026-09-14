@@ -4,6 +4,73 @@ import XCTest
 
 @MainActor
 final class NativeRetryIdentityTests: XCTestCase {
+    func testWorktreeBootstrapRecoveryOnlyAcceptsItsCommittedMessage() async throws {
+        for committed in [false, true] {
+            let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: directory) }
+            let environment = Environment(
+                id: "worktree-recovery", label: "Worktree recovery",
+                httpBaseURL: URL(string: "https://worktree.example")!,
+                webSocketBaseURL: URL(string: "wss://worktree.example/ws")!
+            )
+            let store = EnvironmentStore(fileURL: directory.appendingPathComponent("environments.json"))
+            try await store.save([environment])
+            try await store.setActiveEnvironment(id: environment.id)
+            let identity = FeatureSubmissionIdentity()
+            let message = OrchestrationMessage(
+                id: identity.messageID, role: "user", text: "Wait for setup",
+                attachments: [], turnId: nil, streaming: false,
+                createdAt: "2026-07-30T12:00:00.000Z", updatedAt: "2026-07-30T12:00:00.000Z"
+            )
+            let connection = PartialBootstrapWebSocketConnection()
+            let transport = PartialBootstrapHTTPTransport(
+                shell: retryShellSnapshot(), committedMessages: committed ? [message] : []
+            )
+            let runtime = EnvironmentRuntime(
+                environmentStore: store,
+                credentialStore: InMemoryCredentialStore(credentials: [
+                    environment.id: EnvironmentCredential(accessToken: "token"),
+                ]),
+                httpTransport: transport,
+                webSocketConnector: PartialBootstrapWebSocketConnector(connection: connection)
+            )
+            let settings = UserDefaults(suiteName: UUID().uuidString)!
+            let client = NativeFeatureClient(runtime: runtime, settingsStore: settings)
+            let snapshot = try await client.initialSnapshot()
+            await connection.waitUntilConnected()
+            for _ in 0..<(committed ? 1 : 2) {
+                do {
+                    let created = try await client.createThreadAndSend(
+                        projectID: "project-1", prompt: "Wait for setup",
+                        selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.4"),
+                        runtimeMode: .fullAccess, interactionMode: .standard,
+                        workspaceMode: .worktree, branch: "main", worktreePath: nil,
+                        startFromOrigin: false, attachments: [], identity: identity
+                    )
+                    XCTAssertTrue(committed, "An empty thread does not prove setup or its first turn completed.")
+                    XCTAssertEqual(created.wireID, identity.threadID)
+                } catch let error as RPCError {
+                    guard case .disconnected = error, !committed else { throw error }
+                    XCTAssertTrue(FeatureRootModel.shouldQueue(
+                        error, environmentID: environment.id, snapshot: snapshot
+                    ), "An uncertain setup must retain its draft and stable outbox identity.")
+                }
+            }
+            let commands = await connection.dispatchCommands() + transport.dispatchCommands()
+            XCTAssertEqual(commands.count, committed ? 1 : 2)
+            XCTAssertTrue(commands.allSatisfy { $0["bootstrap"]?["prepareWorktree"] != nil })
+            for command in commands {
+                XCTAssertEqual(command["threadId"]?.stringValue, identity.threadID)
+                XCTAssertEqual(command["commandId"]?.stringValue, identity.commandID)
+                XCTAssertEqual(command["message"]?["messageId"]?.stringValue, identity.messageID)
+            }
+            if let first = commands.first, let last = commands.last {
+                XCTAssertEqual(first["bootstrap"]?["prepareWorktree"], last["bootstrap"]?["prepareWorktree"])
+            }
+            await client.disconnect()
+        }
+    }
+
     func testSavedSettingsSurviveAConnectionRepublish() async throws {
         let directory = FileManager.default.temporaryDirectory
             .appendingPathComponent("t3-native-settings-republish-\(UUID().uuidString)")
@@ -591,10 +658,12 @@ private struct RetryIdentityWebSocketConnector: WebSocketConnecting {
 
 private actor PartialBootstrapHTTPTransport: HTTPTransport {
     private let shellData: Data
+    private let committedMessages: [OrchestrationMessage]
     private var commands: [JSONValue] = []
 
-    init(shell: OrchestrationShellSnapshot) {
+    init(shell: OrchestrationShellSnapshot, committedMessages: [OrchestrationMessage] = []) {
         shellData = try! JSONEncoder.t3.encode(shell)
+        self.committedMessages = committedMessages
     }
 
     func data(for request: URLRequest) throws -> (Data, HTTPURLResponse) {
@@ -617,7 +686,7 @@ private actor PartialBootstrapHTTPTransport: HTTPTransport {
         }
         if path.hasPrefix("/api/orchestration/threads/") {
             let threadID = request.url?.lastPathComponent.removingPercentEncoding ?? "thread"
-            let snapshot = retryEmptyThreadDetail(id: threadID)
+            let snapshot = retryEmptyThreadDetail(id: threadID, messages: committedMessages)
             return (try JSONEncoder.t3.encode(snapshot), retryHTTPResponse(request))
         }
         if path == "/api/orchestration/dispatch" {
@@ -806,7 +875,9 @@ private func retryConfigResponse(for request: JSONValue) throws -> Data? {
     )
 }
 
-private func retryEmptyThreadDetail(id: String) -> OrchestrationThreadDetailSnapshot {
+private func retryEmptyThreadDetail(
+    id: String, messages: [OrchestrationMessage] = []
+) -> OrchestrationThreadDetailSnapshot {
     let timestamp = "2026-07-30T12:00:00.000Z"
     return OrchestrationThreadDetailSnapshot(
         snapshotSequence: 2,
@@ -829,7 +900,7 @@ private func retryEmptyThreadDetail(id: String) -> OrchestrationThreadDetailSnap
             snoozedAt: nil,
             pinnedAt: nil,
             deletedAt: nil,
-            messages: [],
+            messages: messages,
             activities: [],
             checkpoints: [],
             session: nil

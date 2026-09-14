@@ -3,6 +3,68 @@ import XCTest
 
 @MainActor
 final class WebSocketRPCRaceTests: XCTestCase {
+    func testLongRunningResponseSurvivesTheNormalDeadline() async throws {
+        let connection = DeadlineWebSocketConnection(automaticallyReplies: false)
+        let clock = ManualResponseDeadlineClock()
+        let client = WebSocketRPCClient(
+            connector: SequencedConnector(connections: [connection]),
+            responseDeadlineSleep: { _ in await clock.wait() },
+            endpointProvider: { URL(string: "wss://studio.example/ws")! }
+        )
+        let setup = Task {
+            try await client.request("setup", responseDeadline: .none, as: JSONValue.self)
+        }
+        await connection.waitUntilRequestCount(1)
+        let ordinary = Task {
+            try await client.request("ordinary", as: JSONValue.self)
+        }
+        await connection.waitUntilRequestCount(2)
+        await clock.waitUntilEntered()
+        await clock.advance()
+        do {
+            _ = try await ordinary.value
+            XCTFail("Ordinary requests must keep their response deadline.")
+        } catch let error as RPCError {
+            guard case .responseTimedOut = error else { throw error }
+        }
+        await connection.waitUntilInterruptCount(1)
+        let interrupted = await connection.interruptedRequestIndices()
+        XCTAssertEqual(interrupted, [1], "The ordinary deadline must not interrupt setup.")
+        try await connection.replyToRequest(at: 0)
+        let result = try await setup.value
+        XCTAssertEqual(result, .object(["ok": .bool(true)]))
+        await client.stop()
+    }
+
+    func testLongRunningResponseStillEndsOnCancellationOrDisconnect() async throws {
+        for cancelled in [true, false] {
+            let connection = DeadlineWebSocketConnection(automaticallyReplies: false)
+            let client = WebSocketRPCClient(
+                connector: SequencedConnector(connections: [connection]),
+                endpointProvider: { URL(string: "wss://studio.example/ws")! }
+            )
+            let request = Task {
+                try await client.request("setup", responseDeadline: .none, as: JSONValue.self)
+            }
+            await connection.waitUntilRequestCount(1)
+            if cancelled { request.cancel() } else { await client.stop() }
+            do {
+                _ = try await request.value
+                XCTFail("Setup must stop when its owner cancels or disconnects.")
+            } catch is CancellationError {
+                XCTAssertTrue(cancelled)
+            } catch let error as RPCError {
+                guard case .disconnected = error, !cancelled else { throw error }
+            }
+            if cancelled {
+                await connection.waitUntilInterruptCount(1)
+                let interrupted = await connection.interruptedRequestIndices()
+                XCTAssertEqual(interrupted, [0])
+            }
+            await client.stop()
+        }
+    }
+
     func testServerBatchesPreserveOrderAndSplitAtTheEventBudget() async throws {
         let connection = SubscriptionTrafficConnection()
         let client = WebSocketRPCClient(
@@ -365,7 +427,7 @@ final class WebSocketRPCRaceTests: XCTestCase {
         )
 
         let first = Task {
-            try await client.request("server.sendNeverReturns", as: JSONValue.self)
+            try await client.request("server.sendNeverReturns", responseDeadline: .none, as: JSONValue.self)
         }
         await hung.waitUntilSending()
         do {
@@ -1327,13 +1389,46 @@ private actor BlockingStopConnection: WebSocketConnection {
     }
 }
 
+private actor ManualResponseDeadlineClock {
+    private var entered = false
+    private var advanced = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+    private var entryWaiters: [CheckedContinuation<Void, Never>] = []
+
+    func wait() async {
+        entered = true
+        entryWaiters.forEach { $0.resume() }
+        entryWaiters.removeAll()
+        guard !advanced else { return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func waitUntilEntered() async {
+        guard !entered else { return }
+        await withCheckedContinuation { entryWaiters.append($0) }
+    }
+
+    func advance() {
+        advanced = true
+        waiters.forEach { $0.resume() }
+        waiters.removeAll()
+    }
+}
+
 private actor DeadlineWebSocketConnection: WebSocketConnection {
+    private let automaticallyReplies: Bool
     private var requestIDs: [Int] = []
     private var interruptIDs: [Int] = []
     private var requestWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var interruptWaiters: [(Int, CheckedContinuation<Void, Never>)] = []
     private var queuedResponses: [Data] = []
     private var receiver: CheckedContinuation<Data, Error>?
+
+    init(automaticallyReplies: Bool = true) { self.automaticallyReplies = automaticallyReplies }
+
+    func interruptedRequestIndices() -> [Int] {
+        interruptIDs.compactMap { requestIDs.firstIndex(of: $0) }
+    }
 
     func send(_ data: Data) throws {
         let envelope = try JSONDecoder.t3.decode(JSONValue.self, from: data)
@@ -1345,7 +1440,7 @@ private actor DeadlineWebSocketConnection: WebSocketConnection {
             }
             requestIDs.append(requestID)
             resumeRequestWaiters()
-            if requestIDs.count > 1 {
+            if automaticallyReplies, requestIDs.count > 1 {
                 enqueue(try response(requestID: requestID))
             }
         case "Interrupt":

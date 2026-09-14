@@ -154,6 +154,12 @@ private struct RPCResponseEnvelope: Decodable, Sendable {
 public actor WebSocketRPCClient {
     public typealias EndpointProvider = @Sendable () async throws -> URL
 
+    public enum ResponseDeadline: Sendable, Equatable {
+        case standard
+        /// Setup can run until it completes, disconnects, or its caller cancels.
+        case none
+    }
+
     private static let logger = Logger(
         subsystem: "com.t3tools.t3code",
         category: "WebSocketRPC"
@@ -161,6 +167,7 @@ public actor WebSocketRPCClient {
 
     private struct UnaryRequest {
         let envelope: RPCRequestEnvelope
+        let responseDeadline: ResponseDeadline
         var sent: Bool
         var connectionWaitTask: Task<Void, Never>?
         var sendDeadlineTask: Task<Void, Never>?
@@ -258,6 +265,7 @@ public actor WebSocketRPCClient {
     private let endpointProvider: EndpointProvider
     private let connectionWaitTimeout: Duration
     private let responseTimeout: Duration
+    private let responseDeadlineSleep: @Sendable (Duration) async throws -> Void
     private let keepaliveInterval: Duration
     private let subscriptionBufferLimit: Int
     private let reconnectBackoff: @Sendable (Int) -> Duration
@@ -283,6 +291,9 @@ public actor WebSocketRPCClient {
         connector: any WebSocketConnecting = URLSessionWebSocketConnector(),
         connectionWaitTimeout: Duration = .seconds(4),
         responseTimeout: Duration = .seconds(30),
+        responseDeadlineSleep: @escaping @Sendable (Duration) async throws -> Void = {
+            try await Task.sleep(for: $0)
+        },
         keepaliveInterval: Duration = .seconds(5),
         subscriptionBufferLimit: Int = 1_024,
         reconnectBackoff: @escaping @Sendable (Int) -> Duration = { failureCount in
@@ -298,6 +309,7 @@ public actor WebSocketRPCClient {
         self.connector = connector
         self.connectionWaitTimeout = connectionWaitTimeout
         self.responseTimeout = responseTimeout
+        self.responseDeadlineSleep = responseDeadlineSleep
         self.keepaliveInterval = keepaliveInterval > .zero ? keepaliveInterval : .seconds(5)
         self.subscriptionBufferLimit = max(1, subscriptionBufferLimit)
         self.reconnectBackoff = reconnectBackoff
@@ -397,9 +409,10 @@ public actor WebSocketRPCClient {
     public func request<Result: Decodable & Sendable>(
         _ tag: String,
         payload: JSONValue = .object([:]),
+        responseDeadline: ResponseDeadline = .standard,
         as type: Result.Type
     ) async throws -> Result {
-        let raw = try await requestRaw(tag, payload: payload)
+        let raw = try await requestRaw(tag, payload: payload, responseDeadline: responseDeadline)
         return try raw.decode(type)
     }
 
@@ -407,7 +420,7 @@ public actor WebSocketRPCClient {
         _ tag: String,
         payload: JSONValue = .object([:])
     ) async throws {
-        _ = try await requestRaw(tag, payload: payload)
+        _ = try await requestRaw(tag, payload: payload, responseDeadline: .standard)
     }
 
     public func subscribe<Value: Decodable & Sendable>(
@@ -524,7 +537,9 @@ public actor WebSocketRPCClient {
         }
     }
 
-    private func requestRaw(_ tag: String, payload: JSONValue) async throws -> JSONValue {
+    private func requestRaw(
+        _ tag: String, payload: JSONValue, responseDeadline: ResponseDeadline
+    ) async throws -> JSONValue {
         start()
         let id = allocateRequestID()
         let envelope = RPCRequestEnvelope(
@@ -543,6 +558,7 @@ public actor WebSocketRPCClient {
                 }
                 unary[id] = UnaryRequest(
                     envelope: envelope,
+                    responseDeadline: responseDeadline,
                     sent: false,
                     connectionWaitTask: nil,
                     sendDeadlineTask: nil,
@@ -973,10 +989,15 @@ public actor WebSocketRPCClient {
         request.connectionWaitTask = nil
         request.sendDeadlineTask?.cancel()
         request.sendDeadlineTask = nil
+        guard request.responseDeadline == .standard else {
+            unary[id] = request
+            return
+        }
         let responseTimeout = responseTimeout
+        let sleep = responseDeadlineSleep
         request.responseDeadlineTask = Task { [weak self] in
             do {
-                try await Task.sleep(for: responseTimeout)
+                try await sleep(responseTimeout)
             } catch {
                 return
             }
@@ -1004,7 +1025,7 @@ public actor WebSocketRPCClient {
     private func failUnaryOnSendDeadline(_ id: Int, connectionID: UUID) async {
         guard let request = unary[id],
               request.sent,
-              request.responseDeadlineTask == nil else { return }
+              request.sendDeadlineTask != nil else { return }
         completeUnary(id, with: .failure(RPCError.responseTimedOut))
         await disconnected(expectedConnectionID: connectionID)
     }

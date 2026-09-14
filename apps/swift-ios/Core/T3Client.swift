@@ -773,14 +773,19 @@ public actor T3Client {
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
-            )
+            ),
+            responseDeadline: worktreePreparation == nil ? .standard : .none
         )
     }
 
-    private func dispatchOverWebSocket(_ command: JSONValue) async throws -> DispatchResult {
+    private func dispatchOverWebSocket(
+        _ command: JSONValue,
+        responseDeadline: WebSocketRPCClient.ResponseDeadline = .standard
+    ) async throws -> DispatchResult {
         try await rpc.request(
             RPCMethod.dispatchCommand.rawValue,
             payload: command,
+            responseDeadline: responseDeadline,
             as: DispatchResult.self
         )
     }

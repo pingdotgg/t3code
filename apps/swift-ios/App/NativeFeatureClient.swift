@@ -1601,9 +1601,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             )
         } catch {
             // A connection can disappear after the server accepted the command
-            // but before its reply reaches us. Bootstrap expansion creates the
-            // thread before dispatching the stable final turn, so recover an
-            // interrupted empty thread by sending only that original turn.
+            // but before its reply reaches us. Confirm the original message
+            // before recovery. An empty worktree thread can still be in setup.
             let recovered = try await recoverBootstrap(
                 client: client,
                 pending: pending,
@@ -1616,11 +1615,12 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 context: context
             )
             guard recovered else {
-                await resetFailedBootstrapIfConfirmed(
-                    client: client,
-                    pending: pending,
-                    projectCwd: routedProject.workspaceRoot
-                )
+                if pending.worktreeBranchName == nil {
+                    await resetFailedLocalBootstrapIfConfirmed(
+                        client: client,
+                        pending: pending
+                    )
+                }
                 throw error
             }
         }
@@ -1686,6 +1686,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }) {
             return true
         }
+        // Setup and its cancellation cleanup own the worktree until the first
+        // turn is committed. Sending a bare turn can race either operation.
+        guard pending.worktreeBranchName == nil else { return false }
         guard snapshot.thread.projectId == projectID,
               snapshot.thread.deletedAt == nil,
               snapshot.thread.messages.isEmpty else {
@@ -1717,34 +1720,15 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         return true
     }
 
-    /// A failed bootstrap can leave its generated worktree behind after the
-    /// server rolls back the thread. Only reset the retry identity after a
-    /// fresh shell confirms the thread is absent; ambiguous network failures
-    /// keep the stable IDs so the normal recovery path remains idempotent.
-    private func resetFailedBootstrapIfConfirmed(
+    /// Reset a local retry only when a fresh shell confirms its thread is gone.
+    /// Worktree setup and cleanup stay server-owned and keep their stable IDs.
+    private func resetFailedLocalBootstrapIfConfirmed(
         client: T3Client,
-        pending: PendingBootstrapSubmission,
-        projectCwd: String
+        pending: PendingBootstrapSubmission
     ) async {
         guard let shell = try? await client.shellSnapshot(),
               !shell.threads.contains(where: { $0.id == pending.threadID }) else {
             return
-        }
-
-        if let branch = pending.worktreeBranchName,
-           let refs = try? await client.listVCSRefs(
-               cwd: projectCwd,
-               query: branch,
-               refresh: true,
-               limit: 100
-           ),
-           let path = refs.refs.first(where: {
-               $0.name == branch && $0.isRemote != true
-           })?.worktreePath {
-            // Never force-remove: setup scripts may have left useful changes.
-            // A clean orphan is safe to reclaim; a dirty one remains visible
-            // through normal worktree management.
-            try? await client.removeWorktree(cwd: projectCwd, path: path)
         }
 
         removePendingBootstrap(identity: pending.identity)
