@@ -6523,8 +6523,6 @@ export default function ChatView(props: ChatViewProps) {
   const composerHasDraftContent = useComposerDraftStore((store) =>
     composerDraftHasUserContent(store.getComposerDraft(composerDraftTarget)),
   );
-  const composerHasUnsentContent =
-    composerHasDraftContent || (composerEditingQueuedAttachments?.length ?? 0) > 0;
   const nowMinute = useNowMinute();
   const activeBranchMismatchKey = branchMismatchKey(
     activeThread?.id ?? null,
