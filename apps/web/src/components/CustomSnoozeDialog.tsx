@@ -167,6 +167,7 @@ function CustomSnoozeDialog() {
                       <Input
                         nativeInput
                         id={`${id}-time`}
+                        className="h-9 sm:h-8"
                         type="time"
                         required
                         value={time}
@@ -178,8 +179,9 @@ function CustomSnoozeDialog() {
                     </Label>
                   </div>
                 ) : (
-                  <div className="grid grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <NumberField
+                      className="gap-1.5"
                       id={`${id}-amount`}
                       min={0}
                       step="any"
