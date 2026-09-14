@@ -66,6 +66,19 @@ export type EnsureWslNodePtyResult =
       readonly retryLimit?: number;
     };
 
+// Outcome of asking the staged self-contained runtime to prove itself. Any
+// failure sends the launch to the mounted server tree; the caller decides what
+// to do with the cache.
+export type ProbeWslRuntimeResult =
+  | {
+      readonly ok: true;
+      readonly resolvedPath: string;
+    }
+  | {
+      readonly ok: false;
+      readonly reason: string;
+    };
+
 export class DesktopWslDistroListError extends Schema.TaggedError<DesktopWslDistroListError>()(
   "DesktopWslDistroListError",
   { reason: Schema.String },
@@ -108,6 +121,13 @@ export class DesktopWslEnvironment extends Context.Service<
     readonly pruneRuntimes: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
     // Marks a staged runtime as unusable so the next launch reinstalls it.
     readonly invalidateRuntime: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+    // Proves a staged self-contained runtime can run (`<root>/t3 --version`)
+    // and captures the user's login-shell PATH for the launch. Needs no Node
+    // in the distro; the mounted server tree still goes through ensureNodePty.
+    readonly probeRuntime: (
+      distro: string | null,
+      linuxAppRoot: string,
+    ) => Effect.Effect<ProbeWslRuntimeResult>;
     readonly ensureNodePty: (
       distro: string | null,
       linuxAppRoot: string,
@@ -149,14 +169,15 @@ const TIMEOUT_RESULT: ShellResult = {
 
 const formatWslShellTransportFailureReason = (
   failure: ShellResult["transportFailure"],
+  subject = "Node.js",
 ): string | null => {
   switch (failure) {
     case "timeout":
-      return "WSL backend preflight timed out while probing for Node.js. WSL may be slow to start; retry, or check that the distro is healthy.";
+      return `WSL backend preflight timed out while probing for ${subject}. WSL may be slow to start; retry, or check that the distro is healthy.`;
     case "spawn":
-      return "WSL backend preflight could not start wsl.exe to probe for Node.js. Check that WSL is installed and the distro is accessible.";
+      return `WSL backend preflight could not start wsl.exe to probe for ${subject}. Check that WSL is installed and the distro is accessible.`;
     case "process":
-      return "WSL backend preflight lost communication with wsl.exe while probing for Node.js. Retry, or check that the distro is healthy.";
+      return `WSL backend preflight lost communication with wsl.exe while probing for ${subject}. Retry, or check that the distro is healthy.`;
     case null:
       return null;
   }
@@ -255,7 +276,7 @@ const runWslShell = (
 
 const shellQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
 
-// Holds the sha256 of the runtime's server entry, written when the install
+// Holds the sha256 of the runtime's `t3` executable, written when the install
 // promotes a verified tree. Presence alone only says an install once finished
 // here; the digest is what lets a later launch prove the entry still is what
 // that install wrote.
@@ -279,35 +300,25 @@ export const buildWslRuntimeInstallScript = (
     'runtime_parent="$HOME/.t3/wsl-runtime"',
     `runtime_root="$runtime_parent/${safeRuntimeId}"`,
     `ready_marker="$runtime_root/${WSL_RUNTIME_READY_MARKER}"`,
-    // The native payload is the part of the tree the WSL backend actually
-    // dlopens, and the only part a user can plausibly break by hand. Checking
-    // node-pty's package.json alone let a runtime whose pty.node had gone
-    // missing stay cache-ready forever: every launch reused it and then failed
-    // the native probe, with no reinstall and no fallback. Match on the glob
-    // rather than a mapped `uname -m` so this stays a presence check; the probe
-    // is what decides whether the binary is the right arch and loadable.
-    "node_pty_payload_present() {",
-    '  for candidate in "$1"/node_modules/node-pty/prebuilds/linux-*/pty.node; do',
-    '    [ -f "$candidate" ] || continue',
-    '    [ -f "${candidate%/*}/t3code-wsl-node-pty.json" ] || continue',
-    "    return 0",
-    "  done",
-    "  return 1",
+    // The runtime is a self-contained `t3` executable with Node inside, so the
+    // readiness proof is the same one the SSH runner and the CLI installers
+    // use: the file is executable and `t3 --version` exits 0. That covers the
+    // truncated-binary and wrong-arch cases without a separate native probe.
+    "runtime_entry_runs() {",
+    '  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null 2>&1',
     "}",
-    // Hashing the server entry is the only check that can tell a working cache
-    // from one whose bin.mjs was truncated or half-written: the file is still
-    // there, the native probe still passes, and launch then picks a server that
-    // exits before it can become ready, on every restart. Hashing the ~7MB
-    // entry measures in single-digit milliseconds inside the distro, once per
-    // launch, against a cold reinstall of a few hundred megabytes.
+    // Hashing the entry is what tells a working cache from one whose `t3` was
+    // swapped or half-written after install: the file is still there and may
+    // even still run, and launch then picks an executable that is not what
+    // this install verified. Hashing the executable measures in tens of
+    // milliseconds inside the distro, once per launch, against a cold
+    // reinstall of a few hundred megabytes.
     "runtime_server_entry_digest() {",
-    `  sha256sum "$1/apps/server/dist/bin.mjs" 2>/dev/null | cut -d ' ' -f 1`,
+    `  sha256sum "$1/t3" 2>/dev/null | cut -d ' ' -f 1`,
     "}",
     "runtime_is_ready() {",
     '  [ -f "$ready_marker" ] &&',
-    '    [ -f "$runtime_root/apps/server/dist/bin.mjs" ] &&',
-    '    [ -f "$runtime_root/node_modules/node-pty/package.json" ] &&',
-    '    node_pty_payload_present "$runtime_root" &&',
+    '    runtime_entry_runs "$runtime_root" &&',
     // An empty or unreadable marker is a miss, not a pass: that is what a
     // runtime installed before the marker carried a digest looks like, and one
     // reinstall is the cheapest way to make it verifiable from then on.
@@ -370,15 +381,14 @@ export const buildWslRuntimeInstallScript = (
     `runtime_tmp=$(mktemp -d "$runtime_parent/.${safeRuntimeId}.tmp.XXXXXX")`,
     'cleanup_runtime_install() { rm -rf "$runtime_tmp"; }',
     "trap cleanup_runtime_install EXIT",
-    `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp"`,
-    'test -f "$runtime_tmp/apps/server/dist/bin.mjs"',
-    'test -f "$runtime_tmp/node_modules/node-pty/package.json"',
-
-    // Never write the ready marker over a tree that is missing the native
-    // payload. Failing here drops out to the mounted-tree fallback, which is
+    // The release archive has one top-level `t3-<version>-linux-<arch>/`
+    // directory; strip it so the executable lands at `$runtime_root/t3`.
+    `tar -xzf ${shellQuote(linuxArchivePath)} -C "$runtime_tmp" --strip-components=1`,
+    // Never write the ready marker over a tree whose executable does not run.
+    // Failing here drops out to the mounted-tree fallback, which is
     // recoverable; promoting it would mark the defect ready and cache it.
-    'if ! node_pty_payload_present "$runtime_tmp"; then',
-    "  printf 'WSL runtime archive is missing its Linux node-pty binary\\n' >&2",
+    'if ! runtime_entry_runs "$runtime_tmp"; then',
+    "  printf 'WSL runtime archive does not contain a working t3 executable\\n' >&2",
     "  exit 1",
     "fi",
     // The archive's bytes were verified against archiveSha256 above, so the
@@ -466,12 +476,12 @@ export const buildWslRuntimePruneScript = (runtimeId: string): string => {
 };
 
 // Drops the ready marker so the next launch reinstalls the runtime from the
-// archive. Readiness is a presence check by design, so a cached tree whose
-// native payload is present but unloadable (truncated pty.node, a distro whose
-// glibc the binary needs and the tree was copied from another machine) stays
-// ready forever and fails the probe on every launch. Only the probe can see
-// that, so the probe is what revokes the marker. The tree itself is left in
-// place: the install script moves an unready root aside before extracting.
+// archive. Readiness is decided inside the install script, so a cached tree
+// that passes there but fails the launch-time probe (a distro whose glibc the
+// executable needs, a tree copied from another machine) would stay ready
+// forever and fail on every launch. Only the probe can see that, so the probe
+// is what revokes the marker. The tree itself is left in place: the install
+// script moves an unready root aside before extracting.
 export const buildWslRuntimeInvalidateScript = (runtimeId: string): string => {
   const safeRuntimeId = sanitizeWslRuntimeId(runtimeId);
   return [
@@ -488,22 +498,29 @@ export const parseWslRuntimeRoot = (stdout: string): string | null => {
   return runtimeRoot.startsWith("/") ? runtimeRoot : null;
 };
 
-const NODE_PTY_PREBUILD_MISSING_EXIT_CODE = 4;
+// The mounted server tree carries no Linux pty.node unless the build put one
+// there. Distinct from a binary that is present but will not load, which is a
+// distro problem rather than a build problem.
+const NODE_PTY_BINARY_MISSING_EXIT_CODE = 4;
 
 const formatNodePtyProbeFailureReason = (exitCode: number): string | null =>
-  exitCode === NODE_PTY_PREBUILD_MISSING_EXIT_CODE
-    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Rebuild the Windows artifact with `--wsl-prebuild <path-to-linux-pty.node>` or install a build that includes WSL support."
+  exitCode === NODE_PTY_BINARY_MISSING_EXIT_CODE
+    ? "WSL support is missing from this T3 Code build: the packaged Linux node-pty binary was not included. Install a build that includes WSL support."
     : null;
+
+// Captures the login-shell PATH as `resolvedPath:` so the launch can forward the
+// user's PATH; the server spawns provider CLIs (`codex`, `claude`) by name.
+const RESOLVED_PATH_LINE = `printf 'resolvedPath:%s\\n' "$PATH"`;
 
 const NODE_PTY_PROBE_SCRIPT = (
   linuxServerDir: string,
 ) => `printf 'nodePath:%s\\n' "$(command -v node 2>/dev/null)"
 printf 'nodeVersion:%s\\n' "$(node -p 'process.versions.node' 2>/dev/null)"
-printf 'resolvedPath:%s\\n' "$PATH"
+${RESOLVED_PATH_LINE}
 cd ${shellQuote(linuxServerDir)} && node <<'NODE' >/dev/null 2>&1
 // The WSL Node can't read inside app.asar, so confirm what the server needs is
 // unpacked on the real filesystem before reporting the backend healthy. Exit 3
-// marks this distinct from a node-pty prebuild problem so the caller can report
+// marks this distinct from a node-pty binary problem so the caller can report
 // it accurately instead of letting the server crash on ERR_MODULE_NOT_FOUND at
 // launch (which, in wsl-only mode, would just fail to launch with no fallback).
 //
@@ -517,25 +534,26 @@ const fs = require("node:fs");
 const path = require("node:path");
 const pkgDir = path.dirname(require.resolve("node-pty/package.json"));
 // node-pty 1.x is N-API based, so a single Linux pty.node is ABI-stable across
-// Node versions — require() succeeding IS the real compatibility test. Compare
-// only arch and node-pty version (a stale binary from a different node-pty),
-// NOT process.versions.modules: that would reject a perfectly loadable prebuilt
-// whenever the user's WSL Node ABI differs from the build's, defeating the
-// whole point of shipping one prebuilt for all Node versions.
-const expected = {
-  arch: process.arch,
-  nodePtyVersion: require("node-pty/package.json").version,
-};
-const prebuildDir = path.join(pkgDir, "prebuilds", "linux-" + process.arch);
-const marker = path.join(prebuildDir, "t3code-wsl-node-pty.json");
-const binary = path.join(prebuildDir, "pty.node");
-if (!fs.existsSync(marker) || !fs.existsSync(binary)) process.exit(${NODE_PTY_PREBUILD_MISSING_EXIT_CODE});
+// Node versions — require() succeeding IS the real compatibility test. Look in
+// the same places node-pty's own loader does.
+const candidates = [
+  path.join(pkgDir, "build", "Release", "pty.node"),
+  path.join(pkgDir, "prebuilds", "linux-" + process.arch, "pty.node"),
+];
+if (!candidates.some((candidate) => fs.existsSync(candidate))) process.exit(${NODE_PTY_BINARY_MISSING_EXIT_CODE});
 require("node-pty");
-const actual = JSON.parse(fs.readFileSync(marker, "utf8"));
-for (const key of Object.keys(expected)) {
-  if (actual[key] !== expected[key]) process.exit(2);
-}
 NODE`;
+
+// Readiness proof for a staged self-contained runtime: the executable runs and
+// reports its version, and the login shell's PATH is captured for the launch.
+// This runs under plain `sh` (no Node resolver preamble, since the runtime
+// needs no Node), so the login shell is entered explicitly for the PATH
+// capture; a distro without bash falls back to the PATH sh was started with.
+const RUNTIME_PROBE_SCRIPT = (linuxAppRoot: string) =>
+  [
+    `bash -lc ${shellQuote(RESOLVED_PATH_LINE)} 2>/dev/null || ${RESOLVED_PATH_LINE}`,
+    `${shellQuote(`${linuxAppRoot}/t3`)} --version >/dev/null 2>&1`,
+  ].join("\n");
 
 const TOOLCHAIN_CHECK_SCRIPT = [
   "for tool in node make g++ python3; do",
@@ -552,15 +570,8 @@ const NODE_PTY_BUILD_SCRIPT = (linuxServerDir: string) =>
     "set -e",
     `cd ${shellQuote(linuxServerDir)}`,
     `pkg_dir=$(node -p "require('node:path').dirname(require.resolve('node-pty/package.json'))")`,
-    `arch=$(node -p "process.arch")`,
-    `modules=$(node -p "process.versions.modules")`,
-    `node_pty_version=$(node -p "require('node-pty/package.json').version")`,
     `cd "$pkg_dir"`,
     "npx --yes node-gyp rebuild",
-    `prebuild_dir="prebuilds/linux-$arch"`,
-    `mkdir -p "$prebuild_dir"`,
-    `cp build/Release/pty.node "$prebuild_dir/pty.node"`,
-    `printf '{"arch":"%s","modules":"%s","nodePtyVersion":"%s"}\\n' "$arch" "$modules" "$node_pty_version" > "$prebuild_dir/t3code-wsl-node-pty.json"`,
     `node -e 'require("node-pty")'`,
   ].join("\n");
 
@@ -659,6 +670,38 @@ export const formatMissingToolsReason = (
 
   return `WSL distro is missing required tools: ${issues.join(", ")}. Install ${remediations.join(" and ")}, then retry.`;
 };
+
+const probeWslRuntimeImpl = (
+  distro: string | null,
+  linuxAppRoot: string,
+): Effect.Effect<ProbeWslRuntimeResult, never, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const probe = yield* runWslShell(distro, RUNTIME_PROBE_SCRIPT(linuxAppRoot), PROBE_TIMEOUT, {
+      resolveNode: false,
+    });
+    const transportFailureReason = formatWslShellTransportFailureReason(
+      probe.transportFailure,
+      "the staged runtime",
+    );
+    if (transportFailureReason !== null) {
+      return { ok: false, reason: transportFailureReason } as const;
+    }
+    if (probe.exitCode !== 0) {
+      const trimmedTail = probe.stderr.trim().slice(-500);
+      return {
+        ok: false,
+        reason: `${linuxAppRoot}/t3 --version failed (exit ${probe.exitCode})${trimmedTail ? `: ${trimmedTail}` : ""}`,
+      } as const;
+    }
+    const resolvedPath = parseResolvedPath(probe.stdout);
+    if (resolvedPath === null) {
+      return {
+        ok: false,
+        reason: "WSL login-shell PATH could not be resolved during backend preflight.",
+      } as const;
+    }
+    return { ok: true, resolvedPath } as const;
+  });
 
 const ensureNodePtyImpl = (
   distro: string | null,
@@ -1133,6 +1176,9 @@ export interface DesktopWslEnvironmentTestStub {
   ) => PrepareWslRuntimeResult;
   readonly pruneRuntimes?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
   readonly invalidateRuntime?: (distro: string | null, runtimeId: string) => Effect.Effect<void>;
+  // Defaults to success with a plain PATH: a staged runtime that was prepared
+  // is assumed to run unless the test says otherwise.
+  readonly probeRuntime?: (distro: string | null, linuxAppRoot: string) => ProbeWslRuntimeResult;
   readonly ensureNodePty?: (
     distro: string | null,
     linuxAppRoot: string,
@@ -1165,6 +1211,10 @@ export const layerTest = (stub: DesktopWslEnvironmentTestStub = {}) => {
       pruneRuntimes: (distro, runtimeId) => stub.pruneRuntimes?.(distro, runtimeId) ?? Effect.void,
       invalidateRuntime: (distro, runtimeId) =>
         stub.invalidateRuntime?.(distro, runtimeId) ?? Effect.void,
+      probeRuntime: (distro, linuxAppRoot) =>
+        Effect.succeed(
+          stub.probeRuntime?.(distro, linuxAppRoot) ?? { ok: true, resolvedPath: "/usr/bin:/bin" },
+        ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         Effect.succeed(
           stub.ensureNodePty?.(distro, linuxAppRoot, options) ?? {
@@ -1258,6 +1308,10 @@ export const layer = Layer.effect(
       invalidateRuntime: (distro, runtimeId) =>
         provideSpawner(invalidateWslRuntimeImpl(distro, runtimeId)).pipe(
           Effect.withSpan("desktop.wsl.invalidateRuntime"),
+        ),
+      probeRuntime: (distro, linuxAppRoot) =>
+        provideSpawner(probeWslRuntimeImpl(distro, linuxAppRoot)).pipe(
+          Effect.withSpan("desktop.wsl.probeRuntime"),
         ),
       ensureNodePty: (distro, linuxAppRoot, options) =>
         provideSpawner(ensureNodePtyImpl(distro, linuxAppRoot, options)).pipe(

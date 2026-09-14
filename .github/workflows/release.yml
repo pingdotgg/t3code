@@ -354,21 +354,28 @@ jobs:
   # job — the Windows artifact then ships a ready WSL backend binary with no
   # cross-compiling and no first-launch compiler/node-gyp/network on the user's
   # machine. node-pty is N-API, so one binary works across all WSL Node versions.
-  build_wsl_node_pty:
-    name: Build WSL node-pty (linux-x64)
+  # The Linux CLI archive is built ahead of the desktop matrix because two
+  # consumers need it: the Linux desktop entry attaches it to the release, and
+  # the Windows desktop entry embeds it as the WSL runtime. Building it once
+  # here means the WSL backend runs the exact bytes a Linux user downloads.
+  build_linux_cli:
+    name: Build CLI archive (linux-x64)
     # Same gating as relay_public_config: only the release commit is needed, so
     # this runs alongside preflight. See the condition comment there.
-    needs: [resolve_commit]
-    if: |
-      needs.resolve_commit.result == 'success' &&
-      (github.event_name != 'schedule' || needs.resolve_commit.outputs.has_changes == 'true')
-    runs-on: blacksmith-8vcpu-ubuntu-2404
-    timeout-minutes: 15
+    needs: [resolve_commit, preflight, relay_public_config]
+    if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
+    runs-on: blacksmith-32vcpu-ubuntu-2404
+    timeout-minutes: 20
+    env:
+      T3CODE_CLERK_PUBLISHABLE_KEY: ${{ needs.relay_public_config.outputs.clerk_publishable_key }}
+      T3CODE_CLERK_JWT_TEMPLATE: ${{ needs.relay_public_config.outputs.clerk_jwt_template }}
+      T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ needs.relay_public_config.outputs.clerk_cli_oauth_client_id }}
+      T3CODE_RELAY_URL: ${{ needs.relay_public_config.outputs.relay_url }}
     steps:
       - name: Checkout
         uses: actions/checkout@v6
         with:
-          ref: ${{ needs.resolve_commit.outputs.ref }}
+          ref: ${{ needs.preflight.outputs.ref }}
           sparse-checkout: |
             /*
             !/.repos/
@@ -382,38 +389,92 @@ jobs:
           run-install: |
             args:
               - --filter=t3...
+              - --filter=@t3tools/web...
+              - --filter=@t3tools/scripts...
 
-      - name: Build node-pty linux-x64 prebuild
+      - name: Cache resource monitor
+        id: resource_monitor_cache
+        uses: actions/cache@v6
+        with:
+          path: native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor
+          key: resource-monitor-x86_64-unknown-linux-gnu-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
+
+      - name: Setup Rust
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Build resource monitor
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true'
+        run: cargo build --locked --release --manifest-path native/resource-monitor/Cargo.toml --target x86_64-unknown-linux-gnu
+
+      - name: Download relay client tracing config
+        uses: actions/download-artifact@v8
+        with:
+          name: relay-client-tracing-config
+          path: ${{ runner.temp }}/relay-client-tracing
+
+      - name: Load relay client tracing config
         shell: bash
         run: |
-          set -euo pipefail
-          # Resolve node-pty from apps/server (where it's a dependency) and build
-          # its native binary from source for Linux. node-addon-api resolves from
-          # node-pty's own dependency tree, so node-gyp has everything it needs.
-          pty_pkg="$(node -e "console.log(require.resolve('node-pty/package.json', { paths: ['$GITHUB_WORKSPACE/apps/server'] }))")"
-          pty_dir="$(dirname "$pty_pkg")"
-          ( cd "$pty_dir" && npx --yes node-gyp rebuild )
-          mkdir -p wsl-prebuild
-          cp "$pty_dir/build/Release/pty.node" wsl-prebuild/pty.node
-          file wsl-prebuild/pty.node
+          config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
+          tracing_token="$(sed -n 's/^T3CODE_RELAY_CLIENT_OTLP_TRACES_TOKEN=//p' "$config_path")"
+          echo "::add-mask::$tracing_token"
+          cat "$config_path" >> "$GITHUB_ENV"
 
-      - name: Upload node-pty linux-x64 prebuild
+      - name: Align package versions to release version
+        run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
+
+      # The t3 build task depends on @t3tools/web#build, so the web client is
+      # built as part of this step.
+      - name: Build CLI package
+        run: vp run --filter t3 build
+
+      - name: Build CLI single-executable
+        env:
+          # The exact version, not a major: vp downloads it from nodejs.org/dist on
+          # the runner, and only exact versions have a dist directory. Keep in
+          # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
+          VP_NODE_VERSION: "26.8.2"
+        run: node apps/server/scripts/cli.ts build-exe --verbose
+
+      - name: Stage resource monitor for the CLI archive
+        run: |
+          set -euo pipefail
+          target_dir="$RUNNER_TEMP/cli-resource-monitor/linux-x64"
+          mkdir -p "$target_dir"
+          cp native/resource-monitor/target/x86_64-unknown-linux-gnu/release/t3-resource-monitor "$target_dir/"
+
+      - name: Build CLI archive
+        run: |
+          node scripts/build-cli-archive.ts \
+            --platform linux \
+            --arch x64 \
+            --version "${{ needs.preflight.outputs.version }}" \
+            --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --output-dir release-cli
+
+      - name: Smoke-test CLI archive
+        run: node scripts/smoke-cli-archive.ts --archive release-cli/* --expect-version "${{ needs.preflight.outputs.version }}"
+
+      - name: Upload CLI archive
         uses: actions/upload-artifact@v7
         with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild/pty.node
+          name: cli-linux-x64
+          path: release-cli/*
           if-no-files-found: error
 
   build:
     name: Build ${{ matrix.label }}
-    # build_wsl_node_pty stays in `needs` so it runs first and its artifact is
-    # available to download, but only the Windows matrix entry consumes it. We
-    # therefore gate the job on preflight + relay (must succeed) WITHOUT requiring
-    # build_wsl_node_pty, so a failed Linux prebuild doesn't skip the macOS/Linux
-    # builds. `!cancelled()` (not `!failure()`) lets the job run even when
-    # build_wsl_node_pty failed; the Windows-only download step below then fails
-    # that single platform if the prebuild is missing.
-    needs: [preflight, relay_public_config, build_wsl_node_pty]
+    # build_linux_cli stays in `needs` so it runs first and its artifact is
+    # available to download, but only the Windows matrix entry consumes it (as
+    # the WSL runtime). The job is gated on preflight + relay WITHOUT requiring
+    # build_linux_cli, so a failed Linux archive doesn't skip the macOS builds.
+    # `!cancelled()` (not `!failure()`) lets the job run even when
+    # build_linux_cli failed; the Windows-only download step below then fails
+    # that single platform if the archive is missing.
+    needs: [preflight, relay_public_config, build_linux_cli]
     if: ${{ !cancelled() && needs.preflight.result == 'success' && needs.relay_public_config.result == 'success' }}
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
@@ -448,6 +509,7 @@ jobs:
             rust_target: x86_64-apple-darwin
             resource_key: darwin-x64
             cli_archive: false
+          # The Linux CLI archive is produced by build_linux_cli, not here.
           - label: Linux x64
             runner: blacksmith-32vcpu-ubuntu-2404
             platform: linux
@@ -455,7 +517,7 @@ jobs:
             arch: x64
             rust_target: x86_64-unknown-linux-gnu
             resource_key: linux-x64
-            cli_archive: true
+            cli_archive: false
           - label: Windows x64
             runner: blacksmith-32vcpu-windows-2025
             platform: win
@@ -553,12 +615,14 @@ jobs:
       - name: Align package versions to release version
         run: node scripts/update-release-package-versions.ts "${{ needs.preflight.outputs.version }}"
 
-      - name: Download WSL node-pty prebuild
+      # The WSL backend runs the Linux CLI archive inside the distro, so the
+      # Windows desktop embeds the same archive the release attaches.
+      - name: Download Linux CLI archive for WSL
         if: matrix.platform == 'win'
-        uses: actions/download-artifact@v7
+        uses: actions/download-artifact@v8
         with:
-          name: wsl-node-pty-x64
-          path: wsl-prebuild
+          name: cli-linux-x64
+          path: wsl-runtime
 
       - name: Install Spectre-mitigated MSVC libs
         if: matrix.platform == 'win'
@@ -720,10 +784,9 @@ jobs:
               echo "macOS signing disabled (missing one or more Apple signing secrets)."
             fi
           elif [[ "${{ matrix.platform }}" == "win" ]]; then
-            # Bundle the Linux node-pty binary built by the build_wsl_node_pty job
-            # so the packaged WSL backend ships a ready binary (no first-launch
-            # compile). Required for a working WSL backend on Windows.
-            args+=(--wsl-prebuild "$GITHUB_WORKSPACE/wsl-prebuild/pty.node")
+            # Embed the Linux CLI archive built by build_linux_cli as the WSL
+            # runtime. Required for a working WSL backend on Windows.
+            args+=(--wsl-runtime "$GITHUB_WORKSPACE"/wsl-runtime/t3-*-linux-x64.tar.gz)
             if has_all \
               "$AZURE_TENANT_ID" \
               "$AZURE_CLIENT_ID" \

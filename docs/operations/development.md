@@ -191,8 +191,9 @@ rustup target add x86_64-pc-windows-msvc
 rustup target add aarch64-pc-windows-msvc
 ```
 
-NSIS is downloaded by electron-builder. WSL support additionally needs a Linux node-pty prebuild;
-see the [release runbook](./release.md#windows-payload-topology-and-update-validation).
+NSIS is downloaded by electron-builder. WSL support additionally needs the Linux CLI archive
+passed as `--wsl-runtime`; see the
+[release runbook](./release.md#windows-payload-topology-and-update-validation).
 
 ### Signing and passkeys
 
