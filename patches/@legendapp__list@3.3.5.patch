@@ -1,5 +1,5 @@
 diff --git a/keyboard.d.ts b/keyboard.d.ts
-index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8c92d39b3 100644
+index 367945c..0ac7bf8 100644
 --- a/keyboard.d.ts
 +++ b/keyboard.d.ts
 @@ -279,7 +279,7 @@ type KeyboardChatComposerInsetListRef = {
@@ -23,7 +23,7 @@ index 367945cdfa8a8c260b7a127657a75c016c9ab46f..0ac7bf8b8e9c386058b2374199e58fe8
  } & React.RefAttributes<LegendListRef>) => React.ReactElement | null;
  
 diff --git a/keyboard.js b/keyboard.js
-index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d51720a73fb83 100644
+index 6645bcb..321c4c3 100644
 --- a/keyboard.js
 +++ b/keyboard.js
 @@ -33,19 +33,22 @@ if (typeof __DEV__ !== "undefined" && __DEV__ && !reactNativeKeyboardController.
@@ -119,7 +119,7 @@ index 6645bcbb1f77c36c432035eaf8b2d6d924fc8bda..321c4c305129dd3ce3f06127c47d5172
        renderScrollComponent: memoList,
        ...rest
 diff --git a/keyboard.mjs b/keyboard.mjs
-index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85cf4f361ee 100644
+index 87b38b9..111eb24 100644
 --- a/keyboard.mjs
 +++ b/keyboard.mjs
 @@ -1,7 +1,7 @@
@@ -224,7 +224,7 @@ index 87b38b9607c2eba6b407c2acfd520633bdb0e7c2..111eb242ba9d9ade1cb912550f7df85c
        renderScrollComponent: memoList,
        ...rest
 diff --git a/react-native.d.ts b/react-native.d.ts
-index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6aba6636e5 100644
+index ce1fe00..3ccf6f1 100644
 --- a/react-native.d.ts
 +++ b/react-native.d.ts
 @@ -293,6 +293,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -241,13 +241,13 @@ index ce1fe00001c9e5aee6c6ea8bb2d4757d4586d002..3ccf6f16067152dfcb0c143371e2ec6a
       * Number of columns to render items in.
       * @default 1
 diff --git a/react-native.js b/react-native.js
-index b3c5a306b293f797a8b338adfca3060c0f6db22b..5ac6bbe8fe40bf252fefa6b885c2196d0677d75f 100644
+index b3c5a30..5ac6bbe 100644
 --- a/react-native.js
 +++ b/react-native.js
 @@ -717,6 +717,15 @@ function hasActiveInitialScroll(state) {
    return !!(state == null ? void 0 : state.initialScroll) && !state.didFinishInitialScroll;
  }
-
+ 
 +// Size-only changes may not emit a scroll event to refresh the edge signal.
 +function getIsAtEnd(ctx, contentSize = getContentSize(ctx)) {
 +  const { queuedInitialLayout, scroll, scrollLength } = ctx.state;
@@ -809,13 +809,13 @@ index b3c5a306b293f797a8b338adfca3060c0f6db22b..5ac6bbe8fe40bf252fefa6b885c2196d
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2__namespace.cloneElement(refreshControlElement, {
 diff --git a/react-native.mjs b/react-native.mjs
-index 40e87cda8c9bc79a889e5542f29af429a24b24d4..93aac741d2cf77ce35996362439108176f19da7a 100644
+index 40e87cd..93aac74 100644
 --- a/react-native.mjs
 +++ b/react-native.mjs
 @@ -696,6 +696,15 @@ function hasActiveInitialScroll(state) {
    return !!(state == null ? void 0 : state.initialScroll) && !state.didFinishInitialScroll;
  }
-
+ 
 +// Size-only changes may not emit a scroll event to refresh the edge signal.
 +function getIsAtEnd(ctx, contentSize = getContentSize(ctx)) {
 +  const { queuedInitialLayout, scroll, scrollLength } = ctx.state;
@@ -1376,8 +1376,78 @@ index 40e87cda8c9bc79a889e5542f29af429a24b24d4..93aac741d2cf77ce3599636243910817
        onScroll: onScrollHandler,
        recycleItems,
        refreshControl: refreshControlElement ? stylePaddingTopState > 0 ? React2.cloneElement(refreshControlElement, {
+diff --git a/react-native.web.js b/react-native.web.js
+index 914d2da..8b88b09 100644
+--- a/react-native.web.js
++++ b/react-native.web.js
+@@ -5651,6 +5651,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+ });
+ 
+ // src/utils/reordering.ts
++// Element.moveBefore keeps the moved subtree's state and does not count as an
++// insertion, so CSS @starting-style transitions and iframes inside a row do not
++// restart when the list reorders its containers. insertBefore is the fallback.
++function moveChildBefore(container, element, reference) {
++  if (typeof container.moveBefore === "function") {
++    container.moveBefore(element, reference);
++  } else if (reference) {
++    container.insertBefore(element, reference);
++  } else {
++    container.appendChild(element);
++  }
++}
+ function sortDOMElements(container, indexByElement) {
+   const elements = Array.from(container.children);
+   if (elements.length <= 1) return elements;
+@@ -5690,9 +5702,9 @@ function sortDOMElements(container, indexByElement) {
+         }
+       }
+       if (nextStableElement) {
+-        container.insertBefore(element, nextStableElement);
++        moveChildBefore(container, element, nextStableElement);
+       } else {
+-        container.appendChild(element);
++        moveChildBefore(container, element, null);
+       }
+     }
+   }
+diff --git a/react-native.web.mjs b/react-native.web.mjs
+index 95465f2..d7cbe1c 100644
+--- a/react-native.web.mjs
++++ b/react-native.web.mjs
+@@ -5630,6 +5630,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+ });
+ 
+ // src/utils/reordering.ts
++// Element.moveBefore keeps the moved subtree's state and does not count as an
++// insertion, so CSS @starting-style transitions and iframes inside a row do not
++// restart when the list reorders its containers. insertBefore is the fallback.
++function moveChildBefore(container, element, reference) {
++  if (typeof container.moveBefore === "function") {
++    container.moveBefore(element, reference);
++  } else if (reference) {
++    container.insertBefore(element, reference);
++  } else {
++    container.appendChild(element);
++  }
++}
+ function sortDOMElements(container, indexByElement) {
+   const elements = Array.from(container.children);
+   if (elements.length <= 1) return elements;
+@@ -5669,9 +5681,9 @@ function sortDOMElements(container, indexByElement) {
+         }
+       }
+       if (nextStableElement) {
+-        container.insertBefore(element, nextStableElement);
++        moveChildBefore(container, element, nextStableElement);
+       } else {
+-        container.appendChild(element);
++        moveChildBefore(container, element, null);
+       }
+     }
+   }
 diff --git a/react.js b/react.js
-index 914d2dafaafa001c9ab6791a0a0581659295e333..a2df18d450eebe451fda42bab47d1658458edbb1 100644
+index 914d2da..0c2917d 100644
 --- a/react.js
 +++ b/react.js
 @@ -4702,7 +4702,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1403,7 +1473,38 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..a2df18d450eebe451fda42bab47d1658
    }
    return nextSize;
  }
-@@ -6446,8 +6453,8 @@ function ScrollAdjust() {
+@@ -5651,6 +5658,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+ });
+ 
+ // src/utils/reordering.ts
++// Element.moveBefore keeps the moved subtree's state and does not count as an
++// insertion, so CSS @starting-style transitions and iframes inside a row do not
++// restart when the list reorders its containers. insertBefore is the fallback.
++function moveChildBefore(container, element, reference) {
++  if (typeof container.moveBefore === "function") {
++    container.moveBefore(element, reference);
++  } else if (reference) {
++    container.insertBefore(element, reference);
++  } else {
++    container.appendChild(element);
++  }
++}
+ function sortDOMElements(container, indexByElement) {
+   const elements = Array.from(container.children);
+   if (elements.length <= 1) return elements;
+@@ -5690,9 +5709,9 @@ function sortDOMElements(container, indexByElement) {
+         }
+       }
+       if (nextStableElement) {
+-        container.insertBefore(element, nextStableElement);
++        moveChildBefore(container, element, nextStableElement);
+       } else {
+-        container.appendChild(element);
++        moveChildBefore(container, element, null);
+       }
+     }
+   }
+@@ -6446,8 +6465,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1414,7 +1515,7 @@ index 914d2dafaafa001c9ab6791a0a0581659295e333..a2df18d450eebe451fda42bab47d1658
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/react.mjs b/react.mjs
-index 95465f2ab89ce41a10553f58af83618f7310e83c..25cf046f2c3141ddce5a0b6e28c354b865331b4f 100644
+index 95465f2..b73bfdf 100644
 --- a/react.mjs
 +++ b/react.mjs
 @@ -4681,7 +4681,8 @@ function maybeUpdateAnchoredEndSpace(ctx) {
@@ -1440,7 +1541,38 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..25cf046f2c3141ddce5a0b6e28c354b8
    }
    return nextSize;
  }
-@@ -6425,8 +6432,8 @@ function ScrollAdjust() {
+@@ -5630,6 +5637,18 @@ var ContainerSlot = typedMemo(function ContainerSlot2(props) {
+ });
+ 
+ // src/utils/reordering.ts
++// Element.moveBefore keeps the moved subtree's state and does not count as an
++// insertion, so CSS @starting-style transitions and iframes inside a row do not
++// restart when the list reorders its containers. insertBefore is the fallback.
++function moveChildBefore(container, element, reference) {
++  if (typeof container.moveBefore === "function") {
++    container.moveBefore(element, reference);
++  } else if (reference) {
++    container.insertBefore(element, reference);
++  } else {
++    container.appendChild(element);
++  }
++}
+ function sortDOMElements(container, indexByElement) {
+   const elements = Array.from(container.children);
+   if (elements.length <= 1) return elements;
+@@ -5669,9 +5688,9 @@ function sortDOMElements(container, indexByElement) {
+         }
+       }
+       if (nextStableElement) {
+-        container.insertBefore(element, nextStableElement);
++        moveChildBefore(container, element, nextStableElement);
+       } else {
+-        container.appendChild(element);
++        moveChildBefore(container, element, null);
+       }
+     }
+   }
+@@ -6425,8 +6444,8 @@ function ScrollAdjust() {
                window.getComputedStyle(contentNode)[axis.paddingEndProp]
              );
              const temporaryPaddingEnd = `${(currentPaddingEnd || 0) + pad}px`;
@@ -1451,7 +1583,7 @@ index 95465f2ab89ce41a10553f58af83618f7310e83c..25cf046f2c3141ddce5a0b6e28c354b8
              scrollBy();
              if (resetPaddingRafRef.current !== void 0) {
 diff --git a/reanimated.d.ts b/reanimated.d.ts
-index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613dae950fe 100644
+index e504332..2ce6383 100644
 --- a/reanimated.d.ts
 +++ b/reanimated.d.ts
 @@ -294,6 +294,12 @@ interface LegendListSpecificProps<ItemT, TItemType extends string | undefined> {
@@ -1468,7 +1600,7 @@ index e5043320700b12f34f4c0babbc341f85ca8135c1..2ce63830a28636b21937a0741fd0e613
       * Number of columns to render items in.
       * @default 1
 diff --git a/reanimated.js b/reanimated.js
-index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7868d0cec 100644
+index f1265fa..fc03be2 100644
 --- a/reanimated.js
 +++ b/reanimated.js
 @@ -115,8 +115,10 @@ var ReanimatedPositionView = typedMemo(function ReanimatedPositionViewComponent(
@@ -1631,7 +1763,7 @@ index f1265fad74189591b5aae86cf2e3a31f9c0fdb02..fc03be2190c046f743ffde45ed189ee7
          renderScrollComponent: renderReanimatedScrollComponent,
          ...IsNewArchitecture ? { stickyPositionComponentInternal } : {}
 diff --git a/reanimated.mjs b/reanimated.mjs
-index 29a00d5dc084fd408a0e0a0a4d64e856d0ed1525..6ab929250c8924e2d9919ee09a4f774238fbb90a 100644
+index 29a00d5..6ab9292 100644
 --- a/reanimated.mjs
 +++ b/reanimated.mjs
 @@ -1,7 +1,7 @@
