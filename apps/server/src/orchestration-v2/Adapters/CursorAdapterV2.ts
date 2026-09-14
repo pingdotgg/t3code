@@ -433,9 +433,28 @@ function cursorToolSearchPattern(toolCall: ToolCall): string | undefined {
   }
 }
 
-function cursorToolSearchResults(toolCall: ToolCall): ReadonlyArray<{
+type CursorLsDirectoryNode = Extract<
+  Extract<ToolCall, { readonly type: "ls" }>["result"],
+  { readonly status: "success" }
+>["value"]["directoryTreeRoot"];
+
+function cursorLsSearchResults(
+  node: CursorLsDirectoryNode,
+  path: Path.Path,
+): ReadonlyArray<{ readonly fileName: string }> {
+  return [
+    ...node.childrenFiles.map((file) => ({ fileName: path.join(node.absPath, file.name) })),
+    ...node.childrenDirs.flatMap((child) => cursorLsSearchResults(child, path)),
+  ];
+}
+
+function cursorToolSearchResults(
+  toolCall: ToolCall,
+  path: Path.Path,
+): ReadonlyArray<{
   readonly fileName: string;
   readonly line?: number;
+  readonly column?: number;
   readonly preview?: string;
 }> {
   if (toolCall.result?.status !== "success") {
@@ -468,6 +487,27 @@ function cursorToolSearchResults(toolCall: ToolCall): ReadonlyArray<{
           preview: entry.line,
         }));
       });
+    case "ls":
+      return cursorLsSearchResults(toolCall.result.value.directoryTreeRoot, path);
+    case "readLints":
+      return toolCall.result.value.fileDiagnostics.flatMap((file) =>
+        file.diagnostics.map((diagnostic) => {
+          const line = diagnostic.range?.start?.line;
+          const character = diagnostic.range?.start?.character;
+          const hasLine = typeof line === "number" && Number.isInteger(line) && line >= 0;
+          return {
+            fileName: file.path,
+            ...(hasLine ? { line: line + 1 } : {}),
+            ...(hasLine &&
+            typeof character === "number" &&
+            Number.isInteger(character) &&
+            character >= 0
+              ? { column: character + 1 }
+              : {}),
+            preview: diagnostic.message,
+          };
+        }),
+      );
     case "semSearch":
       return [
         {
@@ -1219,7 +1259,7 @@ export function makeCursorAdapterV2(
             case "ls":
             case "readLints":
             case "semSearch": {
-              const results = cursorToolSearchResults(toolCall);
+              const results = cursorToolSearchResults(toolCall, path);
               turnItem = {
                 ...base,
                 type: "file_search",
