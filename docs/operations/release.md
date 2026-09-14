@@ -72,7 +72,8 @@ split so the Developer ID certificate never shares a job with PR code:
   packaging must use the `channel=preview` release train above instead.
 
 Before handing the bundle to the signing runner, the trusted workflow validates its ZIP entries
-and accepts only regular files under `server/dist` and `desktop/dist-electron`. The artifact cannot
+and accepts only regular files under `server/dist` and `desktop/dist-electron`, plus the directory
+entries that lead to those roots. The artifact cannot
 overwrite packaging code or installed dependencies. The bundle is copied into the app, never executed,
 on the signing runner. The
 `pull_request_target` cleanup job in the publish workflow removes the download when the PR closes, or
