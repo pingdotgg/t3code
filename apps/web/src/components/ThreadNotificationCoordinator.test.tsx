@@ -1,4 +1,5 @@
 import type { ClientSettings } from "@t3tools/contracts/settings";
+import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
@@ -29,26 +30,62 @@ const state = vi.hoisted(() => ({
   }),
 }));
 
+const SHELL_NOW = DateTime.makeUnsafe("2026-09-13T09:00:00.000Z");
+
+function mockThreadShell() {
+  return {
+    id: "thread-1",
+    projectId: "project-1",
+    title: "Fix the login form",
+    providerInstanceId: "codex",
+    modelSelection: { instanceId: "codex", model: "gpt-5.4" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    activeProviderThreadId: null,
+    lineage: {
+      rootThreadId: "thread-1",
+      parentThreadId: null,
+      relationshipToParent: null,
+    },
+    forkedFrom: null,
+    createdBy: "user",
+    creationSource: "web",
+    latestRunId: "run-1",
+    activeRunId: null,
+    status: state.completedAt
+      ? "completed"
+      : state.sessionError || state.turnError
+        ? "failed"
+        : "running",
+    pendingRuntimeRequest: state.input
+      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      : state.approval
+        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
+        : null,
+    latestVisibleMessage: null,
+    latestUserMessageAt: null,
+    hasActionableProposedPlan: false,
+    itemCount: 0,
+    visibleItemCount: 0,
+    createdAt: SHELL_NOW,
+    updatedAt: SHELL_NOW,
+    latestRunRequestedAt: SHELL_NOW,
+    latestRunStartedAt: SHELL_NOW,
+    latestRunCompletedAt: state.completedAt ? DateTime.makeUnsafe(state.completedAt) : undefined,
+    archivedAt: state.archivedAt ? DateTime.makeUnsafe(state.archivedAt) : null,
+    settledOverride: null,
+    settledAt: null,
+    lastVisitedAt: null,
+    deletedAt: null,
+  };
+}
+
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({
     status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({
-      threads: [
-        {
-          id: "thread-1",
-          title: "Fix the login form",
-          archivedAt: state.archivedAt,
-          hasPendingUserInput: state.input,
-          hasPendingApprovals: state.approval,
-          session: state.sessionError ? { status: "error" } : null,
-          latestTurn: {
-            turnId: "turn-1",
-            state: state.turnError ? "error" : state.completedAt ? "completed" : "running",
-            completedAt: state.completedAt,
-          },
-        },
-      ],
-    }),
+    snapshot: Option.some({ threads: [mockThreadShell()] }),
   }),
 }));
 vi.mock("@tanstack/react-router", () => ({
