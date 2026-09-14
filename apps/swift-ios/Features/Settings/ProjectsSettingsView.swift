@@ -79,7 +79,7 @@ struct ProjectsSettingsView: View {
 struct ProjectPreferencesView: View {
     @Bindable var model: FeatureRootModel
     let projectID: String
-    @State private var settings: ServerSettingsSnapshot?
+    @State private var preferences: FeatureProjectPreferences?
     @State private var busy = false
     @State private var errorMessage: String?
 
@@ -88,12 +88,8 @@ struct ProjectPreferencesView: View {
     private var providers: [FeatureProvider] {
         DailyUXCreationContext.providers(for: project, in: model.snapshot)
     }
-    private var effective: ServerSettingsSnapshot? {
-        settings?.resolvingProject(
-            id: wireID,
-            disabledProviderIDs: Set(providers.filter { !$0.isAvailable }.map(\.id))
-        )
-    }
+    private var settings: ServerSettingsSnapshot? { preferences?.environment }
+    private var effective: ServerSettingsSnapshot? { preferences?.effective }
     private var supportsRestartContinuation: Bool {
         guard let project else { return false }
         return model.snapshot.preferencesByEnvironment?[project.environmentID]?.continueThreadsAfterServerUpdate != nil
@@ -235,7 +231,7 @@ struct ProjectPreferencesView: View {
     private func load() async {
         guard let project, project.supportsProjectSettingsOverrides == true else { return }
         do {
-            settings = try await model.client.serverPreferences(environmentID: project.environmentID)
+            preferences = try await model.client.projectPreferences(projectID: projectID)
             errorMessage = nil
         } catch { errorMessage = "Could not load project settings. Check this connection." }
     }

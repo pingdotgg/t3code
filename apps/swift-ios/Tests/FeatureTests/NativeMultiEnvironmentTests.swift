@@ -173,6 +173,37 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testProjectEditorReadsLegacyDefaultsBeforeTheSettingsFold() async throws {
+        let server = MultiEnvironmentConfigurationServer(
+            projectSettingsSupportHosts: ["two.example"],
+            settingsByHost: ["two.example": [
+                "defaultModelSelection": try JSONValue.encode(ModelSelection(instanceId: "codex", model: "environment-model")),
+                "defaultThreadEnvMode": .string("local"),
+            ]]
+        )
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(1),
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let source = multiEnvironmentShell(projectID: "project-two", threadID: "thread-two", title: "Task")
+        var wireProject = source.projects[0]
+        wireProject.defaultThreadEnvMode = .worktree
+        await fixture.transport.setShell(.init(
+            snapshotSequence: source.snapshotSequence, projects: [wireProject],
+            threads: source.threads, updatedAt: source.updatedAt
+        ), host: "two.example")
+        let snapshot = try await fixture.client.initialSnapshot()
+        let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
+        let preferences = try await fixture.client.projectPreferences(projectID: project.id)
+        XCTAssertEqual(preferences.environment.defaultModelSelection?.model, "environment-model")
+        XCTAssertEqual(preferences.environment.defaultThreadEnvMode, .local)
+        XCTAssertEqual(preferences.effective.defaultModelSelection, wireProject.defaultModelSelection)
+        XCTAssertEqual(preferences.effective.defaultThreadEnvMode, .worktree)
+        await fixture.client.disconnect()
+    }
+
     func testOldServersRejectProjectSettingsAndResponseStreamingWithoutWriting() async throws {
         let server = MultiEnvironmentConfigurationServer()
         let fixture = try await Self.makeFixture(

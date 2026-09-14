@@ -1183,6 +1183,11 @@ public struct FeatureSettings: Sendable, Equatable, Codable {
     }
 }
 
+public struct FeatureProjectPreferences: Sendable {
+    public let environment: ServerSettingsSnapshot
+    public let effective: ServerSettingsSnapshot
+}
+
 public struct FeatureEnvironmentPreferences: Sendable, Equatable, Codable {
     public enum ProjectGroupingMode: String, Sendable, Equatable, Codable {
         case repository

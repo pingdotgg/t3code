@@ -2339,6 +2339,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }.map { id in latestSnapshot?.environments.first { $0.id == id }?.name ?? id }
     }
 
+    func projectPreferences(projectID: String) async throws -> FeatureProjectPreferences {
+        let route = try projectRoute(for: projectID)
+        let settings = try await serverPreferences(environmentID: route.environmentID)
+        let project = try project(for: route)
+        let providers = serverConfigsByEnvironmentID[route.environmentID]?.providers ?? []
+        return FeatureProjectPreferences(
+            environment: settings,
+            effective: settings.resolvingProject(
+                id: route.wireID, legacyModelSelection: project.defaultModelSelection,
+                legacyWorkspaceMode: project.defaultThreadEnvMode,
+                disabledProviderIDs: Set(providers.filter { !providerCanRun($0) }.map(\.instanceId))
+            )
+        )
+    }
+
     func updateProjectPreferences(projectID: String, change: ServerProjectSettingChange) async throws {
         // Entries replace the entire project's overrides. Serialize local edits
         // and read the latest entry only after the previous write completes.

@@ -92,6 +92,7 @@ public protocol FeatureClient: AnyObject {
     func serverPreferences(environmentID: String) async throws -> ServerSettingsSnapshot
     func updateServerPreferences(environmentID: String, change: ServerSettingsChange) async throws
     func updateProjectPreferences(projectID: String, change: ServerProjectSettingChange) async throws
+    func projectPreferences(projectID: String) async throws -> FeatureProjectPreferences
     func sharedPreferenceMismatches(environmentID: String) -> [String]
     func refreshProviders(environmentID: String) async throws -> [FeatureProvider]
     func refreshWorkspaceProviders(environmentID: String, cwd: String, instanceID: String) async throws -> [FeatureProvider]
@@ -231,6 +232,9 @@ public extension FeatureClient {
         throw FeatureCapabilityUnavailable("Server preferences")
     }
     func updateProjectPreferences(projectID: String, change: ServerProjectSettingChange) async throws {
+        throw FeatureCapabilityUnavailable("Project preferences")
+    }
+    func projectPreferences(projectID: String) async throws -> FeatureProjectPreferences {
         throw FeatureCapabilityUnavailable("Project preferences")
     }
     func sharedPreferenceMismatches(environmentID: String) -> [String] { [] }
