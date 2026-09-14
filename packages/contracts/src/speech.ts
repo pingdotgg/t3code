@@ -62,7 +62,7 @@ export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTrans
 export const SPEECH_STREAM_PATH = "/ws/voice";
 const SPEECH_SAMPLE_RATE = 16_000;
 export const SPEECH_STREAM_MAX_CHUNK_BYTES = SPEECH_SAMPLE_RATE * 4;
-export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5;
+export const SPEECH_STREAM_MAX_QUEUED_BYTES = SPEECH_SAMPLE_RATE * 4 * 5 * 60;
 
 export const SpeechStreamCommand = Schema.Struct({ type: Schema.Literal("finish") });
 

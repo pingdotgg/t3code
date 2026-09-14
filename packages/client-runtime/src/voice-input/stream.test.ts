@@ -59,10 +59,25 @@ it("drains ordered PCM before finishing and replaces tentative hypotheses", asyn
   expect(socket.closed).toBe(true);
 });
 
-it("rejects overload instead of silently dropping audio", async () => {
+it("coalesces queued audio into fewer inference frames", async () => {
+  const { socket, stream, abort } = await connect();
+  stream.feed(new Float32Array([0.1]));
+  stream.feed(new Float32Array([0.2]));
+  stream.feed(new Float32Array([0.3]));
+  socket.receive({ type: "update", revision: 1, text: null });
+
+  const queued = new Float32Array((socket.sent[1] as Uint8Array).slice().buffer);
+  expect(queued).toHaveLength(2);
+  expect(queued[0]).toBeCloseTo(0.2);
+  expect(queued[1]).toBeCloseTo(0.3);
+  expect(socket.sent).toHaveLength(2);
+  abort.abort();
+});
+
+it("rejects recordings beyond the duration limit", async () => {
   const { socket, stream, onError } = await connect();
   stream.feed(new Float32Array(SPEECH_STREAM_MAX_QUEUED_BYTES / 4 + 1));
-  await expect(stream.finish()).rejects.toThrow("cannot keep up");
+  await expect(stream.finish()).rejects.toThrow("limited to five minutes");
   expect(onError).toHaveBeenCalledOnce();
   expect(socket.sent).toHaveLength(0);
   expect(socket.closed).toBe(true);

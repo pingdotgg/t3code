@@ -125,17 +125,27 @@ export async function openSpeechStream(input: {
       if (closed || finishing) return;
       const bytes = new Uint8Array(pcm.buffer, pcm.byteOffset, pcm.byteLength);
       if (queuedBytes + inFlight + bytes.byteLength > SPEECH_STREAM_MAX_QUEUED_BYTES) {
-        fail(
-          new Error(
-            "This environment cannot keep up with live audio. Try a smaller streaming model.",
-          ),
-        );
+        fail(new Error("Voice recordings are limited to five minutes."));
         return;
       }
-      for (let offset = 0; offset < bytes.length; offset += SPEECH_STREAM_MAX_CHUNK_BYTES) {
+      let offset = 0;
+      while (offset < bytes.length) {
+        const tail = queue.at(-1);
+        const available = tail ? SPEECH_STREAM_MAX_CHUNK_BYTES - tail.byteLength : 0;
+        if (tail && available > 0) {
+          const appended = Math.min(available, bytes.length - offset);
+          const merged = new Uint8Array(tail.byteLength + appended);
+          merged.set(tail);
+          merged.set(bytes.subarray(offset, offset + appended), tail.byteLength);
+          queue[queue.length - 1] = merged;
+          queuedBytes += appended;
+          offset += appended;
+          continue;
+        }
         const chunk = bytes.slice(offset, offset + SPEECH_STREAM_MAX_CHUNK_BYTES);
         queue.push(chunk);
-        queuedBytes += chunk.length;
+        queuedBytes += chunk.byteLength;
+        offset += chunk.byteLength;
       }
       try {
         pump();
