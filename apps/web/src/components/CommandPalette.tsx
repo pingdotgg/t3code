@@ -163,7 +163,11 @@ import {
   CommandPaletteMetaDot,
   ThreadCommandSubtitle,
 } from "./ThreadCommandSubtitle";
-import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
+import {
+  ThreadRowLeadingStatus,
+  ThreadRowTrailingStatus,
+  ThreadSearchPullRequestNumber,
+} from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
@@ -1242,7 +1246,12 @@ function OpenCommandPaletteDialog(props: {
         sortOrder: clientSettings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
         renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
-        renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
+        renderTrailingContent: (thread) => (
+          <>
+            <ThreadSearchPullRequestNumber thread={thread} query={threadSearchQuery} />
+            <ThreadRowTrailingStatus thread={thread} />
+          </>
+        ),
         renderDescription: (thread, { projectTitle }) => {
           const modelInstanceId =
             thread.session?.providerInstanceId ?? thread.modelSelection.instanceId;

@@ -1,4 +1,5 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
+import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
@@ -15,7 +16,7 @@ import {
   type ThreadPullRequestBadge,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
-import { useMemo, type MouseEvent } from "react";
+import { useMemo, type MouseEvent, type ComponentProps } from "react";
 import { buttonVariants, InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
@@ -603,4 +604,55 @@ export function ThreadRowTrailingStatus({ thread }: { thread: SidebarThreadSumma
       ) : null}
     </span>
   );
+}
+
+/** Shared number presentation for inbox rows and compact thread search results. */
+export function ThreadPullRequestNumber({
+  number,
+  className,
+  ...props
+}: ComponentProps<"span"> & { number: number }) {
+  return (
+    <span {...props} className={cn("shrink-0 text-xs tabular-nums", className)}>
+      #{number}
+    </span>
+  );
+}
+
+export function ThreadSearchPullRequestNumber({
+  thread,
+  query,
+  enabled = true,
+  settled = false,
+}: {
+  thread: SidebarThreadSummary;
+  query: string;
+  enabled?: boolean;
+  settled?: boolean;
+}) {
+  const matches = createThreadPullRequestMatcher(query);
+  const candidates =
+    thread.pullRequests.length > 0
+      ? visibleThreadPullRequests(thread.pullRequests).map((pr) => ({
+          ...pr,
+          projectId: thread.projectId,
+        }))
+      : [thread.linkedPullRequest, thread.branchPullRequest];
+  const reference = candidates.find((pr) => pr != null && matches({ linkedPullRequest: pr }));
+  const linked = useLinkedThreadPullRequest(thread.environmentId, reference, enabled);
+  const status = prStatusIndicator(linked?.pr ?? null, linked?.sourceControlProvider);
+  return reference ? (
+    <ThreadPullRequestNumber
+      number={reference.number}
+      className={
+        settled
+          ? cn(
+              "text-secondary-label transition-colors",
+              linked?.pr && settledPrHoverColorClass(linked.pr.state, linked.pr.isDraft),
+            )
+          : (status?.colorClass ?? "text-secondary-label")
+      }
+      aria-label={status?.tooltip ?? `Pull request #${reference.number}`}
+    />
+  ) : null;
 }

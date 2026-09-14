@@ -829,6 +829,23 @@ describe("searchSidebarThreads", () => {
     expect(searchSidebarThreads(threads, "workspace")).toEqual([threads[0]]);
   });
 
+  it("finds linked and branch PRs without matching number prefixes", () => {
+    const pr = {
+      projectId: ProjectId.make("project"),
+      repository: "owner/repo",
+      number: 123,
+      url: "https://github.com/owner/repo/pull/123",
+    };
+    const candidates = [
+      { title: "Linked", linkedPullRequest: pr },
+      { title: "Branch", branchPullRequest: pr },
+      { title: "Other", linkedPullRequest: { ...pr, number: 1234, url: `${pr.url}4` } },
+    ];
+    for (const query of ["123", "#123"]) {
+      expect(searchSidebarThreads(candidates, query)).toEqual(candidates.slice(0, 2));
+    }
+  });
+
   it("returns no results for an empty query", () => {
     expect(searchSidebarThreads(threads, "   ")).toEqual([]);
   });

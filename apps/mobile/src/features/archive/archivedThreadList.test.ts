@@ -64,6 +64,30 @@ function makeSnapshot(
 }
 
 describe("buildArchivedThreadGroups", () => {
+  it.each(["123", "#123"])("finds PR threads with %s", (searchQuery) => {
+    const project = makeProject({ id: ProjectId.make("project"), title: "Project" });
+    const pr = {
+      projectId: project.id,
+      repository: "owner/repo",
+      number: 123,
+      url: "https://github.com/owner/repo/pull/123",
+    };
+    const thread = makeThread({
+      id: ThreadId.make("thread"),
+      projectId: project.id,
+      title: "Unrelated title",
+      branchPullRequest: pr,
+    });
+    const groups = buildArchivedThreadGroups({
+      snapshots: [makeSnapshot([project], [thread])],
+      environmentLabels: {},
+      environmentId: null,
+      searchQuery,
+      sortOrder: "newest",
+    });
+    expect(groups.flatMap((group) => group.threads)).toHaveLength(1);
+  });
+
   it("groups archived threads by project and sorts newest first", () => {
     const project = makeProject({ id: ProjectId.make("project-1"), title: "T3 Code" });
     const older = makeThread({
