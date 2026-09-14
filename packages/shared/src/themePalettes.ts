@@ -115,8 +115,6 @@ export type ThemeDefinition = Readonly<{
   variants?: ThemeVariants;
   /** Groups related imported variants into one library card. */
   collection?: Readonly<{ id: string; label: string }>;
-  /** Allows reviewed built-ins to render product artwork over their sidebar. */
-  sidebarArtwork?: boolean;
   /** Generated from the guided editor's canvas and accent roles. */
   managed?: boolean;
 }>;
@@ -245,7 +243,6 @@ export const T3_CHAT_THEME: ThemeDefinition = {
       terminalScrollbarHover: "oklch(0.360924 0.021469 316.83)",
     },
   },
-  sidebarArtwork: true,
 };
 
 export const GROVE_THEME: ThemeDefinition = {
@@ -372,7 +369,6 @@ export const GROVE_THEME: ThemeDefinition = {
       terminalScrollbarHover: "oklch(0.687968 0.00354 193.55)",
     },
   },
-  sidebarArtwork: true,
 };
 
 export const OCEAN_THEME: ThemeDefinition = {
@@ -499,7 +495,6 @@ export const OCEAN_THEME: ThemeDefinition = {
       terminalScrollbarHover: "oklch(0.681569 0.010909 276.465)",
     },
   },
-  sidebarArtwork: true,
 };
 
 export const EMBER_THEME: ThemeDefinition = {
@@ -626,7 +621,6 @@ export const EMBER_THEME: ThemeDefinition = {
       terminalScrollbarHover: "oklch(0.682876 0.009156 9.796)",
     },
   },
-  sidebarArtwork: true,
 };
 
 export const IRIS_THEME: ThemeDefinition = {
@@ -753,7 +747,6 @@ export const IRIS_THEME: ThemeDefinition = {
       terminalScrollbarHover: "oklch(0.676012 0.015271 305.433)",
     },
   },
-  sidebarArtwork: true,
 };
 
 export const BUILT_IN_THEMES: ReadonlyArray<ThemeDefinition> = [

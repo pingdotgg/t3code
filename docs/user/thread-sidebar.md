@@ -125,3 +125,7 @@ On web and desktop, use **Agents** to follow work delegated to subagents.
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it
 finishes; the call's own result shows its status.
+
+Dev and Nightly environments can identify themselves with artwork at the top of the sidebar and in
+the send button. Choose **Artwork**, **Version pill**, or **None** in Settings under environment
+identification. Artwork is recolored to match the active theme, including custom and imported ones.
