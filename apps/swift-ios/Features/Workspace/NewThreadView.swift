@@ -140,6 +140,19 @@ public struct NewThreadView: View {
             }
         }
         .onChange(of: projectID) { prepareProjectIfNeeded(projectID) }
+        .onChange(of: initialSelection) { _, value in
+            if !selectionIsExplicit { selection = value }
+        }
+        .onChange(of: environmentPreferences) { previous, preferences in
+            guard !workspaceSelectionIsExplicit,
+                  previous.defaultWorkspaceMode != preferences.defaultWorkspaceMode
+                    || previous.newWorktreesStartFromOrigin != preferences.newWorktreesStartFromOrigin else { return }
+            workspaceMode = preferences.defaultWorkspaceMode
+            startFromOrigin = preferences.newWorktreesStartFromOrigin
+            selectedBranch = workspaceMode == .local
+                ? NewTaskWorkspaceDefaults.localBranch(in: branches)
+                : NewTaskWorkspaceDefaults.worktreeBase(in: branches)
+        }
         .onChange(of: creationProjectIDs) { _, ids in
             guard !ids.contains(projectID) else { return }
             if projectID.isEmpty {
@@ -201,6 +214,8 @@ public struct NewThreadView: View {
             }
         }) { picker in
             switch picker {
+            case .projectSettings:
+                ProjectPreferencesSheet(model: model, projectID: projectID)
             case .project:
                 NewTaskProjectPicker(
                     groups: creationProjectGroups,
@@ -253,6 +268,18 @@ public struct NewThreadView: View {
                 .disabled(isSubmitting)
                 .accessibilityLabel("Cancel new task")
             Spacer()
+            if selectedProject != nil {
+                Button {
+                    presentPicker(.projectSettings)
+                } label: {
+                    Image(systemName: "gearshape")
+                        .frame(width: 44, height: 44)
+                }
+                .foregroundStyle(T3Colors.textSecondary)
+                .disabled(isSubmitting)
+                .accessibilityLabel("Project settings")
+                .accessibilityIdentifier("new-task-project-settings")
+            }
         }
         .padding(.horizontal, 16)
         .frame(height: 48)
@@ -1365,6 +1392,7 @@ private struct DottedUnderline: Shape {
 }
 
 private enum NewTaskPicker: String, Identifiable {
+    case projectSettings
     case project
     case branch
 

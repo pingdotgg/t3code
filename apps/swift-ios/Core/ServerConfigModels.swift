@@ -154,13 +154,18 @@ public enum ServerProjectGroupingMode: String, Codable, Equatable, Sendable {
 /// can resolve these differently even though they share one mobile client.
 public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
     public var defaultModelSelection: ModelSelection? = nil
-    public let defaultThreadEnvMode: ServerThreadEnvironmentMode
-    public let newWorktreesStartFromOrigin: Bool
+    public var defaultThreadEnvMode: ServerThreadEnvironmentMode
+    public var newWorktreesStartFromOrigin: Bool
     public let sidebarProjectGroupingMode: ServerProjectGroupingMode?
     public let sidebarProjectGroupingOverrides: [String: ServerProjectGroupingMode]?
-    public let sidebarAutoSettleOnMerge: Bool
-    public let sidebarAutoSettleAfterDays: Double?
-    public let continueThreadsAfterServerUpdate: Bool
+    public var sidebarAutoSettleOnMerge: Bool
+    public var sidebarAutoSettleAfterDays: Double?
+    public var continueThreadsAfterServerUpdate: Bool
+    public var defaultAutoPull = false
+    /// Missing on servers that do not support the current streaming setting.
+    public var responseStreamingMode: ResponseStreamingMode? = nil
+    public var projectSettingsOverrides: [String: [String: JSONValue]] = [:]
+    public var projectSettingsFolded = false
     public var environmentIcon: String? = nil
     public var sourceControlWritingStyle: JSONValue? = nil
 
@@ -212,6 +217,7 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
         case continueThreadsAfterServerUpdate
         case environmentIcon
         case sourceControlWritingStyle
+        case defaultAutoPull, responseStreamingMode, projectSettingsOverrides, projectSettingsFolded
     }
 
     public init(from decoder: any Decoder) throws {
@@ -219,6 +225,10 @@ public struct ServerSettingsSnapshot: Codable, Equatable, Sendable {
         defaultModelSelection = try container.decodeIfPresent(ModelSelection.self, forKey: .defaultModelSelection)
         environmentIcon = try container.decodeIfPresent(String.self, forKey: .environmentIcon)
         sourceControlWritingStyle = try container.decodeIfPresent(JSONValue.self, forKey: .sourceControlWritingStyle)
+        defaultAutoPull = try container.decodeIfPresent(Bool.self, forKey: .defaultAutoPull) ?? false
+        responseStreamingMode = try container.decodeIfPresent(ResponseStreamingMode.self, forKey: .responseStreamingMode)
+        projectSettingsOverrides = try container.decodeIfPresent([String: [String: JSONValue]].self, forKey: .projectSettingsOverrides) ?? [:]
+        projectSettingsFolded = try container.decodeIfPresent(Bool.self, forKey: .projectSettingsFolded) ?? false
         continueThreadsAfterServerUpdate = try container.decodeIfPresent(
             Bool.self,
             forKey: .continueThreadsAfterServerUpdate
@@ -259,6 +269,8 @@ public enum ServerSettingsChange: Equatable, Sendable {
     case continueThreadsAfterServerUpdate(Bool)
     case environmentIcon(String?)
     case sharedPreferences(JSONValue)
+    case responseStreamingMode(ResponseStreamingMode)
+    case projectSettingsOverrides(projectID: String, entry: [String: JSONValue]?)
 
     public var jsonValue: JSONValue {
         switch self {
@@ -268,6 +280,9 @@ public enum ServerSettingsChange: Equatable, Sendable {
             .object(["continueThreadsAfterServerUpdate": .bool(value)])
         case let .environmentIcon(value): .object(["environmentIcon": value.map(JSONValue.string) ?? .null])
         case let .sharedPreferences(value): value
+        case let .responseStreamingMode(value): .object(["responseStreamingMode": .string(value.rawValue)])
+        case let .projectSettingsOverrides(projectID, entry):
+            .object(["projectSettingsOverrides": .object([projectID: entry.map(JSONValue.object) ?? .null])])
         case let .sidebarAutoSettleOnMerge(value):
             .object(["sidebarAutoSettleOnMerge": .bool(value)])
         case let .sidebarAutoSettleAfterDays(value):

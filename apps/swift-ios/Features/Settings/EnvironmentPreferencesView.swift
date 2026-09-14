@@ -19,6 +19,21 @@ struct EnvironmentPreferencesView: View {
     var body: some View {
         Form {
             if let settings {
+                if let streamingMode = settings.responseStreamingMode {
+                    Section {
+                        ResponseStreamingPicker(title: "Streaming", selection: Binding(
+                            get: { streamingMode },
+                            set: { save(.responseStreamingMode($0)) }
+                        ))
+                        .accessibilityIdentifier("environment-response-streaming")
+                    } header: {
+                        Text("Responses")
+                    } footer: {
+                        if streamingMode == .token {
+                            Text("Token streaming updates more often and can use more battery.")
+                        }
+                    }
+                }
                 if environment?.canCustomizeIcon == true {
                     Section("Environment") {
                         Picker("Icon", selection: Binding(

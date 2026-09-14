@@ -67,6 +67,123 @@ final class NativeMultiEnvironmentTests: XCTestCase {
         await fixture.client.disconnect()
     }
 
+    func testProjectSettingsPreserveOtherOverridesAndOnlyWriteToTheirEnvironment() async throws {
+        let environmentDefault = ModelSelection(instanceId: "codex", model: "environment-default")
+        let projectDefault = ModelSelection(instanceId: "codex", model: "project-default")
+        let server = MultiEnvironmentConfigurationServer(
+            projectSettingsSupportHosts: ["two.example"],
+            settingsByHost: ["two.example": [
+                "projectSettingsFolded": .bool(true),
+                "defaultModelSelection": try JSONValue.encode(environmentDefault),
+                "responseStreamingMode": .string("paragraph"),
+                "projectSettingsOverrides": .object([
+                    "project-two": .object(["enableAgentBrowserAccess": .bool(false)]),
+                    "another-project": .object(["defaultAutoPull": .bool(true)]),
+                ]),
+            ]]
+        )
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(1),
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let snapshot = try await fixture.client.initialSnapshot()
+        let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
+        XCTAssertEqual(project.defaultSelection?.modelID, environmentDefault.model)
+        XCTAssertEqual(project.supportsProjectSettingsOverrides, true)
+        try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
+            key: .defaultModelSelection, value: try JSONValue.encode(projectDefault)
+        ))
+        async let workspace: Void = fixture.client.updateProjectPreferences(
+            projectID: project.id, change: .init(key: .defaultThreadEnvMode, value: .string("worktree"))
+        )
+        async let origin: Void = fixture.client.updateProjectPreferences(
+            projectID: project.id, change: .init(key: .newWorktreesStartFromOrigin, value: .bool(false))
+        )
+        _ = try await (workspace, origin)
+        try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
+            key: .responseStreamingMode, value: .string("turn")
+        ))
+        let updated = try await fixture.client.initialSnapshot()
+        let updatedProject = try XCTUnwrap(updated.projects.first { $0.id == project.id })
+        XCTAssertEqual(updatedProject.defaultSelection?.modelID, projectDefault.model)
+        XCTAssertEqual(updatedProject.defaultWorkspaceMode, .worktree)
+        XCTAssertEqual(updatedProject.newWorktreesStartFromOrigin, false)
+        XCTAssertEqual(updated.projects.first { $0.environmentID == "one" }?.defaultSelection,
+                       snapshot.projects.first { $0.environmentID == "one" }?.defaultSelection)
+        let stored = await server.settings(host: "two.example")
+        XCTAssertEqual(stored["projectSettingsOverrides"]?["project-two"], .object([
+            "enableAgentBrowserAccess": .bool(false),
+            "defaultModelSelection": try JSONValue.encode(projectDefault),
+            "defaultThreadEnvMode": .string("worktree"),
+            "newWorktreesStartFromOrigin": .bool(false),
+            "responseStreamingMode": .string("turn"),
+        ]))
+        XCTAssertEqual(stored["projectSettingsOverrides"]?["another-project"],
+                       .object(["defaultAutoPull": .bool(true)]))
+        let updatedHosts = await server.updatedHosts()
+        XCTAssertEqual(updatedHosts, Array(repeating: "two.example", count: 4))
+
+        try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
+            key: .defaultModelSelection, value: .null
+        ))
+        let noDefault = try await fixture.client.initialSnapshot()
+        XCTAssertNil(noDefault.projects.first { $0.id == project.id }?.defaultSelection)
+        try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
+            key: .defaultModelSelection, value: nil
+        ))
+        let inherited = try await fixture.client.initialSnapshot()
+        XCTAssertEqual(inherited.projects.first { $0.id == project.id }?.defaultSelection?.modelID,
+                       environmentDefault.model)
+        await fixture.client.disconnect()
+    }
+
+    func testOldServersRejectProjectSettingsAndResponseStreamingWithoutWriting() async throws {
+        let server = MultiEnvironmentConfigurationServer()
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(1),
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        let snapshot = try await fixture.client.initialSnapshot()
+        let project = try XCTUnwrap(snapshot.projects.first { $0.environmentID == "two" })
+        do {
+            try await fixture.client.updateProjectPreferences(projectID: project.id, change: .init(
+                key: .defaultThreadEnvMode, value: .string("worktree")
+            ))
+            XCTFail("Old servers must not receive project settings writes.")
+        } catch is FeatureCapabilityUnavailable { }
+        do {
+            try await fixture.client.updateServerPreferences(environmentID: "two", change: .responseStreamingMode(.token))
+            XCTFail("Old servers must not receive response streaming writes.")
+        } catch is FeatureCapabilityUnavailable { }
+        let updatedHosts = await server.updatedHosts()
+        XCTAssertTrue(updatedHosts.isEmpty)
+        await fixture.client.disconnect()
+    }
+
+    func testResponseStreamingSavesOnTheSelectedEnvironmentOnly() async throws {
+        let server = MultiEnvironmentConfigurationServer(settingsByHost: [
+            "one.example": ["responseStreamingMode": .string("paragraph")],
+            "two.example": ["responseStreamingMode": .string("paragraph")],
+        ])
+        let fixture = try await Self.makeFixture(
+            webSocketConnector: MultiEnvironmentConfigurationConnector(server: server),
+            rpcConnectionWaitTimeout: .seconds(1),
+            fallbackPollingInitialDelay: .seconds(60), aggregateRefreshInterval: .seconds(60)
+        )
+        defer { try? FileManager.default.removeItem(at: fixture.directory) }
+        _ = try await fixture.client.initialSnapshot()
+        try await fixture.client.updateServerPreferences(environmentID: "two", change: .responseStreamingMode(.token))
+        let saved = try await fixture.client.serverPreferences(environmentID: "two")
+        XCTAssertEqual(saved.responseStreamingMode, .token)
+        let updatedHosts = await server.updatedHosts()
+        XCTAssertEqual(updatedHosts, ["two.example"])
+        await fixture.client.disconnect()
+    }
+
     func testProviderCatalogueUsesStableProviderAndModelIdentities() {
         let normalized = NativeFeatureClient.normalizedProviders([
             FeatureProvider(
@@ -1650,15 +1767,20 @@ private actor MultiEnvironmentConfigurationServer {
     private let directoryEntries: [String: ProjectEntriesResult]
     private let legacyEntries: ProjectEntriesResult?
     private var directoryRequests: [(host: String, input: JSONValue)] = []
+    private let projectSettingsSupportHosts: Set<String>
 
     init(
         restartSupportHosts: Set<String> = [],
         directoryEntries: [String: ProjectEntriesResult] = [:],
-        legacyEntries: ProjectEntriesResult? = nil
+        legacyEntries: ProjectEntriesResult? = nil,
+        projectSettingsSupportHosts: Set<String> = [],
+        settingsByHost: [String: [String: JSONValue]] = [:]
     ) {
         self.restartSupportHosts = restartSupportHosts
         self.directoryEntries = directoryEntries
         self.legacyEntries = legacyEntries
+        self.projectSettingsSupportHosts = projectSettingsSupportHosts
+        self.settingsByHost = settingsByHost
     }
 
     func updatedHosts() -> [String] { settingsUpdateHosts }
@@ -1677,6 +1799,8 @@ private actor MultiEnvironmentConfigurationServer {
                 legacyEntries ?? directoryEntries[input["directoryPath"]?.stringValue ?? ""]
                     ?? ProjectEntriesResult(entries: [], truncated: false)
             )
+        case "server.getSettings":
+            value = .object(settingsByHost[host] ?? [:])
         case RPCMethod.subscribeServerConfig.rawValue:
             return .object([
                 "_tag": .string("Chunk"), "requestId": .number(id),
@@ -1696,7 +1820,17 @@ private actor MultiEnvironmentConfigurationServer {
                 throw URLError(.badServerResponse)
             }
             settingsUpdateHosts.append(host)
-            settingsByHost[host, default: [:]].merge(patch) { _, next in next }
+            var updated = settingsByHost[host] ?? [:]
+            for (key, next) in patch {
+                if key == "projectSettingsOverrides", case let .object(entries) = next {
+                    var overrides: [String: JSONValue] = if case let .object(current) = updated[key] { current } else { [:] }
+                    for (projectID, entry) in entries {
+                        overrides[projectID] = entry == .null ? nil : entry
+                    }
+                    updated[key] = .object(overrides)
+                } else { updated[key] = next }
+            }
+            settingsByHost[host] = updated
             value = .object(settingsByHost[host] ?? [:])
         case RPCMethod.getArchivedShellSnapshot.rawValue:
             value = try JSONValue.encode(OrchestrationShellSnapshot(
@@ -1722,6 +1856,7 @@ private actor MultiEnvironmentConfigurationServer {
                 "capabilities": .object([
                     "threadAutoSettlement": .bool(true), "environmentIcon": .bool(true),
                     "threadRestartContinuation": .bool(restartSupportHosts.contains(host)),
+                    "projectSettingsOverrides": .bool(projectSettingsSupportHosts.contains(host)),
                 ]),
             ]),
         ])

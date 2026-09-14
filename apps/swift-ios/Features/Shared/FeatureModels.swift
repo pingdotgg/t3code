@@ -146,6 +146,9 @@ public struct FeatureProject: Identifiable, Sendable, Equatable, Hashable, Codab
     public var createdAt: String?
     public var updatedAt: String?
     public var projectIcon: ProjectIconOverride? = nil
+    public var defaultWorkspaceMode: FeatureWorkspaceMode? = nil
+    public var newWorktreesStartFromOrigin: Bool? = nil
+    public var supportsProjectSettingsOverrides: Bool? = nil
 
     public init(
         id: String,

@@ -78,6 +78,14 @@ public struct SettingsView: View {
                 .accessibilityHint("Manage saved environments")
                 settingsDivider
                 NavigationLink {
+                    ProjectsSettingsView(model: model)
+                } label: {
+                    SettingsNavigationRow(title: "Projects", systemImage: "folder")
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("settings-projects")
+                settingsDivider
+                NavigationLink {
                     ProvidersSettingsView(model: model)
                 } label: {
                     SettingsNavigationRow(title: "Providers", systemImage: "cpu")

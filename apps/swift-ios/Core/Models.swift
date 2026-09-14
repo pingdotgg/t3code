@@ -121,6 +121,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
         public var environmentIcon: Bool? = nil
         public var usageLimitSources: Bool? = nil
         public var questionAttachments: Bool? = nil
+        public var projectSettingsOverrides: Bool? = nil
 
         private enum CodingKeys: String, CodingKey {
             case repositoryIdentity
@@ -142,6 +143,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             case environmentIcon
             case usageLimitSources
             case questionAttachments
+            case projectSettingsOverrides
         }
 
         public init(from decoder: any Decoder) throws {
@@ -149,6 +151,7 @@ public struct EnvironmentDescriptor: Codable, Equatable, Sendable {
             environmentIcon = try container.decodeIfPresent(Bool.self, forKey: .environmentIcon)
             usageLimitSources = try container.decodeIfPresent(Bool.self, forKey: .usageLimitSources)
             questionAttachments = try container.decodeIfPresent(Bool.self, forKey: .questionAttachments)
+            projectSettingsOverrides = try container.decodeIfPresent(Bool.self, forKey: .projectSettingsOverrides)
             repositoryIdentity =
                 try container.decodeIfPresent(Bool.self, forKey: .repositoryIdentity) ?? false
             connectionProbe = try container.decodeIfPresent(Bool.self, forKey: .connectionProbe)
@@ -402,6 +405,7 @@ public struct OrchestrationProject: Codable, Identifiable, Equatable, Sendable {
     public let updatedAt: String
     public let deletedAt: String?
     public var projectIcon: ProjectIconOverride? = nil
+    public var defaultThreadEnvMode: ServerThreadEnvironmentMode? = nil
 }
 
 public struct ProjectIconOverride: Codable, Equatable, Hashable, Sendable {

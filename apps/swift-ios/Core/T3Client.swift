@@ -165,6 +165,11 @@ public actor T3Client {
         }
     }
 
+    /// Read before replacing an override entry, including changes from other clients.
+    public func serverSettings() async throws -> ServerSettingsSnapshot {
+        try await rpc.request("server.getSettings", as: ServerSettingsSnapshot.self)
+    }
+
     public func updateSettings(_ change: ServerSettingsChange) async throws
         -> ServerSettingsSnapshot
     {

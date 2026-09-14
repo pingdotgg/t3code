@@ -100,6 +100,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
     ] = [:]
     private var pendingBootstrapSubmissions: [PendingBootstrapSubmission] = []
     private var pendingTurnSubmissions: [String: PendingTurnSubmission] = [:]
+    private var projectSettingsWriteTask: Task<Void, Error>?
+    private var projectSettingsWriteGeneration: UInt64 = 0
     private var approvalRoutes: [String: PendingRequestRoute] = [:]
     private var inputRoutes: [String: PendingRequestRoute] = [:]
     private var relayDeviceSessionIDs: Set<String> = []
@@ -2337,6 +2339,43 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }.map { id in latestSnapshot?.environments.first { $0.id == id }?.name ?? id }
     }
 
+    func updateProjectPreferences(projectID: String, change: ServerProjectSettingChange) async throws {
+        // Entries replace the entire project's overrides. Serialize local edits
+        // and read the latest entry only after the previous write completes.
+        let predecessor = projectSettingsWriteTask
+        let write = Task { @MainActor [self] in
+            if let predecessor { _ = try? await predecessor.value }
+            let route = try projectRoute(for: projectID)
+            let generation = environmentGeneration
+            let config = try await route.client.serverConfig()
+            guard isKnownClient(route.client, environmentID: route.environmentID, generation: generation) else {
+                throw CancellationError()
+            }
+            guard config.environment?.capabilities.projectSettingsOverrides == true else {
+                throw FeatureCapabilityUnavailable("Project preferences")
+            }
+            let settings = try await route.client.serverSettings()
+            if change.key == .responseStreamingMode, settings.responseStreamingMode == nil {
+                throw FeatureCapabilityUnavailable("Response streaming preferences")
+            }
+            if change.key == .continueThreadsAfterServerUpdate,
+               config.environment?.capabilities.threadRestartContinuation != true {
+                throw FeatureCapabilityUnavailable("Restart continuation")
+            }
+            _ = try await saveServerPreferences(
+                client: route.client, environmentID: route.environmentID,
+                change: change.patch(projectID: route.wireID, settings: settings)
+            )
+        }
+        projectSettingsWriteGeneration &+= 1
+        let generation = projectSettingsWriteGeneration
+        projectSettingsWriteTask = write
+        defer {
+            if projectSettingsWriteGeneration == generation { projectSettingsWriteTask = nil }
+        }
+        try await write.value
+    }
+
     private func supportsRestartContinuation(environmentID: String) -> Bool {
         serverConfigsByEnvironmentID[environmentID]?.environment?.capabilities.threadRestartContinuation == true
     }
@@ -2358,6 +2397,14 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         }
         setServerConfig(config, environmentID: environmentID)
         switch change {
+        case .responseStreamingMode:
+            guard config.settings?.responseStreamingMode != nil else {
+                throw FeatureCapabilityUnavailable("Response streaming preferences")
+            }
+        case .projectSettingsOverrides:
+            guard config.environment?.capabilities.projectSettingsOverrides == true else {
+                throw FeatureCapabilityUnavailable("Project preferences")
+            }
         case .environmentIcon:
             guard config.environment?.capabilities.environmentIcon == true else {
                 throw FeatureCapabilityUnavailable("Environment icons")
@@ -2376,7 +2423,10 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             supportsRestartContinuation: supportsRestartContinuation(environmentID: environmentID)
         ) else { throw FeatureCapabilityUnavailable("Restart continuation") }
         _ = try await saveServerPreferences(client: client, environmentID: environmentID, change: supportedChange)
-        if case .environmentIcon = supportedChange { return }
+        switch supportedChange {
+        case .environmentIcon, .projectSettingsOverrides, .responseStreamingMode: return
+        default: break
+        }
         await fanOutSharedPreferences(from: environmentID, change: supportedChange)
     }
 
@@ -5176,11 +5226,21 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             var threadCountByProjectID: [String: Int] = [:]
             for thread in live { threadCountByProjectID[thread.projectID, default: 0] += 1 }
             for thread in cached { threadCountByProjectID[thread.projectID, default: 0] += 1 }
-            let serverDefault = serverConfigsByEnvironmentID[environment.id]?.settings?.defaultModelSelection
+            let projectConfig = serverConfigsByEnvironmentID[environment.id]
+            let projectSettings = projectConfig?.settings ?? ServerSettingsSnapshot()
+            let disabledProviderIDs = Set((projectConfig?.providers ?? []).filter { !$0.enabled }.map(\.instanceId))
+            let supportsProjectSettings = projectConfig?.environment?.capabilities.projectSettingsOverrides == true
             let mappedProjects = projection.mapProjects(
                 shellsByEnvironmentID[environment.id]?.projects ?? [],
-                defaultModelSelection: serverDefault
+                settings: projectSettings,
+                disabledProviderIDs: disabledProviderIDs,
+                supportsProjectSettings: supportsProjectSettings
             ) { project in
+                let effective = projectSettings.resolvingProject(
+                    id: project.id, legacyModelSelection: project.defaultModelSelection,
+                    legacyWorkspaceMode: project.defaultThreadEnvMode,
+                    disabledProviderIDs: disabledProviderIDs
+                )
                 let uiID = FeatureScopedID.project(
                     environmentID: environment.id,
                     wireID: project.id
@@ -5192,7 +5252,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     name: project.title,
                     path: project.workspaceRoot,
                     threadCount: 0,
-                    defaultSelection: (project.defaultModelSelection ?? serverDefault).map(mapSelection),
+                    defaultSelection: effective.defaultModelSelection.map(mapSelection),
                     repositoryIdentity: project.repositoryIdentity.map {
                         FeatureRepositoryIdentity(
                             canonicalKey: $0.canonicalKey,
@@ -5205,6 +5265,9 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     updatedAt: project.updatedAt
                 )
                 mapped.projectIcon = project.projectIcon
+                mapped.defaultWorkspaceMode = effective.defaultThreadEnvMode == .worktree ? .worktree : .local
+                mapped.newWorktreesStartFromOrigin = effective.newWorktreesStartFromOrigin
+                mapped.supportsProjectSettingsOverrides = supportsProjectSettings
                 return mapped
             }
             for var project in mappedProjects {
@@ -6459,13 +6522,16 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         if let selection {
             return coreModelSelection(selection)
         }
-        if let projectDefault = shell?.projects
-            .first(where: { $0.id == projectID })?
-            .defaultModelSelection {
+        let project = shell?.projects.first(where: { $0.id == projectID })
+        let config = serverConfigsByEnvironmentID[environmentID]
+        let settings = config?.settings ?? ServerSettingsSnapshot()
+        let effective = settings.resolvingProject(
+            id: projectID, legacyModelSelection: project?.defaultModelSelection,
+            legacyWorkspaceMode: project?.defaultThreadEnvMode,
+            disabledProviderIDs: Set((config?.providers ?? []).filter { !$0.enabled }.map(\.instanceId))
+        )
+        if let projectDefault = effective.defaultModelSelection {
             return projectDefault
-        }
-        if let serverDefault = serverConfigsByEnvironmentID[environmentID]?.settings?.defaultModelSelection {
-            return serverDefault
         }
         return fallbackModelSelection(
             environmentID: environmentID,
@@ -7788,17 +7854,24 @@ struct NativeShellProjection {
 
     private var threadContext: ThreadContext?
     private var threads = NativeShellRowProjection<OrchestrationThreadShell, FeatureThread>()
-    private var projectDefaultModelSelection: ModelSelection?
+    private var projectSettings: ServerSettingsSnapshot?
+    private var disabledProjectProviderIDs: Set<String> = []
+    private var supportsProjectSettings = false
     private var projects = NativeShellRowProjection<OrchestrationProject, FeatureProject>()
 
     mutating func mapProjects(
         _ source: [OrchestrationProject],
-        defaultModelSelection: ModelSelection?,
+        settings: ServerSettingsSnapshot,
+        disabledProviderIDs: Set<String> = [],
+        supportsProjectSettings: Bool = false,
         transform: (OrchestrationProject) -> FeatureProject
     ) -> [FeatureProject] {
-        if projectDefaultModelSelection != defaultModelSelection {
+        if projectSettings != settings
+            || disabledProjectProviderIDs != disabledProviderIDs || self.supportsProjectSettings != supportsProjectSettings {
             projects = NativeShellRowProjection()
-            projectDefaultModelSelection = defaultModelSelection
+            projectSettings = settings
+            disabledProjectProviderIDs = disabledProviderIDs
+            self.supportsProjectSettings = supportsProjectSettings
         }
         return projects.map(source, transform: transform)
     }

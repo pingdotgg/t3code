@@ -453,8 +453,13 @@ enum DailyUXCreationContext {
         guard let environmentID = project?.environmentID else {
             return FeatureEnvironmentPreferences()
         }
-        return snapshot.preferencesByEnvironment?[environmentID]
+        var preferences = snapshot.preferencesByEnvironment?[environmentID]
             ?? FeatureEnvironmentPreferences()
+        if let mode = project?.defaultWorkspaceMode { preferences.defaultWorkspaceMode = mode }
+        if let startFromOrigin = project?.newWorktreesStartFromOrigin {
+            preferences.newWorktreesStartFromOrigin = startFromOrigin
+        }
+        return preferences
     }
 }
 
