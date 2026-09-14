@@ -52,12 +52,18 @@ import { ProjectionStoreV2 } from "./ProjectionStore.ts";
 const DEFAULT_IDLE_TIMEOUT_MS = 30 * 60 * 1000;
 const DEFAULT_MAX_IDLE_PIN_MS = 4 * 60 * 60 * 1000;
 const RELEASE_SCOPE_CLOSE_TIMEOUT_MS = 30 * 1000;
-// Turn-shaped adapter calls may legitimately outlive a close: OpenCode
-// awaits the whole session.summarize inside compactThread/startTurn. The
-// release drain bounds their wait — the scope close is what aborts them.
-// Acquisition-only ops stay unbounded: a hang there is a provider pathology
-// the pending release keeps honest ownership of.
+// OpenCode runs turn work in-band: compactThread/startTurn yield* the whole
+// session.summarize inside the call instead of forking it into the session
+// scope. An unbounded drain would let a stalled summarize wedge the release,
+// so turn calls for these drivers get a bounded wait — the scope close is
+// what aborts them. Every other adapter's turn call is acquire-then-return
+// and keeps the unbounded drain: abandoning a pending acquisition (Cursor's
+// runner.open) would let it install a provider resource after the session
+// scope has already closed, with no finalizer left to release it.
 const ADAPTER_OP_DRAIN_TIMEOUT_MS = 20 * 1000;
+const INBAND_TURN_CALL_DRIVERS: ReadonlySet<ProviderDriverKind> = new Set([
+  ProviderDriverKind.make("opencode"),
+]);
 
 export const ProviderSessionReleaseReason = Schema.Literals([
   "idle_timeout",
@@ -2208,7 +2214,7 @@ export const layerWithOptions = (
         readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
         readonly driver: ProviderDriverKind;
         readonly operation: Effect.Effect<A, E>;
-        readonly drainTimeout?: Duration.Duration;
+        readonly drainTimeout: Duration.Duration | undefined;
       }): Effect.Effect<A, E | ProviderAdapterProtocolError> =>
         Effect.uninterruptibleMask((_restore) =>
           Effect.gen(function* () {
@@ -2330,6 +2336,7 @@ export const layerWithOptions = (
                     expectedRuntime: runtime,
                     driver: runtime.driver,
                     operation: runtime.ensureThread(input),
+                    drainTimeout: undefined,
                   }),
                 ),
               ),
@@ -2359,6 +2366,7 @@ export const layerWithOptions = (
                   expectedRuntime: runtime,
                   driver: runtime.driver,
                   operation: runtime.resumeThread(input),
+                  drainTimeout: undefined,
                 }),
               );
             }
@@ -2394,6 +2402,7 @@ export const layerWithOptions = (
                         expectedRuntime: runtime,
                         driver: runtime.driver,
                         operation: runtime.resumeThread(input),
+                        drainTimeout: undefined,
                       }),
                     ),
               ),
@@ -2435,6 +2444,7 @@ export const layerWithOptions = (
                     expectedRuntime: runtime,
                     driver: runtime.driver,
                     operation: runtime.forkThread(input),
+                    drainTimeout: undefined,
                   }),
                 ),
               ),
@@ -2479,9 +2489,9 @@ export const layerWithOptions = (
                 // adapters fork the turn's lifetime into the session scope —
                 // so the admission record spans only the acquisition window
                 // (Cursor's openAgent/runner.open, ACP session activate+prompt
-                // submit). The exception is OpenCode's /compact path, which
-                // awaits the whole summarize inside the call, hence the
-                // bounded drain: the scope close is what aborts it.
+                // submit). Only in-band turn calls get the bounded drain —
+                // abandoning an acquire-then-return call could strand a
+                // resource the scope close already finished checking for.
                 Effect.andThen(
                   threadAttach.withLock(
                     threadAttachKey(providerSessionId, input.threadId),
@@ -2490,7 +2500,9 @@ export const layerWithOptions = (
                       expectedRuntime: runtime,
                       driver: runtime.driver,
                       operation: runtime.startTurn(input),
-                      drainTimeout: Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS),
+                      drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                        ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                        : undefined,
                     }),
                   ),
                 ),
@@ -2583,9 +2595,8 @@ export const layerWithOptions = (
                         }),
                       ),
                       // Compaction delegates to the same acquire-then-start
-                      // path as startTurn, so it shares the admission record;
-                      // the bounded drain covers adapters (OpenCode) whose
-                      // summarize runs inside the call.
+                      // path as startTurn, so it shares the admission record
+                      // and the same driver-keyed drain policy.
                       Effect.andThen(
                         threadAttach.withLock(
                           threadAttachKey(providerSessionId, input.threadId),
@@ -2594,7 +2605,9 @@ export const layerWithOptions = (
                             expectedRuntime: runtime,
                             driver: runtime.driver,
                             operation: runtime.compactThread!(input),
-                            drainTimeout: Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS),
+                            drainTimeout: INBAND_TURN_CALL_DRIVERS.has(runtime.driver)
+                              ? Duration.millis(ADAPTER_OP_DRAIN_TIMEOUT_MS)
+                              : undefined,
                           }),
                         ),
                       ),
@@ -2629,6 +2642,7 @@ export const layerWithOptions = (
                   expectedRuntime: runtime,
                   driver: runtime.driver,
                   operation: runtime.readThreadSnapshot(input),
+                  drainTimeout: undefined,
                 }),
               ),
             ),
@@ -2654,6 +2668,7 @@ export const layerWithOptions = (
                   expectedRuntime: runtime,
                   driver: runtime.driver,
                   operation: runtime.rollbackThread(input),
+                  drainTimeout: undefined,
                 }),
               ),
             ),
