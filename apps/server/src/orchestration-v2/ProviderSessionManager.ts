@@ -214,6 +214,22 @@ interface LiveSessionEntry {
   readonly pinnedSinceMs: number | null;
 }
 
+interface PendingSessionRelease {
+  readonly entry: LiveSessionEntry;
+  readonly threadIds: ReadonlySet<ThreadId>;
+  readonly mcpCredentialIdByThread: Map<ThreadId, string>;
+  readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
+}
+
+interface OpeningSessionRecord {
+  readonly providerSessionId: ProviderSessionId;
+  readonly threadId: ThreadId;
+  readonly instanceId: ProviderInstanceId;
+  closeRequested: boolean;
+  failed: ProviderSessionReleaseError | undefined;
+  readonly settled: Deferred.Deferred<void, ProviderSessionReleaseError>;
+}
+
 type ProviderSessionEventSignal =
   | { readonly type: "event"; readonly event: ProviderAdapterV2Event }
   | {
@@ -365,15 +381,67 @@ export const layerWithOptions = (
       const layerScope = yield* Effect.scope;
       const sessions = yield* Ref.make(new Map<string, LiveSessionEntry>());
       // Keep ownership after removal from the live map until cleanup actually finishes.
-      const releasing = new Map<
-        string,
-        {
-          readonly entry: LiveSessionEntry;
-          readonly threadIds: ReadonlySet<ThreadId>;
-          readonly mcpCredentialIdByThread: Map<ThreadId, string>;
-          readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
-        }
+      const releasing = new Map<string, PendingSessionRelease>();
+      // Startup ownership before a session entry exists: the open registers
+      // here before any adapter work so a racing close/detach can mark it and
+      // join its unwind instead of reporting success over a spawning provider
+      // process. `closeRequested`/`failed` are only written inside
+      // Ref.modify(sessions) or the opening fiber's uninterruptible unwind, so
+      // the registration fence below reads them atomically.
+      const opening = new Map<string, OpeningSessionRecord>();
+      // Teardown fences: once closeInstance bumps its instance's count (or
+      // shutdown flips the flag), no new startup record may be created and
+      // no in-flight startup may register — a record created afterwards
+      // would escape the mark-and-join the close performs on the records it
+      // saw. Read and written only inside synchronous steps (Ref.modify or
+      // straight-line gen code), where no other fiber can interleave.
+      const closingInstanceCounts = new Map<ProviderInstanceId, number>();
+      let shutdownInitiated = false;
+      // Terminal-detach revocations outlive the call that started them: the
+      // detached sweep still owns the thread's credential cleanup, so a
+      // retry joins this record (bounded like any cleanup wait) instead of
+      // forking a second sweep or reporting success while it runs.
+      const pendingRevocations = new Map<
+        ThreadId,
+        Deferred.Deferred<void, ProviderSessionReleaseError>
       >();
+      const forkTrackedRevocation = <E>(
+        providerSessionId: ProviderSessionId,
+        threadId: ThreadId,
+        revoke: Effect.Effect<void, E>,
+      ) =>
+        Effect.gen(function* () {
+          const existing = pendingRevocations.get(threadId);
+          if (existing !== undefined) {
+            return existing;
+          }
+          const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
+          pendingRevocations.set(threadId, done);
+          yield* Effect.gen(function* () {
+            const exit = yield* Effect.exit(revoke);
+            // The record must come down with its completion: a stale entry
+            // would let a later retry join a finished sweep and skip
+            // revoking a freshly configured binding.
+            yield* Effect.uninterruptible(
+              Effect.gen(function* () {
+                pendingRevocations.delete(threadId);
+                yield* Deferred.done(
+                  done,
+                  Exit.isSuccess(exit)
+                    ? Exit.void
+                    : Exit.fail(
+                        new ProviderSessionReleaseError({
+                          providerSessionId,
+                          reason: "runtime_error",
+                          cause: exit.cause,
+                        }),
+                      ),
+                );
+              }),
+            );
+          }).pipe(Effect.forkDetach({ startImmediately: true }));
+          return done;
+        });
       const findPendingRelease = (
         providerSessionId: ProviderSessionId,
         threadId: ThreadId,
@@ -383,6 +451,15 @@ export const layerWithOptions = (
           (release) =>
             release.entry.runtime.providerSessionId === providerSessionId ||
             (release.threadIds.has(threadId) && !existing?.attachedThreadIds.has(threadId)),
+        );
+      // A startup record that failed its unwind, or is still unwinding after a
+      // close request, may still own provider resources for its session id and
+      // thread — the same contract findPendingRelease enforces for releases.
+      const findBlockingStartup = (providerSessionId: ProviderSessionId, threadId: ThreadId) =>
+        Array.from(opening.values()).find(
+          (record) =>
+            (record.providerSessionId === providerSessionId || record.threadId === threadId) &&
+            (record.closeRequested || record.failed !== undefined),
         );
       // Runtime methods attach threads outside `open`, so the pending-release
       // block must hold here too — and it must propagate: observeActivity only
@@ -394,7 +471,10 @@ export const layerWithOptions = (
       }) =>
         Effect.gen(function* () {
           const existing = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
-          if (findPendingRelease(input.providerSessionId, input.threadId, existing) !== undefined) {
+          if (
+            findPendingRelease(input.providerSessionId, input.threadId, existing) !== undefined ||
+            findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
+          ) {
             return yield* new ProviderAdapterProtocolError({
               driver: input.driver,
               detail: "A previous provider session has not finished cleanup.",
@@ -866,70 +946,125 @@ export const layerWithOptions = (
         // Only act on the session instance that owns this runtime: a stale
         // caller must not release a same-id replacement opened meanwhile.
         readonly expectedRuntime?: ProviderAdapterV2SessionRuntime;
+        // Credentials the caller already removed from the entry's records
+        // still belong to this cleanup: merging them into the release record
+        // keeps them claimed and lets the bounded sweep revoke them.
+        readonly extraMcpCredentials?: Iterable<readonly [ThreadId, string]>;
       }) =>
         Effect.uninterruptibleMask((restore) =>
           Effect.gen(function* () {
             const key = sessionKey(input.providerSessionId);
-            const selected = yield* Ref.modify(sessions, (current) => {
-              const pending = releasing.get(key);
-              if (input.joinRelease !== undefined) {
-                return [
-                  pending !== undefined && pending.done === input.joinRelease.done
-                    ? Option.some({ release: pending, start: false })
-                    : Option.none(),
-                  current,
-                ] as const;
-              }
-              if (pending !== undefined) {
-                return [
-                  input.expectedRuntime === undefined ||
-                  pending.entry.runtime === input.expectedRuntime
-                    ? Option.some({ release: pending, start: false })
-                    : Option.none(),
-                  current,
-                ] as const;
-              }
-              if (input.joinOnly === true) {
-                return [Option.none(), current] as const;
-              }
-              const existing = current.get(key);
-              if (
-                existing === undefined ||
-                (input.expectedRuntime !== undefined && existing.runtime !== input.expectedRuntime)
-              ) {
-                return [Option.none(), current] as const;
-              }
-              if (
-                input.onlyIfIdleGeneration !== undefined &&
-                (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
-              ) {
-                return [Option.none(), current] as const;
-              }
-              const release = {
-                entry:
-                  input.detachedThreadId === undefined
-                    ? existing
-                    : {
-                        ...existing,
-                        attachedThreadIds: new Set([
-                          ...existing.attachedThreadIds,
-                          input.detachedThreadId,
-                        ]),
-                      },
-                threadIds: new Set([
-                  ...existing.attachedThreadIds,
-                  ...existing.mcpCredentialIdByThread.keys(),
-                  ...(input.detachedThreadId === undefined ? [] : [input.detachedThreadId]),
-                ]),
-                mcpCredentialIdByThread: new Map(existing.mcpCredentialIdByThread),
-                done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
-              };
-              releasing.set(key, release);
-              const updated = new Map(current);
-              updated.delete(key);
-              return [Option.some({ release, start: true }), updated] as const;
-            });
+            const selected = yield* Ref.modify(
+              sessions,
+              (
+                current,
+              ): readonly [
+                Option.Option<
+                  | { readonly release: PendingSessionRelease; readonly start: boolean }
+                  | { readonly opening: OpeningSessionRecord }
+                >,
+                Map<string, LiveSessionEntry>,
+              ] => {
+                const pending = releasing.get(key);
+                if (input.joinRelease !== undefined) {
+                  return [
+                    pending !== undefined && pending.done === input.joinRelease.done
+                      ? Option.some({ release: pending, start: false })
+                      : Option.none(),
+                    current,
+                  ] as const;
+                }
+                if (pending !== undefined) {
+                  return [
+                    input.expectedRuntime === undefined ||
+                    pending.entry.runtime === input.expectedRuntime
+                      ? Option.some({ release: pending, start: false })
+                      : Option.none(),
+                    current,
+                  ] as const;
+                }
+                if (input.joinOnly === true) {
+                  return [Option.none(), current] as const;
+                }
+                const existing = current.get(key);
+                if (
+                  existing === undefined ||
+                  (input.expectedRuntime !== undefined &&
+                    existing.runtime !== input.expectedRuntime)
+                ) {
+                  // An in-flight startup has no entry to claim but can already
+                  // own resources (a spawning process, a held credential
+                  // reservation). A pinned-runtime caller targets a different
+                  // instance and must not touch it; everyone else marks it so
+                  // registration fences, then joins its unwind below.
+                  const openingRecord =
+                    input.expectedRuntime === undefined ? opening.get(key) : undefined;
+                  if (openingRecord !== undefined) {
+                    if (openingRecord.failed === undefined) {
+                      openingRecord.closeRequested = true;
+                    }
+                    return [Option.some({ opening: openingRecord }), current] as const;
+                  }
+                  return [Option.none(), current] as const;
+                }
+                if (
+                  input.onlyIfIdleGeneration !== undefined &&
+                  (existing.busyCount > 0 || existing.idleGeneration !== input.onlyIfIdleGeneration)
+                ) {
+                  return [Option.none(), current] as const;
+                }
+                const release = {
+                  entry:
+                    input.detachedThreadId === undefined
+                      ? existing
+                      : {
+                          ...existing,
+                          attachedThreadIds: new Set([
+                            ...existing.attachedThreadIds,
+                            input.detachedThreadId,
+                          ]),
+                        },
+                  threadIds: new Set([
+                    ...existing.attachedThreadIds,
+                    ...existing.mcpCredentialIdByThread.keys(),
+                    ...(input.detachedThreadId === undefined ? [] : [input.detachedThreadId]),
+                  ]),
+                  mcpCredentialIdByThread: new Map([
+                    ...existing.mcpCredentialIdByThread,
+                    ...(input.extraMcpCredentials === undefined ? [] : input.extraMcpCredentials),
+                  ]),
+                  done: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                };
+                releasing.set(key, release);
+                const updated = new Map(current);
+                updated.delete(key);
+                return [Option.some({ release, start: true }), updated] as const;
+              },
+            );
             if (Option.isNone(selected)) return;
+            if ("opening" in selected.value) {
+              const openingRecord = selected.value.opening;
+              // The open's own unwind performs the cleanup; this join is
+              // bounded like any cleanup wait and the record stays (marked
+              // closeRequested, or failed) until the unwind finishes, so a
+              // timeout or interruption here cannot let a replacement open
+              // race ahead of a dying startup.
+              const settled = yield* restore(
+                Deferred.await(openingRecord.settled).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                ),
+              );
+              if (Option.isNone(settled)) {
+                return yield* new ProviderSessionReleaseError({
+                  providerSessionId: input.providerSessionId,
+                  reason: input.reason,
+                  cause:
+                    "Provider session startup cleanup did not finish within 30 seconds. " +
+                    "Replacement sessions are blocked until cleanup completes.",
+                });
+              }
+              return;
+            }
             const { release, start } = selected.value;
             if (start) {
               const releaseCredentials = Effect.gen(function* () {
@@ -1336,12 +1471,14 @@ export const layerWithOptions = (
               if (entry.attachedThreadIds.has(input.threadId)) {
                 return [{ outcome: "alreadyAttached" as const, entry }, current];
               }
-              // The pending-release gate in attachThreadOrReject ran before
-              // this caller queued on threadAttach — a release claiming the
-              // thread may have landed meanwhile, so recheck inside the
-              // atomic attach decision.
+              // The pending-release/startup gates in attachThreadOrReject
+              // ran before this caller queued on threadAttach — a release
+              // claiming the thread or a dying startup that owns it may have
+              // landed meanwhile, so recheck inside the atomic attach
+              // decision.
               if (
-                findPendingRelease(input.providerSessionId, input.threadId, entry) !== undefined
+                findPendingRelease(input.providerSessionId, input.threadId, entry) !== undefined ||
+                findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
               ) {
                 return [{ outcome: "closing" as const }, current];
               }
@@ -1459,20 +1596,29 @@ export const layerWithOptions = (
                 ? entry
                 : ((releasing.has(key) ? "closing" : "released") as "closing" | "released");
             };
+            // The guard in rejectPendingThreadAttachment ran before this
+            // caller queued on the attach lock and suspended in credential
+            // preparation — a dying startup that still owns this thread's
+            // resources may have been marked meanwhile, so every ownership
+            // recheck below must see it too.
+            const attachOwnership = (current: ReadonlyMap<string, LiveSessionEntry>) => {
+              const owned = entryStillOwned(current);
+              return owned !== "closing" &&
+                owned !== "released" &&
+                findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
+                ? ("closing" as const)
+                : owned;
+            };
             const abandonPrepared = (
               outcome: "closing" | "released",
             ): Effect.Effect<"closing" | "released", ProviderSessionActivityError> =>
               Effect.gen(function* () {
-                if (pendingMcpCredentialId !== undefined) {
-                  // Drop our reservation before asking who still claims the
-                  // credential: an abandoned reused credential may have been a
-                  // closing peer's last claim, skipped while we held it. Even a
-                  // credential this attach minted stays live while a current
-                  // holder (a same-id replacement that re-attached the thread)
-                  // claims it.
-                  dropReservation();
-                  yield* releaseUnclaimedMcpCredential(input.threadId, pendingMcpCredentialId);
-                }
+                // "closing"/"released" return normally, so the onExit unwind
+                // below never runs for them — the provisional attachment and
+                // any recorded credential claim must be removed here or a live
+                // entry keeps a thread whose attach was rejected.
+                yield* removeThreadAttachment({ ...input, expectedRuntime });
+                yield* releasePrepared();
                 return outcome;
               });
             // Unwind a failed attach's credential bookkeeping while the entry may
@@ -1554,7 +1700,7 @@ export const layerWithOptions = (
                     Map<string, LiveSessionEntry>,
                   ] => {
                     const key = sessionKey(input.providerSessionId);
-                    const owned = entryStillOwned(current);
+                    const owned = attachOwnership(current);
                     if (owned === "closing" || owned === "released") {
                       return [owned, current];
                     }
@@ -1607,7 +1753,7 @@ export const layerWithOptions = (
                           LiveSessionEntry | "closing" | "released",
                           ProviderSessionActivityError
                         > => {
-                          const owned = entryStillOwned(current);
+                          const owned = attachOwnership(current);
                           if (owned === "closing" || owned === "released") {
                             return Effect.succeed(owned);
                           }
@@ -1632,7 +1778,7 @@ export const layerWithOptions = (
                     Effect.catch((writeError) =>
                       Ref.get(sessions).pipe(
                         Effect.flatMap((current) => {
-                          const owned = entryStillOwned(current);
+                          const owned = attachOwnership(current);
                           return owned === "closing" || owned === "released"
                             ? Effect.succeed(owned)
                             : Effect.fail(writeError);
@@ -1647,7 +1793,7 @@ export const layerWithOptions = (
                 // so a release may still have claimed the session between the
                 // in-lock check and now. Re-check before reporting success.
                 const postWrite = yield* Ref.modify(sessions, (current) => [
-                  entryStillOwned(current),
+                  attachOwnership(current),
                   current,
                 ]);
                 if (postWrite === "closing" || postWrite === "released") {
@@ -2320,6 +2466,18 @@ export const layerWithOptions = (
       };
 
       const shutdown = Effect.gen(function* () {
+        // Fence first, in one synchronous pass: a startup that already
+        // registered is found by the session scan below; one still opening
+        // was created before this flag and is marked here so its
+        // registration fence loses instead of slipping in while the
+        // releases run. The flag is permanent — the manager is going away.
+        shutdownInitiated = true;
+        const starting = Array.from(opening.values());
+        for (const record of starting) {
+          if (record.failed === undefined) {
+            record.closeRequested = true;
+          }
+        }
         const activeSessions = [...(yield* Ref.get(sessions)).values()];
         yield* Effect.forEach(
           activeSessions,
@@ -2332,6 +2490,25 @@ export const layerWithOptions = (
               Effect.catchCause((cause) =>
                 Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
                   providerSessionId: entry.runtime.providerSessionId,
+                  cause,
+                }),
+              ),
+            ),
+          { discard: true },
+        );
+        // In-flight startups own provider resources without a live entry;
+        // they were marked above — join their bounded unwind during
+        // shutdown too.
+        yield* Effect.forEach(
+          starting,
+          (record) =>
+            releaseEntry({
+              providerSessionId: record.providerSessionId,
+              reason: "server_shutdown",
+            }).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                  providerSessionId: record.providerSessionId,
                   cause,
                 }),
               ),
@@ -2368,6 +2545,17 @@ export const layerWithOptions = (
                   instanceId: input.modelSelection.instanceId,
                   providerSessionId: input.providerSessionId,
                   cause: `Provider session ${pending.entry.runtime.providerSessionId} has not finished cleanup.`,
+                });
+              }
+              // Block the replacement like a pending release: a failed or
+              // still-unwinding startup for the session id or the same thread
+              // may still own provider resources.
+              const blockingStartup = findBlockingStartup(input.providerSessionId, input.threadId);
+              if (blockingStartup !== undefined) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: `Provider session ${blockingStartup.providerSessionId} has not finished cleanup.`,
                 });
               }
               if (existing !== undefined) {
@@ -2428,6 +2616,39 @@ export const layerWithOptions = (
               };
               const dropReservation = Effect.sync(dropReservationNow);
               const sessionScope = yield* Scope.make();
+              // Track the startup before credential preparation and the
+              // adapter call: a close or detach racing the open marks
+              // closeRequested and joins this record's unwind instead of
+              // reporting success while provider resources are being spawned.
+              // sessionOpen serializes same-id opens, so a record found here
+              // later can only be a failed leftover. The flag check and the
+              // insert share one synchronous step so a startup can never
+              // begin tracking after its instance's close already scanned.
+              const openingRecord = yield* Effect.sync((): OpeningSessionRecord | undefined => {
+                if (
+                  shutdownInitiated ||
+                  closingInstanceCounts.has(input.modelSelection.instanceId)
+                ) {
+                  return undefined;
+                }
+                const record: OpeningSessionRecord = {
+                  providerSessionId: input.providerSessionId,
+                  threadId: input.threadId,
+                  instanceId: input.modelSelection.instanceId,
+                  closeRequested: false,
+                  failed: undefined,
+                  settled: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                };
+                opening.set(key, record);
+                return record;
+              });
+              if (openingRecord === undefined) {
+                return yield* new ProviderSessionOpenError({
+                  instanceId: input.modelSelection.instanceId,
+                  providerSessionId: input.providerSessionId,
+                  cause: "The provider session was closed before it finished opening.",
+                });
+              }
               // Set when the entry lands in `sessions`: the release path owns
               // cleanup from then on. Any earlier non-success exit — typed
               // failure, defect, or interruption — must close the scope and
@@ -2445,6 +2666,17 @@ export const layerWithOptions = (
                   },
                 );
                 const mcpCredentialId = prepared.mcpCredentialId;
+                // A close marked this startup while credentials were
+                // resolving: skip the spawn entirely and unwind. A mark
+                // landing after this read is still caught by the
+                // registration fence below.
+                if (openingRecord.closeRequested) {
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: "The provider session was closed before it finished opening.",
+                  });
+                }
                 const runtime = yield* adapter
                   .openSession({
                     threadId: input.threadId,
@@ -2501,16 +2733,44 @@ export const layerWithOptions = (
                   idleFiber: null,
                   pinnedSinceMs: null,
                 };
-                yield* Ref.update(sessions, (current) => {
-                  const updated = new Map(current);
-                  updated.set(key, entry);
-                  // Set inside the atomic update: from here the release path
-                  // owns cleanup and the entry's credential record guards the
-                  // credential.
-                  entryRegistered = true;
-                  registeredRuntime = runtime;
-                  return updated;
-                });
+                // Fenced in the same atomic step: a close that marked this
+                // startup (or a closeInstance/shutdown that fenced its
+                // instance) before the adapter returned must not see a live
+                // entry appear behind its back — the unwind below closes
+                // the scope and completes `settled` instead.
+                yield* Ref.modify(
+                  sessions,
+                  (current): readonly [boolean, Map<string, LiveSessionEntry>] => {
+                    if (
+                      openingRecord.closeRequested ||
+                      shutdownInitiated ||
+                      closingInstanceCounts.has(openingRecord.instanceId)
+                    ) {
+                      return [false, current] as const;
+                    }
+                    const updated = new Map(current);
+                    updated.set(key, entry);
+                    // Set inside the atomic update: from here the release path
+                    // owns cleanup and the entry's credential record guards the
+                    // credential.
+                    entryRegistered = true;
+                    registeredRuntime = runtime;
+                    return [true, updated] as const;
+                  },
+                );
+                if (entryRegistered) {
+                  opening.delete(key);
+                  yield* Deferred.done(openingRecord.settled, Exit.void);
+                } else {
+                  // A close won the race: skip the spawn bookkeeping entirely
+                  // and fail so the unwind closes the provider scope and
+                  // settles the startup record the close is joining.
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: "The provider session was closed before it finished opening.",
+                  });
+                }
                 // The pre-open reservation can be dropped now; the onExit
                 // below also drops it so an interruption landing before this
                 // line cannot strand it.
@@ -2585,23 +2845,51 @@ export const layerWithOptions = (
                           }).pipe(Effect.forkDetach({ startImmediately: true }), Effect.asVoid);
                         }
                         // A defecting finalizer must not keep the rest of the
-                        // unwind from running. The reservation outlives the
-                        // scope close: the provider process can still present
-                        // the credential while it is shutting down, so a
-                        // peer's terminal detach must keep seeing this claim
-                        // until the close settles.
-                        return Scope.close(sessionScope, Exit.void).pipe(
-                          Effect.ignoreCause,
-                          Effect.ensuring(Effect.sync(dropReservationNow)),
-                          Effect.andThen(
+                        // unwind from running — but its failure must stay
+                        // visible: closing over a provider process that may
+                        // still be alive keeps the opening record as a failed
+                        // cleanup so replacement opens stay blocked until
+                        // restart, and a racing close's join sees the error.
+                        return Effect.gen(function* () {
+                          // The record stays blocking while the unwind runs:
+                          // attachments and replacements must wait for the
+                          // scope close rather than racing a provider process
+                          // that is still shutting down.
+                          openingRecord.closeRequested = true;
+                          const closeExit = yield* Scope.close(sessionScope, Exit.void).pipe(
+                            Effect.exit,
+                          );
+                          // The reservation outlives the scope close: the
+                          // provider process can still present the credential
+                          // while it is shutting down, so a peer's terminal
+                          // detach must keep seeing this claim until the close
+                          // settles.
+                          dropReservationNow();
+                          const sweepExit =
                             pendingMcpCredentialId === undefined
-                              ? Effect.void
-                              : releaseUnclaimedMcpCredential(
+                              ? Exit.void
+                              : yield* releaseUnclaimedMcpCredential(
                                   input.threadId,
                                   pendingMcpCredentialId,
-                                ),
-                          ),
-                        );
+                                ).pipe(Effect.exit);
+                          const failed = Exit.isFailure(closeExit)
+                            ? closeExit
+                            : Exit.isFailure(sweepExit)
+                              ? sweepExit
+                              : undefined;
+                          if (failed === undefined) {
+                            opening.delete(key);
+                            yield* Deferred.done(openingRecord.settled, Exit.void);
+                            return;
+                          }
+                          const error = new ProviderSessionReleaseError({
+                            providerSessionId: input.providerSessionId,
+                            reason: "runtime_error",
+                            cause: failed.cause,
+                          });
+                          openingRecord.failed = error;
+                          yield* Deferred.done(openingRecord.settled, Exit.fail(error));
+                        });
                       }),
                 ),
               );
@@ -2612,7 +2900,8 @@ export const layerWithOptions = (
             // Reusing an attached live session starts no new provider work.
             const existing = (yield* Ref.get(sessions)).get(sessionKey(input.providerSessionId));
             if (
-              findPendingRelease(input.providerSessionId, input.threadId, existing) !== undefined
+              findPendingRelease(input.providerSessionId, input.threadId, existing) !== undefined ||
+              findBlockingStartup(input.providerSessionId, input.threadId) !== undefined
             ) {
               return yield* new ProviderSessionOpenError({
                 instanceId: input.modelSelection.instanceId,
@@ -2652,26 +2941,65 @@ export const layerWithOptions = (
           ),
         closeInstance: (instanceId) =>
           Effect.gen(function* () {
+            // Fence first, in one synchronous pass (same reasoning as
+            // shutdown): startups created after this point are rejected at
+            // the record gate; the ones already tracked are marked so their
+            // registration fence loses while the releases below run.
+            closingInstanceCounts.set(instanceId, (closingInstanceCounts.get(instanceId) ?? 0) + 1);
+            const starting = Array.from(opening.values()).filter(
+              (record) => record.instanceId === instanceId,
+            );
+            for (const record of starting) {
+              if (record.failed === undefined) {
+                record.closeRequested = true;
+              }
+            }
             const active = [
               ...(yield* Ref.get(sessions)).values(),
               ...Array.from(releasing.values(), (release) => release.entry),
             ].filter((entry) => entry.runtime.instanceId === instanceId);
             const outcomes = yield* Effect.forEach(
-              active,
-              (entry) =>
+              active.map((entry) => ({
+                providerSessionId: entry.runtime.providerSessionId,
+                expectedRuntime: entry.runtime,
+              })),
+              (target) =>
                 releaseEntry({
-                  providerSessionId: entry.runtime.providerSessionId,
+                  providerSessionId: target.providerSessionId,
                   reason: "manual_shutdown",
                   detail: `Provider instance ${instanceId} logged out.`,
-                  expectedRuntime: entry.runtime,
+                  expectedRuntime: target.expectedRuntime,
                 }).pipe(Effect.exit),
               { concurrency: "unbounded" },
             );
-            const failure = outcomes.find(Exit.isFailure);
+            // In-flight startups for this instance own provider resources
+            // without a live entry; they were marked above — join their
+            // bounded unwind as part of closing the instance.
+            const startupOutcomes = yield* Effect.forEach(
+              starting,
+              (record) =>
+                releaseEntry({
+                  providerSessionId: record.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: `Provider instance ${instanceId} logged out.`,
+                }).pipe(Effect.exit),
+              { concurrency: "unbounded" },
+            );
+            const failure = [...outcomes, ...startupOutcomes].find(Exit.isFailure);
             if (failure !== undefined && Exit.isFailure(failure)) {
               return yield* Effect.failCause(failure.cause);
             }
           }).pipe(
+            Effect.ensuring(
+              Effect.sync(() => {
+                const remaining = (closingInstanceCounts.get(instanceId) ?? 1) - 1;
+                if (remaining <= 0) {
+                  closingInstanceCounts.delete(instanceId);
+                } else {
+                  closingInstanceCounts.set(instanceId, remaining);
+                }
+              }),
+            ),
             Effect.mapError(
               (cause) =>
                 new ProviderSessionCloseError({
@@ -2694,11 +3022,16 @@ export const layerWithOptions = (
                 // prepare; run it detached so this retry reaches the bounded
                 // join instead of blocking indefinitely first. The pending
                 // release's own sweep is the primary revocation path for the
-                // recorded credential anyway.
-                yield* revokeUnclaimedThreadCredentials(
+                // recorded credential anyway. Tracked so later retries join
+                // this sweep instead of piling on duplicates.
+                yield* forkTrackedRevocation(
+                  input.providerSessionId,
                   input.threadId,
-                  recorded === undefined ? [] : [recorded],
-                ).pipe(Effect.forkDetach({ startImmediately: true }));
+                  revokeUnclaimedThreadCredentials(
+                    input.threadId,
+                    recorded === undefined ? [] : [recorded],
+                  ),
+                );
               }
               return yield* releaseEntry({
                 providerSessionId: input.providerSessionId,
@@ -2707,6 +3040,17 @@ export const layerWithOptions = (
               });
             }
             const currentEntry = (yield* Ref.get(sessions)).get(key);
+            const openingRecord = currentEntry === undefined ? opening.get(key) : undefined;
+            if (openingRecord !== undefined && openingRecord.threadId === input.threadId) {
+              // Detaching the thread an in-flight startup belongs to aborts
+              // it: mark the open like a close and join its bounded unwind
+              // instead of returning success while a provider process may
+              // still be spawning for this thread.
+              return yield* releaseEntry({
+                providerSessionId: input.providerSessionId,
+                reason: "manual_shutdown",
+              });
+            }
             if (currentEntry?.supportsMultipleProviderThreads === true) {
               const projection = yield* Effect.option(
                 projectionStore.getThreadProjection(input.threadId),
@@ -2752,7 +3096,7 @@ export const layerWithOptions = (
             // post-prepare completion: the attach would then record a credential
             // and emit its attached event for a thread the entry no longer
             // tracks, resurrecting a detached binding.
-            const { detached, releaseFiber } = yield* threadAttach.withLock(
+            const { detached, releaseFiber, revokeDone } = yield* threadAttach.withLock(
               threadAttachKey(input.providerSessionId, input.threadId),
               // Masked so the attachment mutation and the release handoff
               // stay atomic with respect to interruption: once the last
@@ -2828,6 +3172,13 @@ export const layerWithOptions = (
                     !detached.value.entry.supportsMultipleProviderThreads
                       ? detached.value.entry
                       : undefined;
+                  // The terminal detach already pruned this thread's
+                  // credential record; hand it to the release's own bounded
+                  // sweep so the credential revocation is covered by the
+                  // completion this detach joins below.
+                  const detachedMcpCredentialId = Option.isSome(detached)
+                    ? detached.value.priorMcpCredentialId
+                    : undefined;
                   const releaseFiber =
                     autoReleaseEntry === undefined
                       ? undefined
@@ -2836,6 +3187,14 @@ export const layerWithOptions = (
                           reason: "manual_shutdown",
                           detachedThreadId: input.threadId,
                           expectedRuntime: autoReleaseEntry.runtime,
+                          ...(input.revokeMcpCredential === true &&
+                          detachedMcpCredentialId !== undefined
+                            ? {
+                                extraMcpCredentials: [
+                                  [input.threadId, detachedMcpCredentialId],
+                                ] as const,
+                              }
+                            : {}),
                           ...(input.detail === undefined ? {} : { detail: input.detail }),
                         }).pipe(Effect.forkDetach({ startImmediately: true }));
                   // Plain detaches deliberately do not revoke: a detached thread's
@@ -2868,27 +3227,54 @@ export const layerWithOptions = (
                       input.threadId,
                       priorMcpCredentialId === undefined ? [] : [priorMcpCredentialId],
                     );
-                    if (Option.isSome(detached)) {
-                      // Forked and detached so interrupting this detach cannot
-                      // strand the pruned credential: the sweep keeps the
-                      // captured id and finishes under mcpPrepareLock even after
-                      // this fiber is gone. The fork stays masked — a pending
-                      // interruption delivered by restore() below must not skip
-                      // it — while the join stays interruptible so a completed
-                      // detach still waits for revocation.
-                      const revokeFiber = yield* revoke.pipe(
-                        Effect.forkDetach({ startImmediately: true }),
+                    // Forked detached and tracked so interrupting this detach
+                    // cannot strand the pruned credential: the sweep keeps the
+                    // captured id and finishes under mcpPrepareLock even after
+                    // this fiber is gone, and a retry joins `revokeDone`
+                    // instead of forking a second sweep or reporting success
+                    // over a running one. The fork stays masked — a pending
+                    // interruption delivered by restore() below must not skip
+                    // it — while the join stays interruptible so a completed
+                    // detach still waits for revocation.
+                    const revokeDone = yield* forkTrackedRevocation(
+                      input.providerSessionId,
+                      input.threadId,
+                      revoke,
+                    );
+                    if (Option.isSome(detached) && releaseFiber === undefined) {
+                      // No release owns this credential's sweep (the session
+                      // stays live for other threads), so this join is the
+                      // only wait on revocation — and the sweep acquires
+                      // mcpPrepareLock, which a stalled peer prepare can hold
+                      // indefinitely. Bound the wait like any cleanup: the
+                      // detached sweep still finishes the revocation late,
+                      // and the timeout keeps the reported state honest
+                      // instead of blocking past the cleanup contract.
+                      const settled = yield* restore(
+                        Deferred.await(revokeDone).pipe(
+                          Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                        ),
                       );
-                      yield* restore(Fiber.join(revokeFiber));
-                    } else {
-                      // The entry is already releasing and its own credential
-                      // sweep owns the recorded credentials; run this detached
-                      // so a stalled peer prepare cannot delay the bounded
-                      // release join below.
-                      yield* revoke.pipe(Effect.forkDetach({ startImmediately: true }));
+                      if (Option.isNone(settled)) {
+                        return yield* new ProviderSessionReleaseError({
+                          providerSessionId: input.providerSessionId,
+                          reason: "runtime_error",
+                          cause:
+                            "MCP credential revocation did not finish within 30 seconds and is still running.",
+                        });
+                      }
                     }
+                    // When a release was forked above, the pruned credential
+                    // was handed to its record via extraMcpCredentials and its
+                    // own bounded sweep revokes it — the bounded release join
+                    // below is this detach's wait, so joining the tracked
+                    // sweep too would only re-expose the unbounded
+                    // mcpPrepareLock wait. When nothing detached, the post-
+                    // lock tail joins `revokeDone` so a retry never reports
+                    // success over a running revocation.
+                    return { detached, releaseFiber, revokeDone };
                   }
-                  return { detached, releaseFiber };
+                  return { detached, releaseFiber, revokeDone: undefined };
                 }),
               ),
             );
@@ -2902,14 +3288,31 @@ export const layerWithOptions = (
               // When no entry was seen at all, the pending-release check at
               // the top already passed, so anything releasing now belongs to
               // another instance.
-              if (currentEntry === undefined) return;
-              if (releasing.has(key)) {
+              if (currentEntry !== undefined && releasing.has(key)) {
                 return yield* releaseEntry({
                   providerSessionId: input.providerSessionId,
                   reason: "manual_shutdown",
                   joinOnly: true,
                   expectedRuntime: currentEntry.runtime,
                 });
+              }
+              // An earlier terminal detach for this thread may have started
+              // a revocation this call must not outrun: the caller that
+              // forked it may already have timed out or been interrupted.
+              // Join the tracked sweep (bounded like any cleanup wait) so a
+              // retry only reports success once revocation actually finished.
+              if (revokeDone !== undefined) {
+                const settled = yield* Deferred.await(revokeDone).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                );
+                if (Option.isNone(settled)) {
+                  return yield* new ProviderSessionReleaseError({
+                    providerSessionId: input.providerSessionId,
+                    reason: "runtime_error",
+                    cause:
+                      "MCP credential revocation did not finish within 30 seconds and is still running.",
+                  });
+                }
               }
               return;
             }
