@@ -171,7 +171,6 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
-import { CompactSidebarPreview } from "./CompactSidebarPreview";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -525,10 +524,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(theme !== "system" ? ["Theme"] : []),
       ...(!followSystem ? ["Follow system"] : []),
       ...(themeHalves !== null ? ["Theme mix"] : []),
-      ...(settings.compactSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.compactSidebarEnabled ||
-      settings.sidebarCompactThreadRows !== DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows
-        ? ["Compact sidebar"]
-        : []),
       ...(settings.appearanceContrast !== DEFAULT_UNIFIED_SETTINGS.appearanceContrast
         ? ["Contrast"]
         : []),
@@ -635,7 +630,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserLinkTarget,
       settings.browserAutoShowFloatingPreview,
       settings.appearanceContrast,
-      settings.compactSidebarEnabled,
       settings.diffColorScheme,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
@@ -668,7 +662,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
-      settings.sidebarCompactThreadRows,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -746,7 +739,6 @@ export function useSettingsRestore(onRestored?: () => void) {
     }
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
-      compactSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.compactSidebarEnabled,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
@@ -765,7 +757,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
-      sidebarCompactThreadRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
@@ -1146,19 +1137,6 @@ export function AppearanceSettingsPanel() {
   const [isImportThemeOpen, setIsImportThemeOpen] = useState(false);
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-  const compactSidebarMode = settings.compactSidebarEnabled
-    ? settings.sidebarCompactThreadRows
-      ? "both"
-      : "rail"
-    : settings.sidebarCompactThreadRows
-      ? "threads"
-      : "off";
-  const compactSidebarModes = {
-    off: "Off",
-    rail: "Rail only",
-    threads: "Threads only",
-    both: "Both",
-  };
   const environmentStageLabel = useEnvironmentStageLabel();
   const showEnvironmentIdentification =
     resolveEnvironmentIdentificationPillLabel(environmentStageLabel) !== null;
@@ -1494,64 +1472,6 @@ export function AppearanceSettingsPanel() {
                 }
               />
             ) : null
-          }
-        />
-      </SettingsSection>
-
-      <SettingsSection id="appearance-sidebar" title="Sidebar">
-        <SettingsRow
-          {...searchableSetting("compact-sidebar")}
-          description="Choose a collapsed icon rail, denser thread rows, or both. Click the preview to collapse or expand."
-          resetAction={
-            settings.compactSidebarEnabled !== DEFAULT_UNIFIED_SETTINGS.compactSidebarEnabled ||
-            settings.sidebarCompactThreadRows !==
-              DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows ? (
-              <SettingResetButton
-                label="compact sidebar"
-                onClick={() =>
-                  updateSettings({
-                    compactSidebarEnabled: DEFAULT_UNIFIED_SETTINGS.compactSidebarEnabled,
-                    sidebarCompactThreadRows: DEFAULT_UNIFIED_SETTINGS.sidebarCompactThreadRows,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <div className="grid w-full grid-cols-[5rem_1fr] items-center gap-3 sm:w-auto sm:grid-cols-[7rem_10rem] sm:gap-4">
-              <CompactSidebarPreview
-                key={compactSidebarMode}
-                railEnabled={settings.compactSidebarEnabled}
-                compactRows={settings.sidebarCompactThreadRows}
-              />
-              <Select
-                value={compactSidebarMode}
-                onValueChange={(value) => {
-                  if (
-                    value !== "off" &&
-                    value !== "rail" &&
-                    value !== "threads" &&
-                    value !== "both"
-                  )
-                    return;
-                  updateSettings({
-                    compactSidebarEnabled: value === "rail" || value === "both",
-                    sidebarCompactThreadRows: value === "threads" || value === "both",
-                  });
-                }}
-              >
-                <SelectTrigger size="sm" className="w-full" aria-label="Compact sidebar">
-                  <SelectValue>{compactSidebarModes[compactSidebarMode]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(compactSidebarModes).map(([value, label]) => (
-                    <SelectItem key={value} hideIndicator value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            </div>
           }
         />
       </SettingsSection>

@@ -162,14 +162,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/appearance",
   },
   {
-    id: "compact-sidebar",
-    title: "Compact sidebar",
-    to: "/settings/appearance",
-    searchTerms: [
-      "collapsed icons rail hover navigation preview expanded dense density one line rows chats threads compact thread list",
-    ],
-  },
-  {
     id: "environment-identification",
     title: "Environment identification",
     to: "/settings/appearance",
