@@ -404,7 +404,12 @@ export const layerWithOptions = (
       const pendingRevocations = new Map<
         ThreadId,
         {
-          readonly instanceId: ProviderInstanceId | undefined;
+          // Attribution is a set because the tail stands in for every sweep
+          // still running in the chain: a successor's caller may belong to a
+          // different instance than the predecessor it waits on. undefined in
+          // the set means some sweep in the chain could not be attributed and
+          // must be joined by every closeInstance.
+          readonly instanceIds: ReadonlySet<ProviderInstanceId | undefined>;
           readonly done: Deferred.Deferred<void, ProviderSessionReleaseError>;
         }
       >();
@@ -421,7 +426,13 @@ export const layerWithOptions = (
           // previous one, so a later retry always joins the newest tail.
           const predecessor = pendingRevocations.get(threadId);
           const done = Deferred.makeUnsafe<void, ProviderSessionReleaseError>();
-          const record = { instanceId, done };
+          const record = {
+            instanceIds: new Set<ProviderInstanceId | undefined>([
+              ...(predecessor?.instanceIds ?? []),
+              instanceId,
+            ]),
+            done,
+          };
           pendingRevocations.set(threadId, record);
           yield* Effect.gen(function* () {
             if (predecessor !== undefined) {
@@ -3067,7 +3078,8 @@ export const layerWithOptions = (
             // the owning entry was already gone) still run under teardown.
             const revocationOutcomes = yield* Effect.forEach(
               [...pendingRevocations].filter(
-                ([, record]) => record.instanceId === undefined || record.instanceId === instanceId,
+                ([, record]) =>
+                  record.instanceIds.has(undefined) || record.instanceIds.has(instanceId),
               ),
               ([threadId, record]) =>
                 Deferred.await(record.done).pipe(
@@ -3375,7 +3387,8 @@ export const layerWithOptions = (
                         revoke,
                         Option.isSome(detached)
                           ? detached.value.entry.runtime.instanceId
-                          : sameInstancePending?.entry.runtime.instanceId,
+                          : (sameInstancePending?.entry.runtime.instanceId ??
+                              currentEntry?.runtime.instanceId),
                       );
                       if (Option.isSome(detached) && releaseFiber === undefined) {
                         // No release owns this credential's sweep (the session
