@@ -2,7 +2,6 @@ import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { OrchestrationV2Command, ProviderDriverKind, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
-import * as FileSystem from "effect/FileSystem";
 import * as Schema from "effect/Schema";
 
 import { IdAllocatorV2, layer as idAllocatorLayer } from "../IdAllocator.ts";
@@ -13,13 +12,11 @@ import {
   materializeFixtureInput,
   type OrchestratorFixtureInput,
 } from "./fixtures/shared.ts";
-import { decodeProviderReplayNdjson } from "./ReplayTranscriptNdjson.ts";
+import { readProviderReplayTranscript } from "./ReplayTranscriptNdjson.ts";
 
 const decodeCommand = Schema.decodeUnknownEffect(OrchestrationV2Command);
 const readTranscript = Effect.fn("readOrchestratorReplayContractTranscript")(function* (file: URL) {
-  const fs = yield* FileSystem.FileSystem;
-  const text = yield* fs.readFileString(decodeURIComponent(file.pathname));
-  return yield* decodeProviderReplayNdjson(text);
+  return yield* readProviderReplayTranscript(file);
 }, Effect.provide(NodeServices.layer));
 
 function assertUnique(values: ReadonlyArray<string>, label: string) {
