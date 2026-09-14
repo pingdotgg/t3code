@@ -7130,13 +7130,15 @@ export default function ChatView(props: ChatViewProps) {
         reviewComments: [],
         submissionIntent: "foreground",
         queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
+        // Restoration is not a send. The user decides when the overflow goes.
+        holdUntilUserAction: true,
         createdAt: new Date().toISOString(),
       });
       toastManager.add(
         stackedThreadToast({
           type: "info",
           title: "Some attachments stayed queued",
-          description: `A message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments. The rest will send as a follow-up.`,
+          description: `A message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments. Use Send now on the queued row when you want the rest to go.`,
         }),
       );
     }

@@ -27,6 +27,11 @@ export interface QueuedComposerMessage {
    * the message goes out on.
    */
   queuedAfterToolActivityId: string | null;
+  /**
+   * Set when the message was created by Stop or a failed restore, not by the
+   * user pressing send. It waits for Send now instead of leaving on its own.
+   */
+  holdUntilUserAction?: boolean;
   createdAt: string;
 }
 
@@ -156,10 +161,11 @@ export function latestCompletedToolActivityId(
  * between a send and the provider picking it up, so nothing is due there.
  */
 export function isQueuedMessageDue(input: {
-  message: Pick<QueuedComposerMessage, "queuedAfterToolActivityId">;
+  message: Pick<QueuedComposerMessage, "queuedAfterToolActivityId" | "holdUntilUserAction">;
   phase: "connecting" | "running" | "ready" | "disconnected";
   latestToolActivityId: string | null;
 }): boolean {
+  if (input.message.holdUntilUserAction) return false;
   if (input.phase === "connecting") return false;
   if (input.phase !== "running") return true;
   return input.latestToolActivityId !== input.message.queuedAfterToolActivityId;

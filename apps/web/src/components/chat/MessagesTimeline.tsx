@@ -1,4 +1,4 @@
-import { ClockIcon } from "lucide-react";
+import { ArrowUpIcon, ClockIcon } from "lucide-react";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
@@ -1494,7 +1494,7 @@ function WorktreeSetupTimelineRow({
   );
 }
 
-/** A message waiting for the running turn: a dimmed user bubble with Steer and Remove. */
+/** A message waiting for the running turn: a dashed user bubble with icon actions under it. */
 function QueuedMessageTimelineRow({
   row,
 }: {
@@ -1508,6 +1508,9 @@ function QueuedMessageTimelineRow({
     queuedMessage.previewAnnotations.length +
     queuedMessage.reviewComments.length;
   const text = queuedMessage.prompt.trim();
+  const statusLabel = row.isNext
+    ? "Queued. Sends after the next tool call or when the turn ends."
+    : "Queued. Sends after the messages above it.";
   return (
     <div className="flex flex-col items-end gap-1" data-queued-message-id={queuedMessage.id}>
       <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
@@ -1528,37 +1531,56 @@ function QueuedMessageTimelineRow({
               .join(", ")}
           </div>
         ) : null}
-        <div
-          className="mt-2 flex items-center gap-3 text-secondary-label text-xs"
-          data-scroll-anchor-ignore
-        >
-          <ClockIcon className="size-3.5 shrink-0" aria-hidden />
-          <span className="min-w-0 flex-1 truncate">
-            {row.isNext ? "Queued, sends after the next tool call" : "Queued"}
-          </span>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            className="h-6 rounded-md px-1.5 text-xs font-semibold text-message-foreground hover:bg-muted/55"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
-            aria-label="Steer: send this message now"
+      </div>
+      <div
+        className="flex items-center gap-0.5 pe-1 text-secondary-label"
+        data-scroll-anchor-ignore
+      >
+        <Tooltip>
+          <TooltipTrigger
+            render={<span className="inline-flex size-6 items-center justify-center" />}
+            aria-label={statusLabel}
           >
-            Steer
-          </Button>
-          <Button
-            type="button"
-            size="xs"
-            variant="ghost"
-            className="h-6 rounded-md px-1.5 text-xs hover:bg-muted/55 hover:text-message-foreground"
-            onPointerDown={(event) => event.preventDefault()}
-            onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
-            aria-label="Remove from queue and return to the composer"
+            <ClockIcon className="size-3.5" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">{statusLabel}</TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-micro"
+                variant="ghost-muted"
+                className="size-6"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
+                aria-label="Send now"
+              />
+            }
           >
-            Remove
-          </Button>
-        </div>
+            <ArrowUpIcon className="size-3.5" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Send now</TooltipPopup>
+        </Tooltip>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                type="button"
+                size="icon-micro"
+                variant="ghost-muted"
+                className="size-6"
+                onPointerDown={(event) => event.preventDefault()}
+                onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
+                aria-label="Cancel and return to the composer"
+              />
+            }
+          >
+            <XIcon className="size-3.5" aria-hidden />
+          </TooltipTrigger>
+          <TooltipPopup side="bottom">Cancel and return to the composer</TooltipPopup>
+        </Tooltip>
       </div>
     </div>
   );

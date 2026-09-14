@@ -110,6 +110,11 @@ describe("queued message dispatch timing", () => {
     );
   });
 
+  it("never auto-sends a message held for user action", () => {
+    const message = { queuedAfterToolActivityId: null, holdUntilUserAction: true };
+    expect(isQueuedMessageDue({ message, phase: "ready", latestToolActivityId: "a4" })).toBe(false);
+  });
+
   it("is due as soon as the turn is over, but not while a send is connecting", () => {
     const message = { queuedAfterToolActivityId: "a2" };
     expect(isQueuedMessageDue({ message, phase: "ready", latestToolActivityId: "a2" })).toBe(true);
