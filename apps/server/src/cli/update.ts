@@ -99,6 +99,16 @@ const resolveNewestVersion = Effect.fn("cli.update.resolve_newest")(function* (
   return yield* new CliUpdateError({ reason: `No published ${channel} release was found.` });
 });
 
+/** Whether a launcher target lives inside `<baseDir>/runtime/versions`. */
+export function launcherOwnsVersionsDir(
+  path: Path.Path,
+  versionsDir: string,
+  candidate: string,
+): boolean {
+  const relative = path.relative(versionsDir, path.resolve(candidate));
+  return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
+}
+
 /**
  * The launcher the install scripts leave behind: a symlink at `<bin>/t3` on
  * POSIX, a `t3.cmd` shim on Windows. `t3 update` repoints it so the next `t3`
@@ -117,10 +127,8 @@ export const repointLauncher = Effect.fn("cli.update.repoint_launcher")(function
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
   if (input.launchedAs === undefined) return Option.none<string>();
-  const ownsTarget = (candidate: string) => {
-    const relative = path.relative(input.versionsDir, path.resolve(candidate));
-    return relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative);
-  };
+  const ownsTarget = (candidate: string) =>
+    launcherOwnsVersionsDir(path, input.versionsDir, candidate);
 
   if (platform === "win32") {
     // The shim runs the executable by absolute path, so the executable sees
@@ -189,7 +197,7 @@ export const resolveLauncherPath = Effect.gen(function* () {
  * only ever sees its own path. Walk PATH for a `t3.cmd` whose target is the
  * running executable; that is the launcher the install script wrote.
  */
-const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
+export const findWindowsShim = Effect.fn("cli.update.find_windows_shim")(function* (
   executablePath: string,
 ) {
   const fs = yield* FileSystem.FileSystem;

@@ -51,13 +51,17 @@ export function pinnedRuntimeCommand(paths: PinnedRuntimePaths): {
   return { command: paths.entryPath, args: [] };
 }
 
+export function pinnedRuntimeVersionsDir(path: Path.Path, baseDir: string): string {
+  return path.join(baseDir, PINNED_RUNTIME_DIR, "versions");
+}
+
 export function pinnedRuntimePaths(
   path: Path.Path,
   baseDir: string,
   version: string,
   platform: NodeJS.Platform,
 ): PinnedRuntimePaths {
-  const versionDir = path.join(baseDir, PINNED_RUNTIME_DIR, "versions", version);
+  const versionDir = path.join(pinnedRuntimeVersionsDir(path, baseDir), version);
   return {
     versionDir,
     entryPath: path.join(versionDir, platform === "win32" ? "t3.exe" : "t3"),
