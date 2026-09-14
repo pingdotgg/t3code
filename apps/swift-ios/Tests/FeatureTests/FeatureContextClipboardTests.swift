@@ -85,7 +85,7 @@ struct FeatureContextClipboardTests {
         let directory = try temporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
-        let local = FeatureDraftAttachment(data: Data("retained paste bytes".utf8), filename: "pasted-text.txt", mimeType: "text/plain", source: .pastedText)
+        let local = FeatureDraftAttachment(data: Data("retained paste bytes".utf8), filename: "file.txt", mimeType: "text/plain", source: .pastedText)
         let record = file("source-record", attachmentID: local.id.uuidString, size: local.byteCount)
         try await store.setDraft(.init(attachments: [local]), for: key)
         let reloaded = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
@@ -127,6 +127,20 @@ struct FeatureContextClipboardTests {
         #expect(attachment.uploadedReference == nil)
         #expect(result.context.records.first?.attachment?.attachmentId == attachment.id.uuidString)
         #expect(result.context.records.first?.attachment?.attachmentId != "source-server-id")
+    }
+
+    @Test func mismatchedLocalMetadataDoesNotReuseTheAttachmentBytes() async throws {
+        let directory = try temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let local = FeatureDraftAttachment(data: Data("original".utf8), filename: "original.txt", mimeType: "text/plain")
+        try await store.setDraft(.init(attachments: [local]), for: "environment:local-source:thread:one")
+        let importer = importer(directory: directory, draftStore: store)
+        let clipboard = content(file("record", attachmentID: local.id.uuidString, size: local.byteCount), environment: "local-source")
+        await #expect(throws: ComposerContextClipboardError.invalidFragment) {
+            try await importer.importContent(clipboard, attachmentCount: 0, contextCount: 0, imagesAllowed: true, maximumFileBytes: 1_000)
+        }
+        #expect(try await store.draft(for: "environment:local-source:thread:one")?.attachments == [local])
     }
 
     @Test(arguments: [false, true])

@@ -113,6 +113,10 @@ struct FeatureContextClipboardImporter {
         }
         try Task.checkCancellation()
         if let local {
+            guard local.filename == binding.name,
+                  local.mimeType.caseInsensitiveCompare(binding.mimeType) == .orderedSame else {
+                throw ComposerContextClipboardError.invalidFragment
+            }
             if let file = local.ownedFile, FileManager.default.fileExists(atPath: file.url.path) {
                 return try await copyFile(file.url, binding: binding, maximumBytes: maximumBytes, source: local.source)
             }
