@@ -116,9 +116,12 @@ describe("resolveSwipeRelease", () => {
   });
 
   it("commits on a short row where the 55% width bound is the binding threshold", () => {
-    // actionsWidth + 48 would be 192, but 55% of 260 is 143, so the max is 192.
-    expect(resolveSwipeRelease({ offset: -150, actionsWidth, contentWidth: 260 })).toBe("open");
-    expect(resolveSwipeRelease({ offset: -192, actionsWidth, contentWidth: 260 })).toBe("commit");
+    // With one 72px action the action bound is 120, but 55% of 260 is 143, so
+    // the width bound is what the drag has to beat.
+    expect(resolveSwipeRelease({ offset: -130, actionsWidth: 72, contentWidth: 260 })).toBe("open");
+    expect(resolveSwipeRelease({ offset: -143, actionsWidth: 72, contentWidth: 260 })).toBe(
+      "commit",
+    );
   });
 
   it("opens a drag past the snap threshold", () => {

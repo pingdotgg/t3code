@@ -73,6 +73,11 @@ const MAX_OVERDRAG = 60;
 
 export type SwipeRelease = "commit" | "open" | "close";
 
+/** Drag distance that commits the direction's first action outright. */
+export function swipeCommitThreshold(actionsWidth: number, contentWidth: number): number {
+  return Math.max(actionsWidth + FULL_SWIPE_EXTRA, contentWidth * 0.55);
+}
+
 /** Pure release decision so the thresholds stay testable. */
 export function resolveSwipeRelease(input: {
   readonly offset: number;
@@ -81,8 +86,7 @@ export function resolveSwipeRelease(input: {
 }): SwipeRelease {
   const distance = Math.abs(input.offset);
   if (input.actionsWidth === 0) return "close";
-  const fullThreshold = Math.max(input.actionsWidth + FULL_SWIPE_EXTRA, input.contentWidth * 0.55);
-  if (distance >= fullThreshold) return "commit";
+  if (distance >= swipeCommitThreshold(input.actionsWidth, input.contentWidth)) return "commit";
   if (distance >= OPEN_THRESHOLD) return "open";
   return "close";
 }
@@ -222,10 +226,20 @@ export function ThreadSwipeable(props: {
         }
         if (Math.abs(dx) < DECIDE_PX) return;
         gesture.decided = true;
-        gesture.direction = dx > 0 ? "start" : "end";
+      }
+      // The direction follows the finger until release: a drag that crosses
+      // back over the origin must not commit the action it left behind.
+      const direction = dx > 0 ? "start" : "end";
+      if (direction !== gesture.direction) {
+        gesture.direction = direction;
       }
       const width = actionsWidthFor(gesture.direction);
-      const limit = width + MAX_OVERDRAG;
+      // The drag must be able to reach the commit threshold, so the cap
+      // stretches past it on short rows instead of pinning at the actions.
+      const limit = Math.max(
+        width + MAX_OVERDRAG,
+        swipeCommitThreshold(width, contentRef.current?.offsetWidth ?? 0),
+      );
       gesture.offset = Math.max(-limit, Math.min(limit, dx));
       const content = contentRef.current;
       if (content) {
@@ -298,9 +312,10 @@ export function ThreadSwipeable(props: {
       aria-label={action.label}
       onClick={handleActionPress(action)}
       className={cn(
-        "flex h-full cursor-pointer flex-col items-center justify-center gap-1 text-[11px] font-medium text-white outline-none",
+        "flex h-full shrink-0 cursor-pointer flex-col items-center justify-center gap-1 text-[11px] font-medium text-white outline-none",
         action.className,
       )}
+      style={{ width: ACTION_WIDTH }}
     >
       {action.icon}
       <span>{action.label}</span>
@@ -313,9 +328,11 @@ export function ThreadSwipeable(props: {
       style={{ touchAction: "pan-y" }}
       onClickCapture={handleClickCapture}
     >
+      {/* visibility:hidden (set imperatively) keeps the closed layers out of
+          both the focus order and the accessibility tree; the layers must not
+          carry aria-hidden, which would hide them while open. */}
       <div
         ref={startLayerRef}
-        aria-hidden
         className="absolute inset-y-0 left-0 flex"
         style={{ visibility: "hidden" }}
       >
@@ -323,7 +340,6 @@ export function ThreadSwipeable(props: {
       </div>
       <div
         ref={endLayerRef}
-        aria-hidden
         className="absolute inset-y-0 right-0 flex"
         style={{ visibility: "hidden" }}
       >
