@@ -111,6 +111,7 @@ struct LocalEndpointDetectionTests {
         "192.168.213.171",
         "[::1]",
         "::1",
+        "0:0:0:0:0:0:0:1",
         "[fe80::aede:48ff:fe00:1122]:3773",
         "fd12:3456:789a::1",
         "fc00::1",
@@ -124,6 +125,10 @@ struct LocalEndpointDetectionTests {
         "172.32.0.1",
         "example.com",
         "2001:4860:4860::8888",
+        "::fd00",
+        "fc.example.com",
+        "10.example.com",
+        "10.999.0.1",
     ])
     func rejectsPublicHosts(_ host: String) {
         #expect(!EndpointNetworkScope.isLocalHost(host))
