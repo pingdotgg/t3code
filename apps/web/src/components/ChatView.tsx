@@ -7100,14 +7100,52 @@ export default function ChatView(props: ChatViewProps) {
     const nextPrompt = prompts.join("\n\n");
     promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
-    const images = messages.flatMap((message) => message.images);
-    const files = messages.flatMap((message) => message.files);
-    if (images.length > 0) addComposerDraftImages(composerDraftTarget, images);
-    if (files.length > 0) addComposerDraftFiles(composerDraftTarget, files);
-    setComposerDraftTerminalContexts(composerDraftTarget, [
+    // The draft store silently drops attachments over the per-turn cap. Split
+    // the overflow back into the queue so nothing is lost; the user can send
+    // the first batch and the rest follows as a queued message.
+    const attachmentRoom = Math.max(
+      0,
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
+        composerImagesRef.current.length -
+        composerFilesRef.current.length,
+    );
+    const attachments = messages.flatMap((message) => [...message.images, ...message.files]);
+    const restored = attachments.slice(0, attachmentRoom);
+    const overflow = attachments.slice(attachmentRoom);
+    const restoredImages = restored.filter((attachment) => attachment.type === "image");
+    const restoredFiles = restored.filter((attachment) => attachment.type === "file");
+    // The composer syncs these refs from the draft in an effect; a send before
+    // that effect runs must already see the restored content.
+    composerImagesRef.current = [...composerImagesRef.current, ...restoredImages];
+    composerFilesRef.current = [...composerFilesRef.current, ...restoredFiles];
+    if (restoredImages.length > 0) addComposerDraftImages(composerDraftTarget, restoredImages);
+    if (restoredFiles.length > 0) addComposerDraftFiles(composerDraftTarget, restoredFiles);
+    if (overflow.length > 0 && activeThreadKey) {
+      useQueuedMessageStore.getState().enqueue(activeThreadKey, {
+        prompt: "",
+        images: overflow.filter((attachment) => attachment.type === "image"),
+        files: overflow.filter((attachment) => attachment.type === "file"),
+        terminalContexts: [],
+        previewAnnotations: [],
+        reviewComments: [],
+        submissionIntent: "foreground",
+        queuedAfterToolActivityId: latestCompletedToolActivityId(threadActivities),
+        createdAt: new Date().toISOString(),
+      });
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Some attachments stayed queued",
+          description: `A message holds at most ${PROVIDER_SEND_TURN_MAX_ATTACHMENTS} attachments. The rest will send as a follow-up.`,
+        }),
+      );
+    }
+    const restoredTerminalContexts = [
       ...composerTerminalContextsRef.current,
       ...messages.flatMap((message) => message.terminalContexts),
-    ]);
+    ];
+    composerTerminalContextsRef.current = restoredTerminalContexts;
+    setComposerDraftTerminalContexts(composerDraftTarget, restoredTerminalContexts);
     const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     setComposerDraftPreviewAnnotations(composerDraftTarget, [
       ...(draft?.previewAnnotations ?? []),
@@ -8085,9 +8123,7 @@ export default function ChatView(props: ChatViewProps) {
 
   const onRemoveQueuedMessage = (id: string) => {
     if (!activeThreadKey) return;
-    const message = useQueuedMessageStore
-      .getState()
-      .take(activeThreadKey, id, latestToolActivityId);
+    const message = useQueuedMessageStore.getState().remove(activeThreadKey, id);
     if (message) restoreQueuedMessagesToComposer([message]);
   };
   // Stop also cancels the queue: the messages return to the composer instead

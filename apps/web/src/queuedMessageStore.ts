@@ -43,6 +43,8 @@ interface QueuedMessageStoreState {
     id: string,
     toolActivityId: string | null,
   ) => QueuedComposerMessage | null;
+  /** Removes one message without touching the others' anchors. Null when already gone. */
+  remove: (threadKey: string, id: string) => QueuedComposerMessage | null;
   /** Removes and returns every queued message for the thread, oldest first. */
   drain: (threadKey: string) => QueuedComposerMessage[];
 }
@@ -86,6 +88,26 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
     });
     return entry;
   },
+  remove: (threadKey, id) => {
+    const queue = get().queuesByThreadKey[threadKey];
+    const entry = queue?.find((message) => message.id === id);
+    if (!queue || !entry) {
+      return null;
+    }
+    set((state) => {
+      const remaining = (state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE).filter(
+        (message) => message.id !== id,
+      );
+      const queuesByThreadKey = { ...state.queuesByThreadKey };
+      if (remaining.length === 0) {
+        delete queuesByThreadKey[threadKey];
+      } else {
+        queuesByThreadKey[threadKey] = remaining;
+      }
+      return { queuesByThreadKey };
+    });
+    return entry;
+  },
   drain: (threadKey) => {
     const queue = get().queuesByThreadKey[threadKey];
     if (!queue || queue.length === 0) {
@@ -100,17 +122,32 @@ export const useQueuedMessageStore = create<QueuedMessageStoreState>()((set, get
   },
 }));
 
-/** The newest finished tool call. Its id changing is the boundary a queued message goes out on. */
+/**
+ * The newest finished tool call. Its id changing is the boundary a queued
+ * message goes out on. Live arrays are sorted, but a snapshot loaded from the
+ * database is not, so pick by sequence rather than position.
+ */
 export function latestCompletedToolActivityId(
-  activities: ReadonlyArray<{ readonly id: string; readonly kind: string }>,
+  activities: ReadonlyArray<{
+    readonly id: string;
+    readonly kind: string;
+    readonly sequence?: number | undefined;
+    readonly createdAt: string;
+  }>,
 ): string | null {
-  for (let index = activities.length - 1; index >= 0; index -= 1) {
-    const activity = activities[index];
-    if (activity?.kind === "tool.completed") {
-      return activity.id;
+  let latest: (typeof activities)[number] | null = null;
+  for (const activity of activities) {
+    if (activity.kind !== "tool.completed") continue;
+    if (
+      latest === null ||
+      (activity.sequence ?? -1) > (latest.sequence ?? -1) ||
+      ((activity.sequence ?? -1) === (latest.sequence ?? -1) &&
+        activity.createdAt > latest.createdAt)
+    ) {
+      latest = activity;
     }
   }
-  return null;
+  return latest?.id ?? null;
 }
 
 /**

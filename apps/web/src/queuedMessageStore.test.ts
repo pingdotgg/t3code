@@ -60,6 +60,16 @@ describe("queuedMessageStore", () => {
     ).toBe(false);
   });
 
+  it("remove keeps the other messages' anchors", () => {
+    const { enqueue, remove } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", { ...makeMessage("first"), queuedAfterToolActivityId: "t1" });
+    const second = enqueue("thread-a", makeMessage("second"));
+
+    expect(remove("thread-a", second.id)?.prompt).toBe("second");
+    expect(remove("thread-a", second.id)).toBeNull();
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([first]);
+  });
+
   it("drain empties one thread's queue in order", () => {
     const { enqueue, drain } = useQueuedMessageStore.getState();
     enqueue("thread-a", makeMessage("first"));
@@ -74,14 +84,20 @@ describe("queuedMessageStore", () => {
 
 describe("queued message dispatch timing", () => {
   const activities = [
-    { id: "a1", kind: "tool.started" },
-    { id: "a2", kind: "tool.completed" },
-    { id: "a3", kind: "tool.updated" },
+    { id: "a1", kind: "tool.started", sequence: 1, createdAt: "2026-01-01T00:00:01Z" },
+    { id: "a2", kind: "tool.completed", sequence: 2, createdAt: "2026-01-01T00:00:02Z" },
+    { id: "a3", kind: "tool.updated", sequence: 3, createdAt: "2026-01-01T00:00:03Z" },
   ];
 
-  it("finds the newest completed tool call", () => {
+  it("finds the newest completed tool call by sequence, not position", () => {
     expect(latestCompletedToolActivityId(activities)).toBe("a2");
     expect(latestCompletedToolActivityId([])).toBeNull();
+    expect(
+      latestCompletedToolActivityId([
+        { id: "late", kind: "tool.completed", sequence: 9, createdAt: "2026-01-01T00:00:09Z" },
+        { id: "early", kind: "tool.completed", sequence: 4, createdAt: "2026-01-01T00:00:04Z" },
+      ]),
+    ).toBe("late");
   });
 
   it("waits mid-turn until a tool call finishes after the message was queued", () => {
