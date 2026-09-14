@@ -78,6 +78,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
   readonly launches?: OrchestrationV2ThreadLaunchInput[];
   readonly projection?: OrchestrationV2ThreadProjection;
   readonly projectionRequests?: ThreadId[];
+  readonly projectionInputs?: Array<Record<string, unknown>>;
   readonly checkpointContext?: OrchestrationV2ThreadCheckpointContext;
   readonly checkpointContextRequests?: ThreadId[];
   readonly advertiseServerResolvedCommandContext?: boolean;
@@ -94,6 +95,7 @@ const makeSupervisor = Effect.fn("TestEnvironmentCommands.makeSupervisor")(funct
     }) =>
       Effect.sync(() => {
         input.projectionRequests?.push(requestInput.threadId);
+        input.projectionInputs?.push(requestInput);
         return input.projection ?? v2Projection;
       }),
     [ORCHESTRATION_V2_WS_METHODS.getThreadCheckpointContext]: (requestInput: {
@@ -785,10 +787,12 @@ describe("V2 environment commands", () => {
     Effect.gen(function* () {
       const commands: OrchestrationV2Command[] = [];
       const projectionRequests: ThreadId[] = [];
+      const projectionInputs: Array<Record<string, unknown>> = [];
       const supervisor = yield* makeSupervisor({
         commands,
         projects: [],
         projectionRequests,
+        projectionInputs,
         advertiseServerResolvedCommandContext: false,
       });
 
@@ -802,6 +806,8 @@ describe("V2 environment commands", () => {
       }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
 
       expect(projectionRequests).toEqual([v2ThreadId]);
+      // New clients opt into bounded projections; older servers strip the key.
+      expect(projectionInputs).toEqual([{ threadId: v2ThreadId, acceptBoundedSnapshot: true }]);
       expect(commands).toEqual([
         {
           type: "provider.switch",
@@ -850,10 +856,12 @@ describe("V2 environment commands", () => {
       for (const status of ["ready", "missing", "error", "stale", null] as const) {
         const commands: OrchestrationV2Command[] = [];
         const projectionRequests: ThreadId[] = [];
+        const projectionInputs: Array<Record<string, unknown>> = [];
         const supervisor = yield* makeSupervisor({
           commands,
           projects: [],
           projectionRequests,
+          projectionInputs,
           advertiseServerResolvedCommandContext: false,
           advertiseThreadCheckpointContext: false,
           projection: {
@@ -903,6 +911,9 @@ describe("V2 environment commands", () => {
           expect(commands).toEqual([]);
         }
         expect(projectionRequests).toEqual([v2ThreadId]);
+        // Ordinal fallback needs every checkpoint, so it must not opt into the
+        // bounded projection window.
+        expect(projectionInputs).toEqual([{ threadId: v2ThreadId }]);
       }
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
   );

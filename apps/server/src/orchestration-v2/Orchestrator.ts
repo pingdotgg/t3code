@@ -224,6 +224,7 @@ export interface OrchestratorV2Shape {
     {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
+      readonly hasOlderHistory: boolean;
       readonly projection: OrchestrationV2ThreadProjection;
     },
     OrchestratorV2Error
