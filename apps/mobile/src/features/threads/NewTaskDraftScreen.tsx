@@ -76,6 +76,10 @@ import {
 import { useVoiceInputController } from "../voice-input/useVoiceInputController";
 import { resolveVoiceComposerPresentation } from "../voice-input/voiceInputPresentation";
 import {
+  settingsSheetRouteDidDismiss,
+  stackContainsRouteName,
+} from "./thread-settings-sheet-presentation-state";
+import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
@@ -270,6 +274,29 @@ export function NewTaskDraftScreen(props: {
     };
   }, [navigation]);
   const settingsRoutePresentedRef = useRef(false);
+  const syncSettingsSheetRoute = useCallback(() => {
+    const sheetRouteVisible = stackContainsRouteName(
+      navigation.getState()?.routes,
+      "ThreadSettings",
+    );
+    if (
+      !settingsSheetRouteDidDismiss({
+        presented: settingsRoutePresentedRef.current,
+        sheetRouteVisible,
+      })
+    ) {
+      return;
+    }
+    settingsRoutePresentedRef.current = false;
+    settingsSheetPresentation.onDismissed();
+  }, [navigation, settingsSheetPresentation.onDismissed]);
+  const openSettings = useCallback(() => {
+    // A swipe-dismissed iOS form sheet often never blurs this screen, so
+    // JS can still think the picker is open. Reconcile from the stack
+    // before the isActive latch can swallow this tap.
+    syncSettingsSheetRoute();
+    settingsSheetPresentation.open();
+  }, [settingsSheetPresentation.open, syncSettingsSheetRoute]);
   useEffect(() => {
     if (!settingsSheetPresentation.isVisible || settingsRoutePresentedRef.current) {
       return;
@@ -289,14 +316,23 @@ export function NewTaskDraftScreen(props: {
     }, [settingsSheetPresentation.onDismissed]),
   );
   useEffect(
+    () => navigation.addListener("state", syncSettingsSheetRoute),
+    [navigation, syncSettingsSheetRoute],
+  );
+  useEffect(
     () =>
       // UIKit's completion callback for the sheet dismissal, surfaced by the
       // native-stack patch. This is when the queued keyboard restore runs.
+      // Form-sheet swipe dismiss often never blurs this screen, so also
+      // reconcile from the stack here.
       (navigation as unknown as NavigationWithFinishTransitioning).addListener(
         "finishTransitioning",
-        settingsSheetPresentation.onStackTransitionsFinished,
+        () => {
+          settingsSheetPresentation.onStackTransitionsFinished();
+          syncSettingsSheetRoute();
+        },
       ),
-    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished, syncSettingsSheetRoute],
   );
   const [importingShareKey, setImportingShareKey] = useState<string | null>(null);
   const [isCancellingShareImport, setIsCancellingShareImport] = useState(false);
@@ -1484,7 +1520,7 @@ export function NewTaskDraftScreen(props: {
           accessibilityRole="button"
           className="px-3 py-2"
           disabled={isComposerInteractionLocked}
-          onPress={settingsSheetPresentation.open}
+          onPress={openSettings}
         >
           <Text className="text-xs text-foreground">Model unavailable. Open model settings.</Text>
         </Pressable>
@@ -1579,7 +1615,7 @@ export function NewTaskDraftScreen(props: {
                         }
                         label={flow.selectedModelOption?.label ?? "Choose model"}
                         maxWidth="100%"
-                        onPress={settingsSheetPresentation.open}
+                        onPress={openSettings}
                       />
                     </View>
                     {flow.planModeEnabled ? (

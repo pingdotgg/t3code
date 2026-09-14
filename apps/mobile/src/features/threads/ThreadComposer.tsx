@@ -105,6 +105,10 @@ import {
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
 import {
+  settingsSheetRouteDidDismiss,
+  stackContainsRouteName,
+} from "./thread-settings-sheet-presentation-state";
+import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
 } from "./use-thread-settings-sheet-presentation";
@@ -578,10 +582,42 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
       threadProviderGroups,
     ],
   );
+  const syncSettingsSheetRoute = useCallback(() => {
+    const sheetRouteVisible = stackContainsRouteName(
+      navigation.getState()?.routes,
+      "ThreadSettingsSheet",
+    );
+    if (
+      !settingsSheetRouteDidDismiss({
+        presented: settingsRoutePresentedRef.current,
+        sheetRouteVisible,
+      })
+    ) {
+      return;
+    }
+    settingsRoutePresentedRef.current = false;
+    settingsSheetPresentation.onDismissed();
+    settingsRoutePresentation.clear(settingsOwnerId);
+  }, [
+    navigation,
+    settingsOwnerId,
+    settingsRoutePresentation.clear,
+    settingsSheetPresentation.onDismissed,
+  ]);
+
   const openSettings = useCallback(() => {
+    // A swipe-dismissed iOS form sheet often never blurs this screen, so
+    // JS can still think the picker is open. Reconcile from the stack
+    // before the isActive latch can swallow this tap.
+    syncSettingsSheetRoute();
     settingsRoutePresentation.present(settingsRouteSession);
     settingsSheetPresentation.open();
-  }, [settingsRoutePresentation.present, settingsRouteSession, settingsSheetPresentation.open]);
+  }, [
+    settingsRoutePresentation.present,
+    settingsRouteSession,
+    settingsSheetPresentation.open,
+    syncSettingsSheetRoute,
+  ]);
 
   useEffect(() => {
     if (settingsSheetPresentation.isActive) {
@@ -611,14 +647,24 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   );
 
   useEffect(
+    () => navigation.addListener("state", syncSettingsSheetRoute),
+    [navigation, syncSettingsSheetRoute],
+  );
+
+  useEffect(
     () =>
       // UIKit's completion callback for the sheet dismissal, surfaced by the
       // native-stack patch. This is when the queued keyboard restore runs.
+      // Form-sheet swipe dismiss often never blurs this screen, so also
+      // reconcile from the stack here.
       (navigation as unknown as NavigationWithFinishTransitioning).addListener(
         "finishTransitioning",
-        settingsSheetPresentation.onStackTransitionsFinished,
+        () => {
+          settingsSheetPresentation.onStackTransitionsFinished();
+          syncSettingsSheetRoute();
+        },
       ),
-    [navigation, settingsSheetPresentation.onStackTransitionsFinished],
+    [navigation, settingsSheetPresentation.onStackTransitionsFinished, syncSettingsSheetRoute],
   );
 
   return (
