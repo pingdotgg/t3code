@@ -444,7 +444,7 @@ const mobileEndorsementRows = [
       return assets.find((a) => a.name.endsWith("-arm64.dmg"))?.browser_download_url ?? null;
     }
     if (platform.os === "linux") {
-      return assets.find((a) => a.name.endsWith(".AppImage"))?.browser_download_url ?? null;
+      return assets.find((a) => a.name.endsWith("-x86_64.AppImage"))?.browser_download_url ?? null;
     }
     return null;
   }
