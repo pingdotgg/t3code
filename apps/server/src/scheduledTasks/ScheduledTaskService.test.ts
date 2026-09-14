@@ -1426,6 +1426,11 @@ const boundThreadStates = new Map<string, "active" | "archived" | "deleted">();
 // unregistered threads accept any project so unrelated tests stay terse.
 const boundThreadProjects = new Map<string, string>();
 const boundThreadStateOf = (threadId: string) => boundThreadStates.get(threadId) ?? "active";
+// Destination thread modes for the execution-mode precondition checks —
+// absent entries default to the same modes boundTaskInput stores.
+const boundThreadModes = new Map<string, { runtimeMode: string; interactionMode: string }>();
+const boundThreadModeOf = (threadId: string) =>
+  boundThreadModes.get(threadId) ?? { runtimeMode: "full-access", interactionMode: "default" };
 const boundThreadArchivedShells = () =>
   [...boundThreadStates.entries()]
     .filter(([, state]) => state === "archived")
@@ -1447,6 +1452,7 @@ const setBoundThreadState = (
   Effect.gen(function* () {
     boundThreadStates.set(threadId, state);
     boundThreadProjects.set(threadId, projectId);
+    const modes = boundThreadModeOf(threadId);
     const sql = yield* SqlClient.SqlClient;
     const now = "2026-09-14T00:00:00.000Z";
     yield* sql`
@@ -1454,23 +1460,51 @@ const setBoundThreadState = (
         (thread_id, project_id, title, default_provider, runtime_mode, interaction_mode,
          created_at, updated_at, archived_at, deleted_at, payload_json)
       VALUES (
-        ${threadId}, ${projectId}, 'bound', 'codex', 'full-access', 'default',
+        ${threadId}, ${projectId}, 'bound', 'codex', ${modes.runtimeMode}, ${modes.interactionMode},
         ${now}, ${now},
         ${state === "archived" ? boundThreadArchivedAt : null},
         ${state === "deleted" ? now : null}, '{}'
       )
       ON CONFLICT (thread_id) DO UPDATE SET
         project_id = excluded.project_id,
+        runtime_mode = excluded.runtime_mode,
+        interaction_mode = excluded.interaction_mode,
         archived_at = excluded.archived_at,
         deleted_at = excluded.deleted_at
+    `;
+  });
+
+// The destination modes a bound run executes under — rewrites only the mode
+// columns so a thread's archive state survives the flip.
+const setBoundThreadModes = (
+  threadId: ThreadId,
+  modes: { readonly runtimeMode: string; readonly interactionMode: string } | null,
+) =>
+  Effect.gen(function* () {
+    if (modes === null) {
+      boundThreadModes.delete(threadId);
+    } else {
+      boundThreadModes.set(threadId, modes);
+    }
+    const effective = boundThreadModeOf(threadId);
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`
+      UPDATE orchestration_v2_projection_threads
+      SET runtime_mode = ${effective.runtimeMode},
+          interaction_mode = ${effective.interactionMode}
+      WHERE thread_id = ${threadId}
     `;
   });
 let sendToThreadCalls = 0;
 // Optional dispatch gate: parks sendToThread between its entry and return so a
 // test can land an archive inside a deterministic mid-dispatch window.
+// acceptedAtEntry models a send the thread already accepted when the call
+// arrived — the archive may land while the dispatch is in flight without the
+// send itself being rejected.
 let sendBarrier: {
   readonly started: Deferred.Deferred<void>;
   readonly release: Deferred.Deferred<void>;
+  readonly acceptedAtEntry?: boolean;
 } | null = null;
 
 // The domain-event stream is a parameter so each service instance gets its
@@ -1487,6 +1521,7 @@ const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2Do
               projectId: boundThreadProjects.get(threadId) ?? archivedBindingProjectId,
               archivedAt:
                 boundThreadStateOf(threadId) === "archived" ? boundThreadArchivedAt : null,
+              ...boundThreadModeOf(threadId),
             } as unknown as OrchestrationV2ThreadShell),
       ),
     getProjectThread: ({ projectId, threadId }) =>
@@ -1516,11 +1551,16 @@ const boundThreadManagementMock = (domainEvents: Stream.Stream<OrchestrationV2Do
       Effect.gen(function* () {
         sendToThreadCalls += 1;
         const barrier = sendBarrier;
+        const acceptedAtEntry =
+          barrier?.acceptedAtEntry === true
+            ? boundThreadStateOf(input.threadId) === "active"
+            : null;
         if (barrier !== null) {
           yield* Deferred.succeed(barrier.started, undefined);
           yield* Deferred.await(barrier.release);
         }
-        if (boundThreadStateOf(input.threadId) !== "active") {
+        const sendable = acceptedAtEntry ?? boundThreadStateOf(input.threadId) === "active";
+        if (!sendable) {
           return yield* new ThreadManagementService.ThreadManagementThreadArchivedError({
             threadId: input.threadId,
           });
@@ -1536,10 +1576,8 @@ const boundThreadTestDeps = Layer.mergeAll(
   boundThreadManagementMock(Stream.never),
 );
 
-const boundThreadTestLayer = scheduledTaskServiceLayer.pipe(Layer.provide(boundThreadTestDeps));
-
-// Same service plus direct SQL access: the stale-archive tests must plant
-// enabled_seq and event-log state the public API cannot express.
+// Same service plus direct SQL access: the tests plant projection and
+// event-log state the public API cannot express.
 const boundThreadTestLayerWithSql = scheduledTaskServiceLayer.pipe(
   Layer.provideMerge(boundThreadTestDeps),
 );
@@ -1768,6 +1806,91 @@ it.effect("an enabled:true update after unarchive re-affirms an already-enabled 
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
+const overdueNextRunAt = "2020-01-01T00:00:00.000Z";
+
+// The task's stored enablement was voided by a committed archive whose pause
+// never landed (unarchive beat the reactor), leaving an overdue next_run_at.
+// Any explicit re-enable is a resume: the interval must restart from now, not
+// fire the stale due time a pre-archive schedule left behind.
+const pinOverdueAndArchive = (taskId: ScheduledTaskId) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${taskId}`;
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+  });
+
+it.effect("a setEnabled resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const affirmed = yield* tasks.setEnabled({ id: seeded.id, enabled: true });
+    assert.isTrue(affirmed.task.enabled);
+    assert.isNotNull(affirmed.task.nextRunAt);
+    assert.notEqual(affirmed.task.nextRunAt, overdueNextRunAt);
+    // The interval restarted from now — under the frozen test clock this is
+    // exactly the value the original seed produced.
+    assert.equal(affirmed.task.nextRunAt, seeded.nextRunAt);
+
+    // The delayed archive event must still spare the affirmed enablement.
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an enabled:true update resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const updated = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      enabled: true,
+    });
+    assert.isTrue(Option.isSome(updated));
+    const updatedTask = Option.getOrThrow(updated).task;
+    assert.isNotNull(updatedTask.nextRunAt);
+    assert.notEqual(updatedTask.nextRunAt, overdueNextRunAt);
+    assert.equal(updatedTask.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an unchanged-schedule upsert resume after a delayed archive restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const { task: saved } = yield* tasks.upsert({
+      ...boundTaskInput,
+      id: seeded.id,
+      enabled: true,
+    });
+    assert.isNotNull(saved.nextRunAt);
+    assert.notEqual(saved.nextRunAt, overdueNextRunAt);
+    assert.equal(saved.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(archiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
 it.effect(
   "a due run pauses instead of dispatching while an archive+unarchive pause is pending",
   () =>
@@ -1857,6 +1980,293 @@ it.effect("rebinding an enabled task is not undone by the destination's earlier 
     assert.isDefined(after);
     assert.isTrue(after!.enabled);
     assert.isNotNull(after!.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("rebinding off a voided binding restarts the interval on the healthy thread", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-healthy");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    // The stored binding's enablement was voided: archive+unarchive committed
+    // while the pause is still queued, leaving an overdue due time behind.
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+      enabled: true,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.isTrue(reboundTask.enabled);
+    // The invalidation belongs to the stored binding — the move must restart
+    // the interval, not carry the overdue due time onto the new thread.
+    assert.notEqual(reboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(reboundTask.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("rebinding onto a previously archived thread keeps the pending due time", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const sql = yield* SqlClient.SqlClient;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-stale-history");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    // A pending due time mid-interval — the value a wrongful "resume" would
+    // overwrite with a fresh interval.
+    const pendingDueAt = "2020-06-01T00:00:00.000Z";
+    yield* sql`UPDATE scheduled_tasks SET next_run_at = ${pendingDueAt} WHERE task_id = ${seeded.id}`;
+    // The destination's archive+unarchive predate this binding entirely; the
+    // stored binding was never archived, so this enablement is intact.
+    yield* insertThreadEvent(rearchiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
+    yield* insertThreadEvent(
+      rearchiveBoundThreadId,
+      "thread.unarchived",
+      "2026-01-01T00:00:02.000Z",
+    );
+
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+      enabled: true,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.equal(reboundTask.nextRunAt, pendingDueAt);
+
+    // The rebind watermarked past the destination's old archive, so its
+    // delayed pause must not disable the healthy task.
+    yield* tasks.pauseForThread(rearchiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+    assert.equal(after!.nextRunAt, pendingDueAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("unbinding a voided binding restarts the interval on the launch path", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    const unbound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: null,
+      enabled: true,
+    });
+    const unboundTask = Option.getOrThrow(unbound).task;
+    assert.isNull(unboundTask.threadId);
+    assert.isTrue(unboundTask.enabled);
+    assert.notEqual(unboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(unboundTask.nextRunAt, seeded.nextRunAt);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("an upsert whose write lands after a committed pause restarts fresh", () =>
+  Effect.gen(function* () {
+    yield* Effect.scoped(
+      Effect.gen(function* () {
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        const gateArmed = yield* Ref.make(false);
+        const deps = yield* Layer.build(
+          Layer.mergeAll(
+            SqlitePersistenceMemory,
+            NodeCrypto.layer,
+            Layer.mock(ThreadLaunchService.ThreadLaunchService)({}),
+            boundThreadManagementMock(Stream.never),
+          ),
+        );
+        const sqlClient = Context.get(deps, SqlClient.SqlClient);
+        const realWithTransaction = sqlClient.withTransaction;
+        Object.assign(sqlClient, {
+          withTransaction: <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+            Effect.suspend(() =>
+              Ref.modify(gateArmed, (armed) => (armed ? [true, false] : [false, armed])),
+            ).pipe(
+              Effect.flatMap((gated) =>
+                gated
+                  ? Deferred.succeed(entered, undefined).pipe(
+                      Effect.andThen(Deferred.await(release)),
+                      Effect.andThen(realWithTransaction(effect)),
+                    )
+                  : realWithTransaction(effect),
+              ),
+            ),
+        });
+        const context = yield* Layer.build(
+          scheduledTaskServiceLayer.pipe(Layer.provide(Layer.succeedContext(deps))),
+        );
+        const tasks = Context.get(context, ScheduledTaskService);
+        yield* setBoundThreadState(archiveBoundThreadId, "active");
+        const { task: seeded } = yield* tasks.upsert({ ...boundTaskInput, enabled: true });
+        yield* sqlClient`UPDATE scheduled_tasks SET next_run_at = ${overdueNextRunAt} WHERE task_id = ${seeded.id}`;
+
+        // The upsert's whole transaction is parked while the archive pause
+        // commits: the row it reads must already be the paused one, or the
+        // save would restore the overdue due time the pause just cleared.
+        yield* Ref.set(gateArmed, true);
+        const upsertExit = yield* tasks
+          .upsert({ ...boundTaskInput, id: seeded.id, enabled: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* insertThreadEvent(
+          archiveBoundThreadId,
+          "thread.archived",
+          "2026-01-01T00:00:01.000Z",
+        );
+        yield* setBoundThreadState(archiveBoundThreadId, "archived");
+        yield* tasks.pauseForThread(archiveBoundThreadId);
+        yield* insertThreadEvent(
+          archiveBoundThreadId,
+          "thread.unarchived",
+          "2026-01-01T00:00:02.000Z",
+        );
+        yield* setBoundThreadState(archiveBoundThreadId, "active");
+        yield* Deferred.succeed(release, undefined);
+        const saved = yield* Fiber.join(upsertExit);
+        assert.isTrue(Exit.isSuccess(saved));
+        if (Exit.isSuccess(saved)) {
+          assert.isTrue(saved.value.task.enabled);
+          assert.isNotNull(saved.value.task.nextRunAt);
+          assert.notEqual(saved.value.task.nextRunAt, overdueNextRunAt);
+        }
+      }),
+    );
+  }).pipe(Effect.provide(SqlitePersistenceMemory)),
+);
+
+it.effect("a binding-only update on a voided enablement restarts the interval", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    const rearchiveBoundThreadId = ThreadId.make("thread:rebound-binding-only");
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* setBoundThreadState(rearchiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+    yield* pinOverdueAndArchive(seeded.id);
+
+    // No enabled field at all: the rebind alone refreshes the watermark past
+    // the stored binding's archive, escaping the queued pause — so the
+    // overdue due time must restart rather than fire on the new thread.
+    const rebound = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      threadId: rearchiveBoundThreadId,
+    });
+    const reboundTask = Option.getOrThrow(rebound).task;
+    assert.isTrue(reboundTask.enabled);
+    assert.equal(reboundTask.threadId, rearchiveBoundThreadId);
+    assert.notEqual(reboundTask.nextRunAt, overdueNextRunAt);
+    assert.equal(reboundTask.nextRunAt, seeded.nextRunAt);
+
+    yield* tasks.pauseForThread(rearchiveBoundThreadId);
+    const after = yield* findTaskById(seeded.id);
+    assert.isTrue(after!.enabled);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("update rejects when the destination thread's modes drifted since authorization", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // The destination's modes elevated after the caller pinned full-access —
+    // the write must fail rather than arm the task under modes the caller
+    // never authorized.
+    const drifted = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "stale modes",
+        expectedExecutionRuntimeMode: "approval-required",
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(drifted));
+    if (Exit.isFailure(drifted)) {
+      assert.include(Cause.pretty(drifted.cause), "changed since it was loaded");
+    }
+
+    // Matching expected execution modes proceed normally.
+    yield* setBoundThreadModes(archiveBoundThreadId, {
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    const matched = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      title: "authorized",
+      expectedExecutionRuntimeMode: "approval-required",
+      expectedExecutionInteractionMode: "plan",
+    });
+    assert.equal(Option.getOrThrow(matched).task.title, "authorized");
+    yield* setBoundThreadModes(archiveBoundThreadId, null);
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("update and delete reject a row that drifted since the caller loaded it", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    const driftedUpdate = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "stale",
+        expectedRuntimeMode: "approval-required",
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(driftedUpdate));
+    if (Exit.isFailure(driftedUpdate)) {
+      assert.include(Cause.pretty(driftedUpdate.cause), "changed since it was loaded");
+    }
+
+    const driftedDelete = yield* tasks
+      .delete({ id: seeded.id, expectedThreadId: null })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(driftedDelete));
+    assert.isDefined(yield* findTaskById(seeded.id));
+
+    // A delete authorized against a scoped load must not land after the task
+    // moved to another project — the pin catches a relocated row too.
+    const relocatedDelete = yield* tasks
+      .delete({
+        id: seeded.id,
+        expectedProjectId: ProjectId.make("project:other-project"),
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(relocatedDelete));
+    assert.isDefined(yield* findTaskById(seeded.id));
+
+    // The same preconditions succeed when they match the committed row.
+    const matched = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      title: "pinned",
+      expectedThreadId: archiveBoundThreadId,
+      expectedRuntimeMode: "full-access",
+      expectedInteractionMode: "default",
+    });
+    assert.equal(Option.getOrThrow(matched).task.title, "pinned");
+
+    const deleted = yield* tasks.delete({
+      id: seeded.id,
+      expectedProjectId: archivedBindingProjectId,
+      expectedThreadId: archiveBoundThreadId,
+    });
+    assert.equal(deleted.id, seeded.id);
+    assert.isUndefined(yield* findTaskById(seeded.id));
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
@@ -2026,7 +2436,11 @@ it.effect("a run firing against a cross-project thread pauses instead of dispatc
     // The thread is owned by another project — a binding that write-time
     // validation can no longer produce, but the fire-time check must still
     // pause it rather than loop a guaranteed sendToThread rejection.
-    yield* setBoundThreadState(crossProjectThreadId, "active", ProjectId.make("project:other-owner"));
+    yield* setBoundThreadState(
+      crossProjectThreadId,
+      "active",
+      ProjectId.make("project:other-owner"),
+    );
     const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
     assert.isTrue(Exit.isFailure(attempted));
     assert.equal(sendToThreadCalls, 0);
@@ -2085,7 +2499,7 @@ it.effect("a run firing after archive pauses the task instead of dispatching", (
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
-it.effect("records an accepted run when archive lands mid-dispatch and never re-arms", () =>
+it.effect("records a rejected run when archive lands mid-dispatch and never re-arms", () =>
   Effect.gen(function* () {
     const tasks = yield* ScheduledTaskService;
     yield* setBoundThreadState(archiveBoundThreadId, "active");
@@ -2103,7 +2517,7 @@ it.effect("records an accepted run when archive lands mid-dispatch and never re-
       yield* tasks.pauseForThread(archiveBoundThreadId);
       yield* Deferred.succeed(release, undefined);
       const finished = yield* Fiber.join(runFiber);
-      // The accepted run is recorded once as failed — the archive pause is
+      // The rejected run is recorded once as failed — the archive pause is
       // not overwritten by the completion write.
       assert.equal(finished.task.lastRunStatus, "failed");
       assert.equal(finished.task.runCount, 1);
@@ -2121,6 +2535,48 @@ it.effect("records an accepted run when archive lands mid-dispatch and never re-
     assert.isTrue(Exit.isFailure(second));
     assert.equal(sendToThreadCalls, 1);
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect(
+  "keeps a durably accepted run's success when archive lands mid-dispatch and never re-arms",
+  () =>
+    Effect.gen(function* () {
+      const tasks = yield* ScheduledTaskService;
+      yield* setBoundThreadState(archiveBoundThreadId, "active");
+      sendToThreadCalls = 0;
+      const seeded = yield* seedBoundTask(true);
+      const started = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      // The thread accepted the dispatch before the archive landed, so the
+      // send itself completes — the pause must not drop or re-arm it.
+      sendBarrier = { started, release, acceptedAtEntry: true };
+      try {
+        const runFiber = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.forkChild);
+        yield* Deferred.await(started);
+        yield* setBoundThreadState(archiveBoundThreadId, "archived");
+        yield* tasks.pauseForThread(archiveBoundThreadId);
+        yield* Deferred.succeed(release, undefined);
+        const finished = yield* Fiber.join(runFiber);
+        // The accepted run is recorded exactly once as succeeded — the
+        // completion write respects the pause that landed mid-dispatch.
+        assert.equal(finished.task.lastRunStatus, "succeeded");
+        assert.equal(finished.task.runCount, 1);
+        assert.isFalse(finished.task.enabled);
+        assert.isNull(finished.task.nextRunAt);
+      } finally {
+        sendBarrier = null;
+      }
+      const after = yield* findTaskById(seeded.id);
+      assert.isDefined(after);
+      assert.isFalse(after!.enabled);
+      assert.isNull(after!.nextRunAt);
+      assert.equal(after!.lastRunStatus, "succeeded");
+      assert.equal(after!.runCount, 1);
+      // No recurring doomed dispatches: a second fire refuses before sending.
+      const second = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
+      assert.isTrue(Exit.isFailure(second));
+      assert.equal(sendToThreadCalls, 1);
+    }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
 it.effect("the domain-event reactor pauses tasks on thread archive and delete", () =>
