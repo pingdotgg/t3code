@@ -19,6 +19,7 @@ import {
   RELAY_URL_SECRET,
 } from "../cloud/config.ts";
 import * as ServerConfig from "../config.ts";
+import { OPENAI_API_KEY_SECRET_NAME } from "../voice/broker.ts";
 import * as ServerEnvironment from "./ServerEnvironment.ts";
 
 const isServerEnvironmentIdPersistenceError = Schema.is(
@@ -226,6 +227,43 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
         yield* secrets.set(PUBLISH_AGENT_ACTIVITY_SECRET, encode("false"));
         const disabled = yield* serverEnvironment.getDescriptor;
         expect(disabled.capabilities.agentActivityPublishing).toBe(false);
+      }).pipe(Effect.provide(testLayer));
+    }),
+  );
+
+  it.effect("advertises voiceLive only while the OpenAI key secret is configured", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-voicelive-test-",
+      });
+      const testLayer = Layer.mergeAll(
+        ServerEnvironment.layer.pipe(Layer.provide(ServerSecretStore.layer)),
+        ServerSecretStore.layer,
+      ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), baseDir)));
+
+      yield* Effect.gen(function* () {
+        const secrets = yield* ServerSecretStore.ServerSecretStore;
+        const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+        const encode = (value: string) => new TextEncoder().encode(value);
+
+        // Without the environment-owned OpenAI key the environment cannot
+        // broker a Live session, so the capability stays absent (absent means
+        // unsupported to clients) instead of advertising an entry point that
+        // can only fail.
+        const withoutKey = yield* serverEnvironment.getDescriptor;
+        expect(withoutKey.capabilities.voiceLive).toBeUndefined();
+
+        // Configuring the key secret publishes the capability...
+        yield* secrets.set(OPENAI_API_KEY_SECRET_NAME, encode("test-key"));
+        const withKey = yield* serverEnvironment.getDescriptor;
+        expect(withKey.capabilities.voiceLive).toBe(true);
+
+        // ...and removing it withdraws the capability without a restart,
+        // matching the broker's per-mint key read.
+        yield* secrets.remove(OPENAI_API_KEY_SECRET_NAME);
+        const afterRemoval = yield* serverEnvironment.getDescriptor;
+        expect(afterRemoval.capabilities.voiceLive).toBeUndefined();
       }).pipe(Effect.provide(testLayer));
     }),
   );
