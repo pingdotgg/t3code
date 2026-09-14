@@ -1551,8 +1551,8 @@ export function NewTaskDraftScreen(props: {
           />
         </View>
       ) : null}
-      <View className="pb-1">{workspaceControls}</View>
-
+      {/* Above the workspace controls so they keep their place relative to
+          the composer when the banner goes away once the clone lands. */}
       {projectClone && projectClone.phase !== "done" && selectedProject ? (
         <View className="px-1 pb-2">
           <ProjectCloneBanner
@@ -1577,6 +1577,7 @@ export function NewTaskDraftScreen(props: {
           />
         </View>
       ) : null}
+      <View className="pb-1">{workspaceControls}</View>
 
       {modelUnavailable ? (
         <Pressable
