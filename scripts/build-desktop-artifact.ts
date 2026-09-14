@@ -34,6 +34,7 @@ import {
   selectCliRuntimeExternalDependencies,
 } from "./lib/cli-external-packages.ts";
 import { loadRepoEnv } from "./lib/public-config.ts";
+import { selectDesktopRuntimeExternalDependencies } from "./lib/desktop-external-packages.ts";
 import { resolveCatalogDependencies } from "./lib/resolve-catalog.ts";
 
 import * as NodeRuntime from "@effect/platform-node/NodeRuntime";
@@ -959,6 +960,10 @@ export const DESKTOP_FILE_EXCLUSIONS = [
   // so the SDK's optional platform packages (each a ~200MB bundled executable)
   // are dead weight. The trailing dash keeps the SDK's own JS package.
   "!**/node_modules/@anthropic-ai/claude-agent-sdk-*/**/*",
+  // Nothing in the packaged app enables source maps or serves them: the web
+  // client's maps alone were 50 MB of app.asar that no request ever read.
+  "!**/*.map",
+  "!**/*.d.cts",
   "!apps/desktop/resources/browser-secret",
   "!apps/desktop/resources/browser-secret/**/*",
   "!apps/desktop/prod-resources/browser-secret",
@@ -977,6 +982,12 @@ export const DESKTOP_FILE_EXCLUSIONS = [
 export const MAC_FILE_EXCLUSIONS = [
   "!**/node_modules/node-pty/prebuilds/win32-*/**/*",
   "!**/node_modules/node-pty/third_party/conpty/**/*",
+] as const;
+// Linux builds node-pty from source, so every prebuild in the package is for
+// another platform (58 MB of it Windows debug symbols).
+export const LINUX_FILE_EXCLUSIONS = [
+  ...MAC_FILE_EXCLUSIONS,
+  "!**/node_modules/node-pty/prebuilds/darwin-*/**/*",
 ] as const;
 
 // node-pty publishes both Darwin prebuilds in one package. Single-architecture
@@ -1013,6 +1024,7 @@ export const WINDOWS_SERVER_ASAR_IGNORE_GLOBS = [
   "**/node_modules/@anthropic-ai/claude-agent-sdk-*/**",
   "**/node_modules/.bin",
   "**/node_modules/.bin/**",
+  "**/*.map",
 ] as const;
 
 export function resolveWindowsServerAsarIgnoreGlobs(arch: typeof BuildArch.Type) {
@@ -1357,7 +1369,10 @@ export function resolveFffNativeDependencies(
   );
 }
 
-export function resolveMacStageDependencies(input: {
+// macOS and Linux run both processes from one app.asar, so the stage installs
+// the union of what each bundle leaves external and nothing else.
+export function resolveMergedStageDependencies(input: {
+  readonly platform: "mac" | "linux";
   readonly serverDependencies: Record<string, string>;
   readonly desktopDependencies: Record<string, string>;
   readonly arch: typeof BuildArch.Type;
@@ -1366,7 +1381,7 @@ export function resolveMacStageDependencies(input: {
   return {
     ...selectCliRuntimeExternalDependencies(input.serverDependencies),
     ...input.desktopDependencies,
-    ...resolveFffNativeDependencies("mac", input.arch, input.fffNodeVersion),
+    ...resolveFffNativeDependencies(input.platform, input.arch, input.fffNodeVersion),
   };
 }
 
@@ -2551,6 +2566,11 @@ function validateBundledClientAssets(clientDir: string) {
   });
 }
 
+// The main-process bundle inlines every JS dependency (see
+// apps/desktop/vite.config.ts), so the packaged app only installs the packages
+// that bundle leaves external: native addons and playwright-core. Everything
+// else already lives inside dist-electron and would only duplicate what the
+// server bundle carries too.
 export function resolveDesktopRuntimeDependencies(
   dependencies: Record<string, string> | undefined,
   catalog: Record<string, string>,
@@ -2559,14 +2579,11 @@ export function resolveDesktopRuntimeDependencies(
     return {};
   }
 
-  const runtimeDependencies = Object.fromEntries(
-    Object.entries(dependencies).filter(
-      ([dependencyName, dependencySpec]) =>
-        dependencyName !== "electron" && !dependencySpec.startsWith("workspace:"),
-    ),
+  return resolveCatalogDependencies(
+    selectDesktopRuntimeExternalDependencies(dependencies),
+    catalog,
+    "apps/desktop",
   );
-
-  return resolveCatalogDependencies(runtimeDependencies, catalog, "apps/desktop");
 }
 
 export const resolveGitHubPublishConfig = Effect.fn("resolveGitHubPublishConfig")(function* (
@@ -2672,7 +2689,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
     electronLanguages: [...DESKTOP_ELECTRON_LANGUAGES],
     files: [
       ...DESKTOP_FILE_EXCLUSIONS,
-      ...(platform === "mac" ? resolveMacFileExclusions(arch) : []),
+      ...(platform === "mac"
+        ? resolveMacFileExclusions(arch)
+        : platform === "linux"
+          ? LINUX_FILE_EXCLUSIONS
+          : []),
     ],
     directories: {
       buildResources: "apps/desktop/resources",
@@ -3735,29 +3756,19 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
   }
 
   // Windows splits dependencies per process: app.asar carries only the
-  // desktop main-process runtime deps, while the server bundle's deps live in
-  // the server.asar sidecar (see stageWindowsServerSidecar). macOS adds only
-  // server packages that remain external to its merged app.asar. Linux retains
-  // its existing full dependency tree.
+  // desktop main-process externals, while the server bundle's externals live
+  // in the server.asar sidecar (see stageWindowsServerSidecar). macOS and
+  // Linux merge both sets into one app.asar.
   const stageDependencies =
     options.platform === "win"
       ? { ...resolvedDesktopRuntimeDependencies }
-      : options.platform === "mac"
-        ? resolveMacStageDependencies({
-            serverDependencies: resolvedServerDependencies,
-            desktopDependencies: resolvedDesktopRuntimeDependencies,
-            arch: options.arch,
-            fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
-          })
-        : {
-            ...resolvedServerDependencies,
-            ...resolvedDesktopRuntimeDependencies,
-            ...resolveFffNativeDependencies(
-              options.platform,
-              options.arch,
-              serverPackageJson.dependencies["@ff-labs/fff-node"],
-            ),
-          };
+      : resolveMergedStageDependencies({
+          platform: options.platform,
+          serverDependencies: resolvedServerDependencies,
+          desktopDependencies: resolvedDesktopRuntimeDependencies,
+          arch: options.arch,
+          fffNodeVersion: serverPackageJson.dependencies["@ff-labs/fff-node"],
+        });
   const stagePatchedDependencies = createStagePatchedDependencies(
     workspacePatchedDependencies,
     stageDependencies,
