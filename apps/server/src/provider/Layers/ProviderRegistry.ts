@@ -422,7 +422,7 @@ export const ProviderRegistryLive = Layer.effect(
         readonly publish?: boolean;
         readonly persist?: boolean;
         readonly replace?: boolean;
-        readonly invalidateWorkspaceSnapshots?: boolean;
+        readonly invalidateWorkspaceCache?: boolean;
       },
     ) {
       const nextProvidersWithUpdateState = yield* Effect.forEach(
@@ -447,7 +447,7 @@ export const ProviderRegistryLive = Layer.effect(
               options?.replace === true
                 ? provider
                 : mergeProviderSnapshot(mergedProviders.get(key), provider);
-            if (options?.invalidateWorkspaceSnapshots) {
+            if (options?.invalidateWorkspaceCache) {
               const { workspaceSnapshots: _workspaceSnapshots, ...machineSnapshot } = merged;
               mergedProviders.set(key, machineSnapshot);
             } else {
@@ -542,7 +542,7 @@ export const ProviderRegistryLive = Layer.effect(
             ),
           ),
       );
-      return yield* upsertProviders([provider], { invalidateWorkspaceSnapshots: true });
+      return yield* upsertProviders([provider], { invalidateWorkspaceCache: true });
     });
 
     const refreshAll = Effect.fn("refreshAll")(function* () {
