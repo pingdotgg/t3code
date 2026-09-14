@@ -23,11 +23,10 @@ describe("cliRelease", () => {
     expect(cliArchivePlatformKey("darwin", "arm64")).toBe("darwin-arm64");
     expect(cliArchivePlatformKey("linux", "x64")).toBe("linux-x64");
     expect(cliArchivePlatformKey("win32", "x64")).toBe("win32-x64");
-    // Built but not published (macOS x64 segfaults under Rosetta when
-    // cross-injected; the arm64 Linux and Windows runners do not exist yet).
+    // Node single-executables are unsupported on x64 macOS.
     expect(cliArchivePlatformKey("darwin", "x64")).toBeUndefined();
-    expect(cliArchivePlatformKey("linux", "arm64")).toBeUndefined();
-    expect(cliArchivePlatformKey("win32", "arm64")).toBeUndefined();
+    expect(cliArchivePlatformKey("linux", "arm64")).toBe("linux-arm64");
+    expect(cliArchivePlatformKey("win32", "arm64")).toBe("win32-arm64");
     expect(cliArchivePlatformKey("freebsd", "x64")).toBeUndefined();
     expect(cliArchivePlatformKey("linux", "ia32")).toBeUndefined();
   });
