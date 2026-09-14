@@ -2017,67 +2017,107 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }
     }
 
-    it.effect("does not spend history limits reading native-owned transcripts", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
-        yield* TestClock.setTime(nowMs);
-        const claudeHomePath = yield* makeTempDir("t3code-native-limit-claude-");
-        const codexHomePath = yield* makeTempDir("t3code-native-limit-codex-");
-        const workspace = yield* makeTempDir("t3code-native-limit-project-");
-        const nativeSessions = new Set(["codex-other\0session-100"]);
-        const opens = new Map<string, number>();
-        for (let index = 0; index <= 100; index += 1) {
-          const sessionId = `session-${index}`;
-          if (index < 100) nativeSessions.add(`codex\0${sessionId}`);
-          yield* writeTranscript({
-            filePath: path.join(
-              codexHomePath,
-              "sessions",
-              "2026",
-              "08",
-              "24",
-              `rollout-${sessionId}.jsonl`,
-            ),
-            contents: [
-              encodeTranscriptRecord({
-                type: "session_meta",
-                payload: { id: sessionId, cwd: workspace, source: "cli" },
+    for (const defaultEnabled of [true, false]) {
+      it.effect(
+        `does not spend history limits reading native-owned transcripts (default enabled: ${defaultEnabled})`,
+        () =>
+          Effect.gen(function* () {
+            const path = yield* Path.Path;
+            const fileSystem = yield* FileSystem.FileSystem;
+            const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+            yield* TestClock.setTime(nowMs);
+            const claudeHomePath = yield* makeTempDir("t3code-native-limit-claude-");
+            const codexHomePath = yield* makeTempDir("t3code-native-limit-codex-");
+            const workspace = yield* makeTempDir("t3code-native-limit-project-");
+            const otherCodexHome = yield* makeTempDir("t3code-native-limit-other-");
+            const nativeSessions = new Set(["codex-other\0session-100"]);
+            const opens = new Map<string, number>();
+            for (let index = 0; index <= 100; index += 1) {
+              const sessionId = `session-${index}`;
+              if (index < 100)
+                nativeSessions.add(
+                  `${["codex", "codex-shared", "codex-disabled"][index % 3]}\0${sessionId}`,
+                );
+              yield* writeTranscript({
+                filePath: path.join(
+                  codexHomePath,
+                  "sessions",
+                  "2026",
+                  "08",
+                  "24",
+                  `rollout-${sessionId}.jsonl`,
+                ),
+                contents: [
+                  encodeTranscriptRecord({
+                    type: "session_meta",
+                    payload: { id: sessionId, cwd: workspace, source: "cli" },
+                  }),
+                  encodeTranscriptRecord({
+                    type: "event_msg",
+                    payload: { type: "user_message", message: "External history" },
+                  }),
+                ].join("\n"),
+                mtimeMs: nowMs - index * 1_000,
+              });
+            }
+            const outcomes = yield* Effect.gen(function* () {
+              const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+              expect((yield* scanner.scan).candidates[0]?.threadCount).toBe(101);
+              opens.clear();
+              return yield* scanner
+                .recentThreads(workspace, [], nativeSessions)
+                .pipe(Stream.runCollect);
+            }).pipe(
+              Effect.provide(
+                makeScannerTestLayer({
+                  claudeHomePath,
+                  codexHomePath,
+                  providerInstances: {
+                    [ProviderInstanceId.make("codex")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: defaultEnabled,
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-shared")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-disabled")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      enabled: false,
+                      config: { homePath: codexHomePath },
+                    },
+                    [ProviderInstanceId.make("codex-other")]: {
+                      driver: ProviderDriverKind.make("codex"),
+                      config: { homePath: otherCodexHome },
+                    },
+                  },
+                }),
+              ),
+              Effect.provideService(FileSystem.FileSystem, {
+                ...fileSystem,
+                open: (filePath, options) => {
+                  opens.set(filePath, (opens.get(filePath) ?? 0) + 1);
+                  return fileSystem.open(filePath, options);
+                },
               }),
-              encodeTranscriptRecord({
-                type: "event_msg",
-                payload: { type: "user_message", message: "External history" },
-              }),
-            ].join("\n"),
-            mtimeMs: nowMs - index * 1_000,
-          });
-        }
-        const outcomes = yield* Effect.gen(function* () {
-          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
-          expect((yield* scanner.scan).candidates[0]?.threadCount).toBe(101);
-          opens.clear();
-          return yield* scanner
-            .recentThreads(workspace, [], nativeSessions)
-            .pipe(Stream.runCollect);
-        }).pipe(
-          Effect.provide(makeScannerTestLayer({ claudeHomePath, codexHomePath })),
-          Effect.provideService(FileSystem.FileSystem, {
-            ...fileSystem,
-            open: (filePath, options) => {
-              opens.set(filePath, (opens.get(filePath) ?? 0) + 1);
-              return fileSystem.open(filePath, options);
-            },
+            );
+            expect(outcomes).toMatchObject([
+              {
+                _tag: "Importable",
+                thread: {
+                  providerSessionId: "session-100",
+                  providerInstanceId: defaultEnabled ? "codex" : "codex-shared",
+                  sharedHomeInstanceIds: ["codex", "codex-shared", "codex-disabled"],
+                },
+              },
+            ]);
+            expect([...opens.keys()]).toEqual([
+              path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-session-100.jsonl"),
+            ]);
           }),
-        );
-        expect(outcomes).toMatchObject([
-          { _tag: "Importable", thread: { providerSessionId: "session-100" } },
-        ]);
-        expect([...opens.keys()]).toEqual([
-          path.join(codexHomePath, "sessions", "2026", "08", "24", "rollout-session-100.jsonl"),
-        ]);
-      }),
-    );
+      );
+    }
 
     it.effect("checks file identity and provider before skipping completed history", () =>
       Effect.gen(function* () {

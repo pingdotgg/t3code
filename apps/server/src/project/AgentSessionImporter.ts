@@ -187,7 +187,12 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         return;
       }
       const thread = outcome.thread;
-      if (nativeSessions.has(`${thread.providerInstanceId}\0${thread.providerSessionId}`)) {
+      const nativeInstanceIds = thread.sharedHomeInstanceIds ?? [thread.providerInstanceId];
+      if (
+        nativeInstanceIds.some((instanceId) =>
+          nativeSessions.has(`${instanceId}\0${thread.providerSessionId}`),
+        )
+      ) {
         return;
       }
       const threadId = ThreadId.make(
@@ -260,7 +265,11 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
                 : { threadId, resume: thread.providerSessionId },
             runtimePayload: { cwd: workspaceRoot },
           },
-          { onConflict: "ignore", unlessNativeSessionId: thread.providerSessionId },
+          {
+            onConflict: "ignore",
+            unlessNativeSessionId: thread.providerSessionId,
+            sharedHomeInstanceIds: nativeInstanceIds,
+          },
         );
         if (!reserved) return "excluded" as const;
 

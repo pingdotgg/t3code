@@ -45,6 +45,7 @@ export interface ProviderSessionDirectoryUpsertOptions {
   readonly onConflict?: "update" | "ignore";
   // For insert-ignore imports, allow insertion or reuse only without a native owner.
   readonly unlessNativeSessionId?: string;
+  readonly sharedHomeInstanceIds?: ReadonlyArray<ProviderInstanceId>;
 }
 
 export interface ProviderSessionDirectoryShape {

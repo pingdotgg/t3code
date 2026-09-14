@@ -165,6 +165,8 @@ export interface AgentSessionThreadMessage {
 }
 
 export interface AgentSessionThread {
+  /** Instances sharing the transcript home, used only to check native ownership. */
+  readonly sharedHomeInstanceIds?: ReadonlyArray<ProviderInstanceId>;
   readonly source: AgentSessionSource;
   readonly providerInstanceId: ProviderInstanceId;
   readonly providerSessionId: string;
@@ -208,6 +210,7 @@ type AgentSessionSource = AgentSessionProjectCandidate["sources"][number];
 
 /** A single directory's worth of evidence from one source. */
 interface RawCandidate {
+  readonly sharedHomeInstanceIds: ReadonlyArray<ProviderInstanceId>;
   readonly cwd: string;
   readonly source: AgentSessionSource;
   readonly providerInstanceId: ProviderInstanceId;
@@ -1112,6 +1115,7 @@ export const make = Effect.gen(function* () {
     source: AgentSessionSource,
     transcripts: ReadonlyArray<TranscriptCandidate>,
     budget: MetadataReadBudget,
+    sharedHomes: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ProviderInstanceId>>,
   ) {
     const byOwnerAndCwd = new Map<
       string,
@@ -1144,6 +1148,9 @@ export const make = Effect.gen(function* () {
     }
 
     return Array.from(byOwnerAndCwd.values(), (group): RawCandidate => ({
+      sharedHomeInstanceIds: sharedHomes.get(group.providerInstanceId) ?? [
+        group.providerInstanceId,
+      ],
       cwd: group.cwd,
       source,
       providerInstanceId: group.providerInstanceId,
@@ -1166,9 +1173,7 @@ export const make = Effect.gen(function* () {
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
       }> = Object.entries(settings.providerInstances)
-        .filter(
-          ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
-        )
+        .filter(([, instance]) => instance.driver === source)
         .map(([instanceId, config]) => ({
           instanceId: ProviderInstanceId.make(instanceId),
           config,
@@ -1181,20 +1186,23 @@ export const make = Effect.gen(function* () {
             config: settings.providers[source],
           },
         };
-        if (resolveProviderInstanceEnabled(legacyInstance.config)) {
-          instances.push(legacyInstance);
-        }
+        instances.push(legacyInstance);
       }
 
-      // A shared home contains one copy of each session. Prefer the built-in
-      // instance as its owner, then keep configured order for custom accounts.
+      // Import through an enabled instance, preferring the built-in. Retain
+      // disabled aliases too: their existing native sessions still own history.
       instances.sort((left, right) => {
         const leftDefault = left.instanceId === source ? 0 : 1;
         const rightDefault = right.instanceId === source ? 0 : 1;
         return leftDefault - rightDefault;
       });
-      const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
-      const seenHomes = new Set<string>();
+      const homes: Array<{
+        homePath: string;
+        providerInstanceId: ProviderInstanceId;
+        sharedHomeInstanceIds: Array<ProviderInstanceId>;
+        enabled: boolean;
+      }> = [];
+      const seenHomes = new Map<string, (typeof homes)[number]>();
       for (const { instanceId, config: instance } of instances) {
         const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
         const environmentHome =
@@ -1222,17 +1230,34 @@ export const make = Effect.gen(function* () {
         }
 
         const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
-        if (seenHomes.has(homeKey)) continue;
-        seenHomes.add(homeKey);
-        homes.push({ homePath, providerInstanceId: instanceId });
+        const enabled = resolveProviderInstanceEnabled(instance);
+        const sharedHome = seenHomes.get(homeKey);
+        if (sharedHome !== undefined) {
+          sharedHome.sharedHomeInstanceIds.push(instanceId);
+          if (enabled && !sharedHome.enabled) {
+            sharedHome.providerInstanceId = instanceId;
+            sharedHome.enabled = true;
+          }
+          continue;
+        }
+        const home = {
+          homePath,
+          providerInstanceId: instanceId,
+          sharedHomeInstanceIds: [instanceId],
+          enabled,
+        };
+        seenHomes.set(homeKey, home);
+        homes.push(home);
       }
 
+      const enabledHomes = homes.filter((home) => home.enabled);
       const transcriptCandidates: Array<TranscriptCandidate> = [];
       const baseOperationBudget = Math.floor(
-        MAX_DISCOVERY_OPERATIONS_PER_SOURCE / Math.max(1, homes.length),
+        MAX_DISCOVERY_OPERATIONS_PER_SOURCE / Math.max(1, enabledHomes.length),
       );
-      const extraOperationBudgets = MAX_DISCOVERY_OPERATIONS_PER_SOURCE % Math.max(1, homes.length);
-      for (const [index, home] of homes.entries()) {
+      const extraOperationBudgets =
+        MAX_DISCOVERY_OPERATIONS_PER_SOURCE % Math.max(1, enabledHomes.length);
+      for (const [index, home] of enabledHomes.entries()) {
         const operationBudget = baseOperationBudget + (index < extraOperationBudgets ? 1 : 0);
         if (operationBudget === 0) {
           truncated = true;
@@ -1260,7 +1285,16 @@ export const make = Effect.gen(function* () {
         recordsRemaining: MAX_METADATA_RECORDS_PER_SOURCE,
         truncated: false,
       };
-      raw.push(...(yield* groupTranscriptsByCwd(source, selectedTranscripts, metadataBudget)));
+      raw.push(
+        ...(yield* groupTranscriptsByCwd(
+          source,
+          selectedTranscripts,
+          metadataBudget,
+          new Map(
+            enabledHomes.map((home) => [home.providerInstanceId, home.sharedHomeInstanceIds]),
+          ),
+        )),
+      );
       truncated ||= metadataBudget.truncated;
     }
 
@@ -1424,7 +1458,9 @@ export const make = Effect.gen(function* () {
       for (const transcript of candidate.transcripts) {
         if (
           transcript.providerSessionId !== null &&
-          nativeSessions.has(`${candidate.providerInstanceId}\0${transcript.providerSessionId}`)
+          candidate.sharedHomeInstanceIds.some((instanceId) =>
+            nativeSessions.has(`${instanceId}\0${transcript.providerSessionId}`),
+          )
         ) {
           continue;
         }
@@ -1556,7 +1592,10 @@ export const make = Effect.gen(function* () {
           importedSessions.add(sessionKey);
           return Option.some<AgentSessionRecentThread>({
             _tag: "Importable",
-            thread: parsedThread,
+            thread:
+              candidate.sharedHomeInstanceIds.length > 1
+                ? { ...parsedThread, sharedHomeInstanceIds: candidate.sharedHomeInstanceIds }
+                : parsedThread,
             source,
           });
         }).pipe(importReadLock.withPermits(1)),

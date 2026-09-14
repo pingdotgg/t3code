@@ -68,6 +68,7 @@ export type RecordImportedTranscriptInput = typeof RecordImportedTranscriptInput
 export interface ProviderSessionRuntimeUpsertOptions {
   readonly onConflict?: "update" | "ignore";
   readonly unlessNativeSessionId?: string;
+  readonly sharedHomeInstanceIds?: ReadonlyArray<ProviderInstanceId>;
 }
 
 /**
@@ -238,7 +239,10 @@ export const make = Effect.gen(function* () {
   // A no-op conflict update lets RETURNING report allowed reuse without changing the binding.
   const insertRuntimeRow = SqlSchema.findOneOption({
     Request: ProviderSessionRuntimeDbRowSchema.mapFields(
-      Struct.assign({ unlessNativeSessionId: Schema.NullOr(Schema.String) }),
+      Struct.assign({
+        unlessNativeSessionId: Schema.NullOr(Schema.String),
+        sharedHomeInstanceIds: Schema.Array(Schema.String),
+      }),
     ),
     Result: Schema.Struct({ threadId: ThreadId }),
     execute: (runtime) =>
@@ -272,7 +276,7 @@ export const make = Effect.gen(function* () {
           SELECT 1 FROM provider_session_runtime
           WHERE thread_id NOT LIKE 'import:%'
             AND provider_name = ${runtime.providerName}
-            AND COALESCE(provider_instance_id, provider_name) = ${runtime.providerInstanceId}
+            AND COALESCE(provider_instance_id, provider_name) IN ${sql.in(runtime.sharedHomeInstanceIds)}
             AND CASE WHEN json_valid(resume_cursor_json) THEN
               CASE provider_name
                 WHEN 'claudeAgent' THEN CASE
@@ -390,6 +394,10 @@ export const make = Effect.gen(function* () {
       ? insertRuntimeRow({
           ...runtime,
           unlessNativeSessionId: options.unlessNativeSessionId ?? null,
+          sharedHomeInstanceIds: [
+            runtime.providerInstanceId ?? runtime.providerName,
+            ...(options.sharedHomeInstanceIds ?? []),
+          ],
         }).pipe(Effect.map(Option.isSome))
       : upsertRuntimeRow(runtime).pipe(Effect.as(true))
     ).pipe(
