@@ -164,25 +164,6 @@ const serviceUpdateCommand = Command.make("update", serviceReconcileFlags).pipe(
   ),
 );
 
-// Run by `t3 update` through the newly installed executable, so the version
-// written into the unit is one that has proven it runs. `--no-start` writes
-// the files and leaves the current service running for a later restart.
-const serviceReconcileCommand = Command.make("__reconcile", {
-  ...serviceReconcileFlags,
-  noStart: Flag.boolean("no-start").pipe(Flag.withDefault(false)),
-}).pipe(
-  Command.withDescription("Point the service unit at this t3, optionally without restarting."),
-  Command.unlisted,
-  Command.withHandler((flags) =>
-    runServiceCommand(
-      flags,
-      reconcileService({ allowDowngrade: flags.allowDowngrade, start: !flags.noStart }).pipe(
-        Effect.asVoid,
-      ),
-    ),
-  ),
-);
-
 const serviceRestartCommand = Command.make("restart", projectLocationFlags).pipe(
   Command.withDescription(
     "Restart the background service. Picks up a version installed by `t3 update` that was not restarted at the time.",
@@ -314,6 +295,5 @@ export const serviceCommand = Command.make("service").pipe(
     serviceUninstallCommand,
     serviceStatusCommand,
     serviceUpdateCommand,
-    serviceReconcileCommand,
   ]),
 );

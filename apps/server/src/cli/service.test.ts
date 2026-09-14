@@ -145,34 +145,6 @@ it.layer(Layer.mergeAll(NodeServices.layer, NetService.layer))("service commands
     }),
   );
 
-  it.effect("__reconcile --no-start writes the unit without starting the service", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-service-cli-test-" });
-      const { service, installOptions, restarts } = makeTestService({
-        ...status,
-        current: false,
-        installedVersion: "0.0.0",
-      });
-      vi.spyOn(BootService, "layer").mockReturnValue(
-        Layer.succeed(BootService.BootService, service),
-      );
-
-      yield* Command.runWith(serviceCommand, { version: packageJson.version })([
-        "__reconcile",
-        "--no-start",
-        "--base-dir",
-        baseDir,
-      ]).pipe(
-        Effect.provideService(HostProcessEnvironment, {}),
-        Effect.provide(ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
-      );
-
-      expect(installOptions).toEqual([{ allowDowngrade: false, start: false }]);
-      expect(restarts).toEqual([]);
-    }),
-  );
-
   it.effect.each(["install", "update"] as const)(
     "%s refuses a downgrade before changing the service",
     (command) =>

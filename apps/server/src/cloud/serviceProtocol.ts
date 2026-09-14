@@ -8,6 +8,10 @@ export const SERVICE_STATE_FILE = "service-state.json";
     the child can tell "the service is going away" from "the launcher is about
     to start my replacement" while a pending update is recorded. */
 export const SERVICE_STOP_MARKER_FILE = ".service-stopping";
+/** Written by `t3 update` when the unit was repointed at a new version but the
+    running service was deliberately left on the old one, and removed by the
+    next restart. Its presence keeps the service from reporting as current. */
+export const SERVICE_RESTART_PENDING_FILE = ".restart-pending";
 
 export interface PendingServiceUpdate {
   readonly id: string;
