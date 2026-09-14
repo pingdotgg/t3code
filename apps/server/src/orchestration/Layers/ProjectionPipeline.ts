@@ -636,6 +636,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             titleRegenerationRequestId: null,
             titleRegenerationStartedAt: null,
             latestUserMessageAt: null,
+            usageLimitResumeAt: null,
             pendingApprovalCount: 0,
             pendingUserInputCount: 0,
             hasActionableProposedPlan: 0,
@@ -1106,6 +1107,36 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.usage-resume-armed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            usageLimitResumeAt: event.payload.resumeAt,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
+        case "thread.usage-resume-disarmed": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isNone(existingRow)) {
+            return;
+          }
+          yield* projectionThreadRepository.upsert({
+            ...existingRow.value,
+            usageLimitResumeAt: null,
+            updatedAt: event.occurredAt,
+          });
+          return;
+        }
+
         default:
           return;
       }
@@ -1352,6 +1383,12 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         runtimeMode: event.payload.session.runtimeMode,
         activeTurnId: event.payload.session.activeTurnId,
         lastError: event.payload.session.lastError,
+        ...(event.payload.session.lastErrorKind !== undefined
+          ? { lastErrorKind: event.payload.session.lastErrorKind }
+          : {}),
+        ...(event.payload.session.lastErrorResetsAt !== undefined
+          ? { lastErrorResetsAt: event.payload.session.lastErrorResetsAt }
+          : {}),
         updatedAt: event.payload.session.updatedAt,
       });
     });

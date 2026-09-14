@@ -794,6 +794,7 @@ export type SidebarThreadStatus =
   | "working"
   | "monitoring"
   | "failed"
+  | "limit"
   | "ready";
 
 export function shouldRecedeSidebarThread(input: {
@@ -827,9 +828,11 @@ export function resolveSidebarThreadStatus(thread: SidebarThreadStatusInput): Si
     return "working";
   }
   // A failed session outranks lingering background liveness: the user must
-  // see the failure, not a stale Working (review finding).
+  // see the failure, not a stale Working (review finding). A usage-limit
+  // failure is parked, not broken — it reads as "Limit" with the window
+  // countdown rather than the red Failed state.
   if (thread.session?.status === "error") {
-    return "failed";
+    return thread.session.lastErrorKind === "usage_limit" ? "limit" : "failed";
   }
   // Background work outlives the turn: fleets read as working; monitoring
   // only when watch loops are the sole live work.
