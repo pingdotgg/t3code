@@ -28,6 +28,10 @@ const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) 
     const config = get(serverEnvironment.configValueAtom(environmentId));
     if (config?.environment.capabilities.projectCloneTracking !== true) return EMPTY_CLONES;
     const result = get(sourceControlEnvironment.projectClones({ environmentId, input: {} }));
+    // A failed subscription must not hold Start forever. Treating it as
+    // "no clone tracked" lets the server's own dispatch guard decide; the
+    // registry re-establishes the stream on reconnect.
+    if (result._tag === "Failure") return EMPTY_CLONES;
     return Option.getOrElse(AsyncResult.value(result), () => "pending" as const);
   }).pipe(Atom.withLabel(`mobile-project-clones:${environmentId}`)),
 );
