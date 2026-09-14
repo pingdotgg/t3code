@@ -1347,6 +1347,48 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("keeps the working header below the initiating prompt across repeated steers", () => {
+    const runId = RunId.make("steered-run");
+    const startedAt = "2026-01-01T00:00:00Z";
+    const prompt = (id: string, inputIntent: "steer" | "send") => ({
+      id,
+      kind: "message" as const,
+      createdAt: startedAt,
+      message: {
+        id: MessageId.make(id),
+        role: "user" as const,
+        text: id,
+        runId,
+        ...(inputIntent === "steer" ? { inputIntent } : {}),
+        createdAt: startedAt,
+        updatedAt: startedAt,
+        streaming: false,
+      },
+    });
+    const timelineEntries = [prompt("initial-prompt", "send")];
+    for (let index = 0; index < 3; index += 1) {
+      const rows = deriveMessagesTimelineRows({
+        timelineEntries,
+        latestRun: { runId, status: "running", startedAt, completedAt: null },
+        isWorking: true,
+        activeTurnStartedAt: startedAt,
+        turnDiffSummaries: [],
+        supportsConversationRollback: false,
+      });
+      expect(rows.slice(0, 2).map((row) => row.id)).toEqual([
+        "initial-prompt",
+        "working-indicator-row",
+      ]);
+      expect(rows.filter((row) => row.kind === "working")).toEqual([
+        expect.objectContaining({ createdAt: startedAt }),
+      ]);
+      expect(rows.filter((row) => row.kind === "message").map((row) => row.id)).toEqual(
+        timelineEntries.map((entry) => entry.id),
+      );
+      timelineEntries.push(prompt(`steer-${index}`, "steer"));
+    }
+  });
+
   it("keeps the previous turn folded while a newly sent message awaits its turn", () => {
     // Right after send, isWorking is true but latestRun still points at the
     // previous, settled turn — it must stay folded through that window.

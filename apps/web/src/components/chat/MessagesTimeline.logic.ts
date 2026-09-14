@@ -1000,13 +1000,18 @@ export function deriveMessagesTimelineRows(input: {
     entry.toolLifecycleStatus === "inProgress" &&
     entry.runId === unsettledRunId;
 
-  // The active run's header row ("Working for ...") anchors right after the
-  // latest user message or notification, or at the run's first owned work entry when one
-  // already rendered above it.
+  // A steer continues the current turn. Keep its elapsed-time header below
+  // the initiating prompt (or automatic wake), rather than moving it down.
   let activeTurnHeaderIndex = input.timelineEntries.length;
   if (input.isWorking) {
-    const latestResponseBoundaryIndex = lastResponseBoundaryIndex(input.timelineEntries);
-    activeTurnHeaderIndex = latestResponseBoundaryIndex + 1;
+    activeTurnHeaderIndex =
+      input.timelineEntries.findLastIndex(
+        (entry) =>
+          (entry.kind === "message" &&
+            entry.message.role === "user" &&
+            entry.message.inputIntent !== "steer") ||
+          (entry.kind === "work" && entry.entry.itemType === "notification"),
+      ) + 1;
   }
 
   // Contiguous trailing work entries of the active run collapse into one live
