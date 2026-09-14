@@ -1,23 +1,22 @@
+import type { CuaDriverMcpConfiguration } from "@t3tools/contracts";
 import { tokenizeCliArgs } from "@t3tools/shared/cliArgs";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 
 import { expandHomePath } from "../pathExpansion.ts";
-import * as CuaDriver from "./CuaDriver.ts";
 import { buildCuaDriverAppServerArgs, hasConfiguredCuaDriver } from "./codexCuaConfiguration.ts";
 
-/** Only interactive sessions acquire managed Cua; existing host/project configuration wins. */
+/** Existing host/project Codex configuration wins over the session's managed driver. */
 export const resolveCodexCua = Effect.fn("cua.resolveCodexCua")(function* (input: {
+  readonly descriptor: CuaDriverMcpConfiguration | undefined;
   readonly cwd: string;
   readonly homePath: string;
   readonly launchArgs: string;
   readonly environment?: NodeJS.ProcessEnv;
 }) {
-  const driver = yield* CuaDriver.CuaDriver;
-  if (!(yield* driver.enabled)) return [];
+  if (!input.descriptor) return [];
   const argv = tokenizeCliArgs(input.launchArgs);
   if (hasConfiguredCuaDriver(argv, undefined)) return [];
 
@@ -47,6 +46,5 @@ export const resolveCodexCua = Effect.fn("cua.resolveCodexCua")(function* (input
     }
     if (hasConfiguredCuaDriver([], config.success)) return [];
   }
-  const descriptor = yield* driver.acquire;
-  return Option.isSome(descriptor) ? buildCuaDriverAppServerArgs(descriptor.value) : [];
+  return buildCuaDriverAppServerArgs(input.descriptor);
 });

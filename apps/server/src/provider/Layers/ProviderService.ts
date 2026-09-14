@@ -10,6 +10,7 @@
  * @module ProviderServiceLive
  */
 import {
+  type CuaDriverMcpConfiguration,
   EventId,
   MessageId,
   ModelSelection,
@@ -82,6 +83,7 @@ import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.
 import { type EventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
+import * as CuaDriver from "../../cua/CuaDriver.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../../mcp/McpSessionRegistry.ts";
 import * as ServerSettings from "../../serverSettings.ts";
@@ -940,6 +942,16 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     } satisfies Record<string, string>;
   });
 
+  /**
+   * Managed computer use is an environment-wide opt-in with no project
+   * override. The driver service already returns none while the setting is
+   * off, so acquiring it here costs nothing for sessions that cannot use it.
+   */
+  const cuaDriver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
+  const managedCuaDriver = Option.isSome(cuaDriver)
+    ? cuaDriver.value.acquire
+    : Effect.succeed(Option.none<CuaDriverMcpConfiguration>());
+
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
       const capabilities = yield* agentAccessCapabilities(threadId);
@@ -948,10 +960,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment
           : undefined;
+        const cua = yield* managedCuaDriver;
         yield* Effect.sync(() =>
           McpProviderSession.setMcpProviderSession({
             ...credential.config,
             ...(deviceEnvironment ? { agentDeviceEnvironment: deviceEnvironment } : {}),
+            ...(Option.isSome(cua) ? { cuaDriver: cua.value } : {}),
           }),
         );
       }

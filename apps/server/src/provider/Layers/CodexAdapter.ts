@@ -38,7 +38,6 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
-import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
@@ -50,7 +49,6 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
-import * as CuaDriver from "../../cua/CuaDriver.ts";
 import { resolveCodexCua } from "../../cua/resolveCodexCua.ts";
 
 import {
@@ -2224,7 +2222,6 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const cuaDriver = yield* Effect.serviceOption(CuaDriver.CuaDriver);
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
   const serverConfig = yield* Effect.service(ServerConfig);
@@ -2262,18 +2259,16 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             : undefined;
         const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
         const launchArgs = resolveCodexLaunchArgs(codexConfig.launchArgs, options?.environment);
-        const cuaArgs = Option.isSome(cuaDriver)
-          ? yield* resolveCodexCua({
-              cwd: input.cwd ?? process.cwd(),
-              homePath: codexConfig.homePath,
-              launchArgs,
-              ...(options?.environment ? { environment: options.environment } : {}),
-            }).pipe(
-              Effect.provideService(CuaDriver.CuaDriver, cuaDriver.value),
-              Effect.provideService(FileSystem.FileSystem, fileSystem),
-              Effect.provideService(Path.Path, path),
-            )
-          : [];
+        const cuaArgs = yield* resolveCodexCua({
+          descriptor: mcpSession?.cuaDriver,
+          cwd: input.cwd ?? process.cwd(),
+          homePath: codexConfig.homePath,
+          launchArgs,
+          ...(options?.environment ? { environment: options.environment } : {}),
+        }).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(Path.Path, path),
+        );
         const runtimeInput: CodexSessionRuntimeOptions = {
           threadId: input.threadId,
           providerInstanceId: boundInstanceId,

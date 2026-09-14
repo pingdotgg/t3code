@@ -37,6 +37,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { cuaAcpMcpServer } from "../../cua/cuaMcpServer.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { AntigravityAuth } from "../AntigravityAuth.ts";
 import {
@@ -806,6 +807,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                         url: mcp.endpoint,
                         headers: [{ name: "Authorization", value: mcp.authorizationHeader }],
                       },
+                      ...(mcp.cuaDriver ? [cuaAcpMcpServer(mcp.cuaDriver)] : []),
                     ]
                   : [],
                 ...makeNativeLoggers({

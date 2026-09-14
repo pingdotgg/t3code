@@ -43,6 +43,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { cuaAcpMcpServer } from "../../cua/cuaMcpServer.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -570,6 +571,7 @@ export function makeCursorAdapter(
                         },
                       ],
                     },
+                    ...(mcpSession.cuaDriver ? [cuaAcpMcpServer(mcpSession.cuaDriver)] : []),
                   ],
                 }
               : {}),

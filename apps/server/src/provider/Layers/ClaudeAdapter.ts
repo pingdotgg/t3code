@@ -87,6 +87,7 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { CUA_MCP_SERVER_NAME, cuaClaudeMcpServer } from "../../cua/cuaMcpServer.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -4759,6 +4760,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                     Authorization: mcpSession.authorizationHeader,
                   },
                 },
+                ...(mcpSession.cuaDriver
+                  ? { [CUA_MCP_SERVER_NAME]: cuaClaudeMcpServer(mcpSession.cuaDriver) }
+                  : {}),
               },
             }
           : {}),

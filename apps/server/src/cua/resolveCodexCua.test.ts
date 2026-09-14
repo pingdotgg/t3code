@@ -4,40 +4,33 @@ import * as NodePath from "node:path";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
-import * as Option from "effect/Option";
 import * as NodePathLayer from "@effect/platform-node/NodePath";
 import { parse } from "smol-toml";
 
-import * as CuaDriver from "./CuaDriver.ts";
 import { resolveCodexCua } from "./resolveCodexCua.ts";
-
-const resolveWithDriver = (
-  driver: CuaDriver.CuaDriver["Service"],
-  input: Parameters<typeof resolveCodexCua>[0],
-) => resolveCodexCua(input).pipe(Effect.provideService(CuaDriver.CuaDriver, driver));
 
 const descriptor = { command: "cua-driver", args: ["mcp", "--proxy"], environment: [] };
 
-it.effect("does no config I/O or host startup while disabled", () =>
-  resolveWithDriver(
-    { enabled: Effect.succeed(false), acquire: Effect.die("unexpected host startup") },
-    { cwd: "/project", homePath: "/codex-home", launchArgs: "" },
-  ).pipe(
+it.effect("does no config I/O without a managed descriptor", () =>
+  resolveCodexCua({
+    descriptor: undefined,
+    cwd: "/project",
+    homePath: "/codex-home",
+    launchArgs: "",
+  }).pipe(
     Effect.provide(NodePathLayer.layer),
     Effect.map((args) => NodeAssert.deepEqual(args, [])),
     Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.die("unexpected I/O") })),
   ),
 );
 
-it.effect("explicit user launch configuration avoids reading files or starting a host", () =>
-  resolveWithDriver(
-    { enabled: Effect.succeed(true), acquire: Effect.die("unexpected host startup") },
-    {
-      cwd: "/project",
-      homePath: "/codex-home",
-      launchArgs: "-c 'mcp_servers.cua-driver.command=\"custom\"'",
-    },
-  ).pipe(
+it.effect("explicit user launch configuration avoids reading files", () =>
+  resolveCodexCua({
+    descriptor,
+    cwd: "/project",
+    homePath: "/codex-home",
+    launchArgs: "-c 'mcp_servers.cua-driver.command=\"custom\"'",
+  }).pipe(
     Effect.provide(NodePathLayer.layer),
     Effect.map((args) => NodeAssert.deepEqual(args, [])),
     Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.die("unexpected I/O") })),
@@ -45,7 +38,7 @@ it.effect("explicit user launch configuration avoids reading files or starting a
 );
 
 for (const location of ["home", "project", "parent", "malformed"] as const) {
-  it.effect(`preserves ${location} Codex configuration without acquiring managed Cua`, () => {
+  it.effect(`preserves ${location} Codex configuration over the managed driver`, () => {
     const home = NodePath.resolve("/custom-codex-home");
     const project = NodePath.resolve("/workspace/project");
     const selectedPath =
@@ -56,10 +49,13 @@ for (const location of ["home", "project", "parent", "malformed"] as const) {
             ".codex",
             "config.toml",
           );
-    return resolveWithDriver(
-      { enabled: Effect.succeed(true), acquire: Effect.die("unexpected host startup") },
-      { cwd: project, homePath: home, launchArgs: "", environment: { CODEX_HOME: "/wrong-home" } },
-    ).pipe(
+    return resolveCodexCua({
+      descriptor,
+      cwd: project,
+      homePath: home,
+      launchArgs: "",
+      environment: { CODEX_HOME: "/wrong-home" },
+    }).pipe(
       Effect.provide(NodePathLayer.layer),
       Effect.map((args) => NodeAssert.deepEqual(args, [])),
       Effect.provide(
@@ -78,27 +74,17 @@ for (const location of ["home", "project", "parent", "malformed"] as const) {
   });
 }
 
-it.effect("acquires once after reading the instance home and emits structured argv", () => {
+it.effect("reads the instance home and emits structured argv", () => {
   const paths: string[] = [];
-  let acquired = 0;
-  return resolveWithDriver(
-    {
-      enabled: Effect.succeed(true),
-      acquire: Effect.sync(() => {
-        acquired++;
-        return Option.some(descriptor);
-      }),
-    },
-    {
-      cwd: "/workspace/project",
-      homePath: "",
-      environment: { CODEX_HOME: "/instance-home" },
-      launchArgs: "",
-    },
-  ).pipe(
+  return resolveCodexCua({
+    descriptor,
+    cwd: "/workspace/project",
+    homePath: "",
+    environment: { CODEX_HOME: "/instance-home" },
+    launchArgs: "",
+  }).pipe(
     Effect.provide(NodePathLayer.layer),
     Effect.map((args) => {
-      NodeAssert.equal(acquired, 1);
       NodeAssert.equal(paths[0], NodePath.join("/instance-home", "config.toml"));
       NodeAssert.equal(args[0], "-c");
       NodeAssert.deepEqual(parse(args[1]!), {

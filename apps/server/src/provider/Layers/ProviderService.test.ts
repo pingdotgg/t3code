@@ -14,6 +14,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   ASSISTANT_CITATION_MAX_TEXT_LENGTH,
+  type CuaDriverMcpConfiguration,
   AssistantCitation,
   ApprovalRequestId,
   EnvironmentId,
@@ -75,6 +76,8 @@ import {
 } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerConfig from "../../config.ts";
 import * as ServerSettings from "../../serverSettings.ts";
+import * as CuaDriver from "../../cua/CuaDriver.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
@@ -4945,7 +4948,15 @@ describe("agent browser access", () => {
     access: boolean | { readonly browser: boolean; readonly device: boolean },
     threadId: ThreadId,
     projectOverride?: boolean | { readonly browser?: boolean; readonly device?: boolean },
-    options?: { readonly withoutOrchestration?: boolean },
+    options?: {
+      readonly withoutOrchestration?: boolean;
+      /** Provides a Cua driver service and a real credential so the session record is written. */
+      readonly cuaDriver?: Option.Option<CuaDriverMcpConfiguration>;
+      /** Reads the session record before the service scope closes and clears it. */
+      readonly onSession?: (
+        session: McpProviderSession.McpProviderSessionConfig | undefined,
+      ) => void;
+    },
   ) =>
     Effect.gen(function* () {
       const enableAgentBrowserAccess = typeof access === "boolean" ? access : access.browser;
@@ -5007,6 +5018,7 @@ describe("agent browser access", () => {
         getThreadDetailSnapshot: () => Effect.die("unused"),
         searchThreads: () => Effect.die("unused"),
       });
+      const cuaDriver = options?.cuaDriver;
       const providerLayer = makeProviderServiceLive({
         issueMcpCredential: (request) =>
           Effect.sync(() => {
@@ -5014,9 +5026,28 @@ describe("agent browser access", () => {
               threadId: request.threadId,
               capabilities: [...request.capabilities].toSorted(),
             });
-            return undefined;
+            if (!cuaDriver) return undefined;
+            return {
+              config: {
+                environmentId: EnvironmentId.make("cua-test-environment"),
+                threadId: request.threadId,
+                providerSessionId: "cua-test-session",
+                providerInstanceId: request.providerInstanceId,
+                endpoint: "http://127.0.0.1:1234/mcp",
+                authorizationHeader: "Bearer synthetic-test-token",
+                capabilities: request.capabilities,
+              },
+            };
           }),
       }).pipe(
+        Layer.provide(
+          cuaDriver
+            ? Layer.succeed(CuaDriver.CuaDriver, {
+                enabled: Effect.succeed(Option.isSome(cuaDriver)),
+                acquire: Effect.succeed(cuaDriver),
+              })
+            : Layer.empty,
+        ),
         Layer.provide(providerAdapterLayer),
         Layer.provide(directoryLayer),
         Layer.provide(options?.withoutOrchestration ? Layer.empty : projectionLayer),
@@ -5053,16 +5084,53 @@ describe("agent browser access", () => {
 
       yield* Effect.gen(function* () {
         const provider = yield* ProviderService.ProviderService;
-        return yield* provider.startSession(threadId, {
+        const session = yield* provider.startSession(threadId, {
           provider: CODEX_DRIVER,
           providerInstanceId: codexInstanceId,
           threadId,
           runtimeMode: "full-access",
         });
+        options?.onSession?.(McpProviderSession.readMcpProviderSession(threadId));
+        return session;
       }).pipe(Effect.provide(providerLayer));
 
       return issued;
     });
+
+  const cuaDescriptor = {
+    command: "/opt/cua/cua-driver",
+    args: ["mcp"],
+    environment: [{ name: "CUA_SOCKET_PATH", value: "/tmp/cua.sock" }],
+  };
+
+  it.effect("records the managed Cua driver on the session for every adapter to attach", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-cua-on");
+      let session: McpProviderSession.McpProviderSessionConfig | undefined;
+      yield* startSessionWith(true, threadId, undefined, {
+        cuaDriver: Option.some(cuaDescriptor),
+        onSession: (current) => {
+          session = current;
+        },
+      });
+      assert.deepEqual(session?.cuaDriver, cuaDescriptor);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("leaves the session without Cua when the driver declines", () =>
+    Effect.gen(function* () {
+      const threadId = asThreadId("thread-cua-off");
+      let session: McpProviderSession.McpProviderSessionConfig | undefined;
+      yield* startSessionWith(true, threadId, undefined, {
+        cuaDriver: Option.none(),
+        onSession: (current) => {
+          session = current;
+        },
+      });
+      assert.ok(session);
+      assert.equal(session.cuaDriver, undefined);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
 
   // The capability on the credential is the observable that matters: a session
   // always gets a credential (the pull request toolkit is never withheld), and

@@ -38,7 +38,6 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
-import { CuaDriver } from "../../cua/CuaDriver.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { EnvironmentId } from "@t3tools/contracts";
 import { parse as parseToml } from "smol-toml";
@@ -516,80 +515,65 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }).pipe(Effect.provide(layer));
   });
 
-  for (const browserEnabled of [false, true]) {
-    it.effect(`attaches managed Cua without changing browser access (${browserEnabled})`, () => {
-      const runtimeFactory = makeRuntimeFactory();
-      const threadId = asThreadId(`cua-session-${browserEnabled}`);
-      const descriptor = {
-        command: "managed-cua-driver",
-        args: ["mcp", "--proxy"],
-        environment: [{ name: "CUA_SOCKET_PATH", value: "/synthetic/socket" }],
-      };
-      const layer = Layer.effect(
-        CodexAdapter,
-        makeCodexAdapter(decodeCodexSettings({ homePath: "/synthetic/codex-home" }), {
-          environment: {},
-          makeRuntime: runtimeFactory.factory,
-        }).pipe(Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed("") }))),
-      ).pipe(
-        Layer.provideMerge(
-          Layer.succeed(CuaDriver, {
-            enabled: Effect.succeed(true),
-            acquire: Effect.succeed(Option.some(descriptor)),
-          }),
-        ),
-        Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
-        Layer.provideMerge(ServerSettingsService.layerTest()),
-        Layer.provideMerge(providerSessionDirectoryTestLayer),
-        Layer.provideMerge(NodeServices.layer),
-      );
-      return Effect.scoped(
-        Effect.gen(function* () {
-          yield* Effect.addFinalizer(() =>
-            Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
-          );
-          if (browserEnabled) {
-            McpProviderSession.setMcpProviderSession({
-              environmentId: EnvironmentId.make("cua-test-environment"),
-              threadId,
-              providerInstanceId: ProviderInstanceId.make("codex"),
-              providerSessionId: "cua-test-provider-session",
-              endpoint: "http://127.0.0.1:1234/mcp",
-              authorizationHeader: "Bearer synthetic-test-token",
-              capabilities: new Set(["preview"]),
-            });
-          }
-          const adapter = yield* CodexAdapter;
-          yield* adapter.startSession({
-            provider: ProviderDriverKind.make("codex"),
-            threadId,
-            runtimeMode: "full-access",
-          });
-          const runtime = runtimeFactory.lastRuntime;
-          NodeAssert.ok(runtime);
-          const args = runtime.options.appServerArgs ?? [];
-          NodeAssert.deepEqual(parseToml(args[1]!), {
-            mcp_servers: {
-              "cua-driver": {
-                command: descriptor.command,
-                args: descriptor.args,
-                env: { CUA_SOCKET_PATH: "/synthetic/socket" },
-              },
+  it.effect("attaches the session's managed Cua driver beside the T3 MCP server", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("cua-session");
+    const descriptor = {
+      command: "managed-cua-driver",
+      args: ["mcp", "--proxy"],
+      environment: [{ name: "CUA_SOCKET_PATH", value: "/synthetic/socket" }],
+    };
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({ homePath: "/synthetic/codex-home" }), {
+        environment: {},
+        makeRuntime: runtimeFactory.factory,
+      }).pipe(Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed("") }))),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("cua-test-environment"),
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "cua-test-provider-session",
+          endpoint: "http://127.0.0.1:1234/mcp",
+          authorizationHeader: "Bearer synthetic-test-token",
+          capabilities: new Set(["preview"]),
+          cuaDriver: descriptor,
+        });
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const runtime = runtimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        const args = runtime.options.appServerArgs ?? [];
+        NodeAssert.deepEqual(parseToml(args[1]!), {
+          mcp_servers: {
+            "cua-driver": {
+              command: descriptor.command,
+              args: descriptor.args,
+              env: { CUA_SOCKET_PATH: "/synthetic/socket" },
             },
-          });
-          NodeAssert.equal(
-            args.some((arg) => arg.startsWith("mcp_servers.t3-code.")),
-            browserEnabled,
-          );
-          NodeAssert.equal(runtime.options.launchArgs, "");
-          NodeAssert.equal(
-            runtime.options.environment?.T3_MCP_BEARER_TOKEN,
-            browserEnabled ? "synthetic-test-token" : undefined,
-          );
-        }),
-      ).pipe(Effect.provide(layer));
-    });
-  }
+          },
+        });
+        NodeAssert.ok(args.some((arg) => arg.startsWith("mcp_servers.t3-code.")));
+        NodeAssert.equal(runtime.options.launchArgs, "");
+        NodeAssert.equal(runtime.options.environment?.T3_MCP_BEARER_TOKEN, "synthetic-test-token");
+      }),
+    ).pipe(Effect.provide(layer));
+  });
 
   it.effect("maps codex model options for the adapter's bound custom instance id", () => {
     const customInstanceId = ProviderInstanceId.make("codex_personal");

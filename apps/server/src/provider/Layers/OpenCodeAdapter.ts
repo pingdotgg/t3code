@@ -34,6 +34,7 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { CUA_MCP_SERVER_NAME, cuaOpenCodeMcpConfig } from "../../cua/cuaMcpServer.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -2857,6 +2858,15 @@ export function makeOpenCodeAdapter(
                     },
                   }),
                 );
+                if (mcpSession.cuaDriver) {
+                  const cuaDriver = mcpSession.cuaDriver;
+                  yield* runOpenCodeSdk("mcp.add", () =>
+                    client.mcp.add({
+                      name: CUA_MCP_SERVER_NAME,
+                      config: cuaOpenCodeMcpConfig(cuaDriver),
+                    }),
+                  );
+                }
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only
