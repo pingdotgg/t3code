@@ -222,11 +222,6 @@ function CustomSnoozeDialog() {
                     </Label>
                   </div>
                 )}
-                <p className="text-pretty text-muted-foreground">
-                  {mode === "date"
-                    ? `Your time zone: ${new Intl.DateTimeFormat().resolvedOptions().timeZone}.`
-                    : "Starts when you press Snooze. One day is 24 hours."}
-                </p>
               </Tabs.Panel>
             </Tabs.Root>
             {error && (

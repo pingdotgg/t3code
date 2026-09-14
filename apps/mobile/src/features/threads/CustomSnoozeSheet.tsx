@@ -111,9 +111,6 @@ export function CustomSnoozeSheet(props: {
                   }}
                 />
               )}
-              <AppText className="text-base text-foreground-secondary">
-                Your time zone: {new Intl.DateTimeFormat().resolvedOptions().timeZone}.
-              </AppText>
             </View>
           ) : (
             <View className="gap-3">
@@ -150,9 +147,6 @@ export function CustomSnoozeSheet(props: {
                   </Pressable>
                 ))}
               </View>
-              <AppText className="text-base text-foreground-secondary">
-                Starts when you press Snooze. One day is 24 hours.
-              </AppText>
             </View>
           )}
           {error && (
