@@ -56,7 +56,7 @@ import {
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2Shape,
 } from "./ProviderAdapter.ts";
-import { makeSingleLayer as makeProviderAdapterRegistryLayer } from "./ProviderAdapterRegistry.ts";
+import { makeLayer as makeProviderAdapterRegistryLayerFor } from "./ProviderAdapterRegistry.ts";
 import { layer as providerEventIngestorLayer } from "./ProviderEventIngestor.ts";
 import {
   ProviderSessionManagerV2,
@@ -390,12 +390,13 @@ function makeTestLayer(input: {
   ) => ReturnType<ProviderAdapterV2SessionRuntime["resumeThread"]>;
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
+  readonly extraAdapters?: ReadonlyArray<ProviderAdapterV2Shape>;
 }) {
   const mcpRegistryLayer = input.mcpRegistryLayer ?? TestMcpRegistryLayer;
   const configuredEventSinkLayer =
     input.eventSinkLayer ??
     (input.failReleaseEventWrites ? FailingReleaseEventSinkLayer : TestEventSinkLayer);
-  const registryLayer = makeProviderAdapterRegistryLayer(
+  const adapters = [
     makeProviderAdapter(input.state, {
       failEventStream: input.failEventStream ?? false,
       ...(input.capabilities === undefined ? {} : { capabilities: input.capabilities }),
@@ -413,7 +414,9 @@ function makeTestLayer(input: {
       ...(input.startTurn === undefined ? {} : { startTurn: input.startTurn }),
       ...(input.resumeThread === undefined ? {} : { resumeThread: input.resumeThread }),
     }),
-  );
+    ...(input.extraAdapters ?? []),
+  ];
+  const registryLayer = makeProviderAdapterRegistryLayerFor(adapters);
   const providerEventIngestorTestLayer = providerEventIngestorLayer.pipe(
     Layer.provide(Layer.mergeAll(configuredEventSinkLayer, idAllocatorLayer, TestStoresLayer)),
   );
@@ -7867,6 +7870,281 @@ it.effect(
             mcpRegistryLayer,
             beforeClose: Deferred.succeed(closing, undefined).pipe(
               Effect.andThen(Deferred.await(closeGate)),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 closeInstance does not close another instance's same-id replacement",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const openEntered = yield* Deferred.make<void>();
+      const openGate = yield* Deferred.make<void>();
+      const closing = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      const closeCalls = yield* Ref.make(0);
+      const openCalls = yield* Ref.make(0);
+      const startupThreadId = ThreadId.make("thread-closeinstance-sameid-startup");
+      const liveThreadId = ThreadId.make("thread-closeinstance-sameid-live");
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const live = yield* makeThreadSessionFixture(liveThreadId);
+        const liveId = yield* live.allocate;
+        yield* live.open(liveId);
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: startupThreadId,
+        });
+        // The startup parks inside openSession with its record tracked.
+        const startupOpening = yield* manager
+          .open({ threadId: startupThreadId, providerSessionId, modelSelection, runtimePolicy })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(openEntered);
+
+        const closingInstance = yield* manager
+          .closeInstance(modelSelection.instanceId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(closing);
+
+        // The fenced startup unwinds and drops its opening record while the
+        // instance close stays parked on the live session's scope.
+        yield* Deferred.succeed(openGate, undefined);
+        assert.equal((yield* Fiber.join(startupOpening))._tag, "Failure");
+        // A different instance may reuse the same session id — the captured
+        // record is gone by now, so only the settled deferred still refers to
+        // the startup's own cleanup.
+        yield* manager.open({
+          threadId: startupThreadId,
+          providerSessionId,
+          modelSelection: {
+            ...modelSelection,
+            instanceId: ProviderInstanceId.make("codex_other"),
+          },
+          runtimePolicy,
+        });
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+
+        yield* Deferred.succeed(closeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingInstance)));
+        // Joining the captured record's settled deferred must not claim the
+        // replacement that registered after the record was removed.
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(openGate, undefined).pipe(
+            Effect.andThen(Deferred.succeed(closeGate, undefined)),
+          ),
+        ),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            // The live session opens first; the second open is the startup
+            // that must park while closeInstance captures its record.
+            beforeOpen: () =>
+              Ref.modify(openCalls, (n) => [n === 1, n + 1] as const).pipe(
+                Effect.andThen((startup) =>
+                  startup
+                    ? Deferred.succeed(openEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(openGate)),
+                      )
+                    : Effect.void,
+                ),
+              ),
+            // Only the live session's close parks: the startup's scope had no
+            // finalizers yet and the replacement's scope closes after the
+            // gate is already open.
+            beforeClose: Ref.modify(closeCalls, (n) => [n === 0, n + 1] as const).pipe(
+              Effect.andThen((first) =>
+                first
+                  ? Deferred.succeed(closing, undefined).pipe(
+                      Effect.andThen(Deferred.await(closeGate)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+            extraAdapters: [
+              {
+                ...makeProviderAdapter(state, {}),
+                instanceId: ProviderInstanceId.make("codex_other"),
+              },
+            ],
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a mid-flight terminal-detach retry waiting on the pending revocation",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const revoking = yield* Deferred.make<void>();
+      const revokeGate = yield* Deferred.make<void>();
+      const pauseRevoke = yield* Ref.make(false);
+      const interruptEntered = yield* Deferred.make<void>();
+      const interruptGate = yield* Deferred.make<void>();
+      const interruptCalls = yield* Ref.make(0);
+      const closing = yield* Deferred.make<void>();
+      const closeGate = yield* Deferred.make<void>();
+      const closeCalls = yield* Ref.make(0);
+      const mcpRegistryLayer = Layer.effect(
+        McpSessionRegistry.McpSessionRegistry,
+        Effect.gen(function* () {
+          const delegate = yield* McpSessionRegistry.McpSessionRegistry;
+          return McpSessionRegistry.McpSessionRegistry.of({
+            ...delegate,
+            revokeProviderSession: (providerSessionId) =>
+              Ref.getAndSet(pauseRevoke, false).pipe(
+                Effect.flatMap((pause) =>
+                  pause
+                    ? Deferred.succeed(revoking, undefined).pipe(
+                        Effect.andThen(Deferred.await(revokeGate)),
+                      )
+                    : Effect.void,
+                ),
+                Effect.andThen(delegate.revokeProviderSession(providerSessionId)),
+              ),
+          });
+        }),
+      ).pipe(Layer.provide(TestMcpRegistryLayer));
+
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const eventSink = yield* EventSinkV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-detach-revoke-midflight");
+        const peerThreadId = ThreadId.make("thread-detach-revoke-midflight-peer");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const peer = yield* makeThreadSessionFixture(peerThreadId);
+        const providerSessionId = yield* first.allocate;
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        yield* eventSink.write({
+          events: [
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-thread.updated",
+              threadId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: providerThread,
+            },
+            {
+              id: yield* idAllocator.allocate.event({ threadId }),
+              type: "provider-turn.updated",
+              threadId,
+              runId,
+              driver: CODEX_DRIVER,
+              occurredAt: now,
+              payload: {
+                id: idAllocator.derive.providerTurn({
+                  driver: CODEX_DRIVER,
+                  nativeTurnId: "native-turn-detach-revoke-midflight",
+                }),
+                providerThreadId: providerThread.id,
+                nodeId: idAllocator.derive.rootNode({ runId }),
+                runAttemptId: null,
+                nativeTurnRef: null,
+                ordinal: 1,
+                status: "running",
+                startedAt: now,
+                completedAt: null,
+              },
+            },
+          ],
+        });
+        yield* first.open(providerSessionId);
+        yield* peer.open(providerSessionId, peerThreadId);
+        const issued = (yield* Ref.get(mcpConfigs)).find((config) => config?.threadId === threadId);
+        const token = issued?.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.isDefined(token);
+
+        // The first terminal detach prunes the credential and parks inside
+        // the tracked revocation sweep.
+        yield* Ref.set(pauseRevoke, true);
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(revoking);
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(detaching))._tag, "Failure");
+
+        // The retry reads the live entry, then parks inside interruptTurn —
+        // a close claims the session while it is suspended, and the release
+        // record it joins never contained the pruned credential.
+        const retry = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(interruptEntered);
+        const closingSession = yield* manager
+          .close(providerSessionId)
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(closing);
+
+        // The release finishes while the revocation is still parked; the
+        // retry must not report success over cleanup it does not own.
+        yield* Deferred.succeed(interruptGate, undefined);
+        yield* Deferred.succeed(closeGate, undefined);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.join(closingSession)));
+        yield* TestClock.adjust("30 seconds");
+        assert.equal((yield* Fiber.join(retry))._tag, "Failure");
+
+        // Once the revocation actually drains, a later retry completes and
+        // the binding is gone.
+        yield* Deferred.succeed(revokeGate, undefined);
+        yield* manager.detach({ providerSessionId, threadId, revokeMcpCredential: true });
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+        assert.isUndefined(yield* registry.resolve(token!));
+      }).pipe(
+        Effect.ensuring(
+          Deferred.succeed(interruptGate, undefined).pipe(
+            Effect.andThen(Deferred.succeed(closeGate, undefined)),
+            Effect.andThen(Deferred.succeed(revokeGate, undefined)),
+          ),
+        ),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            mcpConfigs,
+            mcpRegistryLayer,
+            // The first detach interrupts the seeded running turn unpaused;
+            // the retry parks inside its own interrupt.
+            beforeInterrupt: Ref.modify(interruptCalls, (n) => [n > 0, n + 1] as const).pipe(
+              Effect.andThen((seen) =>
+                seen
+                  ? Deferred.succeed(interruptEntered, undefined).pipe(
+                      Effect.andThen(Deferred.await(interruptGate)),
+                    )
+                  : Effect.void,
+              ),
+            ),
+            beforeClose: Ref.modify(closeCalls, (n) => [n === 0, n + 1] as const).pipe(
+              Effect.andThen((firstCall) =>
+                firstCall
+                  ? Deferred.succeed(closing, undefined).pipe(
+                      Effect.andThen(Deferred.await(closeGate)),
+                    )
+                  : Effect.void,
+              ),
             ),
           }),
         ),

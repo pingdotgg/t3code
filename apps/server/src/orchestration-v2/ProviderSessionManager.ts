@@ -2983,15 +2983,30 @@ export const layerWithOptions = (
             );
             // In-flight startups for this instance own provider resources
             // without a live entry; they were marked above — join their
-            // bounded unwind as part of closing the instance.
+            // bounded unwind as part of closing the instance. Join the
+            // captured record's settled deferred directly: re-resolving by
+            // session id could claim a different instance's same-id
+            // replacement that registered after this record was removed.
             const startupOutcomes = yield* Effect.forEach(
               starting,
               (record) =>
-                releaseEntry({
-                  providerSessionId: record.providerSessionId,
-                  reason: "manual_shutdown",
-                  detail: `Provider instance ${instanceId} logged out.`,
-                }).pipe(Effect.exit),
+                Deferred.await(record.settled).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.flatMap((settled) =>
+                    Option.isNone(settled)
+                      ? Effect.fail(
+                          new ProviderSessionReleaseError({
+                            providerSessionId: record.providerSessionId,
+                            reason: "manual_shutdown",
+                            cause:
+                              "Provider session startup cleanup did not finish within 30 seconds. " +
+                              "Replacement sessions are blocked until cleanup completes.",
+                          }),
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.exit,
+                ),
               { concurrency: "unbounded" },
             );
             const failure = [...outcomes, ...startupOutcomes].find(Exit.isFailure);
@@ -3317,7 +3332,7 @@ export const layerWithOptions = (
               // the top already passed, so anything releasing now belongs to
               // another instance.
               if (currentEntry !== undefined && releasing.has(key)) {
-                return yield* releaseEntry({
+                yield* releaseEntry({
                   providerSessionId: input.providerSessionId,
                   reason: "manual_shutdown",
                   joinOnly: true,
@@ -3329,6 +3344,9 @@ export const layerWithOptions = (
               // forked it may already have timed out or been interrupted.
               // Join the tracked sweep (bounded like any cleanup wait) so a
               // retry only reports success once revocation actually finished.
+              // The release record above does not cover a credential pruned
+              // before it was captured, so this join runs whether or not a
+              // release was pending.
               if (revokeDone !== undefined) {
                 const settled = yield* Deferred.await(revokeDone).pipe(
                   Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
