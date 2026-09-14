@@ -45,13 +45,25 @@ export function createSourceControlEnvironmentAtoms<R, E>(
         key: ({ environmentId }) => environmentId,
       },
     }),
+    // Cancel and retry share the start queue so a double click cannot race
+    // two actions against the same clone.
     cancelProjectClone: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:project-clone-cancel",
       tag: WS_METHODS.projectCloneCancel,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
     }),
     retryProjectClone: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:source-control:project-clone-retry",
       tag: WS_METHODS.projectCloneRetry,
+      scheduler: commandScheduler,
+      concurrency: {
+        mode: "serial",
+        key: ({ environmentId }) => environmentId,
+      },
     }),
     // Every clone the environment tracks. Empty until a clone starts; a
     // finished clone drops out after a grace period, a failed one stays.

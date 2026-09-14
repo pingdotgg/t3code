@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { parseScopedProjectKey, scopedProjectKey } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ProjectCloneSnapshot, ScopedProjectRef } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -27,12 +28,11 @@ const environmentProjectClonesAtom = Atom.family((environmentId: EnvironmentId) 
 );
 
 const projectCloneAtom = Atom.family((key: string) => {
-  const separator = key.indexOf(":");
-  const environmentId = key.slice(0, separator) as EnvironmentId;
-  const projectId = key.slice(separator + 1);
+  const ref = parseScopedProjectKey(key);
   return Atom.make((get): ProjectCloneSnapshot | null => {
-    const clones = get(environmentProjectClonesAtom(environmentId));
-    return clones.find((clone) => clone.projectId === projectId) ?? null;
+    if (ref === null) return null;
+    const clones = get(environmentProjectClonesAtom(ref.environmentId));
+    return clones.find((clone) => clone.projectId === ref.projectId) ?? null;
   }).pipe(Atom.withLabel(`web-project-clone:${key}`));
 });
 
@@ -42,9 +42,7 @@ const projectCloneAtom = Atom.family((key: string) => {
  * cheap: the server sends an empty list and stays quiet until a clone starts.
  */
 export function useProjectClone(ref: ScopedProjectRef | null): ProjectCloneSnapshot | null {
-  return useAtomValue(
-    ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(`${ref.environmentId}:${ref.projectId}`),
-  );
+  return useAtomValue(ref === null ? EMPTY_CLONE_ATOM : projectCloneAtom(scopedProjectKey(ref)));
 }
 
 export function useEnvironmentProjectClones(

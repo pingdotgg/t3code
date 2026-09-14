@@ -40,6 +40,7 @@ function makeHarness(options?: {
           Effect.succeed({
             destinationPath: input.destinationPath,
             remoteUrl: input.remoteUrl ?? "",
+            cloneUrl: input.remoteUrl ?? "",
             repository: null,
           }),
         cloneRepository:

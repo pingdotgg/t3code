@@ -166,7 +166,8 @@ function EnvironmentCloneToasts({ environmentId }: { environmentId: EnvironmentI
           secondaryActionProps: {
             children: "Remove project",
             onClick: () => {
-              closeToast();
+              // The server drops the clone with the project, which closes
+              // this toast; a failed removal leaves it (and Retry) in place.
               void removeClonedProject({ environmentId, projectId: clone.projectId });
             },
           },

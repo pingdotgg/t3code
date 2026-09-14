@@ -7255,6 +7255,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       const projectId = ProjectId.make("project-clone-1");
       const dispatched: Array<string> = [];
       const cloneGate = yield* Deferred.make<void>();
+      const metaUpdateDispatched = yield* Deferred.make<void>();
 
       yield* buildAppUnderTest({
         layers: {
@@ -7263,13 +7264,20 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               Effect.sync(() => {
                 dispatched.push(command.type);
                 return { sequence: dispatched.length };
-              }),
+              }).pipe(
+                Effect.tap(() =>
+                  command.type === "project.meta.update"
+                    ? Deferred.succeed(metaUpdateDispatched, undefined)
+                    : Effect.void,
+                ),
+              ),
           },
           sourceControlRepositoryService: {
             prepareClone: (input) =>
               Effect.succeed({
                 destinationPath: input.destinationPath,
                 remoteUrl: input.remoteUrl ?? "",
+                cloneUrl: input.remoteUrl ?? "",
                 repository: null,
               }),
             cloneRepository: (input) =>
@@ -7328,7 +7336,9 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             yield* Deferred.succeed(cloneGate, undefined);
             const lists = yield* Fiber.join(snapshots);
             assert.equal(lists.at(-1)?.[0]?.phase, "done");
-            // The finished clone refreshes the project so its repository identity updates.
+            // The finished clone refreshes the project so its repository
+            // identity updates. That hook runs after the done snapshot.
+            yield* Deferred.await(metaUpdateDispatched);
             assert.deepEqual(dispatched, ["project.create", "project.meta.update"]);
           }),
         ),

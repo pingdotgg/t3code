@@ -59,17 +59,23 @@ export class SourceControlRepositoryService extends Context.Service<
 
 export interface SourceControlPreparedClone {
   readonly destinationPath: string;
+  /** Credential-free; safe to show and to store in snapshots. */
   readonly remoteUrl: string;
+  /** What git is given; may carry embedded credentials. */
+  readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
 }
 
 export interface SourceControlCloneOptions {
   readonly onProgress?: (line: GitCloneProgressLine) => Effect.Effect<void>;
+  /** Overrides the default clone budget; `null` disables the deadline. */
+  readonly timeoutMs?: number | null;
 }
 
-// Clones can outlast any fixed budget on large repositories; progress
-// reporting is what keeps the user informed instead.
-const CLONE_TIMEOUT_MS = null;
+// The synchronous RPC (older clients, mobile) keeps a deadline: nothing else
+// tells the user a clone stalled. The tracked path passes null and relies on
+// progress and Cancel instead.
+const CLONE_TIMEOUT_MS = 120_000;
 const CLONE_ENV = {
   // `--progress` forces the transfer counters through the pipe; the delay env
   // makes the checkout counter start immediately. No tty means a credential
@@ -102,6 +108,23 @@ function toRepositoryInfo(
     url: urls.url,
     sshUrl: urls.sshUrl,
   };
+}
+
+/**
+ * The URL clients see. A pasted `https://user:token@host/…` must not travel
+ * back over `subscribeProjectClones` to every reader; git still gets the
+ * original.
+ */
+function redactRemoteUrl(remoteUrl: string): string {
+  try {
+    const url = new URL(remoteUrl);
+    if (url.username.length === 0 && url.password.length === 0) return remoteUrl;
+    url.username = "";
+    url.password = "";
+    return url.toString();
+  } catch {
+    return remoteUrl;
+  }
 }
 
 function selectRemoteUrl(
@@ -236,7 +259,8 @@ export const make = Effect.gen(function* () {
 
     return {
       destinationPath: preparedDestination.destinationPath,
-      remoteUrl,
+      remoteUrl: redactRemoteUrl(remoteUrl),
+      cloneUrl: remoteUrl,
       repository,
     } satisfies SourceControlPreparedClone;
   });
@@ -265,12 +289,14 @@ export const make = Effect.gen(function* () {
       .execute({
         operation: "SourceControlRepositoryService.cloneRepository",
         cwd: path.dirname(prepared.destinationPath),
-        args: ["clone", "--progress", prepared.remoteUrl, path.basename(prepared.destinationPath)],
-        timeoutMs: CLONE_TIMEOUT_MS,
-        // Progress redraws add up on a slow multi-GB clone; the cap only
-        // bounds the buffered copy, and once hit it stops line callbacks too.
-        maxOutputBytes: 64 * 1024 * 1024,
+        args: ["clone", "--progress", prepared.cloneUrl, path.basename(prepared.destinationPath)],
+        timeoutMs: options?.timeoutMs === undefined ? CLONE_TIMEOUT_MS : options.timeoutMs,
+        // Progress redraws add up on a slow multi-GB clone. The buffered copy
+        // is never read (the tail is kept by hand above), so keep it small
+        // and let the line callbacks keep flowing past the cap.
+        maxOutputBytes: 256 * 1024,
         appendTruncationMarker: true,
+        keepLineCallbacksAfterTruncation: true,
         env: CLONE_ENV,
         progress: { onStderrLine },
       })

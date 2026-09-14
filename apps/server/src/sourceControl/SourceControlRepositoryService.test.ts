@@ -257,6 +257,38 @@ it.effect("reports clone progress from git's stderr and keeps its error text on 
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect("strips embedded credentials from the remote URL it reports", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "t3-source-control-redact-" });
+    const destinationPath = path.join(parent, "t3code");
+    const cloneArgs: Array<ReadonlyArray<string>> = [];
+    const result = yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      return yield* service.prepareClone({
+        remoteUrl: "https://user:s3cret@github.com/octocat/t3code.git",
+        destinationPath,
+      });
+    }).pipe(
+      Effect.provide(
+        makeLayer({
+          git: {
+            execute: (input) =>
+              Effect.sync(() => {
+                cloneArgs.push(input.args);
+                return processOutput();
+              }),
+          },
+        }),
+      ),
+    );
+    assert.equal(result.remoteUrl, "https://github.com/octocat/t3code.git");
+    // Git itself still receives the credentials.
+    assert.equal(result.cloneUrl, "https://user:s3cret@github.com/octocat/t3code.git");
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 it.effect("preserves destination probe failures instead of treating them as missing paths", () => {
   const fileSystemCause = PlatformError.systemError({
     _tag: "PermissionDenied",

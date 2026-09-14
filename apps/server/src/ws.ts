@@ -1629,28 +1629,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
-              // A project whose clone has not finished has no files to work
-              // in. Web gates the composer on the clone stream; this keeps
-              // older and other clients from starting a turn on an empty tree.
-              // Checked before normalization so no attachment copies are made
-              // for a command that is about to be refused.
-              const cloningProjectId =
-                command.type === "thread.create"
-                  ? command.projectId
-                  : command.type === "thread.turn.start"
-                    ? (command.bootstrap?.createThread?.projectId ?? null)
-                    : null;
-              if (cloningProjectId !== null) {
-                const clone = yield* projectCloneTracker.get(cloningProjectId);
-                if (clone !== null && clone.phase !== "done") {
-                  return yield* new OrchestrationDispatchCommandError({
-                    message:
-                      clone.phase === "running"
-                        ? "The repository is still being cloned."
-                        : "The repository was not cloned. Retry the clone first.",
-                  });
-                }
-              }
+              yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -1682,11 +1661,10 @@ const makeWsRpcLayer = (
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
-              if (normalizedCommand.type === "project.delete") {
-                // Removing a project mid-clone stops the clone and drops its
-                // partial checkout; nothing else references the directory.
-                yield* projectCloneTracker.discard(normalizedCommand.projectId);
-              }
+              yield* ProjectCloneTracker.discardCloneForDeletedProject(
+                projectCloneTracker,
+                normalizedCommand,
+              );
               if (archiveCommand) {
                 if (shouldStopSessionAfterCommand) {
                   yield* Effect.gen(function* () {

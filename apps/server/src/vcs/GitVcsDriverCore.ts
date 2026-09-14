@@ -666,8 +666,11 @@ const collectOutput = Effect.fnUntraced(function* (
   maxOutputBytes: number,
   appendTruncationMarker: boolean,
   onLine: ((line: string) => Effect.Effect<void, never>) | undefined,
+  keepLineCallbacksAfterTruncation = false,
 ): Effect.fn.Return<{ readonly text: string; readonly truncated: boolean }, GitCommandError> {
   const decoder = new TextDecoder();
+  // Decodes past the cap so lines keep reaching `onLine` without being kept.
+  const lineDecoder = new TextDecoder();
   let bytes = 0;
   let text = "";
   let lineBuffer = "";
@@ -697,6 +700,10 @@ const collectOutput = Effect.fnUntraced(function* (
 
   const processChunk = Effect.fnUntraced(function* (chunk: Uint8Array) {
     if (appendTruncationMarker && truncated) {
+      if (keepLineCallbacksAfterTruncation && onLine) {
+        lineBuffer += lineDecoder.decode(chunk, { stream: true });
+        yield* emitCompleteLines(false);
+      }
       return;
     }
     const nextBytes = bytes + chunk.byteLength;
@@ -718,6 +725,10 @@ const collectOutput = Effect.fnUntraced(function* (
     const decoded = decoder.decode(chunkToDecode, { stream: !truncated });
     text += decoded;
     lineBuffer += decoded;
+    if (truncated && keepLineCallbacksAfterTruncation && onLine) {
+      // The rest of this chunk still carries lines for the callbacks.
+      lineBuffer += lineDecoder.decode(chunk.subarray(chunkToDecode.byteLength), { stream: true });
+    }
     yield* emitCompleteLines(false);
   });
 
@@ -735,6 +746,7 @@ const collectOutput = Effect.fnUntraced(function* (
   const remainder = truncated ? "" : decoder.decode();
   text += remainder;
   lineBuffer += remainder;
+  if (truncated && keepLineCallbacksAfterTruncation && onLine) lineBuffer += lineDecoder.decode();
   yield* emitCompleteLines(true);
   return {
     text,
@@ -802,6 +814,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               maxOutputBytes,
               appendTruncationMarker,
               input.progress?.onStdoutLine,
+              input.keepLineCallbacksAfterTruncation,
             ),
             collectOutput(
               commandInput,
@@ -809,6 +822,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
               maxOutputBytes,
               appendTruncationMarker,
               input.progress?.onStderrLine,
+              input.keepLineCallbacksAfterTruncation,
             ),
             child.exitCode.pipe(
               Effect.mapError(

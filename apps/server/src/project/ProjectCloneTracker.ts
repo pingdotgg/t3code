@@ -1,4 +1,5 @@
 import type {
+  OrchestrationCommand,
   ProjectCloneSnapshot,
   ProjectCloneStage,
   ProjectCloneStartInput,
@@ -23,6 +24,7 @@ import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
@@ -119,6 +121,10 @@ export const make = Effect.gen(function* () {
   // Clone fibers outlive the RPC that started them but not the server.
   const cloneScope = yield* Scope.make("parallel");
   yield* Effect.addFinalizer(() => Scope.close(cloneScope, Exit.void));
+  // start/cancel/retry/discard mutate the same entry and the same directory;
+  // one at a time keeps a double-clicked Retry from racing two clones into it.
+  const actionLock = yield* Semaphore.make(1);
+  const locked = <A, E, R>(effect: Effect.Effect<A, E, R>) => actionLock.withPermits(1)(effect);
 
   const list = Ref.get(clones).pipe(
     Effect.map((current) => Array.from(current.values(), (tracked) => tracked.snapshot)),
@@ -219,7 +225,7 @@ export const make = Effect.gen(function* () {
     repositories
       .cloneRepository(
         { remoteUrl: tracked.input.remoteUrl, destinationPath: tracked.input.destinationPath },
-        { onProgress: (update) => progress(projectId, update) },
+        { onProgress: (update) => progress(projectId, update), timeoutMs: null },
       )
       .pipe(
         Effect.onExit((exit) =>
@@ -255,13 +261,6 @@ export const make = Effect.gen(function* () {
   const start: ProjectCloneTracker["Service"]["start"] = Effect.fn("ProjectCloneTracker.start")(
     function* (input, hooks) {
       const prepared = yield* repositories.prepareClone(input);
-      yield* hooks.createProject({
-        projectId: input.projectId,
-        title: input.title,
-        workspaceRoot: prepared.destinationPath,
-        createdAt: input.createdAt,
-      });
-      yield* clearRetention(input.projectId);
       const startedAt = yield* nowIso;
       const snapshot: ProjectCloneSnapshot = {
         projectId: input.projectId,
@@ -277,7 +276,15 @@ export const make = Effect.gen(function* () {
         endedAt: null,
         sequence: ++sequence,
       };
-      yield* Ref.update(clones, (current) => {
+      const claimed = yield* Ref.modify(clones, (current) => {
+        // A second start for the same project, or for a destination another
+        // clone already owns, must not race two gits into one directory.
+        const conflict = Array.from(current.values()).some(
+          (tracked) =>
+            tracked.snapshot.projectId === input.projectId ||
+            tracked.input.destinationPath === prepared.destinationPath,
+        );
+        if (conflict) return [false, current] as const;
         const next = new Map(current);
         next.set(input.projectId, {
           snapshot,
@@ -289,8 +296,27 @@ export const make = Effect.gen(function* () {
             repository: prepared.repository,
           },
         });
-        return next;
+        return [true, next] as const;
       });
+      if (!claimed) {
+        return yield* new SourceControlRepositoryError({
+          operation: "cloneRepository",
+          provider: input.provider ?? "unknown",
+          detail: "A clone into this destination is already in progress.",
+        });
+      }
+      yield* clearRetention(input.projectId);
+      // The entry is registered before the project exists so a thread.create
+      // or project.delete racing this call already sees the clone. If the
+      // project cannot be created the entry goes away again.
+      yield* hooks
+        .createProject({
+          projectId: input.projectId,
+          title: input.title,
+          workspaceRoot: prepared.destinationPath,
+          createdAt: input.createdAt,
+        })
+        .pipe(Effect.tapError(() => remove(input.projectId)));
       yield* publish;
       yield* launch(input.projectId);
       return {
@@ -336,7 +362,9 @@ export const make = Effect.gen(function* () {
       ) {
         return false;
       }
-      yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
+      // A retry into leftover files would fail on the non-empty destination
+      // with a less useful message, so a cleanup failure is the error here.
+      yield* repositories.discardClone(tracked.input.destinationPath);
       const startedAt = yield* nowIso;
       yield* modify(projectId, (entry) => ({
         ...entry,
@@ -361,7 +389,10 @@ export const make = Effect.gen(function* () {
       const tracked = current.get(projectId);
       if (!tracked) return;
       if (tracked.fiber) yield* Fiber.interrupt(tracked.fiber);
-      if (tracked.snapshot.phase !== "done") {
+      // Git may have finished while the interrupt was landing; the project
+      // is going away either way, but a complete checkout is the user's.
+      const after = yield* get(projectId);
+      if (after?.phase !== "done") {
         yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
       }
       yield* clearRetention(projectId);
@@ -387,10 +418,58 @@ export const make = Effect.gen(function* () {
     { bufferSize: 1, strategy: "sliding" },
   );
 
-  return ProjectCloneTracker.of({ start, cancel, retry, discard, get, stream });
+  return ProjectCloneTracker.of({
+    start: (input, hooks) => locked(start(input, hooks)),
+    cancel: (projectId) => locked(cancel(projectId)),
+    retry: (projectId) => locked(retry(projectId)),
+    discard: (projectId) => locked(discard(projectId)),
+    get,
+    stream,
+  });
 });
 
 const isSourceControlRepositoryError = Schema.is(SourceControlRepositoryError);
+
+/**
+ * A project whose clone has not landed has no files to work in. Every
+ * dispatch transport (WebSocket, HTTP) runs this before normalizing so no
+ * client can start a thread on an empty tree, and no attachment copies are
+ * made for a command that is about to be refused.
+ */
+export const rejectCommandsDuringClone = (
+  tracker: ProjectCloneTracker["Service"],
+  command: { readonly type: string; readonly projectId?: ProjectId; readonly bootstrap?: unknown },
+): Effect.Effect<void, OrchestrationDispatchCommandError> =>
+  Effect.gen(function* () {
+    const projectId =
+      command.type === "thread.create"
+        ? (command.projectId ?? null)
+        : command.type === "thread.turn.start"
+          ? bootstrapProjectId(command.bootstrap)
+          : null;
+    if (projectId === null) return;
+    const clone = yield* tracker.get(projectId);
+    if (clone === null || clone.phase === "done") return;
+    return yield* new OrchestrationDispatchCommandError({
+      message:
+        clone.phase === "running"
+          ? "The repository is still being cloned."
+          : "The repository was not cloned. Retry the clone first.",
+    });
+  });
+
+function bootstrapProjectId(bootstrap: unknown): ProjectId | null {
+  if (typeof bootstrap !== "object" || bootstrap === null) return null;
+  const createThread = (bootstrap as { createThread?: { projectId?: ProjectId } }).createThread;
+  return createThread?.projectId ?? null;
+}
+
+/** Removing a project mid-clone stops the clone and drops its partial checkout. */
+export const discardCloneForDeletedProject = (
+  tracker: ProjectCloneTracker["Service"],
+  command: OrchestrationCommand,
+): Effect.Effect<void> =>
+  command.type === "project.delete" ? tracker.discard(command.projectId) : Effect.void;
 
 function describeCloneFailure(cause: Cause.Cause<unknown>): string {
   const error = Cause.squash(cause);

@@ -223,7 +223,7 @@ function RootRouteView() {
           <ThreadNotificationCoordinator />
           <ConfirmDialogHost />
           <SlowRpcRequestToastCoordinator />
-          {primaryEnvironmentAuthenticated ? <ProjectCloneToastCoordinator /> : null}
+          <ProjectCloneToastCoordinator />
           <HostedStaticEnvironmentBootstrap />
           {primaryEnvironmentAuthenticated ? (
             <EventRouter skipInitialBootstrapNavigation={returningFromWelcomeRef.current} />
