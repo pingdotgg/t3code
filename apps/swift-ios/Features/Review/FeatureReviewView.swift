@@ -422,12 +422,22 @@ private struct FeatureDiffView: View {
 
     private func sendComment() {
         guard !trimmedComment.isEmpty, !isSending else { return }
-        let prompt = reviewDraft.prompt
+        let diff = renderedLines.map { line in
+            let prefix = switch line.kind {
+            case .addition: "+"
+            case .deletion: "-"
+            case .context: " "
+            case .hunk: ""
+            }
+            return prefix + line.text
+        }.joined(separator: "\n")
+        let record = reviewDraft.contextRecord(diff: diff)
+        let prompt = "Address this review comment: " + ComposerContextReferences.format(record)
         isSending = true
         commentError = nil
         Task {
             let sent = await sendMessage(
-                FeatureMessageSubmission(threadID: threadID, text: prompt, selection: nil)
+                FeatureMessageSubmission(threadID: threadID, text: prompt, selection: nil, context: .init(records: [record]))
             )
             if sent {
                 comment = ""

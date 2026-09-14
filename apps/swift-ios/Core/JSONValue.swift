@@ -2,7 +2,7 @@ import Foundation
 
 /// A lossless, Sendable JSON representation used at protocol boundaries that
 /// intentionally carry provider-defined payloads.
-public enum JSONValue: Codable, Equatable, Sendable {
+public enum JSONValue: Codable, Equatable, Hashable, Sendable {
     case null
     case bool(Bool)
     case integer(Int64)

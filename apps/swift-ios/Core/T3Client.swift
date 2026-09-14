@@ -678,20 +678,26 @@ public actor T3Client {
         interactionMode: InteractionMode = .default,
         model: ModelSelection? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        context: OrchestrationMessageContext? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
         let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        let preparedMessage = Self.prepareMessageContext(
+            text: text, context: context, attachments: attachments, uploadedAttachments: uploadedAttachments,
+            supportsContext: (latestServerEnvironment ?? environment.descriptor)?.capabilities.inlineMessageContext == true
+        )
         return try await dispatch(
             try OrchestrationCommands.sendTurn(
                 threadID: threadID,
-                text: text,
+                text: preparedMessage.text,
                 runtimeMode: runtimeMode,
                 interactionMode: interactionMode,
                 model: model,
                 attachments: attachments,
                 uploadedAttachments: uploadedAttachments,
+                context: preparedMessage.context,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -739,17 +745,22 @@ public actor T3Client {
         worktreePath: String? = nil,
         worktreePreparation: ThreadWorktreePreparation? = nil,
         attachments: [UploadChatImageAttachment] = [],
+        context: OrchestrationMessageContext? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = OrchestrationCommands.now()
     ) async throws -> DispatchResult {
         let uploadedAttachments = try await prepareTurnAttachments(attachments)
+        let preparedMessage = Self.prepareMessageContext(
+            text: text, context: context, attachments: attachments, uploadedAttachments: uploadedAttachments,
+            supportsContext: (latestServerEnvironment ?? environment.descriptor)?.capabilities.inlineMessageContext == true
+        )
         return try await dispatchOverWebSocket(
             try OrchestrationCommands.createThreadAndSend(
                 threadID: threadID,
                 projectID: projectID,
                 title: title,
-                text: text,
+                text: preparedMessage.text,
                 model: model,
                 runtimeMode: runtimeMode,
                 interactionMode: interactionMode,
@@ -758,6 +769,7 @@ public actor T3Client {
                 worktreePreparation: worktreePreparation,
                 attachments: attachments,
                 uploadedAttachments: uploadedAttachments,
+                context: preparedMessage.context,
                 commandID: commandID,
                 messageID: messageID,
                 createdAt: createdAt
@@ -1063,6 +1075,39 @@ public actor T3Client {
         )
     }
 
+    static func prepareMessageContext(
+        text: String,
+        context: OrchestrationMessageContext?,
+        attachments: [UploadChatAttachment],
+        uploadedAttachments: [JSONValue]?,
+        supportsContext: Bool
+    ) -> (text: String, context: OrchestrationMessageContext?) {
+        var records = context?.records ?? []
+        var prompt = text
+        if supportsContext {
+            for attachment in attachments where records.count < 200 {
+                guard !records.contains(where: { $0.attachment?.attachmentId == attachment.id.uuidString }) else { continue }
+                let binding = ComposerContextRecord.Attachment(
+                    attachmentId: attachment.id.uuidString, name: attachment.name,
+                    mimeType: attachment.mimeType, sizeBytes: attachment.sizeBytes
+                )
+                let record = ComposerContextRecord(
+                    contextId: "\(attachment.type)_\(attachment.id.uuidString)", label: attachment.name,
+                    payload: attachment.type == "image" ? .image(binding) : .file(binding)
+                )
+                records.append(record)
+                prompt = ComposerContextReferences.ensureReferences(prompt, records: [record])
+            }
+        }
+        let ids = Dictionary(zip(attachments, uploadedAttachments ?? []).compactMap { attachment, uploaded in
+            uploaded["id"]?.stringValue.map { (attachment.id.uuidString, $0) }
+        }, uniquingKeysWith: { first, _ in first })
+        let rebound = ComposerContextReferences.rebind(records.isEmpty ? nil : OrchestrationMessageContext(records: records), attachmentIDs: ids)
+        return supportsContext
+            ? (prompt, rebound)
+            : (ComposerContextReferences.providerProjection(prompt, context: rebound), nil)
+    }
+
     private func prepareTurnAttachments(
         _ attachments: [UploadChatImageAttachment]
     ) async throws -> [JSONValue]? {
@@ -1159,7 +1204,7 @@ public actor T3Client {
                 throw RPCError.protocolViolation("The attachment upload URL is invalid.")
             }
             switch attachment.source {
-            case let .imageData(data):
+            case let .imageData(data), let .fileData(data):
                 try await api.uploadAttachment(data, mimeType: attachment.mimeType, to: url)
             case let .file(fileURL):
                 guard let actualBytes = try? fileURL.resourceValues(
@@ -2081,20 +2126,21 @@ public enum OrchestrationCommands {
         model: ModelSelection? = nil,
         attachments: [UploadChatImageAttachment] = [],
         uploadedAttachments: [JSONValue]? = nil,
+        context: OrchestrationMessageContext? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
     ) throws -> JSONValue {
+        var message: [String: JSONValue] = [
+            "messageId": .string(messageID), "role": .string("user"), "text": .string(text),
+            "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
+        ]
+        if let context { message["context"] = try .encode(context) }
         var command: [String: JSONValue] = [
             "type": .string("thread.turn.start"),
             "commandId": .string(commandID),
             "threadId": .string(threadID),
-            "message": .object([
-                "messageId": .string(messageID),
-                "role": .string("user"),
-                "text": .string(text),
-                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
-            ]),
+            "message": .object(message),
             "runtimeMode": .string(runtimeMode.rawValue),
             "interactionMode": .string(interactionMode.rawValue),
             "createdAt": .string(createdAt),
@@ -2118,6 +2164,7 @@ public enum OrchestrationCommands {
         worktreePreparation: ThreadWorktreePreparation? = nil,
         attachments: [UploadChatImageAttachment] = [],
         uploadedAttachments: [JSONValue]? = nil,
+        context: OrchestrationMessageContext? = nil,
         commandID: String = UUID().uuidString,
         messageID: String = UUID().uuidString,
         createdAt: String = now()
@@ -2146,16 +2193,16 @@ public enum OrchestrationCommands {
             bootstrap["prepareWorktree"] = .object(prepareWorktree)
             bootstrap["runSetupScript"] = .bool(true)
         }
+        var message: [String: JSONValue] = [
+            "messageId": .string(messageID), "role": .string("user"), "text": .string(text),
+            "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
+        ]
+        if let context { message["context"] = try .encode(context) }
         return .object([
             "type": .string("thread.turn.start"),
             "commandId": .string(commandID),
             "threadId": .string(threadID),
-            "message": .object([
-                "messageId": .string(messageID),
-                "role": .string("user"),
-                "text": .string(text),
-                "attachments": .array(uploadedAttachments ?? attachments.map(\.jsonValue)),
-            ]),
+            "message": .object(message),
             "modelSelection": try .encode(model),
             "titleSeed": .string(title),
             "runtimeMode": .string(runtimeMode.rawValue),

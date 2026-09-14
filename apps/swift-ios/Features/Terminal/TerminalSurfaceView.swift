@@ -17,6 +17,7 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
     let onResize: (Int, Int) -> Void
     let onClear: () -> Void
     let onFontSizeStep: (Int) -> Void
+    var onAttachOutput: ((String) -> Void)? = nil
 
     func makeUIView(context _: Context) -> GhosttyTerminalView {
         let view = GhosttyTerminalView()
@@ -39,6 +40,7 @@ struct GhosttyTerminalSurface: UIViewRepresentable {
         view.onResize = onResize
         view.onClear = onClear
         view.onFontSizeStep = onFontSizeStep
+        view.onAttachOutput = onAttachOutput
         view.terminalKey = terminalKey
         view.lifecycleVersion = lifecycleVersion
         view.fontSize = fontSize
@@ -657,6 +659,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
     var onResize: ((Int, Int) -> Void)?
     var onClear: (() -> Void)?
     var onFontSizeStep: ((Int) -> Void)?
+    var onAttachOutput: ((String) -> Void)?
 
     var isDarkMode = true {
         didSet {
@@ -896,7 +899,14 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
             let clear = UIAction(title: "Clear", image: UIImage(systemName: "eraser")) { [weak self] _ in
                 self?.onClear?()
             }
-            return UIMenu(children: [copy, paste, clear])
+            var actions = [copy, paste, clear]
+            if self.onAttachOutput != nil {
+                actions.insert(UIAction(title: "Add output to message", image: UIImage(systemName: "text.bubble")) { [weak self] _ in
+                    guard let self else { return }
+                    self.onAttachOutput?(TerminalText.plainText(from: self.buffer))
+                }, at: 1)
+            }
+            return UIMenu(children: actions)
         }
     }
 
@@ -1012,6 +1022,7 @@ final class GhosttyTerminalView: UIView, UITextFieldDelegate, UIContextMenuInter
         onResize = nil
         onClear = nil
         onFontSizeStep = nil
+        onAttachOutput = nil
         destroySurface()
     }
 

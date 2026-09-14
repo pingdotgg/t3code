@@ -610,6 +610,17 @@ public struct FeatureReviewCommentDraft: Sendable, Equatable, Hashable {
         Inspect the surrounding code, make the smallest correct change, and report what changed.
         """
     }
+
+    public func contextRecord(diff: String) -> ComposerContextRecord {
+        let range = line.map { "\($0.side.rawValue) line \($0.line)" } ?? "File"
+        return ComposerContextRecord(label: "\(filePath) \(range)", payload: .reviewComment(.init(
+            sectionId: "working-tree", sectionTitle: "Working changes", filePath: filePath,
+            startIndex: max(0, (line?.line ?? 1) - 1), endIndex: max(0, (line?.line ?? 1) - 1),
+            rangeLabel: range, text: String(decoding: body.utf16.prefix(16_000), as: UTF16.self),
+            diff: String(decoding: diff.utf16.prefix(32_000), as: UTF16.self),
+            fenceLanguage: "diff", pullRequest: nil
+        )))
+    }
 }
 
 public enum FeatureReviewChangeKind: String, Sendable, Codable {

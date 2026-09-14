@@ -37,7 +37,8 @@ public protocol FeatureClient: AnyObject {
         worktreePath: String?,
         startFromOrigin: Bool,
         attachments: [FeatureUploadAttachment],
-        identity: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext?
     ) async throws -> FeatureThread
     func listWorkspaceBranches(
         projectID: String,
@@ -79,7 +80,8 @@ public protocol FeatureClient: AnyObject {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments: [FeatureUploadAttachment],
-        identity: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext?
     ) async throws
     func cancelTurn(threadID: String) async throws
     func resolveApproval(id: String, decision: FeatureApprovalDecision) async throws

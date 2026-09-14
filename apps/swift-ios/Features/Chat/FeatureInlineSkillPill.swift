@@ -34,15 +34,24 @@ enum FeatureInlineSkillParser {
         allowsEndBoundary: Bool,
         preservingTrailing preserved: FeatureInlineSkillDescriptor? = nil
     ) -> [FeatureInlineSkillDescriptor] {
-        guard !text.isEmpty, !skills.isEmpty else { return [] }
+        guard !text.isEmpty else { return [] }
+        let references = ComposerContextReferences.collect(text)
+        let contextDescriptors = references.map { reference in
+            FeatureInlineSkillDescriptor(
+                rawText: (text as NSString).substring(with: reference.range),
+                displayName: reference.label,
+                range: reference.range
+            )
+        }
 
         let skillsByName = Dictionary(skills.map { ($0.name, $0) }) { first, _ in first }
         let source = text as NSString
-        return tokenExpression.matches(
+        let skillDescriptors = tokenExpression.matches(
             in: text,
             range: NSRange(location: 0, length: source.length)
-        ).compactMap { match in
+        ).compactMap { match -> FeatureInlineSkillDescriptor? in
             let range = match.range(at: 0)
+            guard !references.contains(where: { NSIntersectionRange($0.range, range).length > 0 }) else { return nil }
             let hasEndBoundary = NSMaxRange(range) == source.length
             let preservesThisTrailingToken = hasEndBoundary
                 && preserved?.range == range
@@ -59,6 +68,7 @@ enum FeatureInlineSkillParser {
                 range: range
             )
         }
+        return (skillDescriptors + contextDescriptors).sorted { $0.range.location < $1.range.location }
     }
 }
 

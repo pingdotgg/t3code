@@ -16,6 +16,7 @@ public struct ThreadDetailView: View {
     private let draftStore: FeatureComposerDraftStore
 
     @State private var draft = ""
+    @State private var composerContext: OrchestrationMessageContext?
     @State private var selection: FeatureSelection?
     @State private var attachments: [FeatureDraftAttachment] = []
     @State private var isSending = false
@@ -162,7 +163,12 @@ public struct ThreadDetailView: View {
                     case .sourceControl:
                         FeatureSourceControlView(client: model.client, threadID: thread.id)
                     case .terminal:
-                        FeatureTerminalView(client: model.client, threadID: thread.id)
+                        FeatureTerminalView(client: model.client, threadID: thread.id) { record in
+                            composerContext = FeatureComposerContext.merge(composerContext, .init(records: [record]))
+                            draft = ComposerContextReferences.ensureReferences(draft, records: [record])
+                            persistDraftImmediately()
+                            composerFocused = true
+                        }
                     }
                 }
                 .toolbar {
@@ -751,7 +757,8 @@ public struct ThreadDetailView: View {
                     },
                     onRefreshModels: refreshThreadEnvironmentModels,
                     draftSaveError: draftSaveError,
-                    onRetryDraftSave: persistDraftImmediately
+                    onRetryDraftSave: persistDraftImmediately,
+                    context: contextBinding
                 )
             }
             .background(T3Colors.background)
@@ -915,6 +922,7 @@ public struct ThreadDetailView: View {
 
     private func send() {
         let message = draft
+        let pendingContext = composerContext
         let pendingAttachments = currentThread.environmentID.map {
             model.attachmentUploads.attachmentsForSend(
                 draftKey: draftKey,
@@ -945,6 +953,7 @@ public struct ThreadDetailView: View {
         )
         draft = ""
         attachments = []
+        composerContext = nil
         composerFocused = false
         Task {
             await pendingDraftSave?.value
@@ -953,7 +962,8 @@ public struct ThreadDetailView: View {
                 threadID: thread.id,
                 text: message,
                 selection: selection,
-                attachments: pendingAttachments
+                attachments: pendingAttachments,
+                context: pendingContext
                 )
             )
             if sent {
@@ -987,6 +997,7 @@ public struct ThreadDetailView: View {
                 attachments = pendingAttachments + attachments.filter {
                     !pendingIDs.contains($0.id)
                 }
+                composerContext = FeatureComposerContext.merge(pendingContext, composerContext)
                 sendFailed = true
             }
             submittingCompaction = false
@@ -1069,6 +1080,13 @@ public struct ThreadDetailView: View {
         FeatureComposerDraftStore.threadKey(currentThread)
     }
 
+    private var contextBinding: Binding<OrchestrationMessageContext?> {
+        Binding(get: { composerContext }, set: { value in
+            composerContext = value
+            scheduleDraftSave()
+        })
+    }
+
     private var attachmentBinding: Binding<[FeatureDraftAttachment]> {
         Binding(
             get: { attachments },
@@ -1098,6 +1116,7 @@ public struct ThreadDetailView: View {
             providers: threadProviders
         )
         draft = restored.text
+        composerContext = restored.context
         attachments = restored.attachments
         selection = restored.selection
         didRestoreDraft = true
@@ -1238,7 +1257,8 @@ public struct ThreadDetailView: View {
         FeatureComposerDraft(
             text: draft,
             attachments: attachments,
-            selection: selection
+            selection: selection,
+            context: composerContext
         )
     }
 
@@ -1379,7 +1399,8 @@ enum FeatureComposerDraftRestoration {
                 saved: saved?.workspace ?? fallbackWorkspace,
                 baseline: baseline.workspace,
                 current: current.workspace
-            )
+            ),
+            context: current.context == baseline.context ? saved?.context : current.context
         )
     }
 
@@ -2574,8 +2595,76 @@ struct FeatureMessageView: View {
     var imageContext: MarkdownImageContext? = nil
     var attachmentContext: FeatureAttachmentContext? = nil
     var skills: [FeatureProviderSkill] = []
+    @SwiftUI.Environment(\.openURL) private var openURL
+    @State private var previewedContext: ComposerContextRecord?
+    @State private var contextUnavailable = false
 
     var body: some View {
+        messageBody
+            .environment(\.openURL, OpenURLAction { url in
+                guard let reference = ComposerContextReferences.parseHref(url.absoluteString) else {
+                    openURL(url)
+                    return .handled
+                }
+                guard let record = message.context?.records.first(where: { $0.contextId == reference.contextId }) else {
+                    contextUnavailable = true
+                    return .handled
+                }
+                if case let .mention(value) = record.payload, let path = URL(string: value.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? value.path) {
+                    openURL(path)
+                } else {
+                    previewedContext = record
+                }
+                return .handled
+            })
+            .sheet(item: $previewedContext) { record in
+                NavigationStack {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 12) {
+                            if let binding = record.attachment,
+                               let attachment = message.attachments.first(where: { $0.id == binding.attachmentId }) {
+                                FeatureMessageAttachmentsView(attachments: [attachment], context: attachmentContext)
+                            } else {
+                                Text(ComposerContextReferences.providerPayload(record))
+                                    .font(T3Typography.tool)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            if case let .reviewComment(value) = record.payload,
+                               let request = value.pullRequest,
+                               let url = URL(string: request.url), ["https", "http"].contains(url.scheme?.lowercased() ?? "") {
+                                Link("Open pull request #\(request.number)", destination: url)
+                            }
+                        }
+                        .padding()
+                    }
+                    .background(T3Colors.background)
+                    .navigationTitle(record.label)
+                    .navigationBarTitleDisplayMode(.inline)
+                    .toolbar {
+                        ToolbarItem(placement: .confirmationAction) {
+                            Button("Done") { previewedContext = nil }
+                        }
+                    }
+                    .t3NavigationChrome()
+                }
+                .preferredColorScheme(.dark)
+            }
+            .alert("Context unavailable", isPresented: $contextUnavailable) {
+                Button("OK", role: .cancel) {}
+            } message: {
+                Text("This message has a context link without its saved record.")
+            }
+    }
+
+    private var renderedText: String {
+        // Images use the existing attachment preview. Do not ask Markdown to fetch t3-context URLs.
+        ComposerContextReferences.replace(message.text) {
+            "[\($0.label)](t3-context://v1/\($0.kind)/\($0.contextId))"
+        }
+    }
+
+    private var messageBody: some View {
         switch message.role {
         case .user:
             HStack {
@@ -2584,7 +2673,7 @@ struct FeatureMessageView: View {
                     FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
                     if !message.text.isEmpty {
                         MarkdownMessageView(
-                            message.text,
+                            renderedText,
                             isStreaming: message.state == .streaming,
                             imageContext: imageContext,
                             skills: skills
@@ -2621,7 +2710,7 @@ struct FeatureMessageView: View {
                 FeatureMessageAttachmentsView(attachments: message.attachments, context: attachmentContext)
                 if !message.text.isEmpty {
                     MarkdownMessageView(
-                        message.text,
+                        renderedText,
                         isStreaming: message.state == .streaming,
                         imageContext: imageContext,
                         skills: skills

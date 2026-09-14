@@ -1,6 +1,7 @@
 import Foundation
 
 public struct FeatureComposerDraft: Sendable, Equatable {
+    public var context: OrchestrationMessageContext?
     public var text: String
     public var attachments: [FeatureDraftAttachment]
     public var selection: FeatureSelection?
@@ -10,12 +11,14 @@ public struct FeatureComposerDraft: Sendable, Equatable {
         text: String = "",
         attachments: [FeatureDraftAttachment] = [],
         selection: FeatureSelection? = nil,
-        workspace: FeatureComposerWorkspaceDraft? = nil
+        workspace: FeatureComposerWorkspaceDraft? = nil,
+        context: OrchestrationMessageContext? = nil
     ) {
         self.text = text
         self.attachments = attachments
         self.selection = selection
         self.workspace = workspace
+        self.context = context
     }
 
     public var isEmpty: Bool {
@@ -89,6 +92,7 @@ public actor FeatureComposerDraftStore {
     }
 
     private struct PersistedDraft: Codable {
+        var context: OrchestrationMessageContext?
         var text: String
         var attachments: [PersistedAttachment]
         var selection: FeatureSelection?
@@ -97,6 +101,7 @@ public actor FeatureComposerDraftStore {
 
         init(_ draft: FeatureComposerDraft) {
             text = draft.text
+            context = draft.context
             attachments = draft.attachments.map(PersistedAttachment.init)
             selection = draft.selection
             workspace = draft.workspace.map(PersistedWorkspace.init)
@@ -108,7 +113,8 @@ public actor FeatureComposerDraftStore {
                 text: text,
                 attachments: attachments.compactMap { $0.featureValue(fileStore: fileStore) },
                 selection: selection,
-                workspace: workspace?.featureValue
+                workspace: workspace?.featureValue,
+                context: context
             )
         }
     }
@@ -137,6 +143,7 @@ public actor FeatureComposerDraftStore {
     }
 
     private struct PersistedAttachment: Codable {
+        var source: PastedTextAttachmentSource?
         var id: UUID
         var data: Data?
         var ownedFileName: String?
@@ -148,6 +155,7 @@ public actor FeatureComposerDraftStore {
 
         init(_ attachment: FeatureDraftAttachment) {
             id = attachment.id
+            source = attachment.source
             data = attachment.ownedFile == nil ? attachment.data : nil
             ownedFileName = attachment.ownedFile?.fileName
             byteCount = attachment.byteCount
@@ -169,7 +177,8 @@ public actor FeatureComposerDraftStore {
                     thumbnailData: thumbnailData,
                     filename: filename,
                     mimeType: mimeType,
-                    uploadedReference: uploadedReference
+                    uploadedReference: uploadedReference,
+                    source: source
                 )
             }
             guard let data else { return nil }
@@ -179,7 +188,8 @@ public actor FeatureComposerDraftStore {
                 thumbnailData: thumbnailData,
                 filename: filename,
                 mimeType: mimeType,
-                uploadedReference: uploadedReference
+                uploadedReference: uploadedReference,
+                source: source
             )
         }
 
@@ -187,6 +197,7 @@ public actor FeatureComposerDraftStore {
             guard id == attachment.id,
                   filename == attachment.filename,
                   mimeType == attachment.mimeType,
+                  source == attachment.source,
                   (byteCount ?? data?.count ?? 0) == attachment.byteCount else { return false }
             if let ownedFileName {
                 return ownedFileName == attachment.ownedFile?.fileName

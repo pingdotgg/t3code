@@ -40,12 +40,14 @@ struct FeatureComposerView: View {
     @State private var pathSearchError: String?
     @State private var textSelectionRequest: FeatureComposerTextSelectionRequest?
     @State private var imageIntakeErrorMessage: String?
+    @State private var pastedTextErrorMessage: String?
     @State private var textRevision: UInt64 = 0
     @State private var textObservation = FeatureComposerTextObservation()
     @State private var voiceInputController = FeatureVoiceInputController()
     @Binding private var text: String
     @Binding private var selection: FeatureSelection?
     @Binding private var attachments: [FeatureDraftAttachment]
+    @Binding private var context: OrchestrationMessageContext?
 
     private let providers: [FeatureProvider]
     private let draftOwnerID: String
@@ -107,11 +109,13 @@ struct FeatureComposerView: View {
         onUserInputDismiss: ((String) async -> Void)? = nil,
         onRefreshModels: (() async throws -> Void)? = nil,
         draftSaveError: String? = nil,
-        onRetryDraftSave: (() -> Void)? = nil
+        onRetryDraftSave: (() -> Void)? = nil,
+        context: Binding<OrchestrationMessageContext?> = .constant(nil)
     ) {
         _text = text
         _selection = selection
         _attachments = attachments
+        _context = context
         self.draftOwnerID = draftOwnerID
         self.environmentID = environmentID
         self.draftStorageKey = draftStorageKey
@@ -237,6 +241,17 @@ struct FeatureComposerView: View {
             } message: {
                 Text(imageIntakeErrorMessage ?? "")
             }
+            .alert(
+                "Could not paste text",
+                isPresented: Binding(
+                    get: { pastedTextErrorMessage != nil },
+                    set: { if !$0 { pastedTextErrorMessage = nil } }
+                )
+            ) {
+                Button("OK") { pastedTextErrorMessage = nil }
+            } message: {
+                Text(pastedTextErrorMessage ?? "")
+            }
     }
 
     private var composerSurface: some View {
@@ -349,7 +364,10 @@ struct FeatureComposerView: View {
                     selectionRequest: textSelectionRequest,
                     onSelectionChange: handleTextSelectionChange,
                     onPasteImages: attachImageProviders,
-                    onDismissKeyboard: onDismissKeyboard
+                    onDismissKeyboard: onDismissKeyboard,
+                    maximumPastedTextBytes: maximumPastedTextBytes,
+                    onPasteTextAttachment: attachPastedText,
+                    onPasteTextError: { pastedTextErrorMessage = $0 }
                 )
                 .padding(.horizontal, 16)
                 .padding(.top, 14)
@@ -871,6 +889,12 @@ struct FeatureComposerView: View {
         }
     }
 
+    private func contextReference(label: String, payload: ComposerContextRecord.Payload) -> String {
+        let record = ComposerContextRecord(label: label, payload: payload)
+        context = FeatureComposerContext.merge(FeatureComposerContext.referenced(context, text: text), .init(records: [record]))
+        return ComposerContextReferences.format(record) + " "
+    }
+
     private func selectCommandItem(_ item: FeatureComposerMenuItem) {
         guard let trigger = composerTrigger else { return }
         let replacement: String
@@ -883,9 +907,11 @@ struct FeatureComposerView: View {
         case let .providerCommand(command):
             replacement = "/\(command.name) "
         case let .skill(skill):
-            replacement = skill.invocation
+            replacement = skill.userInvocationOnly == true
+                ? skill.invocation
+                : contextReference(label: skill.invocationDisplayName, payload: .skill(.init(name: skill.name)))
         case let .path(entry):
-            replacement = FeatureComposerFileLinkSerializer.markdownLink(for: entry.path) + " "
+            replacement = contextReference(label: entry.name, payload: .mention(.init(path: entry.path)))
         }
         let nextCursorLocation = FeatureComposerTextSelectionPolicy.cursorLocation(
             afterReplacing: trigger.range,
@@ -1020,6 +1046,27 @@ struct FeatureComposerView: View {
                 }
             }
         }
+    }
+
+    private var maximumPastedTextBytes: Int? {
+        FeaturePastedText.maximumAttachmentBytes(
+            advertisedMaximum: attachmentPreferences.maxFileAttachmentBytes,
+            attachmentCount: attachments.count,
+            pendingCount: attachmentPreparation.pendingItemCount
+        )
+    }
+
+    private func attachPastedText(_ pastedText: String) -> Bool {
+        guard !voiceInputController.isBusy, !pastedText.isEmpty,
+              let maximumPastedTextBytes,
+              pastedText.utf8.count <= maximumPastedTextBytes else { return false }
+        attachments.append(FeatureDraftAttachment(
+            data: Data(pastedText.utf8),
+            filename: FeaturePastedText.nextFileName(existingNames: attachments.map(\.filename)),
+            mimeType: "text/plain",
+            source: .pastedText
+        ))
+        return true
     }
 
     /// A drop is refused outright when images are not accepted, so the drag

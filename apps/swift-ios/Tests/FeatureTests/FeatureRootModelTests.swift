@@ -3700,7 +3700,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         worktreePath: String?,
         startFromOrigin: Bool,
         attachments: [FeatureUploadAttachment],
-        identity: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext? = nil
     ) async throws -> FeatureThread {
         try await beforeStartTask?()
         if let startTaskError { throw startTaskError }
@@ -3753,7 +3754,8 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments _: [FeatureUploadAttachment],
-        identity _: FeatureSubmissionIdentity
+        identity _: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext? = nil
     ) async throws {
         sentRuntimeModes.append(runtimeMode)
         sendMessageCallCount += 1

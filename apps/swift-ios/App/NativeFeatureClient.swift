@@ -1479,7 +1479,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         worktreePath: String?,
         startFromOrigin: Bool,
         attachments: [FeatureUploadAttachment],
-        identity: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext? = nil
     ) async throws -> FeatureThread {
         try await createThreadAndSendResolved(
             projectID: projectID,
@@ -1492,7 +1493,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             worktreePath: worktreePath,
             startFromOrigin: startFromOrigin,
             attachments: attachments,
-            submissionIdentity: identity
+            submissionIdentity: identity,
+            context: context
         )
     }
 
@@ -1507,7 +1509,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         worktreePath: String?,
         startFromOrigin: Bool,
         attachments: [FeatureUploadAttachment],
-        submissionIdentity: FeatureSubmissionIdentity?
+        submissionIdentity: FeatureSubmissionIdentity?,
+        context: OrchestrationMessageContext? = nil
     ) async throws -> FeatureThread {
         let route = try projectRoute(for: projectID)
         let client = route.client
@@ -1540,7 +1543,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             branch: branch,
             worktreePath: worktreePath,
             startFromOrigin: startFromOrigin,
-            attachments: attachments
+            attachments: attachments,
+            context: context
         )
         let pending: PendingBootstrapSubmission
         let explicitIdentity = submissionIdentity.map { commandIdentity($0) }
@@ -1590,6 +1594,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     }
                 },
                 attachments: uploads,
+                context: context,
                 commandID: pending.identity.commandID,
                 messageID: pending.identity.messageID,
                 createdAt: pending.identity.createdAt
@@ -1607,7 +1612,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 model: model,
                 runtimeMode: runtime,
                 interactionMode: interaction,
-                attachments: uploads
+                attachments: uploads,
+                context: context
             )
             guard recovered else {
                 await resetFailedBootstrapIfConfirmed(
@@ -1669,7 +1675,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         model: ModelSelection,
         runtimeMode: RuntimeMode,
         interactionMode: InteractionMode,
-        attachments: [UploadChatImageAttachment]
+        attachments: [UploadChatImageAttachment],
+        context: OrchestrationMessageContext? = nil
     ) async throws -> Bool {
         guard let snapshot = try? await client.threadSnapshot(id: pending.threadID) else {
             return false
@@ -1693,6 +1700,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 interactionMode: interactionMode,
                 model: model,
                 attachments: attachments,
+                context: context,
                 commandID: pending.identity.commandID,
                 messageID: pending.identity.messageID,
                 createdAt: pending.identity.createdAt
@@ -2184,7 +2192,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         selection: FeatureSelection?,
         runtimeMode: FeatureRuntimeMode,
         attachments: [FeatureUploadAttachment],
-        identity: FeatureSubmissionIdentity
+        identity: FeatureSubmissionIdentity,
+        context: OrchestrationMessageContext? = nil
     ) async throws {
         try await sendMessageResolved(
             threadID: threadID,
@@ -2192,7 +2201,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             selection: selection,
             runtimeMode: runtimeMode,
             attachments: attachments,
-            submissionIdentity: identity
+            submissionIdentity: identity,
+            context: context
         )
     }
 
@@ -2202,7 +2212,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
         selection: FeatureSelection?,
         runtimeMode requestedRuntimeMode: FeatureRuntimeMode?,
         attachments: [FeatureUploadAttachment],
-        submissionIdentity: FeatureSubmissionIdentity?
+        submissionIdentity: FeatureSubmissionIdentity?,
+        context: OrchestrationMessageContext? = nil
     ) async throws {
         let route = try threadRoute(for: threadID)
         let client = route.client
@@ -2224,7 +2235,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
             model: model,
             runtimeMode: runtimeMode,
             interactionMode: interactionMode,
-            attachments: attachments
+            attachments: attachments,
+            context: context
         )
         let pending: PendingTurnSubmission
         let explicitIdentity = submissionIdentity.map { commandIdentity($0) }
@@ -2252,6 +2264,7 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 interactionMode: interactionMode,
                 model: model,
                 attachments: uploads,
+                context: context,
                 commandID: pending.identity.commandID,
                 messageID: pending.identity.messageID,
                 createdAt: pending.identity.createdAt
@@ -6255,9 +6268,11 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     name: $0.name,
                     mimeType: $0.mimeType,
                     sizeBytes: $0.sizeBytes,
-                    url: cachedAttachmentURL(for: $0.id, environmentID: environmentID)
+                    url: cachedAttachmentURL(for: $0.id, environmentID: environmentID),
+                    source: $0.source.flatMap { try? $0.decode(PastedTextAttachmentSource.self) }
                 )
-            }
+            },
+            context: message.context
         )
     }
 
@@ -7030,7 +7045,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                     name: $0.name,
                     mimeType: $0.mimeType,
                     sizeBytes: ownedFile.byteCount,
-                    uploadedReference: reference
+                    uploadedReference: reference,
+                    contextSource: $0.source
                 )
             }
             return try UploadChatAttachment(
@@ -7038,7 +7054,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 data: $0.data,
                 name: $0.name,
                 mimeType: $0.mimeType,
-                uploadedReference: reference
+                uploadedReference: reference,
+                contextSource: $0.source
             )
         }
     }
@@ -7753,6 +7770,13 @@ enum NativeThreadDetailReducer {
             return .refresh
         }
         let turnID = payload["turnId"]?.stringValue
+        let context: OrchestrationMessageContext?
+        if let rawContext = payload["context"], rawContext != .null {
+            guard let decoded = try? rawContext.decode(OrchestrationMessageContext.self) else { return .refresh }
+            context = decoded
+        } else {
+            context = nil
+        }
         let attachments: [ChatAttachment]?
         if let rawAttachments = payload["attachments"], rawAttachments != .null {
             guard let decoded = try? rawAttachments.decode([ChatAttachment].self) else {
@@ -7777,7 +7801,8 @@ enum NativeThreadDetailReducer {
                 turnId: turnID,
                 streaming: streaming,
                 createdAt: existing.createdAt,
-                updatedAt: streaming ? existing.updatedAt : updatedAt
+                updatedAt: streaming ? existing.updatedAt : updatedAt,
+                context: context ?? existing.context
             )
             renderMutation = .message(messages[index])
         } else {
@@ -7789,7 +7814,8 @@ enum NativeThreadDetailReducer {
                 turnId: turnID,
                 streaming: streaming,
                 createdAt: createdAt,
-                updatedAt: updatedAt
+                updatedAt: updatedAt,
+                context: context
             )
             messages.append(message)
             renderMutation = .message(message)
@@ -8213,6 +8239,7 @@ private struct BootstrapSubmissionSignature: Equatable {
     let worktreePath: String?
     let startFromOrigin: Bool
     let attachments: [FeatureUploadAttachment]
+    var context: OrchestrationMessageContext? = nil
 }
 
 private struct PendingBootstrapSubmission {
@@ -8239,6 +8266,7 @@ private struct TurnSubmissionSignature: Equatable {
     let runtimeMode: RuntimeMode
     let interactionMode: InteractionMode
     let attachments: [FeatureUploadAttachment]
+    var context: OrchestrationMessageContext? = nil
 }
 
 private struct PendingTurnSubmission {

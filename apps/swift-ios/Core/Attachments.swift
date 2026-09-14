@@ -51,13 +51,14 @@ public struct UploadedAttachmentReference: Codable, Equatable, Sendable {
 }
 
 /// A validated turn attachment. Images can remain inline for older servers.
-/// Generic files always stay file-backed and require the upload capability.
+/// Generic files require the upload capability. Clipboard text can stay in memory.
 public struct UploadChatAttachment: Equatable, Sendable {
     public static let maximumBytes = 10 * 1024 * 1024
     public static let maximumFileBytes = 50 * 1024 * 1024
 
     enum Source: Equatable, Sendable {
         case imageData(Data)
+        case fileData(Data)
         case file(URL)
     }
 
@@ -67,6 +68,7 @@ public struct UploadChatAttachment: Equatable, Sendable {
     public let mimeType: String
     public let sizeBytes: Int
     public let uploadedReference: UploadedAttachmentReference?
+    public let contextSource: PastedTextAttachmentSource?
     let source: Source
 
     public init(
@@ -74,8 +76,29 @@ public struct UploadChatAttachment: Equatable, Sendable {
         data: Data,
         name: String,
         mimeType: String,
-        uploadedReference: UploadedAttachmentReference? = nil
+        uploadedReference: UploadedAttachmentReference? = nil,
+        contextSource: PastedTextAttachmentSource? = nil
     ) throws {
+        if !mimeType.lowercased().hasPrefix("image/") {
+            guard !data.isEmpty else { throw FileAttachmentError.empty }
+            guard data.count <= Self.maximumFileBytes else {
+                throw FileAttachmentError.tooLarge(actualBytes: data.count, maximumBytes: Self.maximumFileBytes)
+            }
+            let normalizedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+            let normalizedMIME = mimeType.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+            guard !normalizedName.isEmpty, normalizedName.count <= 255 else { throw FileAttachmentError.invalidName }
+            guard !normalizedMIME.isEmpty, normalizedMIME.count <= 100,
+                  !normalizedMIME.contains(where: { $0.isWhitespace || $0.isNewline }) else { throw FileAttachmentError.invalidMIMEType }
+            self.id = id
+            type = "file"
+            self.name = normalizedName
+            self.mimeType = normalizedMIME
+            sizeBytes = data.count
+            self.uploadedReference = uploadedReference
+            self.contextSource = contextSource
+            source = .fileData(data)
+            return
+        }
         guard !data.isEmpty else { throw ImageAttachmentError.empty }
         guard data.count <= Self.maximumBytes else {
             throw ImageAttachmentError.tooLarge(
@@ -97,6 +120,7 @@ public struct UploadChatAttachment: Equatable, Sendable {
         self.mimeType = normalizedMIME
         sizeBytes = data.count
         self.uploadedReference = uploadedReference
+        self.contextSource = nil
         source = .imageData(data)
     }
 
@@ -106,7 +130,8 @@ public struct UploadChatAttachment: Equatable, Sendable {
         name: String,
         mimeType: String,
         sizeBytes: Int,
-        uploadedReference: UploadedAttachmentReference? = nil
+        uploadedReference: UploadedAttachmentReference? = nil,
+        contextSource: PastedTextAttachmentSource? = nil
     ) throws {
         guard fileURL.isFileURL else { throw FileAttachmentError.invalidFileURL }
         guard sizeBytes > 0 else { throw FileAttachmentError.empty }
@@ -131,6 +156,7 @@ public struct UploadChatAttachment: Equatable, Sendable {
         self.mimeType = normalizedMIME
         self.sizeBytes = sizeBytes
         self.uploadedReference = uploadedReference
+        self.contextSource = contextSource
         source = .file(fileURL)
     }
 
@@ -142,6 +168,7 @@ public struct UploadChatAttachment: Equatable, Sendable {
             "sizeBytes": .number(Double(sizeBytes)),
         ]
         if case let .imageData(data) = source {
+            value["id"] = .string(id.uuidString)
             value["dataUrl"] = .string(
                 "data:\(mimeType);base64,\(data.base64EncodedString())"
             )
@@ -150,13 +177,17 @@ public struct UploadChatAttachment: Equatable, Sendable {
     }
 
     func uploadedJSONValue(id: String) -> JSONValue {
-        .object([
+        var value: [String: JSONValue] = [
             "type": .string(type),
             "id": .string(id),
             "name": .string(name),
             "mimeType": .string(mimeType),
             "sizeBytes": .number(Double(sizeBytes)),
-        ])
+        ]
+        if let contextSource {
+            value["source"] = .object(["_tag": .string(contextSource.rawValue)])
+        }
+        return .object(value)
     }
 }
 

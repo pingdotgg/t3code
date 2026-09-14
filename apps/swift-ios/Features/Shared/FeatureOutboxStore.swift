@@ -23,6 +23,7 @@ public struct FeatureSubmissionIdentity: Sendable, Equatable, Hashable, Codable 
 }
 
 public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
+    public var source: PastedTextAttachmentSource?
     public var id: UUID
     public var data: Data?
     public var ownedFileName: String?
@@ -37,7 +38,8 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
         data: Data,
         name: String,
         mimeType: String,
-        uploadedReference: FeatureUploadedAttachmentReference? = nil
+        uploadedReference: FeatureUploadedAttachmentReference? = nil,
+        source: PastedTextAttachmentSource? = nil
     ) {
         self.id = id
         self.data = data
@@ -46,11 +48,13 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
         self.name = name
         self.mimeType = mimeType
         self.uploadedReference = uploadedReference
+        self.source = source
         resolvedOwnedFile = nil
     }
 
     init(_ attachment: FeatureUploadAttachment) {
         id = attachment.id
+        source = attachment.source
         data = attachment.ownedFile == nil ? attachment.data : nil
         ownedFileName = attachment.ownedFile?.fileName
         byteCount = attachment.byteCount
@@ -62,6 +66,7 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
 
     private enum CodingKeys: String, CodingKey {
         case id, data, ownedFileName, byteCount, name, mimeType, uploadedReference
+        case source
     }
 
     public init(from decoder: any Decoder) throws {
@@ -72,6 +77,7 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
         byteCount = try container.decodeIfPresent(Int.self, forKey: .byteCount) ?? data?.count
         name = try container.decode(String.self, forKey: .name)
         mimeType = try container.decode(String.self, forKey: .mimeType)
+        source = try container.decodeIfPresent(PastedTextAttachmentSource.self, forKey: .source)
         uploadedReference = try container.decodeIfPresent(
             FeatureUploadedAttachmentReference.self,
             forKey: .uploadedReference
@@ -87,6 +93,7 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
         try container.encodeIfPresent(byteCount, forKey: .byteCount)
         try container.encode(name, forKey: .name)
         try container.encode(mimeType, forKey: .mimeType)
+        try container.encodeIfPresent(source, forKey: .source)
         try container.encodeIfPresent(uploadedReference, forKey: .uploadedReference)
     }
 
@@ -105,7 +112,8 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
                 ownedFile: resolvedOwnedFile,
                 name: name,
                 mimeType: mimeType,
-                uploadedReference: uploadedReference
+                uploadedReference: uploadedReference,
+                source: source
             )
         }
         guard let data else { return nil }
@@ -114,7 +122,8 @@ public struct FeatureQueuedAttachment: Sendable, Equatable, Codable {
             data: data,
             name: name,
             mimeType: mimeType,
-            uploadedReference: uploadedReference
+            uploadedReference: uploadedReference,
+            source: source
         )
     }
 }
@@ -145,6 +154,7 @@ public struct FeatureQueuedCreation: Sendable, Equatable, Codable {
 }
 
 public struct FeatureQueuedSubmission: Identifiable, Sendable, Equatable, Codable {
+    public var context: OrchestrationMessageContext?
     public let id: String
     public var environmentID: String
     public var identity: FeatureSubmissionIdentity
@@ -166,7 +176,8 @@ public struct FeatureQueuedSubmission: Identifiable, Sendable, Equatable, Codabl
         runtimeMode: FeatureRuntimeMode,
         interactionMode: FeatureInteractionMode,
         attachments: [FeatureUploadAttachment],
-        creation: FeatureQueuedCreation? = nil
+        creation: FeatureQueuedCreation? = nil,
+        context: OrchestrationMessageContext? = nil
     ) {
         self.id = id ?? identity.messageID
         self.environmentID = environmentID
@@ -178,6 +189,7 @@ public struct FeatureQueuedSubmission: Identifiable, Sendable, Equatable, Codabl
         self.interactionMode = interactionMode.mobileNormalized
         self.attachments = attachments.map(FeatureQueuedAttachment.init)
         self.creation = creation
+        self.context = context
     }
 
     public var uploads: [FeatureUploadAttachment] {

@@ -8,6 +8,7 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
     public var filename: String
     public var mimeType: String
     public var uploadedReference: FeatureUploadedAttachmentReference?
+    public var source: PastedTextAttachmentSource?
 
     public init(
         id: UUID = UUID(),
@@ -15,7 +16,8 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
         thumbnailData: Data? = nil,
         filename: String,
         mimeType: String,
-        uploadedReference: FeatureUploadedAttachmentReference? = nil
+        uploadedReference: FeatureUploadedAttachmentReference? = nil,
+        source: PastedTextAttachmentSource? = nil
     ) {
         self.id = id
         inlineData = data
@@ -24,6 +26,7 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
         self.filename = filename
         self.mimeType = mimeType
         self.uploadedReference = uploadedReference
+        self.source = source
     }
 
     public init(
@@ -32,7 +35,8 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
         thumbnailData: Data? = nil,
         filename: String,
         mimeType: String,
-        uploadedReference: FeatureUploadedAttachmentReference? = nil
+        uploadedReference: FeatureUploadedAttachmentReference? = nil,
+        source: PastedTextAttachmentSource? = nil
     ) {
         self.id = id
         inlineData = nil
@@ -41,6 +45,7 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
         self.filename = filename
         self.mimeType = mimeType
         self.uploadedReference = uploadedReference
+        self.source = source
     }
 
     /// Kept for image-only callers. File-backed attachments return empty data
@@ -59,6 +64,7 @@ public struct FeatureDraftAttachment: Identifiable, Sendable, Equatable {
 }
 
 public struct NewTaskRequest: Sendable, Equatable {
+    public var context: OrchestrationMessageContext?
     public var projectID: String
     public var prompt: String
     public var selection: FeatureSelection?
@@ -80,7 +86,8 @@ public struct NewTaskRequest: Sendable, Equatable {
         branch: String? = nil,
         worktreePath: String? = nil,
         startFromOrigin: Bool = true,
-        attachments: [FeatureDraftAttachment] = []
+        attachments: [FeatureDraftAttachment] = [],
+        context: OrchestrationMessageContext? = nil
     ) {
         self.projectID = projectID
         self.prompt = prompt
@@ -92,6 +99,7 @@ public struct NewTaskRequest: Sendable, Equatable {
         self.worktreePath = workspaceMode == .local ? Self.nonEmpty(worktreePath) : nil
         self.startFromOrigin = workspaceMode == .worktree && startFromOrigin
         self.attachments = attachments
+        self.context = context
     }
 
     public var trimmedPrompt: String {
@@ -108,6 +116,7 @@ public struct NewTaskRequest: Sendable, Equatable {
 }
 
 public struct FeatureMessageSubmission: Sendable, Equatable {
+    public var context: OrchestrationMessageContext?
     public var threadID: String
     public var text: String
     public var selection: FeatureSelection?
@@ -117,12 +126,14 @@ public struct FeatureMessageSubmission: Sendable, Equatable {
         threadID: String,
         text: String,
         selection: FeatureSelection?,
-        attachments: [FeatureDraftAttachment] = []
+        attachments: [FeatureDraftAttachment] = [],
+        context: OrchestrationMessageContext? = nil
     ) {
         self.threadID = threadID
         self.text = text
         self.selection = selection
         self.attachments = attachments
+        self.context = context
     }
 }
 
