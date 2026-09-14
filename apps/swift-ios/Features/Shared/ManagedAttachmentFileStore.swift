@@ -55,7 +55,7 @@ public struct ManagedAttachmentFileStore: Sendable {
 
     public init(rootURL: URL? = nil) {
         if let rootURL {
-            self.rootURL = rootURL.standardizedFileURL
+            self.rootURL = URL(fileURLWithPath: rootURL.standardizedFileURL.path, isDirectory: true)
         } else {
             let applicationSupport = FileManager.default.urls(
                 for: .applicationSupportDirectory,
