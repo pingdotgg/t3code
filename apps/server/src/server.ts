@@ -8,7 +8,6 @@ import {
   ProviderDriverKind,
   type RepositoryIdentity,
 } from "@t3tools/contracts";
-import { EnvironmentHttpApi, ProviderDriverKind } from "@t3tools/contracts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Cause from "effect/Cause";
 import * as Duration from "effect/Duration";

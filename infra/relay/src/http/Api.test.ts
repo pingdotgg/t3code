@@ -14,7 +14,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import * as Context from "effect/Context";
-import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeCryptoLayer from "@effect/platform-node/NodeCrypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -37,7 +37,6 @@ import {
   RelayEnvironmentPrincipal,
   RelayApi,
 } from "@t3tools/contracts/relay";
-import { RelayEnvironmentAuth } from "@t3tools/contracts/relay";
 import { RELAY_MANAGED_TUNNEL_RECOVERY_TYP, signRelayJwt } from "@t3tools/shared/relayJwt";
 
 import {
@@ -130,7 +129,7 @@ describe("device listing compatibility", () => {
       Layer.provide(
         Layer.mergeAll(
           Layer.succeed(RelayConfiguration.RelayConfiguration, relaySettings),
-          NodeCrypto.layer,
+          NodeCryptoLayer.layer,
           Layer.mock(RelayTokens.RelayTokens, { resolveDpopAccessTokenScopes: () => null }),
           Layer.mock(EnvironmentLinker.EnvironmentLinker, {}),
           Layer.mock(EnvironmentLinks.EnvironmentLinks, {}),
