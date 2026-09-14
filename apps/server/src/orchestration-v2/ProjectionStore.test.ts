@@ -2869,25 +2869,22 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           type: "user_input_request",
           extra: {
             requestId: "request:structured-compaction-window",
-            questions: [
-              {
-                id: "question:1",
-                header: "Pick",
-                question: "Which?",
-                options: [
-                  {
-                    label: "A",
-                    description: "y".repeat(300_000),
-                  },
-                ],
-              },
-            ],
+            questions: Array.from({ length: 10 }, (_, i) => ({
+              id: `question:${i}`,
+              header: "Pick",
+              question: "Which?",
+              options: Array.from({ length: 10 }, (_, j) => ({
+                label: `Option ${j}`,
+                description: "details ".repeat(1000),
+                value: `${j}`,
+              })),
+            })),
           },
         });
 
         const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: 77,
-          maxRowPayloadBytes: 8_192,
+          maxRowPayloadBytes: 65_536,
         });
         const hugeResult = windowed.projection.turnItems.find(
           (item) => item.id === "item:structured-compaction-window:huge-result",
@@ -2914,7 +2911,8 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
         );
         assert.isDefined(deepField);
         if (deepField?.type === "user_input_request") {
-          assert.strictEqual(deepField.questions[0]?.options[0]?.label, "A");
+          assert.strictEqual(deepField.questions.length, 10);
+          assert.strictEqual(deepField.questions[0]?.options.length, 10);
           assert.isAtMost(
             deepField.questions[0]?.options[0]?.description.length ?? 0,
             THREAD_HISTORY_COMPACTED_FIELD_CHARS,
