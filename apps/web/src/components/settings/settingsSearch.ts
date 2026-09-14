@@ -1,5 +1,12 @@
 import { isElectron } from "~/env";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
+import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import {
+  validateSettingsScopeSearch,
+  type ResolvedSettingsScope,
+  type SettingsScopeSearch,
+} from "./settingsScope";
 
 export type SettingsPath =
   | "/settings/projects"
@@ -13,6 +20,19 @@ export type SettingsPath =
   | "/settings/connections"
   | "/settings/archived";
 
+/**
+ * Where a setting can be edited. Device-local rows have no scope: they render
+ * at every selection. `project-defaults` rows accept project overrides, so
+ * they are reachable from any server-backed selection.
+ */
+export type SettingsSearchScope =
+  | "environment"
+  | "environment-defaults"
+  | "project-defaults"
+  | "project"
+  | "checkout"
+  | "connections";
+
 export interface SettingsSearchItem {
   readonly id: string;
   readonly title: string;
@@ -20,6 +40,7 @@ export interface SettingsSearchItem {
   readonly targetId?: string;
   /** Descriptions, option labels, and aliases people may remember instead of the title. */
   readonly searchTerms?: ReadonlyArray<string>;
+  readonly scope?: SettingsSearchScope;
   // Its row only renders in the desktop app, so a browser result would land on
   // an anchor that isn't there.
   readonly desktopOnly?: boolean;
@@ -28,16 +49,18 @@ export interface SettingsSearchItem {
   // not expose a result that points to a missing anchor.
   readonly windowsOnly?: boolean;
   readonly cloudOnly?: boolean;
-  readonly primaryOnly?: boolean;
+  readonly environmentOnly?: boolean;
   readonly providerSettingsOnly?: boolean;
   readonly localBackendManagementOnly?: boolean;
+  readonly localEnvironmentOnly?: boolean;
   readonly wslAvailableOnly?: boolean;
   readonly requiresThreadAutoSettlement?: boolean;
 }
 
 export interface SettingsSearchAvailability {
+  readonly localEnvironmentDisabled?: boolean;
   readonly hasCloudPublicConfig: boolean;
-  readonly hasPrimaryEnvironment: boolean;
+  readonly hasEnvironment: boolean;
   readonly hasProviderSettingsEnvironment: boolean;
   readonly canManageLocalBackend: boolean;
   readonly isWslSettingsRowVisible: boolean;
@@ -49,9 +72,9 @@ export interface SettingsSearchAvailability {
  * subtitles both render from this record, so each label exists once.
  */
 export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
+  "/settings/projects": "Project",
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
-  "/settings/projects": "Projects",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/providers": "Providers",
@@ -70,9 +93,30 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "project-defaults",
     title: "Project defaults and overrides",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["model workspace environments projects inheritance checkout"],
+  },
+  {
+    id: "project-overview",
+    title: "Project overview",
     to: "/settings/projects",
+    searchTerms: ["name icon emoji image checkout remove delete"],
+  },
+  {
+    id: "default-model",
+    title: "Default model",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["new thread project provider reasoning effort"],
+  },
+  {
+    id: "default-permissions",
+    title: "Permissions",
+    to: "/settings/general",
+    scope: "project-defaults",
     searchTerms: [
-      "model workspace browser machines projects inheritance automatic pull checkout grouping actions scripts",
+      "new thread default runtime mode supervised approvals auto accept edits full access",
     ],
   },
   {
@@ -174,6 +218,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["sidebar inactivity days no activity automatically"],
     requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
   },
   {
     id: "auto-settle-merged-threads",
@@ -181,6 +226,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: ["pull request merge closed automatically sidebar"],
     requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
   },
   {
     id: "days-before-auto-settle",
@@ -189,6 +235,19 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "auto-settle-inactive-threads",
     searchTerms: ["thread timeout activity sidebar"],
     requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "thread-notifications",
+    title: "Thread notifications",
+    to: "/settings/general",
+    searchTerms: ["notification sound alert completion input approval desktop"],
+  },
+  {
+    id: "in-app-notifications",
+    title: "In-app notifications",
+    to: "/settings/general",
+    searchTerms: ["notification toast popup completion input approval failure"],
   },
   {
     id: "time-format",
@@ -197,10 +256,23 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["timestamp clock locale system browser os 12 hour 24 hour"],
   },
   {
+    id: "response-streaming",
+    title: "Response streaming",
+    to: "/settings/general",
+    scope: "project-defaults",
+    searchTerms: ["output token paragraph buffered wait turn legacy"],
+  },
+  {
     id: "hide-whitespace-changes",
     title: "Hide whitespace changes",
     to: "/settings/general",
     searchTerms: ["diff ignore spaces edits default"],
+  },
+  {
+    id: "default-diff-file-state",
+    title: "Default diff file state",
+    to: "/settings/general",
+    searchTerms: ["collapsed expanded collapse expand files pull request pr code tab"],
   },
   {
     id: "diff-layout",
@@ -231,11 +303,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Provider update checks",
     to: "/settings/general",
     searchTerms: ["installed cli versions newer available codex claude cursor grok opencode"],
+    scope: "environment-defaults",
   },
   {
     id: "continue-threads-after-server-update",
     title: "Continue threads after restarts",
     to: "/settings/general",
+    scope: "project-defaults",
     searchTerms: [
       "resume running active interrupted work restart reboot machine crash desktop update automatically",
     ],
@@ -244,6 +318,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "background-activity",
     title: "Background activity",
     to: "/settings/general",
+    scope: "environment-defaults",
     searchTerms: [
       "balanced performance battery saver advanced git fetch provider health refresh host power monitor idle policy",
     ],
@@ -251,19 +326,22 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "new-threads",
     title: "New threads",
-    to: "/settings/projects",
+    to: "/settings/general",
+    scope: "project-defaults",
     searchTerms: ["default workspace mode draft local worktree"],
   },
   {
     id: "start-from-origin",
     title: "Start from origin",
     to: "/settings/general",
+    scope: "project-defaults",
     searchTerms: ["new worktrees latest matching remote branch local"],
   },
   {
     id: "add-project-starts-in",
     title: "Add project starts in",
     to: "/settings/general",
+    scope: "environment-defaults",
     searchTerms: ["base directory folder browser path home"],
   },
   {
@@ -295,6 +373,7 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "text-generation-model",
     title: "Text generation model",
     to: "/settings/general",
+    scope: "project-defaults",
     searchTerms: ["generated thread titles source control content default provider"],
   },
   {
@@ -302,6 +381,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Diagnostics",
     to: "/settings/general",
     searchTerms: ["logs traces processes resource history failures spans cpu memory"],
+  },
+  {
+    id: "open-source-licenses",
+    title: "Open source licenses",
+    to: "/settings/general",
   },
   {
     id: "legacy-plan-mode",
@@ -314,12 +398,6 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "Context window indicator (legacy)",
     to: "/settings/general",
     searchTerms: ["composer meter usage tokens circle old"],
-  },
-  {
-    id: "legacy-token-streaming",
-    title: "Stream token by token (legacy)",
-    to: "/settings/general",
-    searchTerms: ["response output old compatibility"],
   },
   {
     id: "legacy-sidebar",
@@ -399,8 +477,36 @@ export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "agent-browser-access",
     title: "Agent browser access",
-    to: "/settings/projects",
-    searchTerms: ["allow open drive preview tools sessions"],
+    to: "/settings/integrations",
+    scope: "project-defaults",
+    searchTerms: ["allow disable enable open drive preview tools sessions project override"],
+  },
+  {
+    id: "device-hosts",
+    title: "Device hosts",
+    to: "/settings/integrations",
+    searchTerms: ["ssh remote simulator emulator ios android mac mini identity key connection"],
+  },
+  {
+    id: "agent-device-access",
+    title: "Agent device access",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["allow simulator emulator ios android drive tools sessions"],
+  },
+  {
+    id: "device-hub",
+    title: "Device hub",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["simulator emulator ios android install start"],
+  },
+  {
+    id: "device-platform-support",
+    title: "Simulator support",
+    to: "/settings/integrations",
+    targetId: "devices",
+    searchTerms: ["xcode android studio sdk avd runtime"],
   },
   {
     id: "browser-profiles",
@@ -447,14 +553,29 @@ export const SETTINGS_SEARCH_ITEMS = [
     id: "browser-auto-show-floating-preview",
     title: "Auto-show floating preview",
     to: "/settings/integrations",
-    searchTerms: ["agent opens browser pop into view hide"],
+    searchTerms: ["agent opens browser device simulator pop into view hide"],
+  },
+  {
+    id: "automatic-pull",
+    title: "Automatically pull",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["auto pull default branch current checkout fast forward upstream"],
+  },
+  {
+    id: "pull-request-merge-method",
+    title: "Default merge method",
+    to: "/settings/source-control",
+    scope: "project-defaults",
+    searchTerms: ["pull request merge squash rebase last selected"],
   },
   {
     id: "source-control",
     title: "Source control",
     to: "/settings/source-control",
+    scope: "environment-defaults",
     searchTerms: [
-      "version control git github gitlab bitbucket azure devops hosting integrations credentials scan server environment",
+      "version control git github gitlab forgejo gitea tea codeberg bitbucket azure devops hosting integrations credentials scan server environment",
     ],
   },
   {
@@ -464,7 +585,8 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "automatic remote branch refresh background credentials security keys seconds off",
     ],
-    primaryOnly: true,
+    environmentOnly: true,
+    scope: "environment-defaults",
   },
   {
     id: "source-control-writing-style",
@@ -473,14 +595,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "repository conventions conventional commits custom instructions change descriptions request titles",
     ],
-    primaryOnly: true,
+    environmentOnly: true,
   },
   {
     id: "follow-change-request-templates",
     title: "Follow change request templates",
     to: "/settings/source-control",
     searchTerms: ["repository pr pull request description structure"],
-    primaryOnly: true,
+    environmentOnly: true,
   },
   {
     id: "source-control-writer-model",
@@ -489,7 +611,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "override generated commit change request pr titles descriptions branch bookmark",
     ],
-    primaryOnly: true,
+    environmentOnly: true,
+    scope: "project-defaults",
+  },
+  {
+    id: "project-actions",
+    title: "Actions",
+    to: "/settings/projects",
+    searchTerms: ["commands scripts setup run dev server checkout worktree t3.json import"],
   },
   {
     id: "environment-icon",
@@ -498,6 +627,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     targetId: "connections-environment",
     searchTerms: ["machine glyph sidebar mac mini studio laptop desktop server cloud vm"],
     localBackendManagementOnly: true,
+  },
+  {
+    id: "local-environment",
+    title: "Local environment",
+    to: "/settings/connections",
+    targetId: "connections-environment",
+    searchTerms: ["turn off on disable enable local server agents remote only restart"],
+    desktopOnly: true,
   },
   {
     id: "network-access",
@@ -530,6 +667,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "t3-connect",
+    localEnvironmentOnly: true,
     title: "T3 Connect",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -539,6 +677,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "publish-agent-activity",
+    localEnvironmentOnly: true,
     title: "Publish agent activity",
     to: "/settings/connections",
     targetId: "connections-environment",
@@ -547,7 +686,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "connections-environment",
-    title: "This environment",
+    title: "This machine",
     to: "/settings/connections",
     searchTerms: [
       "connections server backend local remote access administrative permissions scope pairing links qr code authorized clients sessions revoke endpoint",
@@ -555,7 +694,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "remote-environments",
-    title: "Remote environments",
+    title: "Environments",
     to: "/settings/connections",
     searchTerms: ["add pair backend host code ssh config agent tunnel saved t3 connect"],
   },
@@ -568,6 +707,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "github-routing",
+    title: "GitHub sharing",
+    to: "/settings/connections",
+    searchTerms: ["pull request trusted environments shared credentials permissions read actions"],
+  },
+  {
     id: "archive",
     title: "Archived threads",
     to: "/settings/archived",
@@ -578,6 +723,111 @@ export const SETTINGS_SEARCH_ITEMS = [
 export type SettingsSearchItemId = (typeof SETTINGS_SEARCH_ITEMS)[number]["id"];
 
 const SEARCH_ITEMS_BY_ID = new Map(SETTINGS_SEARCH_ITEMS.map((item) => [item.id, item] as const));
+
+const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScope | null>> = {
+  "/settings/projects": "project",
+  "/settings/general": null,
+  "/settings/appearance": null,
+  "/settings/snap-shot": null,
+  // Keybindings fan out to the selection; Providers shows the representative
+  // environment at any selection. Neither needs a particular scope to render.
+  "/settings/keybindings": null,
+  "/settings/providers": null,
+  "/settings/integrations": null,
+  "/settings/source-control": "environment-defaults",
+  "/settings/connections": "connections",
+  "/settings/archived": "project-defaults",
+};
+
+/** Search keeps the selected target. A missing row can explain its owning scope instead. */
+export function getSettingsSearchTargetScope(targetId: string) {
+  const items: readonly SettingsSearchItem[] = SETTINGS_SEARCH_ITEMS;
+  const item =
+    items.find((candidate) => candidate.id === targetId) ??
+    items.find((candidate) => candidate.targetId === targetId);
+  return item
+    ? {
+        title: item.title,
+        scope: item.scope ?? SETTINGS_CATEGORY_SCOPES[item.to],
+        ...(item.requiresThreadAutoSettlement ? { requiresThreadAutoSettlement: true } : {}),
+      }
+    : null;
+}
+
+interface AutoSettlementSearchEnvironment {
+  readonly environmentId: EnvironmentId;
+  readonly connection: { readonly phase: EnvironmentConnectionPhase };
+  readonly serverConfig: {
+    readonly environment: {
+      readonly capabilities: { readonly threadAutoSettlement?: boolean };
+    };
+  } | null;
+}
+
+/** Discovery needs one capable environment; the selected page needs every connected target to support it. */
+export function getThreadAutoSettlementSearchAvailability(
+  environments: readonly AutoSettlementSearchEnvironment[],
+  scope?: Pick<ResolvedSettingsScope, "kind" | "environmentIds">,
+) {
+  const connected = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" && environment.serverConfig !== null,
+  );
+  const eligibleEnvironmentIds = connected
+    .filter(
+      (environment) =>
+        environment.serverConfig?.environment.capabilities.threadAutoSettlement === true,
+    )
+    .map((environment) => environment.environmentId);
+  const selected = connected.filter((environment) =>
+    scope?.environmentIds.includes(environment.environmentId),
+  );
+  return {
+    eligibleEnvironmentIds,
+    isTargetAvailable:
+      scope !== undefined &&
+      scope.kind !== "unavailable" &&
+      selected.length > 0 &&
+      selected.every((environment) => eligibleEnvironmentIds.includes(environment.environmentId)),
+  };
+}
+
+export function isSettingsSearchScopeAvailable(
+  requiredScope: SettingsSearchScope | null,
+  scopeKind: ResolvedSettingsScope["kind"],
+): boolean {
+  switch (requiredScope) {
+    case null:
+    case "connections":
+      return true;
+    case "environment":
+    case "checkout":
+      return requiredScope === scopeKind;
+    case "project":
+      return scopeKind === "project" || scopeKind === "checkout";
+    case "environment-defaults":
+      return scopeKind === "environment" || scopeKind === "all";
+    case "project-defaults":
+      return (
+        scopeKind === "environment" ||
+        scopeKind === "all" ||
+        scopeKind === "project" ||
+        scopeKind === "checkout"
+      );
+  }
+}
+
+function settingsScopeKindFromSearch(search: SettingsScopeSearch): ResolvedSettingsScope["kind"] {
+  const target = validateSettingsScopeSearch({ ...search });
+  if (target.checkout && !target.project) return "unavailable";
+  if (target.project) return target.checkout ? "checkout" : "project";
+  return target.machine ? "environment" : "all";
+}
+
+export function isSettingsOverviewVisible(search: SettingsScopeSearch): boolean {
+  const kind = settingsScopeKindFromSearch(search);
+  return kind === "project" || kind === "checkout";
+}
 
 /**
  * `id` and `title` props for the element a search item anchors to. Panels
@@ -599,9 +849,10 @@ export function filterAvailableSettingsSearchItems(
   return items.filter(
     (item) =>
       (!item.cloudOnly || availability.hasCloudPublicConfig) &&
-      (!item.primaryOnly || availability.hasPrimaryEnvironment) &&
+      (!item.environmentOnly || availability.hasEnvironment) &&
       (!item.providerSettingsOnly || availability.hasProviderSettingsEnvironment) &&
       (!item.localBackendManagementOnly || availability.canManageLocalBackend) &&
+      (!item.localEnvironmentOnly || !availability.localEnvironmentDisabled) &&
       (!item.wslAvailableOnly || availability.isWslSettingsRowVisible) &&
       (!item.requiresThreadAutoSettlement || availability.hasThreadAutoSettlement),
   );

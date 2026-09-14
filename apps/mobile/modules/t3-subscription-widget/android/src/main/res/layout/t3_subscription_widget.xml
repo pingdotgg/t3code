@@ -1,0 +1,9 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+  android:id="@+id/t3_widget_root" android:layout_width="match_parent" android:layout_height="match_parent"
+  android:orientation="vertical" android:padding="16dp" android:background="@drawable/t3_subscription_widget_background">
+  <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/t3_subscription_widget_name" android:textStyle="bold" android:textSize="16sp" android:textColor="@color/t3_widget_foreground" android:maxLines="1" android:ellipsize="end" />
+  <LinearLayout android:id="@+id/t3_widget_rows" android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1" android:orientation="vertical">
+    <TextView android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginTop="8dp" android:text="@string/t3_subscription_widget_empty" android:textSize="13sp" android:textColor="@color/t3_widget_secondary" />
+  </LinearLayout>
+  <TextView android:id="@+id/t3_widget_footer" android:layout_width="match_parent" android:layout_height="wrap_content" android:text="@string/t3_subscription_widget_open" android:textSize="10sp" android:textColor="@color/t3_widget_secondary" android:maxLines="1" android:ellipsize="end" />
+</LinearLayout>

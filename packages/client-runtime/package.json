@@ -103,6 +103,10 @@
       "types": "./src/state/attachments.ts",
       "default": "./src/state/attachments.ts"
     },
+    "./text-paste": {
+      "types": "./src/textPaste.ts",
+      "default": "./src/textPaste.ts"
+    },
     "./state/connections": {
       "types": "./src/state/connections.ts",
       "default": "./src/state/connections.ts"
@@ -130,6 +134,14 @@
     "./state/presentation": {
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
+    },
+    "./state/device": {
+      "types": "./src/state/device.ts",
+      "default": "./src/state/device.ts"
+    },
+    "./state/deviceHubAccess": {
+      "types": "./src/state/deviceHubAccess.ts",
+      "default": "./src/state/deviceHubAccess.ts"
     },
     "./state/preview": {
       "types": "./src/state/preview.ts",
@@ -215,6 +227,10 @@
       "types": "./src/state/vcs.ts",
       "default": "./src/state/vcs.ts"
     },
+    "./work-log/user-input": {
+      "types": "./src/work-log/userInput.ts",
+      "default": "./src/work-log/userInput.ts"
+    },
     "./work-log/presentation": {
       "types": "./src/work-log/presentation.ts",
       "default": "./src/work-log/presentation.ts"
@@ -234,6 +250,10 @@
     "./thread-pull-request-compatibility": {
       "types": "./src/threadPullRequestCompatibility.ts",
       "default": "./src/threadPullRequestCompatibility.ts"
+    },
+    "./file-preview": {
+      "types": "./src/filePreview.ts",
+      "default": "./src/filePreview.ts"
     }
   },
   "scripts": {

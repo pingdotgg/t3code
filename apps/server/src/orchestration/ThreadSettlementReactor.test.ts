@@ -302,6 +302,35 @@ const startHarness = Effect.fn("startThreadSettlementHarness")(function* (
 });
 
 describe("ThreadSettlementReactor", () => {
+  it("distinguishes a project that inherits the threshold from one that disables it", () => {
+    const inherits = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: true } },
+    });
+    const never = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: true, sidebarAutoSettleAfterDays: null },
+      },
+    });
+    assert.notStrictEqual(inherits, never);
+  });
+
+  it("ignores project overrides that do not touch settlement", () => {
+    const base = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettleOnMerge: false } },
+    });
+    const unrelated = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {
+        [LINKED_PROJECT_ID]: { defaultThreadEnvMode: "worktree" },
+        [PROJECT_ID]: { sidebarAutoSettleOnMerge: false, defaultAutoPull: true },
+      },
+    });
+    assert.strictEqual(base, unrelated);
+  });
+
   it.effect(
     "settles all-terminal links from snapshots and keeps open or unsynced links active",
     () =>
@@ -480,6 +509,59 @@ describe("ThreadSettlementReactor", () => {
           assert.deepStrictEqual(
             (yield* Ref.get(fixture.commands)).map((command) => command.threadId).toSorted(),
             [ThreadId.make("branch-thread"), ThreadId.make("linked-thread")],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("a project override settles only that project's inactive threads", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const overriddenProject = ProjectId.make("overridden-project");
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot(
+            [
+              makeThread("inherits-thread"),
+              makeThread("overridden-thread", { projectId: overriddenProject }),
+            ],
+            [makeProject(), makeProject(overriddenProject, "/workspace/overridden")],
+          ),
+          settings: {
+            ...DEFAULT_SERVER_SETTINGS,
+            sidebarAutoSettleAfterDays: null,
+            sidebarAutoSettleOnMerge: false,
+            projectSettingsOverrides: {
+              [overriddenProject]: { sidebarAutoSettleAfterDays: 1 },
+            },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* reactor.start();
+          yield* Queue.take(fixture.settingsReads);
+          yield* Deferred.succeed(fixture.activation, undefined);
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            [ThreadId.make("overridden-thread")],
+          );
+
+          // Clearing the override is a settlement change, so the sweep re-arms.
+          yield* fixture.updateSettings({
+            projectSettingsOverrides: { [overriddenProject]: null },
+            sidebarAutoSettleAfterDays: 1,
+          });
+          yield* Queue.take(fixture.snapshotReads);
+          yield* reactor.drain;
+          // The static snapshot never records the first settlement, so the
+          // second sweep dispatches for both; the inheriting thread is new.
+          assert.include(
+            (yield* Ref.get(fixture.commands)).map((command) => command.threadId),
+            ThreadId.make("inherits-thread"),
           );
         }).pipe(Effect.provide(fixture.layer));
       }),

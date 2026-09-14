@@ -6,7 +6,10 @@ import { SymbolView } from "../../components/AppSymbol";
 import { NativeHeaderToolbar, NativeStackScreenOptions } from "../../native/StackHeader";
 import { StackActions, useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, View } from "react-native";
+import { Alert, Platform, Pressable, View } from "react-native";
+import { AppText as Text } from "../../components/AppText";
+import { TerminalContextSheet } from "./TerminalContextSheet";
+import { hasNativeTerminalSurface } from "./nativeTerminalModule";
 import * as Clipboard from "expo-clipboard";
 import * as Schema from "effect/Schema";
 import {
@@ -179,6 +182,8 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const isEnvironmentReady = environment.presentation?.connection.phase === "connected";
   const requestedTerminalId = firstRouteParam(params.terminalId);
   const terminalId = requestedTerminalId ?? DEFAULT_TERMINAL_ID;
+  const [captureRequest, setCaptureRequest] = useState(0);
+  const [capturedOutput, setCapturedOutput] = useState<string | null>(null);
   const {
     isReady: hasResolvedFontPreference,
     appearance,
@@ -850,6 +855,19 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
     [navigation, selectedThread, terminalId],
   );
 
+  const handleCloseTerminal = useCallback(() => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+      return;
+    }
+    navigation.dispatch(
+      StackActions.replace("Thread", {
+        environmentId: params.environmentId,
+        threadId: params.threadId,
+      }),
+    );
+  }, [navigation, params.environmentId, params.threadId]);
+
   const navigateAwayAfterExit = useCallback(() => {
     // With other shells still live, fall through to the previous one instead
     // of dropping the user back on the thread.
@@ -1125,6 +1143,20 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
   return (
     <>
+      {capturedOutput !== null && selectedThread ? (
+        <TerminalContextSheet
+          text={capturedOutput}
+          environmentId={selectedThread.environmentId}
+          threadId={selectedThread.id}
+          terminalId={terminalId}
+          terminalLabel={resolveTerminalSessionLabel(terminalId, terminal.summary)}
+          onClose={() => setCapturedOutput(null)}
+          onAttach={() => {
+            setCapturedOutput(null);
+            if (navigation.canGoBack()) navigation.goBack();
+          }}
+        />
+      ) : null}
       <NativeStackScreenOptions
         options={{
           // Static header config lives in Stack.tsx (SOLID_HEADER_OPTIONS — the pty
@@ -1143,7 +1175,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
         <AndroidScreenHeader
           title="Terminal"
           subtitle={headerSubtitle}
-          onBack={navigation.canGoBack() ? () => navigation.goBack() : undefined}
+          onBack={handleCloseTerminal}
           trailing={
             <>
               {layout.usesSplitView ? (
@@ -1179,6 +1211,12 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
 
       {layout.usesSplitView ? (
         <NativeHeaderToolbar placement="left">
+          <NativeHeaderToolbar.Button
+            accessibilityLabel="Close terminal"
+            icon="xmark"
+            onPress={handleCloseTerminal}
+            separateBackground
+          />
           <NativeHeaderToolbar.Button
             accessibilityLabel={panes.primarySidebarVisible ? "Maximize terminal" : "Show threads"}
             icon={
@@ -1283,6 +1321,11 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
                 fontSize={fontSize}
                 isRunning={isRunning}
                 keyboardFocusRequest={keyboardFocusRequest}
+                captureRequest={captureRequest}
+                onCapture={(text) => {
+                  if (text.trim()) setCapturedOutput(text);
+                  else Alert.alert("No terminal output", "There is no visible output to attach.");
+                }}
                 onInput={handleInput}
                 onResize={handleResize}
                 style={{ flex: 1 }}
@@ -1291,6 +1334,18 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
               />
             </BlurTargetView>
 
+            {selectedThread && hasNativeTerminalSurface() ? (
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  KeyboardController.dismiss();
+                  setCaptureRequest((value) => value + 1);
+                }}
+                className="px-4 py-2"
+              >
+                <Text style={{ color: terminalTheme.foreground }}>Attach visible output</Text>
+              </Pressable>
+            ) : null}
             {isAccessoryVisible ? (
               <KeyboardStickyView
                 style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}
