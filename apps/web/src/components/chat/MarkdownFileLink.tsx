@@ -347,6 +347,12 @@ export const MarkdownFileLink = memo(function MarkdownFileLink({
                 }
                 handleOpenInFilePreview();
               }}
+              onAuxClick={(event) => {
+                if (event.button !== 1) return;
+                event.preventDefault();
+                event.stopPropagation();
+                handleOpenInEditor();
+              }}
               onContextMenu={handleContextMenu}
             >
               <FileTagChipContent
