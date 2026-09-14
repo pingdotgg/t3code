@@ -343,9 +343,23 @@ export const make = Effect.gen(function* () {
     // Only what git left behind may go. The destination was empty when the
     // clone started, so anything without a `.git` inside was put there by
     // someone else since; refuse rather than delete their files.
-    const entries = yield* fileSystem
-      .readDirectory(normalized)
-      .pipe(Effect.orElseSucceed((): ReadonlyArray<string> => []));
+    // A missing destination is already discarded; any other read failure
+    // (a file in its place, permissions) is not something to remove through.
+    const entries = yield* fileSystem.readDirectory(normalized).pipe(
+      Effect.catchIf(
+        (cause) => cause.reason._tag === "NotFound",
+        () => Effect.succeed<ReadonlyArray<string>>([]),
+      ),
+      Effect.mapError(
+        (cause) =>
+          new SourceControlRepositoryError({
+            operation: "discardClone",
+            provider: "unknown",
+            detail: "The clone destination could not be inspected.",
+            cause,
+          }),
+      ),
+    );
     if (entries.length > 0 && !entries.includes(".git")) {
       return yield* new SourceControlRepositoryError({
         operation: "discardClone",

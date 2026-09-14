@@ -302,16 +302,25 @@ it.effect("discards only a directory git wrote to", () =>
     yield* fs.makeDirectory(foreign);
     yield* fs.writeFileString(path.join(foreign, "notes.txt"), "mine");
 
+    // A file where the directory should be must not be removed either.
+    const replaced = path.join(parent, "replaced");
+    yield* fs.writeFileString(replaced, "not a directory");
+
     yield* Effect.gen(function* () {
       const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
       yield* service.discardClone(partial);
       const error = yield* Effect.flip(service.discardClone(foreign));
       assert.include(error.detail, "not from the clone");
+      const replacedError = yield* Effect.flip(service.discardClone(replaced));
+      assert.include(replacedError.detail, "could not be inspected");
+      // A destination that never got created is nothing to discard.
+      yield* service.discardClone(path.join(parent, "missing"));
     }).pipe(Effect.provide(makeLayer({})));
 
     // The partial clone is emptied but its directory (the workspace root) stays.
     assert.deepStrictEqual(yield* fs.readDirectory(partial), []);
     assert.deepStrictEqual(yield* fs.readDirectory(foreign), ["notes.txt"]);
+    assert.strictEqual(yield* fs.readFileString(replaced), "not a directory");
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
