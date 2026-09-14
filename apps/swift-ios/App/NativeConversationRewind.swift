@@ -37,8 +37,8 @@ enum NativeConversationRewind {
         afterSequence: Int,
         previousFailureIDs: Set<String>,
         timeout: Duration = .seconds(120)
-    ) async throws {
-        try await withThrowingTaskGroup(of: Void.self) { group in
+    ) async throws -> Int {
+        try await withThrowingTaskGroup(of: Int.self) { group in
             group.addTask {
                 for try await batch in batches {
                     for item in batch {
@@ -48,7 +48,9 @@ enum NativeConversationRewind {
                         case let .snapshot(snapshot):
                             guard snapshot.thread.id == threadID,
                                   snapshot.snapshotSequence > afterSequence else { continue }
-                            if isComplete(snapshot.thread, messageID: messageID, turnCount: turnCount) { return }
+                            if isComplete(snapshot.thread, messageID: messageID, turnCount: turnCount) {
+                                return snapshot.snapshotSequence
+                            }
                             if let failure = snapshot.thread.activities.last(where: {
                                 $0.kind == "checkpoint.revert.failed" && !previousFailureIDs.contains($0.id)
                                     && $0.payload["turnCount"] == .number(Double(turnCount))
@@ -73,7 +75,7 @@ enum NativeConversationRewind {
                                 )
                             }
                             if event["type"]?.stringValue == "thread.reverted",
-                               event["payload"]?["turnCount"] == .number(Double(turnCount)) { return }
+                               event["payload"]?["turnCount"] == .number(Double(turnCount)) { return Int(sequence) }
                         }
                     }
                 }
@@ -84,7 +86,8 @@ enum NativeConversationRewind {
                 throw FeatureConversationRewindError(message: "Timed out waiting for rewind. Reload the thread before trying again.")
             }
             defer { group.cancelAll() }
-            _ = try await group.next()
+            guard let sequence = try await group.next() else { throw CancellationError() }
+            return sequence
         }
     }
 }

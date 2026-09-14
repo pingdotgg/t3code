@@ -128,7 +128,7 @@ struct NativeConversationRewindTests {
     }
 
     private func wait(_ events: AsyncThrowingStream<[ThreadStreamItem], Error>) async throws {
-        try await NativeConversationRewind.waitForCompletion(
+        _ = try await NativeConversationRewind.waitForCompletion(
             batches: events, threadID: "thread", messageID: "user", turnCount: 0,
             afterSequence: 10, previousFailureIDs: []
         )
