@@ -32,7 +32,7 @@ struct NativeConversationRewindTests {
     }
 
     @Test
-    func draftRecoveryKeepsExistingInputAndSameNameAttachments() {
+    func draftRecoveryKeepsExistingInputAndSameNameAttachments() throws {
         let existing = FeatureDraftAttachment(data: Data([1]), filename: "same.txt", mimeType: "text/plain")
         let recovered = FeatureDraftAttachment(data: Data([2]), filename: "same.txt", mimeType: "text/plain")
         let draft = FeatureComposerDraft(
@@ -40,7 +40,7 @@ struct NativeConversationRewindTests {
             selection: .init(providerID: "selected-provider", modelID: "selected-model"),
             workspace: .init(mode: .worktree, branch: "feature", worktreePath: "/worktree", startFromOrigin: true)
         )
-        let result = FeatureConversationRewind.recover(.init(
+        let result = try FeatureConversationRewind.recover(.init(
             message: .init(id: "message", role: .user, text: "Original prompt"), attachments: [recovered]
         ), draft: draft)
         #expect(result.text == "Current draft\n\nOriginal prompt")
@@ -48,6 +48,46 @@ struct NativeConversationRewindTests {
         #expect(result.attachments.map(\.data) == [Data([1]), Data([2])])
         #expect(result.selection == draft.selection)
         #expect(result.workspace == draft.workspace)
+    }
+
+    @Test
+    func recoveredContextKeepsItsLinksAndUsesNewAttachmentIDsOnResend() throws {
+        let existing = ComposerContextRecord(contextId: "existing", label: "Sources", payload: .mention(.init(path: "src")))
+        let shared = ComposerContextRecord(contextId: "shared", label: "Build", payload: .skill(.init(name: "build")))
+        let file = ComposerContextRecord(contextId: "file", label: "Pasted text", payload: .file(.init(
+            attachmentId: "old-server-file", name: "paste.txt", mimeType: "text/plain", sizeBytes: 3
+        )))
+        let terminal = FeatureComposerContext.terminalRecord(text: "Original output", terminalID: "terminal", label: "Terminal")
+        let future = ComposerContextRecord(contextId: "future", label: "Captured input", payload: .unknown(
+            kind: "future", payload: .object(["value": .string("Keep this")])
+        ))
+        let restoredRecords = [shared, file, terminal, future]
+        let prompt = restoredRecords.map(ComposerContextReferences.format).joined(separator: " ")
+        let copied = FeatureDraftAttachment(data: Data([1, 2, 3]), filename: "paste.txt", mimeType: "text/plain", source: .pastedText)
+        let result = try FeatureConversationRewind.recover(.init(
+            message: .init(id: "user", role: .user, text: prompt, attachments: [.init(
+                id: "old-server-file", name: "paste.txt", mimeType: "text/plain", sizeBytes: 3, source: .pastedText
+            )], context: .init(records: restoredRecords)),
+            attachments: [copied]
+        ), draft: .init(text: ComposerContextReferences.format(existing), context: .init(records: [existing, shared])))
+
+        #expect(result.text.hasSuffix(prompt))
+        #expect(result.context?.records.map(\.contextId) == ["existing", "shared", "file", terminal.contextId, "future"])
+        #expect(result.context?.records.first(where: { $0.contextId == "file" })?.attachment?.attachmentId == copied.id.uuidString)
+        #expect(result.context?.records.last == future)
+        #expect(result.attachments.first?.source == .pastedText)
+
+        let upload = try UploadChatAttachment(
+            id: copied.id, data: copied.data, name: copied.filename, mimeType: copied.mimeType, contextSource: copied.source
+        )
+        let resent = T3Client.prepareMessageContext(
+            text: result.text + " Edit this", context: result.context, attachments: [upload],
+            uploadedAttachments: [.object(["id": .string("new-server-file")])], supportsContext: true
+        )
+        #expect(resent.context?.records.count == result.context?.records.count)
+        #expect(resent.context?.records.first(where: { $0.contextId == "file" })?.attachment?.attachmentId == "new-server-file")
+        #expect(resent.text == result.text + " Edit this")
+        #expect(upload.contextSource == .pastedText)
     }
 
     @Test
@@ -59,8 +99,8 @@ struct NativeConversationRewindTests {
     }
 
     @Test
-    func attachmentOnlyRewindDoesNotRestoreGeneratedBootstrapText() {
-        let result = FeatureConversationRewind.recover(.init(
+    func attachmentOnlyRewindDoesNotRestoreGeneratedBootstrapText() throws {
+        let result = try FeatureConversationRewind.recover(.init(
             message: .init(id: "user", role: .user, text: "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]"),
             attachments: [.init(data: Data([1]), filename: "input.txt", mimeType: "text/plain")]
         ), draft: .init(text: "Existing draft"))
@@ -69,9 +109,9 @@ struct NativeConversationRewindTests {
     }
 
     @Test
-    func literalBootstrapSentenceWithoutAttachmentsIsPreserved() {
+    func literalBootstrapSentenceWithoutAttachmentsIsPreserved() throws {
         let message = FeatureMessage(id: "user", role: .user, text: "[User attached one or more files without additional text. Respond using the conversation context and the attached files.]")
-        let result = FeatureConversationRewind.recover(.init(message: message, attachments: []), draft: .init())
+        let result = try FeatureConversationRewind.recover(.init(message: message, attachments: []), draft: .init())
         #expect(result.text == message.text)
     }
 

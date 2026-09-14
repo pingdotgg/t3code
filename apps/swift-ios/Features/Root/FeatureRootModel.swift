@@ -939,7 +939,9 @@ public final class FeatureRootModel {
                 guard self.snapshot.environments.contains(where: { $0.id == detail.thread.environmentID }) else {
                     throw FeatureConversationRewindError(message: "The computer was removed before rewind started.", didNotRevert: true)
                 }
-                let recovery = FeatureConversationRewind.recover(reverted, draft: FeatureComposerDraft())
+                let recovery = try FeatureConversationRewind.recover(reverted, draft: FeatureComposerDraft())
+                // Check the combined record limit before the server changes history.
+                _ = try FeatureComposerContext.merge(draft.context, recovery.context)
                 try await self.draftStore.setDraft(recovery, for: recoveryKey)
                 self.pendingRewindRecoveryIDs.insert(threadID)
             }

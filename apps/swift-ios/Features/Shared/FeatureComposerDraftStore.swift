@@ -369,7 +369,7 @@ public actor FeatureComposerDraftStore {
         guard current.attachments.count + recovery.attachments.count <= 8 else {
             throw FeatureConversationRewindError(message: "Make room for the saved prompt's attachments before recovering it.")
         }
-        let recovered = FeatureConversationRewind.merge(recovery: recovery, into: current)
+        let recovered = try FeatureConversationRewind.merge(recovery: recovery, into: current)
         var persisted = PersistedDraft(recovered)
         persisted.importedShareIDs = drafts[threadKey]?.importedShareIDs
         drafts[threadKey] = persisted

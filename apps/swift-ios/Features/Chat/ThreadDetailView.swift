@@ -312,6 +312,7 @@ public struct ThreadDetailView: View {
         draft = recovered.text
         attachments = recovered.attachments
         selection = recovered.selection
+        composerContext = recovered.context
         didRestoreDraft = true
     }
 

@@ -2378,7 +2378,8 @@ final class NativeFeatureClient: FeatureClient, FeatureDeviceManaging,
                 )
             }.value
             attachments.append(FeatureDraftAttachment(
-                id: id, ownedFile: file, filename: attachment.name, mimeType: attachment.mimeType
+                id: id, ownedFile: file, filename: attachment.name, mimeType: attachment.mimeType,
+                source: attachment.source
             ))
         }
         try await prepareRecovery(FeatureRevertedMessage(message: message, attachments: attachments))

@@ -96,13 +96,21 @@ struct FeatureRootModelTests {
         let draftURL = directory.appendingPathComponent("drafts.json")
         let drafts = FeatureComposerDraftStore(fileURL: draftURL)
         let thread = FeatureThread(id: "thread", projectID: "project", environmentID: "environment", title: "Task")
-        let attachment = FeatureDraftAttachment(data: Data([4, 5, 6]), filename: "saved.txt", mimeType: "text/plain")
+        let attachment = FeatureDraftAttachment(data: Data([4, 5, 6]), filename: "saved.txt", mimeType: "text/plain", source: .pastedText)
+        let fileContext = ComposerContextRecord(contextId: "saved-file", label: "Pasted text", payload: .file(.init(
+            attachmentId: "server-file", name: "saved.txt", mimeType: "text/plain", sizeBytes: 3
+        )))
+        let originalPrompt = "Original prompt " + ComposerContextReferences.format(fileContext)
         let client = FeatureClientStub()
         client.snapshot = FeatureSnapshot(
             environments: [.init(id: "environment", name: "Computer", endpoint: "https://example.test", connectionState: .connected)],
             threads: [thread]
         )
-        client.threadDetail = .init(thread: thread, messages: [.init(id: "user", role: .user, text: "Original prompt")])
+        client.threadDetail = .init(thread: thread, messages: [.init(
+            id: "user", role: .user, text: originalPrompt, attachments: [.init(
+                id: "server-file", name: "saved.txt", mimeType: "text/plain", sizeBytes: 3, source: .pastedText
+            )], context: .init(records: [fileContext])
+        )])
         client.rewindAttachments = [attachment]
         client.rewindHandler = { _, _ in throw RPCError.disconnected }
         let model = FeatureRootModel(
@@ -115,6 +123,7 @@ struct FeatureRootModelTests {
         let recoveryKey = FeatureComposerDraftStore.rewindRecoveryKey(for: key)
         #expect(try await drafts.draft(for: key)?.text == "Current draft")
         #expect(try await drafts.draft(for: recoveryKey)?.attachments.first?.data == Data([4, 5, 6]))
+        #expect(try await drafts.draft(for: recoveryKey)?.context?.records.first?.attachment?.attachmentId == attachment.id.uuidString)
         #expect(model.pendingRewindRecoveryIDs.contains(thread.id))
         #expect(!model.canRewindConversation(threadID: thread.id, messageID: "user"))
 
@@ -126,14 +135,53 @@ struct FeatureRootModelTests {
         await restarted.reload()
         await restarted.checkRewindRecovery(for: thread)
         #expect(restarted.pendingRewindRecoveryIDs.contains(thread.id))
-        await restarted.recoverSavedRewind(threadID: thread.id, draft: .init(text: "Newer draft"))
+        let newContext = ComposerContextRecord(contextId: "new-source", label: "New source", payload: .mention(.init(path: "src/new.swift")))
+        let newPrompt = "Newer draft " + ComposerContextReferences.format(newContext)
+        await restarted.recoverSavedRewind(threadID: thread.id, draft: .init(text: newPrompt, context: .init(records: [newContext])))
         let recovered = try await restartedDrafts.draft(for: key)
-        #expect(recovered?.text == "Newer draft\n\nOriginal prompt")
+        #expect(recovered?.text == newPrompt + "\n\n" + originalPrompt)
         #expect(recovered?.attachments.first?.data == Data([4, 5, 6]))
         #expect(recovered?.attachments.first?.uploadedReference == nil)
+        #expect(recovered?.attachments.first?.source == .pastedText)
+        #expect(recovered?.context?.records.map(\.contextId) == [newContext.contextId, fileContext.contextId])
+        #expect(recovered?.context?.records.last?.attachment?.attachmentId == attachment.id.uuidString)
         #expect(try await restartedDrafts.draft(for: recoveryKey) == nil)
         #expect(try await restartedDrafts.consumeRewindRecovery(for: key) == nil)
         #expect(restarted.pendingRewindRecoveryIDs.isEmpty)
+    }
+
+    @Test
+    func rewindRejectsContextOverflowBeforeDispatch() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let drafts = FeatureComposerDraftStore(fileURL: directory.appendingPathComponent("drafts.json"))
+        let thread = FeatureThread(id: "thread", projectID: "project", environmentID: "environment", title: "Task")
+        let record = ComposerContextRecord(contextId: "recovered", label: "Saved", payload: .mention(.init(path: "saved")))
+        let message = FeatureMessage(id: "user", role: .user, text: ComposerContextReferences.format(record), context: .init(records: [record]))
+        let client = FeatureClientStub()
+        client.snapshot = FeatureSnapshot(
+            environments: [.init(id: "environment", name: "Computer", endpoint: "https://example.test", connectionState: .connected)],
+            threads: [thread]
+        )
+        client.threadDetail = .init(thread: thread, messages: [message])
+        var dispatched = false
+        client.rewindHandler = { _, _ in
+            dispatched = true
+            return FeatureRevertedMessage(message: message, attachments: [])
+        }
+        let model = FeatureRootModel(
+            client: client, outboxStore: .init(fileURL: directory.appendingPathComponent("outbox.json")), draftStore: drafts
+        )
+        await model.reload()
+        _ = await model.detail(for: thread.id)
+        let current = FeatureComposerDraft(text: "Current draft", context: .init(records: (0..<200).map {
+            ComposerContextRecord(contextId: "existing-\($0)", label: "Source \($0)", payload: .mention(.init(path: "source-\($0)")))
+        }))
+        await model.rewindConversation(threadID: thread.id, messageID: message.id, draft: current)
+        #expect(!dispatched)
+        #expect(model.rewindErrors[thread.id] == FeatureComposerContext.MergeError.tooManyRecords.localizedDescription)
+        #expect(try await drafts.draft(for: FeatureComposerDraftStore.threadKey(thread)) == current)
+        #expect(try await !drafts.hasRewindRecovery(for: FeatureComposerDraftStore.threadKey(thread)))
     }
 
     @Test
