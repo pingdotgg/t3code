@@ -152,11 +152,13 @@ function makePublicValueConfig(name: string, fallback: string) {
 /**
  * The CLI never calls Clerk's /oauth/authorize itself: the browser leg goes
  * through the hosted /connect page, which builds the authorize URL after a
- * Clerk session exists (see CliTokenManager.login). Only the token endpoint
- * is contacted directly.
+ * Clerk session exists (see CliTokenManager.login). The token endpoint and,
+ * for headless hosts, the device authorization endpoint are contacted
+ * directly.
  */
 export interface CloudCliOAuthConfig {
   readonly tokenEndpoint: string;
+  readonly deviceAuthorizationEndpoint: string;
   readonly clientId: string;
   readonly loopbackPort: number;
   readonly redirectUri: string;
@@ -195,6 +197,7 @@ export function makeCloudCliOAuthConfig({
           (clerkFrontendApiUrl) =>
             ({
               tokenEndpoint: `${clerkFrontendApiUrl}/oauth/token`,
+              deviceAuthorizationEndpoint: `${clerkFrontendApiUrl}/oauth/device_authorization`,
               clientId,
               loopbackPort: CLOUD_CLI_OAUTH_LOOPBACK_PORT,
               redirectUri: connectLoopbackRedirectUri(CLOUD_CLI_OAUTH_LOOPBACK_PORT),
