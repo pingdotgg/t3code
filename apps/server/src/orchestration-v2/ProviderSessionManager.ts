@@ -2511,89 +2511,99 @@ export const layerWithOptions = (
           }
         }
         const activeSessions = [...(yield* Ref.get(sessions)).values()];
-        yield* Effect.forEach(
-          activeSessions,
-          (entry) =>
-            releaseEntry({
-              providerSessionId: entry.runtime.providerSessionId,
-              reason: "server_shutdown",
-              expectedRuntime: entry.runtime,
-            }).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+        // Every wait below is independently bounded, and the phases target
+        // disjoint resources — run all of them concurrently so a few wedged
+        // provider processes cannot multiply the teardown wait. Ownership is
+        // unchanged: shutdown still joins each tracked cleanup before it
+        // returns.
+        yield* Effect.all(
+          [
+            Effect.forEach(
+              activeSessions,
+              (entry) =>
+                releaseEntry({
                   providerSessionId: entry.runtime.providerSessionId,
-                  cause,
-                }),
-              ),
+                  reason: "server_shutdown",
+                  expectedRuntime: entry.runtime,
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                      providerSessionId: entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
             ),
-          { discard: true },
-        );
-        // Releases already claimed before this shutdown (a racing close,
-        // detach, or idle sweep) are invisible to the sessions scan; join
-        // each pending record so teardown does not return while cleanup
-        // still runs against the manager's dependencies.
-        yield* Effect.forEach(
-          [...releasing.values()],
-          (release) =>
-            releaseEntry({
-              providerSessionId: release.entry.runtime.providerSessionId,
-              reason: "server_shutdown",
-              joinOnly: true,
-              expectedRuntime: release.entry.runtime,
-            }).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+            // Releases already claimed before this shutdown (a racing close,
+            // detach, or idle sweep) are invisible to the sessions scan; join
+            // each pending record so teardown does not return while cleanup
+            // still runs against the manager's dependencies.
+            Effect.forEach(
+              [...releasing.values()],
+              (release) =>
+                releaseEntry({
                   providerSessionId: release.entry.runtime.providerSessionId,
-                  cause,
-                }),
-              ),
+                  reason: "server_shutdown",
+                  joinOnly: true,
+                  expectedRuntime: release.entry.runtime,
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                      providerSessionId: release.entry.runtime.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
             ),
-          { discard: true },
-        );
-        // Terminal-detach credential sweeps outlive their callers in
-        // pendingRevocations; join each tracked tail (bounded like every
-        // cleanup wait) so teardown does not return while a revocation is
-        // still running.
-        yield* Effect.forEach(
-          [...pendingRevocations],
-          ([threadId, record]) =>
-            Deferred.await(record.done).pipe(
-              Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
-              Effect.flatMap((settled) =>
-                Option.isNone(settled)
-                  ? Effect.logWarning(
-                      "orchestration-v2.driver-session.shutdown-revocation-pending",
-                      { threadId },
-                    )
-                  : Effect.void,
-              ),
-              Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
-                  threadId,
-                  cause,
-                }),
-              ),
+            // Terminal-detach credential sweeps outlive their callers in
+            // pendingRevocations; join each tracked tail (bounded like every
+            // cleanup wait) so teardown does not return while a revocation is
+            // still running.
+            Effect.forEach(
+              [...pendingRevocations],
+              ([threadId, record]) =>
+                Deferred.await(record.done).pipe(
+                  Effect.timeoutOption(RELEASE_SCOPE_CLOSE_TIMEOUT_MS),
+                  Effect.flatMap((settled) =>
+                    Option.isNone(settled)
+                      ? Effect.logWarning(
+                          "orchestration-v2.driver-session.shutdown-revocation-pending",
+                          { threadId },
+                        )
+                      : Effect.void,
+                  ),
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                      threadId,
+                      cause,
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
             ),
-          { discard: true },
-        );
-        // In-flight startups own provider resources without a live entry;
-        // they were marked above — join their bounded unwind during
-        // shutdown too.
-        yield* Effect.forEach(
-          starting,
-          (record) =>
-            releaseEntry({
-              providerSessionId: record.providerSessionId,
-              reason: "server_shutdown",
-            }).pipe(
-              Effect.catchCause((cause) =>
-                Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+            // In-flight startups own provider resources without a live entry;
+            // they were marked above — join their bounded unwind during
+            // shutdown too.
+            Effect.forEach(
+              starting,
+              (record) =>
+                releaseEntry({
                   providerSessionId: record.providerSessionId,
-                  cause,
-                }),
-              ),
+                  reason: "server_shutdown",
+                }).pipe(
+                  Effect.catchCause((cause) =>
+                    Effect.logWarning("orchestration-v2.driver-session.shutdown-release-failed", {
+                      providerSessionId: record.providerSessionId,
+                      cause,
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
             ),
-          { discard: true },
+          ],
+          { concurrency: "unbounded", discard: true },
         );
       });
       yield* Effect.addFinalizer(() => shutdown);
@@ -2604,80 +2614,7 @@ export const layerWithOptions = (
           const open = sessionOpen.withLock(
             input.providerSessionId,
             Effect.gen(function* () {
-              const cwd = input.runtimePolicy.cwd;
-              if (cwd !== null) {
-                const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
-                  Effect.map((stat) => stat.type === "Directory"),
-                  Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
-                );
-                if (!workspaceIsDirectory) {
-                  return yield* new ProviderWorkspaceMissingError({
-                    threadId: input.threadId,
-                    cwd,
-                  });
-                }
-              }
               const key = sessionKey(input.providerSessionId);
-              const existing = (yield* Ref.get(sessions)).get(key);
-              const pending = findPendingRelease(input.providerSessionId, input.threadId, existing);
-              if (pending !== undefined) {
-                return yield* new ProviderSessionOpenError({
-                  instanceId: input.modelSelection.instanceId,
-                  providerSessionId: input.providerSessionId,
-                  cause: `Provider session ${pending.entry.runtime.providerSessionId} has not finished cleanup.`,
-                });
-              }
-              // Block the replacement like a pending release: a failed or
-              // still-unwinding startup for the session id or the same thread
-              // may still own provider resources.
-              const blockingStartup = findBlockingStartup(input.providerSessionId, input.threadId);
-              if (blockingStartup !== undefined) {
-                return yield* new ProviderSessionOpenError({
-                  instanceId: input.modelSelection.instanceId,
-                  providerSessionId: input.providerSessionId,
-                  cause: `Provider session ${blockingStartup.providerSessionId} has not finished cleanup.`,
-                });
-              }
-              if (existing !== undefined) {
-                if (
-                  !existing.attachedThreadIds.has(input.threadId) &&
-                  !existing.supportsMultipleProviderThreads
-                ) {
-                  return yield* new ProviderSessionOpenError({
-                    instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
-                    cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
-                  });
-                }
-                const attached = yield* ensureThreadAttached({
-                  providerSessionId: input.providerSessionId,
-                  threadId: input.threadId,
-                  providerInstanceId: existing.runtime.instanceId,
-                  expectedRuntime: existing.runtime,
-                });
-                if (attached === "closing" || attached === "released") {
-                  return yield* new ProviderSessionOpenError({
-                    instanceId: input.modelSelection.instanceId,
-                    providerSessionId: input.providerSessionId,
-                    cause: `Provider session ${input.providerSessionId} ${
-                      attached === "closing" ? "has not finished cleanup." : "is no longer running."
-                    }`,
-                  });
-                }
-                yield* touchActivity(input.providerSessionId, existing.runtime);
-                return existing.exposedRuntime;
-              }
-
-              const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
-                Effect.mapError(
-                  (cause) =>
-                    new ProviderSessionOpenError({
-                      instanceId: input.modelSelection.instanceId,
-                      providerSessionId: input.providerSessionId,
-                      cause,
-                    }),
-                ),
-              );
               // The reservation from prepare protects the credential (which
               // eager adapters bake into the provider process during
               // openSession) from racing releases until this session's entry
@@ -2696,20 +2633,14 @@ export const layerWithOptions = (
               };
               const dropReservation = Effect.sync(dropReservationNow);
               const sessionScope = yield* Scope.make();
-              // Track the startup before credential preparation and the
-              // adapter call: a close or detach racing the open marks
-              // closeRequested and joins this record's unwind instead of
+              // Track the startup before any suspension — the workspace stat
+              // and adapter lookup included: a close or detach racing the open
+              // marks closeRequested and joins this record's unwind instead of
               // reporting success while provider resources are being spawned.
               // sessionOpen serializes same-id opens, so a record found here
               // later can only be a failed leftover. The flag check and the
               // insert share one synchronous step so a startup can never
               // begin tracking after its instance's close already scanned.
-              // Set when the entry lands in `sessions`: the release path owns
-              // cleanup from then on. Any earlier non-success exit — typed
-              // failure, defect, or interruption — must close the scope and
-              // revoke the credential when nothing else claims it, or the
-              // partially opened provider process and its token are left
-              // unowned and unrecoverable.
               let entryRegistered = false;
               let registeredRuntime: ProviderAdapterV2SessionRuntime | undefined;
               // Registration and the unwind handler are one uninterruptible
@@ -2720,24 +2651,39 @@ export const layerWithOptions = (
               // `restore`; every exit from it still runs the unwind.
               const exposedRuntime = yield* Effect.uninterruptibleMask((restore) =>
                 Effect.gen(function* () {
-                  const openingRecord = yield* Effect.sync((): OpeningSessionRecord | undefined => {
-                    if (
-                      shutdownInitiated ||
-                      closingInstanceCounts.has(input.modelSelection.instanceId)
-                    ) {
-                      return undefined;
-                    }
-                    const record: OpeningSessionRecord = {
-                      providerSessionId: input.providerSessionId,
-                      threadId: input.threadId,
+                  const openingRecord = yield* Effect.sync(
+                    (): OpeningSessionRecord | "blocked" | undefined => {
+                      if (
+                        shutdownInitiated ||
+                        closingInstanceCounts.has(input.modelSelection.instanceId)
+                      ) {
+                        return undefined;
+                      }
+                      // sessionOpen serializes same-id opens, so a record
+                      // found here can only be a failed or still-unwinding
+                      // leftover — it must keep blocking replacements.
+                      if (opening.has(key)) {
+                        return "blocked";
+                      }
+                      const record: OpeningSessionRecord = {
+                        providerSessionId: input.providerSessionId,
+                        threadId: input.threadId,
+                        instanceId: input.modelSelection.instanceId,
+                        closeRequested: false,
+                        failed: undefined,
+                        settled: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
+                      };
+                      opening.set(key, record);
+                      return record;
+                    },
+                  );
+                  if (openingRecord === "blocked") {
+                    return yield* new ProviderSessionOpenError({
                       instanceId: input.modelSelection.instanceId,
-                      closeRequested: false,
-                      failed: undefined,
-                      settled: Deferred.makeUnsafe<void, ProviderSessionReleaseError>(),
-                    };
-                    opening.set(key, record);
-                    return record;
-                  });
+                      providerSessionId: input.providerSessionId,
+                      cause: "A previous provider session has not finished cleanup.",
+                    });
+                  }
                   if (openingRecord === undefined) {
                     return yield* new ProviderSessionOpenError({
                       instanceId: input.modelSelection.instanceId,
@@ -2747,6 +2693,88 @@ export const layerWithOptions = (
                   }
                   return yield* restore(
                     Effect.gen(function* () {
+                      const cwd = input.runtimePolicy.cwd;
+                      if (cwd !== null) {
+                        const workspaceIsDirectory = yield* fileSystem.stat(cwd).pipe(
+                          Effect.map((stat) => stat.type === "Directory"),
+                          Effect.catch((error) => Effect.succeed(error.reason._tag !== "NotFound")),
+                        );
+                        if (!workspaceIsDirectory) {
+                          return yield* new ProviderWorkspaceMissingError({
+                            threadId: input.threadId,
+                            cwd,
+                          });
+                        }
+                      }
+                      const existing = (yield* Ref.get(sessions)).get(key);
+                      const pending = findPendingRelease(
+                        input.providerSessionId,
+                        input.threadId,
+                        existing,
+                      );
+                      if (pending !== undefined) {
+                        return yield* new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause: `Provider session ${pending.entry.runtime.providerSessionId} has not finished cleanup.`,
+                        });
+                      }
+                      // Block the replacement like a pending release: a failed or
+                      // still-unwinding startup for the session id or the same thread
+                      // may still own provider resources.
+                      const blockingStartup = findBlockingStartup(
+                        input.providerSessionId,
+                        input.threadId,
+                      );
+                      if (blockingStartup !== undefined) {
+                        return yield* new ProviderSessionOpenError({
+                          instanceId: input.modelSelection.instanceId,
+                          providerSessionId: input.providerSessionId,
+                          cause: `Provider session ${blockingStartup.providerSessionId} has not finished cleanup.`,
+                        });
+                      }
+                      if (existing !== undefined) {
+                        if (
+                          !existing.attachedThreadIds.has(input.threadId) &&
+                          !existing.supportsMultipleProviderThreads
+                        ) {
+                          return yield* new ProviderSessionOpenError({
+                            instanceId: input.modelSelection.instanceId,
+                            providerSessionId: input.providerSessionId,
+                            cause: `Provider ${existing.runtime.driver} does not support attaching multiple app threads to one session.`,
+                          });
+                        }
+                        const attached = yield* ensureThreadAttached({
+                          providerSessionId: input.providerSessionId,
+                          threadId: input.threadId,
+                          providerInstanceId: existing.runtime.instanceId,
+                          expectedRuntime: existing.runtime,
+                        });
+                        if (attached === "closing" || attached === "released") {
+                          return yield* new ProviderSessionOpenError({
+                            instanceId: input.modelSelection.instanceId,
+                            providerSessionId: input.providerSessionId,
+                            cause: `Provider session ${input.providerSessionId} ${
+                              attached === "closing"
+                                ? "has not finished cleanup."
+                                : "is no longer running."
+                            }`,
+                          });
+                        }
+                        yield* touchActivity(input.providerSessionId, existing.runtime);
+                        return existing.exposedRuntime;
+                      }
+
+                      const adapter = yield* registry.get(input.modelSelection.instanceId).pipe(
+                        Effect.mapError(
+                          (cause) =>
+                            new ProviderSessionOpenError({
+                              instanceId: input.modelSelection.instanceId,
+                              providerSessionId: input.providerSessionId,
+                              cause,
+                            }),
+                        ),
+                      );
                       const prepared = yield* prepareMcpSession(
                         input.threadId,
                         input.modelSelection.instanceId,
@@ -2916,7 +2944,20 @@ export const layerWithOptions = (
                   ).pipe(
                     Effect.onExit((exit) =>
                       Exit.isSuccess(exit)
-                        ? Effect.void
+                        ? entryRegistered
+                          ? Effect.void
+                          : // Early returns — a reused live session or a
+                            // rejected attach — never hand the record to the
+                            // release path; settle it here or a racing close
+                            // joins a deferred that never completes.
+                            Effect.uninterruptible(
+                              Effect.gen(function* () {
+                                if (opening.get(key) === openingRecord) {
+                                  opening.delete(key);
+                                }
+                                yield* Deferred.done(openingRecord.settled, Exit.void);
+                              }),
+                            )
                         : Effect.suspend(() => {
                             if (entryRegistered) {
                               // A registered entry guards the credential by its
