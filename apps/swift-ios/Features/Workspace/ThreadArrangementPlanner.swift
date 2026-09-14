@@ -20,6 +20,12 @@ struct ThreadArrangementDestination: Equatable {
     var after = false
 }
 
+struct ThreadArrangementRow {
+    let section: ThreadArrangementSection
+    var thread: FeatureThread?
+    var id: String { thread.map { "thread:\($0.id)" } ?? "section:\(section.rawValue)" }
+}
+
 /// Resolves drops against all environments, without the Home project filter.
 /// A destination identifies a row rather than an index so a stale drag cannot
 /// silently move next to a different thread.
@@ -32,6 +38,26 @@ enum ThreadArrangementPlanner {
         let section: FeatureThreadOrderSection?
         let orderedIDs: [String]
         let assignments: [FeatureThreadOrderAssignment]
+    }
+
+    static func destination(
+        rows: [ThreadArrangementRow],
+        insertionIndex: Int,
+        isBeforeHeader: Bool
+    ) -> ThreadArrangementDestination? {
+        if insertionIndex == rows.count, let last = rows.last {
+            return .init(section: last.section, targetID: last.thread?.id, after: true)
+        }
+        guard rows.indices.contains(insertionIndex) else { return nil }
+        let row = rows[insertionIndex]
+        // UIKit uses the next header's index for the preceding section's end.
+        // A pointer on the header itself still targets that section, including
+        // empty sections and the collapsed Settled shelf.
+        if row.thread == nil, isBeforeHeader, insertionIndex > 0 {
+            let previous = rows[insertionIndex - 1]
+            return .init(section: previous.section, targetID: previous.thread?.id, after: true)
+        }
+        return .init(section: row.section, targetID: row.thread?.id)
     }
 
     static func lifecycle(

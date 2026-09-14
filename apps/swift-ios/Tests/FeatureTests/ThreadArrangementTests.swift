@@ -7,6 +7,28 @@ struct ThreadArrangementTests {
     private let now = Date(timeIntervalSince1970: 20_000)
 
     @Test
+    func sectionBoundaryAndSectionHeaderAreDifferentDropTargets() {
+        let pinned = thread("pinned")
+        let active = thread("active")
+        let rows: [ThreadArrangementRow] = [
+            .init(section: .pinned), .init(section: .pinned, thread: pinned),
+            .init(section: .active), .init(section: .active, thread: active),
+            .init(section: .settled),
+        ]
+        #expect(ThreadArrangementPlanner.destination(rows: rows, insertionIndex: 2, isBeforeHeader: true)
+            == .init(section: .pinned, targetID: pinned.id, after: true))
+        #expect(ThreadArrangementPlanner.destination(rows: rows, insertionIndex: 2, isBeforeHeader: false)
+            == .init(section: .active))
+        #expect(ThreadArrangementPlanner.destination(rows: rows, insertionIndex: 4, isBeforeHeader: true)
+            == .init(section: .active, targetID: active.id, after: true))
+        #expect(ThreadArrangementPlanner.destination(rows: rows, insertionIndex: 4, isBeforeHeader: false)
+            == .init(section: .settled))
+        #expect(ThreadArrangementPlanner.destination(
+            rows: [.init(section: .pinned), .init(section: .active)], insertionIndex: 1, isBeforeHeader: true
+        ) == .init(section: .pinned, after: true))
+    }
+
+    @Test
     func crossSectionMoveUsesAllProjectsAndScopedThreadIDs() throws {
         var source = thread("same", environment: "two")
         source.projectID = "another-project"

@@ -93,11 +93,7 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, UICollectionViewDelegate,
         UICollectionViewDragDelegate, UICollectionViewDropDelegate {
-        struct Row {
-            let section: ThreadArrangementSection
-            var thread: FeatureThread?
-            var id: String { thread.map { "thread:\($0.id)" } ?? "section:\(section.rawValue)" }
-        }
+        typealias Row = ThreadArrangementRow
 
         var parent: ThreadArrangementCollection
         private weak var view: UICollectionView?
@@ -255,14 +251,14 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
             update()
         }
 
-        private func destination(at indexPath: IndexPath?) -> ThreadArrangementDestination? {
+        private func destination(at indexPath: IndexPath?, location: CGPoint) -> ThreadArrangementDestination? {
             guard let indexPath, indexPath.section == 0 else { return nil }
-            if indexPath.item == rows.count, let last = rows.last {
-                return ThreadArrangementDestination(section: last.section, targetID: last.thread?.id, after: true)
-            }
-            guard rows.indices.contains(indexPath.item) else { return nil }
-            let row = rows[indexPath.item]
-            return ThreadArrangementDestination(section: row.section, targetID: row.thread?.id)
+            let frame = view?.layoutAttributesForItem(at: indexPath)?.frame
+            return ThreadArrangementPlanner.destination(
+                rows: rows,
+                insertionIndex: indexPath.item,
+                isBeforeHeader: frame.map { location.y < $0.minY } ?? false
+            )
         }
 
         func collectionView(
@@ -271,7 +267,7 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
             withDestinationIndexPath indexPath: IndexPath?
         ) -> UICollectionViewDropProposal {
             guard session.localDragSession != nil, let id = draggedID,
-                  let destination = destination(at: indexPath),
+                  let destination = destination(at: indexPath, location: session.location(in: collectionView)),
                   parent.model.arrangementPlan(id: id, destination: destination) != nil else {
                 parent.onAction(nil)
                 return UICollectionViewDropProposal(operation: .forbidden)
@@ -287,7 +283,10 @@ private struct ThreadArrangementCollection: UIViewRepresentable {
 
         func collectionView(_ collectionView: UICollectionView, performDropWith coordinator: UICollectionViewDropCoordinator) {
             guard let id = draggedID, let item = coordinator.items.first,
-                  let destination = destination(at: coordinator.destinationIndexPath),
+                  let destination = destination(
+                    at: coordinator.destinationIndexPath,
+                    location: coordinator.session.location(in: collectionView)
+                  ),
                   parent.model.arrangementPlan(id: id, destination: destination) != nil,
                   let moved = rows.first(where: { $0.thread?.id == id })?.thread else { return }
             var next = rows.filter { $0.thread?.id != id }
