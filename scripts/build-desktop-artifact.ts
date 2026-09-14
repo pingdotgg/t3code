@@ -1283,31 +1283,51 @@ function escapeXml(value: string): string {
     .replaceAll("'", "&apos;");
 }
 
-export function renderMacPasskeyEntitlements(
-  configuration: MacPasskeySigningConfiguration,
-): string {
-  const associatedDomains = configuration.rpDomains
-    .map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`)
-    .join("\n");
+export function renderMacEntitlements(configuration?: MacPasskeySigningConfiguration): string {
+  const associatedDomains =
+    configuration?.rpDomains
+      .map((domain) => `      <string>webcredentials:${escapeXml(domain)}</string>`)
+      .join("\n") ?? "";
 
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
   <dict>
-    <key>com.apple.application-identifier</key>
+    ${
+      configuration
+        ? `<key>com.apple.application-identifier</key>
     <string>${escapeXml(`${configuration.teamId}.${configuration.appId}`)}</string>
     <key>com.apple.developer.team-identifier</key>
     <string>${escapeXml(configuration.teamId)}</string>
     <key>com.apple.developer.associated-domains</key>
     <array>
 ${associatedDomains}
-    </array>
+    </array>`
+        : ""
+    }
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
     <key>com.apple.security.cs.allow-jit</key>
     <true/>
-    <key>com.apple.security.cs.allow-unsigned-executable-memory</key>
+    ${
+      configuration
+        ? `<key>com.apple.security.cs.allow-unsigned-executable-memory</key>
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
-    <true/>
+    <true/>`
+        : [
+            // Preserve @electron/osx-sign's defaults when no passkey profile is used.
+            "device.audio-input",
+            "device.bluetooth",
+            "device.camera",
+            "device.print",
+            "device.usb",
+            "personal-information.location",
+            "personal-information.photos-library",
+          ]
+            .map((key) => `<key>com.apple.security.${key}</key>\n    <true/>`)
+            .join("\n    ")
+    }
   </dict>
 </plist>
 `;
@@ -2626,6 +2646,11 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       target: target === "dmg" ? [target, "zip"] : [target],
       icon: "icon.icns",
       category: "public.app-category.developer-tools",
+      entitlements: "entitlements.mac.plist",
+      extendInfo: {
+        NSAppleEventsUsageDescription:
+          "T3 Code uses your terminal app to open project directories and SSH sessions.",
+      },
       protocols: [
         {
           name: "T3 Code",
@@ -3612,16 +3637,15 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         ),
       }
     : undefined;
-  const macEntitlementsPath = macPasskeySigning
-    ? path.join(stageAppDir, "entitlements.mac.plist")
-    : undefined;
-  if (macPasskeySigning && macEntitlementsPath) {
-    if (!(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
+  const macEntitlementsPath =
+    options.platform === "mac" ? path.join(stageAppDir, "entitlements.mac.plist") : undefined;
+  if (macEntitlementsPath) {
+    if (macPasskeySigning && !(yield* fs.exists(macPasskeySigning.provisioningProfilePath))) {
       return yield* new MacProvisioningProfileNotFoundError({
         provisioningProfilePath: macPasskeySigning.provisioningProfilePath,
       });
     }
-    yield* fs.writeFileString(macEntitlementsPath, renderMacPasskeyEntitlements(macPasskeySigning));
+    yield* fs.writeFileString(macEntitlementsPath, renderMacEntitlements(macPasskeySigning));
   }
 
   // Windows splits dependencies per process: app.asar carries only the

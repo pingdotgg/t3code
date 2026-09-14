@@ -1,3 +1,4 @@
+import type { ExternalTerminalId, OpenExternalTerminalInput } from "./externalTerminal.ts";
 import type {
   VcsCreateRefInput,
   VcsCreateRefResult,
@@ -1125,6 +1126,9 @@ export interface DesktopBridge {
     items: readonly ContextMenuItem<T>[],
     position?: { x: number; y: number },
   ) => Promise<T | null>;
+  /** Request any native terminal permission before saving a preference. */
+  requestTerminalPermission?: (terminal: ExternalTerminalId) => Promise<void>;
+  openTerminal?: (input: OpenExternalTerminalInput) => Promise<void>;
   openExternal: (url: string) => Promise<boolean>;
   /**
    * Open a System Settings pane by identifier. Optional: older desktop builds

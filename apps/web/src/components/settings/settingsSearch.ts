@@ -463,6 +463,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     localBackendManagementOnly: true,
   },
   {
+    id: "external-terminal",
+    title: "Terminal app",
+    to: "/settings/integrations",
+    searchTerms: ["external terminal shell ssh iterm ghostty konsole"],
+    desktopOnly: true,
+  },
+  {
     id: "wsl-backend",
     title: "WSL backend",
     to: "/settings/connections",

@@ -50,6 +50,18 @@ describe("shouldShowOpenInPicker", () => {
     ).toBe(false);
   });
 
+  it("shows the picker for a secondary local backend with desktop terminal support", () => {
+    expect(
+      shouldShowOpenInPicker({
+        activeProjectName: "repo",
+        activeThreadEnvironmentId: EnvironmentId.make("wsl"),
+        primaryEnvironmentId,
+        remoteOpenMode: "local-exec",
+        externalTerminalAvailable: true,
+      }),
+    ).toBe(true);
+  });
+
   it("hides the picker when there is no active project", () => {
     expect(
       shouldShowOpenInPicker({

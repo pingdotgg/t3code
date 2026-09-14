@@ -20,7 +20,7 @@ export const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 15;
+const LAUNCHER_VERSION = 16;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -232,6 +232,11 @@ function patchMainBundleInfoPlist(appBundlePath, iconPath, executableName) {
   setPlistString(infoPlistPath, "CFBundleIdentifier", APP_BUNDLE_ID);
   setPlistString(infoPlistPath, "CFBundleExecutable", executableName);
   setPlistString(infoPlistPath, "CFBundleIconFile", "icon.icns");
+  setPlistString(
+    infoPlistPath,
+    "NSAppleEventsUsageDescription",
+    "T3 Code uses your terminal app to open project directories and SSH sessions.",
+  );
   setPlistJson(infoPlistPath, "CFBundleURLTypes", [
     {
       CFBundleURLName: APP_BUNDLE_ID,

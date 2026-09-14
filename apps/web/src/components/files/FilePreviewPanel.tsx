@@ -1134,12 +1134,15 @@ export default function FilePreviewPanel({
             </ScrollArea>
           )}
           {absolutePath &&
-          (environmentId === primaryEnvironmentId || remoteOpenState.mode !== "local-exec") ? (
+          (environmentId === primaryEnvironmentId ||
+            remoteOpenState.mode !== "local-exec" ||
+            window.desktopBridge?.openTerminal !== undefined) ? (
             <OpenInPicker
               environmentId={environmentId}
               keybindings={keybindings}
               availableEditors={availableEditors}
               openInCwd={absolutePath}
+              terminalCwd={cwd}
               compact
               enableShortcut={false}
             />
