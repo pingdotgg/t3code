@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PlatformError from "effect/PlatformError";
+import * as Redacted from "effect/Redacted";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 
@@ -27,6 +28,13 @@ import { decodeGitHubProjectPullRequestListJson } from "./gitHubProjectPullReque
 import { type GitHubAuthStatusAccount, parseGitHubAuthStatus } from "./gitHubAuthStatus.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+
+/** Server-local credential scope; never put its value in RPC payloads or cache keys. */
+export const PinnedGitHubCredential = Context.Reference<{
+  readonly host: string;
+  readonly token: Redacted.Redacted<string>;
+  readonly credentialFingerprint: string;
+} | null>("t3/sourceControl/PinnedGitHubCredential", { defaultValue: () => null });
 
 const gitHubCliFailureFields = {
   command: Schema.Literal("gh"),

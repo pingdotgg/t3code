@@ -1,0 +1,91 @@
+import { EnvironmentId, type PreviewAnnotationPayload } from "@t3tools/contracts";
+import { renderToStaticMarkup } from "react-dom/server";
+import { describe, expect, it, vi } from "vite-plus/test";
+
+import { ComposerPreviewAnnotationCards } from "./ComposerPreviewAnnotationCards";
+
+const annotation: PreviewAnnotationPayload = {
+  id: "annotation_1",
+  pageUrl: "http://localhost:3000/welcome",
+  pageTitle: "Welcome",
+  comment: "Make this headline feel intentional.",
+  elements: [],
+  regions: [{ id: "region_1", rect: { x: 1, y: 2, width: 30, height: 20 } }],
+  strokes: [],
+  styleChanges: [
+    {
+      targetId: "element_1",
+      selector: "h1",
+      property: "font-size",
+      previousValue: "32px",
+      value: "40px",
+    },
+  ],
+  screenshot: null,
+  createdAt: "2026-06-13T00:00:00.000Z",
+};
+
+describe("ComposerPreviewAnnotationCards", () => {
+  it("presents the annotation as one contextual attachment", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPreviewAnnotationCards
+        annotations={[annotation]}
+        images={[]}
+        onRemove={vi.fn()}
+        onExpandImage={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain("Make this headline feel intentional.");
+    expect(markup.match(/data-slot="tooltip-trigger"/g)).toHaveLength(2);
+    expect(markup).not.toContain('title="1 region"');
+    expect(markup).not.toContain('title="1 style change"');
+    expect(markup).not.toContain("Welcome");
+    expect(markup).not.toContain("localhost:3000");
+    expect(markup).not.toContain("Preview annotation");
+  });
+
+  it("uses the shared button contract for removal", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPreviewAnnotationCards
+        annotations={[annotation]}
+        images={[]}
+        onRemove={vi.fn()}
+        onExpandImage={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Remove preview annotation"');
+    expect(markup).toContain('data-slot="button"');
+  });
+
+  it("shows a retry action for a failed screenshot upload", () => {
+    const image = {
+      type: "image" as const,
+      id: annotation.id,
+      name: "annotation.png",
+      mimeType: "image/png",
+      sizeBytes: 3,
+      previewUrl: "blob:annotation",
+      file: new File([new Uint8Array([1, 2, 3])], "annotation.png", { type: "image/png" }),
+    };
+    const markup = renderToStaticMarkup(
+      <ComposerPreviewAnnotationCards
+        annotations={[annotation]}
+        images={[image]}
+        uploadsByImageId={{
+          [image.id]: {
+            status: "failed",
+            environmentId: EnvironmentId.make("environment-1"),
+            reason: "Upload rejected",
+          },
+        }}
+        onRetryUpload={vi.fn()}
+        onRemove={vi.fn()}
+        onExpandImage={vi.fn()}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Retry upload for annotation.png"');
+  });
+});

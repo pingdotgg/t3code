@@ -1,0 +1,183 @@
+import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import { Frame, MousePointerClick, Paintbrush, PenLine, RotateCcw, X } from "lucide-react";
+import type { ReactNode } from "react";
+
+import type { ComposerImageAttachment } from "~/composerDraftStore";
+import { formatElementContextLabel, normalizeElementContextSelection } from "~/lib/elementContext";
+import {
+  formatAttachmentUploadProgress,
+  type AttachmentUploadState,
+} from "~/lib/attachmentUploadState";
+import { cn } from "~/lib/utils";
+import { Button } from "../ui/button";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+
+interface ComposerPreviewAnnotationCardsProps {
+  annotations: ReadonlyArray<PreviewAnnotationPayload>;
+  images: ReadonlyArray<ComposerImageAttachment>;
+  onRemove: (annotationId: string) => void;
+  onExpandImage: (imageId: string) => void;
+  uploadsByImageId?: Readonly<Record<string, AttachmentUploadState>>;
+  onRetryUpload?: (image: ComposerImageAttachment) => void;
+  className?: string;
+}
+
+function TargetStat(props: { icon: ReactNode; count: number; label: string }) {
+  const tooltipText = `${props.count} ${props.label}${props.count === 1 ? "" : "s"}`;
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground">
+            {props.icon}
+            {props.count}
+          </span>
+        }
+      />
+      <TooltipPopup side="top">{tooltipText}</TooltipPopup>
+    </Tooltip>
+  );
+}
+
+export function ComposerPreviewAnnotationCards({
+  annotations,
+  images,
+  onRemove,
+  onExpandImage,
+  uploadsByImageId,
+  onRetryUpload,
+  className,
+}: ComposerPreviewAnnotationCardsProps) {
+  if (annotations.length === 0) return null;
+  const imagesById = new Map(images.map((image) => [image.id, image]));
+
+  return (
+    <div className={cn("flex flex-wrap gap-1.5", className)}>
+      {annotations.map((annotation) => {
+        const image = imagesById.get(annotation.id);
+        const upload = image ? uploadsByImageId?.[image.id] : undefined;
+        const elementLabels = annotation.elements.flatMap((target) => {
+          const context = normalizeElementContextSelection(target.element);
+          return context ? [{ id: target.id, label: formatElementContextLabel(context) }] : [];
+        });
+        return (
+          <section
+            key={annotation.id}
+            className="group/preview-annotation relative flex min-w-0 max-w-full items-center overflow-hidden rounded-lg border border-border/80 bg-background/72"
+          >
+            {image?.previewUrl ? (
+              <button
+                type="button"
+                aria-label={`Preview ${image.name}`}
+                className="size-14 shrink-0 cursor-zoom-in overflow-hidden border-r border-border/70 bg-muted"
+                onClick={() => onExpandImage(image.id)}
+              >
+                <img
+                  src={image.previewUrl}
+                  alt="Annotated preview crop"
+                  className="size-full object-cover transition duration-200 group-hover/preview-annotation:scale-[1.03]"
+                />
+              </button>
+            ) : (
+              <span className="grid size-10 shrink-0 place-items-center border-r border-border/70 text-message-action">
+                <MousePointerClick className="size-3.5" />
+              </span>
+            )}
+            <div className="min-w-0 px-2.5 py-2 pr-8">
+              {annotation.comment.trim() ? (
+                <p className="max-w-80 truncate text-foreground text-xs font-medium">
+                  {annotation.comment.trim()}
+                </p>
+              ) : null}
+              <div
+                className={cn(
+                  "flex min-w-0 items-center gap-2",
+                  annotation.comment.trim() && "mt-1",
+                )}
+              >
+                {elementLabels.length > 0 ? (
+                  <div className="flex min-w-0 items-center gap-1">
+                    {elementLabels.slice(0, 2).map(({ id, label }) => (
+                      <span
+                        key={id}
+                        className="max-w-40 truncate font-mono text-secondary-label text-[10px]"
+                      >
+                        {label}
+                      </span>
+                    ))}
+                    {elementLabels.length > 2 ? (
+                      <span className="text-secondary-label text-[10px]">
+                        +{elementLabels.length - 2}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+                <div className="flex shrink-0 items-center gap-2">
+                  {annotation.elements.length > 0 ? (
+                    <TargetStat
+                      icon={<MousePointerClick className="size-3" />}
+                      count={annotation.elements.length}
+                      label="element"
+                    />
+                  ) : null}
+                  {annotation.regions.length > 0 ? (
+                    <TargetStat
+                      icon={<Frame className="size-3" />}
+                      count={annotation.regions.length}
+                      label="region"
+                    />
+                  ) : null}
+                  {annotation.strokes.length > 0 ? (
+                    <TargetStat
+                      icon={<PenLine className="size-3" />}
+                      count={annotation.strokes.length}
+                      label="drawing"
+                    />
+                  ) : null}
+                  {annotation.styleChanges.length > 0 ? (
+                    <TargetStat
+                      icon={<Paintbrush className="size-3" />}
+                      count={annotation.styleChanges.length}
+                      label="style change"
+                    />
+                  ) : null}
+                  {upload?.status === "uploading" ? (
+                    <span className="text-[10px] text-secondary-label">
+                      {formatAttachmentUploadProgress(upload.progress)}
+                    </span>
+                  ) : null}
+                  {upload?.status === "failed" && image && onRetryUpload ? (
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            size="icon-micro"
+                            variant="ghost-muted"
+                            aria-label={`Retry upload for ${image.name}`}
+                            onClick={() => onRetryUpload(image)}
+                          />
+                        }
+                      >
+                        <RotateCcw className="size-3" />
+                      </TooltipTrigger>
+                      <TooltipPopup side="top">{upload.reason}</TooltipPopup>
+                    </Tooltip>
+                  ) : null}
+                </div>
+              </div>
+            </div>
+            <Button
+              size="icon-micro"
+              variant="ghost-muted"
+              aria-label="Remove preview annotation"
+              className="absolute right-1.5 top-1.5 [--control-icon-color:currentColor] rounded text-icon-muted hover:bg-muted"
+              onClick={() => onRemove(annotation.id)}
+            >
+              <X className="size-3" />
+            </Button>
+          </section>
+        );
+      })}
+    </div>
+  );
+}
