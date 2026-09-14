@@ -4063,6 +4063,7 @@ const PlainWorkEntryRow = memo(function PlainWorkEntryRow(props: {
       className={cn(
         "flex flex-col rounded-md px-0.5 transition-colors",
         isExpandedToolGroupEntry ? "py-0" : "py-0.5",
+        expanded && "mb-1",
         canExpand &&
           "cursor-pointer hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70",
       )}
