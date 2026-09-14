@@ -308,6 +308,12 @@ export type ThreadStateChangedPayload = typeof ThreadStateChangedPayload.Type;
 
 const ThreadMetadataUpdatedPayload = Schema.Struct({
   name: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * The name is the agent's own session title, set by an explicit rename
+   * rather than guessed from the first turn, so it replaces a thread title
+   * this client already generated instead of yielding to it.
+   */
+  nameIsExplicit: Schema.optional(Schema.Boolean),
   metadata: Schema.optional(UnknownRecordSchema),
 });
 export type ThreadMetadataUpdatedPayload = typeof ThreadMetadataUpdatedPayload.Type;

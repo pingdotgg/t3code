@@ -9,6 +9,7 @@ import {
   type ServerSettings as ContractServerSettings,
 } from "@t3tools/contracts";
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
+import { HostProcessEnvironment } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -76,6 +77,12 @@ interface ScannerTestInput {
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  /**
+   * Pins the inherited environment. omp resolves its agent directory from
+   * environment variables alone, so a developer's own `OMP_PROFILE` or
+   * `PI_CODING_AGENT_DIR` would otherwise leak into those assertions.
+   */
+  readonly hostEnvironment?: NodeJS.ProcessEnv;
 }
 
 const makeScannerTestLayer = (input: ScannerTestInput) =>
@@ -96,6 +103,9 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
           input.configBaseDir ?? { prefix: "t3code-scanner-config-" },
         ),
         makeProjectionSnapshotQueryLayer(input.importedWorkspaceRoots ?? []),
+        ...(input.hostEnvironment === undefined
+          ? []
+          : [Layer.succeed(HostProcessEnvironment, input.hostEnvironment)]),
       ),
     ),
   );
@@ -176,6 +186,38 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
         "\n"
     : records;
 }
+
+/**
+ * An enabled omp instance whose agent directory is pinned through the
+ * environment. omp has no home setting: `PI_CODING_AGENT_DIR` is what the
+ * spawned CLI would resolve its sessions from.
+ */
+const ompProviderInstances = (
+  environment: ReadonlyArray<{ readonly name: string; readonly value: string }>,
+): ContractServerSettings["providerInstances"] => ({
+  [ProviderInstanceId.make("omp")]: {
+    driver: ProviderDriverKind.make("omp"),
+    config: { enabled: true },
+    environment: environment.map((variable) => ({ ...variable, sensitive: false })),
+  },
+});
+
+/**
+ * omp records the session's real cwd in its `session` record; the directory
+ * name is a lossy mangling of the same path. On Windows the recorded spelling
+ * uses backslashes, which is what a migrating terminal user actually has.
+ */
+const ompSessionCwd = (cwd: string) =>
+  NodeOS.platform() === "win32" ? cwd.replaceAll("/", "\\") : cwd;
+
+const ompSessionLine = (input: { readonly cwd: string; readonly sessionId: string }) =>
+  `${encodeTranscriptRecord({
+    type: "session",
+    version: 3,
+    id: input.sessionId,
+    timestamp: "2026-08-23T12:00:00.000Z",
+    cwd: ompSessionCwd(input.cwd),
+  })}\n`;
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
   describe("scan", () => {
@@ -400,68 +442,72 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("returns the imported project ID through a realpath alias", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const workspaceAlias = path.join(linkParent, "workspace-alias");
-        yield* fileSystem.symlink(workspace, workspaceAlias);
+    it.effect.skipIf(!symlinksSupported)(
+      "returns the imported project ID through a realpath alias",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const workspaceAlias = path.join(linkParent, "workspace-alias");
+          yield* fileSystem.symlink(workspace, workspaceAlias);
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(workspaceAlias),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(workspaceAlias),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({
-          claudeHomePath,
-          codexHomePath,
-          importedWorkspaceRoots: [workspace],
-        });
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            importedWorkspaceRoots: [workspace],
+          });
 
-        expect(result.candidates[0]).toMatchObject({
-          path: workspace,
-          projectId: ProjectId.make("project-1"),
-          alreadyImported: true,
-          git: null,
-        });
-      }),
+          expect(result.candidates[0]).toMatchObject({
+            path: workspace,
+            projectId: ProjectId.make("project-1"),
+            alreadyImported: true,
+            git: null,
+          });
+        }),
     );
 
-    it.effect("matches a persisted project alias to a transcript realpath", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const fileSystem = yield* FileSystem.FileSystem;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const workspace = yield* makeTempDir("t3code-workspace-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const workspaceAlias = path.join(linkParent, "workspace-alias");
-        yield* fileSystem.symlink(workspace, workspaceAlias);
+    it.effect.skipIf(!symlinksSupported)(
+      "matches a persisted project alias to a transcript realpath",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const workspace = yield* makeTempDir("t3code-workspace-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const workspaceAlias = path.join(linkParent, "workspace-alias");
+          yield* fileSystem.symlink(workspace, workspaceAlias);
 
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(workspace),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(workspace),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({
-          claudeHomePath,
-          codexHomePath,
-          importedWorkspaceRoots: [workspaceAlias],
-        });
+          const result = yield* runScan({
+            claudeHomePath,
+            codexHomePath,
+            importedWorkspaceRoots: [workspaceAlias],
+          });
 
-        expect(result.candidates[0]).toMatchObject({
-          path: workspaceAlias,
-          projectId: ProjectId.make("project-1"),
-          alreadyImported: true,
-          git: null,
-        });
-      }),
+          expect(result.candidates[0]).toMatchObject({
+            path: workspaceAlias,
+            projectId: ProjectId.make("project-1"),
+            alreadyImported: true,
+            git: null,
+          });
+        }),
     );
 
     it.effect("merges case aliases and preserves the persisted project path", () =>
@@ -998,31 +1044,33 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
       }),
     );
 
-    it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>
-      Effect.gen(function* () {
-        const path = yield* Path.Path;
-        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
-        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
-        const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
-        const linkParent = yield* makeTempDir("t3code-scanner-links-");
-        const fileSystem = yield* FileSystem.FileSystem;
+    it.effect.skipIf(!symlinksSupported)(
+      "excludes sandboxes reached through a symlink into the worktrees dir",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const configBaseDir = yield* makeTempDir("t3code-scanner-base-");
+          const linkParent = yield* makeTempDir("t3code-scanner-links-");
+          const fileSystem = yield* FileSystem.FileSystem;
 
-        // The recorded cwd is a symlink whose own spelling looks harmless;
-        // only its realpath reveals the managed sandbox.
-        const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
-        yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
-        const symlinkCwd = path.join(linkParent, "innocent-project");
-        yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
-        yield* writeTranscript({
-          filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
-          contents: claudeSessionLine(symlinkCwd),
-          mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
-        });
+          // The recorded cwd is a symlink whose own spelling looks harmless;
+          // only its realpath reveals the managed sandbox.
+          const worktreeCwd = path.join(configBaseDir, "worktrees", "t3code", "wt-3");
+          yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+          const symlinkCwd = path.join(linkParent, "innocent-project");
+          yield* fileSystem.symlink(worktreeCwd, symlinkCwd);
+          yield* writeTranscript({
+            filePath: path.join(claudeHomePath, "projects", "-slug", "a.jsonl"),
+            contents: claudeSessionLine(symlinkCwd),
+            mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
+          });
 
-        const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
+          const result = yield* runScan({ claudeHomePath, codexHomePath, configBaseDir });
 
-        expect(result.candidates).toEqual([]);
-      }),
+          expect(result.candidates).toEqual([]);
+        }),
     );
 
     it.effect("finds the cwd on a later line when the first records carry none", () =>
@@ -1367,6 +1415,126 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
         expect(result.candidates).toEqual([]);
         expect(result.scannedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+      }),
+    );
+
+    it.effect("groups omp sessions by the cwd their session record names", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const ompAgentDir = yield* makeTempDir("t3code-omp-agent-");
+        const workspace = yield* makeTempDir("t3code-omp-workspace-");
+        const otherWorkspace = yield* makeTempDir("t3code-omp-workspace-other-");
+
+        // Both transcripts sit in the same mangled directory while naming
+        // different cwds: the directory name must not decide the grouping.
+        yield* writeTranscript({
+          filePath: path.join(
+            ompAgentDir,
+            "sessions",
+            "--mangled--",
+            "2026-08-23T12-00-00-000Z_session-a.jsonl",
+          ),
+          contents: ompSessionLine({ cwd: workspace, sessionId: "session-a" }),
+          mtimeMs: Date.parse("2026-08-23T12:00:00.000Z"),
+        });
+        yield* writeTranscript({
+          filePath: path.join(
+            ompAgentDir,
+            "sessions",
+            "--mangled--",
+            "2026-08-24T12-00-00-000Z_session-b.jsonl",
+          ),
+          contents: ompSessionLine({ cwd: otherWorkspace, sessionId: "session-b" }),
+          mtimeMs: Date.parse("2026-08-24T12:00:00.000Z"),
+        });
+
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostEnvironment: {},
+          providerInstances: ompProviderInstances([
+            { name: "PI_CODING_AGENT_DIR", value: ompAgentDir },
+          ]),
+        });
+
+        expect(result.candidates).toEqual([
+          {
+            path: otherWorkspace,
+            title: path.basename(otherWorkspace),
+            sources: ["omp"],
+            threadCount: 1,
+            lastActiveAt: "2026-08-24T12:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+          {
+            path: workspace,
+            title: path.basename(workspace),
+            sources: ["omp"],
+            threadCount: 1,
+            lastActiveAt: "2026-08-23T12:00:00.000Z",
+            alreadyImported: false,
+            git: null,
+          },
+        ]);
+      }),
+    );
+
+    it.effect("ignores omp sessions when no omp instance is configured", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const ompAgentDir = yield* makeTempDir("t3code-omp-agent-");
+        const workspace = yield* makeTempDir("t3code-omp-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(ompAgentDir, "sessions", "--mangled--", "s.jsonl"),
+          contents: ompSessionLine({ cwd: workspace, sessionId: "session-a" }),
+          mtimeMs: Date.parse("2026-08-24T12:00:00.000Z"),
+        });
+
+        // omp ships disabled, so the default settings must not surface it even
+        // with the agent directory present in the environment.
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostEnvironment: { PI_CODING_AGENT_DIR: ompAgentDir },
+        });
+
+        expect(result.candidates).toEqual([]);
+      }),
+    );
+
+    it.effect("resolves the omp agent directory from a profile instead of the override", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const ompAgentDir = yield* makeTempDir("t3code-omp-agent-");
+        const workspace = yield* makeTempDir("t3code-omp-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(ompAgentDir, "sessions", "--mangled--", "s.jsonl"),
+          contents: ompSessionLine({ cwd: workspace, sessionId: "session-a" }),
+          mtimeMs: Date.parse("2026-08-24T12:00:00.000Z"),
+        });
+
+        // omp roots a profile's agent directory under its config home and
+        // ignores PI_CODING_AGENT_DIR, so these sessions belong to no profile.
+        const result = yield* runScan({
+          claudeHomePath,
+          codexHomePath,
+          hostEnvironment: {},
+          providerInstances: ompProviderInstances([
+            { name: "PI_CODING_AGENT_DIR", value: ompAgentDir },
+            { name: "OMP_PROFILE", value: "work" },
+          ]),
+        });
+
+        expect(result.candidates).toEqual([]);
       }),
     );
   });
@@ -2605,6 +2773,122 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual(["recent-session"]);
       }),
     );
+
+    it.effect("imports omp text, title, model and resumable session id", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+        const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+        const ompAgentDir = yield* makeTempDir("t3code-omp-agent-");
+        const workspace = yield* makeTempDir("t3code-omp-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            ompAgentDir,
+            "sessions",
+            "--mangled--",
+            "2026-08-23T12-00-00-000Z_01a06f8e.jsonl",
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "title",
+              v: 1,
+              title: "Statusbar cache indicator",
+              source: "auto",
+              updatedAt: "2026-08-23T13:00:00.000Z",
+            }),
+            ompSessionLine({ cwd: workspace, sessionId: "01a06f8e" }).trimEnd(),
+            encodeTranscriptRecord({ type: "model_change", model: "anthropic/claude-sonnet-4" }),
+            encodeTranscriptRecord({ type: "thinking_level_change", thinkingLevel: "medium" }),
+            encodeTranscriptRecord({
+              type: "message",
+              timestamp: "2026-08-23T12:01:00.000Z",
+              message: {
+                role: "user",
+                content: [{ type: "text", text: "Show cache status" }],
+                attribution: "user",
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "custom_message",
+              customType: "skill-prompt",
+              content: "[IMPORTANT: User invoked a skill]",
+            }),
+            encodeTranscriptRecord({
+              type: "custom",
+              customType: "tool_execution_start",
+              data: { toolName: "read", args: { path: "settings.ts" } },
+            }),
+            encodeTranscriptRecord({
+              type: "message",
+              timestamp: "2026-08-23T12:02:00.000Z",
+              message: {
+                role: "toolResult",
+                content: [{ type: "text", text: "file contents" }],
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "message",
+              timestamp: "2026-08-23T12:03:00.000Z",
+              message: {
+                role: "developer",
+                content: [{ type: "text", text: "<system-reminder>todos</system-reminder>" }],
+              },
+            }),
+            encodeTranscriptRecord({
+              type: "message",
+              timestamp: "2026-08-23T12:04:00.000Z",
+              message: {
+                role: "assistant",
+                content: [
+                  { type: "thinking", thinking: "Consider the statusline" },
+                  { type: "text", text: "Added the segment" },
+                  { type: "toolCall", toolName: "write" },
+                ],
+              },
+            }),
+            encodeTranscriptRecord({ type: "model_change", model: "anthropic/claude-opus-5" }),
+          ].join("\n"),
+          mtimeMs: nowMs - 24 * 60 * 60 * 1000,
+        });
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot: workspace,
+          hostEnvironment: {},
+          providerInstances: ompProviderInstances([
+            { name: "PI_CODING_AGENT_DIR", value: ompAgentDir },
+          ]),
+        });
+
+        expect(threads).toEqual([
+          {
+            source: "omp",
+            providerInstanceId: "omp",
+            providerSessionId: "01a06f8e",
+            title: "Statusbar cache indicator",
+            model: "anthropic/claude-opus-5",
+            createdAt: "2026-08-23T12:01:00.000Z",
+            updatedAt: "2026-08-23T12:00:00.000Z",
+            messages: [
+              {
+                role: "user",
+                text: "Show cache status",
+                createdAt: "2026-08-23T12:01:00.000Z",
+              },
+              {
+                role: "assistant",
+                text: "Added the segment",
+                createdAt: "2026-08-23T12:04:00.000Z",
+              },
+            ],
+          },
+        ]);
+      }),
+    );
   });
 });
 
@@ -3213,5 +3497,128 @@ describe("parseAgentSessionTranscript", () => {
     expect(thread?.messages).toHaveLength(200);
     expect(thread?.messages[0]?.text).toBe("Keep this prompt");
     expect(thread?.messages.at(-1)?.text).toBe("Assistant update 249");
+  });
+
+  it("prefers the rewritten omp title header over older title records", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "title", title: "Newest header title" }),
+        encodeTranscriptRecord({
+          type: "session",
+          id: "omp-session",
+          cwd: "C:\\tmp",
+          title: "Title when the session started",
+          titleSource: "auto",
+        }),
+        encodeTranscriptRecord({ type: "title_change", title: "Renamed mid-session" }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Hello" }] },
+        }),
+      ].join("\n"),
+      source: "omp",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      fallbackSessionId: "2026-08-23T12-00-00-000Z_omp-session",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Newest header title");
+    expect(thread?.providerSessionId).toBe("omp-session");
+  });
+
+  it("falls back to the omp session record title when no header was written", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({
+          type: "session",
+          id: "omp-session",
+          cwd: "/project",
+          title: "Title when the session started",
+        }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Hello" }] },
+        }),
+      ].join("\n"),
+      source: "omp",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      fallbackSessionId: "unused",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Title when the session started");
+  });
+
+  it("keeps the first omp session id when a resumed transcript copies its ancestor", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session", id: "original-session", cwd: "/project" }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Hello" }] },
+        }),
+        encodeTranscriptRecord({ type: "session", id: "forked-session", cwd: "/project" }),
+      ].join("\n"),
+      source: "omp",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      fallbackSessionId: "unused",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.providerSessionId).toBe("original-session");
+  });
+
+  it("skips an omp transcript whose session record is missing", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "title", title: "Orphan transcript" }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: { role: "user", content: [{ type: "text", text: "Hello" }] },
+        }),
+      ].join("\n"),
+      source: "omp",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      // The filename embeds the id, but only the transcript proves which
+      // session ACP `session/load` can replay.
+      fallbackSessionId: "2026-08-23T12-00-00-000Z_omp-session",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread).toBeNull();
+  });
+
+  it("drops omp user records that carry injected rather than typed text", () => {
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session", id: "omp-session", cwd: "/project" }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "<system-notice>injected</system-notice>" }],
+            attribution: "system",
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "Typed by the operator" }],
+            attribution: "user",
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "message",
+          message: { role: "fileMention", files: [{ path: "design/", content: "notes.md" }] },
+        }),
+      ].join("\n"),
+      source: "omp",
+      providerInstanceId: ProviderInstanceId.make("omp"),
+      fallbackSessionId: "unused",
+      lastActiveAtMs: Date.parse("2026-08-24T12:00:00.000Z"),
+    });
+
+    expect(thread?.messages.map((message) => message.text)).toEqual(["Typed by the operator"]);
   });
 });

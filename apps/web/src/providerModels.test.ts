@@ -5,7 +5,11 @@ import {
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { getProviderModelCapabilities } from "./providerModels";
+import {
+  formatProviderDriverKindLabel,
+  getProviderModelCapabilities,
+  resolveThreadProviderDisplayName,
+} from "./providerModels";
 
 const PROVIDER = ProviderDriverKind.make("claudeAgent");
 
@@ -73,5 +77,48 @@ describe("getProviderModelCapabilities", () => {
     expect(getProviderModelCapabilities(models, "unknown-model", PROVIDER)).toEqual({
       optionDescriptors: [],
     });
+  });
+});
+
+describe("formatProviderDriverKindLabel", () => {
+  it("maps the omp slug to its configured display name", () => {
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("omp"))).toBe("Oh My Pi");
+  });
+
+  it("maps the legacy piAgent slug to the same display name", () => {
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("piAgent"))).toBe("Oh My Pi");
+  });
+
+  it("prefers brand labels over humanized slugs for every driver", () => {
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("claudeAgent"))).toBe("Claude");
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("opencode"))).toBe("OpenCode");
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("codex"))).toBe("Codex");
+  });
+
+  it("humanizes an unmapped fork slug", () => {
+    expect(formatProviderDriverKindLabel(ProviderDriverKind.make("myCustomDriver"))).toBe(
+      "My Custom Driver",
+    );
+  });
+});
+
+describe("resolveThreadProviderDisplayName", () => {
+  it("prefers the configured display name over the driver slug", () => {
+    expect(
+      resolveThreadProviderDisplayName({
+        configuredDisplayName: "Oh My Pi",
+        sessionProviderName: "omp",
+        fallbackInstanceId: "omp",
+      }),
+    ).toBe("Oh My Pi");
+  });
+
+  it("formats the session slug when no catalog entry exists", () => {
+    expect(resolveThreadProviderDisplayName({ sessionProviderName: "omp" })).toBe("Oh My Pi");
+    expect(resolveThreadProviderDisplayName({ sessionProviderName: "piAgent" })).toBe("Oh My Pi");
+  });
+
+  it("humanizes an unmapped slug without a configured name", () => {
+    expect(resolveThreadProviderDisplayName({ fallbackInstanceId: "my_custom" })).toBe("My Custom");
   });
 });

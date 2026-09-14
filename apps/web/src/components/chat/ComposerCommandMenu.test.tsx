@@ -98,4 +98,48 @@ describe("ComposerCommandMenu", () => {
     expect(markup).toContain(">Repo</span>");
     expect(markup).toContain("Find the right skill or workflow");
   });
+
+  it("badges a provider command that collides with a built-in label", () => {
+    const seen: Array<{ id: string; type: string }> = [];
+    const markup = renderToStaticMarkup(
+      <ComposerCommandMenu
+        items={[
+          {
+            id: "slash:model",
+            type: "slash-command",
+            command: "model",
+            label: "/model",
+            description: "Switch response model for this thread",
+          },
+          {
+            id: "provider-slash-command:omp:model",
+            type: "provider-slash-command",
+            provider: ProviderDriverKind.make("omp"),
+            command: { name: "model", description: "Switch the omp model" },
+            label: "/model",
+            description: "Switch the omp model",
+          },
+        ]}
+        resolvedTheme="dark"
+        isLoading={false}
+        triggerKind="slash-command"
+        activeItemId="provider-slash-command:omp:model"
+        onHighlightedItemChange={() => {}}
+        onSelect={(item) => {
+          seen.push({ id: item.id, type: item.type });
+        }}
+      />,
+    );
+
+    // Both rows keep the colliding "/model" label with their own description,
+    // so the data the renderer receives still dispatches distinctly.
+    expect(markup).toContain("Switch response model for this thread");
+    expect(markup).toContain("Switch the omp model");
+    expect(markup).toContain('data-composer-item-id="slash:model"');
+    expect(markup).toContain('data-composer-item-id="provider-slash-command:omp:model"');
+    // The provider row carries its brand badge; the built-in row has no badge.
+    expect(markup).toContain(">Oh My Pi</span>");
+    const badgeCount = markup.split('data-slot="badge"').length - 1;
+    expect(badgeCount).toBe(1);
+  });
 });

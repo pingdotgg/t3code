@@ -105,5 +105,44 @@ file-bearing messages, and an image-only server can fail the entire environment'
 replaying one such event. Rollouts and downgrades must account for persisted history as well as
 current client support.
 
+## Oh My Pi speaks two protocols, and only one carries sessions
+
+omp runs sessions over ACP (`omp acp`), but its menu catalogs live in RPC mode. `session/new`
+returns only `sessionId`, `configOptions` and `modes`, so skills and slash commands are read from
+a separate `omp --mode rpc --no-session --no-lsp` probe whose startup `available_commands_update`
+frame lists every command, including one `skill:<name>` per discovered skill. The probe closes
+stdin immediately — RPC mode exits when stdin ends — so it never calls a model. Re-implementing
+omp's own skill resolution in T3 was rejected: it layers native, plugin, Claude, Codex, agents,
+opencode and github providers with per-source toggles and ignore globs, and would drift on every
+omp release. See the [probe](../../apps/server/src/provider/Drivers/OmpCommands.ts).
+
+The RPC catalog reports no filesystem path for a skill, so omp skills carry an internal
+`skill://<name>/SKILL.md` path. Composers must not offer "view instructions" for a path that is
+not openable; the check lives with the chip in
+[ComposerPromptEditor](../../apps/web/src/components/ComposerPromptEditor.tsx).
+
+The composer inserts `$name` for every provider. omp has no `$` syntax: it exposes each skill as
+`/skill:<name>` and recognizes that token inside prose, so known mentions are rewritten in place
+with no last-block or one-command-per-message rule to respect. See
+[the dispatcher](../../apps/server/src/provider/Drivers/OmpSkillDispatch.ts).
+
+Rewind stays out of reach. omp's RPC mode can branch a session from an entry id, but ACP exposes
+only `session/list`, `session/fork`, `session/load` and `session/close`, so the adapter keeps
+`supportsConversationRollback: false` and a fork is a copy of the live session, not a rewind.
+`session/fork` also needs `cwd` alongside `sessionId`; omitting it fails with an internal error
+about a missing `path`.
+
+Token and cost reporting arrive as an unstable ACP extension: omp sends `usage_update`
+(`size` = context window, `used` = tokens, plus `cost`) as a session update and repeats turn
+totals on the prompt response. `usedTokens` tracks context occupancy, so per-turn totals must not
+overwrite it or the meter shrinks every turn.
+
+omp updates itself through whichever installer it detects (Homebrew, mise, Bun, npm, or a direct
+binary), so no registry describes it: `omp update --check` reports the current and latest version
+and `omp update` installs, which is the only advisory source T3 trusts for it.
+Subscription limits come from `omp usage --json`, which enumerates authenticated accounts per
+provider and doubles as the auth probe — a failed probe must stay `unknown` rather than report
+`unauthenticated`.
+
 Model classification has its own [manifest constraints](./model-manifest.md). Assistant-reference
 handling is documented under [citations](./assistant-citations.md).

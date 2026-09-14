@@ -2053,7 +2053,10 @@ const make = Effect.gen(function* () {
       }
 
       if (event.type === "thread.metadata.updated" && event.payload.name) {
-        if (canReplaceThreadTitle(thread.title)) {
+        // An explicit rename in the agent (omp's `/rename`) is the session's
+        // own name, so it wins over a title this client guessed; a guessed
+        // provider name still yields to an existing title.
+        if (event.payload.nameIsExplicit === true || canReplaceThreadTitle(thread.title)) {
           yield* orchestrationEngine.dispatch({
             type: "thread.meta.update",
             commandId: yield* providerCommandId(event, "thread-meta-update"),

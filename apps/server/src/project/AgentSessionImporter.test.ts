@@ -64,12 +64,16 @@ import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 const PROJECT_ID = ProjectId.make("project-1");
 const WORKSPACE_ROOT = "/tmp/project-from-server";
 const CLAUDE_SESSION_ID = "123e4567-e89b-42d3-a456-426614174000";
+const OMP_SESSION_ID = "01a06f8e-040e-729f-b231-1fd3c4abb63c";
 const encodeTranscriptRecord = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
 
-const makeThread = (source: "codex" | "claudeAgent"): AgentSessionScanner.AgentSessionThread => ({
+const makeThread = (
+  source: "codex" | "claudeAgent" | "omp",
+): AgentSessionScanner.AgentSessionThread => ({
   source,
   providerInstanceId: ProviderInstanceId.make(source),
-  providerSessionId: source === "codex" ? "codex-session" : CLAUDE_SESSION_ID,
+  providerSessionId:
+    source === "codex" ? "codex-session" : source === "omp" ? OMP_SESSION_ID : CLAUDE_SESSION_ID,
   title: `Imported ${source} thread`,
   model: null,
   createdAt: "2026-08-24T10:00:00.000Z",
@@ -535,6 +539,94 @@ it.layer(NodeServices.layer)("AgentSessionImporter", (it) => {
         });
 
         expect(result).toEqual({ importedCount: 0, skippedCount: 2 });
+        expect(commands).toHaveLength(0);
+      }),
+    );
+
+    it.effect("binds an imported omp thread to the cursor the omp adapter parses", () =>
+      Effect.gen(function* () {
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () => Stream.succeed(makeThreadOutcome(makeThread("omp"))),
+        });
+        const commands: Array<OrchestrationCommand> = [];
+        const bindings: Array<ProviderSessionDirectory.ProviderRuntimeBinding> = [];
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: (binding) => Effect.sync(() => void bindings.push(binding)),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.void,
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({ project: makeProject() }),
+        });
+
+        expect(result).toEqual({ importedCount: 1, skippedCount: 0 });
+        expect(bindings).toMatchObject([
+          {
+            provider: "omp",
+            providerInstanceId: "omp",
+            // `parseOmpResume` in OmpAdapter.ts accepts exactly this shape.
+            resumeCursor: { schemaVersion: 1, sessionId: OMP_SESSION_ID },
+            runtimePayload: { cwd: WORKSPACE_ROOT },
+          },
+        ]);
+        expect(commands.map((command) => command.type)).toEqual([
+          "thread.create",
+          "thread.history.import",
+        ]);
+      }),
+    );
+
+    it.effect("skips an omp thread whose session id cannot resume", () =>
+      Effect.gen(function* () {
+        const scanner = AgentSessionScanner.AgentSessionScanner.of({
+          scan: Effect.die("unused"),
+          recentThreads: () =>
+            Stream.succeed(makeThreadOutcome({ ...makeThread("omp"), providerSessionId: "   " })),
+        });
+        const commands: Array<OrchestrationCommand> = [];
+        const engine = OrchestrationEngine.OrchestrationEngineService.of({
+          dispatch: (command) => Effect.sync(() => ({ sequence: commands.push(command) })),
+          readEvents: () => Stream.empty,
+          readThreadEvents: () => Stream.empty,
+          getThreadReplayStats: () => Effect.die("unused"),
+          streamDomainEvents: Stream.empty,
+          subscribeDomainEvents: Effect.succeed(Stream.empty),
+          latestSequence: Effect.succeed(0),
+        });
+        const directory = ProviderSessionDirectory.ProviderSessionDirectory.of({
+          upsert: () => Effect.die("must not bind an unresumable omp session"),
+          getProvider: () => Effect.die("unused"),
+          recordImportedTranscript: () => Effect.die("unused"),
+          getBinding: () => Effect.succeed(Option.none()),
+          listThreadIds: () => Effect.die("unused"),
+          listBindings: () => Effect.die("unused"),
+        });
+
+        const result = yield* runImport({
+          scanner,
+          engine,
+          directory,
+          snapshots: makeSnapshotsLayer({ project: makeProject() }),
+        });
+
+        expect(result).toEqual({ importedCount: 0, skippedCount: 1 });
         expect(commands).toHaveLength(0);
       }),
     );

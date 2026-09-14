@@ -3956,6 +3956,27 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.title).toBe("User-set title");
   });
 
+  // omp's `/rename` is the user naming the session, so it replaces a title
+  // this client generated rather than losing to it.
+  it("accepts an explicit provider rename over an existing title", async () => {
+    const harness = await createHarness({ threadTitle: "Generated title" });
+
+    harness.emit({
+      type: "thread.metadata.updated",
+      eventId: asEventId("evt-thread-metadata-explicit"),
+      provider: ProviderDriverKind.make("omp"),
+      createdAt: "2026-01-01T00:00:00.000Z",
+      threadId: asThreadId("thread-1"),
+      payload: { name: "Statusbar cache indicator", nameIsExplicit: true },
+    });
+
+    const thread = await waitForThread(
+      harness.readModel,
+      (entry) => entry.title === "Statusbar cache indicator",
+    );
+    expect(thread.title).toBe("Statusbar cache indicator");
+  });
+
   it("projects context window updates into normalized thread activities", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";

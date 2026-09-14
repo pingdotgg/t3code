@@ -102,6 +102,15 @@ export interface AcpSessionRuntimeOptions {
   readonly transformSessionUpdate?: (
     notification: EffectAcpSchema.SessionNotification,
   ) => EffectAcpSchema.SessionNotification;
+  /**
+   * Accept updates published under a session id the agent switched to on this
+   * same connection. omp's `/fresh` replaces the provider session and reports
+   * every later update under the new id; without adoption the runtime treats
+   * them as a foreign child session and the thread goes silent.
+   */
+  readonly adoptAgentSessionIdChanges?: boolean;
+  /** Called after an adopted session id replaces the tracked one. */
+  readonly onAgentSessionIdChanged?: (sessionId: string) => void;
   /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
@@ -333,6 +342,10 @@ export const make = (
     const eventQueue = yield* Queue.unbounded<AcpSessionRuntimeEvent>();
     const modeStateRef = yield* Ref.make<AcpSessionModeState | undefined>(undefined);
     const toolCallsRef = yield* Ref.make(new Map<string, AcpToolCallTrackedState>());
+    // Session ids the agent switched to on this connection (omp's `/fresh`).
+    // Requests keep using the id the session was created with — that one is
+    // still routed by the agent — while updates under the new id are ours.
+    const adoptedSessionIdsRef = yield* Ref.make(new Set<string>());
     const assistantItemRuntimeId = yield* crypto.randomUUIDv4.pipe(
       Effect.mapError(
         (cause) =>
@@ -541,11 +554,25 @@ export const make = (
           }
           // One runtime projects one root ACP session. Child-session updates need
           // explicit lineage routing and must never be flattened into this stream.
-          if (
-            startState._tag !== "Started" ||
-            notification.sessionId !== startState.result.sessionId
-          ) {
+          //
+          // An agent may replace the session behind the same connection though:
+          // omp's `/fresh` starts a new provider session and publishes every
+          // later update under the new id. Providers that opt in adopt it, or
+          // the connection would go silent for the rest of the thread.
+          if (startState._tag !== "Started") {
             return;
+          }
+          if (notification.sessionId !== startState.result.sessionId) {
+            if (options.adoptAgentSessionIdChanges !== true) {
+              return;
+            }
+            const adopted = yield* Ref.get(adoptedSessionIdsRef);
+            if (!adopted.has(notification.sessionId)) {
+              yield* Ref.update(adoptedSessionIdsRef, (current) =>
+                new Set(current).add(notification.sessionId),
+              );
+              yield* Effect.sync(() => options.onAgentSessionIdChanged?.(notification.sessionId));
+            }
           }
           yield* processSessionUpdate(notification);
         }),
@@ -819,6 +846,18 @@ export const make = (
                 status: "failed",
                 cause,
               }),
+            ),
+            // A `session/load` that dies (agent defect, malformed reply) is
+            // still a failed resume: as a defect it escapes the error
+            // channel and the caller's turn waits forever instead.
+            Effect.catchCause((cause) =>
+              Cause.hasInterrupts(cause) || Cause.hasFails(cause)
+                ? Effect.failCause(cause)
+                : new EffectAcpErrors.AcpTransportError({
+                    method: "session/load",
+                    detail: `session/load failed: ${String(Cause.squash(cause))}`,
+                    cause,
+                  }),
             ),
           );
 

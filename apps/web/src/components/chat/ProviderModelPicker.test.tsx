@@ -9,6 +9,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { ModelListRow } from "./ModelListRow";
+import { Combobox } from "../ui/combobox";
 import type { ModelEsque } from "./providerIconUtils";
 
 function providerEntry(instanceId: string, driver: string) {
@@ -114,7 +116,7 @@ describe("ProviderModelPicker", () => {
     },
   );
 
-  it.each(["codex", "claudeAgent", "cursor", "grok"])(
+  it.each(["codex", "claudeAgent", "cursor", "grok", "omp"])(
     "uses the first option label for a missing %s model",
     (driver) => {
       const markup = renderPicker({
@@ -175,5 +177,30 @@ describe("ProviderModelPicker", () => {
     expect(markup).toContain("size-4");
     expect(markup).toContain("h-3");
     expect(markup).toContain("text-[7px]");
+  });
+
+  it("renders each model row with its provider and upstream label", () => {
+    const markup = renderToStaticMarkup(
+      <Combobox>
+        <ModelListRow
+          index={0}
+          model={{
+            slug: "alibaba-coding-plan/qwen3.8-max-0902",
+            name: "Qwen3.8 Max",
+            subProvider: "Alibaba Coding Plan",
+          }}
+          instanceId={ProviderInstanceId.make("omp")}
+          driverKind={ProviderDriverKind.make("omp")}
+          providerDisplayName="Oh My Pi"
+          isFavorite={false}
+          isSelected={false}
+          showProvider
+          onToggleFavorite={() => {}}
+        />
+      </Combobox>,
+    );
+
+    expect(markup).toContain("Qwen3.8 Max");
+    expect(markup).toContain("Oh My Pi · Alibaba Coding Plan");
   });
 });

@@ -129,6 +129,16 @@ function installElectronRuntime(electronDir, version) {
     ]);
     if (hostPlatform === "darwin") {
       runChecked("ditto", ["-x", "-k", zipPath, NodePath.join(electronDir, "dist")]);
+    } else if (hostPlatform === "win32") {
+      // Windows ships no python3; PowerShell's Expand-Archive is always present.
+      runChecked("powershell", [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Expand-Archive -LiteralPath ${JSON.stringify(zipPath)} -DestinationPath ${JSON.stringify(
+          NodePath.join(electronDir, "dist"),
+        )} -Force`,
+      ]);
     } else {
       runChecked("python3", [
         "-c",

@@ -2,6 +2,7 @@ import {
   ClaudeSettings,
   CodexSettings,
   type ExecutionEnvironmentPlatformOs,
+  OmpSettings,
   type ServerProvider,
   type ServerSettings,
 } from "@t3tools/contracts";
@@ -10,6 +11,7 @@ import * as Schema from "effect/Schema";
 
 const decodeClaudeSettings = Schema.decodeUnknownOption(ClaudeSettings);
 const decodeCodexSettings = Schema.decodeUnknownOption(CodexSettings);
+const decodeOmpSettings = Schema.decodeUnknownOption(OmpSettings);
 const SAFE_SHELL_BINARY_PATTERN = /^[A-Za-z0-9_./:\\-]+$/;
 
 function quoteProviderBinary(
@@ -72,7 +74,7 @@ export function selectOnboardingProvidersByDriver(
 }
 
 /**
- * Official standalone installers. Neither needs Node or npm, and both land in
+ * Official standalone installers. None needs Node or npm, and all land in
  * the paths the server's provider maintenance recognizes as native, so the
  * one-click updater in Settings keeps working after install.
  */
@@ -84,6 +86,12 @@ const NATIVE_INSTALL_COMMANDS = {
   codex: {
     windows: "irm https://chatgpt.com/codex/install.ps1 | iex",
     posix: "curl -fsSL https://chatgpt.com/codex/install.sh | sh",
+  },
+  // omp ships its own installer and updater; `omp update` keeps it current
+  // afterwards, which is exactly what its maintenance resolver advertises.
+  omp: {
+    windows: "irm https://omp.sh/install.ps1 | iex",
+    posix: "curl -fsSL https://omp.sh/install | sh",
   },
 } as const;
 
@@ -123,6 +131,17 @@ export function resolveOnboardingProviderLoginCommand(
     );
     const binaryPath = Option.isSome(config) ? config.value.binaryPath : "codex";
     return `${quoteProviderBinary(binaryPath, "codex", platform)} login`;
+  }
+
+  if (provider.driver === "omp") {
+    const config = decodeOmpSettings(
+      instance ? (instance.config ?? {}) : (settings.providers.omp ?? {}),
+    );
+    const binaryPath = Option.isSome(config) ? config.value.binaryPath : "omp";
+    // omp has no `login` subcommand: `omp setup` runs the onboarding that
+    // authenticates providers, and it is interactive, which is what the
+    // inline terminal is for.
+    return `${quoteProviderBinary(binaryPath, "omp", platform)} setup`;
   }
 
   return provider.driver;

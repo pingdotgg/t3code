@@ -265,6 +265,10 @@ import {
   slashCommandItemsForPromptPosition,
 } from "./composerSlashCommandSearch";
 import {
+  parseSlashCommandArgumentOptions,
+  searchSlashCommandArgumentOptions,
+} from "./slashCommandArguments";
+import {
   getComposerPromptInjectionState,
   getComposerProviderState,
   renderProviderTraitsMenuContent,
@@ -2354,6 +2358,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
       return searchSlashCommandItems(slashCommandItems, query);
     }
+    if (composerTrigger.kind === "slash-argument") {
+      const command = selectedProviderSlashCommands.find(
+        (candidate) => candidate.name === composerTrigger.command,
+      );
+      // Only enumerated arguments complete; a free-text hint (`[title]`) has
+      // nothing to offer and must leave the menu closed.
+      const options = searchSlashCommandArgumentOptions(
+        parseSlashCommandArgumentOptions(command?.input?.hint),
+        composerTrigger.query,
+      );
+      return options.map((option) => ({
+        id: `slash-argument:${selectedProvider}:${composerTrigger.command}:${option}`,
+        type: "slash-argument" as const,
+        value: option,
+        label: option,
+        description: `/${composerTrigger.command} ${option}`,
+      }));
+    }
     if (composerTrigger.kind === "skill") {
       return searchProviderSkills(selectedProviderSkills, composerTrigger.query).map((skill) => ({
         id: `skill:${selectedProvider}:${skill.name}`,
@@ -3554,6 +3576,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         const applied = applyPromptReplacement(trigger.rangeStart, trigger.rangeEnd, "", {
           expectedText: snapshot.value.slice(trigger.rangeStart, trigger.rangeEnd),
         });
+        if (applied) {
+          setComposerHighlightedItemId(null);
+        }
+        return;
+      }
+      if (item.type === "slash-argument") {
+        const replacement = `${item.value} `;
+        const replacementRangeEnd = extendReplacementRangeForTrailingSpace(
+          snapshot.value,
+          trigger.rangeEnd,
+          replacement,
+        );
+        const applied = applyPromptReplacement(
+          trigger.rangeStart,
+          replacementRangeEnd,
+          replacement,
+          { expectedText: snapshot.value.slice(trigger.rangeStart, replacementRangeEnd) },
+        );
         if (applied) {
           setComposerHighlightedItemId(null);
         }

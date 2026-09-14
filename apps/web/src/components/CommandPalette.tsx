@@ -31,6 +31,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type FilesystemBrowseResult,
+  isProviderDriverKind,
   type ProjectId,
   type SourceControlDiscoveryResult,
   type SourceControlProviderKind,
@@ -166,6 +167,7 @@ import {
 import { ThreadRowLeadingStatus, ThreadRowTrailingStatus } from "./ThreadStatusIndicators";
 import { primaryServerKeybindingsAtom, primaryServerProvidersAtom } from "../state/server";
 import { deriveProviderInstanceEntries, type ProviderInstanceEntry } from "../providerInstances";
+import { resolveThreadProviderDisplayName } from "../providerModels";
 import { resolveShortcutCommand, threadJumpIndexFromCommand } from "../keybindings";
 import { CommandDialog, CommandDialogPopup, CommandFooterAction } from "./ui/command";
 import { Button } from "./ui/button";
@@ -1250,6 +1252,16 @@ function OpenCommandPaletteDialog(props: {
             providerEntryByEnvironmentAndInstanceId.get(
               `${thread.environmentId}:${modelInstanceId}`,
             ) ?? null;
+          // Configured instance label wins over the persisted driver slug
+          // (`thread.session.providerName`); the resolver formats the slug
+          // (brand label, legacy `piAgent` alias, humanized fallback) when no
+          // catalog entry exists. Driver falls back to the session slug so a
+          // historical thread without a catalog entry still shows its harness.
+          const sessionDriverKind =
+            thread.session?.providerName != null &&
+            isProviderDriverKind(thread.session.providerName)
+              ? thread.session.providerName
+              : null;
           return (
             <ThreadCommandSubtitle
               project={projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ?? null}
@@ -1260,10 +1272,12 @@ function OpenCommandPaletteDialog(props: {
               branch={thread.branch}
               worktreePath={thread.worktreePath}
               isCurrent={thread.id === activeThreadId}
-              driverKind={providerEntry?.driverKind ?? null}
-              providerDisplayName={
-                thread.session?.providerName ?? providerEntry?.displayName ?? modelInstanceId
-              }
+              driverKind={providerEntry?.driverKind ?? sessionDriverKind}
+              providerDisplayName={resolveThreadProviderDisplayName({
+                configuredDisplayName: providerEntry?.displayName,
+                sessionProviderName: thread.session?.providerName,
+                fallbackInstanceId: modelInstanceId,
+              })}
             />
           );
         },

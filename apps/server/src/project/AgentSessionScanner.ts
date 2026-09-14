@@ -1,10 +1,10 @@
 /**
  * AgentSessionScanner - discovery of projects a user already works on.
  *
- * Claude Code and Codex both keep a per-session transcript on disk, and each
- * transcript records the directory the session ran in. Reading those `cwd`
- * values gives us the set of directories worth offering as projects during
- * onboarding, without asking the user to browse the filesystem.
+ * Claude Code, Codex and omp each keep a per-session transcript on disk, and
+ * each transcript records the directory the session ran in. Reading those
+ * `cwd` values gives us the set of directories worth offering as projects
+ * during onboarding, without asking the user to browse the filesystem.
  *
  * The scan is read-only and best-effort: an unreadable home, a malformed
  * transcript, or a directory that has since been deleted is skipped rather
@@ -95,6 +95,10 @@ const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
 const MAX_IMPORT_RECORDS = 100_000;
 
+/** omp's profile name rules, mirrored from its own directory resolver. */
+const OMP_PROFILE_NAME_PATTERN = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+const WINDOWS_RESERVED_BASENAME_PATTERN = /^(?:CON|PRN|AUX|NUL|COM[0-9]|LPT[0-9])(?:\..*)?$/i;
+
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
   text: Schema.optional(Schema.String),
@@ -104,6 +108,8 @@ const TranscriptMessage = Schema.Struct({
   role: Schema.optional(Schema.String),
   content: Schema.optional(Schema.Union([Schema.String, Schema.Array(TranscriptContentBlock)])),
   model: Schema.optional(Schema.String),
+  // omp tags every visible prompt `user`; injected turns carry another value.
+  attribution: Schema.optional(Schema.String),
 });
 
 const CodexTurnMetadata = Schema.Struct({
@@ -115,6 +121,11 @@ const TranscriptRecord = Schema.Struct({
   timestamp: Schema.optional(Schema.String),
   cwd: Schema.optional(Schema.String),
   sessionId: Schema.optional(Schema.String),
+  // omp keeps its resumable session id, title and model at the top level of
+  // the `session`, `title`/`title_change` and `model_change` records.
+  id: Schema.optional(Schema.String),
+  title: Schema.optional(Schema.String),
+  model: Schema.optional(Schema.String),
   aiTitle: Schema.optional(Schema.String),
   isSidechain: Schema.optional(Schema.Boolean),
   isMeta: Schema.optional(Schema.Boolean),
@@ -183,7 +194,7 @@ export class AgentSessionScanner extends Context.Service<
   AgentSessionScanner,
   {
     /**
-     * Discover every directory the configured Claude and Codex homes have run
+     * Discover every directory the configured Claude, Codex and omp homes have run
      * a session in. Candidates are returned newest-first; the client decides
      * which ones to import and how far back to look. Fails with the contract
      * error directly — there is no server-local context worth wrapping.
@@ -283,6 +294,18 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
+/**
+ * omp's own profile validation, copied so the scanner resolves the same
+ * agent directory the CLI does. `default`, an empty value and every name omp
+ * rejects (it throws and then ignores the variable) mean "no profile".
+ */
+function normalizeOmpProfileName(value: string | undefined): string | null {
+  const profile = value?.trim() ?? "";
+  if (profile.length === 0 || profile === "default") return null;
+  if (profile.endsWith(".") || !OMP_PROFILE_NAME_PATTERN.test(profile)) return null;
+  return WINDOWS_RESERVED_BASENAME_PATTERN.test(profile) ? null : profile;
+}
+
 /** Keep visible user and assistant text while ignoring tools, reasoning, and malformed records. */
 export function parseAgentSessionTranscript(
   input: AgentSessionTranscriptMetadata & {
@@ -301,11 +324,16 @@ function parseAgentSessionRecords(
 ): AgentSessionThread | null {
   const fallbackTimestamp = DateTime.formatIso(DateTime.makeUnsafe(input.lastActiveAtMs));
   // Claude filenames are session IDs. Codex rollout filenames include extra
-  // timestamp text, so only transcript metadata can provide a resumable ID.
-  let providerSessionId = input.source === "codex" ? "" : input.fallbackSessionId;
+  // timestamp text, and omp prefixes its own with a start timestamp, so for
+  // both only transcript metadata can provide a resumable ID.
+  let providerSessionId = input.source === "claudeAgent" ? input.fallbackSessionId : "";
   let title: string | null = null;
   let model: string | null = null;
-  let hasCodexSessionId = false;
+  let hasMetadataSessionId = false;
+  // omp writes the current title three times over: the rewritten-in-place
+  // header record is newest, then `title_change`, then the `session` record's
+  // copy of whatever the title was when the session started.
+  let ompTitleRank = -1;
   const messages: Array<AgentSessionThreadMessage & { readonly codexResponseUser: boolean }> = [];
   let firstUserMessage:
     | (AgentSessionThreadMessage & { readonly codexResponseUser: boolean })
@@ -424,11 +452,62 @@ function parseAgentSessionRecords(
       continue;
     }
 
+    if (input.source === "omp") {
+      if (record.type === "session") {
+        // A resumed session copies its ancestor's header, so the first
+        // `session` record names the id ACP `session/load` can replay.
+        const sessionId = record.id?.trim();
+        if (!hasMetadataSessionId && sessionId) {
+          providerSessionId = sessionId;
+          hasMetadataSessionId = true;
+        }
+        const sessionTitle = record.title?.trim();
+        if (sessionTitle && ompTitleRank <= 0) {
+          title = sessionTitle;
+          ompTitleRank = 0;
+        }
+        continue;
+      }
+      if (record.type === "title" || record.type === "title_change") {
+        const rank = record.type === "title" ? 2 : 1;
+        const nextTitle = record.title?.trim();
+        if (nextTitle && rank >= ompTitleRank) {
+          title = nextTitle;
+          ompTitleRank = rank;
+        }
+        continue;
+      }
+      if (record.type === "model_change") {
+        const nextModel = record.model?.trim();
+        if (nextModel) model = nextModel;
+        continue;
+      }
+      if (record.type !== "message") continue;
+      const role = record.message?.role;
+      if (role !== "user" && role !== "assistant") continue;
+      // omp replays tool results and system reminders as `toolResult`,
+      // `developer` and `fileMention` roles, which the role check already
+      // drops. A `user` record with another attribution is injected text.
+      const attribution = record.message?.attribution;
+      if (role === "user" && attribution !== undefined && attribution !== "user") continue;
+      // Thinking and tool-call blocks carry no `text`, so only visible
+      // assistant prose survives extraction.
+      const text = extractText(record.message?.content);
+      if (text.length === 0) continue;
+      retainMessage({
+        role,
+        text,
+        createdAt: normalizeTimestamp(record.timestamp, fallbackTimestamp),
+        codexResponseUser: false,
+      });
+      continue;
+    }
+
     if (record.type === "session_meta") {
       const sessionId = record.payload?.id?.trim() || record.payload?.session_id?.trim();
-      if (!hasCodexSessionId && sessionId) {
+      if (!hasMetadataSessionId && sessionId) {
         providerSessionId = sessionId;
-        hasCodexSessionId = true;
+        hasMetadataSessionId = true;
       }
       continue;
     }
@@ -523,6 +602,16 @@ function shouldRetainDecodedRecord(
       record.sessionId !== undefined ||
       record.aiTitle !== undefined ||
       record.message?.model !== undefined
+    );
+  }
+  if (source === "omp") {
+    return (
+      record.type === "session" ||
+      record.type === "title" ||
+      record.type === "title_change" ||
+      record.type === "model_change" ||
+      (record.type === "message" &&
+        (record.message?.role === "user" || record.message?.role === "assistant"))
     );
   }
   return (
@@ -921,9 +1010,37 @@ export const make = Effect.gen(function* () {
     return path.join(NodeOS.homedir(), ".claude");
   };
 
-  const discoverClaudeTranscripts = Effect.fn("AgentSessionScanner.discoverClaudeTranscripts")(
-    function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
-      const projectsDir = path.join(homePath, "projects");
+  /**
+   * Resolve the omp agent directory the CLI would use, matching omp's own
+   * precedence: a profile (`OMP_PROFILE`, else `PI_PROFILE`) roots the agent
+   * directory under `profiles/<profile>` and makes `PI_CODING_AGENT_DIR`
+   * inert; without a profile that variable, when set, *is* the agent
+   * directory. The config directory name itself is `PI_CONFIG_DIR` or
+   * `.omp`. An unusable profile name is ignored by omp rather than fatal.
+   */
+  const resolveOmpAgentDir = (readEnvironment: (name: string) => string | undefined): string => {
+    const ompProfile = readEnvironment("OMP_PROFILE");
+    const profile = normalizeOmpProfileName(
+      ompProfile === undefined ? readEnvironment("PI_PROFILE") : ompProfile,
+    );
+    const agentDirOverride = readEnvironment("PI_CODING_AGENT_DIR")?.trim() ?? "";
+    if (profile === null && agentDirOverride.length > 0) {
+      return path.resolve(expandHomePath(agentDirOverride));
+    }
+    const configDirName = readEnvironment("PI_CONFIG_DIR")?.trim() || ".omp";
+    const configRoot = path.join(NodeOS.homedir(), configDirName);
+    return profile === null
+      ? path.join(configRoot, "agent")
+      : path.join(configRoot, "profiles", profile, "agent");
+  };
+
+  /**
+   * Claude keeps one directory of transcripts per project slug, and omp one
+   * per mangled cwd. Neither slug is decoded: the transcripts themselves
+   * carry the real `cwd`.
+   */
+  const discoverGroupedTranscripts = Effect.fn("AgentSessionScanner.discoverGroupedTranscripts")(
+    function* (rootDir: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       let operationsRemaining = operationBudget;
       let truncated = false;
       const readDirectory = (directory: string) => {
@@ -934,7 +1051,7 @@ export const make = Effect.gen(function* () {
         operationsRemaining -= 1;
         return listDirectory(directory);
       };
-      const projectDirectories = yield* readDirectory(projectsDir);
+      const projectDirectories = yield* readDirectory(rootDir);
       const transcripts: Array<TranscriptCandidate> = [];
 
       for (const projectDirectory of projectDirectories) {
@@ -942,7 +1059,7 @@ export const make = Effect.gen(function* () {
           truncated = true;
           break;
         }
-        const directory = path.join(projectsDir, projectDirectory);
+        const directory = path.join(rootDir, projectDirectory);
         const directoryTranscripts = (yield* readDirectory(directory))
           .filter((entry) => entry.endsWith(".jsonl"))
           .map((entry) => path.join(directory, entry));
@@ -1090,7 +1207,7 @@ export const make = Effect.gen(function* () {
     const raw: Array<RawCandidate> = [];
     let truncated = false;
 
-    for (const source of ["claudeAgent", "codex"] as const) {
+    for (const source of ["claudeAgent", "codex", "omp"] as const) {
       const instances: Array<{
         readonly instanceId: ProviderInstanceId;
         readonly config: ProviderInstanceConfig;
@@ -1125,19 +1242,28 @@ export const make = Effect.gen(function* () {
       const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
       const seenHomes = new Set<string>();
       for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const environmentHome =
-          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
-          hostEnvironment[homeVariable];
+        // The spawned CLI sees the instance's own environment first, then
+        // whatever this process inherited.
+        const readEnvironment = (name: string) =>
+          instance.environment?.findLast((variable) => variable.name === name)?.value ??
+          hostEnvironment[name];
 
         let homePath: string;
         if (source === "claudeAgent") {
           const config = decodeClaudeSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+          homePath = resolveClaudeConfigDir(
+            config.value.homePath,
+            readEnvironment("CLAUDE_CONFIG_DIR"),
+          );
+        } else if (source === "omp") {
+          // omp has no configurable home: its agent directory is derived
+          // entirely from the environment the CLI runs with.
+          homePath = resolveOmpAgentDir(readEnvironment);
         } else {
           const config = decodeCodexSettings(instance.config ?? {});
           if (Option.isNone(config)) continue;
+          const environmentHome = readEnvironment("CODEX_HOME");
           const codexSettings =
             config.value.homePath.trim().length === 0 &&
             config.value.shadowHomePath.trim().length === 0 &&
@@ -1167,9 +1293,13 @@ export const make = Effect.gen(function* () {
           truncated = true;
           continue;
         }
-        const discovered = yield* source === "claudeAgent"
-          ? discoverClaudeTranscripts(home.homePath, home.providerInstanceId, operationBudget)
-          : discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget);
+        const discovered = yield* source === "codex"
+          ? discoverCodexTranscripts(home.homePath, home.providerInstanceId, operationBudget)
+          : discoverGroupedTranscripts(
+              path.join(home.homePath, source === "claudeAgent" ? "projects" : "sessions"),
+              home.providerInstanceId,
+              operationBudget,
+            );
         truncated ||= discovered.truncated;
         transcriptCandidates.push(...discovered.transcripts);
       }
