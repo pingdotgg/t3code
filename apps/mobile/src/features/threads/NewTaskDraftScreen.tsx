@@ -172,6 +172,8 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
+    /** The project was just added by a clone that is still running. */
+    readonly cloning?: boolean;
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
@@ -213,8 +215,17 @@ export function NewTaskDraftScreen(props: {
       : null,
   );
   const projectClone = projectCloneState === "pending" ? null : projectCloneState;
+  // Before the clone stream delivers, only the project this draft was opened
+  // for by Add Project is known to be cloning; any other project (offline
+  // included) must still be able to queue a task.
+  const awaitingKnownClone =
+    projectCloneState === "pending" &&
+    props.initialProjectRef?.cloning === true &&
+    selectedProject !== null &&
+    selectedProject.id === props.initialProjectRef.projectId &&
+    selectedProject.environmentId === props.initialProjectRef.environmentId;
   const cloneBlocksStart =
-    projectCloneState === "pending" || (projectClone !== null && projectClone.phase !== "done");
+    awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done");
   const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
     reportFailure: false,
   });

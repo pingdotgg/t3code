@@ -580,7 +580,7 @@ export function AddProjectSourceScreen() {
 
 function openNewTaskDraft(
   navigation: { dispatch: (action: ReturnType<typeof CommonActions.reset>) => void },
-  params: { environmentId: EnvironmentId; projectId: ProjectId; title: string },
+  params: { environmentId: EnvironmentId; projectId: ProjectId; title: string; cloning?: "1" },
 ) {
   navigation.dispatch(
     CommonActions.reset({ index: 0, routes: [{ name: "NewTaskDraft", params }] }),
