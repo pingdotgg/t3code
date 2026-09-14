@@ -1,13 +1,14 @@
 // @effect-diagnostics nodeBuiltinImport:off
 // @effect-diagnostics globalTimers:off
-// This file is shipped as a standalone bundle and copied to a stable path by
-// `t3 service update`. Keep runtime imports limited to Node built-ins.
+// The launcher supervises the server child for the boot service and must keep
+// working across server versions, so it stays on Node built-ins with no Effect
+// runtime: it is the one part of the executable that cannot depend on the
+// rest of it being loadable.
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
-import * as NodeSea from "node:sea";
 
 import type {
   PendingServiceUpdate,
@@ -41,37 +42,24 @@ interface ManagedChild {
   readonly process: NodeChildProcess.ChildProcess;
 }
 
-// Mirrors pinnedRuntimePaths: archive-distributed versions are unpacked
-// release archives whose executable runs on its own, npm versions are a
-// bin.mjs the launcher's Node runs. Kept inline so this file stays on Node
+// Mirrors pinnedRuntimePaths: a runtime is an unpacked release archive whose
+// executable runs on its own. Kept inline so this file stays on Node
 // built-ins only.
 const runtimePaths = (baseDir: string, version: string) => {
   const versionDir = NodePath.join(baseDir, "runtime", "versions", version);
-  const archive = /-preview\.\d{8}\.\d+$/.test(version);
   // oxlint-disable-next-line t3code/no-global-process-runtime -- Standalone launcher has no Effect runtime.
   const executableName = process.platform === "win32" ? "t3.exe" : "t3";
   return {
     versionDir,
-    entryPath: archive
-      ? NodePath.join(versionDir, executableName)
-      : NodePath.join(versionDir, "node_modules", "t3", "dist", "bin.mjs"),
+    entryPath: NodePath.join(versionDir, executableName),
     sentinelPath: NodePath.join(versionDir, ".install-complete"),
-    executable: archive,
   };
 };
 
-const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) =>
-  paths.executable
-    ? { command: paths.entryPath, args: ["serve"] }
-    : { command: process.execPath, args: [paths.entryPath, "serve"] };
-
-// An npm-layout runtime needs a Node interpreter. When the launcher itself is
-// the single-executable, process.execPath is `t3`, which cannot run a
-// bin.mjs, so the two layouts cannot be mixed within one service install.
-const launcherIsExecutable = NodeSea.isSea();
-
-const canLaunchRuntime = (paths: ReturnType<typeof runtimePaths>) =>
-  paths.executable || !launcherIsExecutable;
+const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
+  command: paths.entryPath,
+  args: ["serve"],
+});
 
 /** SQLite persists across the main file plus its WAL and shared-memory sidecars. */
 const DB_FILE_SUFFIXES = ["", "-wal", "-shm"] as const;
@@ -503,12 +491,6 @@ export class Launcher {
     }
     if (!NodePath.isAbsolute(message.dbPath)) {
       await reject("The requested database path is not absolute.");
-      return;
-    }
-    if (!canLaunchRuntime(runtimePaths(this.#baseDir, message.targetVersion))) {
-      await reject(
-        "This service runs from a self-contained t3 executable and cannot switch to an npm-installed version. Reinstall the service with the target version instead.",
-      );
       return;
     }
     if (!(await runtimeExists(this.#baseDir, message.targetVersion))) {

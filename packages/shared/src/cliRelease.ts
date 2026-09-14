@@ -70,11 +70,6 @@ export function parseChecksums(text: string): ReadonlyMap<string, string> {
   return checksums;
 }
 
-/** Whether a version was published from a release train that ships archives. */
-export function isArchiveDistributedVersion(version: string): boolean {
-  return /-preview\.\d{8}\.\d+$/.test(version);
-}
-
 export type CliReleaseChannel = "stable" | "nightly" | "preview";
 export const CLI_RELEASE_CHANNELS: ReadonlyArray<CliReleaseChannel> = [
   "stable",

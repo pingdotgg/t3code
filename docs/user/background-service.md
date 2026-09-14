@@ -39,8 +39,7 @@ On Windows, run `irm https://t3.codes/install.ps1 | iex` in PowerShell instead.
 It places `t3` in `~/.local/bin` and reuses the same download when you later
 run `t3 service install`. It follows the stable train by default; set
 `T3CODE_CHANNEL=nightly` for nightlies, `T3CODE_VERSION` to pin an exact
-version, or `T3CODE_RELEASE_BASE_URL` to download from a mirror. Versions that
-were only published to npm are refused with the `npm install` to run instead.
+version, or `T3CODE_RELEASE_BASE_URL` to download from a mirror.
 
 `preview` is a third train that maintainers cut from unreleased branches to
 exercise the release pipeline. Those builds can be broken, receive no fixes,
@@ -58,9 +57,7 @@ restart the service. A server you started by hand is never touched; the
 command tells you it is still on the old version so you can restart it
 yourself. Pass an exact version (`t3 update 0.0.41-preview.20260912.1595`) to
 pin one, `--channel` to follow a different release train (moving onto preview from stable or nightly asks for confirmation), or
-`--allow-downgrade` to move backwards. Versions published only to npm cannot
-be installed this way; the command says so and names the `npm install` to run
-instead.
+`--allow-downgrade` to move backwards.
 
 ## Platform support
 
