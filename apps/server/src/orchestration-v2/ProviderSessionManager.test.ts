@@ -1800,15 +1800,37 @@ function makeSteppingScheduler() {
   const tasks: Array<() => void> = [];
   const counts = new Map<Fiber.Fiber<unknown, unknown>, number>();
   const targets = new Map<Fiber.Fiber<unknown, unknown>, number>();
+  // Resume tasks of fibers suspended through `spawnedTarget`, keyed by fiber so
+  // a `drain` cannot accidentally release them — a spawned fiber stays parked
+  // until `resumeSpawned` requeues its continuation.
+  const held = new Map<Fiber.Fiber<unknown, unknown>, () => void>();
+  // When set, a fiber with no explicit target suspends once its own op count
+  // reaches this value. The runtime consults `shouldYield` synchronously inside
+  // the yielding task, so the next scheduled task is that fiber's resume —
+  // capture it instead of queueing.
+  let spawnedTarget: number | undefined;
+  let capture: Fiber.Fiber<unknown, unknown> | undefined;
   const scheduler: Scheduler.Scheduler = {
     executionMode: "sync",
     shouldYield: (fiber) => {
       const count = (counts.get(fiber) ?? 0) + 1;
       counts.set(fiber, count);
-      return count === targets.get(fiber);
+      if (targets.has(fiber)) return count === targets.get(fiber);
+      if (spawnedTarget === undefined || count !== spawnedTarget) return false;
+      // The arming is consumed by the first spawned fiber to reach the offset:
+      // later forks (the scope-close grandchild, settle-phase workers) must
+      // run free or the sweep deadlocks on its own bookkeeping.
+      spawnedTarget = undefined;
+      capture = fiber;
+      return true;
     },
     makeDispatcher: () => ({
       scheduleTask: (task) => {
+        if (capture !== undefined) {
+          held.set(capture, task);
+          capture = undefined;
+          return;
+        }
         tasks.push(task);
       },
       flush: () => {
@@ -1849,7 +1871,22 @@ function makeSteppingScheduler() {
       if (tasks.length === 0) return;
     }
   });
-  return { scheduler, tasks, counts, step, drain };
+  // Registers `fiber` as an explicit target so `spawnedTarget` ignores it;
+  // `ops` beyond its lifetime means it never suspends on a target.
+  const aim = (fiber: Fiber.Fiber<unknown, unknown>, ops: number) => {
+    targets.set(fiber, ops);
+  };
+  // Suspends the first spawned (non-targeted) fiber to reach its own op `ops`;
+  // the arming is consumed by that hold.
+  const holdSpawnedAt = (ops: number) => {
+    spawnedTarget = ops;
+  };
+  // Requeues the captured resume tasks of all suspended spawned fibers.
+  const resumeSpawned = () => {
+    for (const task of held.values()) tasks.push(task);
+    held.clear();
+  };
+  return { scheduler, tasks, counts, step, drain, aim, holdSpawnedAt, resumeSpawned, held };
 }
 
 for (const operation of ["close", "detach", "closeInstance"] as const) {
@@ -7423,13 +7460,15 @@ it.effect(
       yield* Effect.gen(function* () {
         const manager = yield* ProviderSessionManagerV2;
         const stepper = makeSteppingScheduler();
-        // The window is the scheduler boundary between the detach's
-        // attachment mutation and the release claim it used to fork: a close
-        // landing inside it claimed the emptied entry, producing a release
-        // record with no thread ownership — this thread's replacement then
-        // passed the cleanup gate while the provider process still ran.
-        for (let ops = 0; ops < 160; ops++) {
-          const threadId = ThreadId.make(`thread-detach-close-claim-${ops}`);
+        // The window sits between the detach's attachment mutation and the
+        // release claim its forked worker performs. Stepping the outer detach
+        // fiber cannot reach it — the mutation and the fork share one op
+        // boundary and the worker's claim then runs during the same task
+        // drain. The discriminating pause is inside the spawned worker: hold
+        // it at each of its own op offsets, let a racing close claim first,
+        // then check the pending record still covers this thread.
+        for (let childOps = 0; childOps < 48; childOps++) {
+          const threadId = ThreadId.make(`thread-detach-close-claim-${childOps}`);
           const fixture = yield* makeThreadSessionFixture(threadId);
           const providerSessionId = yield* fixture.allocate;
           const replacementId = yield* fixture.allocate;
@@ -7442,19 +7481,25 @@ it.effect(
               Effect.forkDetach,
               Effect.provideService(Scheduler.Scheduler, stepper.scheduler),
             );
-          const reached = yield* stepper.step(detaching, ops);
+          stepper.aim(detaching, Number.MAX_SAFE_INTEGER);
+          stepper.holdSpawnedAt(childOps);
+          yield* stepper.drain;
 
-          // Interleave a close while the detach is suspended; it claims the
-          // entry or joins the pending release — either way the parked scope
-          // close keeps the record alive for the gate check below.
+          // Interleave a close while the spawned release worker is held: it
+          // claims the emptied entry or joins the pending release — either
+          // way the parked scope close keeps the record alive for the gate
+          // check below.
           const closing = yield* manager
             .close(providerSessionId)
             .pipe(Effect.exit, Effect.forkChild);
-          for (let i = 0; i < 8; i += 1) {
+          // Ambient turns for the close's claim — a synchronous map write a
+          // few scheduler turns in — before the held worker resumes.
+          for (let i = 0; i < 24; i += 1) {
             yield* Effect.yieldNow;
           }
+          stepper.resumeSpawned();
           yield* stepper.drain;
-          for (let i = 0; i < 8; i += 1) {
+          for (let i = 0; i < 24; i += 1) {
             yield* Effect.yieldNow;
           }
 
@@ -7473,14 +7518,14 @@ it.effect(
           assert.equal(
             openExit._tag,
             "Failure",
-            `close interleaved at op ${ops} let a same-thread replacement open during cleanup`,
+            `close interleaved while the release worker was held at op ${childOps} let a same-thread replacement open during cleanup`,
           );
 
           yield* TestClock.adjust("30 seconds");
+          stepper.resumeSpawned();
           yield* stepper.drain;
           yield* Fiber.join(detaching);
           yield* Fiber.join(closing);
-          if (!reached) break;
         }
       }).pipe(
         Effect.ensuring(Deferred.succeed(hangClose, undefined)),
