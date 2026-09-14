@@ -41,6 +41,15 @@ on each selected environment, and reset returns to the environment's shared list
 For workspace mode, a project's `t3.json` preference applies when the project has no override.
 Browser access changes apply when an agent session next starts.
 
+## Reconnect a moved folder
+
+If a project folder was moved or renamed, open its project settings and update the folder under
+**Checkouts**. Select the folder in the checkout's environment. This keeps the project's conversations
+and settings without moving files. A folder already registered as another project cannot be selected.
+
+An active provider session adopts the new folder on its next turn. Worktree conversations keep their
+own paths; updating the project folder does not relocate or repair a worktree.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, or image. The choice applies to

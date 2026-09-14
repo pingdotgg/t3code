@@ -5,6 +5,8 @@ import type {
   SidebarProjectGroupMember,
   SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
+import { checkoutKey, resolveSettingsProjectSuccessor } from "./ProjectSettingsPanel.logic";
+import { derivePhysicalProjectKey } from "../../logicalProject";
 import { resolveSettingsScope, validateSettingsScopeSearch } from "./settingsScope";
 
 const laptopId = EnvironmentId.make("laptop");
@@ -202,4 +204,83 @@ describe("settings scope resolution", () => {
       environmentIds: [],
     });
   });
+});
+
+describe("folder recovery settings scope", () => {
+  it("follows the same registration into its new group and path", () => {
+    const moved = { ...first, workspaceRoot: "/renamed", physicalProjectKey: "laptop:/renamed" };
+    const nextGroups = [group("t3code", [second, third]), group("renamed", [moved])];
+    const resolved = resolveSettingsScope(
+      { project: "t3code", machine: laptopId, checkout: checkoutKey(first) },
+      nextGroups,
+      environments,
+    );
+    expect(resolved).toMatchObject({
+      kind: "checkout",
+      members: [moved],
+      group: { projectKey: "renamed" },
+    });
+  });
+
+  it("does not broaden a deleted or wrong-environment registration", () => {
+    for (const search of [
+      { project: "t3code", checkout: checkoutKey({ ...first, id: "deleted" }) },
+      { project: "t3code", machine: serverId, checkout: checkoutKey(first) },
+    ]) {
+      expect(resolveSettingsScope(search, groups, environments)).toMatchObject({
+        kind: "unavailable",
+        members: [],
+        environmentIds: [],
+      });
+    }
+  });
+
+  it("retains the conversation's exact ID when another registration represents the same path", () => {
+    const hidden = { ...first, id: ProjectId.make("older") };
+    const representative = { ...first, physicalProjectKey: derivePhysicalProjectKey(first) };
+    const snapshot = {
+      ...group("t3code", [representative]),
+      memberProjectRefs: [
+        { environmentId: first.environmentId, projectId: first.id },
+        { environmentId: hidden.environmentId, projectId: hidden.id },
+      ],
+    };
+    const resolved = resolveSettingsScope(
+      { project: "t3code", checkout: checkoutKey(hidden) },
+      [snapshot],
+      environments,
+      [hidden, first],
+    );
+    expect(resolved).toMatchObject({
+      kind: "checkout",
+      members: [{ id: hidden.id, workspaceRoot: hidden.workspaceRoot }],
+    });
+  });
+});
+
+it("recovers a legacy path selection after a remote move without selecting its sibling", () => {
+  const moved = { ...first, workspaceRoot: "/renamed", physicalProjectKey: "laptop:/renamed" };
+  const nextGroups = [group("t3code", [second, third]), group("renamed", [moved])];
+  const original = resolveSettingsScope(
+    { project: "t3code", checkout: first.physicalProjectKey },
+    groups,
+    environments,
+  );
+  const successor = resolveSettingsProjectSuccessor(
+    nextGroups,
+    original.members.map(checkoutKey),
+    first.physicalProjectKey,
+  );
+  expect(successor).toEqual({ project: "renamed", checkout: checkoutKey(first) });
+  expect(resolveSettingsScope(successor!, nextGroups, environments)).toMatchObject({
+    kind: "checkout",
+    members: [moved],
+  });
+  expect(
+    resolveSettingsProjectSuccessor(
+      [group("t3code", [second, third])],
+      original.members.map(checkoutKey),
+      first.physicalProjectKey,
+    ),
+  ).toBeNull();
 });

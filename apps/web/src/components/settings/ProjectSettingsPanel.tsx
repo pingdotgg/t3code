@@ -21,7 +21,14 @@ import {
   type SidebarProjectSnapshot,
 } from "../../sidebarProjectGrouping";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
-import { useThreadShells } from "../../state/entities";
+import {
+  readProject,
+  readProjects,
+  useProjects,
+  waitForProject,
+  useThreadShells,
+} from "../../state/entities";
+import { serializeProjectFolderUpdate } from "../../state/projectFolderUpdate";
 import { projectEnvironment } from "../../state/projects";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -39,8 +46,19 @@ import {
   ProjectFaviconPickerDialog,
 } from "./ProjectFaviconPickerDialog";
 import { ProjectActionsSettings } from "./ProjectActionsSettings";
-import { projectGroupTitleNeedsUpdate } from "./ProjectSettingsPanel.logic";
+import {
+  checkoutKey as stableCheckoutKey,
+  relinkProjectPreferences,
+  resolveSettingsProjectSuccessor,
+  resolveSettingsProjectGroup,
+  projectGroupTitleNeedsUpdate,
+} from "./ProjectSettingsPanel.logic";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
+
+import { getClientSettings, useUpdateClientSettings } from "../../hooks/useSettings";
+import { openCommandPalette } from "../../commandPaletteBus";
+import { getBrowseParentPath, normalizeProjectPathForComparison } from "../../lib/projectPaths";
+import { useUiStateStore } from "../../uiStateStore";
 
 const ProjectIconPickerDialog = lazy(() =>
   import("./ProjectIconPickerDialog").then((module) => ({
@@ -67,13 +85,21 @@ export function ProjectSettingsPanel({
   const navigate = useNavigate({ from: "/settings" });
   const pathname = useLocation({ select: (location) => location.pathname });
 
-  const selected = groups.find((group) => group.projectKey === projectKey) ?? null;
+  const projects = useProjects();
+  const selected = resolveSettingsProjectGroup(
+    groups,
+    projectKey,
+    checkoutKey ?? undefined,
+    projects,
+  );
   const members = useMemo(
     () =>
       selected?.memberProjects.filter(
         (member) =>
           (environmentId === null || member.environmentId === environmentId) &&
-          (checkoutKey === null || member.physicalProjectKey === checkoutKey),
+          (checkoutKey === null ||
+            member.physicalProjectKey === checkoutKey ||
+            stableCheckoutKey(member) === checkoutKey),
       ) ?? [],
     [selected, environmentId, checkoutKey],
   );
@@ -92,14 +118,23 @@ export function ProjectSettingsPanel({
       key: selected.projectKey,
       environmentId,
       checkoutKey,
-      memberKeys: members.map((member) => member.physicalProjectKey),
+      memberKeys: members.map(stableCheckoutKey),
     };
   }, [selected, members, environmentId, checkoutKey]);
 
   // A grouping-rule change replaces the group key mid-visit; follow the
   // project to its new key instead of parking on the not-found state.
   useEffect(() => {
-    if (members.length > 0) return;
+    if (members.length > 0) {
+      if (selected && selected.projectKey !== projectKey) {
+        void navigate({
+          to: pathname,
+          search: (search) => ({ ...search, project: selected.projectKey }),
+          replace: true,
+        });
+      }
+      return;
+    }
     const last = lastSelectionRef.current;
     if (
       last?.key !== projectKey ||
@@ -107,22 +142,29 @@ export function ProjectSettingsPanel({
       last.checkoutKey !== checkoutKey
     )
       return;
-    const successor = groups.find((group) =>
-      group.memberProjects.some((member) => last.memberKeys.includes(member.physicalProjectKey)),
-    );
+    const successor = resolveSettingsProjectSuccessor(groups, last.memberKeys, checkoutKey);
     if (successor) {
       void navigate({
         to: pathname,
         search: () => ({
-          project: successor.projectKey,
+          project: successor.project,
           machine: environmentId ?? undefined,
-          checkout: checkoutKey ?? undefined,
+          checkout: successor.checkout,
         }),
         replace: true,
         hashScrollIntoView: false,
       });
     }
-  }, [groups, navigate, pathname, projectKey, members.length, environmentId, checkoutKey]);
+  }, [
+    groups,
+    navigate,
+    pathname,
+    projectKey,
+    members.length,
+    environmentId,
+    checkoutKey,
+    selected,
+  ]);
 
   if (!selected) {
     return (
@@ -290,8 +332,6 @@ function ProjectDetail({
     [updateAllMembers],
   );
 
-  const hasMultipleCheckouts = group.memberProjects.length > 1;
-
   const removeMembers = useCallback(
     async (members: ReadonlyArray<SidebarProjectGroupMember>) => {
       const api = readLocalApi();
@@ -381,22 +421,109 @@ function ProjectDetail({
     ],
   );
 
+  const updateClientSettings = useUpdateClientSettings();
+  const updateCheckoutFolder = async (
+    selectedCheckout: SidebarProjectGroupMember,
+    workspaceRoot: string,
+  ) => {
+    const ref = scopeProjectRef(selectedCheckout.environmentId, selectedCheckout.id);
+    return serializeProjectFolderUpdate(ref, async () => {
+      const previous = readProject(ref);
+      if (previous === null) return false;
+      const result = await updateProject({
+        environmentId: selectedCheckout.environmentId,
+        input: { projectId: selectedCheckout.id, workspaceRoot },
+      });
+      reportFailure(
+        "Failed to update project folder",
+        mapAtomCommandResult(result, () => undefined),
+      );
+      if (result._tag === "Failure") return false;
+      const selectedPath = normalizeProjectPathForComparison(workspaceRoot);
+      if (normalizeProjectPathForComparison(previous.workspaceRoot) === selectedPath) return true;
+      // The palette submits a resolved server browse path, not the typed query.
+      const updated = await settlePromise(() => waitForProject(ref, { workspaceRoot }));
+      reportFailure(
+        "Folder updated, but project preferences could not follow it",
+        mapAtomCommandResult(updated, () => undefined),
+      );
+      if (updated._tag === "Failure") return true;
+      const projects = readProjects();
+      const project = projects.find(
+        (item) =>
+          item.environmentId === ref.environmentId &&
+          item.id === ref.projectId &&
+          normalizeProjectPathForComparison(item.workspaceRoot) === selectedPath,
+      );
+      if (!project) return true;
+      const settings = getClientSettings();
+      const next = relinkProjectPreferences(useUiStateStore.getState(), {
+        previous,
+        project,
+        projects,
+        settings,
+      });
+      useUiStateStore.setState(next.uiState);
+      if (
+        next.settings.sidebarProjectGroupingOverrides !==
+          settings.sidebarProjectGroupingOverrides ||
+        next.settings.pullRequestMergeMethodOverrides !== settings.pullRequestMergeMethodOverrides
+      ) {
+        updateClientSettings({
+          sidebarProjectGroupingOverrides: next.settings.sidebarProjectGroupingOverrides,
+          pullRequestMergeMethodOverrides: next.settings.pullRequestMergeMethodOverrides,
+        });
+      }
+      return true;
+    });
+  };
+
   const checkoutChoices = (
-    <SettingsSection title="Checkouts">
+    <SettingsSection id="checkout" title="Checkouts">
       {group.memberProjects.map((member) => (
         <SettingsRow
           key={member.physicalProjectKey}
           title={member.environmentLabel ?? "Environment"}
           description={member.workspaceRoot}
           control={
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => void removeMembers([member])}
-              aria-label={`Remove checkout ${member.workspaceRoot}`}
-            >
-              Remove
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                aria-label={`Update project folder ${member.workspaceRoot}`}
+                disabled={
+                  environmentById.get(member.environmentId)?.connection.phase !== "connected"
+                }
+                onClick={() => {
+                  void navigate({
+                    to: "/settings/projects",
+                    search: (search) => ({
+                      ...search,
+                      project: group.projectKey,
+                      machine: member.environmentId,
+                      checkout: stableCheckoutKey(member),
+                    }),
+                    resetScroll: false,
+                  });
+                  openCommandPalette({
+                    open: "select-folder",
+                    environmentId: member.environmentId,
+                    initialPath: getBrowseParentPath(member.workspaceRoot) ?? member.workspaceRoot,
+                    onSelect: (path) => updateCheckoutFolder(member, path),
+                  });
+                }}
+              >
+                Update project folder
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => void removeMembers([member])}
+                aria-label={`Remove checkout ${member.workspaceRoot}`}
+              >
+                Remove
+              </Button>
+            </div>
           }
         />
       ))}
@@ -479,7 +606,7 @@ function ProjectDetail({
           />
         </SettingsSection>
         <ProjectActionsSettings />
-        {hasMultipleCheckouts ? checkoutChoices : null}
+        {checkoutChoices}
         <SettingsSection title="Danger">
           <SettingsRow
             title={

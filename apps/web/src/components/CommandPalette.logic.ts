@@ -1,5 +1,4 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
-import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
 import {
   type EnvironmentId,
   type FilesystemBrowseEntry,
@@ -15,6 +14,7 @@ import { sortThreads } from "../lib/threadSort";
 import { normalizeSearchText } from "../lib/utils";
 import { formatRelativeTimeLabel } from "../timestampFormat";
 import { type Project, type SidebarThreadSummary, type Thread } from "../types";
+import type { CommandPaletteLinkedThreads, FolderSelectionRequest } from "../commandPaletteBus";
 
 export const RECENT_THREAD_LIMIT = 12;
 export const ITEM_ICON_CLASS = "size-4 text-icon-muted";
@@ -62,6 +62,7 @@ export type SearchOverlayMode = "command" | "files" | "content";
 
 export type CommandPaletteOpenIntent =
   | { readonly kind: "add-project" | "new-thread-in" }
+  | (FolderSelectionRequest & { readonly kind: "select-folder" })
   | {
       readonly kind: "search";
       readonly query: string;
@@ -84,6 +85,12 @@ export type CommandPaletteUiAction =
     }
   | { readonly _tag: "OpenAddProject" }
   | { readonly _tag: "OpenNewThreadIn" }
+  | { readonly _tag: "SelectFolder"; readonly request: FolderSelectionRequest }
+  | {
+      readonly _tag: "CompleteFolderSelection";
+      readonly request: FolderSelectionRequest;
+      readonly selected: boolean;
+    }
   | { readonly _tag: "ClearOpenIntent" };
 
 export function reduceCommandPaletteUiState(
@@ -113,6 +120,16 @@ export function reduceCommandPaletteUiState(
       return { open: true, mode: "command", openIntent: { kind: "add-project" } };
     case "OpenNewThreadIn":
       return { open: true, mode: "command", openIntent: { kind: "new-thread-in" } };
+    case "SelectFolder":
+      return {
+        open: true,
+        mode: "command",
+        openIntent: { ...action.request, kind: "select-folder" },
+      };
+    case "CompleteFolderSelection":
+      return action.selected && state.openIntent === action.request
+        ? { ...state, open: false, openIntent: null }
+        : state;
     case "ClearOpenIntent":
       return state.openIntent ? { ...state, openIntent: null } : state;
   }

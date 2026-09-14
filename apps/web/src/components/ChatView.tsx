@@ -1,3 +1,4 @@
+import { checkoutKey } from "./settings/ProjectSettingsPanel.logic";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -17,6 +18,8 @@ import {
 } from "../questionAttachments";
 import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
 import {
+  projectFolderMissingMessage,
+  PROJECT_FOLDER_MISSING_MESSAGE,
   type AssistantCitation,
   type ApprovalRequestId,
   type ChatFileAttachment,
@@ -2084,6 +2087,14 @@ export default function ChatView(props: ChatViewProps) {
     [activeThread?.environmentId, activeThread?.projectId],
   );
   const activeProject = useProject(activeProjectRef);
+  // A failed start belongs to the checkout it tried. Relinking must not leave
+  // a missing-folder banner claiming that the new checkout is missing too.
+  const currentCheckoutThreadError =
+    activeProject &&
+    visibleThreadError?.startsWith(`${PROJECT_FOLDER_MISSING_MESSAGE}\n`) &&
+    visibleThreadError !== projectFolderMissingMessage(activeProject.workspaceRoot)
+      ? null
+      : visibleThreadError;
   // Environment settings with the active project's overrides applied.
   const activeProjectSettings = useMemo(
     () => resolveProjectSettings(settings, activeProject?.id ?? null, activeProject ?? undefined),
@@ -3514,7 +3525,8 @@ export default function ChatView(props: ChatViewProps) {
   )
     ? activeProviderStatus
     : null;
-  const hasTimelineTopBanner = Boolean(visibleThreadError) || visibleProviderStatus !== null;
+  const hasTimelineTopBanner =
+    Boolean(currentCheckoutThreadError) || visibleProviderStatus !== null;
   const activeProjectCwd = activeProject?.workspaceRoot ?? null;
   const activeThreadWorktreePath = activeThread?.worktreePath ?? null;
   const activeWorkspaceRoot = activeThreadWorktreePath ?? activeProjectCwd ?? undefined;
@@ -8934,7 +8946,27 @@ export default function ChatView(props: ChatViewProps) {
                 onOpenProviderSetup={openProviderSetup}
               />
               <ThreadErrorBanner
-                error={visibleThreadError}
+                error={currentCheckoutThreadError}
+                {...(activeProject &&
+                !activeThread.worktreePath &&
+                visibleThreadError === projectFolderMissingMessage(activeProject.workspaceRoot)
+                  ? {
+                      onUpdateProjectSettings: () => {
+                        void navigate({
+                          to: "/settings/projects",
+                          search: {
+                            project: deriveLogicalProjectKeyFromSettings(
+                              activeProject,
+                              projectGroupingSettings,
+                            ),
+                            machine: activeProject.environmentId,
+                            checkout: checkoutKey(activeProject),
+                          },
+                          hash: "checkout",
+                        });
+                      },
+                    }
+                  : {})}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);

@@ -1,4 +1,6 @@
 import type { EnvironmentId } from "@t3tools/contracts";
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
+import { checkoutKey, resolveSettingsProjectGroup } from "./ProjectSettingsPanel.logic";
 
 import type {
   SidebarProjectGroupMember,
@@ -65,6 +67,7 @@ export function resolveSettingsScope(
   search: SettingsScopeSearch,
   groups: readonly SidebarProjectSnapshot[],
   environments: readonly Pick<EnvironmentPresentation, "environmentId" | "label">[],
+  projects: readonly EnvironmentProject[] = [],
 ): ResolvedSettingsScope {
   const unavailable = (
     reason: Extract<ResolvedSettingsScope, { kind: "unavailable" }>["reason"],
@@ -88,12 +91,14 @@ export function resolveSettingsScope(
   }
 
   if (search.project) {
-    const group = groups.find((candidate) => candidate.projectKey === search.project);
+    const group = resolveSettingsProjectGroup(groups, search.project, search.checkout, projects);
     if (!group) return unavailable("project-missing", "This project is no longer available.");
     const members = group.memberProjects.filter(
       (member) =>
         (search.machine === undefined || member.environmentId === search.machine) &&
-        (search.checkout === undefined || member.physicalProjectKey === search.checkout),
+        (search.checkout === undefined ||
+          member.physicalProjectKey === search.checkout ||
+          checkoutKey(member) === search.checkout),
     );
     if (members.length === 0) {
       return unavailable(

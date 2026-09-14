@@ -1,16 +1,18 @@
 import { createContext, type ReactNode, useContext, useMemo } from "react";
 
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
+import { useProjects } from "../../state/entities";
 import { useSettingsProjectGroups } from "./useSettingsProjectGroups";
 import { resolveScopedSettingsTargets, selectScopedSettingsEnvironments } from "./scopedSettings";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 
 function useResolvedSettingsScope(search: SettingsScopeSearch) {
   const groups = useSettingsProjectGroups();
+  const projects = useProjects();
   const { environments: availableEnvironments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   return useMemo(() => {
-    const scope = resolveSettingsScope(search, groups, availableEnvironments);
+    const scope = resolveSettingsScope(search, groups, availableEnvironments, projects);
     const selected = selectScopedSettingsEnvironments(
       scope,
       availableEnvironments,
@@ -26,7 +28,7 @@ function useResolvedSettingsScope(search: SettingsScopeSearch) {
       targets[0] ??
       null;
     return { scope, groups, ...selected, targets, target };
-  }, [availableEnvironments, groups, primaryEnvironmentId, search]);
+  }, [availableEnvironments, groups, primaryEnvironmentId, search, projects]);
 }
 
 const SettingsScopeContext = createContext<

@@ -533,6 +533,7 @@ export function SettingsPageContainer({
   const clearTargetHash = useCallback(() => {
     void navigate({
       hash: "",
+      search: true,
       replace: true,
       resetScroll: false,
       hashScrollIntoView: false,

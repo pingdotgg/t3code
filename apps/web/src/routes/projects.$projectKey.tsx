@@ -1,7 +1,9 @@
 import { createFileRoute, redirect } from "@tanstack/react-router";
 
 export const Route = createFileRoute("/projects/$projectKey")({
-  beforeLoad: async ({ context, params }) => {
+  validateSearch: (search: Record<string, unknown>): { checkout?: string } =>
+    typeof search.checkout === "string" ? { checkout: search.checkout } : {},
+  beforeLoad: async ({ context, params, search, location }) => {
     if (
       context.authGateState.status !== "authenticated" &&
       context.authGateState.status !== "hosted-static"
@@ -10,7 +12,8 @@ export const Route = createFileRoute("/projects/$projectKey")({
     }
     throw redirect({
       to: "/settings/projects",
-      search: { project: params.projectKey, machine: undefined },
+      search: { project: params.projectKey, machine: undefined, checkout: search.checkout },
+      hash: location.hash,
       replace: true,
     });
   },

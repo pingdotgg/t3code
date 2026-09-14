@@ -12,6 +12,7 @@ import {
   filterCommandPaletteGroups,
   reduceCommandPaletteUiState,
   type CommandPaletteGroup,
+  type CommandPaletteUiState,
 } from "./CommandPalette.logic";
 
 describe("linked pull request thread navigation", () => {
@@ -269,6 +270,88 @@ describe("reduceCommandPaletteUiState", () => {
       openIntent: null,
     });
   });
+});
+
+describe("folder selection completion", () => {
+  const request = {
+    environmentId: EnvironmentId.make("environment-a"),
+    initialPath: "/projects/",
+    onSelect: async () => true,
+  };
+  const openSelection = () =>
+    reduceCommandPaletteUiState(
+      { open: false, mode: "command", openIntent: null },
+      { _tag: "SelectFolder", request },
+    );
+
+  it.each([true, false])("handles the owning selection result %s", (selected) => {
+    const state = openSelection();
+    const intent = state.openIntent;
+    assertFolderIntent(intent);
+    const next = reduceCommandPaletteUiState(state, {
+      _tag: "CompleteFolderSelection",
+      request: intent,
+      selected,
+    });
+    if (selected) {
+      expect(next).toEqual({ open: false, mode: "command", openIntent: null });
+    } else {
+      expect(next).toBe(state);
+    }
+  });
+
+  it.each([
+    [
+      "dismissed dialog",
+      (state: CommandPaletteUiState) =>
+        reduceCommandPaletteUiState(state, { _tag: "SetOpen", open: false }),
+    ],
+    [
+      "Files overlay",
+      (state: CommandPaletteUiState) =>
+        reduceCommandPaletteUiState(state, { _tag: "ToggleMode", mode: "files" }),
+    ],
+    [
+      "Add project flow",
+      (state: CommandPaletteUiState) =>
+        reduceCommandPaletteUiState(state, { _tag: "OpenAddProject" }),
+    ],
+    [
+      "linked PR search",
+      (state: CommandPaletteUiState) =>
+        reduceCommandPaletteUiState(state, {
+          _tag: "OpenSearch",
+          query: "https://github.com/acme/web/pull/7",
+        }),
+    ],
+    [
+      "new folder request with the same values",
+      (state: CommandPaletteUiState) =>
+        reduceCommandPaletteUiState(state, { _tag: "SelectFolder", request }),
+    ],
+  ] as const)("preserves the %s after an older selection succeeds", (_name, replace) => {
+    const original = openSelection();
+    const intent = original.openIntent;
+    assertFolderIntent(intent);
+    const current = replace(original);
+    expect(current.openIntent).not.toBe(intent);
+    expect(
+      reduceCommandPaletteUiState(current, {
+        _tag: "CompleteFolderSelection",
+        request: intent,
+        selected: true,
+      }),
+    ).toBe(current);
+  });
+
+  function assertFolderIntent(
+    intent: CommandPaletteUiState["openIntent"],
+  ): asserts intent is Extract<
+    NonNullable<CommandPaletteUiState["openIntent"]>,
+    { kind: "select-folder" }
+  > {
+    if (intent?.kind !== "select-folder") throw new Error("Expected folder selection intent");
+  }
 });
 
 describe("enumerateCommandPaletteItems", () => {

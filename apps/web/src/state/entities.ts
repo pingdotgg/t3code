@@ -12,6 +12,7 @@ import type { ScopedProjectRef, ScopedThreadRef, ServerConfig } from "@t3tools/c
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
+import { normalizeProjectPathForComparison } from "../lib/projectPaths";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentProjects } from "./projects";
 import { environmentServerConfigsAtom } from "./server";
@@ -157,19 +158,27 @@ export function readProjects(): ReadonlyArray<EnvironmentProject> {
 /** Resolves when the project event reaches the live client store. */
 export function waitForProject(
   ref: ScopedProjectRef,
-  timeoutMs = 10_000,
+  options: { readonly workspaceRoot?: string; readonly timeoutMs?: number } = {},
 ): Promise<EnvironmentProject> {
+  const expectedPath =
+    options.workspaceRoot === undefined
+      ? undefined
+      : normalizeProjectPathForComparison(options.workspaceRoot);
+  const matches = (project: EnvironmentProject | null): project is EnvironmentProject =>
+    project !== null &&
+    (expectedPath === undefined ||
+      normalizeProjectPathForComparison(project.workspaceRoot) === expectedPath);
   const current = readProject(ref);
-  if (current !== null) return Promise.resolve(current);
+  if (matches(current)) return Promise.resolve(current);
 
   return new Promise((resolve, reject) => {
     let unsubscribe: (() => void) | null = null;
     const timeout = setTimeout(() => {
       unsubscribe?.();
       reject(new Error("The project did not appear in the desktop app."));
-    }, timeoutMs);
+    }, options.timeoutMs ?? 10_000);
     const finish = (project: EnvironmentProject | null) => {
-      if (project === null) return;
+      if (!matches(project)) return;
       clearTimeout(timeout);
       unsubscribe?.();
       resolve(project);

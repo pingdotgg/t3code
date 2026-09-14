@@ -22,6 +22,7 @@ import {
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
 import { SETTINGS_SECTION_LABELS } from "./settingsSearch";
+import { useProjects } from "../../state/entities";
 import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope";
 import {
   ALL_ENVIRONMENTS_VALUE,
@@ -132,7 +133,8 @@ function EnvironmentScopeMenu({
   environments,
   onChange,
 }: SettingsScopeBreadcrumbProps) {
-  const resolved = resolveSettingsScope(value, groups, environments);
+  const projects = useProjects();
+  const resolved = resolveSettingsScope(value, groups, environments, projects);
   const environmentValue = environmentAxisValue(
     value,
     resolved.kind === "checkout" ? resolved.environmentId : null,
