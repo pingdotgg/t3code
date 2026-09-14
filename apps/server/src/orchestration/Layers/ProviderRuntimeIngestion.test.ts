@@ -4562,6 +4562,21 @@ describe("splitBufferedAssistantText", () => {
     });
   });
 
+  it("keeps a fence nested under a list item open across its blank lines", () => {
+    const text = "- step\n\n    ```ts\n    a\n\n    b\n    ```\n\nafter\n";
+    expect(splitBufferedAssistantText(text)).toEqual({
+      ready: "- step\n\n    ```ts\n    a\n\n    b\n    ```\n\n",
+      rest: "after\n",
+    });
+  });
+
+  it("does not treat a no-break-space line as blank", () => {
+    expect(splitBufferedAssistantText("para\n\u00a0\ncont\n\nnext")).toEqual({
+      ready: "para\n\u00a0\ncont\n\n",
+      rest: "next",
+    });
+  });
+
   it("treats CRLF blank lines as boundaries", () => {
     expect(splitBufferedAssistantText("one\r\n\r\ntwo")).toEqual({
       ready: "one\r\n\r\n",
