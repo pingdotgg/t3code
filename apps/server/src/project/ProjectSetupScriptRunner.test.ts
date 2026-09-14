@@ -72,6 +72,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       status: "started",
       scriptId: "setup",
       scriptName: "Setup",
+      scriptCommand: "vp install",
       terminalId: "setup-setup",
       cwd: "/repo-worktree",
     });
