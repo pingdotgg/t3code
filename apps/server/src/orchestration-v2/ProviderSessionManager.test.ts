@@ -7333,6 +7333,87 @@ it.effect(
 );
 
 it.effect(
+  "ProviderSessionManagerV2 bounds an exclusive terminal detach when the release's credential sweep stalls",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const mcpConfigs = yield* Ref.make<
+        ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+      >([]);
+      const pauseSettings = yield* Ref.make(false);
+      const preparing = yield* Deferred.make<void>();
+      const prepareGate = yield* Deferred.make<void>();
+      const settingsLayer = Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const delegate = yield* ServerSettings.ServerSettingsService;
+          return ServerSettings.ServerSettingsService.of({
+            ...delegate,
+            getSettings: Ref.get(pauseSettings).pipe(
+              Effect.flatMap((pause) =>
+                pause
+                  ? Deferred.succeed(preparing, undefined).pipe(
+                      Effect.andThen(Deferred.await(prepareGate)),
+                    )
+                  : Effect.void,
+              ),
+              Effect.andThen(delegate.getSettings),
+            ),
+          });
+        }),
+      ).pipe(Layer.provide(ServerSettings.layerTest({ enableAgentBrowserAccess: true })));
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const threadId = ThreadId.make("thread-detach-exclusive-revoke-bounded");
+        const { allocate, open } = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* allocate;
+        yield* open(providerSessionId);
+
+        // A peer open for the same thread parks inside prepareMcpSession
+        // holding mcpPrepareLock[threadId] — the lock the release's
+        // credential sweep must acquire.
+        yield* Ref.set(pauseSettings, true);
+        const peerId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* manager
+          .open({ threadId, providerSessionId: peerId, modelSelection, runtimePolicy })
+          .pipe(Effect.exit, Effect.forkChild);
+        yield* Deferred.await(preparing);
+
+        // The exclusive session's last detach forks the release and joins it;
+        // the release's sweep parks behind the stalled peer prepare. The
+        // detach must report the unfinished cleanup within the 30-second
+        // bound — the release keeps running and keeps ownership.
+        const detaching = yield* manager
+          .detach({ providerSessionId, threadId, revokeMcpCredential: true })
+          .pipe(Effect.exit, Effect.forkChild);
+        for (let i = 0; i < 8; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        yield* TestClock.adjust("30 seconds");
+        for (let i = 0; i < 8; i += 1) {
+          yield* Effect.yieldNow;
+        }
+        assert.equal((yield* Fiber.join(detaching))._tag, "Failure");
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(prepareGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            capabilities: ExclusiveCapabilities,
+            mcpConfigs,
+            serverSettingsLayer: settingsLayer,
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 fences a startup that finishes opening while shutdown is busy closing another session",
   () =>
     Effect.gen(function* () {
