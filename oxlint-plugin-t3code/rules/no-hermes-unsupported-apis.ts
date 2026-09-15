@@ -1,13 +1,27 @@
 import { defineRule, type ESTree } from "@oxlint/plugins";
 
-// ES2023 change-array-by-copy methods. Hermes does not implement them, and
-// tsconfig targets ESNext, so nothing but this rule stands between a call and a
-// TypeError that is fatal on every mobile launch that reaches it.
+// Add global APIs by dotted path, or instance methods by name. Values explain the replacement.
+const UNSUPPORTED_GLOBAL_APIS = new Map([
+  [
+    "Intl.Segmenter",
+    "Use a portable implementation or a simpler character-counting approximation.",
+  ],
+]);
+
 const UNSUPPORTED_METHODS = new Map([
-  ["toSorted", "[...array].sort(...)"],
-  ["toReversed", "[...array].reverse()"],
+  [
+    "toSorted",
+    "Hermes does not implement Array#toSorted. Copy the array first: [...array].sort(...).",
+  ],
+  [
+    "toReversed",
+    "Hermes does not implement Array#toReversed. Copy the array first: [...array].reverse().",
+  ],
   // splice returns the removed elements, so the copy itself is the result.
-  ["toSpliced", "const copy = [...array]; copy.splice(...); use copy"],
+  [
+    "toSpliced",
+    "Hermes does not implement Array#toSpliced. Copy the array first: const copy = [...array]; copy.splice(...); use copy.",
+  ],
 ]);
 
 function memberName(node: ESTree.MemberExpression): string | null {
@@ -19,55 +33,38 @@ function memberName(node: ESTree.MemberExpression): string | null {
   return null;
 }
 
-function isIntl(node: ESTree.Node): boolean {
-  if (node.type === "Identifier") return node.name === "Intl";
-  return (
-    node.type === "MemberExpression" &&
-    node.object.type === "Identifier" &&
-    ["globalThis", "global", "window"].includes(node.object.name) &&
-    memberName(node) === "Intl"
-  );
+function globalApiPath(node: ESTree.Node): string | null {
+  if (node.type === "Identifier") return node.name;
+  if (node.type !== "MemberExpression") return null;
+  const object = globalApiPath(node.object);
+  const property = memberName(node);
+  if (object === null || property === null) return null;
+  return ["globalThis", "global", "window"].includes(object) ? property : `${object}.${property}`;
 }
 
 export default defineRule({
   meta: {
     type: "problem",
     docs: {
-      description:
-        "Disallow unsupported array-by-copy methods and Intl.Segmenter in code that runs on Hermes.",
+      description: "Disallow APIs that Hermes does not implement in mobile and shared client code.",
     },
   },
   create(context) {
-    function checkSegmenter(node: ESTree.CallExpression | ESTree.NewExpression) {
-      const { callee } = node;
-      if (
-        callee.type === "MemberExpression" &&
-        memberName(callee) === "Segmenter" &&
-        isIntl(callee.object)
-      ) {
+    function checkApi(node: ESTree.CallExpression | ESTree.NewExpression) {
+      const path = globalApiPath(node.callee);
+      const replacement = path === null ? undefined : UNSUPPORTED_GLOBAL_APIS.get(path);
+      if (replacement !== undefined) {
         context.report({
-          node: callee.property,
-          message:
-            "Hermes does not implement Intl.Segmenter. Use unicode-segmenter/grapheme for portable grapheme counting or segmentation.",
+          node: node.callee,
+          message: `Hermes does not implement ${path}. ${replacement}`,
         });
+        return;
       }
+      if (node.type !== "CallExpression" || node.callee.type !== "MemberExpression") return;
+      const name = memberName(node.callee);
+      const message = name === null ? undefined : UNSUPPORTED_METHODS.get(name);
+      if (message !== undefined) context.report({ node: node.callee.property, message });
     }
-    return {
-      NewExpression: checkSegmenter,
-      CallExpression(node) {
-        checkSegmenter(node);
-        if (node.callee.type !== "MemberExpression") return;
-        const { property } = node.callee;
-        const name = memberName(node.callee);
-        if (name === null) return;
-        const replacement = UNSUPPORTED_METHODS.get(name);
-        if (replacement === undefined) return;
-
-        context.report({
-          node: property,
-          message: `Hermes does not implement Array#${name}. Copy the array first: ${replacement}.`,
-        });
-      },
-    };
+    return { NewExpression: checkApi, CallExpression: checkApi };
   },
 });

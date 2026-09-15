@@ -459,14 +459,11 @@ const ProjectLucideIconName = TrimmedNonEmptyString.check(
 
 const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 
+const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 export const ProjectMonogramText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-  // Approximate monogram length without Intl.Segmenter, which Hermes lacks.
-  // Normalize composed letters and ignore marks/joiners; complex conjuncts may count as multiple letters.
-  Schema.makeFilter(
-    (text) => [...text.normalize("NFC").replace(/[\p{M}\u200c\u200d]/gu, "")].length <= 2,
-  ),
+  Schema.makeFilter((text) => Array.from(monogramSegmenter.segment(text)).length <= 2),
 );
 
 export const ProjectIconOverride = Schema.Union([

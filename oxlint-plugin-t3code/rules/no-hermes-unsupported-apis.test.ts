@@ -73,7 +73,7 @@ describe("t3code/no-hermes-unsupported-apis", () => {
   ]) {
     rule.invalid(`reports ${expression}`, `${expression};`, (output) => {
       assert.match(output, /Hermes does not implement Intl\.Segmenter/);
-      assert.match(output, /unicode-segmenter\/grapheme/);
+      assert.match(output, /portable implementation/);
     });
   }
 });
