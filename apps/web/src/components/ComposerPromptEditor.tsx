@@ -1978,6 +1978,14 @@ function ComposerPromptEditorInner({
           <PlainTextPlugin
             contentEditable={
               <ContentEditable
+                // The draft belongs to whoever is typing it: `dir="auto"` re-reads
+                // the first strong character on every input, so a Hebrew draft
+                // flips the composer RTL (text-align follows `start`) live, and
+                // clearing it falls back to LTR. Lexical stamps each paragraph
+                // with its own `dir="auto"` too; this covers the root box, the
+                // caret in an empty composer, and any non-paragraph child. No CSS
+                // here forces a text-align that could fight it.
+                dir="auto"
                 className={cn(
                   // The wrapper owns the appearance preference; keep everything else here.
                   "block max-h-50 min-h-17.5 w-full overflow-y-auto whitespace-pre-wrap wrap-break-word bg-transparent leading-relaxed text-foreground focus:outline-none",

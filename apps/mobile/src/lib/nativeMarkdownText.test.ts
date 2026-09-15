@@ -273,15 +273,16 @@ describe("nativeMarkdownDocumentRuns", () => {
       ],
     });
     expect(runs).toEqual([
-      { text: "Inspect ", role: "body" },
+      { text: "Inspect ", role: "body", writingDirection: "ltr" },
       {
         text: "Checkout.tsx",
         role: "body",
         href: "src/Checkout.tsx",
         fileIcon: "react",
         sourceText: "@src/Checkout.tsx",
+        writingDirection: "ltr",
       },
-      { text: ". Use @t3tools/contracts.", role: "body" },
+      { text: ". Use @t3tools/contracts.", role: "body", writingDirection: "ltr" },
     ]);
   });
 
@@ -319,14 +320,15 @@ describe("nativeMarkdownDocumentRuns", () => {
     };
 
     expect(nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }])).toEqual([
-      { text: "Use ", role: "body" },
+      { text: "Use ", role: "body", writingDirection: "ltr" },
       {
         text: "$ui",
         role: "body",
         skillName: "ui",
         skillLabel: "UI",
+        writingDirection: "ltr",
       },
-      { text: " for this.", role: "body" },
+      { text: " for this.", role: "body", writingDirection: "ltr" },
     ]);
   });
 
@@ -342,15 +344,50 @@ describe("nativeMarkdownDocumentRuns", () => {
     };
 
     expect(nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }])).toEqual([
-      { text: "Use ", role: "body" },
+      { text: "Use ", role: "body", writingDirection: "ltr" },
       {
         text: "$2spec",
         role: "body",
         skillName: "2spec",
         skillLabel: "2Spec",
+        writingDirection: "ltr",
       },
-      { text: " for this.", role: "body" },
+      { text: " for this.", role: "body", writingDirection: "ltr" },
     ]);
+  });
+
+  it("keeps a skill reference intact when Latin runs are isolated for RTL text", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $ui for this." }],
+        },
+      ],
+    };
+
+    const runs = nativeMarkdownDocumentRuns(node, [{ name: "ui", displayName: "UI" }], "rtl");
+    const skillRun = runs.find((run) => run.skillName === "ui");
+    expect(skillRun?.text).toBe("$ui");
+    expect(skillRun?.skillLabel).toBe("UI");
+  });
+
+  it("keeps a digit-led skill reference intact when Latin runs are isolated for RTL text", () => {
+    const node: MarkdownNode = {
+      type: "document",
+      children: [
+        {
+          type: "paragraph",
+          children: [{ type: "text", content: "Use $2spec for this." }],
+        },
+      ],
+    };
+
+    const runs = nativeMarkdownDocumentRuns(node, [{ name: "2spec", displayName: "2Spec" }], "rtl");
+    const skillRun = runs.find((run) => run.skillName === "2spec");
+    expect(skillRun?.text).toBe("$2spec");
+    expect(skillRun?.skillLabel).toBe("2Spec");
   });
 
   it("decorates known skill references inside blockquotes", () => {
@@ -369,6 +406,7 @@ describe("nativeMarkdownDocumentRuns", () => {
       role: "body",
       skillName: "ui",
       skillLabel: "UI",
+      writingDirection: "ltr",
     });
   });
 
@@ -384,7 +422,7 @@ describe("nativeMarkdownDocumentRuns", () => {
     };
 
     expect(nativeMarkdownDocumentRuns(node, [])).toEqual([
-      { text: "Use $unknown for this.", role: "body" },
+      { text: "Use $unknown for this.", role: "body", writingDirection: "ltr" },
     ]);
   });
 
@@ -440,11 +478,13 @@ describe("nativeMarkdownDocumentRuns", () => {
       text: "Header One\n",
       role: "heading",
       headingLevel: 1,
+      writingDirection: "ltr",
     });
     expect(runs).toContainEqual({
       text: "bold text",
       bold: true,
       role: "body",
+      writingDirection: "ltr",
     });
     expect(runs).toContainEqual({
       text: "•\t",
@@ -453,6 +493,7 @@ describe("nativeMarkdownDocumentRuns", () => {
       firstLineHeadIndent: 0,
       headIndent: 24,
       paragraphSpacing: 2,
+      writingDirection: "ltr",
     });
   });
 
@@ -519,11 +560,12 @@ describe("nativeMarkdownDocumentRuns", () => {
         firstLineHeadIndent: 0,
         headIndent: 24,
         paragraphSpacing: 2,
+        writingDirection: "ltr",
       },
-      { text: "Finding:", bold: true, role: "body", depth: 1 },
-      { text: " details with ", role: "body", depth: 1 },
-      { text: "inline code", code: true, role: "body", depth: 1 },
-      { text: ".", role: "body", depth: 1 },
+      { text: "Finding:", bold: true, role: "body", depth: 1, writingDirection: "ltr" },
+      { text: " details with ", role: "body", depth: 1, writingDirection: "ltr" },
+      { text: "inline code", code: true, role: "body", depth: 1, writingDirection: "ltr" },
+      { text: ".", role: "body", depth: 1, writingDirection: "ltr" },
     ]);
   });
 
@@ -554,6 +596,7 @@ describe("nativeMarkdownDocumentRuns", () => {
       text: "const answer = 42;",
       code: true,
       role: "code-block",
+      writingDirection: "ltr",
     });
   });
 
@@ -591,8 +634,8 @@ describe("nativeMarkdownDocumentRuns", () => {
     // Merging these would render one chip and emit one copy range with a
     // combined label for two distinct references.
     expect(runs).toEqual([
-      { text: "First", role: "body", href, fileIcon: "bash" },
-      { text: "Second", role: "body", href, fileIcon: "bash" },
+      { text: "First", role: "body", href, fileIcon: "bash", writingDirection: "ltr" },
+      { text: "Second", role: "body", href, fileIcon: "bash", writingDirection: "ltr" },
     ]);
   });
 });

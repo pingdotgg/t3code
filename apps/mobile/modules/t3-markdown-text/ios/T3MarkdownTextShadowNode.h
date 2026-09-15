@@ -20,6 +20,10 @@ struct T3MarkdownTextParagraphStyleRange {
   Float firstLineHeadIndent;
   Float headIndent;
   Float paragraphSpacing;
+  // RTL paragraphs (Hebrew/Arabic list items) need their base writing direction
+  // pinned and their marker tab stop right-aligned; TextKit flips the head
+  // indents to the leading (right) edge on its own.
+  bool rtl;
 };
 
 struct T3MarkdownTextAttachmentRange {

@@ -5,9 +5,11 @@ import type { MarkdownNode } from "react-native-nitro-markdown/headless";
 import { CopyTextButton } from "./CopyTextButton";
 import { MarkdownTextPrimitive } from "./MarkdownTextPrimitive";
 import {
+  markdownBlockDirection,
   nativeMarkdownDocumentRuns,
   nativeMarkdownListItemBlocks,
   nativeMarkdownNodePosition,
+  type MarkdownWritingDirection,
 } from "./nativeMarkdownText";
 import { NativeMarkdownSelectableText } from "./NativeMarkdownSelectableText";
 import type {
@@ -57,10 +59,11 @@ function SelectableNode(props: {
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  readonly direction?: MarkdownWritingDirection;
 }) {
   return (
     <NativeMarkdownSelectableText
-      runs={nativeMarkdownDocumentRuns(documentFor(props.node), props.skills)}
+      runs={nativeMarkdownDocumentRuns(documentFor(props.node), props.skills, props.direction)}
       textStyle={props.textStyle}
       onLinkPress={props.onLinkPress}
     />
@@ -114,6 +117,8 @@ function HighlightedCodeText(props: {
       fontFamily: MONO_FONT_FAMILY,
       fontSize,
       lineHeight,
+      // Code stays LTR always — a Hebrew comment must not flip the snippet.
+      writingDirection: "ltr" as const,
     }),
     [props.textStyle.codeColor, fontSize, lineHeight],
   );
@@ -376,6 +381,7 @@ function NativeMixedParagraph(props: {
   readonly skills: ReadonlyArray<SelectableMarkdownSkill>;
   readonly textStyle: NativeMarkdownTextStyle;
   readonly onLinkPress?: (href: string) => void;
+  readonly direction?: MarkdownWritingDirection;
 }) {
   return (
     <View style={{ gap: 8 }}>
@@ -395,6 +401,7 @@ function NativeMixedParagraph(props: {
             skills={props.skills}
             textStyle={props.textStyle}
             onLinkPress={props.onLinkPress}
+            direction={props.direction}
           />
         ),
       )}
@@ -409,6 +416,7 @@ function NativeList(props: {
   readonly highlightCode: MarkdownCodeHighlighter;
   readonly onLinkPress?: (href: string) => void;
   readonly depth: number;
+  readonly direction?: MarkdownWritingDirection;
 }) {
   const ordered = props.node.ordered ?? false;
   const start = props.node.start ?? 1;
@@ -420,6 +428,11 @@ function NativeList(props: {
       }}
     >
       {(props.node.children ?? []).map((item, index) => {
+        // Each item resolves its own direction — inherited from the enclosing
+        // block, or from the item's own first strong letter — so a Hebrew item
+        // in an English list still gets its marker on the right, and vice versa.
+        const itemDirection = props.direction ?? markdownBlockDirection(item);
+        const rtl = itemDirection === "rtl";
         const taskMarker = item.type === "task_list_item";
         const marker = taskMarker
           ? item.checked
@@ -437,14 +450,15 @@ function NativeList(props: {
         return (
           <View
             key={nodeKey(item, index)}
-            style={{ alignItems: "flex-start", flexDirection: "row" }}
+            style={{ alignItems: "flex-start", flexDirection: rtl ? "row-reverse" : "row" }}
           >
             <View
               style={{
                 width: markerWidth,
                 height: props.textStyle.lineHeight,
-                marginRight: 6,
-                alignItems: ordered ? "flex-end" : "center",
+                marginLeft: rtl ? 6 : 0,
+                marginRight: rtl ? 0 : 6,
+                alignItems: rtl && ordered ? "flex-start" : ordered ? "flex-end" : "center",
                 justifyContent: "flex-start",
               }}
             >
@@ -471,6 +485,7 @@ function NativeList(props: {
                   highlightCode={props.highlightCode}
                   onLinkPress={props.onLinkPress}
                   depth={props.depth + 1}
+                  direction={itemDirection}
                   compact
                 />
               ))}
@@ -490,6 +505,7 @@ export function NativeMarkdownBlock(props: {
   readonly onLinkPress?: (href: string) => void;
   readonly depth?: number;
   readonly compact?: boolean;
+  readonly direction?: MarkdownWritingDirection;
 }) {
   const depth = props.depth ?? 0;
   switch (props.node.type) {
@@ -505,6 +521,7 @@ export function NativeMarkdownBlock(props: {
               highlightCode={props.highlightCode}
               onLinkPress={props.onLinkPress}
               depth={depth}
+              direction={props.direction}
             />
           ))}
         </View>
@@ -545,14 +562,20 @@ export function NativeMarkdownBlock(props: {
           }}
         />
       );
-    case "blockquote":
+    case "blockquote": {
+      // The quote bar sits on the leading edge of its own text: right for a
+      // Hebrew/Arabic quote, left otherwise (per-block, like the web's dir="auto").
+      const rtl = (props.direction ?? markdownBlockDirection(props.node)) === "rtl";
       return (
         <View
           style={{
             borderLeftColor: props.textStyle.quoteMarkerColor,
-            borderLeftWidth: 2,
+            borderLeftWidth: rtl ? 0 : 2,
+            borderRightColor: props.textStyle.quoteMarkerColor,
+            borderRightWidth: rtl ? 2 : 0,
             marginVertical: props.compact ? 4 : 0,
-            paddingLeft: 11,
+            paddingLeft: rtl ? 0 : 11,
+            paddingRight: rtl ? 11 : 0,
             paddingVertical: 2,
             gap: 6,
           }}
@@ -566,11 +589,13 @@ export function NativeMarkdownBlock(props: {
               highlightCode={props.highlightCode}
               onLinkPress={props.onLinkPress}
               depth={depth}
+              direction={rtl ? "rtl" : "ltr"}
               compact
             />
           ))}
         </View>
       );
+    }
     case "list":
       return (
         <NativeList
@@ -580,6 +605,7 @@ export function NativeMarkdownBlock(props: {
           highlightCode={props.highlightCode}
           onLinkPress={props.onLinkPress}
           depth={depth}
+          direction={props.direction}
         />
       );
     case "paragraph":
@@ -589,6 +615,7 @@ export function NativeMarkdownBlock(props: {
           skills={props.skills}
           textStyle={props.textStyle}
           onLinkPress={props.onLinkPress}
+          direction={props.direction}
         />
       ) : (
         <SelectableNode
@@ -596,6 +623,7 @@ export function NativeMarkdownBlock(props: {
           skills={props.skills}
           textStyle={props.textStyle}
           onLinkPress={props.onLinkPress}
+          direction={props.direction}
         />
       );
     case "html_block":

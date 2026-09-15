@@ -84,6 +84,7 @@ function runKeySignature(run: NativeMarkdownTextRun): string {
     run.firstLineHeadIndent,
     run.headIndent,
     run.paragraphSpacing,
+    run.writingDirection,
   ].join(":");
 }
 
@@ -174,6 +175,10 @@ function runStyle(run: NativeMarkdownTextRun, textStyle: NativeMarkdownTextStyle
     fontStyle: run.italic ? "italic" : "normal",
     fontWeight: isHeading || run.bold || isFile || isSkill ? "700" : "400",
     textDecorationLine,
+    // Per-block bidi: the block's own first strong letter decided this in
+    // nativeMarkdownText.ts, and the native side turns it into the paragraph's
+    // base writing direction (which natural alignment then follows).
+    ...(run.writingDirection ? { writingDirection: run.writingDirection } : {}),
     backgroundColor: isCodeBlock
       ? textStyle.codeBlockBackgroundColor
       : parseComposerContextHref(run.href ?? "")
