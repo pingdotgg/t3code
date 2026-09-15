@@ -1498,6 +1498,19 @@ it.effect("memory windows bill the item payload like SQL, not the projected row"
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
 
+it.effect("memory snapshot windows surface missing threads as not-found, not read errors", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    // The window's mapError wraps only the decode/bounding gen inside the
+    // flatMap; the snapshot lookup's not-found failure must reach callers
+    // untagged as a read error so isThreadNotFound still maps it.
+    const error = yield* projectionStore
+      .getThreadSnapshotWindow(ThreadId.make("thread:missing-window"), { rowLimit: 75 })
+      .pipe(Effect.flip);
+    assert.instanceOf(error, ProjectionStoreThreadNotFoundError);
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
 it("bounds write-time previews for free-form record members", () => {
   const payload = {
     id: "item:preview-record-members",
@@ -1684,6 +1697,17 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
       assert.deepEqual(yield* store.getTurnStartHistory(threadId, [RunId.make("run:other")]), []);
     }),
   );
+
+  it.effect("surfaces missing threads as not-found, not read errors", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const error = yield* projectionStore
+        .getThreadSnapshotWindow(ThreadId.make("thread:missing-window"), { rowLimit: 75 })
+        .pipe(Effect.flip);
+      assert.instanceOf(error, ProjectionStoreThreadNotFoundError);
+    }),
+  );
+
   it.effect("preserves stored provider usage when a terminal update omits it", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStoreV2;
