@@ -573,7 +573,7 @@ async function createShowcaseShell(baseDir: string): Promise<string> {
   await NodeFSP.writeFile(
     shellPath,
     `#!/bin/sh
-if [ "$1" = "-ilc" ] || [ "$1" = "-lic" ]; then
+if [ "$1" = "-lc" ] || [ "$1" = "-ilc" ] || [ "$1" = "-lic" ]; then
   exec /bin/sh -c "$2"
 fi
 exec /bin/cat
