@@ -154,6 +154,10 @@ export function readProjects(): ReadonlyArray<EnvironmentProject> {
   return appAtomRegistry.get(environmentProjects.projectsAtom);
 }
 
+export function readServerConfigs(): ReadonlyMap<EnvironmentId, ServerConfig> {
+  return appAtomRegistry.get(environmentServerConfigsAtom);
+}
+
 /** Resolves when the project event reaches the live client store. */
 export function waitForProject(
   ref: ScopedProjectRef,

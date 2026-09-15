@@ -16,7 +16,7 @@ import {
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, GitPullRequestArrowIcon, LayersIcon, TerminalIcon } from "lucide-react";
 import { useMemo, type MouseEvent } from "react";
-import { buttonVariants, InlineButton } from "./ui/button";
+import { InlineButton } from "./ui/button";
 import { cn } from "../lib/utils";
 import { useEnvironment, usePrimaryEnvironmentId } from "../state/environments";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
@@ -137,23 +137,24 @@ function ThreadPullRequestBadgeIcon({
   return <Icon aria-hidden className={cn("size-3 shrink-0", className)} />;
 }
 
-/** The complete linked-PR control shared by the sidebar and composer footer. */
+/** The complete linked-PR control worn by a thread row. */
 export function ThreadPullRequestBadgeControl({
-  variant,
   badge,
   number,
   url,
   status,
   onOpenStack,
   onOpenPullRequest,
+  onContextMenuPullRequest,
 }: {
-  variant: "underline" | "ghost";
   badge: ThreadPullRequestBadge | null;
   number?: number | undefined;
   url?: string | undefined;
   status: PrStatusIndicator | null;
   onOpenStack: () => void;
   onOpenPullRequest: (event: MouseEvent<HTMLAnchorElement>) => void;
+  /** Only the single-pull-request shape carries one; a stack has no one number to act on. */
+  onContextMenuPullRequest?: ((event: MouseEvent<HTMLAnchorElement>) => void) | undefined;
 }) {
   const isStack = badge?.kind === "stack";
   const linkedCount = badge?.kind === "pull-request" && badge.others > 0 ? badge.others + 1 : null;
@@ -166,12 +167,8 @@ export function ThreadPullRequestBadgeControl({
           : ""
       }`;
   const className = cn(
-    variant === "ghost"
-      ? buttonVariants({ variant: "ghost", size: "xs" })
-      : "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
+    "inline-flex shrink-0 cursor-pointer items-center gap-0.5 whitespace-nowrap border-b border-transparent hover:border-current focus-visible:outline-2 focus-visible:outline-ring",
     "text-xs tabular-nums",
-    variant === "ghost" &&
-      "font-normal text-xs! active:scale-100 [--control-icon-color:currentColor]",
     badge !== null && (isStack || linkedCount !== null)
       ? PR_STATE_COLOR_CLASS[badge.state]
       : (status?.colorClass ?? "text-muted-foreground"),
@@ -206,6 +203,7 @@ export function ThreadPullRequestBadgeControl({
               aria-label={label}
               onPointerDown={(event) => event.stopPropagation()}
               onClick={onOpenPullRequest}
+              {...(onContextMenuPullRequest ? { onContextMenu: onContextMenuPullRequest } : {})}
             />
           )
         }

@@ -87,8 +87,9 @@ make your first commit before pushing.
 
 ## Create a pull request
 
-Use a thread's Git actions to commit, push, and create a pull request. T3 Code can generate commit
-messages, review titles, and descriptions from your changes.
+Use a thread's Git actions to commit and push, then the pull request button beside them to open one.
+Once the thread has a pull request, that button shows its number and opens **Linked pull requests**.
+T3 Code can generate commit messages, review titles, and descriptions from your changes.
 
 Choose the writing style and model in **Settings → Source Control**. **Repository conventions**
 uses the project's instructions and recent commit subjects.
@@ -147,7 +148,8 @@ links. On mobile, the Git overview lists linked reviews and their stacks; tap a 
 Linking and unlinking are available in the web and desktop clients.
 
 The **Linked pull requests** panel lists every review and groups stacks. Unlink a review from its
-row menu. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
+row menu, or right-click its number anywhere it appears: the thread list, the thread header, or a
+link in the conversation. An unlinked stack layer stays out of later syncs. Open linked reviews refresh on the server;
 closed reviews refresh periodically so reopening one on the host is detected. Merged reviews refresh
 when requested. With **Auto-settle merged threads** enabled, a thread can settle after every linked
 review is terminal. An open or unsynced link keeps it active.
