@@ -155,6 +155,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.map(stampIdentity),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
       );
       // NOTE: the local branch intentionally uses the shared SDK server
       // instead of `opencode debug skill` (loadSkillsFromCli). The CLI writes
