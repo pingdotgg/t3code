@@ -98,6 +98,7 @@ type ThreadGitControlsProps = ThreadGitMenuProps & {
     readonly onPress: () => void;
   };
   readonly canOpenTerminal: boolean;
+  readonly canOperateTerminal: boolean;
   readonly canOpenFiles: boolean;
   readonly projectScripts: ReadonlyArray<ProjectScript>;
   readonly terminalSessions: ReadonlyArray<TerminalMenuSession>;
@@ -283,6 +284,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
           items: [
             ...props.projectScripts.map((script) => ({
               description: script.command,
+              disabled: !props.canOperateTerminal,
               icon: { name: projectScriptMenuIcon(script.icon), type: "sfSymbol" as const },
               label: projectScriptMenuLabel(script),
               onPress: () => void props.onRunProjectScript(script),
@@ -317,6 +319,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
             })),
             {
               description: "Start another shell for this thread",
+              disabled: !props.canOperateTerminal,
               icon: { name: "plus", type: "sfSymbol" },
               label: "Open new terminal",
               onPress: props.onOpenNewTerminal,
@@ -402,6 +405,7 @@ function useThreadGitHeaderActionItems(props: ThreadGitControlsProps): ThreadGit
       model.runQuickAction,
       props.canOpenFiles,
       props.canOpenTerminal,
+      props.canOperateTerminal,
       props.gitStatus,
       props.onOpenNewTerminal,
       props.onOpenTerminal,
@@ -457,6 +461,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
               <NativeHeaderToolbar.MenuAction
                 key={script.id}
                 icon={projectScriptMenuIcon(script.icon)}
+                disabled={!props.canOperateTerminal}
                 onPress={() => void props.onRunProjectScript(script)}
                 subtitle={script.command}
               >
@@ -495,6 +500,7 @@ export function ThreadGitControls(props: ThreadGitControlsProps) {
           ))}
           <NativeHeaderToolbar.MenuAction
             icon="plus"
+            disabled={!props.canOperateTerminal}
             onPress={props.onOpenNewTerminal}
             subtitle="Start another shell for this thread"
           >
