@@ -113,6 +113,24 @@ describe("parseCodexLine", () => {
     expect(record?.totals.reasoningTokens).toBe(116);
   });
 
+  it("gives identical events a stable identity across rollout copies", () => {
+    const firstState = initialCodexScanState();
+    parseCodexLine(sessionMeta, firstState);
+    parseCodexLine(turnContext, firstState);
+    const first = parseCodexLine(tokenCount(19239, 11008, 299, 116), firstState);
+
+    // A second parse of the same copied file (e.g. sessions/ vs
+    // archived_sessions) must produce the same key so the aggregator
+    // charges it once.
+    const secondState = initialCodexScanState();
+    parseCodexLine(sessionMeta, secondState);
+    parseCodexLine(turnContext, secondState);
+    const second = parseCodexLine(tokenCount(19239, 11008, 299, 116), secondState);
+
+    expect(first?.dedupeKey).not.toBeNull();
+    expect(second?.dedupeKey).toBe(first?.dedupeKey);
+  });
+
   it("skips a repeated token_count so deltas are not double counted", () => {
     const state = initialCodexScanState();
     parseCodexLine(turnContext, state);

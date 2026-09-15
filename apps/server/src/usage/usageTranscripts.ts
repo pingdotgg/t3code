@@ -304,9 +304,21 @@ export function parseCodexLine(line: string, state: CodexScanState): UsageRecord
     totals,
     // Codex does not report cost in the rollout.
     reportedCostUsd: null,
-    // Events surviving the fork-copy suppression above are unique to this
-    // rollout, so they need no global dedup.
-    dedupeKey: null,
+    // Archiving or copying a rollout must not charge the same event twice.
+    dedupeKey:
+      state.sessionId.length === 0
+        ? null
+        : JSON.stringify([
+            "codex",
+            state.sessionId,
+            timestampMs,
+            state.model,
+            totals.uncachedInputTokens,
+            totals.cachedInputTokens,
+            totals.cacheCreationTokens,
+            totals.outputTokens,
+            totals.reasoningTokens,
+          ]),
   };
 }
 

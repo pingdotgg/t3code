@@ -288,6 +288,20 @@ export const make = Effect.gen(function* () {
         if (seen.has(key)) continue;
         seen.add(key);
         dirs.push({ provider, dir, ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}) });
+        // Codex moves rolled-out sessions to archived_sessions; without this
+        // their cost never reaches usage. Copies across the two directories
+        // are charged once via the record dedupeKey in the aggregator.
+        if (provider === "codex") {
+          const archivedDirectory = path.resolve(home, "archived_sessions");
+          const archivedDir = yield* fileSystem
+            .realPath(archivedDirectory)
+            .pipe(Effect.orElseSucceed(() => archivedDirectory));
+          const archivedKey = `${provider}\0${archivedDir}`;
+          if (!seen.has(archivedKey)) {
+            seen.add(archivedKey);
+            dirs.push({ provider, dir: archivedDir });
+          }
+        }
       }
     }
     return dirs;
