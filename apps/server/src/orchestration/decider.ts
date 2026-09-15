@@ -1503,7 +1503,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       if (thread.messages.some((message) => message.id === command.message.messageId)) {
-        return [];
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `Message '${command.message.messageId}' already exists on thread '${command.threadId}'.`,
+        });
       }
       return {
         ...(yield* withEventBase({

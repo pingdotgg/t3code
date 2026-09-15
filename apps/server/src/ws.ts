@@ -1655,7 +1655,13 @@ const makeWsRpcLayer = (
                       )
                     : Effect.void;
                 return track(
-                  worktreeSetupTracker.finish(threadId, "cancelled").pipe(Effect.asVoid),
+                  worktreeSetupTracker
+                    .finish(threadId, "cancelled")
+                    .pipe(
+                      Effect.flatMap((snapshot) =>
+                        snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
+                      ),
+                    ),
                 ).pipe(
                   Effect.andThen(removeCreatedWorktree),
                   Effect.andThen(
@@ -1673,7 +1679,11 @@ const makeWsRpcLayer = (
               return track(
                 worktreeSetupTracker
                   .finish(threadId, "failed", dispatchError.message)
-                  .pipe(Effect.asVoid),
+                  .pipe(
+                    Effect.flatMap((snapshot) =>
+                      snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
+                    ),
+                  ),
               ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
             }),
           );

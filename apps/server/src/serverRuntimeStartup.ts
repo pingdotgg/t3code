@@ -1,5 +1,6 @@
 import {
   CommandId,
+  EventId,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
@@ -10,6 +11,9 @@ import {
   ProviderInstanceId,
   ThreadId,
   TurnId,
+  WORKTREE_SETUP_ACTIVITY_KIND,
+  WorktreeSetupSnapshot,
+  worktreeSetupActivityId,
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
@@ -742,6 +746,79 @@ export const reconcileProviderSessions = Effect.gen(function* () {
   ),
 );
 
+const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
+
+/**
+ * A worktree bootstrap records its setup snapshot on the thread while it runs
+ * and settles it when it finishes. The bootstrap itself lives only in memory,
+ * so a process exit mid-setup leaves a `running` record with nobody to finish
+ * it, and a persisted user message with no turn behind it. Mark those setups
+ * failed so every client shows the outcome instead of a spinner, and the user
+ * can send again.
+ */
+export const reconcileWorktreeSetups = Effect.gen(function* () {
+  const crypto = yield* Crypto.Crypto;
+  const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
+  const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const { threads } = yield* query.getCommandReadModel();
+  const interruptedAt = DateTime.formatIso(yield* DateTime.now);
+
+  for (const thread of threads) {
+    if (thread.deletedAt !== null) continue;
+    const recorded = thread.activities.find(
+      (activity) => activity.id === worktreeSetupActivityId(thread.id),
+    );
+    if (!recorded) continue;
+    const snapshot = decodeWorktreeSetupSnapshot(recorded.payload);
+    if (Option.isNone(snapshot) || snapshot.value.phase !== "running") continue;
+
+    const interrupted: WorktreeSetupSnapshot = {
+      ...snapshot.value,
+      phase: "failed",
+      endedAt: interruptedAt,
+      error: "The server restarted before the worktree setup finished. Send the message again.",
+      stages: snapshot.value.stages.map((stage) =>
+        stage.status === "running" || stage.status === "pending"
+          ? { ...stage, status: "failed", endedAt: interruptedAt }
+          : stage,
+      ),
+      sequence: snapshot.value.sequence + 1,
+    };
+    yield* orchestrationEngine
+      .dispatch({
+        type: "thread.activity.append",
+        commandId: CommandId.make(yield* crypto.randomUUIDv4),
+        threadId: thread.id,
+        activity: {
+          id: EventId.make(worktreeSetupActivityId(thread.id)),
+          tone: "error",
+          kind: WORKTREE_SETUP_ACTIVITY_KIND,
+          summary: "Worktree setup interrupted by a server restart",
+          payload: interrupted,
+          turnId: null,
+          createdAt: snapshot.value.startedAt,
+        },
+        createdAt: interruptedAt,
+      })
+      .pipe(
+        Effect.catchCause((cause) =>
+          Cause.hasInterrupts(cause)
+            ? Effect.failCause(cause)
+            : Effect.logWarning("failed to settle interrupted worktree setup", {
+                threadId: thread.id,
+                cause,
+              }),
+        ),
+      );
+  }
+}).pipe(
+  Effect.catchCause((cause) =>
+    Cause.hasInterrupts(cause)
+      ? Effect.failCause(cause)
+      : Effect.logWarning("worktree setup startup reconciliation failed", { cause }),
+  ),
+);
+
 interface StartupOptions {
   readonly activate?: Effect.Effect<void>;
   readonly awaitAuxiliaryParked?: Effect.Effect<void>;
@@ -881,6 +958,7 @@ export const make = (options?: StartupOptions) =>
       );
 
       yield* runStartupPhase("provider-sessions.reconcile", reconcileProviderSessions);
+      yield* runStartupPhase("worktree-setups.reconcile", reconcileWorktreeSetups);
 
       yield* Effect.logDebug("startup phase: syncing clean projects");
       yield* runStartupPhase("projects.auto-pull", syncAutoPullProjects);

@@ -11750,6 +11750,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "thread.message.user.append",
           "thread.activity.append",
           "thread.session.set",
+          "thread.activity.append",
           "thread.delete",
         ],
       );
@@ -11959,13 +11960,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           "thread.message.user.append",
           "thread.activity.append",
           "thread.session.set",
+          "thread.activity.append",
           "thread.delete",
           "thread.session.set",
         ],
       );
       // The surviving thread must not keep its preparing session, or it would
       // read as working forever.
-      const failedSession = dispatchedCommands[5];
+      const failedSession = dispatchedCommands[6];
       assertTrue(failedSession?.type === "thread.session.set");
       if (failedSession?.type === "thread.session.set") {
         assert.equal(failedSession.session.status, "error");

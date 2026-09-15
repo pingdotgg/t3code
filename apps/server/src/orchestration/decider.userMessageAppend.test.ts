@@ -96,17 +96,17 @@ it.layer(NodeServices.layer)("thread.message.user.append", (it) => {
     }),
   );
 
-  it.effect("is idempotent for an already persisted message id", () =>
+  it.effect("rejects a message id that already exists on the thread", () =>
     Effect.gen(function* () {
       const readModel = yield* readModelWithThread;
       const first = yield* decideOrchestrationCommand({ command: appendCommand, readModel });
       const firstEvent = Array.isArray(first) ? first[0]! : first;
       const withMessage = yield* projectEvent(readModel, { ...firstEvent, sequence: 3 });
-      const again = yield* decideOrchestrationCommand({
-        command: appendCommand,
-        readModel: withMessage,
-      });
-      expect(again).toEqual([]);
+      const error = yield* Effect.flip(
+        decideOrchestrationCommand({ command: appendCommand, readModel: withMessage }),
+      );
+      expect(error._tag).toBe("OrchestrationCommandInvariantError");
+      expect(error.message).toContain("already exists");
     }),
   );
 
