@@ -226,6 +226,7 @@ import {
   AlarmClockIcon,
   CheckCircle2Icon,
   ChevronDownIcon,
+  DownloadIcon,
   GitBranchIcon,
   Minimize2Icon,
   PaperclipIcon,
@@ -259,6 +260,7 @@ import {
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
 import { useNewThreadHandler } from "../hooks/useHandleNewThread";
+import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
@@ -328,6 +330,9 @@ import {
 } from "@t3tools/client-runtime/state/threads";
 import { resolveProviderSkillsForCwd } from "@t3tools/client-runtime/providerSkills";
 import { vcsEnvironment } from "../state/vcs";
+import { sourceControlEnvironment } from "../state/sourceControl";
+import { useProjectClone } from "../state/projectClones";
+import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   useProject,
@@ -1425,6 +1430,16 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
+/**
+ * Worktree setups whose async setup script may still be running after the
+ * draft route hands off to the created thread. Keyed by scoped thread key;
+ * entries are removed once the setup settles.
+ */
+const pendingWorktreeSetupByThreadKey = new Map<
+  string,
+  { environmentId: EnvironmentId; threadId: ThreadId }
+>();
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -1654,7 +1669,12 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: EnvironmentId;
     threadId: ThreadId;
     ownerKey: string;
-  } | null>(null);
+  } | null>(() => {
+    // The draft route unmounts when it promotes to the created thread, while an
+    // async setup script may still be running. Adopt the ref the draft left.
+    const handed = pendingWorktreeSetupByThreadKey.get(routeThreadKey);
+    return handed ? { ...handed, ownerKey: routeThreadKey } : null;
+  });
   const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
@@ -2094,6 +2114,113 @@ export default function ChatView(props: ChatViewProps) {
     () => (activeProject ? resolveProjectScripts(settings, activeProject) : []),
     [activeProject, settings],
   );
+  // A project added by cloning exists before its files do. The draft stays
+  // editable throughout; only sending waits for the clone, and a failed
+  // clone offers its retry right where the user is looking.
+  const activeProjectClone = useProjectClone(activeProjectRef);
+  const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
+    reportFailure: false,
+  });
+  const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
+    reportFailure: false,
+  });
+  const removeClonedProject = useRemoveClonedProject();
+  // The banner mirrors the server's clone state, so a request that never got
+  // there needs its own feedback.
+  const runProjectCloneAction = useCallback(
+    async (
+      title: string,
+      action: () => Promise<AtomCommandResult<unknown, unknown>>,
+    ): Promise<void> => {
+      const result = await action();
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const error = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title,
+            description: error instanceof Error ? error.message : "An error occurred.",
+          }),
+        );
+      }
+    },
+    [],
+  );
+  const projectCloneSendBlockReason =
+    activeProjectClone === null
+      ? null
+      : activeProjectClone.phase === "running"
+        ? "Cloning repository"
+        : activeProjectClone.phase === "done"
+          ? null
+          : "Repository not cloned";
+  const projectCloneBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
+    if (!activeProjectClone || !activeProjectRef || activeProjectClone.phase === "done") {
+      return null;
+    }
+    const name = projectCloneDisplayName(activeProjectClone);
+    const { environmentId, projectId } = activeProjectRef;
+    if (activeProjectClone.phase === "running") {
+      return {
+        id: `project-clone:${projectId}`,
+        variant: "info",
+        priority: "activity",
+        icon: <DownloadIcon />,
+        title: `Cloning ${name}`,
+        description: projectCloneProgressSummary(activeProjectClone),
+        actions: (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void runProjectCloneAction("Failed to cancel clone", () =>
+                cancelProjectClone({ environmentId, input: { projectId } }),
+              )
+            }
+          >
+            Cancel
+          </Button>
+        ),
+      };
+    }
+    const cancelled = activeProjectClone.phase === "cancelled";
+    return {
+      id: `project-clone:${projectId}`,
+      variant: cancelled ? "warning" : "error",
+      icon: <DownloadIcon />,
+      title: cancelled ? `Cancelled cloning ${name}` : `Failed to clone ${name}`,
+      description: cancelled ? "Retry to bring in the repository." : activeProjectClone.error,
+      actions: (
+        <>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() => void removeClonedProject({ environmentId, projectId })}
+          >
+            Remove project
+          </Button>
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void runProjectCloneAction("Failed to retry clone", () =>
+                retryProjectClone({ environmentId, input: { projectId } }),
+              )
+            }
+          >
+            Retry
+          </Button>
+        </>
+      ),
+    };
+  }, [
+    activeProjectClone,
+    activeProjectRef,
+    cancelProjectClone,
+    removeClonedProject,
+    retryProjectClone,
+    runProjectCloneAction,
+  ]);
   const activeProjectDefaultModelSelection = activeProjectSettings.settings.defaultModelSelection;
   const handleNewThreadInActiveProject = useCallback(() => {
     startNewThreadForProject(activeProjectRef, handleNewThread);
@@ -3388,14 +3515,28 @@ export default function ChatView(props: ChatViewProps) {
       ? heldWorktreeSetup
       : null;
   // A finished card is dropped once the agent's turn shows in the timeline:
-  // the card belongs to the send, and the agent takes over from there.
+  // the card belongs to the send, and the agent takes over from there. An
+  // async setup script keeps the snapshot running past the handoff and its
+  // row leaves the moment the script exits cleanly; a failed script stays
+  // for the rest of the turn so the exit code and terminal remain reachable.
   const worktreeSetupDoneAndTurnVisible =
-    worktreeSetup?.phase === "done" && activeThread?.latestTurn?.startedAt != null;
+    worktreeSetup?.phase === "done" &&
+    activeThread?.latestTurn?.startedAt != null &&
+    (!isWorking || !worktreeSetup.stages.some((stage) => stage.status === "failed"));
   useEffect(() => {
     if (!worktreeSetupDoneAndTurnVisible) return;
     setWorktreeSetupRef(null);
     setHeldWorktreeSetup(null);
   }, [worktreeSetupDoneAndTurnVisible]);
+  // The handoff entry only matters while the setup is still running: once it
+  // settles in any phase, a later mount of the thread must not adopt it.
+  const worktreeSetupSettledKey =
+    worktreeSetup && worktreeSetup.phase !== "running" && worktreeSetupRef
+      ? scopedThreadKey(scopeThreadRef(worktreeSetupRef.environmentId, worktreeSetupRef.threadId))
+      : null;
+  useEffect(() => {
+    if (worktreeSetupSettledKey) pendingWorktreeSetupByThreadKey.delete(worktreeSetupSettledKey);
+  }, [worktreeSetupSettledKey]);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -6248,10 +6389,12 @@ export default function ChatView(props: ChatViewProps) {
     const parkedThreadItems = parkedThreadBannerItem === null ? [] : [parkedThreadBannerItem];
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
+    const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
     if (!localCheckoutBranchMismatch || !showBranchMismatchBanner || !activeBranchMismatchKey) {
       return [
         ...feedbackBannerItems,
         ...usageLimitsItems,
+        ...projectCloneItems,
         ...systemComposerBannerItems,
         ...backgroundLivenessItems,
         ...resumeCompactionItems,
@@ -6262,6 +6405,7 @@ export default function ChatView(props: ChatViewProps) {
     return [
       ...feedbackBannerItems,
       ...usageLimitsItems,
+      ...projectCloneItems,
       ...systemComposerBannerItems,
       ...backgroundLivenessItems,
       ...resumeCompactionItems,
@@ -6314,6 +6458,7 @@ export default function ChatView(props: ChatViewProps) {
     isRestoringThreadBranch,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
+    projectCloneBannerItem,
     resumeCompactionBannerItem,
     showBranchMismatchBanner,
     systemComposerBannerItems,
@@ -7399,6 +7544,12 @@ export default function ChatView(props: ChatViewProps) {
         ? { environmentId, threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey }
         : null,
     );
+    if (baseBranchForWorktree) {
+      pendingWorktreeSetupByThreadKey.set(
+        scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend)),
+        { environmentId, threadId: threadIdForSend },
+      );
+    }
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -9162,7 +9313,7 @@ export default function ChatView(props: ChatViewProps) {
                                   ? "Sending feedback"
                                   : threadDetailLoading
                                     ? "Messages loading"
-                                    : null
+                                    : projectCloneSendBlockReason
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}

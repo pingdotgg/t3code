@@ -1,4 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
+import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/unstable/reactivity";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import {
   nextPastedTextFileName,
@@ -103,6 +105,11 @@ import {
   waitForComposerDraftsLoaded,
 } from "../../state/use-composer-drafts";
 import { useEnvironmentServerConfig, useProjects } from "../../state/entities";
+import { useProjectClone } from "../../state/projectClones";
+import { projectEnvironment } from "../../state/projects";
+import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { ProjectCloneBanner } from "../../components/ProjectCloneBanner";
 import {
   isModelSelectionUnavailable,
   resolveSelectableModelSelection,
@@ -165,6 +172,8 @@ export function NewTaskDraftScreen(props: {
     readonly projectId?: string;
     readonly branch?: string | null;
     readonly worktreePath?: string | null;
+    /** The project was just added by a clone that is still running. */
+    readonly cloning?: boolean;
   };
   /** Queued outbox message id when editing an existing pending task. */
   readonly pendingTaskId?: string;
@@ -198,6 +207,70 @@ export function NewTaskDraftScreen(props: {
       (environment) => environment.environmentId === selectedProject.environmentId,
     )?.connectionState === "connected";
   const modelUnavailable = environmentConnected && flow.selectedModelOption?.isUnavailable === true;
+  // A project added by cloning exists before its files do: the prompt can be
+  // written meanwhile, but Start waits for the clone.
+  const projectCloneState = useProjectClone(
+    selectedProject
+      ? { environmentId: selectedProject.environmentId, projectId: selectedProject.id }
+      : null,
+  );
+  const projectClone = projectCloneState === "pending" ? null : projectCloneState;
+  // Before the clone stream delivers, only the project this draft was opened
+  // for by Add Project is known to be cloning; any other project (offline
+  // included) must still be able to queue a task.
+  const awaitingKnownClone =
+    projectCloneState === "pending" &&
+    props.initialProjectRef?.cloning === true &&
+    selectedProject !== null &&
+    selectedProject.id === props.initialProjectRef.projectId &&
+    selectedProject.environmentId === props.initialProjectRef.environmentId;
+  const cloneBlocksStart =
+    awaitingKnownClone || (projectClone !== null && projectClone.phase !== "done");
+  const cancelProjectClone = useAtomCommand(sourceControlEnvironment.cancelProjectClone, {
+    reportFailure: false,
+  });
+  const retryProjectClone = useAtomCommand(sourceControlEnvironment.retryProjectClone, {
+    reportFailure: false,
+  });
+  // The banner only reflects the server's state, so a request that never got
+  // there needs its own feedback.
+  const runCloneAction = async (
+    title: string,
+    action: () => Promise<AsyncResult.AsyncResult<unknown, unknown>>,
+  ) => {
+    const result = await action();
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(title, error instanceof Error ? error.message : "An error occurred.");
+    }
+  };
+  const deleteProject = useAtomCommand(projectEnvironment.delete, { reportFailure: false });
+  // The delete is awaited; by then the picker may point somewhere else, and
+  // only the removed project's draft should leave the screen.
+  const selectedProjectRef = useRef(selectedProject);
+  useEffect(() => {
+    selectedProjectRef.current = selectedProject;
+  }, [selectedProject]);
+  const removeClonedProject = async () => {
+    if (!selectedProject) return;
+    const removed = selectedProject;
+    const result = await deleteProject({
+      environmentId: removed.environmentId,
+      input: { projectId: removed.id },
+    });
+    if (AsyncResult.isFailure(result)) {
+      const error = Cause.squash(result.cause);
+      Alert.alert(
+        "Failed to remove project",
+        error instanceof Error ? error.message : "An error occurred.",
+      );
+      return;
+    }
+    const current = selectedProjectRef.current;
+    if (current?.id === removed.id && current.environmentId === removed.environmentId) {
+      navigation.dispatch(StackActions.replace("Home"));
+    }
+  };
   const uploadStates = useAtomValue(composerAttachmentUploadsAtom);
   const attachmentBlockReason = selectedProject
     ? composerAttachmentUploadBlockReason({
@@ -1261,6 +1334,7 @@ export function NewTaskDraftScreen(props: {
   const isAndroid = Platform.OS === "android";
   const canStart =
     !isImportingContext &&
+    !cloneBlocksStart &&
     attachmentBlockReason === null &&
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
@@ -1480,6 +1554,32 @@ export function NewTaskDraftScreen(props: {
           />
         </View>
       ) : null}
+      {/* Above the workspace controls so they keep their place relative to
+          the composer when the banner goes away once the clone lands. */}
+      {projectClone && projectClone.phase !== "done" && selectedProject ? (
+        <View className="px-1 pb-2">
+          <ProjectCloneBanner
+            clone={projectClone}
+            onCancel={() =>
+              void runCloneAction("Failed to cancel clone", () =>
+                cancelProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRetry={() =>
+              void runCloneAction("Failed to retry clone", () =>
+                retryProjectClone({
+                  environmentId: selectedProject.environmentId,
+                  input: { projectId: selectedProject.id },
+                }),
+              )
+            }
+            onRemove={() => void removeClonedProject()}
+          />
+        </View>
+      ) : null}
       <View className="pb-1">{workspaceControls}</View>
 
       {modelUnavailable ? (
@@ -1621,15 +1721,19 @@ export function NewTaskDraftScreen(props: {
                 <ComposerActionButton
                   accessibilityLabel={
                     attachmentBlockReason ??
-                    (pendingPastedTextAttachmentCount > 0
-                      ? "Attaching pasted text"
-                      : flow.submitting
-                        ? "Starting task"
-                        : attachmentsUploading
-                          ? "Queue task, sends when uploads finish"
-                          : environmentConnected
-                            ? "Start task"
-                            : "Queue task")
+                    (cloneBlocksStart
+                      ? projectClone === null || projectClone.phase === "running"
+                        ? "Cloning repository"
+                        : "Repository not cloned"
+                      : pendingPastedTextAttachmentCount > 0
+                        ? "Attaching pasted text"
+                        : flow.submitting
+                          ? "Starting task"
+                          : attachmentsUploading
+                            ? "Queue task, sends when uploads finish"
+                            : environmentConnected
+                              ? "Start task"
+                              : "Queue task")
                   }
                   disabled={!canStart}
                   icon={queuesInsteadOfStarting ? "tray.and.arrow.up" : "arrow.up"}

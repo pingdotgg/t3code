@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -133,6 +134,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
@@ -605,6 +608,17 @@ const makeWsRpcLayer = (
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const repositoryIdentityResolver =
+        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      // Clone hooks run on the tracker's fiber, outside any RPC, so the
+      // normalizer's services are captured here rather than inherited.
+      const normalizerContext = yield* Effect.context<
+        | FileSystem.FileSystem
+        | Path.Path
+        | ServerConfig.ServerConfig
+        | WorkspacePaths.WorkspacePaths
+      >();
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -1098,15 +1112,16 @@ const makeWsRpcLayer = (
           const threadId = command.threadId;
           const track = (effect: Effect.Effect<void>) => (tracked ? effect : Effect.void);
 
-          // Runs the setup script and, for tracked bootstraps, waits for it to
-          // exit so the card can show the exit code and the agent stage never
-          // starts on a half-installed tree. Untracked callers keep the old
-          // fire-and-forget behavior.
+          // Starts the setup script. For tracked bootstraps it returns the
+          // effect that waits for the script to exit and records the outcome
+          // on the card; whether the agent stage waits on it depends on the
+          // script's `async` flag. Returns null when nothing is left to await.
+          // Untracked callers keep the old fire-and-forget behavior.
           const runSetupProgram = () =>
             Effect.gen(function* () {
               if (!bootstrap?.runSetupScript || !targetWorktreePath) {
                 yield* track(worktreeSetupTracker.stageStatus(threadId, "setup-script", "skipped"));
-                return;
+                return null;
               }
               const worktreePath = targetWorktreePath;
               const requestedAt = yield* nowIso;
@@ -1183,21 +1198,38 @@ const makeWsRpcLayer = (
                   }),
                 );
               if (!tracked || !setupResult?.completion) {
-                return;
+                return null;
               }
               // The setup script is best effort, like the untracked path: a
               // failed install must not throw away the worktree the user just
               // waited for. The card keeps the failed stage and its terminal.
-              const completion = yield* setupResult.completion;
-              if (completion.exitCode === 0) {
-                yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
-                return;
+              // Forked right away so the terminal listener behind `completion`
+              // is always consumed, even when the turn dispatch fails before
+              // anyone would otherwise wait on it. The tracker update is a
+              // no-op once the snapshot has been dropped.
+              const completionFiber = yield* setupResult.completion.pipe(
+                Effect.flatMap((completion) => {
+                  if (completion.exitCode === 0) {
+                    return worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
+                  }
+                  const detail =
+                    completion.exitCode === null
+                      ? "terminal closed before the script finished"
+                      : `exit ${completion.exitCode}`;
+                  return worktreeSetupTracker.stageStatus(
+                    threadId,
+                    "setup-script",
+                    "failed",
+                    detail,
+                  );
+                }),
+                Effect.forkDetach,
+              );
+              if (!setupResult.async) {
+                yield* Fiber.join(completionFiber);
+                return null;
               }
-              const detail =
-                completion.exitCode === null
-                  ? "terminal closed before the script finished"
-                  : `exit ${completion.exitCode}`;
-              yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "failed", detail);
+              return completionFiber;
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -1400,7 +1432,7 @@ const makeWsRpcLayer = (
               yield* refreshGitStatus(targetWorktreePath);
             }
 
-            yield* runSetupProgram();
+            const pendingSetupScript = yield* runSetupProgram();
 
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "running"));
             // Past this point a cancel would roll back a thread whose turn has
@@ -1409,11 +1441,21 @@ const makeWsRpcLayer = (
             const started = yield* Effect.uninterruptible(
               dispatchFromClient(finalTurnStartCommand),
             );
-            yield* track(
-              worktreeSetupTracker
-                .stageStatus(threadId, "agent", "done")
-                .pipe(Effect.andThen(worktreeSetupTracker.finish(threadId, "done"))),
-            );
+            yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "done"));
+            // An async setup script outlives the handoff: the snapshot stays
+            // running so the client keeps its row next to the agent's work,
+            // and settles when the script exits. The turn already started, so
+            // the wait cannot fail the dispatch.
+            const settle = track(worktreeSetupTracker.finish(threadId, "done"));
+            if (pendingSetupScript) {
+              yield* Fiber.join(pendingSetupScript).pipe(
+                Effect.ignoreCause({ log: true }),
+                Effect.andThen(settle),
+                Effect.forkDetach,
+              );
+            } else {
+              yield* settle;
+            }
             return started;
           });
 
@@ -1615,6 +1657,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
+              yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -1646,6 +1689,10 @@ const makeWsRpcLayer = (
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
+              yield* ProjectCloneTracker.discardCloneForDeletedProject(
+                projectCloneTracker,
+                normalizedCommand,
+              );
               if (archiveCommand) {
                 if (shouldStopSessionAfterCommand) {
                   yield* Effect.gen(function* () {
@@ -2657,6 +2704,65 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.projectCloneStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneStart,
+            projectCloneTracker.start(input, {
+              createProject: (project) =>
+                Effect.gen(function* () {
+                  const normalizedCommand = yield* normalizeDispatchCommand({
+                    type: "project.create",
+                    commandId: yield* serverCommandId("project-clone-create"),
+                    projectId: project.projectId,
+                    title: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                    createWorkspaceRootIfMissing: true,
+                    createdAt: project.createdAt,
+                  });
+                  yield* dispatchNormalizedCommand(normalizedCommand);
+                  yield* recordClientCommandAnalytics(normalizedCommand);
+                }).pipe(Effect.provideContext(normalizerContext)),
+              onCloned: (project) =>
+                // The project was created against an empty directory, so its
+                // cached identity is "not a repository" until this refresh.
+                // Re-emitting the project shell carries the new identity to
+                // every client without a round trip.
+                repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      const command = yield* normalizeDispatchCommand({
+                        type: "project.meta.update",
+                        commandId: yield* serverCommandId("project-clone-done"),
+                        projectId: project.projectId,
+                      });
+                      yield* dispatchNormalizedCommand(command);
+                    }),
+                  ),
+                  Effect.andThen(refreshGitStatus(project.workspaceRoot)),
+                  Effect.ignoreCause({ log: true }),
+                  Effect.provideContext(normalizerContext),
+                ),
+            }),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.projectCloneCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneCancel,
+            projectCloneTracker
+              .cancel(input.projectId)
+              .pipe(Effect.map((applied) => ({ applied }))),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.projectCloneRetry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneRetry,
+            projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.subscribeProjectClones]: () =>
+          observeRpcStream(WS_METHODS.subscribeProjectClones, projectCloneTracker.stream, {
+            "rpc.aggregate": "source-control",
+          }),
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
@@ -3292,10 +3398,6 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
-
-              yield* providerRegistry
-                .refresh()
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,

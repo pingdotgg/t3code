@@ -1464,8 +1464,11 @@ function WorktreeSetupTimelineRow({
   return (
     <WorktreeSetupCard
       snapshot={row.snapshot}
-      onCancel={ctx.onCancelWorktreeSetup}
-      onWorkLocally={row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null}
+      embedded={row.embedded}
+      onCancel={row.embedded ? null : ctx.onCancelWorktreeSetup}
+      onWorkLocally={
+        !row.embedded && row.snapshot.phase === "running" ? ctx.onWorktreeSetupWorkLocally : null
+      }
       onOpenTerminal={onOpenTerminal}
     />
   );

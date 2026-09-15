@@ -44,6 +44,8 @@ import {
   WS_METHODS,
   WsRpcGroup,
   EditorId,
+  type WorktreeSetupSnapshot,
+  type WorktreeSetupStageId,
 } from "@t3tools/contracts";
 import {
   computeDpopAccessTokenHash,
@@ -148,6 +150,7 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 import * as ServiceLauncherClient from "./cloud/serviceLauncherClient.ts";
 import * as ServerSettings from "./serverSettings.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as PreviewManager from "./preview/Manager.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
@@ -933,6 +936,13 @@ const buildAppUnderTest = (options?: {
             ...options?.layers?.terminalManager,
           }),
           WorktreeSetupTracker.layer,
+          ProjectCloneTracker.layer.pipe(
+            Layer.provide(
+              Layer.mock(SourceControlRepositoryService.SourceControlRepositoryService)({
+                ...options?.layers?.sourceControlRepositoryService,
+              }),
+            ),
+          ),
         ),
       ),
       Layer.provide(
@@ -6319,48 +6329,26 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("refreshes providers for each subscribeServerConfig connection", () =>
+  it.effect("serves config on reconnect without starting provider probes", () =>
     Effect.gen(function* () {
-      const refreshCalls = yield* Ref.make(0);
-      const firstRefreshDone = yield* Deferred.make<void>();
-      const secondRefreshDone = yield* Deferred.make<void>();
-
+      const refresh = vi.fn(() => Effect.never);
       yield* buildAppUnderTest({
-        layers: {
-          providerRegistry: {
-            refresh: () =>
-              Ref.updateAndGet(refreshCalls, (count) => count + 1).pipe(
-                Effect.tap((count) =>
-                  Deferred.succeed(
-                    count === 1 ? firstRefreshDone : secondRefreshDone,
-                    undefined,
-                  ).pipe(Effect.ignore),
-                ),
-                Effect.as([]),
-              ),
-          },
-        },
+        layers: { providerRegistry: { refresh } },
       });
 
       const wsUrl = yield* getWsServerUrl("/ws");
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
-            yield* Deferred.await(firstRefreshDone);
-          }),
-        ),
-      );
-      yield* Effect.scoped(
-        withWsRpcClient(wsUrl, (client) =>
-          Effect.gen(function* () {
-            yield* client[WS_METHODS.subscribeServerConfig]({}).pipe(Stream.runHead);
-            yield* Deferred.await(secondRefreshDone);
-          }),
-        ),
-      );
-
-      assert.equal(yield* Ref.get(refreshCalls), 2);
+      for (let connection = 0; connection < 2; connection += 1) {
+        const event = yield* Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeServerConfig]({}).pipe(
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ),
+        );
+        assert.equal(event.type, "snapshot");
+      }
+      assert.equal(refresh.mock.calls.length, 0);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -7235,6 +7223,106 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
 
       assert.isAtLeast(response.sequence, 0);
       assert.equal(stat.type, "Directory");
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect("starts a project clone in the background and blocks threads until it lands", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const parentDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-ws-project-clone-" });
+      const destinationPath = path.join(parentDir, "t3code");
+      const projectId = ProjectId.make("project-clone-1");
+      const dispatched: Array<string> = [];
+      const cloneGate = yield* Deferred.make<void>();
+      const metaUpdateDispatched = yield* Deferred.make<void>();
+
+      yield* buildAppUnderTest({
+        layers: {
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatched.push(command.type);
+                return { sequence: dispatched.length };
+              }).pipe(
+                Effect.tap(() =>
+                  command.type === "project.meta.update"
+                    ? Deferred.succeed(metaUpdateDispatched, undefined)
+                    : Effect.void,
+                ),
+              ),
+          },
+          sourceControlRepositoryService: {
+            prepareClone: (input) =>
+              Effect.succeed({
+                destinationPath: input.destinationPath,
+                remoteUrl: input.remoteUrl ?? "",
+                cloneUrl: input.remoteUrl ?? "",
+                repository: null,
+              }),
+            cloneRepository: (input) =>
+              Deferred.await(cloneGate).pipe(
+                Effect.as({
+                  cwd: input.destinationPath,
+                  remoteUrl: input.remoteUrl ?? "",
+                  repository: null,
+                }),
+              ),
+          },
+        },
+      });
+
+      const wsUrl = yield* getWsServerUrl("/ws");
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          Effect.gen(function* () {
+            const started = yield* client[WS_METHODS.projectCloneStart]({
+              projectId,
+              title: "t3code",
+              createdAt: "2026-01-01T00:00:00.000Z",
+              remoteUrl: "git@github.com:octocat/t3code.git",
+              destinationPath,
+            });
+            assert.equal(started.cwd, destinationPath);
+            // The project exists before the clone finishes.
+            assert.deepEqual(dispatched, ["project.create"]);
+
+            const blocked = yield* Effect.flip(
+              client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+                type: "thread.create",
+                commandId: CommandId.make("cmd-thread-create-while-cloning"),
+                threadId: ThreadId.make("thread-while-cloning"),
+                projectId,
+                title: "Draft",
+                modelSelection: {
+                  instanceId: ProviderInstanceId.make("codex"),
+                  model: "gpt-5-codex",
+                },
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: null,
+                createdAt: "2026-01-01T00:00:01.000Z",
+              }),
+            );
+            assert.include(String(blocked.message), "still being cloned");
+
+            const snapshots = yield* client[WS_METHODS.subscribeProjectClones]({}).pipe(
+              Stream.takeUntil((clones) => clones[0]?.phase === "done"),
+              Stream.runCollect,
+              Effect.forkChild,
+            );
+            yield* Effect.yieldNow;
+            yield* Deferred.succeed(cloneGate, undefined);
+            const lists = yield* Fiber.join(snapshots);
+            assert.equal(lists.at(-1)?.[0]?.phase, "done");
+            // The finished clone refreshes the project so its repository
+            // identity updates. That hook runs after the done snapshot.
+            yield* Deferred.await(metaUpdateDispatched);
+            assert.deepEqual(dispatched, ["project.create", "project.meta.update"]);
+          }),
+        ),
+      );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -10673,6 +10761,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               scriptCommand: "npm install",
               terminalId: "setup-setup",
               cwd: "/tmp/bootstrap-worktree",
+              async: true,
             }),
         );
 
@@ -11238,6 +11327,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             scriptCommand: "npm install",
             terminalId: "setup-setup",
             cwd: "/tmp/bootstrap-worktree",
+            async: true,
           }),
       );
       let setupActivityAppendAttempt = 0;
@@ -11338,6 +11428,153 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         setupActivities.every((command) => command.activity.kind !== "setup-script.failed"),
       );
       assertTrue(dispatchedCommands.every((command) => command.type !== "thread.delete"));
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
+  it.effect.each([
+    { caseName: "async setup scripts let the turn start before the script exits", async: true },
+    { caseName: "sync setup scripts hold the turn until the script exits", async: false },
+  ])("$caseName", ({ async }) =>
+    Effect.gen(function* () {
+      const dispatchedCommands: Array<OrchestrationCommand> = [];
+      const scriptExit = yield* Deferred.make<void>();
+      const runForThread = vi.fn(
+        (
+          _: Parameters<
+            ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"]
+          >[0],
+        ) =>
+          Effect.succeed({
+            status: "started" as const,
+            scriptId: "setup",
+            scriptName: "Setup",
+            scriptCommand: "npm install",
+            terminalId: "setup-setup",
+            cwd: "/tmp/bootstrap-worktree",
+            async,
+            completion: Deferred.await(scriptExit).pipe(Effect.as({ exitCode: 0, durationMs: 1 })),
+          }),
+      );
+
+      yield* buildAppUnderTest({
+        layers: {
+          vcsDriver: {
+            isInsideWorkTree: () => Effect.succeed(true),
+          },
+          gitVcsDriver: {
+            execute: () => Effect.succeed(SUCCESSFUL_GIT_EXECUTION),
+            createWorktree: () =>
+              Effect.succeed({
+                worktree: {
+                  refName: "t3code/bootstrap-refName",
+                  path: "/tmp/bootstrap-worktree",
+                },
+              }),
+          },
+          orchestrationEngine: {
+            dispatch: (command) =>
+              Effect.sync(() => {
+                dispatchedCommands.push(command);
+                return { sequence: dispatchedCommands.length };
+              }),
+            readEvents: () => Stream.empty,
+          },
+          projectSetupScriptRunner: {
+            runForThread,
+          },
+        },
+      });
+
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      const threadId = ThreadId.make(`thread-bootstrap-${async ? "async" : "sync"}-setup`);
+      const wsUrl = yield* getWsServerUrl("/ws");
+      const dispatchFiber = yield* Effect.scoped(
+        withWsRpcClient(wsUrl, (client) =>
+          client[ORCHESTRATION_WS_METHODS.dispatchCommand]({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`cmd-bootstrap-${async ? "async" : "sync"}-setup`),
+            threadId,
+            message: {
+              messageId: MessageId.make("msg-bootstrap-setup"),
+              role: "user",
+              text: "hello",
+              attachments: [],
+            },
+            modelSelection: defaultModelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            bootstrap: {
+              createThread: {
+                projectId: defaultProjectId,
+                title: "Bootstrap Thread",
+                modelSelection: defaultModelSelection,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: "main",
+                worktreePath: null,
+                createdAt,
+              },
+              prepareWorktree: {
+                projectCwd: "/tmp/project",
+                baseBranch: "main",
+                branch: "t3code/bootstrap-refName",
+              },
+              runSetupScript: true,
+            },
+            createdAt,
+          }),
+        ),
+      ).pipe(Effect.forkChild);
+
+      const turnStarted = () =>
+        dispatchedCommands.some((command) => command.type === "thread.turn.start");
+      const snapshotWhere = (predicate: (snapshot: WorktreeSetupSnapshot) => boolean) =>
+        Effect.scoped(
+          withWsRpcClient(wsUrl, (client) =>
+            client[WS_METHODS.subscribeWorktreeSetup]({ threadId }).pipe(
+              Stream.filter(
+                (snapshot): snapshot is WorktreeSetupSnapshot =>
+                  snapshot !== null && predicate(snapshot),
+              ),
+              Stream.runHead,
+              Effect.map(Option.getOrThrow),
+            ),
+          ),
+        );
+      const stageStatus = (snapshot: WorktreeSetupSnapshot, id: WorktreeSetupStageId) =>
+        snapshot.stages.find((stage) => stage.id === id)?.status;
+
+      if (async) {
+        // The turn is dispatched while the script is still running.
+        const started = yield* snapshotWhere(
+          (snapshot) => stageStatus(snapshot, "agent") === "done",
+        );
+        assertTrue(turnStarted());
+        assert.equal(started.phase, "running");
+        assert.equal(stageStatus(started, "setup-script"), "running");
+        yield* Fiber.join(dispatchFiber);
+
+        yield* Deferred.succeed(scriptExit, undefined);
+        const settled = yield* snapshotWhere((snapshot) => snapshot.phase !== "running");
+        assert.equal(settled.phase, "done");
+        assert.equal(stageStatus(settled, "setup-script"), "done");
+        return;
+      }
+
+      // The script is running and the turn has not been dispatched yet.
+      const running = yield* snapshotWhere(
+        (snapshot) => stageStatus(snapshot, "setup-script") === "running",
+      );
+      assert.equal(stageStatus(running, "agent"), "pending");
+      assert.isFalse(turnStarted());
+
+      yield* Deferred.succeed(scriptExit, undefined);
+      yield* Fiber.join(dispatchFiber);
+      assertTrue(turnStarted());
+      const settled = yield* snapshotWhere((snapshot) => snapshot.phase !== "running");
+      assert.equal(settled.phase, "done");
+      assert.equal(stageStatus(settled, "setup-script"), "done");
+      assert.equal(stageStatus(settled, "agent"), "done");
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
