@@ -2,6 +2,8 @@ import {
   CommandId,
   MessageId,
   ProjectId,
+  ProviderInstanceId,
+  RunId,
   ScheduledTask,
   ScheduledTaskError,
   ScheduledTaskId,
@@ -680,6 +682,54 @@ export const layer = Layer.effect(
           );
         }
       });
+
+    // The live-run requirement pins the exact run the caller was authorized
+    // under rather than a snapshot read: re-checked inside the write
+    // transaction so a mutation committing after the provider run settled is
+    // rejected instead of carrying a dead run's authorization forward.
+    // Statuses mirror isActiveRun on the raw projection row.
+    const ensureExpectedActiveRun = Effect.fn("ScheduledTaskService.ensureExpectedActiveRun")(
+      function* (input: {
+        readonly taskId: ScheduledTaskId | undefined;
+        readonly run: {
+          readonly id: RunId;
+          readonly threadId: ThreadId;
+          readonly providerInstanceId: ProviderInstanceId;
+        };
+      }) {
+        const rows = yield* sql<{
+          thread_id: string;
+          provider_instance_id: string;
+          status: string;
+          root_node_id: string | null;
+        }>`
+          SELECT thread_id, provider_instance_id, status,
+                 json_extract(payload_json, '$.rootNodeId') AS root_node_id
+          FROM orchestration_v2_projection_runs
+          WHERE run_id = ${input.run.id}
+        `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not read the schedule task's authorizing run.", { cause }),
+          ),
+        );
+        const row = rows[0];
+        const active =
+          row !== undefined &&
+          row.thread_id === input.run.threadId &&
+          row.provider_instance_id === input.run.providerInstanceId &&
+          row.root_node_id !== null &&
+          (row.status === "preparing" ||
+            row.status === "starting" ||
+            row.status === "running" ||
+            row.status === "waiting");
+        if (!active) {
+          return yield* taskError(
+            "The run that authorized this scheduled-task change is no longer active; retry the operation.",
+            input.taskId === undefined ? undefined : { taskId: input.taskId },
+          );
+        }
+      },
+    );
 
     // "A committed archive on the task's bound thread postdates its stored
     // enablement." When this holds, an explicit enable affirmation is a
@@ -1396,6 +1446,28 @@ export const layer = Layer.effect(
                   yield* requireThreadInProject(task.id, task.projectId, task.threadId);
                 }
               }
+              if (input.expectedActiveRun !== undefined) {
+                yield* ensureExpectedActiveRun({ taskId: task.id, run: input.expectedActiveRun });
+              }
+              // Same pin as update: the destination's modes are re-read here
+              // so a concurrent elevation on the bound thread fails the write
+              // rather than persisting a task authorized against a stale
+              // snapshot. An unbound task's stored modes are what the caller
+              // passed, making the check a no-op.
+              yield* ensureExpectedExecutionModes({
+                taskId: task.id,
+                projectId: task.projectId,
+                threadId: task.threadId,
+                task,
+                ...(input.expectedExecutionRuntimeMode === undefined
+                  ? {}
+                  : { expectedExecutionRuntimeMode: input.expectedExecutionRuntimeMode }),
+                ...(input.expectedExecutionInteractionMode === undefined
+                  ? {}
+                  : {
+                      expectedExecutionInteractionMode: input.expectedExecutionInteractionMode,
+                    }),
+              });
               // An enabled upsert that re-affirms an enablement a committed
               // archive already voided (pause still queued) is a resume:
               // restart the interval rather than preserving the stale due
@@ -1456,6 +1528,9 @@ export const layer = Layer.effect(
                   "Scheduled task changed since it was loaded; retry the operation.",
                   { taskId: input.id },
                 );
+              }
+              if (input.expectedActiveRun !== undefined) {
+                yield* ensureExpectedActiveRun({ taskId: input.id, run: input.expectedActiveRun });
               }
               const nextEnabled = input.enabled ?? existing.enabled;
               const nextSchedule = input.schedule ?? existing.schedule;
@@ -1775,6 +1850,12 @@ export const layer = Layer.effect(
                     "Scheduled task changed since it was loaded; retry the operation.",
                     { taskId: input.id },
                   );
+                }
+                if (existing !== null && input.expectedActiveRun !== undefined) {
+                  yield* ensureExpectedActiveRun({
+                    taskId: input.id,
+                    run: input.expectedActiveRun,
+                  });
                 }
                 if (existing !== null) {
                   yield* ensureExpectedExecutionModes({

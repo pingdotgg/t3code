@@ -9,6 +9,7 @@ import {
   EventId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ScheduledTaskError,
   ScheduledTaskId,
   ThreadId,
@@ -1649,6 +1650,51 @@ const findTaskById = (id: ScheduledTaskId) =>
     return all.find((candidate) => candidate.id === id);
   });
 
+// A projection run row in the shape the expectedActiveRun precondition
+// re-reads inside write transactions: the pinned run must still be active,
+// belong to the pinned thread, carry the caller's provider instance and a
+// root node.
+const authorizingRunId = RunId.make("run:authorizing");
+const authorizingRun = {
+  id: authorizingRunId,
+  threadId: archiveBoundThreadId,
+  providerInstanceId: ProviderInstanceId.make("codex"),
+} as const;
+const seedAuthorizingRun = (
+  status: string,
+  overrides?: {
+    readonly threadId?: ThreadId;
+    readonly providerInstanceId?: string;
+    readonly rootNodeId?: string | null;
+  },
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const rootNodeId = overrides?.rootNodeId === undefined ? "node:root" : overrides.rootNodeId;
+    yield* sql`INSERT INTO orchestration_v2_projection_runs ${sql.insert({
+      run_id: authorizingRunId,
+      thread_id: overrides?.threadId ?? archiveBoundThreadId,
+      ordinal: 1,
+      provider: overrides?.providerInstanceId ?? "codex",
+      provider_instance_id: overrides?.providerInstanceId ?? "codex",
+      provider_thread_id: "provider-thread:authorizing",
+      status,
+      requested_at: "2026-09-14T00:00:00.000Z",
+      completed_at: null,
+      payload_json: rootNodeId === null ? "{}" : `{"rootNodeId":"${rootNodeId}"}`,
+    })}`;
+  });
+// Re-seeding within a test rewrites the pinned row in place.
+const reseedAuthorizingRun = (
+  status: string,
+  overrides?: Parameters<typeof seedAuthorizingRun>[1],
+) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`DELETE FROM orchestration_v2_projection_runs WHERE run_id = ${authorizingRunId}`;
+    yield* seedAuthorizingRun(status, overrides);
+  });
+
 it.effect(
   "rejects binding an enabled task to an archived thread while storing a disabled one",
   () =>
@@ -2321,6 +2367,137 @@ it.effect("update and delete reject a row that drifted since the caller loaded i
     });
     assert.equal(deleted.id, seeded.id);
     assert.isUndefined(yield* findTaskById(seeded.id));
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("mutations reject when the pinned authorizing run settled before the write", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // The run the caller was authorized under has already completed — the
+    // update, upsert and delete carrying its pin must all fail rather than
+    // keep its authorization alive past the provider session.
+    yield* seedAuthorizingRun("completed");
+    const settledUpdate = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "stale run",
+        expectedActiveRun: authorizingRun,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(settledUpdate));
+    if (Exit.isFailure(settledUpdate)) {
+      assert.include(Cause.pretty(settledUpdate.cause), "no longer active");
+    }
+
+    const settledUpsert = yield* tasks
+      .upsert({ ...boundTaskInput, enabled: false, expectedActiveRun: authorizingRun })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(settledUpsert));
+
+    const settledDelete = yield* tasks
+      .delete({ id: seeded.id, expectedActiveRun: authorizingRun })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(settledDelete));
+    assert.isDefined(yield* findTaskById(seeded.id));
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("mutations reject when the pinned run belongs to another thread or provider", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    const seeded = yield* seedBoundTask(true);
+
+    // Same run id, wrong thread ownership: the pin is the identity the caller
+    // checked, not just an active row.
+    yield* seedAuthorizingRun("running", { threadId: ThreadId.make("thread:other") });
+    const foreignUpdate = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "foreign run",
+        expectedActiveRun: authorizingRun,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(foreignUpdate));
+
+    // A provider the caller's pin does not name cannot authorize the write.
+    yield* reseedAuthorizingRun("running", { providerInstanceId: "claude" });
+    const foreignDelete = yield* tasks
+      .delete({ id: seeded.id, expectedActiveRun: authorizingRun })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(foreignDelete));
+
+    // A rootless run never carried dispatch authority in the first place.
+    yield* reseedAuthorizingRun("running", { rootNodeId: null });
+    const rootlessUpdate = yield* tasks
+      .update({
+        id: seeded.id,
+        projectId: archivedBindingProjectId,
+        title: "rootless",
+        expectedActiveRun: authorizingRun,
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(rootlessUpdate));
+    assert.isDefined(yield* findTaskById(seeded.id));
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("mutations proceed while the pinned authorizing run is still active", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+    yield* seedAuthorizingRun("running");
+    const seeded = yield* seedBoundTask(true);
+
+    const updated = yield* tasks.update({
+      id: seeded.id,
+      projectId: archivedBindingProjectId,
+      title: "still authorized",
+      expectedActiveRun: authorizingRun,
+    });
+    assert.equal(Option.getOrThrow(updated).task.title, "still authorized");
+
+    const deleted = yield* tasks.delete({ id: seeded.id, expectedActiveRun: authorizingRun });
+    assert.equal(deleted.id, seeded.id);
+    assert.isUndefined(yield* findTaskById(seeded.id));
+  }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
+);
+
+it.effect("upsert rejects when the bound destination's modes drifted since authorization", () =>
+  Effect.gen(function* () {
+    const tasks = yield* ScheduledTaskService;
+    yield* setBoundThreadState(archiveBoundThreadId, "active");
+
+    // Creation pins the caller's snapshot of the destination modes: a
+    // concurrent elevation committed before the write fails the upsert
+    // instead of persisting a task armed under modes nobody authorized.
+    yield* setBoundThreadModes(archiveBoundThreadId, {
+      runtimeMode: "approval-required",
+      interactionMode: "plan",
+    });
+    const drifted = yield* tasks
+      .upsert({
+        ...boundTaskInput,
+        enabled: true,
+        expectedExecutionRuntimeMode: "full-access",
+        expectedExecutionInteractionMode: "default",
+      })
+      .pipe(Effect.exit);
+    assert.isTrue(Exit.isFailure(drifted));
+
+    yield* setBoundThreadModes(archiveBoundThreadId, null);
+    const created = yield* tasks.upsert({
+      ...boundTaskInput,
+      enabled: true,
+      expectedExecutionRuntimeMode: "full-access",
+      expectedExecutionInteractionMode: "default",
+    });
+    assert.equal(created.task.threadId, archiveBoundThreadId);
   }).pipe(Effect.provide(boundThreadTestLayerWithSql)),
 );
 
