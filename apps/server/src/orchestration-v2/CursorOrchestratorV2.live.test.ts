@@ -1,3 +1,4 @@
+import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -37,6 +38,11 @@ import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 import { CURSOR_MODEL_SELECTION, SUBAGENT_PROMPT } from "./testkit/fixtures/shared.ts";
 
+const PlatformTestLayer = Layer.merge(
+  NodeServices.layer,
+  Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => Effect.die("unused title link") }),
+);
+
 const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
   prefix: "t3-cursor-v2-live-",
 });
@@ -44,7 +50,7 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(serverConfigLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(PlatformTestLayer),
 );
 
 const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer));
@@ -61,17 +67,17 @@ const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
 const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
   Layer.provide(
     Layer.mergeAll(
-      serverConfigLayer.pipe(Layer.provide(NodeServices.layer)),
+      serverConfigLayer.pipe(Layer.provide(PlatformTestLayer)),
       serverSettingsLayer,
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntimeLive.pipe(Layer.provide(NodeServices.layer)),
+      OpenCodeRuntimeLive.pipe(Layer.provide(PlatformTestLayer)),
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
       ModelManifest.layerTest,
       AntigravityInstallation.layer.pipe(
-        Layer.provide(serverConfigLayer.pipe(Layer.provide(NodeServices.layer))),
+        Layer.provide(serverConfigLayer.pipe(Layer.provide(PlatformTestLayer))),
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(PlatformTestLayer),
       ),
     ),
   ),
@@ -87,7 +93,7 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(providerInstanceRegistryLayer),
   Layer.provide(CodexResetCredit.layer),
   Layer.provide(backgroundPolicyLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(PlatformTestLayer),
 );
 
 const waitForIdle = Effect.fn("CursorOrchestratorV2Live.waitForIdle")(function* (

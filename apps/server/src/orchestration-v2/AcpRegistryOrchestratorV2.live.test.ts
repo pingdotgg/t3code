@@ -1,3 +1,4 @@
+import { SourceControlProviderRegistry } from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import {
@@ -43,6 +44,11 @@ import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.
 //
 // T3_ACP_ANTIGRAVITY_LIVE=1 ../../node_modules/.bin/vp test run \
 //   src/orchestration-v2/AcpRegistryOrchestratorV2.live.test.ts
+const PlatformTestLayer = Layer.merge(
+  NodeServices.layer,
+  Layer.mock(SourceControlProviderRegistry)({ resolveLink: () => Effect.die("unused title link") }),
+);
+
 const runAntigravityFixture = process.env.T3_ACP_ANTIGRAVITY_LIVE === "1";
 const liveAgentId = runAntigravityFixture
   ? "antigravity-acp"
@@ -61,7 +67,7 @@ const serverConfigLayer = ServerConfig.layerTest(process.cwd(), {
 const vcsDriverRegistryLayer = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProcess.layer),
   Layer.provide(serverConfigLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(PlatformTestLayer),
 );
 
 const checkpointStoreLayer = CheckpointStore.layer.pipe(Layer.provide(vcsDriverRegistryLayer));
@@ -86,17 +92,17 @@ const backgroundPolicyLayer = BackgroundPolicy.layer.pipe(
 const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe(
   Layer.provide(
     Layer.mergeAll(
-      serverConfigLayer.pipe(Layer.provide(NodeServices.layer)),
+      serverConfigLayer.pipe(Layer.provide(PlatformTestLayer)),
       serverSettingsLayer,
       NodeServices.layer,
       FetchHttpClient.layer,
-      OpenCodeRuntimeLive.pipe(Layer.provide(NodeServices.layer)),
+      OpenCodeRuntimeLive.pipe(Layer.provide(PlatformTestLayer)),
       Layer.succeed(ProviderEventLoggers, NoOpProviderEventLoggers),
       ModelManifest.layerTest,
       AntigravityInstallation.layer.pipe(
-        Layer.provide(serverConfigLayer.pipe(Layer.provide(NodeServices.layer))),
+        Layer.provide(serverConfigLayer.pipe(Layer.provide(PlatformTestLayer))),
         Layer.provide(FetchHttpClient.layer),
-        Layer.provide(NodeServices.layer),
+        Layer.provide(PlatformTestLayer),
       ),
     ),
   ),
@@ -112,7 +118,7 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(CodexResetCredit.layer),
   Layer.provide(backgroundPolicyLayer),
   Layer.provide(worktreeRepairDependenciesTestLayer),
-  Layer.provide(NodeServices.layer),
+  Layer.provide(PlatformTestLayer),
 );
 
 const waitForIdle = Effect.fn("AcpRegistryOrchestratorV2Live.waitForIdle")(function* (
