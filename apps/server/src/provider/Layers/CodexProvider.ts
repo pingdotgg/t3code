@@ -529,6 +529,23 @@ const makePendingCodexProvider = (
     });
   });
 
+/**
+ * A live app-server keeps the credentials it loaded at spawn, so after
+ * `codex login` to another account, threads with a live process keep using
+ * the old one. Only a change between two signed-in accounts counts; a
+ * signed-out or failed probe is not a switch, and neither is a plan change
+ * (`label`) on the same account.
+ */
+export function hasCodexAccountChanged(
+  previous: ServerProvider["auth"] | null,
+  next: ServerProvider["auth"],
+): boolean {
+  if (!previous || previous.status !== "authenticated" || next.status !== "authenticated") {
+    return false;
+  }
+  return previous.type !== next.type || previous.email !== next.email;
+}
+
 function accountProbeStatus(account: CodexAppServerProviderSnapshot["account"]): {
   readonly status: Exclude<ServerProviderState, "disabled">;
   readonly auth: ServerProvider["auth"];
