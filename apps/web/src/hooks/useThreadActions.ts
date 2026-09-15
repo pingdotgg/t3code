@@ -137,6 +137,16 @@ export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<Thre
   }
 }
 
+export async function requestThreadArchiveConfirmation(input: {
+  enabled: boolean;
+  title: string;
+  confirm: ((message: string) => Promise<boolean>) | null;
+}) {
+  const { confirm } = input;
+  if (!input.enabled || confirm === null) return AsyncResult.success(true);
+  return settlePromise(() => confirm(`Archive thread "${input.title}"?`));
+}
+
 export async function requestThreadUnpinConfirmation(input: {
   enabled: boolean;
   title: string;
@@ -215,6 +225,7 @@ export function useThreadActions() {
     reportFailure: false,
   });
   const sidebarThreadSortOrder = useClientSettings((settings) => settings.sidebarThreadSortOrder);
+  const confirmThreadArchive = useClientSettings((settings) => settings.confirmThreadArchive);
   const confirmThreadDelete = useClientSettings((settings) => settings.confirmThreadDelete);
   const confirmThreadUnpin = useClientSettings((settings) => settings.confirmThreadUnpin);
   const clearComposerDraftForThread = useComposerDraftStore((store) => store.clearDraftThread);
@@ -294,6 +305,23 @@ export function useThreadActions() {
       return archiveResult;
     },
     [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+  );
+
+  const confirmAndArchiveThread = useCallback(
+    async (target: ScopedThreadRef, opts: { onArchived?: () => void } = {}) => {
+      const resolved = resolveThreadTarget(target);
+      if (!resolved) return AsyncResult.success(undefined);
+      const localApi = readLocalApi();
+      const confirmation = await requestThreadArchiveConfirmation({
+        enabled: confirmThreadArchive,
+        title: resolved.thread.title,
+        confirm: localApi ? (message) => localApi.dialogs.confirm(message) : null,
+      });
+      if (confirmation._tag === "Failure") return confirmation;
+      if (!confirmation.value) return AsyncResult.success(undefined);
+      return archiveThread(target, opts);
+    },
+    [archiveThread, confirmThreadArchive, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
@@ -754,6 +782,7 @@ export function useThreadActions() {
   return useMemo(
     () => ({
       archiveThread,
+      confirmAndArchiveThread,
       unarchiveThread,
       deleteThread,
       confirmAndDeleteThread,
@@ -769,6 +798,7 @@ export function useThreadActions() {
     }),
     [
       archiveThread,
+      confirmAndArchiveThread,
       confirmAndDeleteThread,
       confirmAndUnpinThread,
       deleteThread,

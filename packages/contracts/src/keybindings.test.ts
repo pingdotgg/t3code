@@ -134,6 +134,14 @@ it.effect("parses keybinding rules", () =>
       command: "thread.stop",
     });
     assert.strictEqual(parsedThreadStop.command, "thread.stop");
+    for (const command of ["thread.archive", "thread.delete"] as const) {
+      const parsed = yield* decode(KeybindingRule, {
+        key: "mod+shift+a",
+        command,
+        when: "!terminalFocus",
+      });
+      assert.strictEqual(parsed.command, command);
+    }
   }),
 );
 
