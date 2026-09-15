@@ -1,5 +1,5 @@
 diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
-index 86035915aa330d2011e7c3027ae315c689e40f58..3d43e949550e1bc1311c38d11a7920c237a41018 100644
+index 20d042b00e4655a6647eff1a9a0890fae7e45175..fd08d36fd6c1f79adcfa0dc675420e42a9815d25 100644
 --- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
 +++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxyCommon.h
 @@ -22,6 +22,7 @@ struct LayoutAnimation {
@@ -11,10 +11,10 @@ index 86035915aa330d2011e7c3027ae315c689e40f58..3d43e949550e1bc1311c38d11a7920c2
    LayoutAnimation &operator=(const LayoutAnimation &other) = default;
  
 diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
-index bc62f8fc31a1d3b08353df514bf4f954c6279ceb..0c16264538a13ae8b7bd4fd11e1227d8580c5c65 100644
+index 0f08622518910486bb724b664e0a5dd692470b18..9f71dbc301e77656ab0c5dc453ade03eea7649f8 100644
 --- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
 +++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Experimental.cpp
-@@ -290,6 +290,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Experimental::endLayoutAnimation(
+@@ -353,6 +353,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Experimental::endLayoutAnimation(
    if (--layoutAnimation.count > 0) {
      return {};
    }
@@ -22,7 +22,7 @@ index bc62f8fc31a1d3b08353df514bf4f954c6279ceb..0c16264538a13ae8b7bd4fd11e1227d8
    maybeSettledAnimationTags_.insert(tag);
    auto surfaceId = layoutAnimation.finalView.surfaceId;
  
-@@ -407,7 +408,8 @@ void LayoutAnimationsProxy_Experimental::addOngoingAnimations(SurfaceId surfaceI
+@@ -478,7 +479,8 @@ void LayoutAnimationsProxy_Experimental::addOngoingAnimations(SurfaceId surfaceI
  
      const auto layoutAnimationIt = layoutAnimations_.find(tag);
  
@@ -32,7 +32,7 @@ index bc62f8fc31a1d3b08353df514bf4f954c6279ceb..0c16264538a13ae8b7bd4fd11e1227d8
        continue;
      }
  
-@@ -554,6 +556,8 @@ void LayoutAnimationsProxy_Experimental::maybeCancelAnimation(const int tag) con
+@@ -635,6 +637,8 @@ void LayoutAnimationsProxy_Experimental::maybeCancelAnimation(const int tag) con
    }
    if (layoutAnimationIt->second.isSettled()) {
      // Already settled - cleanupAnimations will erase it together with its updateMap entry.
@@ -42,10 +42,10 @@ index bc62f8fc31a1d3b08353df514bf4f954c6279ceb..0c16264538a13ae8b7bd4fd11e1227d8
    }
    layoutAnimations_.erase(layoutAnimationIt);
 diff --git a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
-index 9402e3e5ba4859ed344901b8b5884b9f708dd82b..2b1e4294ef798b7b6aabd04cc6663aae8297d034 100644
+index f9711f4eb6185ea99e08280ff90edd45e4152e12..ca812666ca54ec55d9d4409910b21ae97c721f2f 100644
 --- a/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
 +++ b/Common/cpp/reanimated/LayoutAnimations/LayoutAnimationsProxy_Legacy.cpp
-@@ -119,6 +119,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Legacy::endLayoutAnimation(int ta
+@@ -228,6 +228,7 @@ std::optional<SurfaceId> LayoutAnimationsProxy_Legacy::endLayoutAnimation(int ta
    if (--layoutAnimation.count > 0) {
      return {};
    }
@@ -53,7 +53,7 @@ index 9402e3e5ba4859ed344901b8b5884b9f708dd82b..2b1e4294ef798b7b6aabd04cc6663aae
    maybeSettledAnimationTags_.insert(tag);
    auto surfaceId = layoutAnimation.finalView.surfaceId;
  
-@@ -414,12 +415,7 @@ void LayoutAnimationsProxy_Legacy::addOngoingAnimations(SurfaceId surfaceId, Sha
+@@ -531,12 +532,7 @@ void LayoutAnimationsProxy_Legacy::addOngoingAnimations(SurfaceId surfaceId, Sha
      auto layoutAnimationIt = layoutAnimations_.find(tag);
  
      if (layoutAnimationIt == layoutAnimations_.end() ||
