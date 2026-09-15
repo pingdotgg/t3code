@@ -24,6 +24,7 @@ import {
   AuthSettingsWriteScope,
   AuthProvidersManageScope,
   AuthEnvironmentMaintainScope,
+  AuthDiagnosticsReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -247,6 +248,11 @@ const PAIRING_SCOPE_OPTIONS: ReadonlyArray<{
     scope: AuthPreviewOperateScope,
     title: "Control previews",
     description: "Open browser previews and host browser automation.",
+  },
+  {
+    scope: AuthDiagnosticsReadScope,
+    title: "View diagnostics and usage",
+    description: "Read process diagnostics, resource history, and usage totals.",
   },
   {
     scope: AuthTerminalOperateScope,
@@ -1218,9 +1224,11 @@ const AuthorizedClientsHeaderAction = memo(function AuthorizedClientsHeaderActio
                     disabled={isCreatingPairingLink}
                     onClick={() =>
                       setPairingScopes(
-                        [AuthOrchestrationReadScope, AuthFilesystemReadScope].filter((scope) =>
-                          delegatableScopes.includes(scope),
-                        ),
+                        [
+                          AuthOrchestrationReadScope,
+                          AuthFilesystemReadScope,
+                          AuthDiagnosticsReadScope,
+                        ].filter((scope) => delegatableScopes.includes(scope)),
                       )
                     }
                   >
