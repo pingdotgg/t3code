@@ -5,7 +5,11 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -26,6 +30,7 @@ import {
 export const ANTIGRAVITY_AUTH_STDOUT_PREFIX =
   "Open the following link to authenticate the ACP server: ";
 export const ANTIGRAVITY_AUTH_BROWSER_MARKER = "__T3_ANTIGRAVITY_AUTH_URL__";
+export const ANTIGRAVITY_BROWSER_HELPER_COMMAND = "__antigravity-browser";
 export const ANTIGRAVITY_SIGN_IN_REQUIRED_MESSAGE =
   "Sign in to Antigravity in Settings before you continue.";
 
@@ -293,9 +298,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const userHome =
     input.userHome ?? resolveAntigravityUserHome(platform, input.baseEnv ?? process.env);
   const runtimeExecutablePath = input.runtimeExecutablePath ?? (yield* HostProcessExecutablePath);
+  const runtimeIsExecutable = yield* HostProcessIsExecutable;
   const helperExecutable =
     platform === "win32" ? runtimeExecutablePath.replaceAll("\\", "/") : runtimeExecutablePath;
-  const browserArguments = [helperExecutable, "-e", browserHelperSource, "--", "%s"];
+  const helperArguments = runtimeIsExecutable
+    ? [ANTIGRAVITY_BROWSER_HELPER_COMMAND]
+    : ["-e", browserHelperSource, "--"];
+  const browserArguments = [helperExecutable, ...helperArguments, "%s"];
   const browserCommand = browserArguments.map(quoteBrowserArgument).join(" ");
   if (
     browserCommand.includes(platform === "win32" ? ";" : ":") ||
@@ -321,7 +330,7 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const environment = antigravityEnvironment(profile, input.baseEnv ?? process.env, auth);
   yield* Effect.gen(function* () {
     const child = yield* spawner.spawn(
-      ChildProcess.make(helperExecutable, ["-e", browserHelperSource, "--", browserPreflightUrl], {
+      ChildProcess.make(helperExecutable, [...helperArguments, browserPreflightUrl], {
         env: environment,
         extendEnv: false,
         shell: false,
