@@ -1418,6 +1418,85 @@ it.effect("memory billing measures deep over-cap rows without recursing the seri
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
 
+it.effect("memory windows bill the item payload like SQL, not the projected row", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:memory-row-billing");
+    yield* projectionStore.apply({
+      id: EventId.make("event:memory-row-billing:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:memory-row-billing"),
+        title: "Row billing parity",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    // Each item's payload is ~900 bytes: two payloads fit the 1.9 KB window
+    // budget, while billing the projected wrapper (visibility/source ids/
+    // position envelope around the item) would push the pair over it.
+    for (const ordinal of [1, 2]) {
+      yield* projectionStore.apply({
+        id: EventId.make(`event:memory-row-billing:item-${ordinal}`),
+        type: "turn-item.updated",
+        threadId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(`item:memory-row-billing:${ordinal}`),
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal,
+          status: "completed",
+          title: null,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+          input: "cmd",
+          output: "x".repeat(500),
+          exitCode: 0,
+        },
+      });
+    }
+
+    const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+      rowLimit: 75,
+      maxWindowBytes: 1_900,
+    });
+    assert.strictEqual(windowed.projection.visibleTurnItems.length, 2);
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
 it("bounds write-time previews for free-form record members", () => {
   const payload = {
     id: "item:preview-record-members",
