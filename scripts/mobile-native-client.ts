@@ -71,8 +71,8 @@ export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(o
       });
     }
   });
+  yield* verifyInputs;
   if (status === "compatible") {
-    yield* verifyInputs;
     return { status, rebuilt: false, fingerprint };
   }
   yield* operations.build;

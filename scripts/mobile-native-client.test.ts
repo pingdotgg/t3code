@@ -137,20 +137,22 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("rejects native edits while reading a previously compatible binary", () =>
+it.effect("rejects native edits during status reads before reuse or building", () =>
   Effect.gen(function* () {
-    let fingerprint = "native-a";
-    const error = yield* ensureClient({
-      fingerprint: Effect.sync(() => fingerprint),
-      installedBinary: Effect.sync(() => {
-        fingerprint = "native-b";
-        return "binary-a";
-      }),
-      readRecord: Effect.succeed({ fingerprint: "native-a", binary: "binary-a" }),
-      build: Effect.die("A changed checkout must be rechecked before building"),
-      saveRecord: () => Effect.die("Must not record changed inputs"),
-    }).pipe(Effect.flip);
-    assert.match(error.message, /inputs changed/);
+    for (const binary of ["binary-a", null]) {
+      let fingerprint = "native-a";
+      const error = yield* ensureClient({
+        fingerprint: Effect.sync(() => fingerprint),
+        installedBinary: Effect.sync(() => {
+          fingerprint = "native-b";
+          return binary;
+        }),
+        readRecord: Effect.succeed({ fingerprint: "native-a", binary: "binary-a" }),
+        build: Effect.die("A changed checkout must be rechecked before building"),
+        saveRecord: () => Effect.die("Must not record changed inputs"),
+      }).pipe(Effect.flip);
+      assert.match(error.message, /inputs changed/);
+    }
   }),
 );
 
