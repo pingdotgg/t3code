@@ -24,9 +24,13 @@ export function createRelayEnvironmentDiscoveryAtoms<R, E>(
       () => RelayEnvironmentDiscovery.EMPTY_RELAY_ENVIRONMENT_DISCOVERY_STATE,
     ),
   ).pipe(Atom.withLabel("relay-environment-discovery-value"));
+  // `latest` rather than `singleFlight`: a refresh requested while one is in
+  // flight must start a fresh pass once it settles. Callers refresh after
+  // mutating the relay (linking, deregistering), and joining a pass that began
+  // before the mutation landed would show the stale list as the final result.
   const refresh = createRuntimeCommand(runtime, {
     label: "relay-environment-discovery:refresh",
-    concurrency: { mode: "singleFlight", key: () => "refresh" },
+    concurrency: { mode: "latest", key: () => "refresh" },
     execute: (_input: void) =>
       RelayEnvironmentDiscovery.RelayEnvironmentDiscovery.pipe(
         Effect.flatMap((discovery) => discovery.refresh),
