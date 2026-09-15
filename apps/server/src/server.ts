@@ -811,8 +811,17 @@ const makeServerLayer = Layer.unwrap(
                   ),
                 )
               : false;
+            // A failed read must not end this fiber before it registers
+            // recovery and starts consuming recovery requests. "managed" is
+            // what a missing value means, so it is the safe fallback.
             const desiredCliLinkMode = wantsCliLink
-              ? yield* CloudCliState.readCliDesiredLinkMode
+              ? yield* CloudCliState.readCliDesiredLinkMode.pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("Failed to read the desired T3 Connect link mode", {
+                      cause,
+                    }).pipe(Effect.as("managed" as const)),
+                  ),
+                )
               : null;
             const registerManagedTunnel = retryManagedTunnelRegistration(
               registerManagedCloudTunnelRecovery(localOrigin, {
