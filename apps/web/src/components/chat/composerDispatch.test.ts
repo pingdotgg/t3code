@@ -28,4 +28,18 @@ describe("resolveComposerDispatchMode", () => {
       }),
     ).toBe("queue");
   });
+  it.each(["queue", "steer"] as const)(
+    "uses configured %s behavior only during a running turn",
+    (activeTurnDefault) => {
+      expect(
+        resolveComposerDispatchMode({ phase: "running", queueModifier: false, activeTurnDefault }),
+      ).toBe(activeTurnDefault);
+      expect(
+        resolveComposerDispatchMode({ phase: "running", queueModifier: true, activeTurnDefault }),
+      ).toBe("queue");
+      expect(
+        resolveComposerDispatchMode({ phase: "ready", queueModifier: false, activeTurnDefault }),
+      ).toBe("auto");
+    },
+  );
 });

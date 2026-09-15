@@ -403,7 +403,11 @@ import {
   shouldShowThreadErrorBanner,
   ThreadErrorBanner,
 } from "./chat/ThreadErrorBanner";
-import { QueuedRunsControl, type EditQueuedRunRequest } from "./chat/QueuedRunsControl";
+import {
+  QueuedRunsControl,
+  type QueuedRunsControlHandle,
+  type EditQueuedRunRequest,
+} from "./chat/QueuedRunsControl";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import { ComposerSurface } from "./chat/ComposerSurface";
@@ -4211,6 +4215,7 @@ export default function ChatView(props: ChatViewProps) {
   const editQueuedRunCommand = useAtomCommand(threadEnvironment.editQueuedRun, {
     reportFailure: false,
   });
+  const queuedRunsControlRef = useRef<QueuedRunsControlHandle>(null);
   const queuedEditSaveInFlightRef = useRef(false);
   const [isSavingQueuedEdit, setIsSavingQueuedEdit] = useState(false);
   const queuedEditImageResources = useMemo(
@@ -7259,6 +7264,13 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
 
+      if (command === "thread.steerQueuedMessage") {
+        if (!queuedRunsControlRef.current?.steerNext(event.repeat)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        return;
+      }
+
       if (command === "thread.stop") {
         // An unavailable command should not shadow contextual shortcuts such as Escape to close a dialog.
         if (!canInterruptRunningThread) return;
@@ -10053,6 +10065,12 @@ export default function ChatView(props: ChatViewProps) {
                             queuedRunsControl={
                               isServerThread && activeThread ? (
                                 <QueuedRunsControl
+                                  ref={queuedRunsControlRef}
+                                  steerShortcutLabel={shortcutLabelForCommand(
+                                    keybindings,
+                                    "thread.steerQueuedMessage",
+                                    { context: { terminalFocus: false } },
+                                  )}
                                   environmentId={activeThread.environmentId}
                                   threadId={activeThread.id}
                                   optimisticMessages={optimisticUserMessages}

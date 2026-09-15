@@ -14,7 +14,7 @@ import {
   ListOrderedIcon,
   PencilIcon,
 } from "lucide-react";
-import { useId, useMemo, useRef, useState } from "react";
+import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from "react";
 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
@@ -41,7 +41,16 @@ interface QueuedRowThumbnail {
 
 const QUEUED_RUN_DRAG_TYPE = "application/x-t3code-queued-run";
 
-export function QueuedRunsControl(props: {
+export interface QueuedRunsControlHandle {
+  steerNext: (repeat: boolean) => boolean;
+}
+
+export function QueuedRunsControl({
+  ref,
+  ...props
+}: {
+  readonly ref?: Ref<QueuedRunsControlHandle>;
+  readonly steerShortcutLabel?: string | null;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly optimisticMessages: ReadonlyArray<
@@ -153,8 +162,6 @@ export function QueuedRunsControl(props: {
     })),
   ];
 
-  if (items.length === 0) return null;
-
   const move = async (runId: RunId, beforeRunId: RunId | null) => {
     setBusyRunId(runId);
     try {
@@ -178,8 +185,10 @@ export function QueuedRunsControl(props: {
     void move(runId, queued[insertIndex]?.run.id ?? null);
   };
 
+  const steerInFlightRef = useRef(false);
   const steer = async (queuedRunId: RunId) => {
-    if (activeRun === null) return;
+    if (activeRun === null || !workflow?.canPromoteToSteer || steerInFlightRef.current) return;
+    steerInFlightRef.current = true;
     setBusyRunId(queuedRunId);
     try {
       await promote({
@@ -187,9 +196,21 @@ export function QueuedRunsControl(props: {
         input: { threadId: props.threadId, queuedRunId, targetRunId: activeRun.id },
       });
     } finally {
+      steerInFlightRef.current = false;
       setBusyRunId(null);
     }
   };
+
+  useImperativeHandle(ref, () => ({
+    steerNext(repeat) {
+      const next = queued[0];
+      if (!next || !workflow?.canPromoteToSteer) return false;
+      if (!repeat && busyRunId === null) void steer(next.run.id);
+      return true;
+    },
+  }));
+
+  if (items.length === 0) return null;
 
   const remove = async (runId: RunId) => {
     setBusyRunId(runId);
@@ -420,7 +441,7 @@ export function QueuedRunsControl(props: {
                           <TooltipPopup>
                             {activeRun === null
                               ? "There is no active run to steer"
-                              : "Send as a steer instead"}
+                              : `Send as a steer instead${item.serverIndex === 0 && props.steerShortcutLabel ? ` (${props.steerShortcutLabel})` : ""}`}
                           </TooltipPopup>
                         </Tooltip>
                         <Tooltip>
