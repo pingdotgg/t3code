@@ -649,6 +649,15 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         commandReadModel.threads[0]?.linkedPullRequest,
         snapshot.threads[0]?.linkedPullRequest,
       );
+      const targetedCommandReadModel = yield* snapshotQuery.getCommandReadModel({
+        threadId: ThreadId.make("thread-1"),
+      });
+      const commandThread = targetedCommandReadModel.threads[0];
+      assert.deepEqual(commandThread?.messages, []);
+      assert.deepEqual(commandThread?.activities, []);
+      assert.deepEqual(commandThread?.checkpoints, []);
+      assert.deepEqual(commandThread?.proposedPlans, snapshot.threads[0]?.proposedPlans);
+      assert.deepEqual(commandThread?.pullRequests, expectedPullRequests);
 
       // Without link rows the legacy field is omitted, whatever the old JSON
       // column still holds.
@@ -765,6 +774,16 @@ projectionSnapshotLayer("ProjectionSnapshotQuery", (it) => {
         assert.equal(changedContext.value.session?.providerInstanceId, "claude-secondary");
         assert.equal(changedContext.value.session?.lastError, "Starting another session");
       }
+
+      yield* sql`
+        UPDATE projection_threads
+        SET archived_at = '2026-02-24T00:00:09.000Z'
+        WHERE thread_id = 'thread-1'
+      `;
+      const archivedCommandReadModel = yield* snapshotQuery.getCommandReadModel({
+        threadId: ThreadId.make("thread-1"),
+      });
+      assert.equal(archivedCommandReadModel.threads[0]?.archivedAt, "2026-02-24T00:00:09.000Z");
     }),
   );
 
