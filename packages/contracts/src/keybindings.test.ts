@@ -108,6 +108,18 @@ it.effect("parses keybinding rules", () =>
     });
     assert.strictEqual(parsedThreadPrevious.command, "thread.previous");
 
+    const parsedReasoningDecrease = yield* decode(KeybindingRule, {
+      key: "alt+,",
+      command: "reasoning.decrease",
+    });
+    assert.strictEqual(parsedReasoningDecrease.command, "reasoning.decrease");
+
+    const parsedReasoningIncrease = yield* decode(KeybindingRule, {
+      key: "alt+.",
+      command: "reasoning.increase",
+    });
+    assert.strictEqual(parsedReasoningIncrease.command, "reasoning.increase");
+
     const parsedThreadSettle = yield* decode(KeybindingRule, {
       key: "mod+shift+s",
       command: "thread.settle",
