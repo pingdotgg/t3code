@@ -31,6 +31,27 @@ const emitContentThenHang = process.env.T3_ACP_EMIT_CONTENT_THEN_HANG === "1";
 const emitPlanThenHang = process.env.T3_ACP_EMIT_PLAN_THEN_HANG === "1";
 const emitActiveToolThenHang = process.env.T3_ACP_EMIT_ACTIVE_TOOL_THEN_HANG === "1";
 const emitGrokMonitorPostTurnPoll = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_POLL === "1";
+const emitGrokMonitorPostTurnHang = process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_HANG === "1";
+const emitGrokMonitorPostTurnTaskCompleted =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_TASK_COMPLETED === "1";
+const emitGrokMonitorPostTurnTaskCompletedDual =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_POST_TURN_TASK_COMPLETED_DUAL === "1";
+const emitGrokMonitorTaskCompletedBeforeStart =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_TASK_COMPLETED_BEFORE_START === "1";
+const emitGrokMonitorOrphanTaskCompleted =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_ORPHAN_TASK_COMPLETED === "1";
+const emitGrokMonitorNoticeThenTerminalPoll =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_NOTICE_THEN_TERMINAL_POLL === "1";
+const emitGrokMonitorNoticeThenRunningPoll =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_NOTICE_THEN_RUNNING_POLL === "1";
+const emitGrokMonitorSessionUpdateOnly =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_SESSION_UPDATE_ONLY === "1";
+const emitGrokMonitorLiveThenOrphanNotice =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_LIVE_THEN_ORPHAN_NOTICE === "1";
+const emitGrokMonitorForeignSessionNotice =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_FOREIGN_SESSION_NOTICE === "1";
+const emitGrokMonitorMissingSessionNotice =
+  process.env.T3_ACP_EMIT_GROK_MONITOR_MISSING_SESSION_NOTICE === "1";
 const emitGrokBackgroundTaskStarted = process.env.T3_ACP_EMIT_GROK_BACKGROUND_TASK_STARTED === "1";
 const emitForeignSessionUpdates = process.env.T3_ACP_EMIT_FOREIGN_SESSION_UPDATES === "1";
 const waitForResumeRelease = process.env.T3_ACP_WAIT_FOR_RESUME_RELEASE === "1";
@@ -837,11 +858,10 @@ const program = Effect.gen(function* () {
         return yield* Effect.never;
       }
 
-      if (emitGrokMonitorPostTurnPoll) {
+      const grokMonitorTaskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
+      const grokMonitorDescription = "Watch count-sheet Typst unit until done";
+      const emitGrokMonitorStarted = () => {
         const monitorCallId = "call-monitor-1";
-        const pollCallId = "call-monitor-poll-1";
-        const taskId = "01a05f41-5107-7550-821e-79e8d1cd7687";
-        const description = "Watch count-sheet Typst unit until done";
         writeJsonRpcNotification("session/update", {
           sessionId: requestedSessionId,
           update: {
@@ -850,7 +870,7 @@ const program = Effect.gen(function* () {
             title: "monitor",
             kind: "other",
             status: "pending",
-            rawInput: { description },
+            rawInput: { description: grokMonitorDescription },
             _meta: {
               "x.ai/tool": { version: 1, name: "monitor", kind: "task", namespace: "grok_build" },
             },
@@ -862,14 +882,41 @@ const program = Effect.gen(function* () {
             sessionUpdate: "tool_call_update",
             toolCallId: monitorCallId,
             status: "completed",
-            rawInput: { description },
+            rawInput: { description: grokMonitorDescription },
             rawOutput: {
               type: "Monitor",
-              taskId,
+              taskId: grokMonitorTaskId,
               timeoutMs: 36_000_000,
             },
           },
         });
+      };
+      const grokMonitorTaskCompletedParams = () => ({
+        sessionId: requestedSessionId,
+        update: {
+          sessionUpdate: "task_completed",
+          task_snapshot: {
+            task_id: grokMonitorTaskId,
+            command: `python3 /tmp/example/watch.py --unit t3-draft`,
+            display_command: `[monitor] ${grokMonitorDescription}`,
+            description: grokMonitorDescription,
+            kind: "monitor",
+            exit_code: 0,
+            signal: null,
+            explicitly_killed: false,
+            completed: true,
+            is_backgrounded: true,
+            output: "DONE t3-draft\n",
+            start_time: 1_788_666_700.1,
+            end_time: 1_788_666_972.0,
+          },
+          will_wake: true,
+        },
+      });
+
+      if (emitGrokMonitorPostTurnPoll) {
+        const pollCallId = "call-monitor-poll-1";
+        emitGrokMonitorStarted();
         writeJsonRpcNotification("_x.ai/session/prompt_complete", {
           sessionId: requestedSessionId,
           promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
@@ -885,12 +932,12 @@ const program = Effect.gen(function* () {
             title: "get_command_or_subagent_output",
             kind: "other",
             status: "completed",
-            rawInput: { variant: "TaskOutput", task_ids: [taskId], timeout_ms: 0 },
+            rawInput: { variant: "TaskOutput", task_ids: [grokMonitorTaskId], timeout_ms: 0 },
             rawOutput: {
               type: "TaskOutput",
               Result: {
-                task_id: taskId,
-                command: `[monitor] ${description}`,
+                task_id: grokMonitorTaskId,
+                command: `[monitor] ${grokMonitorDescription}`,
                 status: "completed",
                 exit_code: 0,
                 output: "Monitor finished.",
@@ -898,6 +945,223 @@ const program = Effect.gen(function* () {
             },
           },
         });
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorTaskCompletedBeforeStart) {
+        writeJsonRpcNotification("_x.ai/task_completed", grokMonitorTaskCompletedParams());
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorOrphanTaskCompleted) {
+        writeJsonRpcNotification("_x.ai/task_completed", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_completed",
+            task_snapshot: {
+              task_id: "orphan-task-never-started",
+              command: "python3 /tmp/example/watch.py --unit orphan",
+              display_command: "[monitor] Orphan watch",
+              description: "Orphan watch",
+              kind: "monitor",
+              exit_code: 0,
+              signal: null,
+              explicitly_killed: false,
+              completed: true,
+              is_backgrounded: true,
+              output: "DONE orphan\n",
+              start_time: 1_788_666_700.1,
+              end_time: 1_788_666_972.0,
+            },
+            will_wake: true,
+          },
+        });
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        return yield* Effect.never;
+      }
+
+      const emitGrokMonitorPostTurnNotice = () => {
+        const taskCompletedParams = grokMonitorTaskCompletedParams();
+        if (emitGrokMonitorSessionUpdateOnly) {
+          writeJsonRpcNotification("_x.ai/session/update", taskCompletedParams);
+        } else {
+          writeJsonRpcNotification("_x.ai/task_completed", taskCompletedParams);
+        }
+      };
+
+      const emitGrokMonitorTaskOutputPoll = (status: "completed" | "running") => {
+        const pollCallId = "call-monitor-poll-1";
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call",
+            toolCallId: pollCallId,
+            title: "get_command_or_subagent_output",
+            kind: "other",
+            status: "pending",
+            rawInput: { variant: "TaskOutput", task_ids: [grokMonitorTaskId], timeout_ms: 0 },
+          },
+        });
+        writeJsonRpcNotification("session/update", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "tool_call_update",
+            toolCallId: pollCallId,
+            status: "completed",
+            rawInput: { variant: "TaskOutput", task_ids: [grokMonitorTaskId], timeout_ms: 0 },
+            rawOutput: {
+              type: "TaskOutput",
+              Result: {
+                task_id: grokMonitorTaskId,
+                command: `[monitor] ${grokMonitorDescription}`,
+                status,
+                exit_code: status === "completed" ? 0 : null,
+                output: status === "completed" ? "Monitor finished." : "Still running.",
+              },
+            },
+          },
+        });
+      };
+
+      if (emitGrokMonitorNoticeThenTerminalPoll) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        emitGrokMonitorPostTurnNotice();
+        emitGrokMonitorTaskOutputPoll("completed");
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorNoticeThenRunningPoll) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        emitGrokMonitorPostTurnNotice();
+        emitGrokMonitorTaskOutputPoll("running");
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorSessionUpdateOnly) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        emitGrokMonitorPostTurnNotice();
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorLiveThenOrphanNotice) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        writeJsonRpcNotification("_x.ai/task_completed", {
+          sessionId: requestedSessionId,
+          update: {
+            sessionUpdate: "task_completed",
+            task_snapshot: {
+              task_id: "orphan-task-never-started",
+              command: "python3 /tmp/example/watch.py --unit orphan",
+              display_command: "[monitor] Orphan watch",
+              description: "Orphan watch",
+              kind: "monitor",
+              exit_code: 0,
+              signal: null,
+              explicitly_killed: false,
+              completed: true,
+              is_backgrounded: true,
+              output: "DONE orphan\n",
+              start_time: 1_788_666_700.1,
+              end_time: 1_788_666_972.0,
+            },
+            will_wake: true,
+          },
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorForeignSessionNotice) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        writeJsonRpcNotification("_x.ai/task_completed", {
+          ...grokMonitorTaskCompletedParams(),
+          sessionId: "foreign-session-id-not-active",
+        });
+        return yield* Effect.never;
+      }
+
+      if (emitGrokMonitorMissingSessionNotice) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        yield* Effect.sleep("120 millis");
+        const { sessionId: _sessionId, ...taskCompletedWithoutSession } =
+          grokMonitorTaskCompletedParams();
+        writeJsonRpcNotification("_x.ai/task_completed", taskCompletedWithoutSession);
+        return yield* Effect.never;
+      }
+
+      if (
+        emitGrokMonitorPostTurnHang ||
+        emitGrokMonitorPostTurnTaskCompleted ||
+        emitGrokMonitorPostTurnTaskCompletedDual
+      ) {
+        emitGrokMonitorStarted();
+        writeJsonRpcNotification("_x.ai/session/prompt_complete", {
+          sessionId: requestedSessionId,
+          promptId: promptIdFromRequestMeta(request) ?? "mock-xai-prompt-1",
+          stopReason: "end_turn",
+          agentResult: null,
+        });
+        if (emitGrokMonitorPostTurnTaskCompleted || emitGrokMonitorPostTurnTaskCompletedDual) {
+          yield* Effect.sleep("120 millis");
+          const taskCompletedParams = grokMonitorTaskCompletedParams();
+          if (emitGrokMonitorPostTurnTaskCompletedDual) {
+            writeJsonRpcNotification("_x.ai/session/update", taskCompletedParams);
+          }
+          writeJsonRpcNotification("_x.ai/task_completed", taskCompletedParams);
+        }
         return yield* Effect.never;
       }
 
