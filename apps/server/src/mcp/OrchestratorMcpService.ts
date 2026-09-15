@@ -1124,46 +1124,40 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         yield* requireCapability(scope);
         const parent = yield* loadProjection(scope.threadId);
-        const existing = yield* loadScopedScheduledTask(
-          parent.thread.projectId,
-          input.scheduledTaskId,
-        );
-        const threadId =
-          input.bindToCurrentThread === undefined
-            ? existing.threadId
-            : input.bindToCurrentThread
-              ? scope.threadId
-              : null;
-        // Rebinding changes where runs execute, so the workspace strategy must
-        // follow: unbinding a root-strategy task would otherwise run loose
-        // prompts in the shared project checkout.
-        const workspaceStrategy =
-          input.bindToCurrentThread === undefined
-            ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
-        const upsertInput: ScheduledTaskUpsertInput = {
-          id: existing.id,
-          title: input.title ?? existing.title,
-          prompt: input.prompt ?? existing.prompt,
-          enabled: input.enabled ?? existing.enabled,
-          schedule: input.schedule ?? existing.schedule,
-          projectId: existing.projectId,
-          threadId,
-          workspaceStrategy,
-          modelSelection: existing.modelSelection,
-          runtimeMode: existing.runtimeMode,
-          interactionMode: existing.interactionMode,
-          createdBy: existing.createdBy,
-          creationSource: existing.creationSource,
-        };
-        const { task } = yield* scheduledTasks
-          .upsert(upsertInput)
+        // Atomic scoped partial update: only the fields the caller provided
+        // are written, and only while the task still exists in this project.
+        // A delete racing the edit surfaces as task_not_found instead of the
+        // task being resurrected by a stale full-row upsert.
+        const updated = yield* scheduledTasks
+          .update({
+            id: input.scheduledTaskId,
+            projectId: parent.thread.projectId,
+            ...(input.title === undefined ? {} : { title: input.title }),
+            ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+            ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+            ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
+            // Rebinding changes where runs execute, so the workspace strategy
+            // must follow: unbinding a root-strategy task would otherwise run
+            // loose prompts in the shared project checkout.
+            ...(input.bindToCurrentThread === undefined
+              ? {}
+              : {
+                  threadId: input.bindToCurrentThread ? scope.threadId : null,
+                  workspaceStrategy: scheduledTaskWorkspaceStrategy(input.bindToCurrentThread),
+                }),
+          })
           .pipe(
             Effect.mapError((error) =>
               failure("orchestration_error", `Could not update scheduled task: ${error.message}`),
             ),
           );
-        return scheduledTaskSummary(task);
+        if (Option.isNone(updated)) {
+          return yield* failure(
+            "task_not_found",
+            `Scheduled task ${input.scheduledTaskId} was not found in the calling project.`,
+          );
+        }
+        return scheduledTaskSummary(updated.value.task);
       }),
     deleteScheduledTask: (scope, input) =>
       Effect.gen(function* () {
