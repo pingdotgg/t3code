@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState } from "react";
 import { Pressable, StyleSheet, View, type AccessibilityActionEvent } from "react-native";
 import { Gesture, GestureDetector } from "react-native-gesture-handler";
 import { runOnJS } from "react-native-reanimated";
+import { useHoverGesture } from "../../lib/useHoverGesture";
 import { cn } from "../../lib/cn";
 
 const ACCESSIBILITY_RESIZE_STEP = 24;
@@ -20,7 +21,7 @@ interface WorkspacePaneDividerProps {
 export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   const latestProps = useRef(props);
   latestProps.current = props;
-  const [hovered, setHovered] = useState(false);
+  const { hovered, hoverGesture } = useHoverGesture();
   const [dragging, setDragging] = useState(false);
   const handleResizeStart = useCallback(() => {
     setDragging(true);
@@ -50,6 +51,11 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
     [handleResize, handleResizeEnd, handleResizeStart],
   );
 
+  const dividerGesture = useMemo(
+    () => Gesture.Simultaneous(resizeGesture, hoverGesture),
+    [resizeGesture, hoverGesture],
+  );
+
   const handleAccessibilityAction = (event: AccessibilityActionEvent) => {
     props.onResizeStart?.();
     if (event.nativeEvent.actionName === "increment") {
@@ -61,7 +67,7 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
   };
 
   return (
-    <GestureDetector gesture={resizeGesture}>
+    <GestureDetector gesture={dividerGesture}>
       <Pressable
         className="relative z-[100] -mx-[22px] w-11 self-stretch cursor-pointer justify-center"
         accessibilityActions={[
@@ -75,8 +81,6 @@ export function WorkspacePaneDivider(props: WorkspacePaneDividerProps) {
           text: `${Math.round(props.currentWidth)} points wide`,
         }}
         onAccessibilityAction={handleAccessibilityAction}
-        onHoverIn={() => setHovered(true)}
-        onHoverOut={() => setHovered(false)}
       >
         <View
           className={cn(

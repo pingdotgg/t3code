@@ -1,7 +1,7 @@
 import { useNavigation } from "@react-navigation/native";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -10,9 +10,15 @@ import {
   TextInput,
   useWindowDimensions,
   View,
+  type CellRendererProps,
 } from "react-native";
 
-import { AppText as Text, AppTextInput } from "../../components/AppText";
+import { GestureHandlerRootView } from "react-native-gesture-handler";
+
+import { RowPressable } from "../../components/RowPressable";
+import { AppText as Text } from "../../components/AppText";
+import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { GlassSurface } from "../../components/GlassSurface";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
@@ -35,7 +41,82 @@ const PALETTE_COMMANDS: ReadonlyArray<HardwareKeyboardCommand> = [
   "palettePrevious",
   ...THREAD_JUMP_KEYBINDING_COMMANDS,
 ];
-const ROW_HEIGHT = 64;
+const ROW_HEIGHT = 50;
+
+const ACTION_ICONS: Record<string, AppSymbolName> = {
+  newTask: "square.and.pencil",
+  newThread: "square.and.pencil",
+  addProject: "folder.badge.plus",
+  settings: "gearshape",
+  appearance: "paintbrush",
+  environments: "desktopcomputer",
+  usage: "chart.bar.xaxis",
+  archive: "archivebox",
+  files: "doc.text",
+  terminal: "terminal",
+  review: "arrow.triangle.pull",
+  copyThreadReference: "link",
+};
+
+function itemIcon(item: CommandPaletteItem): AppSymbolName {
+  if (item.kind === "project") return "folder";
+  if (item.kind === "thread") return "text.bubble";
+  return ACTION_ICONS[item.key] ?? "ellipsis";
+}
+
+function PaletteCell({
+  children,
+  style,
+  onLayout,
+  onFocusCapture,
+}: CellRendererProps<CommandPaletteItem>) {
+  // Keep gesture-enabled rows behind stable native cell boundaries as
+  // virtualization inserts and removes cells from the scroll content.
+  const viewProps = { style, onLayout, onFocusCapture };
+  return (
+    <View {...viewProps} collapsable={false}>
+      {children}
+    </View>
+  );
+}
+
+function PaletteRow(props: {
+  readonly item: CommandPaletteItem;
+  readonly index: number;
+  readonly selected: boolean;
+  readonly onSelect: () => void;
+}) {
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityState={{ selected: props.selected }}
+      onPress={props.onSelect}
+      className={
+        props.selected
+          ? "mx-2 flex-row items-center gap-3 rounded-xl bg-primary/10 px-3"
+          : "mx-2 flex-row items-center gap-3 rounded-xl px-3"
+      }
+      style={{ height: ROW_HEIGHT }}
+    >
+      <View className="w-7 items-center">
+        <SymbolView name={itemIcon(props.item)} size={20} tintColorClassName="accent-icon" />
+      </View>
+      <View className="flex-1">
+        <Text numberOfLines={1} className="text-base">
+          {props.item.title}
+        </Text>
+        {props.item.detail ? (
+          <Text numberOfLines={1} className="text-sm text-foreground-muted">
+            {props.item.detail}
+          </Text>
+        ) : null}
+      </View>
+      {props.index < 9 ? (
+        <Text className="text-sm text-foreground-muted">⌘{props.index + 1}</Text>
+      ) : null}
+    </RowPressable>
+  );
+}
 
 /** Mounted only while open, so the app root does not subscribe to the full thread catalog. */
 export function CommandPalette(props: {
@@ -255,6 +336,24 @@ export function CommandPalette(props: {
     }
   }, [selectedIndex, selectedKey]);
 
+  const dismissed = useRef(false);
+  const handleDismissed = useCallback(() => {
+    if (dismissed.current) return;
+    dismissed.current = true;
+    // Present navigation sheets only after UIKit has dismissed this modal.
+    props.onClose();
+    pendingAction.current?.();
+  }, [props]);
+
+  // iOS drops Modal onDismiss when the VC is dismissed mid-presentation (e.g.
+  // ⌘K during the fade-in) or raced by another sheet — without a fallback the
+  // palette stays mounted-but-invisible and ⌘K dead-ends on a stale open state.
+  useEffect(() => {
+    if (visible) return;
+    const fallback = setTimeout(handleDismissed, 400);
+    return () => clearTimeout(fallback);
+  }, [visible, handleDismissed]);
+
   function close(run?: () => void) {
     if (closing.current) return;
     closing.current = true;
@@ -283,104 +382,90 @@ export function CommandPalette(props: {
       animationType="fade"
       onShow={() => inputRef.current?.focus()}
       onRequestClose={() => close()}
-      onDismiss={() => {
-        // Present navigation sheets only after UIKit has dismissed this modal.
-        props.onClose();
-        pendingAction.current?.();
-      }}
+      onDismiss={handleDismissed}
     >
-      <T3KeyboardCommands enabledCommands={PALETTE_COMMANDS} onCommand={onCommand}>
-        <KeyboardAvoidingView
-          behavior="padding"
-          className="flex-1 items-center justify-center bg-black/40 p-4"
-        >
-          <Pressable
-            className="absolute inset-0"
-            accessibilityLabel="Close command palette"
-            onPress={() => close()}
-          />
-          <View
-            accessibilityViewIsModal
-            className="overflow-hidden rounded-2xl border border-border bg-sheet-solid"
-            style={{ width: Math.min(600, width - 32), height: Math.min(520, height - 80) }}
+      <GestureHandlerRootView className="flex-1">
+        <T3KeyboardCommands enabledCommands={PALETTE_COMMANDS} onCommand={onCommand}>
+          <KeyboardAvoidingView
+            behavior="padding"
+            className="flex-1 items-center justify-center p-4"
           >
-            <View className="flex-row items-center gap-2 border-b border-border p-3">
-              <AppTextInput
-                ref={inputRef}
-                accessibilityLabel="Search commands, projects, and threads"
-                placeholder="Search commands, projects, and threads…"
-                autoCorrect={false}
-                autoCapitalize="none"
-                className="flex-1"
-                value={query}
-                onChangeText={(value) => {
-                  setQuery(value);
-                  setSelection(null);
-                  listRef.current?.scrollToOffset({ offset: 0, animated: false });
-                }}
-                returnKeyType="go"
-                submitBehavior="submit"
-                onSubmitEditing={() => {
-                  const item = results[selectedIndex];
-                  if (item) close(item.run);
-                }}
-              />
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Close command palette"
-                className="min-h-11 justify-center px-2"
-                onPress={() => close()}
-              >
-                <Text className="text-primary">Cancel</Text>
-              </Pressable>
-            </View>
-            <FlatList
-              ref={listRef}
-              data={results}
-              extraData={selectedKey}
-              keyboardShouldPersistTaps="handled"
-              keyExtractor={(item) => item.key}
-              getItemLayout={(_, index) => ({
-                length: ROW_HEIGHT,
-                offset: ROW_HEIGHT * index,
-                index,
-              })}
-              ListEmptyComponent={
-                <Text className="p-5 text-center text-foreground-muted">
-                  {search.isPending ? "Searching…" : "No results"}
-                </Text>
-              }
-              renderItem={({ item, index }) => (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityState={{ selected: item.key === selectedKey }}
-                  onPress={() => close(item.run)}
-                  className={
-                    item.key === selectedKey
-                      ? "flex-row items-center gap-3 bg-primary/10 px-4"
-                      : "flex-row items-center gap-3 px-4"
-                  }
-                  style={{ height: ROW_HEIGHT }}
-                >
-                  <View className="flex-1">
-                    <Text numberOfLines={1} className="text-base">
-                      {item.title}
-                    </Text>
-                    {item.detail ? (
-                      <Text numberOfLines={1} className="text-sm text-foreground-muted">
-                        {item.detail}
-                      </Text>
-                    ) : null}
-                  </View>
-                  {index < 9 ? (
-                    <Text className="text-sm text-foreground-muted">⌘{index + 1}</Text>
-                  ) : null}
-                </Pressable>
-              )}
+            <Pressable
+              className="absolute inset-0 bg-black/15"
+              accessibilityLabel="Close command palette"
+              onPress={() => close()}
             />
-          </View>
-        </KeyboardAvoidingView>
-      </T3KeyboardCommands>
+            <GlassSurface
+              accessibilityViewIsModal
+              style={{
+                width: Math.min(600, width - 32),
+                height: Math.min(520, height - 80),
+                borderRadius: 20,
+              }}
+            >
+              <View className="px-3 pb-2.5 pt-3.5">
+                <View className="h-[38px] flex-row items-center gap-1.5 pr-2.5 pl-[11px]">
+                  <SymbolView
+                    name="magnifyingglass"
+                    size={15}
+                    tintColorClassName="accent-foreground-muted"
+                    type="monochrome"
+                  />
+                  <TextInput
+                    ref={inputRef}
+                    accessibilityLabel="Search commands, projects, and threads"
+                    placeholder="Search commands, projects, and threads…"
+                    placeholderTextColorClassName="accent-placeholder"
+                    autoCorrect={false}
+                    autoCapitalize="none"
+                    clearButtonMode="while-editing"
+                    className="h-[34px] flex-1 px-0 py-0 font-sans text-base text-foreground"
+                    value={query}
+                    onChangeText={(value) => {
+                      setQuery(value);
+                      setSelection(null);
+                      listRef.current?.scrollToOffset({ offset: 0, animated: false });
+                    }}
+                    returnKeyType="go"
+                    submitBehavior="submit"
+                    onSubmitEditing={() => {
+                      const item = results[selectedIndex];
+                      if (item) close(item.run);
+                    }}
+                  />
+                </View>
+              </View>
+              <FlatList
+                ref={listRef}
+                CellRendererComponent={PaletteCell}
+                data={results}
+                extraData={selectedKey}
+                keyboardShouldPersistTaps="handled"
+                keyExtractor={(item) => item.key}
+                getItemLayout={(_, index) => ({
+                  length: ROW_HEIGHT,
+                  offset: ROW_HEIGHT * index,
+                  index,
+                })}
+                contentContainerClassName="pb-2"
+                ListEmptyComponent={
+                  <Text className="p-5 text-center text-foreground-muted">
+                    {search.isPending ? "Searching…" : "No results"}
+                  </Text>
+                }
+                renderItem={({ item, index }) => (
+                  <PaletteRow
+                    item={item}
+                    index={index}
+                    selected={item.key === selectedKey}
+                    onSelect={() => close(item.run)}
+                  />
+                )}
+              />
+            </GlassSurface>
+          </KeyboardAvoidingView>
+        </T3KeyboardCommands>
+      </GestureHandlerRootView>
     </Modal>
   );
 }
