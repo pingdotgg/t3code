@@ -190,6 +190,10 @@ import { BrowserSettingsReadError } from "../browser/openFileInPreview";
 import { addBrowserSurface } from "./preview/addBrowserSurface";
 import { closePreviewSession } from "./preview/closePreviewSession";
 import { ThreadPreviewMiniPlayer } from "./preview/ThreadPreviewMiniPlayer";
+import {
+  selectComputerUseInProgress,
+  selectLatestComputerUsePreview,
+} from "./preview/computerUsePreview";
 import { subscribePreviewAction } from "./preview/previewActionBus";
 import { getConfiguredPreviewUrls } from "./preview/previewEmptyStateLogic";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -199,6 +203,7 @@ import {
 } from "../sidebarPendingFileDropStore";
 import {
   browserMiniPlayerSource,
+  COMPUTER_MINI_PLAYER_SOURCE,
   previewMiniPlayerSourceKey,
   selectThreadPreviewMiniPlayer,
   usePreviewMiniPlayerStore,
@@ -4550,6 +4555,31 @@ export default function ChatView(props: ChatViewProps) {
     deviceState.sessions,
     deviceState.devices,
   ]);
+  // The first screenshot the agent takes of the host computer floats over chat
+  // the same way an agent-opened device does; later captures refresh it in
+  // place. Closing the card is remembered for the thread until the agent
+  // captures again, so a dismissed card does not reappear every render.
+  const computerUsePreview = useMemo(
+    () => selectLatestComputerUsePreview(workLogEntries),
+    [workLogEntries],
+  );
+  const computerUseInProgress = useMemo(
+    () => selectComputerUseInProgress(workLogEntries),
+    [workLogEntries],
+  );
+  const lastShownComputerUseEntryId = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeThreadRef || !computerUsePreview || shouldUseRightPanelSheet) return;
+    if (lastShownComputerUseEntryId.current === computerUsePreview.entryId) return;
+    lastShownComputerUseEntryId.current = computerUsePreview.entryId;
+    if (!autoShowFloatingPreview) return;
+    const current =
+      usePreviewMiniPlayerStore.getState().byThreadKey[scopedThreadKey(activeThreadRef)];
+    // A browser or device the agent is driving keeps the float; the capture
+    // still updates the work log row.
+    if (current && current.source.kind !== "computer") return;
+    usePreviewMiniPlayerStore.getState().open(activeThreadRef, COMPUTER_MINI_PLAYER_SOURCE);
+  }, [activeThreadRef, autoShowFloatingPreview, computerUsePreview, shouldUseRightPanelSheet]);
   // A floating device follows its session: once the agent or another client
   // closes the device there is nothing left to stream.
   useEffect(() => {
@@ -9442,6 +9472,8 @@ export default function ChatView(props: ChatViewProps) {
                 threadRef={activeThreadRef}
                 miniPlayer={activePreviewMiniPlayer}
                 composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
+                computerUse={computerUsePreview}
+                computerUseInProgress={computerUseInProgress}
               />
             ) : null}
 

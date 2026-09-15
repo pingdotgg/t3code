@@ -349,6 +349,11 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   if ("kind" in data) {
     projectedData.kind = data.kind;
   }
+  const computerUse = projectComputerUse(data.computerUse);
+  if (computerUse) {
+    projectedData.computerUse = computerUse;
+    projectedData.imagePath = computerUse.imagePath;
+  }
 
   const changedFiles: string[] = [];
   collectChangedFiles(data, changedFiles, new Set<string>(), 0);
@@ -357,6 +362,20 @@ function projectMcpToolCallData(data: Record<string, unknown>): Record<string, u
   }
 
   return projectedData;
+}
+
+/**
+ * The screenshot ingestion saved for a Cua capture, plus the window it shows.
+ * Mirrored onto `imagePath` so both clients render it like a viewed image.
+ */
+function projectComputerUse(
+  value: unknown,
+): { readonly imagePath: string; readonly windowTitle?: string } | undefined {
+  const record = asRecord(value);
+  const imagePath = asTrimmedString(record?.imagePath);
+  if (!imagePath || !isWorkspaceImagePreviewPath(imagePath)) return undefined;
+  const windowTitle = asTrimmedString(record?.windowTitle);
+  return { imagePath, ...(windowTitle ? { windowTitle } : {}) };
 }
 
 function projectRawOutput(value: unknown): Record<string, unknown> | undefined {

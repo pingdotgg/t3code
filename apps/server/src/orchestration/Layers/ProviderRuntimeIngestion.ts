@@ -51,6 +51,7 @@ import {
   type ProviderRuntimeIngestionShape,
 } from "../Services/ProviderRuntimeIngestion.ts";
 import { projectActivityPayload } from "../ActivityPayloadProjection.ts";
+import { cuaToolResultOf, saveCuaScreenshot } from "../../cua/cuaScreenshots.ts";
 import { forkParked } from "../../serverActivation.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -408,6 +409,11 @@ function taskLinkageActivityFields(payload: Record<string, unknown>): Record<str
   }
   return fields;
 }
+
+const asRecordOrEmpty = (value: unknown): Record<string, unknown> =>
+  typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
 
 export function runtimeEventToActivities(
   event: ProviderRuntimeEvent,
@@ -2230,6 +2236,26 @@ const make = Effect.gen(function* () {
               ...activityEvent.payload,
               beforeTokens: activityEvent.payload.beforeTokens ?? tokenCounts.beforeTokens,
               afterTokens: activityEvent.payload.afterTokens ?? tokenCounts.afterTokens,
+            },
+          };
+        }
+      }
+
+      if (
+        activityEvent.type === "item.completed" &&
+        activityEvent.payload.toolSurface === "computer" &&
+        activityEvent.payload.status === "completed"
+      ) {
+        const screenshot = yield* saveCuaScreenshot({
+          threadId: thread.id,
+          result: cuaToolResultOf(activityEvent.payload.data),
+        });
+        if (screenshot) {
+          activityEvent = {
+            ...activityEvent,
+            payload: {
+              ...activityEvent.payload,
+              data: { ...asRecordOrEmpty(activityEvent.payload.data), computerUse: screenshot },
             },
           };
         }
