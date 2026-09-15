@@ -58,6 +58,7 @@ import {
 } from "react";
 import {
   Markdown,
+  parseMarkdown,
   type CustomRenderers,
   type NodeStyleOverrides,
   type PartialMarkdownTheme,
@@ -92,6 +93,7 @@ import { copyTextWithHaptic } from "../../lib/copyTextWithHaptic";
 import { tryOpenExternalUrl } from "../../lib/openExternalUrl";
 import { downloadAndShareAttachment } from "../../lib/attachmentDownload";
 import { hasWideMarkdownBlock } from "../../lib/wideMarkdownBlocks";
+import { resolveMarkdownNodeTextDirection, type TextDirection } from "../../lib/textDirection";
 import { faviconUrlForOrigin } from "@t3tools/shared/favicon";
 import {
   hasNativeSelectableMarkdownText,
@@ -603,7 +605,7 @@ interface MarkdownStyleSets {
 interface MarkdownStyleSet {
   readonly theme: PartialMarkdownTheme;
   readonly styles: NodeStyleOverrides;
-  readonly renderers: CustomRenderers;
+  readonly renderers: Readonly<Record<TextDirection, CustomRenderers>>;
   readonly nativeTextStyle: NativeMarkdownTextStyle;
 }
 
@@ -686,6 +688,8 @@ function MarkdownInlineCode(props: {
         color: presentation ? props.textColor : props.codeColor,
         fontSize: props.fontSize,
         lineHeight: props.lineHeight,
+        textAlign: "left",
+        writingDirection: "ltr",
       }}
     >
       {presentation ? (
@@ -759,6 +763,65 @@ function ArtifactTemplateCard(props: {
   );
 }
 
+const NitroMarkdownMessage = memo(function NitroMarkdownMessage(props: {
+  readonly text: string;
+  readonly markdownStyles: MarkdownStyleSet;
+}) {
+  const sourceAst = useMemo(() => parseMarkdown(props.text, { gfm: true }), [props.text]);
+  const direction = resolveMarkdownNodeTextDirection(sourceAst);
+  const styles = useMemo<NodeStyleOverrides>(
+    () => ({
+      ...props.markdownStyles.styles,
+      document: {
+        ...props.markdownStyles.styles.document,
+        direction,
+      },
+      paragraph: {
+        ...props.markdownStyles.styles.paragraph,
+        direction,
+      },
+      list: {
+        ...props.markdownStyles.styles.list,
+        direction,
+      },
+      list_item: {
+        ...props.markdownStyles.styles.list_item,
+        direction,
+      },
+      task_list_item: {
+        ...props.markdownStyles.styles.task_list_item,
+        direction,
+      },
+      blockquote: {
+        ...props.markdownStyles.styles.blockquote,
+        direction,
+        ...(direction === "rtl"
+          ? {
+              borderLeftWidth: 0,
+              borderRightWidth: props.markdownStyles.styles.blockquote?.borderLeftWidth,
+              borderRightColor: props.markdownStyles.styles.blockquote?.borderLeftColor,
+              paddingLeft: 0,
+              paddingRight: props.markdownStyles.styles.blockquote?.paddingLeft,
+            }
+          : null),
+      },
+    }),
+    [direction, props.markdownStyles.styles],
+  );
+
+  return (
+    <Markdown
+      options={{ gfm: true }}
+      renderers={props.markdownStyles.renderers[direction]}
+      sourceAst={sourceAst}
+      styles={styles}
+      theme={props.markdownStyles.theme}
+    >
+      {props.text}
+    </Markdown>
+  );
+});
+
 /** Tap opens a link; long-press on a native file chip shows its menu. Built once per feed. */
 interface MarkdownLinkHandlers {
   readonly onLinkPress: (href: string) => void;
@@ -802,15 +865,11 @@ const AssistantMarkdownContent = memo(function AssistantMarkdownContent(props: {
         renderImage={props.renderImage}
       />
     ) : (
-      <Markdown
+      <NitroMarkdownMessage
         key={`markdown:${segment.sourceOffset}`}
-        options={{ gfm: true }}
-        renderers={props.markdownStyles.renderers}
-        styles={props.markdownStyles.styles}
-        theme={props.markdownStyles.theme}
-      >
-        {markdown}
-      </Markdown>
+        text={markdown}
+        markdownStyles={props.markdownStyles}
+      />
     );
   });
 });
@@ -880,6 +939,8 @@ function MarkdownCodeBlock(props: {
             color: props.textColor,
             fontSize: props.fontSize,
             lineHeight: props.lineHeight,
+            textAlign: "left",
+            writingDirection: "ltr",
             ...(Platform.OS === "android" ? { includeFontPadding: false } : null),
           }}
         >
@@ -1067,6 +1128,7 @@ function useMarkdownStyles(
       copyTintColor: ColorValue,
       preserveSoftBreaks: boolean,
       highlightCode: boolean,
+      direction: TextDirection,
     ): CustomRenderers => ({
       link: ({ children, href = "" }) => {
         const presentation = resolveMarkdownLinkPresentation(href);
@@ -1119,7 +1181,7 @@ function useMarkdownStyles(
         );
       },
       list: ({ node, Renderer, ordered = false, start = 1 }) => (
-        <View className="mt-0.5 mb-2">
+        <View className="mt-0.5 mb-2" style={{ direction }}>
           {node.children?.map((child, index) => {
             const childKey = `${child.type}:${child.beg ?? "unknown"}:${child.end ?? "unknown"}`;
             if (child.type === "task_list_item") {
@@ -1133,11 +1195,12 @@ function useMarkdownStyles(
                   className="font-sans"
                   style={{
                     width: ordered ? 22 : 12,
-                    marginRight: 5,
+                    marginLeft: direction === "rtl" ? 5 : 0,
+                    marginRight: direction === "rtl" ? 0 : 5,
                     color: inlineTextColor,
                     fontSize: markdownFontSizes.m,
                     lineHeight: markdownFontSizes.bodyLineHeight,
-                    textAlign: ordered ? "right" : "center",
+                    textAlign: ordered ? (direction === "rtl" ? "left" : "right") : "center",
                   }}
                 >
                   {ordered ? `${start + index}.` : "•"}
@@ -1190,6 +1253,37 @@ function useMarkdownStyles(
       ),
     });
 
+    const createDirectionalMarkdownRenderers = (
+      inlineTextColor: string,
+      inlineCodeTextColor: string,
+      blockBackgroundColor: string,
+      blockTextColor: string,
+      copyTintColor: ColorValue,
+      preserveSoftBreaks: boolean,
+      highlightCode: boolean,
+    ): Readonly<Record<TextDirection, CustomRenderers>> => ({
+      ltr: createMarkdownRenderers(
+        inlineTextColor,
+        inlineCodeTextColor,
+        blockBackgroundColor,
+        blockTextColor,
+        copyTintColor,
+        preserveSoftBreaks,
+        highlightCode,
+        "ltr",
+      ),
+      rtl: createMarkdownRenderers(
+        inlineTextColor,
+        inlineCodeTextColor,
+        blockBackgroundColor,
+        blockTextColor,
+        copyTintColor,
+        preserveSoftBreaks,
+        highlightCode,
+        "rtl",
+      ),
+    });
+
     const userTheme: PartialMarkdownTheme = {
       ...baseTheme,
       colors: {
@@ -1239,7 +1333,7 @@ function useMarkdownStyles(
       user: {
         theme: userTheme,
         styles: userStyles,
-        renderers: createMarkdownRenderers(
+        renderers: createDirectionalMarkdownRenderers(
           markdownUserCodeText,
           markdownUserInlineCodeText,
           markdownUserFenceBg,
@@ -1273,7 +1367,7 @@ function useMarkdownStyles(
       assistant: {
         theme: assistantTheme,
         styles: assistantStyles,
-        renderers: createMarkdownRenderers(
+        renderers: createDirectionalMarkdownRenderers(
           markdownCodeText,
           markdownInlineCodeText,
           markdownCodeBg,
@@ -1810,16 +1904,7 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
         />
       );
     }
-    return (
-      <Markdown
-        options={{ gfm: true }}
-        renderers={props.markdownStyles.renderers}
-        styles={props.markdownStyles.styles}
-        theme={props.markdownStyles.theme}
-      >
-        {text}
-      </Markdown>
-    );
+    return <NitroMarkdownMessage text={props.text} markdownStyles={props.markdownStyles} />;
   }
 
   return (
@@ -1852,15 +1937,11 @@ function LegacyUserMessageContent(props: UserMessageContentProps) {
             renderImage={props.renderImage}
           />
         ) : (
-          <Markdown
+          <NitroMarkdownMessage
             key={segment.id}
-            options={{ gfm: true }}
-            renderers={props.markdownStyles.renderers}
-            styles={props.markdownStyles.styles}
-            theme={props.markdownStyles.theme}
-          >
-            {text}
-          </Markdown>
+            text={text}
+            markdownStyles={props.markdownStyles}
+          />
         );
       })}
     </View>
