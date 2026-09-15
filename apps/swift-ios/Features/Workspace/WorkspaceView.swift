@@ -297,7 +297,7 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: collapseToSidebar
             )
             .id(id)
         } else {
@@ -607,6 +607,15 @@ public struct WorkspaceView: View {
 
     private func closeSelectedThread() {
         threadSelection.close()
+        preferredCompactColumn = .sidebar
+    }
+
+    /// Compact-width swipe back. Mirrors the system back button: collapse the
+    /// column but keep the selection so the thread view is re-shown, not
+    /// destroyed and recreated. Recreating it inside the split view's
+    /// interactive pop fires a spurious onDisappear on the next open, which
+    /// releases the thread mid-load and leaves stale cached content.
+    private func collapseToSidebar() {
         preferredCompactColumn = .sidebar
     }
 
