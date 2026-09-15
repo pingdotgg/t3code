@@ -22,7 +22,22 @@ repository-root `.env` or `.env.local`, not an `apps/mobile/.env` file. See
 
 ## Development
 
-Start Metro for the dev client:
+For simulator/emulator development, select and boot a device, then ensure its native client matches
+this checkout before starting Metro:
+
+```bash
+node ../../scripts/mobile-native-client.ts ensure ios <simulator-udid>
+# Or: node ../../scripts/mobile-native-client.ts ensure android <emulator-serial>
+vp run dev:client
+```
+
+The helper compares a local Expo fingerprint and the installed binary with its last successful
+build record. It builds and installs missing, stale, or unverified clients and reuses matching ones.
+Use `check` instead of `ensure` for a read-only decision: exit 0 means compatible, 2 means a build is
+needed, and 1 means an operational error. Run it on the simulator host; no EAS login is required.
+An externally installed client is unverified until the helper builds it once.
+
+Start Metro for an already verified dev client:
 
 ```bash
 vp run dev:client

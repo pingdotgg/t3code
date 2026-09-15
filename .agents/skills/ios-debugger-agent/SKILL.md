@@ -31,6 +31,8 @@ Avoid generic Mac window automation for switching among Simulator windows. Expli
 
 ## Choose build or launch
 
+For T3 Code Mobile, run `node scripts/mobile-native-client.ts ensure ios <simulator-udid>` from the checkout on the simulator host first. It checks the local Expo native fingerprint against the installed client and builds/installs when stale, missing, or unknown. Then launch with the intended Metro bundle. Authorized verification includes native builds and installs; do not stop because the existing client is old. Use `check` instead of `ensure` only when the user explicitly prohibits rebuilding or requests a read-only check.
+
 - Use `build_run_sim` when native source, native dependencies, entitlements, or project configuration changed.
 - Use `test_sim` for the smallest relevant native test target or test cases; do not run an entire workspace test matrix routinely.
 - Use `launch_app_sim` when a compatible app is already installed and no native rebuild is needed.

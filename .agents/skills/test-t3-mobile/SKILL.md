@@ -15,24 +15,28 @@ Inspect the host and the affected code before launching processes:
 
 - On macOS with Xcode, prefer one representative iOS Simulator when the change is cross-platform so the user can watch through serve-sim. Load and follow [`ios-debugger-agent`](../ios-debugger-agent/SKILL.md), and load [`ios-simulator-browser`](../ios-simulator-browser/SKILL.md) when live streaming is available.
 - On macOS, Linux, or Windows with the Android SDK, use one Android Emulator when Android is the affected surface or iOS tooling is unavailable.
-- When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK, emulator, or dev-client prerequisite rather than claiming verification.
+- When the change is platform-specific, test that platform. When neither platform is viable, report the missing SDK or emulator prerequisite rather than claiming verification. A missing development client is a build step, not a blocker.
 
 Do not treat unavailable iOS tooling as a blocker when Android is a valid representative target.
 
-## Choose the lightest valid launch path
+## Ensure a compatible native client
 
-- For JavaScript, TypeScript, or asset-only changes, reuse a compatible installed development client and start Metro. Do not rebuild native code merely to load a new bundle.
-- For native source, native dependencies, entitlements, config plugins, or generated project changes, rebuild the affected platform.
-- Use `vp run ios:dev` or `vp run android:dev` only when an Expo clean prebuild is actually required; both commands regenerate the native project.
-- If the user requested no native rebuild and no compatible app is installed, reuse an existing compatible `.app` or `.apk` artifact when available. Otherwise report the missing dev client instead of silently rebuilding.
+Authorized mobile verification includes building and installing a development client. A missing, stale, or unknown native client is not a reason to skip verification or leave a PR in draft. Build and install it, then continue. Respect an explicit user instruction not to rebuild; otherwise do not ask for separate permission.
 
-The development identity on both platforms is:
+Run this from the checkout being tested, on the machine that hosts the selected simulator or emulator. Select and boot one explicit iOS UDID or Android emulator serial first:
 
-- App: `T3 Code Dev`
-- Bundle/package identifier: `com.t3tools.t3code.dev`
-- URL scheme: `t3code-dev`
+```bash
+node scripts/mobile-native-client.ts ensure ios <simulator-udid>
+node scripts/mobile-native-client.ts ensure android <emulator-serial>
+```
 
-Bundle or package presence proves the correct variant, not native compatibility. Reuse it only when the current changes did not alter its Expo SDK, native dependencies, config plugins, entitlements, generated project, or native source.
+`ensure` compares the checkout's local Expo development fingerprint and the installed app's binary contents against the last successful build record. It reuses a matching client; otherwise it runs a clean prebuild, builds and installs the development app, and records the successful result. It does not start Metro. Start Metro below after it succeeds. On hosts with an `agent-job` requirement, run the entire `ensure` command through that queue.
+
+For a read-only decision, use `check` in place of `ensure`. Exit 0 means compatible, 2 means build required, and 1 means an operational error. An app installed outside this helper is initially unknown and gets rebuilt once. Records are local to the simulator host under `~/.cache/t3code/native-clients` and work across checkouts. Do not copy records between machines or write them manually.
+
+A JavaScript-only diff, bundle identifier, app version, or recent install date does not prove native compatibility. Always check the whole checkout. Expo fingerprints are computed locally with `APP_VARIANT=development`; no EAS credentials or cloud build are required. Generated `ios/` and `android/` directories are excluded by `.fingerprintignore`, so edit native source modules or config plugins rather than generated output.
+
+The development identity is `T3 Code Dev`, bundle/package `com.t3tools.t3code.dev`, scheme `t3code-dev`. If a build fails, investigate the build error and fix the local prerequisites. Report the concrete failure if it cannot be resolved, not “no compatible client.”
 
 ## Start one disposable T3 environment
 
@@ -98,10 +102,9 @@ Use `ios-debugger-agent` to select one UDID and set these XcodeBuildMCP session 
 - Simulator ID: the selected UDID
 - Bundle ID: `com.t3tools.t3code.dev`
 
-Check the installed client with:
+After `ensure` succeeds, open the Metro URL:
 
 ```bash
-xcrun simctl get_app_container <simulator-udid> com.t3tools.t3code.dev app
 xcrun simctl openurl <simulator-udid> <printed-dev-client-url>
 ```
 
@@ -109,10 +112,9 @@ Accept the iOS confirmation prompt and dismiss the developer menu when it obscur
 
 ### Android launch
 
-Select one running emulator serial from `adb devices` and check the installed client:
+Use the emulator serial already checked by `ensure`:
 
 ```bash
-adb -s <emulator-serial> shell pm path com.t3tools.t3code.dev
 adb -s <emulator-serial> reverse tcp:<metro-port> tcp:<metro-port>
 adb -s <emulator-serial> shell am start -W \
   -a android.intent.action.VIEW \
