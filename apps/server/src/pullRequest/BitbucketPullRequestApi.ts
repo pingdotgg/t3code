@@ -35,7 +35,8 @@ import {
   type BitbucketPullRequest,
   type BitbucketRawComment,
 } from "./bitbucketPullRequestJson.ts";
-import type { ProviderListCursor } from "./PullRequestProvider.ts";
+import { decodeJsonResult } from "@t3tools/shared/schemaJson";
+import type { ProviderDiffSlice, ProviderListCursor } from "./PullRequestProvider.ts";
 
 /**
  * Names the read that produced unusable output, so a failure reports the call it came from
@@ -134,7 +135,7 @@ const CONVERSATION_PAGE_SIZE = 50;
  */
 const CONVERSATION_PAGES = 10;
 /** The same ceiling the gh and glab diff reads use. */
-const DIFF_MAX_BYTES = 8 * 1024 * 1024;
+const DIFF_MAX_BYTES = 120_000;
 
 export interface BitbucketPullRequestBatch {
   readonly items: ReadonlyArray<BitbucketPullRequest>;
@@ -172,10 +173,8 @@ export class BitbucketPullRequestApi extends Context.Service<
       readonly number: number;
       /** One commit's own changes, rather than everything the pull request carries. */
       readonly commit?: string | undefined;
-    }) => Effect.Effect<
-      { readonly patch: string; readonly truncated: boolean },
-      BitbucketPullRequestApiError
-    >;
+      readonly cursor?: string | undefined;
+    }) => Effect.Effect<ProviderDiffSlice, BitbucketPullRequestApiError>;
 
     readonly getDiffStat: (input: {
       readonly repository: string;
@@ -596,26 +595,79 @@ export const make = Effect.gen(function* () {
         }),
       ).pipe(Effect.catchIf(isRepositoryPermissionRemovedError, () => Effect.succeed(true))),
 
-    getPullRequestDiff: (input) =>
-      input.commit !== undefined && !isCommitSha(input.commit)
-        ? Effect.fail(new BitbucketDiffCommitError())
-        : withRepository(input.repository, (path) =>
-            // Already a unified patch, so it needs no decoding at all — only a bound, which a
-            // diff of any size would otherwise ignore. A commit's own patch sits beside the pull
-            // request's at `/diff/{sha}` and reads the same way.
-            bitbucket
-              .request({
+    getPullRequestDiff: Effect.fn("BitbucketPullRequestApi.getPullRequestDiff")(function* (input) {
+      if (input.commit !== undefined && !isCommitSha(input.commit))
+        return yield* new BitbucketDiffCommitError();
+      const page = input.cursor === undefined ? 1 : Number(input.cursor);
+      if (!Number.isSafeInteger(page) || page < 1)
+        return yield* new BitbucketPullRequestReadError({
+          operation: "getPullRequestDiff",
+          cause: "Invalid diff cursor",
+        });
+      return yield* withRepository(input.repository, (path) =>
+        Effect.gen(function* () {
+          const diffUrl =
+            input.commit === undefined
+              ? `${path}/pullrequests/${input.number}/diff`
+              : `${path}/diff/${input.commit}`;
+          if (input.cursor === undefined) {
+            const response = yield* bitbucket.request({
+              method: "GET",
+              url: diffUrl,
+              maxBytes: DIFF_MAX_BYTES,
+            });
+            if (!response.truncated)
+              return { patch: response.body, truncated: false, nextCursor: null };
+          }
+          const statUrl =
+            input.commit === undefined
+              ? `${path}/pullrequests/${input.number}/diffstat`
+              : `${path}/diffstat/${input.commit}`;
+          const files = yield* readPage({
+            operation: "getPullRequestDiff",
+            url: `${statUrl}?pagelen=4&page=${page}`,
+            decode: decodeJsonResult(
+              Schema.Struct({
+                values: Schema.Array(
+                  Schema.Struct({
+                    old: Schema.NullOr(Schema.Struct({ path: Schema.NonEmptyString })),
+                    new: Schema.NullOr(Schema.Struct({ path: Schema.NonEmptyString })),
+                    lines_added: Schema.Number,
+                    lines_removed: Schema.Number,
+                  }),
+                ),
+                next: Schema.optional(Schema.String),
+              }),
+            ),
+          });
+          const patches = yield* Effect.forEach(
+            files.values,
+            (file) => {
+              const paths = [
+                ...new Set([file.old?.path, file.new?.path].filter((path) => path !== undefined)),
+              ];
+              return bitbucket.request({
                 method: "GET",
-                url:
-                  input.commit === undefined
-                    ? `${path}/pullrequests/${input.number}/diff`
-                    : `${path}/diff/${input.commit}`,
-                maxBytes: DIFF_MAX_BYTES,
-              })
-              .pipe(
-                Effect.map((response) => ({ patch: response.body, truncated: response.truncated })),
-              ),
-          ),
+                url: `${diffUrl}?${paths.map((path) => `path=${encodeURIComponent(path)}`).join("&")}`,
+                maxBytes: 1024 * 1024,
+              });
+            },
+            { concurrency: 4 },
+          );
+          return {
+            patch: patches.map((patch) => patch.body.replace(/\n?$/, "\n")).join(""),
+            truncated: patches.some((patch) => patch.truncated),
+            nextCursor: files.next ? String(page + 1) : null,
+            omittedFileStats: files.values.flatMap((file) => {
+              const path = file.new?.path ?? file.old?.path;
+              return path === undefined
+                ? []
+                : [{ path, additions: file.lines_added, deletions: file.lines_removed }];
+            }),
+          };
+        }),
+      );
+    }),
 
     getDiffStat: (input) =>
       withRepository(input.repository, (path) =>

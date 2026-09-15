@@ -2228,14 +2228,14 @@ layer("GitHubPullRequestCli.layer", (it) => {
       const args = callAt(1).args;
       expect(args).toContain("--hostname");
       expect(args).toContain("github.acme.dev");
-      expect(args).toContain("repos/acme/web/pulls/7/files?per_page=100&page=1");
+      expect(args).toContain("repos/acme/web/pulls/7/files?per_page=4&page=1");
     }),
   );
 
   it.effect("hands back a cursor for the next page rather than walking on by itself", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 0))));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const diff = yield* cli.getPullRequestDiff({
@@ -2255,20 +2255,20 @@ layer("GitHubPullRequestCli.layer", (it) => {
   it.effect("carries on from a cursor without asking `gh pr diff` again", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(Effect.fail(diffRefused));
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 0))));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       const target = { cwd: "/w", repository: "acme/web", host: "github.com", number: 7 };
 
       const first = yield* cli.getPullRequestDiff(target);
       assert.isNotNull(first.nextCursor);
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 100))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(2, 4))));
       const second = yield* cli.getPullRequestDiff({ ...target, cursor: first.nextCursor });
 
       assert.isNull(second.nextCursor);
-      expect(second.patch).toContain("diff --git a/src/file100.ts b/src/file100.ts");
+      expect(second.patch).toContain("diff --git a/src/file4.ts b/src/file4.ts");
       // The second slice is one request: the cursor already says where to read.
       assert.strictEqual(mockedExecute.mock.calls.length, 3);
-      expect(callAt(2).args).toContain("repos/acme/web/pulls/7/files?per_page=100&page=2");
+      expect(callAt(2).args).toContain("repos/acme/web/pulls/7/files?per_page=4&page=2");
     }),
   );
 
@@ -2310,7 +2310,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
       expect(diff.patch).toContain("diff --git a/src/file1.ts b/src/file1.ts");
       const args = callAt(0).args;
       expect(args).toContain(
-        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=100&page=1",
+        "repos/acme/web/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0?per_page=4&page=1",
       );
       // The commit endpoint wraps its files in an object, which jq unwraps for the decoder.
       expect(args).toContain(".files // []");
@@ -2319,7 +2319,7 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
   it.effect("pages inside a commit the way it pages the pull request's own files", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(100, 0))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 0))));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
       const target = {
         cwd: "/w",
@@ -2331,11 +2331,11 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       const first = yield* cli.getPullRequestDiff(target);
       assert.isNotNull(first.nextCursor);
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(4, 100))));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output(pullRequestFiles(2, 4))));
       const second = yield* cli.getPullRequestDiff({ ...target, cursor: first.nextCursor });
 
       assert.isNull(second.nextCursor);
-      expect(callAt(1).args).toContain("repos/acme/web/commits/a1b2c3d?per_page=100&page=2");
+      expect(callAt(1).args).toContain("repos/acme/web/commits/a1b2c3d?per_page=4&page=2");
     }),
   );
 

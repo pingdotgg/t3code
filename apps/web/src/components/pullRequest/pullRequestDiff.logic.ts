@@ -1,5 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide } from "@t3tools/contracts";
+import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
+
+import { resolveFileDiffPath } from "~/lib/diffRendering";
 
 /**
  * Whether a conversation's line is really in this file's hunks.
@@ -40,4 +42,35 @@ export function isFileDiffCollapsed(
 ): boolean {
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+}
+
+/** Host totals stay stable while patches arrive; individual previews may omit hunks. */
+export function getPullRequestDiffStats(input: {
+  files: ReadonlyArray<FileDiffMetadata>;
+  omittedFileStats: ReadonlyMap<string, PullRequestOmittedFileStat>;
+  totals: { additions: number; deletions: number; changedFiles: number } | null;
+}) {
+  const loaded = input.files.reduce(
+    (total, file) => {
+      const stat = input.omittedFileStats.get(resolveFileDiffPath(file));
+      return {
+        changedFiles: total.changedFiles + 1,
+        additions:
+          total.additions +
+          (stat?.additions ?? file.hunks.reduce((sum, hunk) => sum + hunk.additionLines, 0)),
+        deletions:
+          total.deletions +
+          (stat?.deletions ?? file.hunks.reduce((sum, hunk) => sum + hunk.deletionLines, 0)),
+      };
+    },
+    { additions: 0, deletions: 0, changedFiles: 0 },
+  );
+  // Some hosts omit totals, and detail can lag a newly pushed patch.
+  return input.totals === null
+    ? loaded
+    : {
+        additions: Math.max(input.totals.additions, loaded.additions),
+        deletions: Math.max(input.totals.deletions, loaded.deletions),
+        changedFiles: Math.max(input.totals.changedFiles, loaded.changedFiles),
+      };
 }

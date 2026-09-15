@@ -370,7 +370,7 @@ const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
 const PULL_REQUEST_FALLBACK_MAX_ROWS = 1_000;
 
 /** What the files API serves at most in one response, which is what one slice is made of. */
-const DIFF_FILES_PAGE_SIZE = 100;
+const DIFF_FILES_PAGE_SIZE = 4;
 
 /**
  * Pages of review threads to follow before the conversation is reported as truncated. GitHub
@@ -1993,7 +1993,7 @@ export const make = Effect.gen(function* () {
         .execute({
           cwd: input.cwd,
           args: ["pr", "diff", String(input.number), ...repositoryArgs(input), "--color", "never"],
-          maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
+          maxOutputBytes: 120_000,
           timeoutMs: DIFF_TIMEOUT_MS,
         })
         .pipe(

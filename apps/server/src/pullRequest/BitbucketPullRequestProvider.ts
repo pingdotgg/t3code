@@ -221,18 +221,15 @@ export const make = Effect.gen(function* () {
         Effect.map((canWrite) => bitbucketViewerPermissions({ canWrite })),
       ),
 
-    // `/diff` answers with the whole patch and pages nothing, so the first slice is the last.
     getDiff: (input) =>
       api
         .getPullRequestDiff({
           repository: input.repository,
           number: input.number,
           ...(input.commit === undefined ? {} : { commit: input.commit }),
+          ...(input.cursor === undefined ? {} : { cursor: input.cursor }),
         })
-        .pipe(
-          Effect.mapError(fail("getDiff")),
-          Effect.map((diff) => ({ ...diff, nextCursor: null })),
-        ),
+        .pipe(Effect.mapError(fail("getDiff"))),
 
     // Users only: Bitbucket requests a review of an account, and has no group that stands in for
     // one on a pull request.

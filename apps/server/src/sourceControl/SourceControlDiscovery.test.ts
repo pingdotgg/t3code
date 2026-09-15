@@ -111,6 +111,7 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(Path.layer),
       Effect.provideService(ForgejoCli.ForgejoCli, cli),
     );
     yield* provider.submitReview({
@@ -253,7 +254,9 @@ it.effect(
     const writes: ForgejoCli.ForgejoApiInput[] = [];
     let reactionReads = 0;
     return Effect.gen(function* () {
-      const provider = yield* ForgejoPullRequestProvider.make;
+      const provider = yield* ForgejoPullRequestProvider.make.pipe(
+        Effect.provide(Layer.mergeAll(NodeServices.layer, Layer.mock(VcsProcess.VcsProcess)({}))),
+      );
       const input = { cwd: "/repo", repository: "maria/project", host: "forgejo.test", number: 2 };
       const activity = yield* provider.getChangeRequestActivity(input);
       assert.deepStrictEqual(
@@ -1050,6 +1053,7 @@ it.effect("loads later fj review pages when the server caps pages below the requ
   return Effect.gen(function* () {
     const cli = yield* ForgejoCli.make;
     const provider = yield* ForgejoPullRequestProvider.make.pipe(
+      Effect.provide(Path.layer),
       Effect.provideService(ForgejoCli.ForgejoCli, cli),
     );
     const activity = yield* provider.getChangeRequestActivity({

@@ -195,6 +195,7 @@ const COMMIT_PAGE_SIZE = 100;
  * request a person is reading holds, and a walk that ends whatever the host has.
  */
 const CONVERSATION_PAGES = 10;
+const DIFF_PAGE_SIZE = 4;
 const DIFF_MAX_OUTPUT_BYTES = 8 * 1024 * 1024;
 const DIFF_TIMEOUT_MS = 60_000;
 const DIFF_FILE_MAX_OUTPUT_BYTES = 1024 * 1024;
@@ -678,7 +679,7 @@ export const make = Effect.gen(function* () {
           ? `merge_requests/${input.number}/diffs`
           : `repository/commits/${input.commit}/diff`
       }?${query([
-        ["per_page", String(MAX_PAGE_SIZE)],
+        ["per_page", String(DIFF_PAGE_SIZE)],
         ["page", String(input.page)],
       ])}`,
       maxOutputBytes: DIFF_MAX_OUTPUT_BYTES,
@@ -714,7 +715,7 @@ export const make = Effect.gen(function* () {
         const patch = decoded.success.patch;
         // Counted before decoding, so a page whose files all failed to decode still moves on
         // rather than pointing the reader back at the page it just read.
-        const morePages = decoded.success.rawCount >= MAX_PAGE_SIZE;
+        const morePages = decoded.success.rawCount >= DIFF_PAGE_SIZE;
         return Effect.succeed({
           // The slice ends on a newline, so a file GitLab gave a header and no hunks for does
           // not run into the first line of the next slice.
