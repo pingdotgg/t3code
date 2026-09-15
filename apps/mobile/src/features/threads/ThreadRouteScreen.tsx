@@ -789,7 +789,8 @@ function ThreadRouteContent(
     () =>
       selectedThreadDetail !== null &&
       selectedThreadDetail.latestTurn === null &&
-      selectedThreadDetail.session === null &&
+      (selectedThreadDetail.session === null ||
+        selectedThreadDetail.session.status === "starting") &&
       selectedThreadDetail.messages.some((message) => message.role === "user"),
     [selectedThreadDetail],
   );

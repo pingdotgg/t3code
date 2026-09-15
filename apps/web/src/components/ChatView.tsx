@@ -3176,13 +3176,14 @@ export default function ChatView(props: ChatViewProps) {
     compactRequestIsActive &&
     !compactionSettled;
   // A thread whose first user message is persisted but whose turn has not
-  // started is mid-bootstrap on the server. That is how a reload or another
-  // client sees a worktree still being prepared, so it counts as working
-  // just like the local dispatch that started it.
+  // started is mid-bootstrap on the server (the session is absent, or the
+  // placeholder "starting" one the bootstrap projects). That is how a reload
+  // or another client sees a worktree still being prepared, so it counts as
+  // working just like the local dispatch that started it.
   const awaitingBootstrapTurn =
     activeServerThread !== null &&
     activeServerThread.latestTurn === null &&
-    activeServerThread.session === null &&
+    (activeServerThread.session === null || activeServerThread.session.status === "starting") &&
     activeServerThread.messages.some((message) => message.role === "user");
   const isWorking =
     phase === "running" ||
