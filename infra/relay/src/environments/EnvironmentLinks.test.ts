@@ -42,6 +42,54 @@ describe("EnvironmentLinks", () => {
     );
   });
 
+  it.effect("reports a lease conflict when the conditional upsert touches no row", () => {
+    const setWhereSql: Array<unknown> = [];
+    const fakeDb = {
+      insert: () => ({
+        values: () => ({
+          onConflictDoUpdate: (config: { setWhere?: unknown }) => {
+            setWhereSql.push(config.setWhere);
+            return { returning: () => Effect.succeed([]) };
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const links = yield* EnvironmentLinks.EnvironmentLinks;
+      const error = yield* Effect.flip(
+        links.upsert({
+          userId: "user-1",
+          request: {
+            proof: "proof",
+            notificationsEnabled: true,
+            liveActivitiesEnabled: true,
+            managedTunnelsEnabled: true,
+          },
+          proof: {
+            environmentId: "env-1",
+            descriptor: { label: "Env" },
+            environmentPublicKey: "pk",
+          } as never,
+          endpoint: {
+            httpBaseUrl: "https://e.example.test/",
+            wsBaseUrl: "wss://e.example.test/ws",
+            providerKind: "t3_relay",
+            connectorLeaseId: "new-lease",
+          },
+          expectedConnectorLeaseId: "old-lease",
+        }),
+      );
+      expect(error._tag).toBe("EnvironmentLinkLeaseConflict");
+      expect(setWhereSql).toHaveLength(1);
+      expect(setWhereSql[0]).toBeDefined();
+    }).pipe(
+      Effect.provide(
+        EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("identifies delivery-user list failures without retaining key material", () => {
     const cause = new Error("database unavailable");
     const fakeDb = {

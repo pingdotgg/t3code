@@ -71,7 +71,14 @@
       "entry": ["src/*NativeComponent.ts!"],
     },
     "infra/relay": {
-      "entry": ["alchemy.run.ts!", "src/persistence/schema.ts!"],
+      // The edge canary stack and its scripts are run by hand; see
+      // docs/operations/t3-relay-canary.md.
+      "entry": [
+        "alchemy.run.ts!",
+        "alchemy.edge-canary.run.ts!",
+        "scripts/*.mjs",
+        "src/persistence/schema.ts!",
+      ],
     },
     "packages/*": {
       // These workspace packages are private to this monorepo.

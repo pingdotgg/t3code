@@ -49,6 +49,7 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Terminal runtime](./internals/terminal-runtime.md)
 - [Devices](./internals/devices.md)
 - [Voice input](./internals/voice-input.md)
+- [T3 relay transport](./internals/t3-relay-transport.md)
 
 ### Runbooks
 
@@ -57,4 +58,5 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Release](./operations/release.md)
 - [Observability](./operations/observability.md)
 - [Relay observability](./operations/relay-observability.md)
+- [T3 relay canary](./operations/t3-relay-canary.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

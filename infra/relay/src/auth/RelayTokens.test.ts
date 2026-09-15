@@ -36,6 +36,50 @@ const config = RelayConfiguration.RelayConfiguration.of({
 const layer = RelayTokens.layer.pipe(Layer.provide(RelayConfiguration.layer(config)));
 
 describe("RelayTokens", () => {
+  it.effect("verifies a Cloudflare-bound challenge for a client that omits the provider", () =>
+    Effect.gen(function* () {
+      const relayTokens = yield* RelayTokens.RelayTokens;
+      const request = {
+        notificationsEnabled: true,
+        liveActivitiesEnabled: true,
+        managedTunnelsEnabled: true,
+      };
+      const token = yield* relayTokens.issueLinkChallenge({
+        userId: "user_123",
+        request,
+        managedEndpointProvider: "cloudflare_tunnel",
+        jti: "challenge-legacy",
+        issuedAtEpochSeconds: 100,
+        expiresAtEpochSeconds: 200,
+      });
+      // Web and mobile predate provider negotiation and send no provider.
+      expect(
+        yield* relayTokens.verifyLinkChallenge({
+          token,
+          userId: "user_123",
+          request,
+          nowEpochSeconds: 150,
+        }),
+      ).toMatchObject({ managedEndpointProvider: "cloudflare_tunnel" });
+      const t3Token = yield* relayTokens.issueLinkChallenge({
+        userId: "user_123",
+        request,
+        managedEndpointProvider: "t3_relay",
+        jti: "challenge-t3",
+        issuedAtEpochSeconds: 100,
+        expiresAtEpochSeconds: 200,
+      });
+      expect(
+        yield* relayTokens.verifyLinkChallenge({
+          token: t3Token,
+          userId: "user_123",
+          request,
+          nowEpochSeconds: 150,
+        }),
+      ).toBeNull();
+    }).pipe(Effect.provide(layer)),
+  );
+
   it.effect("issues a user-bound environment link challenge", () =>
     Effect.gen(function* () {
       const relayTokens = yield* RelayTokens.RelayTokens;

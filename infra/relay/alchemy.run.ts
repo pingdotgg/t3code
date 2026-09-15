@@ -11,6 +11,7 @@ import * as RelayDb from "./src/db.ts";
 import { RelayObservability } from "./src/observability.ts";
 import { ManagedEndpointZone, RelayApiZone } from "./src/zone.ts";
 import ApiLive, { Api } from "./src/worker.ts";
+import EdgeLive, { Edge } from "./src/transport/EdgeWorker.ts";
 
 export default Alchemy.Stack(
   "T3CodeRelay",
@@ -30,6 +31,7 @@ export default Alchemy.Stack(
     const relayApiZone = yield* RelayApiZone.pipe(Effect.orDie);
     const observability = yield* RelayObservability;
     const api = yield* Api;
+    const edge = yield* Edge;
 
     return {
       databaseName: db.database.name,
@@ -37,6 +39,8 @@ export default Alchemy.Stack(
       hyperdriveName: hyperdrive.name,
       workerName: api.workerName,
       url: api.url,
+      edgeWorkerName: edge.workerName,
+      edgeUrl: edge.url,
       relayApiZoneId: relayApiZone.zoneId,
       managedEndpointZoneId: managedEndpointZone.zoneId,
       mobileTracingUrl: observability.traces.otelTracesEndpoint,
@@ -46,5 +50,5 @@ export default Alchemy.Stack(
       clientTracingDataset: observability.traces.name,
       clientTracingToken: observability.clientIngestToken.token,
     };
-  }).pipe(Effect.provide(ApiLive)),
+  }).pipe(Effect.provide(ApiLive.pipe(Layer.provideMerge(EdgeLive)))),
 );
