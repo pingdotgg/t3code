@@ -40,6 +40,7 @@ import {
 import { ServerConfig } from "../config.ts";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
+const gitProcesses = Semaphore.makeUnsafe(8);
 // `git worktree add` checks out the full tree, so on large repositories it can
 // take well beyond the default 30s (e.g. a 375k-file repo takes ~40s on an idle
 // machine). Give it generous headroom while still bounding a genuinely hung git.
@@ -966,6 +967,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           operation: input.operation,
         },
       }),
+      (execution) =>
+        input.timeoutMs === null || (input.timeoutMs ?? DEFAULT_TIMEOUT_MS) > DEFAULT_TIMEOUT_MS
+          ? execution
+          : gitProcesses.withPermits(1)(execution),
       Effect.withSpan(input.operation, {
         kind: "client",
         attributes: {
@@ -3065,23 +3070,29 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     const progress = options?.progress;
     const onCheckoutProgress = progress?.onCheckoutProgress;
 
-    yield* executeGit("GitVcsDriver.createWorktree", input.cwd, args, {
-      fallbackErrorDetail: "git worktree add failed",
-      timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
-      ...(onCheckoutProgress
-        ? {
-            // Git only prints checkout progress when stderr is a tty or the
-            // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
-            env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
-            progress: {
-              onStderrLine: (line) => {
-                const parsed = parseGitCheckoutProgressLine(line);
-                return parsed ? onCheckoutProgress(parsed) : Effect.void;
+    const checkoutWorkers = (yield* readConfigValue(input.cwd, "checkout.workers")) ?? "0";
+    yield* executeGit(
+      "GitVcsDriver.createWorktree",
+      input.cwd,
+      ["-c", `checkout.workers=${checkoutWorkers}`, ...args],
+      {
+        fallbackErrorDetail: "git worktree add failed",
+        timeoutMs: WORKTREE_ADD_TIMEOUT_MS,
+        ...(onCheckoutProgress
+          ? {
+              // Git only prints checkout progress when stderr is a tty or the
+              // delay elapsed. GIT_PROGRESS_DELAY=0 forces it through the pipe.
+              env: { GIT_PROGRESS_DELAY: "0", LC_ALL: "C" },
+              progress: {
+                onStderrLine: (line) => {
+                  const parsed = parseGitCheckoutProgressLine(line);
+                  return parsed ? onCheckoutProgress(parsed) : Effect.void;
+                },
               },
-            },
-          }
-        : {}),
-    });
+            }
+          : {}),
+      },
+    );
 
     if (progress?.onWorktreeClaimed) {
       yield* progress.onWorktreeClaimed(worktreePath);
