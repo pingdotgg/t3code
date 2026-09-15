@@ -15,6 +15,7 @@ import {
   type OrchestrationMessage,
   type OrchestrationSearchThreadsInput,
   type OrchestrationSearchThreadsResult,
+  type OrchestrationSession,
   type OrchestrationSessionStatus,
   type OrchestrationShellSnapshot,
   type OrchestrationSubscribeThreadInput,
@@ -603,14 +604,49 @@ function projectThreadExcerpt(thread: OrchestrationThread, truncated: boolean): 
 
 /** A thread without a live session has nothing running; the neutral session
     state is reported rather than a status the server never sent. */
+function sessionStateReadout(session: OrchestrationSession | null): {
+  status: OrchestrationSessionStatus;
+  lastError: string | null;
+} {
+  return session === null
+    ? { status: "idle", lastError: null }
+    : { status: session.status, lastError: session.lastError };
+}
+
 function sessionReadout(thread: OrchestrationThread): {
   status: OrchestrationSessionStatus;
   lastError: string | null;
 } {
-  const session = thread.session;
-  return session === null
-    ? { status: "idle", lastError: null }
-    : { status: session.status, lastError: session.lastError };
+  return sessionStateReadout(thread.session);
+}
+
+/** Read-out of the session after a follow-up dispatch. A session-set for the
+    new turn can only be projected after the dispatch (the provider reactor
+    emits it when it picks the turn up), so a read-back whose session state is
+    identical to the pre-dispatch state describes the PREVIOUS turn, not this
+    one. Echoing it reported a restart-reconciliation error ("Provider session
+    did not survive a server restart") as the outcome of a follow-up the
+    dispatch receipt had accepted and that was in fact running. The dispatch
+    receipt alone proves acceptance and the new turn identity, never
+    completion. Live in-flight states are reported as observed; a stale
+    terminal state is reported as the honest in-flight `starting` instead,
+    without the inherited lastError. */
+function postDispatchSessionReadout(
+  preDispatch: OrchestrationSession | null,
+  readback: OrchestrationSession | null,
+): { status: OrchestrationSessionStatus; lastError: string | null } {
+  const describesPreviousTurn =
+    preDispatch !== null &&
+    readback !== null &&
+    readback.updatedAt === preDispatch.updatedAt &&
+    readback.status === preDispatch.status &&
+    readback.lastError === preDispatch.lastError &&
+    readback.status !== "starting" &&
+    readback.status !== "running";
+  if (describesPreviousTurn) {
+    return { status: "starting", lastError: null };
+  }
+  return sessionStateReadout(readback);
 }
 
 function isSessionRunning(status: OrchestrationSessionStatus): boolean {
@@ -1179,6 +1215,7 @@ export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor 
           message: "The target thread is unavailable for a follow-up.",
         });
       }
+      const preDispatchSession = thread.session;
       const config = await access.serverConfig();
       const availability = evaluateModelAvailability(
         config.providers,
@@ -1209,7 +1246,7 @@ export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor 
         threadId: input.threadId,
         messageId: identifiers.messageId,
         dispatchSequence: result.sequence,
-        session: sessionReadout(readback.thread),
+        session: postDispatchSessionReadout(preDispatchSession, readback.thread.session),
       };
       startRecords.set(input.requestId, { destination, output });
       return output;
