@@ -1,10 +1,11 @@
 import { Fragment } from "react";
-import type {
-  OrchestrationV2Run,
-  OrchestrationV2TurnItem,
-  ProviderInstanceId,
-  ServerProvider,
-  ThreadId,
+import {
+  ProviderDriverKind,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
+  type ProviderInstanceId,
+  type ServerProvider,
+  type ThreadId,
 } from "@t3tools/contracts";
 import type { TimestampFormat } from "@t3tools/contracts/settings";
 import {
@@ -21,7 +22,8 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { cn } from "../../lib/utils";
 import { getProviderInstanceEntry } from "../../providerInstances";
 import { formatShortTimestamp } from "../../timestampFormat";
-import { PROVIDER_ICON_BY_PROVIDER, getTriggerDisplayModelName } from "./providerIconUtils";
+import { getTriggerDisplayModelName } from "./providerIconUtils";
+import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { TimelineSystemDivider } from "./TimelineSystemDivider";
 import { T3Wordmark } from "../T3Wordmark";
 
@@ -345,10 +347,6 @@ function HandoffEndpoint(props: {
   readonly model?: string | undefined;
 }) {
   const entry = getProviderInstanceEntry(props.providers, props.instanceId);
-  const Icon =
-    Object.entries(PROVIDER_ICON_BY_PROVIDER).find(
-      ([driver]) => driver === (entry?.driverKind ?? props.instanceId),
-    )?.[1] ?? BotIcon;
   const model = props.model?.trim();
   const providerModel =
     model === undefined || model.length === 0
@@ -370,7 +368,13 @@ function HandoffEndpoint(props: {
             aria-label={label}
             className="inline-flex shrink-0 items-center justify-center rounded-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <Icon aria-hidden="true" className="size-3 shrink-0" />
+            <ProviderInstanceIcon
+              driverKind={entry?.driverKind ?? ProviderDriverKind.make(props.instanceId)}
+              displayName={entry?.displayName ?? props.instanceId}
+              acpRegistryAgentId={entry?.acpRegistryAgentId}
+              acpRegistryIconUrl={entry?.acpRegistryIconUrl}
+              iconClassName="size-3"
+            />
           </span>
         }
       />
