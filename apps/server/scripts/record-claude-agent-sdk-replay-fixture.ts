@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Console from "effect/Console";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 
 import {
@@ -59,6 +60,11 @@ import {
   WORKSPACE_NEVER_POLICY,
   WEB_SEARCH_PROMPT,
 } from "../src/orchestration-v2/testkit/fixtures/shared.ts";
+import {
+  DENIED_WRITE_POLICY,
+  TOOL_CALL_DENIED_WRITE_PROMPT,
+  TOOL_CALL_DENIED_WRITE_TARGET,
+} from "../src/orchestration-v2/testkit/fixtures/tool_call_denied_write/input.ts";
 import {
   validateClaudeReplayRecordingSelection,
   type ClaudeRecordingQueryMode,
@@ -135,6 +141,15 @@ const CLAUDE_RECORDINGS = {
     queryMode: "streaming",
     enableTools: true,
     runtimePolicyOverride: WORKSPACE_NEVER_POLICY,
+  },
+  tool_call_denied_write: {
+    prompts: [TOOL_CALL_DENIED_WRITE_PROMPT],
+    defaultTranscriptFile: "fixtures/tool_call_denied_write/claude_transcript.ndjson",
+    queryMode: "streaming",
+    enableTools: true,
+    runtimePolicyOverride: DENIED_WRITE_POLICY,
+    permissionDecision: "decline",
+    expectedAbsentWorkspacePaths: [TOOL_CALL_DENIED_WRITE_TARGET],
   },
   tool_call_restricted_granular: {
     prompts: [TOOL_CALL_WRITE_PROMPT],
@@ -264,18 +279,24 @@ const recording = CLAUDE_RECORDINGS[scenario as keyof typeof CLAUDE_RECORDINGS];
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
 if (recording === undefined) {
-  throw new Error(
-    `Claude replay fixture '${scenario}' is not configured. ` +
-      "TODO: approval fixtures need permission callback recording before they can be generated.",
-  );
+  throw new Error(`Claude replay fixture '${scenario}' is not configured.`);
 }
 
 const positionalOutputPath = process.argv[2]?.startsWith("--") ? undefined : process.argv[2];
+const path = await Effect.runPromise(
+  Effect.service(Path.Path).pipe(Effect.provide(NodeServices.layer)),
+);
 const outputPath =
   readArgValue("--out") ??
   positionalOutputPath ??
-  new URL(`../src/orchestration-v2/testkit/${recording.defaultTranscriptFile}`, import.meta.url)
-    .pathname;
+  (await Effect.runPromise(
+    path.fromFileUrl(
+      new URL(
+        `../src/orchestration-v2/testkit/${recording.defaultTranscriptFile}`,
+        import.meta.url,
+      ),
+    ),
+  ));
 
 function encodeTranscriptNdjson(
   transcript: Awaited<ReturnType<typeof recordClaudeAgentSdkReplayTranscript>>,
@@ -286,15 +307,6 @@ function encodeTranscriptNdjson(
     ...entries.map((entry) => JSON.stringify(entry)),
     "",
   ].join("\n");
-}
-
-function dirname(filePath: string): string {
-  const normalized = filePath.replace(/\/+$/u, "");
-  const lastSlash = normalized.lastIndexOf("/");
-  if (lastSlash < 0) {
-    return ".";
-  }
-  return lastSlash === 0 ? "/" : normalized.slice(0, lastSlash);
 }
 
 function joinPath(directory: string, fileName: string): string {
@@ -365,6 +377,37 @@ const cwd =
     : await makeCheckpointWorkspace(`claude-agent-sdk-record-${scenario}`));
 const shouldRemoveCwd = process.env.T3_CLAUDE_REPLAY_CWD === undefined;
 
+const expectedAbsentWorkspacePaths =
+  "expectedAbsentWorkspacePaths" in recording ? recording.expectedAbsentWorkspacePaths : [];
+
+// Scenarios that deny a tool call prove the denial by checking the real
+// recording workspace, not just the transcript: the target must be absent
+// before and after the turn, and the verified paths are preserved in the
+// transcript metadata before the temporary workspace is removed.
+async function assertWorkspacePathsAbsent(phase: "before" | "after"): Promise<void> {
+  const presentPaths = await runFileSystem(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const present: Array<string> = [];
+      for (const relativePath of expectedAbsentWorkspacePaths) {
+        if (yield* fs.exists(joinPath(cwd, relativePath))) {
+          present.push(relativePath);
+        }
+      }
+      return present;
+    }),
+  );
+  if (presentPaths.length > 0) {
+    throw new Error(
+      `Claude replay fixture '${scenario}' expected ${presentPaths
+        .map((relativePath) => `'${relativePath}'`)
+        .join(
+          ", ",
+        )} to be absent ${phase} the recorded turn, but found in the recording workspace.`,
+    );
+  }
+}
+
 if (shouldRemoveCwd && (scenario === "tool_call_read_only" || scenario === "subagent")) {
   await runFileSystem(
     Effect.gen(function* () {
@@ -398,6 +441,7 @@ try {
   });
   const queryPolicy = claudeRuntimeQueryPolicyForRuntimePolicy(runtimePolicy);
 
+  await assertWorkspacePathsAbsent("before");
   const transcript = await recordClaudeAgentSdkReplayTranscript({
     scenario,
     prompts,
@@ -418,13 +462,27 @@ try {
       ? {}
       : { allowDangerouslySkipPermissions: queryPolicy.allowDangerouslySkipPermissions }),
     ...(queryPolicy.installPermissionCallback ? { enablePermissionCallback: true } : {}),
+    ...("permissionDecision" in recording
+      ? { permissionDecision: recording.permissionDecision }
+      : {}),
     ...("interruptAfter" in recording ? { interruptAfter: recording.interruptAfter } : {}),
   });
+  await assertWorkspacePathsAbsent("after");
+  const transcriptWithEvidence =
+    expectedAbsentWorkspacePaths.length === 0
+      ? transcript
+      : {
+          ...transcript,
+          metadata: {
+            ...transcript.metadata,
+            verifiedAbsentWorkspacePaths: [...expectedAbsentWorkspacePaths],
+          },
+        };
   await runFileSystem(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
-      yield* fs.makeDirectory(dirname(outputPath), { recursive: true });
-      yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcript));
+      yield* fs.makeDirectory(path.dirname(outputPath), { recursive: true });
+      yield* fs.writeFileString(outputPath, encodeTranscriptNdjson(transcriptWithEvidence));
     }),
   );
   await Effect.runPromise(
