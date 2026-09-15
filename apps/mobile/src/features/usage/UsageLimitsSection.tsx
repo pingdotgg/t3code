@@ -9,11 +9,12 @@ import type {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import {
-  elapsedShare,
+  evenPaceRemainingPercent,
+  formatAllowancePace,
   formatDuration,
   formatResetsIn,
   limitsNotice,
-  paceOf,
+  paceDetail,
   remainingPercent,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useState } from "react";
@@ -25,8 +26,6 @@ import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useProviderColors } from "./usageProviders";
-
-const PACE_LABEL = { ahead: "ahead of pace", on: "on pace", under: "under pace" } as const;
 
 type Driver = ServerProvider["driver"];
 
@@ -40,9 +39,8 @@ function useBarColor(driver: Driver): string | null {
 
 /**
  * One window as a bar spanning its whole duration: the fill is quota left,
- * the hairline is how much of the window is left, so even spending keeps the
- * fill on the line. Pace sits under the left edge, the countdown under the
- * right, so a row reads in one glance.
+ * a colored pill sits at even pace when reserve or deficit is large enough.
+ * The pace chip rides the header row; the countdown sits under the bar.
  */
 function WindowRow(props: {
   readonly window: ServerProviderUsageWindow;
@@ -51,19 +49,28 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
-  const pace = paceOf(window, now);
+  const detail = paceDetail(window, now);
+  const pace = detail ? formatAllowancePace(detail) : null;
   const resetsIn = formatResetsIn(window, now);
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
         <Text className="text-sm text-foreground">{window.label}</Text>
-        <Text className="text-sm font-t3-medium tabular-nums text-foreground">
-          {remaining}% left
-        </Text>
+        <View className="flex-row items-center gap-1.5">
+          <Text className="text-sm font-t3-medium tabular-nums text-foreground">
+            {remaining}% left
+          </Text>
+          {pace ? (
+            <Text
+              className="text-xs tabular-nums text-foreground-tertiary"
+              accessibilityLabel={pace.explanation}
+            >
+              {pace.percent}
+            </Text>
+          ) : null}
+        </View>
       </View>
-      <View className="h-3 justify-center">
+      <View className="h-3.5 justify-center">
         <View className="h-1.5 flex-row overflow-hidden rounded-full bg-subtle">
           <View
             className={
@@ -80,18 +87,19 @@ function WindowRow(props: {
           />
           <View style={{ flex: 100 - remaining }} />
         </View>
-        {timeLeft !== null ? (
+        {detail ? (
           <View
-            className="absolute top-0 bottom-0 w-px bg-foreground"
-            style={{ left: `${timeLeft}%`, opacity: 0.6 }}
+            className={
+              detail.status === "deficit"
+                ? "absolute top-0 h-3.5 w-0.5 rounded-full bg-red-500"
+                : "absolute top-0 h-3.5 w-0.5 rounded-full bg-emerald-500"
+            }
+            style={{ left: `${evenPaceRemainingPercent(detail)}%`, marginLeft: -1 }}
           />
         ) : null}
       </View>
-      {pace || resetsIn ? (
-        <View className="flex-row justify-between gap-3">
-          <Text className="text-xs text-foreground-tertiary">{pace ? PACE_LABEL[pace] : ""}</Text>
-          <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn ?? ""}</Text>
-        </View>
+      {resetsIn ? (
+        <Text className="text-xs tabular-nums text-foreground-tertiary">{resetsIn}</Text>
       ) : null}
     </View>
   );
