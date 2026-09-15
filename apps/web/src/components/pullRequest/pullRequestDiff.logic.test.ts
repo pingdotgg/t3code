@@ -1,7 +1,11 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
 import { describe, expect, it } from "vite-plus/test";
 
-import { isFileDiffCollapsed, isLineInFileDiff } from "./pullRequestDiff.logic";
+import {
+  getPullRequestDiffStats,
+  isFileDiffCollapsed,
+  isLineInFileDiff,
+} from "./pullRequestDiff.logic";
 
 /** Only the hunk ranges matter here; the viewer fills the rest in when it renders. */
 function fileWithHunks(
@@ -77,5 +81,84 @@ describe("isFileDiffCollapsed", () => {
   it("still answers to a toggle after either toolbar press", () => {
     expect(isFileDiffCollapsed("a.ts", "expanded", new Set(["a.ts"]))).toBe(true);
     expect(isFileDiffCollapsed("a.ts", "folded", new Set(["a.ts"]))).toBe(false);
+  });
+});
+
+describe("getPullRequestDiffStats", () => {
+  const file = {
+    name: "example.ts",
+    hunks: [{ additionLines: 3, deletionLines: 2 }],
+  } as FileDiffMetadata;
+  it("uses full PR totals before and during page loading", () => {
+    const totals = { additions: 1000, deletions: 500, changedFiles: 50 };
+    for (const files of [[], [file]]) {
+      expect(
+        getPullRequestDiffStats({ complete: false, files, omittedFileStats: new Map(), totals }),
+      ).toEqual(totals);
+    }
+  });
+  it("does not replace known patch counts with omitted host totals", () => {
+    expect(
+      getPullRequestDiffStats({
+        complete: false,
+        files: [file],
+        omittedFileStats: new Map(),
+        totals: { additions: 0, deletions: 0, changedFiles: 0 },
+      }),
+    ).toEqual({ additions: 3, deletions: 2, changedFiles: 1 });
+  });
+  it("uses one snapshot while paging and replaces stale totals when complete", () => {
+    const files = [
+      { name: "example.ts", hunks: [{ additionLines: 15, deletionLines: 1 }] } as FileDiffMetadata,
+    ];
+    const totals = { additions: 10, deletions: 20, changedFiles: 2 };
+    expect(
+      getPullRequestDiffStats({ files, omittedFileStats: new Map(), totals, complete: false }),
+    ).toEqual(totals);
+    expect(
+      getPullRequestDiffStats({ files, omittedFileStats: new Map(), totals, complete: true }),
+    ).toEqual({ additions: 15, deletions: 1, changedFiles: 1 });
+  });
+  it("counts a selected commit independently and includes withheld hunks", () => {
+    const omittedFileStats = new Map([
+      ["example.ts", { path: "example.ts", additions: 80, deletions: 40 }],
+    ]);
+    expect(
+      getPullRequestDiffStats({ complete: false, files: [file], omittedFileStats, totals: null }),
+    ).toEqual({
+      additions: 80,
+      deletions: 40,
+      changedFiles: 1,
+    });
+    expect(
+      getPullRequestDiffStats({
+        complete: false,
+        files: [file],
+        omittedFileStats: new Map(),
+        totals: null,
+      }),
+    ).toEqual({ additions: 3, deletions: 2, changedFiles: 1 });
+  });
+  it("includes omitted-only files without counting parsed paths twice", () => {
+    const omittedFileStats = new Map([
+      ["example.ts", { path: "example.ts", additions: 80, deletions: 40 }],
+      ["omitted.ts", { path: "omitted.ts", additions: 10, deletions: 5 }],
+    ]);
+    for (const totals of [null, { additions: 200, deletions: 100, changedFiles: 3 }]) {
+      expect(
+        getPullRequestDiffStats({ files: [file], omittedFileStats, totals, complete: true }),
+      ).toEqual({
+        additions: 90,
+        deletions: 45,
+        changedFiles: 2,
+      });
+    }
+    expect(
+      getPullRequestDiffStats({ files: [], omittedFileStats, totals: null, complete: true }),
+    ).toEqual({
+      additions: 90,
+      deletions: 45,
+      changedFiles: 2,
+    });
   });
 });

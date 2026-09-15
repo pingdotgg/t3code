@@ -18,6 +18,9 @@ export interface ReviewSectionItem {
   readonly subtitle: string | null;
   readonly diff: string | null;
   readonly isLoading: boolean;
+  readonly files?: ReviewDiffPreviewSource["files"];
+  readonly truncated?: boolean;
+  readonly source?: ReviewDiffPreviewSource;
 }
 
 export interface ReviewRenderableHunkRow {
@@ -47,6 +50,7 @@ export type ReviewRenderableRow = ReviewRenderableHunkRow | ReviewRenderableLine
 export interface ReviewRenderableFile {
   readonly id: string;
   readonly cacheKey: string;
+  readonly notice?: string;
   readonly path: string;
   readonly previousPath: string | null;
   readonly changeType: ChangeTypes;
@@ -442,6 +446,9 @@ export function buildReviewSectionItems(input: {
     title: section.title,
     subtitle: gitSubtitle(section),
     diff: section.diff,
+    source: section,
+    ...(section.files ? { files: section.files } : {}),
+    truncated: section.truncated,
     isLoading: false,
   }));
   const hasDirtyWorktreeItem = gitItems.some((item) => item.id === DIRTY_WORKTREE_SECTION_ID);
@@ -526,4 +533,28 @@ export function buildReviewParsedDiff(
       notice,
     };
   }
+}
+
+export function applyReviewDiffMetadata(
+  previewDiff: ReviewParsedDiff,
+  selectedSection: Pick<ReviewSectionItem, "files" | "truncated"> | null,
+): ReviewParsedDiff {
+  if (previewDiff.kind === "empty") return previewDiff;
+  const notice = selectedSection?.truncated
+    ? `This preview exceeds the size limit. Changes shown are incomplete.${selectedSection.files ? " Counts include all changes." : ""}`
+    : previewDiff.notice;
+  if (previewDiff.kind !== "files" || !selectedSection?.files) return { ...previewDiff, notice };
+  const totals = selectedSection.files.reduce(
+    (total, file) => ({
+      additions: total.additions + file.additions,
+      deletions: total.deletions + file.deletions,
+    }),
+    { additions: 0, deletions: 0 },
+  );
+  const stats = new Map(selectedSection.files.map((file) => [file.path, file]));
+  const files = previewDiff.files.map((file) => {
+    const stat = stats.get(file.path);
+    return stat ? { ...file, additions: stat.additions, deletions: stat.deletions } : file;
+  });
+  return { ...previewDiff, ...totals, files, fileCount: selectedSection.files.length, notice };
 }

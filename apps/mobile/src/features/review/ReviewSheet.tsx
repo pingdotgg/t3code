@@ -382,24 +382,39 @@ export function ReviewSheet(props: ReviewSheetProps) {
   useEffect(() => {
     showAuxiliaryPane("inspector");
   }, [environmentId, showAuxiliaryPane, threadId]);
-  const { error, reviewSections, selectedSection, refreshSelectedSection, selectSection } =
-    useReviewSections({
-      enabled: isEnvironmentReady,
-      environmentId,
-      threadId,
-      reviewCache,
-    });
+  const {
+    error,
+    reviewSections,
+    selectedSection,
+    refreshSelectedSection,
+    selectSection,
+    isSelectedSectionPending,
+  } = useReviewSections({
+    enabled: isEnvironmentReady,
+    environmentId,
+    threadId,
+    reviewCache,
+  });
   useReviewDiffPrewarming({
     threadKey: reviewCache.threadKey,
     sections: reviewSections,
     selectedSectionId: selectedSection?.id ?? null,
   });
-  const { headerDiffSummary, nativeReviewDiffData, parsedDiff, pendingReviewCommentCount } =
-    useReviewDiffData({
-      threadKey: reviewCache.threadKey,
-      selectedSection,
-      draftMessage,
-    });
+  const {
+    headerDiffSummary,
+    nativeReviewDiffData,
+    parsedDiff,
+    pendingReviewCommentCount,
+    loadVisibleFile,
+    refreshFilePatches,
+    isPending: areFilePatchesPending,
+  } = useReviewDiffData({
+    threadKey: reviewCache.threadKey,
+    environmentId,
+    cwd: selectedThreadCwd,
+    selectedSection,
+    draftMessage,
+  });
   // Resolution returns null while Expo registers the native view (or forever
   // when the binary lacks it). Rendering a null component type crashes the
   // app, so callers must fall back — ThreadFeed's ReviewCommentCard does the
@@ -412,11 +427,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const handlePullToRefresh = useCallback(async () => {
     setIsPullRefreshing(true);
     try {
+      refreshFilePatches();
       await refreshSelectedSection();
     } finally {
       setIsPullRefreshing(false);
     }
-  }, [refreshSelectedSection]);
+  }, [refreshSelectedSection, refreshFilePatches]);
   const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
   const fileVisibility = useReviewFileVisibility({
@@ -469,6 +485,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
 
   const handleSelectFile = useCallback(
     (fileId: string | null) => {
+      loadVisibleFile(fileId, true);
       commentSelection.clearSelection();
       if (fileId !== null && collapsedFileIds.includes(fileId)) {
         toggleExpandedFile(fileId);
@@ -481,13 +498,14 @@ export function ReviewSheet(props: ReviewSheetProps) {
         console.error("[review] Failed to navigate to diff file", error);
       });
     },
-    [collapsedFileIds, commentSelection, toggleExpandedFile],
+    [collapsedFileIds, commentSelection, toggleExpandedFile, loadVisibleFile],
   );
   const handleVisibleFileChange = useCallback(
     (event: NativeSyntheticEvent<{ readonly fileId?: string | null }>) => {
+      loadVisibleFile(event.nativeEvent.fileId ?? null);
       reviewFileNavigatorRef.current?.setVisibleFile(event.nativeEvent.fileId ?? null);
     },
-    [],
+    [loadVisibleFile],
   );
   const renderInspector = useCallback(
     () => (
@@ -508,10 +526,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
     (event: NativeSyntheticEvent<{ readonly fileId?: string }>) => {
       const { fileId } = event.nativeEvent;
       if (fileId) {
+        loadVisibleFile(fileId, true);
         toggleExpandedFile(fileId);
       }
     },
-    [toggleExpandedFile],
+    [toggleExpandedFile, loadVisibleFile],
   );
 
   const handleNativeToggleViewedFile = useCallback(
@@ -818,7 +837,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
                 <NativeReviewDiffView
                   collapsable={false}
                   testID="review-native-diff-view"
-                  refreshing={isPullRefreshing}
+                  refreshing={isPullRefreshing || isSelectedSectionPending || areFilePatchesPending}
                   onPullToRefresh={() => void handlePullToRefresh()}
                   style={StyleSheet.absoluteFill}
                   appearanceScheme={selectedTheme}
@@ -862,7 +881,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
               // iOS has no other refresh affordance here (the explicit
               // "Refresh current diff" menu is Android-only).
               <RefreshControl
-                refreshing={isPullRefreshing}
+                refreshing={isPullRefreshing || isSelectedSectionPending || areFilePatchesPending}
                 onRefresh={() => void handlePullToRefresh()}
               />
             }

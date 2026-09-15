@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 
 import {
+  applyReviewDiffMetadata,
   buildReviewParsedDiff,
   buildReviewSectionItems,
   getDefaultReviewSectionId,
@@ -269,5 +270,36 @@ describe("buildReviewParsedDiff", () => {
       title: "Large diff",
       actionLabel: "Load diff",
     });
+  });
+});
+
+describe("applyReviewDiffMetadata", () => {
+  it("uses complete counts even when the preview contains only part of one file", () => {
+    const parsed = buildReviewParsedDiff(
+      [
+        "diff --git a/large.txt b/large.txt",
+        "--- a/large.txt",
+        "+++ b/large.txt",
+        "@@ -1 +1 @@",
+        "-before",
+        "+after",
+      ].join("\n"),
+      "partial",
+    );
+    const result = applyReviewDiffMetadata(parsed, {
+      truncated: true,
+      files: [
+        { path: "large.txt", previousPath: null, additions: 4000, deletions: 3000 },
+        { path: "unseen.txt", previousPath: null, additions: 100, deletions: 20 },
+      ],
+    });
+    expect(result.kind).toBe("files");
+    if (result.kind !== "files") return;
+    expect(result.fileCount).toBe(2);
+    expect(result.additions).toBe(4100);
+    expect(result.deletions).toBe(3020);
+    expect(result.files[0]?.additions).toBe(4000);
+    expect(result.notice).toContain("Counts include all changes");
+    expect(applyReviewDiffMetadata(parsed, null)).toEqual(parsed);
   });
 });

@@ -320,8 +320,82 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       expect(callAt(0)).toMatchObject({
         url: "/repositories/acme/web/pullrequests/7/diff",
         // A diff of any size would otherwise be read into memory whole.
-        maxBytes: 8 * 1024 * 1024,
+        maxBytes: 120_000,
       });
+    }),
+  );
+
+  it.effect("continues an oversized diff by file without losing later files or counts", () =>
+    Effect.gen(function* () {
+      mockedRequest.mockReturnValueOnce(Effect.succeed({ body: "partial", truncated: true }));
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            valuePage(
+              [
+                {
+                  old: { path: " old.ts" },
+                  new: { path: "new #.ts" },
+                  lines_added: 200,
+                  lines_removed: 100,
+                },
+              ],
+              "https://api.bitbucket.org/2.0/repositories/acme/web/pullrequests/7/diffstat?page=2",
+            ),
+          ),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed({ body: "first file excerpt", truncated: true }),
+      );
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const first = yield* api.getPullRequestDiff({ repository: "acme/web", number: 7 });
+      expect(first).toMatchObject({
+        patch: "first file excerpt\n",
+        truncated: true,
+        nextCursor: "2",
+        omittedFileStats: [{ path: "new #.ts", additions: 200, deletions: 100 }],
+      });
+      expect(callAt(2).url).toBe(
+        "/repositories/acme/web/pullrequests/7/diff?path=%20old.ts&path=new%20%23.ts",
+      );
+      mockedRequest.mockReturnValueOnce(
+        Effect.succeed(
+          response(
+            valuePage([{ old: null, new: { path: "last.ts" }, lines_added: 1, lines_removed: 0 }]),
+          ),
+        ),
+      );
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response("last file")));
+      const last = yield* api.getPullRequestDiff({
+        repository: "acme/web",
+        number: 7,
+        cursor: first.nextCursor!,
+      });
+      expect(last.patch).toBe("last file\n");
+      expect(last.nextCursor).toBeNull();
+      expect(callAt(3).url).toBe("/repositories/acme/web/pullrequests/7/diffstat?pagelen=4&page=2");
+    }),
+  );
+
+  it.effect("pages a selected commit independently and rejects invalid cursors", () =>
+    Effect.gen(function* () {
+      const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
+      const invalid = yield* Effect.flip(
+        api.getPullRequestDiff({ repository: "acme/web", number: 7, cursor: "../2" }),
+      );
+      expect(invalid._tag).toBe("BitbucketPullRequestReadError");
+      expect(mockedRequest).not.toHaveBeenCalled();
+      mockedRequest.mockReturnValueOnce(Effect.succeed(response(valuePage([]))));
+      const commit = "a".repeat(40);
+      const result = yield* api.getPullRequestDiff({
+        repository: "acme/web",
+        number: 7,
+        commit,
+        cursor: "2",
+      });
+      expect(callAt(0).url).toBe(`/repositories/acme/web/diffstat/${commit}?pagelen=4&page=2`);
+      expect(result.nextCursor).toBeNull();
     }),
   );
 
@@ -340,7 +414,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       assert.strictEqual(diff.patch, patch);
       expect(callAt(0)).toMatchObject({
         url: "/repositories/acme/web/diff/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0",
-        maxBytes: 8 * 1024 * 1024,
+        maxBytes: 120_000,
       });
     }),
   );

@@ -1,5 +1,7 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
-import type { PullRequestDiffSide } from "@t3tools/contracts";
+import type { PullRequestDiffSide, PullRequestOmittedFileStat } from "@t3tools/contracts";
+
+import { resolveFileDiffPath } from "~/lib/diffRendering";
 
 /**
  * Whether a conversation's line is really in this file's hunks.
@@ -40,4 +42,43 @@ export function isFileDiffCollapsed(
 ): boolean {
   const foldedByDefault = foldOverride === "folded";
   return toggledFileKeys.has(fileKey) ? !foldedByDefault : foldedByDefault;
+}
+
+/** Host totals stay stable while patches arrive; individual previews may omit hunks. */
+export function getPullRequestDiffStats(input: {
+  files: ReadonlyArray<FileDiffMetadata>;
+  omittedFileStats: ReadonlyMap<string, PullRequestOmittedFileStat>;
+  totals: { additions: number; deletions: number; changedFiles: number } | null;
+  complete: boolean;
+}) {
+  const parsedPaths = new Set(input.files.map(resolveFileDiffPath));
+  const loaded = input.files.reduce(
+    (total, file) => {
+      const stat = input.omittedFileStats.get(resolveFileDiffPath(file));
+      return {
+        changedFiles: total.changedFiles + 1,
+        additions:
+          total.additions +
+          (stat?.additions ?? file.hunks.reduce((sum, hunk) => sum + hunk.additionLines, 0)),
+        deletions:
+          total.deletions +
+          (stat?.deletions ?? file.hunks.reduce((sum, hunk) => sum + hunk.deletionLines, 0)),
+      };
+    },
+    { additions: 0, deletions: 0, changedFiles: 0 },
+  );
+  for (const [path, stat] of input.omittedFileStats) {
+    if (parsedPaths.has(path)) continue;
+    loaded.changedFiles++;
+    loaded.additions += stat.additions;
+    loaded.deletions += stat.deletions;
+  }
+  // Detail can lag a push. Use one snapshot's counts, never a maximum per field.
+  return input.complete ||
+    input.totals === null ||
+    (input.totals.additions === 0 &&
+      input.totals.deletions === 0 &&
+      input.totals.changedFiles === 0)
+    ? loaded
+    : input.totals;
 }
