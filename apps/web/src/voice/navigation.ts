@@ -51,6 +51,17 @@ export interface VoiceRouteDriver {
   subscribeMissingThreadRedirect(
     listener: (redirect: VoiceMissingThreadRedirect) => void,
   ): () => void;
+  /** Provenance high-water mark and since-query over the guard's retained
+      recent redirects. Optional so test drivers without the seam stay valid;
+      the navigator uses them to catch a provenance event recorded while a
+      navigation was still pending (before the post-acknowledgment watch
+      armed) whose route transition commits after a successful-looking path
+      read-back. */
+  currentMissingThreadRedirectSeq?(): number;
+  hasMissingThreadRedirectSince?(
+    destination: VoiceNavigationDestination,
+    sinceSeq: number,
+  ): boolean;
 }
 
 export type VoiceEnvironmentReachability = "unknown" | "disconnected" | "connected";
@@ -129,6 +140,11 @@ export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
     const myToken = token;
     clearRedirectWatch();
     acknowledgedDestination = undefined;
+    // Provenance recorded between this mark and the acknowledgment is
+    // checked below: the live subscription only arms at acknowledgment, so
+    // an event fired while this navigation was pending would otherwise be
+    // lost if its route transition commits after the path read-back.
+    const provenanceSeq = deps.driver.currentMissingThreadRedirectSeq?.() ?? 0;
 
     const reachability = deps.reachabilityOf(destination.environmentId);
     if (reachability === "unknown") {
@@ -174,6 +190,12 @@ export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
           message: `Navigation landed on "${path}" instead of the requested thread route.`,
         },
       };
+    }
+    // The path read-back can still show the thread route while the guard has
+    // already proven it missing (record + redirect mid-transition). The
+    // guard's verdict outranks the transient read-back.
+    if (deps.driver.hasMissingThreadRedirectSince?.(destination, provenanceSeq) === true) {
+      return { status: "failed", error: threadNotFoundError(destination) };
     }
 
     acknowledgedDestination = destination;

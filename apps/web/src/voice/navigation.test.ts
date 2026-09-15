@@ -2,6 +2,11 @@ import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentId, ThreadId, VoiceTimingMark, VoiceToolError } from "@t3tools/contracts";
 
 import {
+  currentMissingThreadRedirectSeq,
+  hasMissingThreadRedirectSince,
+  recordMissingThreadRedirect,
+} from "../missingThreadRedirects.ts";
+import {
   createVoiceNavigator,
   expectedThreadRoutePath,
   THREAD_ROUTE_TO,
@@ -321,6 +326,41 @@ describe("voice navigator", () => {
 
     expect(harness.redirectListeners).toHaveLength(1);
     expect(harness.lateRedirects).toHaveLength(0);
+  });
+
+  it("does not lose provenance recorded while the navigation was pending", async () => {
+    // The guard records provenance mid-transition and its redirect's route
+    // change can commit after the navigator's post-navigate path read-back,
+    // which would then still show the thread route. The watch arms only at
+    // acknowledgment, so the live subscription cannot have seen the event;
+    // the driver's retained-provenance query must carry the verdict instead.
+    const driver: VoiceRouteDriver = {
+      navigate: async () => {
+        // Mid-transition: the guard proves the thread missing here, while
+        // the navigation is still pending.
+        recordMissingThreadRedirect(provenanceOf(DESTINATION));
+      },
+      // The redirect's route transition has not committed yet at read-back.
+      readCurrentPath: () => expectedThreadRoutePath(DESTINATION),
+      subscribeMissingThreadRedirect: () => () => {},
+      currentMissingThreadRedirectSeq: () => currentMissingThreadRedirectSeq(),
+      hasMissingThreadRedirectSince: (destination, sinceSeq) =>
+        hasMissingThreadRedirectSince(destination, sinceSeq),
+    };
+    const marks: VoiceTimingMark[] = [];
+    const navigator = createVoiceNavigator({
+      driver,
+      reachabilityOf: () => "connected",
+      emitMark: (mark) => marks.push(mark),
+      onRedirectAfterAcknowledgment: () => {
+        throw new Error("must not acknowledge, so the late-redirect watch must not fire");
+      },
+    });
+
+    const result = await navigator.navigateToThread(DESTINATION);
+
+    expect(result).toMatchObject({ status: "failed", error: { code: "thread_not_found" } });
+    expect(marks).toEqual([]);
   });
 
   it("ignores provenance for a navigation that is no longer current", async () => {
