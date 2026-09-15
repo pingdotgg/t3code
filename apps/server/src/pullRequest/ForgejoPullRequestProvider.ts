@@ -569,7 +569,9 @@ export const make = Effect.gen(function* () {
           }).pipe(
             Effect.scoped,
             Effect.mapError((cause) =>
-              failure("getDiff", "Could not construct the file preview.", cause),
+              cause._tag === "PullRequestProviderError"
+                ? cause
+                : failure("getDiff", "Could not construct the file preview.", cause),
             ),
           ),
         { concurrency: 4 },
