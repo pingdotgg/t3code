@@ -17,6 +17,7 @@ import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { createJjRepo, describeJj, runGit, runJj } from "../vcs/testing/JjTestSupport.ts";
 import * as ServerConfig from "../config.ts";
 
 const ServerConfigLayer = ServerConfig.ServerConfig.layerTest(process.cwd(), {
@@ -88,6 +89,21 @@ function initRepoWithCommit(
   });
 }
 
+/** `.t3code/vcs.json` is the supported way to make detection resolve one kind for a directory. */
+function pinVcsKind(
+  cwd: string,
+  kind: "git" | "jj",
+): Effect.Effect<void, PlatformError.PlatformError, FileSystem.FileSystem> {
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    yield* fileSystem.makeDirectory(NodePath.join(cwd, ".t3code"), { recursive: true });
+    yield* fileSystem.writeFileString(
+      NodePath.join(cwd, ".t3code", "vcs.json"),
+      `{"vcs":{"kind":"${kind}"}}`,
+    );
+  });
+}
+
 function buildLargeText(lineCount = 5_000): string {
   return Array.from({ length: lineCount }, (_, index) => `line ${String(index).padStart(5, "0")}`)
     .join("\n")
@@ -95,13 +111,13 @@ function buildLargeText(lineCount = 5_000): string {
 }
 
 it.layer(TestLayer)("CheckpointStore.layer", (it) => {
-  describe("isGitRepository", () => {
-    it.effect("returns false when no Git repository is detected", () =>
+  describe("supportsCheckpoints", () => {
+    it.effect("returns false when no repository is detected", () =>
       Effect.gen(function* () {
         const tmp = yield* makeTmpDir();
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(false);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(false);
       }),
     );
 
@@ -111,9 +127,39 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
         yield* initRepoWithCommit(tmp);
         const checkpointStore = yield* CheckpointStore.CheckpointStore;
 
-        expect(yield* checkpointStore.isGitRepository(tmp)).toBe(true);
+        expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(true);
       }),
     );
+
+    describeJj("with Jujutsu installed", () => {
+      it.effect("returns true for a colocated Jujutsu repository", () =>
+        Effect.gen(function* () {
+          const tmp = yield* makeTmpDir();
+          yield* createJjRepo(tmp);
+          yield* pinVcsKind(tmp, "jj");
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+          expect(yield* checkpointStore.supportsCheckpoints(tmp)).toBe(true);
+        }),
+      );
+
+      it.effect("returns false for a Jujutsu repository with no colocated Git store", () =>
+        Effect.gen(function* () {
+          const fileSystem = yield* FileSystem.FileSystem;
+          const base = yield* makeTmpDir();
+          const store = NodePath.join(base, "store.git");
+          const root = NodePath.join(base, "project");
+          yield* fileSystem.makeDirectory(store, { recursive: true });
+          yield* fileSystem.makeDirectory(root, { recursive: true });
+          yield* runGit(store, ["init", "--bare", "--initial-branch=main", store]);
+          yield* runJj(root, ["git", "init", "--git-repo", store]);
+          yield* pinVcsKind(root, "jj");
+          const checkpointStore = yield* CheckpointStore.CheckpointStore;
+
+          expect(yield* checkpointStore.supportsCheckpoints(root)).toBe(false);
+        }),
+      );
+    });
   });
 
   it.effect("detects a nested workspace without its own .git entry", () =>
@@ -124,7 +170,7 @@ it.layer(TestLayer)("CheckpointStore.layer", (it) => {
       const nested = NodePath.join(tmp, "packages", "nested");
       yield* fileSystem.makeDirectory(nested, { recursive: true });
       const checkpointStore = yield* CheckpointStore.CheckpointStore;
-      expect(yield* checkpointStore.isGitRepository(nested)).toBe(true);
+      expect(yield* checkpointStore.supportsCheckpoints(nested)).toBe(true);
     }),
   );
   describe("warmCheckpoint", () => {
