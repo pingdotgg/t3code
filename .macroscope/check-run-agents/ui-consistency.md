@@ -11,9 +11,6 @@ include:
   - "apps/web/src/**/*.css"
 exclude:
   - "apps/web/src/**/*.test.tsx"
-labels:
-  - vouch:trusted
-  - macroscope-review
 requires:
   - Check
 maxBudgetPerRun: 2
