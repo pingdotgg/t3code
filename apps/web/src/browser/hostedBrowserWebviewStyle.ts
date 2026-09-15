@@ -49,9 +49,8 @@ export function resolveHostedBrowserWebviewWrapperStyle(input: {
   }
 
   if (renderingActive) {
-    // Electron stops compositing a guest that is fully outside the window, even
-    // when background throttling is disabled. Keep capture-active guests inside
-    // the viewport but behind the app so recordings receive complete frames.
+    // Keep the retained surface measurable while background automation uses
+    // the native page in its automation window.
     return {
       left: 0,
       top: 0,

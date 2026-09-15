@@ -509,7 +509,6 @@ export const make = Effect.gen(function* () {
     );
     flushMainWindowBounds = flushBoundsPersist;
 
-    yield* previewManager.setMainWindow(window);
     window.webContents.on("will-attach-webview", (event, webPreferences, params) => {
       if (
         typeof params.partition !== "string" ||
@@ -596,6 +595,7 @@ export const make = Effect.gen(function* () {
         installContextMenu(popup, popup.webContents);
       });
     };
+    yield* previewManager.setMainWindow(window, (contents) => installContextMenu(window, contents));
     installContextMenu(window, window.webContents);
     window.webContents.on("did-attach-webview", (_event, contents) => {
       installContextMenu(window, contents);
