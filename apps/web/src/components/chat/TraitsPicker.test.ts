@@ -100,7 +100,7 @@ describe("buildTraitsTriggerDisplay", () => {
     });
     expect(display([serviceTierDescriptor("priority")])).toEqual({
       label: "Fast",
-      showFastModeIcon: false,
+      showFastModeIcon: true,
     });
   });
 
@@ -117,10 +117,10 @@ describe("buildTraitsTriggerDisplay", () => {
     });
   });
 
-  it("falls back to a text label when fast mode is the only trait", () => {
+  it("keeps the bolt alongside the text label when fast mode is the only trait", () => {
     expect(display([fastModeDescriptor(true)])).toEqual({
       label: "Fast",
-      showFastModeIcon: false,
+      showFastModeIcon: true,
     });
     expect(display([fastModeDescriptor(false)])).toEqual({
       label: "Normal",
