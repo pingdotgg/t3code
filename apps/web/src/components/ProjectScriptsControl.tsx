@@ -1,8 +1,11 @@
-import type {
-  ProjectScript,
-  ResolvedKeybindingsConfig,
-  T3ProjectFileScript,
+import {
+  AuthSettingsWriteScope,
+  type EnvironmentId,
+  type ProjectScript,
+  type T3ProjectFileScript,
 } from "@t3tools/contracts";
+import { useAtomValue } from "@effect/atom-react";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
@@ -12,6 +15,8 @@ import { useCallback, useMemo, useState } from "react";
 
 import { commandForProjectScript, primaryProjectScript } from "~/projectScripts";
 import { shortcutLabelForCommand } from "~/keybindings";
+import { serverEnvironment } from "~/state/server";
+import { readEnvironmentScope } from "~/state/session";
 import {
   EMPTY_PROJECT_SCRIPT_INPUT,
   editorRequestForScript,
@@ -40,10 +45,10 @@ export type { NewProjectScriptInput, ProjectScriptActionResult };
 const NO_FILE_SCRIPTS: ReadonlyArray<T3ProjectFileScript> = [];
 
 interface ProjectScriptsControlProps {
+  environmentId: EnvironmentId;
   scripts: ReadonlyArray<ProjectScript>;
   /** Scripts declared in the project's checked-in t3.json, offered for import. */
   fileScripts?: ReadonlyArray<T3ProjectFileScript>;
-  keybindings: ResolvedKeybindingsConfig;
   preferredScriptId?: string | null;
   onRunScript: (script: ProjectScript) => void;
   onAddScript: (input: NewProjectScriptInput) => Promise<ProjectScriptActionResult>;
@@ -55,15 +60,18 @@ interface ProjectScriptsControlProps {
 }
 
 export default function ProjectScriptsControl({
+  environmentId,
   scripts,
   fileScripts = NO_FILE_SCRIPTS,
-  keybindings,
   preferredScriptId = null,
   onRunScript,
   onAddScript,
   onUpdateScript,
   onDeleteScript,
 }: ProjectScriptsControlProps) {
+  const keybindings =
+    useAtomValue(serverEnvironment.configValueAtom(environmentId))?.keybindings ??
+    DEFAULT_RESOLVED_KEYBINDINGS;
   const [actionsMenuOpen, setActionsMenuOpen] = useState({
     scripts: false,
     imports: false,
@@ -114,7 +122,7 @@ export default function ProjectScriptsControl({
       icon: fileScript.icon ?? "play",
       runOnWorktreeCreate: fileScript.runOnWorktreeCreate ?? false,
       waitForSetup: fileScript.runOnWorktreeCreate === true && fileScript.async === false,
-      keybinding: null,
+      ...(readEnvironmentScope(environmentId, AuthSettingsWriteScope) ? { keybinding: null } : {}),
       previewUrl: fileScript.previewUrl ?? null,
       autoOpenPreview: fileScript.previewUrl ? (fileScript.autoOpenPreview ?? false) : false,
     };
@@ -289,6 +297,7 @@ export default function ProjectScriptsControl({
       )}
 
       <ProjectScriptEditorDialog
+        environmentId={environmentId}
         request={editorRequest}
         scripts={scripts}
         onSubmit={submitScript}

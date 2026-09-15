@@ -1,21 +1,16 @@
 import { useAtomValue } from "@effect/atom-react";
-import type { EnvironmentId } from "@t3tools/contracts";
+import { AuthSettingsWriteScope, type EnvironmentId } from "@t3tools/contracts";
 import { ChevronDownIcon, PlusIcon, RotateCcwIcon, XIcon } from "lucide-react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useRef, useState } from "react";
 
-import { isElectron } from "../../env";
 import { cn } from "../../lib/utils";
 import { environmentPresentations } from "../../state/presentation";
 import { serverEnvironment } from "../../state/server";
-import { environmentSession } from "../../state/session";
+import { environmentSession, readEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import type { EnvironmentUsageStatus } from "../../state/usage";
-import {
-  resolvePrimaryOperateAccess,
-  resolveRemoteOperateAccess,
-} from "../settings/ProviderSettingsPanel.logic";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -50,15 +45,17 @@ const priceTargetsAtom = Atom.make((get): readonly UsagePriceTarget[] =>
   [...get(environmentPresentations.presentationsAtom)].map(([environmentId, environment]) => {
     const settings = get(serverEnvironment.settingsValueAtom(environmentId));
     const session = get(environmentSession.sessionStateAtom(environmentId));
-    const sessionAccess = {
-      session: Option.getOrNull(AsyncResult.value(session)),
-      isPending: session.waiting,
-      hasError: session._tag === "Failure",
-    };
-    const isPrimary = environment.entry.target._tag === "PrimaryConnectionTarget";
-    const access = isPrimary
-      ? resolvePrimaryOperateAccess({ ...sessionAccess, isPrimary, hasDesktopBridge: isElectron })
-      : resolveRemoteOperateAccess(sessionAccess);
+    const sessionData = Option.getOrNull(AsyncResult.value(session));
+    const access =
+      session._tag === "Failure"
+        ? "denied"
+        : sessionData === null
+          ? session.waiting
+            ? "pending"
+            : "denied"
+          : sessionData.authenticated && sessionData.scopes?.includes(AuthSettingsWriteScope)
+            ? "granted"
+            : "denied";
     return {
       environmentId,
       label: environment.entry.target.label,
@@ -224,7 +221,10 @@ export function UsagePriceOverrides({
           target.unavailable ?? [...changes.get(target.environmentId)!.errors.values()][0] ?? null,
       })),
       changes: new Map([...changes].map(([id, plan]) => [id, plan.changes])),
-      write: updateSettings,
+      write: async (input) =>
+        readEnvironmentScope(input.environmentId, AuthSettingsWriteScope)
+          ? updateSettings(input)
+          : { _tag: "Failure" },
       onResult: (environmentId, result) => {
         if (result.status === "failed") failed = true;
         setAttempt((previous) =>

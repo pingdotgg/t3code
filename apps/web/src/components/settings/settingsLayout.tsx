@@ -1,3 +1,6 @@
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useEnvironmentScope, useEnvironmentsWithScope } from "../../state/session";
 import { InfoIcon, Undo2Icon } from "lucide-react";
 import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@t3tools/contracts";
 import * as Equal from "effect/Equal";
@@ -25,6 +28,7 @@ import { useOptionalSettingsScope } from "./SettingsScopeContext";
 import {
   isProjectScopedSettingKey,
   listProjectOverrides,
+  type ProjectOverrideEntry,
   scopedSettingsAreMixed,
   scopedSettingsSource,
 } from "./scopedSettings";
@@ -294,6 +298,16 @@ export function SettingsRow({
   const targetRef = useSettingsSearchTarget<HTMLDivElement>(rowProps.id);
   const primarySettingsAvailable = usePrimarySettingsAvailable();
   const context = useOptionalSettingsScope();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const primaryCanWrite = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
+  const writableIds = useEnvironmentsWithScope(
+    context?.connectedEnvironments ?? [],
+    AuthSettingsWriteScope,
+  );
+  const canWriteSettings = context
+    ? context.connectedEnvironments.length > 0 &&
+      context.connectedEnvironments.every((target) => writableIds.has(target.environmentId))
+    : primaryCanWrite;
   const clearOverrides = useClearScopedSettings();
   const clearProjectOverrides = useClearProjectOverrides();
   const isProjectScope =
@@ -308,7 +322,8 @@ export function SettingsRow({
     context && isProjectScope ? scopedSettingsSource(context.targets, scopedKeys) : null;
   const unavailable =
     serverScoped &&
-    !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable);
+    (!canWriteSettings ||
+      !(context ? context.connectedEnvironments.length > 0 : primarySettingsAvailable));
   const inheritedFrom =
     source === "environment" && context?.scope.environmentIds.length === 1
       ? (context.environments.find(
@@ -387,9 +402,11 @@ export function SettingsRow({
   const renderedControl =
     unavailable && control
       ? inertControl(
-          context
-            ? "Reconnect the selected environment to change this setting."
-            : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
+          !canWriteSettings
+            ? "This connection does not have permission to change environment settings."
+            : context
+              ? "Reconnect the selected environment to change this setting."
+              : PRIMARY_SETTINGS_UNAVAILABLE_MESSAGE,
         )
       : environmentWide && control
         ? inertControl("Environment-wide setting. Select an environment to change it.")
@@ -425,7 +442,12 @@ export function SettingsRow({
         environments={context.connectedEnvironments}
         keys={settingKeys}
         overridingProjects={overridingProjects}
-        onClearOverrides={(entries) => clearProjectOverrides(entries, scopedKeys)}
+        {...(canWriteSettings
+          ? {
+              onClearOverrides: (entries: readonly ProjectOverrideEntry[]) =>
+                clearProjectOverrides(entries, scopedKeys),
+            }
+          : {})}
       />
     ) : null;
   const renderedStatus = status;

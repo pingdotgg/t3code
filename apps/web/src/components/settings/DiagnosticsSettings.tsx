@@ -1,3 +1,6 @@
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
+import { AuthEnvironmentMaintainScope } from "@t3tools/contracts";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AlertTriangleIcon,
@@ -22,7 +25,7 @@ import * as Option from "effect/Option";
 
 import { cn } from "../../lib/utils";
 import { ensureLocalApi } from "../../localApi";
-import { resolveAndPersistPreferredEditor } from "../../editorPreferences";
+import { useOpenInPreferredEditor } from "../../editorPreferences";
 import { formatRelativeTimeLabel, getRelativeTimeState } from "../../timestampFormat";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -311,44 +314,46 @@ function ProcessNameCell({
 
 function ProcessSignalActions({
   process,
+  canMaintainEnvironment,
   isSignaling,
   onSignal,
 }: {
   process: ServerProcessDiagnosticsEntry;
+  canMaintainEnvironment: boolean;
   isSignaling: boolean;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
 }) {
   return (
     <div className="flex items-center justify-end gap-1.5">
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling}
-              className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGINT")}
-            >
-              INT
-            </button>
-          }
-        />
-        <TooltipPopup side="top">Send SIGINT</TooltipPopup>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[11px] font-medium text-muted-foreground underline-offset-2 hover:text-foreground hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process.pid, "SIGINT")}
+          >
+            INT
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGINT" : "This connection cannot manage processes."}
+        </TooltipPopup>
       </Tooltip>
       <Tooltip>
-        <TooltipTrigger
-          render={
-            <button
-              type="button"
-              disabled={isSignaling}
-              className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:pointer-events-none disabled:opacity-50"
-              onClick={() => onSignal(process.pid, "SIGKILL")}
-            >
-              KILL
-            </button>
-          }
-        />
-        <TooltipPopup side="top">Send SIGKILL</TooltipPopup>
+        <TooltipTrigger render={<span className="inline-flex" />}>
+          <button
+            type="button"
+            disabled={isSignaling || !canMaintainEnvironment}
+            className="cursor-pointer text-[11px] font-medium text-destructive underline-offset-2 hover:underline disabled:opacity-50"
+            onClick={() => onSignal(process.pid, "SIGKILL")}
+          >
+            KILL
+          </button>
+        </TooltipTrigger>
+        <TooltipPopup side="top">
+          {canMaintainEnvironment ? "Send SIGKILL" : "This connection cannot manage processes."}
+        </TooltipPopup>
       </Tooltip>
     </div>
   );
@@ -356,11 +361,13 @@ function ProcessSignalActions({
 
 function ProcessDiagnosticsTable({
   processes,
+  canMaintainEnvironment,
   signalingPid,
   onSignal,
   emptyLabel,
 }: {
   processes: ReadonlyArray<ServerProcessDiagnosticsEntry>;
+  canMaintainEnvironment: boolean;
   signalingPid: number | null;
   onSignal: (pid: number, signal: ServerProcessSignal) => void;
   emptyLabel?: string;
@@ -470,6 +477,7 @@ function ProcessDiagnosticsTable({
               <td className="p-2 align-middle sm:pr-4">
                 <ProcessSignalActions
                   process={process}
+                  canMaintainEnvironment={canMaintainEnvironment}
                   isSignaling={signalingPid === process.pid}
                   onSignal={onSignal}
                 />
@@ -775,14 +783,14 @@ export function DiagnosticsSettingsPanel() {
   // The boundary only mounts this page when the selection resolves to one
   // connected environment, so the representative is the one to inspect.
   const environmentId = environment?.environmentId ?? null;
+  const canMaintainEnvironment = useEnvironmentScope(environmentId, AuthEnvironmentMaintainScope);
   const observability = environment?.serverConfig?.observability;
   const availableEditors = environment?.serverConfig?.availableEditors;
+  const canOpenHostEditor = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const signalServerProcess = useAtomCommand(serverEnvironment.signalProcess, {
     reportFailure: false,
   });
-  const openInEditor = useAtomCommand(shellEnvironment.openInEditor, {
-    reportFailure: false,
-  });
+  const openInEditor = useOpenInPreferredEditor(environmentId, availableEditors ?? []);
   const [resourceWindowMs, setResourceWindowMs] = useState(15 * 60_000);
   const selectedResourceWindow =
     RESOURCE_HISTORY_WINDOWS.find((option) => option.windowMs === resourceWindowMs) ??
@@ -838,26 +846,17 @@ export function DiagnosticsSettingsPanel() {
     const logsDirectoryPath = observability?.logsDirectoryPath ?? null;
     if (!logsDirectoryPath) return;
 
-    const editor = resolveAndPersistPreferredEditor(availableEditors ?? []);
-    if (!editor) {
-      setOpenLogsDirectoryError("No available editors found.");
-      return;
-    }
-    if (environmentId === null) {
-      setOpenLogsDirectoryError("No environment is selected.");
+    if (
+      environmentId === null ||
+      !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)
+    ) {
       return;
     }
 
     setIsOpeningLogsDirectory(true);
     setOpenLogsDirectoryError(null);
     void (async () => {
-      const result = await openInEditor({
-        environmentId,
-        input: {
-          cwd: logsDirectoryPath,
-          editor,
-        },
-      });
+      const result = await openInEditor(logsDirectoryPath);
       setIsOpeningLogsDirectory(false);
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
@@ -866,7 +865,7 @@ export function DiagnosticsSettingsPanel() {
         );
       }
     })();
-  }, [availableEditors, environmentId, observability?.logsDirectoryPath, openInEditor]);
+  }, [environmentId, observability?.logsDirectoryPath, openInEditor]);
 
   const isInitialLoading = isPending && data === null;
   const isProcessInitialLoading = isProcessPending && processData === null;
@@ -874,7 +873,7 @@ export function DiagnosticsSettingsPanel() {
     async (pid: number, signal: ServerProcessSignal) => {
       const targetEnvironmentId = environmentIdRef.current;
       const process = processDataRef.current?.processes.find((entry) => entry.pid === pid);
-      if (targetEnvironmentId === null || process === undefined) return;
+      if (targetEnvironmentId === null || process === undefined || !readEnvironmentScope(targetEnvironmentId, AuthEnvironmentMaintainScope)) return;
       if (signalingPidRef.current !== null) return;
       signalingPidRef.current = pid;
       setSignalingPid(pid);
@@ -903,7 +902,12 @@ export function DiagnosticsSettingsPanel() {
           return;
         }
       }
-      if (environmentIdRef.current !== targetEnvironmentId) {
+      const currentEnvironmentId = environmentIdRef.current;
+      if (
+        currentEnvironmentId === null ||
+        currentEnvironmentId !== targetEnvironmentId ||
+        !readEnvironmentScope(currentEnvironmentId, AuthEnvironmentMaintainScope)
+      ) {
         clearSignaling();
         return;
       }
@@ -1021,6 +1025,7 @@ export function DiagnosticsSettingsPanel() {
         ) : null}
         <ProcessDiagnosticsTable
           processes={processData?.processes ?? []}
+          canMaintainEnvironment={canMaintainEnvironment}
           signalingPid={signalingPid}
           onSignal={signalProcess}
           emptyLabel={
@@ -1106,7 +1111,11 @@ export function DiagnosticsSettingsPanel() {
                   <Button
                     size="icon-xs"
                     variant="ghost-muted"
-                    disabled={!observability?.logsDirectoryPath || isOpeningLogsDirectory}
+                    disabled={
+                      !canOpenHostEditor ||
+                      !observability?.logsDirectoryPath ||
+                      isOpeningLogsDirectory
+                    }
                     onClick={openLogsDirectory}
                     aria-label="Open logs folder"
                   >

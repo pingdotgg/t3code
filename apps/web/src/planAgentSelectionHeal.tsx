@@ -1,4 +1,7 @@
 import { useEffect } from "react";
+import { AuthSettingsWriteScope } from "@t3tools/contracts";
+import { usePrimaryEnvironmentId } from "./state/environments";
+import { useEnvironmentScope } from "./state/session";
 
 import {
   useClientSettingsHydrated,
@@ -15,6 +18,8 @@ import { resolvePlanAgentHealPatch } from "./modelSelection";
  * whenever the settings load.
  */
 export function PlanAgentSelectionHeal() {
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
+  const canWriteSettings = useEnvironmentScope(primaryEnvironmentId, AuthSettingsWriteScope);
   const planModeEnabled = usePrimarySettings((settings) => settings.planModeEnabled);
   const textGenerationModelSelection = usePrimarySettings(
     (settings) => settings.textGenerationModelSelection,
@@ -29,7 +34,7 @@ export function PlanAgentSelectionHeal() {
     // planModeEnabled reads as false until client settings hydrate, so never
     // heal before then: we would strip a stored plan selection from a user
     // whose plan mode is actually on.
-    if (!settingsHydrated) {
+    if (!settingsHydrated || !canWriteSettings) {
       return;
     }
     const patch = resolvePlanAgentHealPatch({
@@ -41,6 +46,7 @@ export function PlanAgentSelectionHeal() {
       updateSettings(patch);
     }
   }, [
+    canWriteSettings,
     planModeEnabled,
     settingsHydrated,
     textGenerationModelSelection,

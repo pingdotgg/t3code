@@ -2,10 +2,15 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
 import { DownloadIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { type ProviderDriverKind, type ProviderInstanceId } from "@t3tools/contracts";
+import {
+  AuthProvidersManageScope,
+  type ProviderDriverKind,
+  type ProviderInstanceId,
+} from "@t3tools/contracts";
 
 import { primaryServerProvidersAtom, serverEnvironment } from "../state/server";
 import { usePrimaryEnvironment } from "../state/environments";
+import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useDismissedProviderUpdateNotificationKeys } from "../providerUpdateDismissal";
 import { PROVIDER_ICON_BY_PROVIDER } from "./chat/providerIconUtils";
 import {
@@ -27,7 +32,12 @@ const seenProviderUpdateNotificationKeys = new Set<string>();
 type ProviderUpdateToastId = ReturnType<typeof toastManager.add>;
 
 type ActiveProviderUpdateToast =
-  | { readonly kind: "prompt"; readonly key: string; readonly toastId: ProviderUpdateToastId }
+  | {
+      readonly kind: "prompt";
+      readonly key: string;
+      readonly toastId: ProviderUpdateToastId;
+      readonly canManageProviders: boolean;
+    }
   | {
       readonly kind: "update";
       readonly key: string;
@@ -105,6 +115,10 @@ export function ProviderUpdatePrimaryNotification() {
   const navigate = useNavigate();
   const providers = useAtomValue(primaryServerProvidersAtom);
   const primaryEnvironment = usePrimaryEnvironment();
+  const canManageProviders = useEnvironmentScope(
+    primaryEnvironment?.environmentId ?? null,
+    AuthProvidersManageScope,
+  );
   const updateProvider = useAtomCommand(serverEnvironment.updateProvider, {
     reportFailure: false,
   });
@@ -183,11 +197,15 @@ export function ProviderUpdatePrimaryNotification() {
       activeToastRef.current = null;
     }
 
+    const updateExistingPrompt =
+      activeToast?.kind === "prompt" &&
+      activeToast.key === notificationKey &&
+      activeToast.canManageProviders !== canManageProviders;
     if (
       !notificationKey ||
       dismissedNotificationKeys.has(notificationKey) ||
-      seenProviderUpdateNotificationKeys.has(notificationKey) ||
-      activeToastRef.current
+      (seenProviderUpdateNotificationKeys.has(notificationKey) && !updateExistingPrompt) ||
+      (activeToastRef.current && !updateExistingPrompt)
     ) {
       return;
     }
@@ -204,7 +222,12 @@ export function ProviderUpdatePrimaryNotification() {
     };
 
     const runUpdates = () => {
-      if (updateStarted || oneClickProviders.length === 0 || !primaryEnvironment) {
+      if (
+        updateStarted ||
+        oneClickProviders.length === 0 ||
+        !primaryEnvironment ||
+        !readEnvironmentScope(primaryEnvironment.environmentId, AuthProvidersManageScope)
+      ) {
         return;
       }
       updateStarted = true;
@@ -224,6 +247,19 @@ export function ProviderUpdatePrimaryNotification() {
       void (async () => {
         const results = [];
         for (const provider of oneClickProviders) {
+          if (!readEnvironmentScope(primaryEnvironment.environmentId, AuthProvidersManageScope)) {
+            if (activeToastRef.current === activeUpdate) {
+              addProviderUpdateToast({
+                view: getProviderUpdateRejectedToastView(
+                  providerCount,
+                  "This connection cannot manage provider accounts.",
+                ),
+                openSettings: openProviderSettings,
+              });
+              activeToastRef.current = null;
+            }
+            return;
+          }
           results.push(
             await updateProvider({
               environmentId: primaryEnvironment.environmentId,
@@ -265,44 +301,52 @@ export function ProviderUpdatePrimaryNotification() {
       })();
     };
 
-    toastId = toastManager.add(
-      stackedThreadToast({
-        type: initialView.type,
-        title: initialView.title,
-        description: initialView.description,
-        timeout: 0,
-        actionProps:
-          oneClickProviders.length > 0
-            ? {
-                children: "Update",
-                onClick: runUpdates,
-              }
-            : {
+    const toastOptions = stackedThreadToast({
+      type: initialView.type,
+      title: initialView.title,
+      description: canManageProviders
+        ? initialView.description
+        : "This connection cannot manage provider accounts. View provider settings for update details.",
+      timeout: 0,
+      actionProps:
+        oneClickProviders.length > 0
+          ? {
+              children: "Update",
+              disabled: !canManageProviders,
+              onClick: runUpdates,
+            }
+          : {
+              children: "Settings",
+              onClick: openSettings,
+            },
+      actionVariant: "outline",
+      data: {
+        leadingIcon:
+          updateProviders.length === 1 ? (
+            <ProviderUpdateToastIcon provider={updateProviders[0]!.driver} />
+          ) : undefined,
+        hideCopyButton: true,
+        onClose: dismissPrompt,
+        ...(oneClickProviders.length > 0
+          ? {
+              secondaryActionProps: {
                 children: "Settings",
                 onClick: openSettings,
               },
-        actionVariant: "outline",
-        data: {
-          leadingIcon:
-            updateProviders.length === 1 ? (
-              <ProviderUpdateToastIcon provider={updateProviders[0]!.driver} />
-            ) : undefined,
-          hideCopyButton: true,
-          onClose: dismissPrompt,
-          ...(oneClickProviders.length > 0
-            ? {
-                secondaryActionProps: {
-                  children: "Settings",
-                  onClick: openSettings,
-                },
-                secondaryActionVariant: "outline" as const,
-              }
-            : {}),
-        },
-      }),
-    );
-    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId };
+              secondaryActionVariant: "outline" as const,
+            }
+          : {}),
+      },
+    });
+    if (updateExistingPrompt && activeToast?.kind === "prompt") {
+      toastId = activeToast.toastId;
+      toastManager.update(toastId, toastOptions);
+    } else {
+      toastId = toastManager.add(toastOptions);
+    }
+    activeToastRef.current = { kind: "prompt", key: notificationKey, toastId, canManageProviders };
   }, [
+    canManageProviders,
     updateProvider,
     dismissNotificationKey,
     dismissedNotificationKeys,

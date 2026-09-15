@@ -1,4 +1,5 @@
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
+import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
   COMPOSER_CONTEXT_CLIPBOARD_MIME,
@@ -164,7 +165,7 @@ import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
 import { assetEnvironment } from "../state/assets";
-import { usePreparedConnection } from "../state/session";
+import { readEnvironmentScope, usePreparedConnection, useEnvironmentScope } from "../state/session";
 import { previewEnvironment } from "../state/preview";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
@@ -2250,12 +2251,11 @@ function useChatMarkdownState({
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const remoteOpen = useRemoteOpenResolution(environmentId);
-  const canUseShellActions = canUseMarkdownFileShellActions(
-    environmentId,
-    remoteOpen.state.mode,
-    remoteOpen.isResolved,
-  );
+  const canUseShellActions =
+    canOperateHost &&
+    canUseMarkdownFileShellActions(environmentId, remoteOpen.state.mode, remoteOpen.isResolved);
   const preparedConnection = usePreparedConnection(environmentId);
   const openMarkdownMedia = useCallback(
     (source: string, resolvedFilePath?: string, clickedImage?: HTMLImageElement | null) => {
@@ -2322,6 +2322,13 @@ function useChatMarkdownState({
         return Promise.resolve(
           AsyncResult.failure<void, PreferredEditorEnvironmentRequiredError>(
             Cause.fail(new PreferredEditorEnvironmentRequiredError({ targetPath: filePath })),
+          ),
+        );
+      }
+      if (!readEnvironmentScope(environmentId, AuthOrchestrationOperateScope)) {
+        return Promise.resolve(
+          AsyncResult.failure<void, Error>(
+            Cause.fail(new Error("This connection cannot reveal files on this environment.")),
           ),
         );
       }
@@ -2421,6 +2428,7 @@ function useChatMarkdownState({
   const updateThreadPullRequestLink = useCallback(
     async (href: string, linked: boolean) => {
       if (threadRef === undefined || (!linked && linkedThreadPullRequestFor(href) === null)) return;
+      if (!readEnvironmentScope(threadRef.environmentId, AuthOrchestrationOperateScope)) return;
       await pullRequestLinking.changeLink(threadRef, href, linked);
     },
     [linkedThreadPullRequestFor, pullRequestLinking, threadRef],
@@ -2618,6 +2626,7 @@ function useChatMarkdownState({
 
   const componentState = useMemo(
     () => ({
+      canOperateHost,
       cwd,
       diffThemeName,
       environmentId,
@@ -2647,6 +2656,7 @@ function useChatMarkdownState({
       updateThreadPullRequestLink,
     }),
     [
+      canOperateHost,
       cwd,
       diffThemeName,
       environmentId,
@@ -2799,6 +2809,7 @@ const CHAT_MARKDOWN_COMPONENTS = {
   },
   a: function MarkdownAnchor({ node, href, children, title: _title, ...props }) {
     const {
+      canOperateHost,
       cwd,
       environmentId,
       imageBaseDir,
@@ -2955,8 +2966,9 @@ const CHAT_MARKDOWN_COMPONENTS = {
             event.stopPropagation();
             const api = readLocalApi();
             if (!api) return;
-            const threadLinkAction =
-              linkedThreadPullRequestFor(href) !== null
+            const threadLinkAction = !canOperateHost
+              ? undefined
+              : linkedThreadPullRequestFor(href) !== null
                 ? "unlink-from-thread"
                 : resolveThreadPullRequest(href) === null
                   ? undefined
