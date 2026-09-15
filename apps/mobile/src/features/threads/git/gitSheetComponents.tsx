@@ -24,7 +24,7 @@ export function SheetActionButton(props: {
   return (
     <Pressable
       className={cn(
-        "min-h-[48px] flex-1 flex-row items-center justify-center gap-2 rounded-[18px] px-4 py-3 disabled:opacity-[0.45]",
+        "min-h-[48px] flex-1 items-center justify-center rounded-[18px] px-3 py-3 disabled:opacity-[0.45]",
         tone === "primary"
           ? "bg-primary"
           : tone === "danger"
@@ -34,24 +34,26 @@ export function SheetActionButton(props: {
       disabled={props.disabled}
       onPress={props.onPress}
     >
-      <SymbolView
-        name={props.icon}
-        size={16}
-        tintColorClassName={textColorClassName}
-        type="monochrome"
-      />
-      <Text
-        className={cn(
-          "text-xs font-t3-bold tracking-[0.9px] uppercase",
-          tone === "primary"
-            ? "text-primary-foreground"
-            : tone === "danger"
-              ? "text-danger-foreground"
-              : "text-secondary-foreground",
-        )}
-      >
-        {props.label}
-      </Text>
+      <View className="max-w-full flex-row items-center justify-center gap-1.5">
+        <SymbolView
+          name={props.icon}
+          size={16}
+          tintColorClassName={textColorClassName}
+          type="monochrome"
+        />
+        <Text
+          className={cn(
+            "shrink text-center text-xs font-t3-bold tracking-[0.9px] uppercase",
+            tone === "primary"
+              ? "text-primary-foreground"
+              : tone === "danger"
+                ? "text-danger-foreground"
+                : "text-secondary-foreground",
+          )}
+        >
+          {props.label}
+        </Text>
+      </View>
     </Pressable>
   );
 }
