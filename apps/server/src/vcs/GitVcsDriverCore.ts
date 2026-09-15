@@ -11,6 +11,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -3271,7 +3272,89 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         env: STATUS_UPSTREAM_REFRESH_ENV,
         fallbackErrorDetail: `git fetch ${input.remoteName} failed`,
       };
-      const fetchAll = executeGit("GitVcsDriver.fetchRemote", input.cwd, args, options);
+      const sshConfig = yield* executeGit(
+        "GitVcsDriver.fetchRemote.sshConfig",
+        input.cwd,
+        ["config", "--get-regexp", "^(core\\.sshcommand|ssh\\.variant)$"],
+        { allowNonZeroExit: true },
+      );
+      // ponytail: instrument only Git's default OpenSSH transport; custom commands need their own diagnostics.
+      const monitorSsh =
+        !process.env.GIT_SSH_COMMAND &&
+        !process.env.GIT_SSH &&
+        !process.env.GIT_SSH_VARIANT &&
+        sshConfig.exitCode <= 1 &&
+        !sshConfig.stdout.trim() &&
+        (yield* commandSpawner
+          .exitCode(
+            ChildProcess.make(
+              "ssh",
+              ["-G", "-F", "none", "-o", "LogVerbose=sshconnect2.c:*:*", "localhost"],
+              { stdout: "ignore", stderr: "ignore" },
+            ),
+          )
+          .pipe(
+            Effect.map((code) => code === 0),
+            Effect.timeout("1 second"),
+            Effect.orElseSucceed(() => false),
+          ));
+      const fetch = Effect.fnUntraced(function* (
+        fetchArgs: readonly string[],
+        allowNonZeroExit = false,
+      ) {
+        const signing = yield* Queue.sliding<boolean>(1);
+        const execution = executeGitWithStableDiagnostics(
+          "GitVcsDriver.fetchRemote",
+          input.cwd,
+          fetchArgs,
+          {
+            ...options,
+            allowNonZeroExit,
+            ...(monitorSsh
+              ? {
+                  env: {
+                    ...options.env,
+                    GIT_SSH_COMMAND:
+                      "ssh -o 'LogVerbose=sshconnect2.c:sign_and_send_pubkey():*,packet.c:ssh_packet_send2_wrapped():*'",
+                  },
+                  progress: {
+                    onStderrLine: (line: string) =>
+                      Queue.offer(
+                        signing,
+                        line.startsWith("debug3:") &&
+                          line.includes("sign_and_send_pubkey") &&
+                          line.includes("signing using "),
+                      ).pipe(Effect.asVoid),
+                  },
+                }
+              : {}),
+          },
+        );
+        if (!monitorSsh) return yield* execution;
+        // A sent packet clears the signing deadline before waiting on the network or fetching a pack.
+        return yield* execution.pipe(
+          Effect.raceFirst(
+            Stream.fromQueue(signing).pipe(
+              Stream.debounce("10 seconds"),
+              Stream.filter((pending) => pending),
+              Stream.runHead,
+              Effect.flatMap(
+                () =>
+                  new GitCommandError({
+                    ...gitCommandContext({
+                      operation: "GitVcsDriver.fetchRemote",
+                      cwd: input.cwd,
+                      args: fetchArgs,
+                    }),
+                    detail:
+                      "SSH key authorization timed out. Unlock or approve your SSH key on the computer running T3 Code, then retry, or use an HTTPS remote.",
+                  }),
+              ),
+            ),
+          ),
+        );
+      });
+      const fetchAll = fetch(args);
       if (input.refName === undefined) {
         return yield* fetchAll.pipe(Effect.asVoid);
       }
@@ -3282,12 +3365,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...args,
         `+refs/heads/${branch}:refs/remotes/${input.remoteName}/${branch}`,
       ];
-      const result = yield* executeGitWithStableDiagnostics(
-        "GitVcsDriver.fetchRemote",
-        input.cwd,
-        scopedArgs,
-        { ...options, allowNonZeroExit: true },
-      );
+      const result = yield* fetch(scopedArgs, true);
       if (result.exitCode === 0) return;
       if (
         result.stderr
