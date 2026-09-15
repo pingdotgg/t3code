@@ -828,8 +828,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 onBlur={handleBlur}
                 onSubmit={handleSend}
                 scrollEnabled={isExpanded}
-                // Android: collapsed single line centers natively (gravity) in
-                // a pill-height box matching the send button; iOS keeps insets.
+                // Android: collapsed single line centers natively and ellipsizes
+                // in a pill-height box close to the send button; iOS keeps insets.
                 singleLineCentered={!isExpanded}
                 contentInsetVertical={isExpanded || Platform.OS === "android" ? 0 : 6}
                 style={
@@ -840,7 +840,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                         paddingVertical: 4,
                       }
                     : {
-                        height: 36,
+                        minHeight: 40,
                       }
                 }
                 textStyle={{

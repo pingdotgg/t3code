@@ -12,6 +12,7 @@ import android.text.Editable
 import android.text.InputType
 import android.text.InputFilter
 import android.text.Spanned
+import android.text.TextUtils
 import android.text.TextWatcher
 import android.text.style.ReplacementSpan
 import android.util.TypedValue
@@ -281,10 +282,17 @@ class T3ComposerEditorView(context: Context, appContext: AppContext) : ExpoView(
   }
 
   fun setSingleLineCentered(centered: Boolean) {
-    editor.gravity = if (centered) {
-      Gravity.CENTER_VERTICAL or Gravity.START
+    if (centered) {
+      editor.isSingleLine = true
+      editor.maxLines = 1
+      editor.ellipsize = TextUtils.TruncateAt.END
+      editor.gravity = Gravity.CENTER_VERTICAL or Gravity.START
     } else {
-      Gravity.TOP or Gravity.START
+      editor.isSingleLine = false
+      editor.maxLines = Int.MAX_VALUE
+      editor.ellipsize = null
+      editor.gravity = Gravity.TOP or Gravity.START
+      updateInputFlags()
     }
   }
 
