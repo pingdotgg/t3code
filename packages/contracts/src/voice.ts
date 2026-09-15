@@ -376,7 +376,11 @@ export const VoiceStartThreadOutput = Schema.Struct({
   /** Read-back of the thread's session after dispatch. Present once the
       read-back completed; a fast terminal success reports its final status
       here, a running worker reports `starting`/`running`. Thread existence
-      alone is never reported as successful execution. */
+      alone is never reported as successful execution. A read-back whose
+      session state is identical to the pre-dispatch state describes the
+      previous turn (the new turn's session-set is only projected when the
+      provider reactor picks it up); continueThread reports such a follow-up
+      as `starting` instead of echoing a stale terminal status or error. */
   session: Schema.optional(VoiceStartedThreadSession),
 });
 export type VoiceStartThreadOutput = typeof VoiceStartThreadOutput.Type;
