@@ -70,6 +70,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
     });
     assert.deepEqual(result, {
       status: "started",
+      async: true,
       scriptId: "setup",
       scriptName: "Setup",
       scriptCommand: "vp install",
@@ -81,6 +82,8 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       T3CODE_PROJECT_ROOT: "/repo",
       T3CODE_WORKTREE_PATH: "/repo-worktree",
       COLORTERM: "",
+      NO_COLOR: "1",
+      FORCE_COLOR: "0",
     });
     assert.equal(write.mock.calls[0]?.[0].data, "vp install\r");
   }).pipe(Effect.provide(layer));

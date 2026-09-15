@@ -30,6 +30,8 @@ export interface ProjectSetupScriptRunnerResultStarted {
   readonly scriptCommand: string;
   readonly terminalId: string;
   readonly cwd: string;
+  /** False when the script's `async` flag asks the agent to wait for it. */
+  readonly async: boolean;
   /**
    * Resolves when the script's shell prints the completion sentinel. The
    * exit code is null when the terminal exited or was closed before the
@@ -374,7 +376,8 @@ export const make = Effect.gen(function* () {
         terminalId,
         cwd,
         worktreePath: input.worktreePath,
-        env,
+        // Setup may run before a terminal client attaches to answer color probes.
+        env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
       })
       .pipe(
         Effect.mapError(
@@ -425,6 +428,7 @@ export const make = Effect.gen(function* () {
       scriptCommand: script.command,
       terminalId,
       cwd,
+      async: script.async !== false,
       ...(observed ? { completion: observed.completion } : {}),
     } as const;
   });
