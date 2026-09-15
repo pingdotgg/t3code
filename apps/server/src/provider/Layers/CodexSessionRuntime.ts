@@ -39,6 +39,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { buildCodexInitializeParams } from "./CodexProvider.ts";
 import { codexSessionAppServerArgs } from "./codexLaunchArgs.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
+import { resolveProjectEnvironment } from "../ProjectEnvironment.ts";
 import {
   buildCodexDeveloperInstructions,
   type T3CodeToolAvailability,
@@ -1310,11 +1311,22 @@ export const makeCodexSessionRuntime = (
     // `child_process.spawn`; `expandHomePath` lets a configured
     // `CODEX_HOME=~/.codex_work` reach codex as an absolute path.
     const resolvedHomePath = options.homePath ? expandHomePath(options.homePath) : undefined;
-    const env = {
-      ...options.environment,
-      ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
-    };
-    const extendEnv = options.environment === undefined;
+    const env = yield* resolveProjectEnvironment({
+      cwd: options.cwd,
+      environment: {
+        ...(options.environment ?? process.env),
+        ...(resolvedHomePath ? { CODEX_HOME: resolvedHomePath } : {}),
+      },
+    }).pipe(
+      Effect.mapError(
+        (cause) =>
+          new CodexErrors.CodexAppServerSpawnError({
+            command: `${options.binaryPath} app-server`,
+            cause,
+          }),
+      ),
+    );
+    const extendEnv = false;
     const appServerArgs = codexSessionAppServerArgs(options.appServerArgs, options.launchArgs);
     const spawnCommand = yield* resolveSpawnCommand(options.binaryPath, appServerArgs, {
       env,
