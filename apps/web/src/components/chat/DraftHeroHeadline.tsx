@@ -172,7 +172,12 @@ export function DraftHeroHeadline({
               draftId,
             );
             if (!hasExplicitComposerModelSelection(currentDraft)) {
-              applyStickyState(draftId);
+              applyStickyState(
+                draftId,
+                environments.find(
+                  (environment) => environment.environmentId === project.environmentId,
+                )?.serverConfig?.providers ?? [],
+              );
               const environmentSettings = environments.find(
                 (environment) => environment.environmentId === project.environmentId,
               )?.serverConfig?.settings;

@@ -1,3 +1,7 @@
+import {
+  autoBalancePickerInstanceId,
+  type AutoBalanceProviderCatalog,
+} from "../../autoBalanceProviders";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -1350,6 +1354,8 @@ export interface ChatComposerProps {
   // Provider / model
   lockedProvider: ProviderDriverKind | null;
   providerStatuses: ServerProvider[];
+  autoBalanceCatalog?: AutoBalanceProviderCatalog | undefined;
+  onAutoBalanceModelSelect?: ((instanceId: ProviderInstanceId, model: string) => void) | undefined;
   /** False until the environment's server config has arrived at least once. */
   providerCatalogKnown: boolean;
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
@@ -1473,6 +1479,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     interactionMode: requestedInteractionMode,
     lockedProvider,
     providerStatuses,
+    autoBalanceCatalog,
+    onAutoBalanceModelSelect,
     providerCatalogKnown,
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
@@ -1846,7 +1854,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // the thread's own selection instead of swapping in the setup button and
   // back once the catalog lands.
   const providerCatalogPending = noProviderAvailable && !providerCatalogKnown;
-  const showProviderUnavailable = noProviderAvailable && !providerCatalogPending;
+  const showProviderUnavailable =
+    noProviderAvailable && !providerCatalogPending && !autoBalanceCatalog?.entries.length;
   const providerSetupInstanceId = noProviderAvailable
     ? (unavailableProviderInstanceId ??
       (lockedProvider === null
@@ -4903,11 +4912,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ) : null}
       <ProviderModelPicker
         isComposerOwned
-        disabled={providerCatalogPending}
+        disabled={providerCatalogPending && !autoBalanceCatalog?.entries.length}
         activeInstanceId={
-          providerCatalogPending
-            ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
-            : selectedInstanceId
+          autoBalanceCatalog
+            ? autoBalancePickerInstanceId(selectedProvider, selectedInstanceId)
+            : providerCatalogPending
+              ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
+              : selectedInstanceId
         }
         model={
           providerCatalogPending
@@ -4916,9 +4927,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         }
         lockedProvider={lockedProvider}
         lockedContinuationGroupKey={lockedContinuationGroupKey}
-        instanceEntries={providerInstanceEntries}
+        instanceEntries={autoBalanceCatalog?.entries ?? providerInstanceEntries}
         keybindings={keybindings}
-        modelOptionsByInstance={modelOptionsByInstance}
+        modelOptionsByInstance={
+          autoBalanceCatalog?.modelOptionsByInstance ?? modelOptionsByInstance
+        }
         size={composerControlsInStrip ? "xs" : "sm"}
         triggerClassName={
           composerControlsInStrip
@@ -4942,9 +4955,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
-        getModelDisabledReason={getModelDisabledReason}
-        onInstanceModelChange={onProviderModelSelect}
-        onOpenProviderSetup={onOpenProviderSetup}
+        {...(autoBalanceCatalog ? {} : { getModelDisabledReason })}
+        onInstanceModelChange={
+          autoBalanceCatalog ? onAutoBalanceModelSelect! : onProviderModelSelect
+        }
+        {...(autoBalanceCatalog ? {} : { onOpenProviderSetup })}
       />
 
       {composerControlsCompact ? (

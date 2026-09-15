@@ -1,3 +1,4 @@
+import { matchesProviderModelFavorite } from "../../providerModelFavorites";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import { connectionStatusTitle } from "@t3tools/client-runtime/connection";
@@ -122,10 +123,17 @@ function withoutProviderInstanceKey<V>(
 }
 
 function withoutProviderInstanceFavorites(
-  favorites: ReadonlyArray<{ readonly provider: ProviderInstanceId; readonly model: string }>,
+  favorites: ReadonlyArray<{
+    readonly provider: ProviderInstanceId;
+    readonly driver?: ProviderDriverKind;
+    readonly model: string;
+  }>,
   instanceId: ProviderInstanceId,
+  driverKind: ProviderDriverKind,
 ) {
-  return favorites.filter((favorite) => favorite.provider !== instanceId);
+  return favorites.filter(
+    (favorite) => !matchesProviderModelFavorite(favorite, { instanceId, driverKind }),
+  );
 }
 
 const PROVIDER_SETTINGS = DRIVER_OPTIONS.map((definition) => ({
@@ -846,6 +854,7 @@ export function EnvironmentProviderSettings({
 
   const updateProviderFavoriteModels = (
     instanceId: ProviderInstanceId,
+    driver: ProviderDriverKind,
     nextFavoriteModels: ReadonlyArray<string>,
   ) => {
     const favoriteModels = [
@@ -858,8 +867,8 @@ export function EnvironmentProviderSettings({
     ];
     updateClientSettings({
       favorites: [
-        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId),
-        ...favoriteModels.map((model) => ({ provider: instanceId, model })),
+        ...withoutProviderInstanceFavorites(settings.favorites ?? [], instanceId, driver),
+        ...favoriteModels.map((model) => ({ provider: instanceId, driver, model })),
       ],
     });
   };
@@ -899,7 +908,9 @@ export function EnvironmentProviderSettings({
       modelOrder: [],
     };
     const favoriteModels = Arr.filterMap(settings.favorites ?? [], (favorite) =>
-      favorite.provider === row.instanceId ? Result.succeed(favorite.model) : Result.failVoid,
+      matchesProviderModelFavorite(favorite, { instanceId: row.instanceId, driverKind: row.driver })
+        ? Result.succeed(favorite.model)
+        : Result.failVoid,
     );
     const resetLabel = driverOption?.label ?? String(row.driver);
 
@@ -966,7 +977,9 @@ export function EnvironmentProviderSettings({
             hiddenModels,
           })
         }
-        onFavoriteModelsChange={(next) => updateProviderFavoriteModels(row.instanceId, next)}
+        onFavoriteModelsChange={(next) =>
+          updateProviderFavoriteModels(row.instanceId, row.driver, next)
+        }
         onModelOrderChange={(modelOrder) =>
           updateProviderModelPreferences(row.instanceId, {
             ...modelPreferences,

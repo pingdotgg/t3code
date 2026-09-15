@@ -872,3 +872,15 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
+
+describe("driver-aware favorite persistence", () => {
+  it("round-trips driver identity through settings and patches alongside legacy favorites", () => {
+    const favorites = [
+      { provider: "work", driver: "codex", model: "shared" },
+      { provider: "work", driver: "claudeAgent", model: "shared" },
+      { provider: "codex", model: "legacy" },
+    ];
+    expect(encodeClientSettings(decodeClientSettings({ favorites })).favorites).toEqual(favorites);
+    expect(decodeClientSettingsPatch({ favorites }).favorites).toEqual(favorites);
+  });
+});
