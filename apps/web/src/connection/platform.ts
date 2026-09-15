@@ -24,7 +24,6 @@ import {
 import { bootstrapRemoteBearerSession } from "@t3tools/client-runtime/authorization";
 import { fetchRemoteEnvironmentDescriptor } from "@t3tools/client-runtime/environment";
 import { managedRelayAccountChanges, managedRelaySessionAtom } from "@t3tools/client-runtime/relay";
-import { EnvironmentRpcRequestObserver } from "@t3tools/client-runtime/rpc";
 import {
   AuthStandardClientScopes,
   type DesktopBridge,
@@ -53,7 +52,6 @@ import { clearComposerDraftsEnvironment } from "../composerDraftStore";
 import { isHostedStaticApp } from "../hostedPairing";
 import { isLocalEnvironmentDisabled } from "../localEnvironment";
 import { appAtomRegistry } from "../rpc/atomRegistry";
-import { acknowledgeRpcRequest, trackRpcRequestSent } from "../rpc/requestLatencyState";
 import {
   desktopLocalConnectionId,
   readDesktopSecondaryBootstrapsResult,
@@ -61,8 +59,6 @@ import {
 } from "./desktopLocal";
 import { connectionStorageLayer } from "./storage";
 import { clientPresentationMetadata } from "./clientMetadata";
-
-let nextObservedRpcRequestId = 0;
 
 function currentNetworkStatus(): "unknown" | "offline" | "online" {
   if (typeof navigator === "undefined") {
@@ -592,29 +588,13 @@ const environmentOwnedDataCleanupLayer = Layer.succeed(
   }),
 );
 
-const rpcRequestObserverLayer = Layer.succeed(
-  EnvironmentRpcRequestObserver,
-  EnvironmentRpcRequestObserver.of({
-    observe: ({ environmentId, method }) =>
-      Effect.sync(() => {
-        nextObservedRpcRequestId += 1;
-        const requestId = `${environmentId}:${nextObservedRpcRequestId}`;
-        trackRpcRequestSent(requestId, method, `${method} · ${environmentId}`);
-        return Effect.sync(() => {
-          acknowledgeRpcRequest(requestId);
-        });
-      }),
-  }),
-);
-
 type ConnectionPlatformLayerSource =
   | typeof connectionStorageLayer
   | typeof connectivityLayer
   | typeof wakeupsLayer
   | typeof capabilitiesLayer
   | typeof platformConnectionSourceLayer
-  | typeof environmentOwnedDataCleanupLayer
-  | typeof rpcRequestObserverLayer;
+  | typeof environmentOwnedDataCleanupLayer;
 
 export const connectionPlatformLayer: Layer.Layer<
   Layer.Success<ConnectionPlatformLayerSource>,
@@ -627,5 +607,4 @@ export const connectionPlatformLayer: Layer.Layer<
   capabilitiesLayer,
   platformConnectionSourceLayer,
   environmentOwnedDataCleanupLayer,
-  rpcRequestObserverLayer,
 );
