@@ -1,3 +1,4 @@
+import { normalizeGitRemoteUrl } from "@t3tools/shared/git";
 import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,6 +20,7 @@ import {
   providerAuth,
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
+  type SourceControlUnknownRemoteRefinementInput,
 } from "./SourceControlProviderDiscovery.ts";
 
 const decodeLinkSubject = Schema.decodeUnknownEffect(
@@ -105,6 +107,27 @@ function parseGitHubAuth(input: SourceControlAuthProbeInput) {
   });
 }
 
+/**
+ * Identifies custom GitHub hosts from CLI accounts when DNS naming is inconclusive.
+ * Matches on host presence, not auth state: `gh auth status --json hosts` lists hosts with
+ * expired tokens too, and claiming them lets gh's auth error surface as "run `gh auth login`"
+ * instead of "unsupported host". Returns null without a matching account.
+ */
+function refineUnknownGitHubRemote(input: SourceControlUnknownRemoteRefinementInput) {
+  const host = input.context.provider.name.toLowerCase();
+  const known = parseGitHubAuthStatus(input.auth.stdout).accounts.some(
+    (account) => account.host === host,
+  );
+
+  if (!known) return null;
+
+  return {
+    kind: "github",
+    name: "GitHub Self-Hosted",
+    baseUrl: input.context.provider.baseUrl,
+  } as const;
+}
+
 export const discovery = {
   type: "cli",
   kind: "github",
@@ -113,19 +136,33 @@ export const discovery = {
   versionArgs: ["--version"],
   authArgs: ["auth", "status", "--json", "hosts"],
   parseAuth: parseGitHubAuth,
+  refineUnknownRemote: refineUnknownGitHubRemote,
   installHint:
     "Install the GitHub command-line tool (`gh`) via https://cli.github.com/ or your package manager (for example `brew install gh`).",
 } satisfies SourceControlCliDiscoverySpec;
+
+/** Uses the selected remote rather than gh's default remote or default GitHub host. */
+function repositoryTarget(input: {
+  readonly context?: SourceControlProvider.SourceControlProviderContext;
+}) {
+  if (!input.context) return {};
+  const host = new URL(input.context.provider.baseUrl).host;
+  const remote = normalizeGitRemoteUrl(input.context.remoteUrl);
+  const path = remote.slice(remote.indexOf("/") + 1);
+  return { repository: `${host}/${path}` };
+}
 
 export const make = Effect.gen(function* () {
   const github = yield* GitHubCli.GitHubCli;
 
   const listChangeRequests: SourceControlProvider.SourceControlProvider["Service"]["listChangeRequests"] =
     (input) => {
+      const target = repositoryTarget(input);
       if (input.state === "open") {
         return github
           .listOpenPullRequests({
             cwd: input.cwd,
+            ...target,
             headSelector: input.headSelector,
             ...(input.limit !== undefined ? { limit: input.limit } : {}),
           })
@@ -155,6 +192,7 @@ export const make = Effect.gen(function* () {
           args: [
             "pr",
             "list",
+            ...(target.repository ? ["--repo", target.repository] : []),
             "--head",
             input.headSelector,
             "--state",
@@ -267,7 +305,7 @@ export const make = Effect.gen(function* () {
     },
     listChangeRequests,
     getChangeRequest: (input) =>
-      github.getPullRequest(input).pipe(
+      github.getPullRequest({ ...input, ...repositoryTarget(input) }).pipe(
         Effect.map(toChangeRequest),
         Effect.mapError(
           (error) =>
@@ -288,6 +326,7 @@ export const make = Effect.gen(function* () {
       github
         .createPullRequest({
           cwd: input.cwd,
+          ...repositoryTarget(input),
           baseBranch: input.baseRefName,
           headSelector: input.headSelector,
           title: input.title,
@@ -310,22 +349,30 @@ export const make = Effect.gen(function* () {
           ),
         ),
     getRepositoryCloneUrls: (input) =>
-      github.getRepositoryCloneUrls(input).pipe(
-        Effect.mapError(
-          (error) =>
-            new SourceControlProviderError({
-              provider: "github",
-              operation: "getRepositoryCloneUrls",
-              command: error.command,
-              cwd: input.cwd,
-              repository: SourceControlProvider.transportSafeSourceControlErrorValue(
-                input.repository,
-              ),
-              detail: error.detail,
-              cause: error,
-            }),
+      github
+        .getRepositoryCloneUrls({
+          ...input,
+          repository:
+            input.context && /^[^/]+\/[^/]+$/.test(input.repository)
+              ? `${new URL(input.context.provider.baseUrl).host}/${input.repository}`
+              : input.repository,
+        })
+        .pipe(
+          Effect.mapError(
+            (error) =>
+              new SourceControlProviderError({
+                provider: "github",
+                operation: "getRepositoryCloneUrls",
+                command: error.command,
+                cwd: input.cwd,
+                repository: SourceControlProvider.transportSafeSourceControlErrorValue(
+                  input.repository,
+                ),
+                detail: error.detail,
+                cause: error,
+              }),
+          ),
         ),
-      ),
     createRepository: (input) =>
       github.createRepository(input).pipe(
         Effect.mapError(
@@ -344,7 +391,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     getDefaultBranch: (input) =>
-      github.getDefaultBranch(input).pipe(
+      github.getDefaultBranch({ ...input, ...repositoryTarget(input) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({
@@ -358,7 +405,7 @@ export const make = Effect.gen(function* () {
         ),
       ),
     checkoutChangeRequest: (input) =>
-      github.checkoutPullRequest(input).pipe(
+      github.checkoutPullRequest({ ...input, ...repositoryTarget(input) }).pipe(
         Effect.mapError(
           (error) =>
             new SourceControlProviderError({

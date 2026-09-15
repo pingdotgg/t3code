@@ -401,6 +401,89 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
   );
 });
 
+for (const remoteUrl of [
+  "git@code.example.test:team/project.git",
+  "ssh://git@code.example.test/team/project.git",
+  "https://code.example.test/team/project.git",
+]) {
+  it.effect(`targets the selected Enterprise remote throughout CLI operations: ${remoteUrl}`, () =>
+    Effect.gen(function* () {
+      const commands: ReadonlyArray<string>[] = [];
+      const provider = yield* GitHubSourceControlProvider.make.pipe(
+        Effect.provide(GitHubCli.layer),
+        Effect.provide(
+          Layer.mock(VcsProcess.VcsProcess)({
+            run: ({ args }) => {
+              commands.push(args);
+              const stdout =
+                args[0] === "repo"
+                  ? args.includes("defaultBranchRef")
+                    ? "main"
+                    : JSON.stringify({
+                        nameWithOwner: "team/project",
+                        url: "https://code.example.test/team/project",
+                        sshUrl: "git@code.example.test:team/project.git",
+                      })
+                  : args[1] === "list"
+                    ? "[]"
+                    : args[1] === "view"
+                      ? JSON.stringify({
+                          number: 42,
+                          title: "Enterprise PR",
+                          url: "https://code.example.test/team/project/pull/42",
+                          baseRefName: "main",
+                          headRefName: "feature",
+                          state: "OPEN",
+                        })
+                      : "";
+              return Effect.succeed(processResult(stdout));
+            },
+          }),
+        ),
+      );
+      const input = {
+        cwd: "/repo",
+        context: {
+          provider: {
+            kind: "github" as const,
+            name: "GitHub Self-Hosted",
+            baseUrl: "https://code.example.test",
+          },
+          remoteName: "upstream",
+          remoteUrl,
+        },
+      };
+      yield* provider.listChangeRequests({ ...input, headSelector: "feature", state: "open" });
+      yield* provider.listChangeRequests({ ...input, headSelector: "feature", state: "closed" });
+      yield* provider.getChangeRequest({ ...input, reference: "42" });
+      yield* provider.createChangeRequest({
+        ...input,
+        baseRefName: "main",
+        headSelector: "feature",
+        title: "PR",
+        bodyFile: "/tmp/body.md",
+      });
+      yield* provider.getDefaultBranch(input);
+      yield* provider.checkoutChangeRequest({ ...input, reference: "42" });
+      yield* provider.getRepositoryCloneUrls({ ...input, repository: "team/other" });
+      yield* provider.getRepositoryCloneUrls({ ...input, repository: "github.com/team/explicit" });
+      assert.deepStrictEqual(
+        commands.map((args) => (args[0] === "repo" ? args[2] : args[args.indexOf("--repo") + 1])),
+        [
+          "code.example.test/team/project",
+          "code.example.test/team/project",
+          "code.example.test/team/project",
+          "code.example.test/team/project",
+          "code.example.test/team/project",
+          "code.example.test/team/project",
+          "code.example.test/team/other",
+          "github.com/team/explicit",
+        ],
+      );
+    }),
+  );
+}
+
 for (const kind of ["pull", "issues"]) {
   it.effect(`resolves ${kind} subjects on the linked host without using the checkout`, () =>
     Effect.gen(function* () {
