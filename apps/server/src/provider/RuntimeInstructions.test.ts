@@ -5,6 +5,9 @@ describe("buildRuntimeInstructions", () => {
   it("forbids name-matched process cleanup and requires exact owned identity", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
     expect(instructions).toContain("Do not use pkill, killall, or pgrep piped to kill");
+    expect(instructions).toContain(
+      "Never stop a process by matching its name, command, path, port string, or worktree text.",
+    );
     expect(instructions).toContain("exact PID, start identity, and ownership");
     expect(instructions).toContain("descendant of this T3 backend");
     expect(instructions).toContain("Preserve and target the recorded process group");
