@@ -19,7 +19,10 @@ import { terminalEnvironment } from "../state/terminal";
 import { threadEnvironment } from "../state/threads";
 import { vcsEnvironment } from "../state/vcs";
 import { useNewThreadHandler } from "./useHandleNewThread";
-import { refreshArchivedThreadsForEnvironment } from "../lib/archivedThreadsState";
+import {
+  fetchArchivedThreadShells,
+  refreshArchivedThreadsForEnvironment,
+} from "../lib/archivedThreadsState";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
 import {
@@ -36,7 +39,10 @@ import {
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
-import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
+import {
+  formatWorktreePathForDisplay,
+  resolveOrphanedWorktreePathForDelete,
+} from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -123,6 +129,35 @@ export class ThreadPinReorderUnsupportedError extends Schema.TaggedError<ThreadP
   override get message(): string {
     return "This environment's server does not support reordering pinned threads yet. Update the server to reorder pins.";
   }
+}
+
+/** Resolves the thread a delete acts on. The main shell store excludes archived
+    threads, so on a miss this fetches the environment's archived snapshot (the
+    cached atom is only warm while Settings → Archived is open). Fails soft: a
+    failed or empty fetch resolves to null and the delete proceeds without
+    worktree cleanup, as before. */
+export async function resolveThreadDeleteTarget<Thread extends { readonly id: ThreadId }>(input: {
+  readonly target: ScopedThreadRef;
+  readonly resolveActive: (
+    target: ScopedThreadRef,
+  ) => { readonly thread: Thread; readonly threadRef: ScopedThreadRef } | null;
+  readonly fetchArchived: (environmentId: EnvironmentId) => Promise<ReadonlyArray<Thread> | null>;
+}): Promise<ResolvedThreadDeleteTarget<Thread> | null> {
+  const resolved = input.resolveActive(input.target);
+  if (resolved) return resolved;
+
+  const archivedThreads = await input.fetchArchived(input.target.environmentId);
+  if (!archivedThreads) return null;
+  const archivedThread = archivedThreads.find((thread) => thread.id === input.target.threadId);
+  if (!archivedThread) return null;
+  // Returned so the worktree orphan check can reuse the same fetch.
+  return { thread: archivedThread, threadRef: input.target, archivedThreads };
+}
+
+export interface ResolvedThreadDeleteTarget<Thread> {
+  readonly thread: Thread;
+  readonly threadRef: ScopedThreadRef;
+  readonly archivedThreads?: ReadonlyArray<Thread>;
 }
 
 export class ThreadActiveReorderUnsupportedError extends Schema.TaggedError<ThreadActiveReorderUnsupportedError>()(
@@ -242,6 +277,15 @@ export function useThreadActions() {
       threadRef: target,
     };
   }, []);
+  const resolveDeletableThreadTarget = useCallback(
+    (target: ScopedThreadRef) =>
+      resolveThreadDeleteTarget({
+        target,
+        resolveActive: resolveThreadTarget,
+        fetchArchived: fetchArchivedThreadShells,
+      }),
+    [resolveThreadTarget],
+  );
   const getCurrentRouteThreadRef = useCallback(() => {
     const currentRouteParams = router.state.matches[router.state.matches.length - 1]?.params ?? {};
     return resolveThreadRouteRef(currentRouteParams);
@@ -312,9 +356,11 @@ export function useThreadActions() {
 
   const deleteThread = useCallback(
     async (target: ScopedThreadRef, opts: { deletedThreadKeys?: ReadonlySet<string> } = {}) => {
-      const resolved = resolveThreadTarget(target);
+      const resolved = await resolveDeletableThreadTarget(target);
       if (!resolved) {
-        // Thread not in main store (e.g. archived thread) — dispatch delete directly.
+        // Thread not found in either store, or the archived fetch failed
+        // (e.g. offline) — dispatch delete directly for idempotency rather
+        // than block on a retry.
         const result = await deleteThreadMutation({
           environmentId: target.environmentId,
           input: { threadId: target.threadId },
@@ -324,7 +370,7 @@ export function useThreadActions() {
         }
         return result;
       }
-      const { thread, threadRef } = resolved;
+      const { thread, threadRef, archivedThreads: resolvedArchivedThreads } = resolved;
       const threads = readEnvironmentThreadRefs(threadRef.environmentId).flatMap((ref) => {
         const shell = readThreadShell(ref);
         return shell === null ? [] : [shell];
@@ -346,10 +392,20 @@ export function useThreadActions() {
         deletedIds && deletedIds.size > 0
           ? threads.filter((entry) => entry.id === threadRef.threadId || !deletedIds.has(entry.id))
           : threads;
-      const orphanedWorktreePath = getOrphanedWorktreePathForThread(
-        survivingThreads,
-        threadRef.threadId,
-      );
+      // `threads` only holds active threads; an archived target must be added.
+      const orphanCheckThreads = survivingThreads.some((entry) => entry.id === threadRef.threadId)
+        ? survivingThreads
+        : [...survivingThreads, thread];
+      // Archived siblings still link the worktree, so they count in the orphan
+      // check. Reuse the fetch from target resolution when there was one.
+      const orphanedWorktreePath = await resolveOrphanedWorktreePathForDelete({
+        threads: orphanCheckThreads,
+        threadId: threadRef.threadId,
+        fetchArchivedThreads: () =>
+          resolvedArchivedThreads !== undefined
+            ? Promise.resolve(resolvedArchivedThreads)
+            : fetchArchivedThreadShells(threadRef.environmentId),
+      });
       const displayWorktreePath = orphanedWorktreePath
         ? formatWorktreePathForDisplay(orphanedWorktreePath)
         : null;
@@ -490,8 +546,8 @@ export function useThreadActions() {
       getCurrentRouteThreadRef,
       refreshVcsStatus,
       removeWorktree,
+      resolveDeletableThreadTarget,
       router,
-      resolveThreadTarget,
       sidebarThreadSortOrder,
       stopThreadSession,
     ],
@@ -725,9 +781,10 @@ export function useThreadActions() {
   const confirmAndDeleteThread = useCallback(
     async (target: ScopedThreadRef) => {
       const localApi = readLocalApi();
-      const resolved = resolveThreadTarget(target);
 
       if (confirmThreadDelete && localApi) {
+        // Archived-aware so an archived thread's real title shows in the prompt.
+        const resolved = await resolveDeletableThreadTarget(target);
         const title = resolved?.thread.title ?? "this thread";
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
@@ -748,7 +805,7 @@ export function useThreadActions() {
 
       return deleteThread(target);
     },
-    [confirmThreadDelete, deleteThread, resolveThreadTarget],
+    [confirmThreadDelete, deleteThread, resolveDeletableThreadTarget],
   );
 
   return useMemo(

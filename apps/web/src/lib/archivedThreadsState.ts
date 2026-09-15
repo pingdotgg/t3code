@@ -4,6 +4,8 @@ import {
   createArchivedThreadSnapshotsAtomFamily,
   makeArchivedThreadsEnvironmentKey,
 } from "@t3tools/client-runtime/state/threads";
+import { type EnvironmentThreadShell, scopeThreadShell } from "@t3tools/client-runtime/state/shell";
+import { executeAtomQuery } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
 
@@ -24,6 +26,26 @@ const archivedSnapshotsAtom = createArchivedThreadSnapshotsAtomFamily({
 
 export function refreshArchivedThreadsForEnvironment(environmentId: EnvironmentId): void {
   appAtomRegistry.refresh(archivedSnapshotAtom(environmentId));
+}
+
+const ARCHIVED_FETCH_TIMEOUT_MS = 5_000;
+
+/** Fetches fresh archived shells before checking worktree ownership. Cached
+    snapshots may omit a sibling archived on another client, so failures return
+    null and callers skip worktree cleanup while allowing thread deletion. */
+export async function fetchArchivedThreadShells(
+  environmentId: EnvironmentId,
+): Promise<ReadonlyArray<EnvironmentThreadShell> | null> {
+  const atom = archivedSnapshotAtom(environmentId);
+  const result = await executeAtomQuery(appAtomRegistry, atom, {
+    refresh: true,
+    timeoutMs: ARCHIVED_FETCH_TIMEOUT_MS,
+    reportDefect: false,
+    reportFailure: false,
+  });
+  return result._tag === "Success"
+    ? result.value.threads.map((thread) => scopeThreadShell(environmentId, thread))
+    : null;
 }
 
 export function useArchivedThreadSnapshots(environmentIds: ReadonlyArray<EnvironmentId>): {
