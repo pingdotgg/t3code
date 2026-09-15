@@ -1,12 +1,17 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  CheckpointRef,
+  EventId,
   ProjectId,
   ProviderInstanceId,
   PullRequestOperationError,
   ThreadId,
+  TurnId,
   type OrchestrationCommand,
+  type OrchestrationCheckpointSummary,
   type OrchestrationProjectShell,
   type OrchestrationShellSnapshot,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   type PullRequestSummary,
   type ServerSettings,
@@ -19,6 +24,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
@@ -153,6 +159,15 @@ function makeBranchPullRequest(
 
 interface HarnessOptions {
   readonly snapshot: OrchestrationShellSnapshot;
+  readonly verificationEvidence?: Readonly<
+    Record<
+      string,
+      {
+        readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+        readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+      }
+    >
+  >;
   readonly settings?: ServerSettings;
   readonly branchPullRequest?: GitManager["Service"]["branchPullRequest"];
   readonly pullRequestSummary?: PullRequestService["Service"]["summary"];
@@ -243,6 +258,22 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           Effect.tap((count) => Queue.offer(snapshotReads, count)),
           Effect.andThen(Ref.get(snapshots)),
         ),
+      getThreadDetailById: (threadId) =>
+        Ref.get(snapshots).pipe(
+          Effect.map((current) => {
+            const thread = current.threads.find((candidate) => candidate.id === threadId);
+            if (!thread) return Option.none();
+            const evidence = options.verificationEvidence?.[threadId];
+            return Option.some({
+              ...thread,
+              deletedAt: null,
+              messages: [],
+              proposedPlans: [],
+              activities: evidence?.activities ?? [],
+              checkpoints: evidence?.checkpoints ?? [],
+            });
+          }),
+        ),
     }),
     Layer.mock(GitManager)({
       branchPullRequest,
@@ -330,6 +361,58 @@ describe("ThreadSettlementReactor", () => {
     });
     assert.strictEqual(base, unrelated);
   });
+
+  it.effect("keeps an otherwise eligible thread active when verification is stale", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const mutation: OrchestrationThreadActivity = {
+          id: EventId.make("mutation"),
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "File change",
+          payload: { itemType: "file_change", status: "completed" },
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-08-20T00:02:00.000Z",
+        };
+        const verification: OrchestrationThreadActivity = {
+          id: EventId.make("verification"),
+          tone: "tool",
+          kind: "tool.completed",
+          summary: "Ran command",
+          payload: {
+            itemType: "command_execution",
+            status: "completed",
+            detail: "vp test run apps/server/src/orchestration/ThreadSettlementPolicy.test.ts",
+          },
+          turnId: TurnId.make("turn-1"),
+          createdAt: "2026-08-20T00:01:00.000Z",
+        };
+        const changedCheckpoint: OrchestrationCheckpointSummary = {
+          turnId: TurnId.make("turn-1"),
+          checkpointTurnCount: 1,
+          checkpointRef: CheckpointRef.make("refs/t3/checkpoints/stale/turn/1"),
+          status: "ready",
+          files: [{ path: "src/index.ts", kind: "modified", additions: 1, deletions: 0 }],
+          assistantMessageId: null,
+          completedAt: "2026-08-20T00:03:00.000Z",
+        };
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("stale")]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          verificationEvidence: {
+            stale: { activities: [verification, mutation], checkpoints: [changedCheckpoint] },
+          },
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
 
   it.effect(
     "settles all-terminal links from snapshots and keeps open or unsynced links active",

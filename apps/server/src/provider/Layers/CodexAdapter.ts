@@ -2297,6 +2297,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
         // after the stop and often sparse, so keep the session's merged view of
         // it and read it when a turn fails on the limit.
         let rateLimits: CodexRateLimitSnapshot | undefined;
+        const startedCollabTaskIds = new Set<RuntimeTaskId>();
         const sessionScope = yield* Scope.make("sequential");
         let sessionScopeTransferred = false;
         yield* Effect.addFinalizer(() =>
@@ -2398,6 +2399,15 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             }
 
             const mappedEvents = mapToRuntimeEvents(event, event.threadId).map((runtimeEvent) => {
+              if (runtimeEvent.type === "task.started" && event.method.startsWith("collabAgent/")) {
+                if (startedCollabTaskIds.has(runtimeEvent.payload.taskId)) {
+                  return {
+                    ...runtimeEvent,
+                    type: "task.updated",
+                  } satisfies ProviderRuntimeEvent;
+                }
+                startedCollabTaskIds.add(runtimeEvent.payload.taskId);
+              }
               if (runtimeEvent.type === "turn.completed" && runtimeEvent.turnId) {
                 return {
                   ...runtimeEvent,

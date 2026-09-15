@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  CheckpointRef,
+  EventId,
   ProviderInstanceId,
   ThreadId,
   ProjectId,
   TurnId,
+  type OrchestrationCheckpointSummary,
+  type OrchestrationThreadActivity,
   type OrchestrationThreadShell,
   type ThreadPullRequestLink,
 } from "@t3tools/contracts";
-import { type SettlementPullRequest, resolveAutoSettlementAt } from "./ThreadSettlementPolicy.ts";
+import {
+  type SettlementPullRequest,
+  resolveAutoSettlementAt,
+  verificationAllowsAutoSettlement,
+} from "./ThreadSettlementPolicy.ts";
 
 const NOW = "2026-08-28T12:00:00.000Z";
 const makeThread = (
@@ -48,6 +56,158 @@ const decide = (
     autoSettleAfterDays: settings.days === undefined ? 3 : settings.days,
     autoSettleOnMerge: settings.merge ?? true,
   }) !== null;
+
+function toolActivity(input: {
+  readonly id: string;
+  readonly createdAt: string;
+  readonly itemType: "command_execution" | "file_change";
+  readonly status: "completed" | "failed";
+  readonly detail?: string;
+  readonly data?: unknown;
+}): OrchestrationThreadActivity {
+  return {
+    id: EventId.make(input.id),
+    tone: "tool",
+    kind: "tool.completed",
+    summary: "Tool",
+    payload: {
+      itemType: input.itemType,
+      status: input.status,
+      ...(input.detail ? { detail: input.detail } : {}),
+      ...(input.data === undefined ? {} : { data: input.data }),
+    },
+    turnId: TurnId.make("turn-1"),
+    createdAt: input.createdAt,
+  };
+}
+
+function checkpoint(files: ReadonlyArray<string>): OrchestrationCheckpointSummary {
+  return {
+    turnId: TurnId.make("turn-1"),
+    checkpointTurnCount: 1,
+    checkpointRef: CheckpointRef.make("refs/t3/checkpoints/thread-1/turn/1"),
+    status: "ready",
+    files: files.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+    assistantMessageId: null,
+    completedAt: "2026-08-28T11:04:00.000Z",
+  };
+}
+
+describe("verificationAllowsAutoSettlement", () => {
+  const mutation = toolActivity({
+    id: "mutation",
+    createdAt: "2026-08-28T11:00:00.000Z",
+    itemType: "file_change",
+    status: "completed",
+  });
+
+  it("accepts a recognized successful verification after a successful mutation", () => {
+    const verification = toolActivity({
+      id: "verification",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      detail:
+        "/bin/bash -lc 'vp test run apps/server/src/orchestration/ThreadSettlementPolicy.test.ts'",
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, verification],
+        checkpoints: [checkpoint(["apps/server/src/orchestration/ThreadSettlementPolicy.ts"])],
+      }),
+    ).toBe(true);
+  });
+
+  it("recognizes projected provider command data and package-manager vp execution", () => {
+    const verification = toolActivity({
+      id: "verification",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      detail: "tests passed",
+      data: { command: "corepack pnpm exec vp test run apps/server/src/example.test.ts" },
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, verification],
+        checkpoints: [checkpoint(["apps/server/src/example.ts"])],
+      }),
+    ).toBe(true);
+  });
+
+  it("rejects output that resembles verification and compound shell commands", () => {
+    const outputOnly = toolActivity({
+      id: "output-only",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      detail: "tests passed",
+      data: { rawOutput: { content: "vp test run" } },
+    });
+    const compound = toolActivity({
+      id: "compound",
+      createdAt: "2026-08-28T11:02:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      data: { command: "vp test run || true" },
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, outputOnly, compound],
+        checkpoints: [checkpoint(["apps/server/src/example.ts"])],
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects verification that predates the latest successful mutation", () => {
+    const staleVerification = toolActivity({
+      id: "stale-verification",
+      createdAt: "2026-08-28T10:59:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      detail: "vp test run apps/server/src/orchestration/ThreadSettlementPolicy.test.ts",
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [staleVerification, mutation],
+        checkpoints: [checkpoint(["apps/server/src/orchestration/ThreadSettlementPolicy.ts"])],
+      }),
+    ).toBe(false);
+  });
+
+  it("does not recognize a failed verification command", () => {
+    const failedVerification = toolActivity({
+      id: "failed-verification",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "failed",
+      detail: "vp test run apps/server/src/orchestration/ThreadSettlementPolicy.test.ts",
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, failedVerification],
+        checkpoints: [checkpoint(["apps/server/src/orchestration/ThreadSettlementPolicy.ts"])],
+      }),
+    ).toBe(false);
+  });
+
+  it("allows threads with no mutation evidence and blocks uninspectable changed checkpoints", () => {
+    expect(
+      verificationAllowsAutoSettlement({ activities: [], checkpoints: [checkpoint([])] }),
+    ).toBe(true);
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [],
+        checkpoints: [checkpoint(["apps/server/src/orchestration/ThreadSettlementPolicy.ts"])],
+      }),
+    ).toBe(false);
+  });
+});
 
 describe("resolveAutoSettlementAt", () => {
   it("returns the last activity time for persisted settlement", () => {

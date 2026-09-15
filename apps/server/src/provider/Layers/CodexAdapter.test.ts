@@ -1103,7 +1103,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         events.map((event) => event.type),
         [
           "task.started",
-          "task.started",
+          "task.updated",
           "task.updated",
           "task.updated",
           "task.updated",
@@ -1126,6 +1126,49 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       NodeAssert.equal("status" in blankMetadataPayload, false);
       NodeAssert.equal("model" in blankMetadataPayload, false);
       NodeAssert.equal("effort" in blankMetadataPayload, false);
+    }),
+  );
+
+  it.effect("emits one task start per child and preserves the activity-only fallback", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+        Effect.forkChild,
+      );
+      const childEvent = (id: string, method: string, agentThreadId: string) => ({
+        id: asEventId(id),
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method,
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+        payload: {
+          agentThreadId,
+          agentPath: `/root/${agentThreadId}`,
+          activityKind: "started",
+        },
+      });
+
+      yield* runtime.emit(childEvent("evt-child-started", "collabAgent/started", "child-1"));
+      yield* runtime.emit(childEvent("evt-child-duplicate", "collabAgent/activity", "child-1"));
+      yield* runtime.emit(
+        childEvent("evt-fallback-start", "collabAgent/activity", "activity-only"),
+      );
+      yield* runtime.emit(
+        childEvent("evt-fallback-duplicate", "collabAgent/activity", "activity-only"),
+      );
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      NodeAssert.deepStrictEqual(
+        events.map((event) => ({ type: event.type, taskId: event.payload.taskId })),
+        [
+          { type: "task.started", taskId: "child-1" },
+          { type: "task.updated", taskId: "child-1" },
+          { type: "task.started", taskId: "activity-only" },
+          { type: "task.updated", taskId: "activity-only" },
+        ],
+      );
     }),
   );
 

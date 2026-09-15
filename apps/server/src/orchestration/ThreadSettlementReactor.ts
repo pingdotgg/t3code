@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schedule from "effect/Schedule";
 import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -23,6 +24,7 @@ import {
   isAutoSettlementCandidate,
   resolveAutoSettlementAt,
   type SettlementPullRequest,
+  verificationAllowsAutoSettlement,
 } from "./ThreadSettlementPolicy.ts";
 
 export class ThreadSettlementReactor extends Context.Service<
@@ -114,6 +116,18 @@ export const make = Effect.gen(function* () {
         });
         if (settledAt === null) {
           return thread;
+        }
+        const detail = yield* snapshots.getThreadDetailById(thread.id, {
+          activityKinds: ["tool.completed"],
+        });
+        if (
+          Option.isNone(detail) ||
+          !verificationAllowsAutoSettlement({
+            activities: detail.value.activities,
+            checkpoints: detail.value.checkpoints,
+          })
+        ) {
+          return null;
         }
         const uuid = yield* crypto.randomUUIDv4;
         yield* engine.dispatch({

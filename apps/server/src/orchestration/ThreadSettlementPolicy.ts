@@ -1,5 +1,10 @@
-import type { OrchestrationThreadShell } from "@t3tools/contracts";
+import type {
+  OrchestrationCheckpointSummary,
+  OrchestrationThreadActivity,
+  OrchestrationThreadShell,
+} from "@t3tools/contracts";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
+import * as Predicate from "effect/Predicate";
 
 export interface SettlementPullRequest {
   readonly state: "open" | "closed" | "merged";
@@ -10,6 +15,106 @@ export interface SettlementPullRequest {
 
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
+const VERIFICATION_COMMANDS = [
+  /^(?:(?:(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+exec\s+)?vp)\s+(?:test(?:\s+run)?|lint|typecheck|check)(?:\s|$)/u,
+  /^(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+(?:(?:run\s+)?(?:test|lint|typecheck|check))(?:[\s:]|$)/u,
+  /^(?:(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+exec\s+)?(?:vitest|pytest)(?:\s|$)/u,
+  /^(?:bunx|npx)\s+(?:vitest|pytest)(?:\s|$)/u,
+  /^python3?\s+-m\s+(?:pytest|unittest)(?:\s|$)/u,
+  /^cargo\s+test(?:\s|$)/u,
+  /^go\s+test(?:\s|$)/u,
+  /^dotnet\s+test(?:\s|$)/u,
+  /^mvn\s+test(?:\s|$)/u,
+  /^(?:gradle|\.\/gradlew)\s+(?:test|check)(?:\s|$)/u,
+  /^git\s+diff\s+--check(?:\s|$)/u,
+] as const;
+
+function normalizeCommand(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  const shellWrapped = trimmed.match(
+    /^(?:\/(?:usr\/)?bin\/)?(?:ba|z|)sh\s+-lc\s+(['"])([\s\S]*)\1$/u,
+  );
+  const command = (shellWrapped?.[2] ?? trimmed).trim();
+  if (/[;&|`]|\$\(/u.test(command)) return null;
+  return command;
+}
+
+function commandFromActivity(activity: OrchestrationThreadActivity): string | null {
+  if (!Predicate.isObject(activity.payload)) return null;
+  const data = Predicate.isObject(activity.payload.data) ? activity.payload.data : undefined;
+  const item = data && Predicate.isObject(data.item) ? data.item : undefined;
+  const itemInput = item && Predicate.isObject(item.input) ? item.input : undefined;
+  const itemResult = item && Predicate.isObject(item.result) ? item.result : undefined;
+  const candidates = [
+    data?.command,
+    item?.command,
+    itemInput?.command,
+    itemResult?.command,
+    activity.payload.detail,
+  ];
+  return candidates.map(normalizeCommand).find((command) => command !== null) ?? null;
+}
+
+function isVerificationCommand(command: string | null): boolean {
+  return command !== null && VERIFICATION_COMMANDS.some((pattern) => pattern.test(command));
+}
+
+function successfulToolActivity(
+  activity: OrchestrationThreadActivity,
+  itemType: "command_execution" | "file_change",
+): boolean {
+  if (activity.kind !== "tool.completed" || !Predicate.isObject(activity.payload)) return false;
+  return activity.payload.itemType === itemType && activity.payload.status === "completed";
+}
+
+function compareActivityOrder(
+  left: OrchestrationThreadActivity,
+  right: OrchestrationThreadActivity,
+): number {
+  if (left.sequence !== undefined && right.sequence !== undefined) {
+    return left.sequence - right.sequence;
+  }
+  return Date.parse(left.createdAt) - Date.parse(right.createdAt);
+}
+
+function latestActivity(
+  activities: ReadonlyArray<OrchestrationThreadActivity>,
+): OrchestrationThreadActivity | null {
+  return activities.reduce<OrchestrationThreadActivity | null>(
+    (latest, activity) =>
+      latest === null || compareActivityOrder(activity, latest) > 0 ? activity : latest,
+    null,
+  );
+}
+
+/** Automatic settlement only accepts inspectable verification after the last mutation. */
+export function verificationAllowsAutoSettlement(input: {
+  readonly activities: ReadonlyArray<OrchestrationThreadActivity>;
+  readonly checkpoints: ReadonlyArray<OrchestrationCheckpointSummary>;
+}): boolean {
+  const mutations = input.activities.filter((activity) =>
+    successfulToolActivity(activity, "file_change"),
+  );
+  const hasChangedCheckpoint = input.checkpoints.some(
+    (checkpoint) => checkpoint.status === "ready" && checkpoint.files.length > 0,
+  );
+  if (mutations.length === 0) return !hasChangedCheckpoint;
+
+  const latestMutation = latestActivity(mutations);
+  const latestVerification = latestActivity(
+    input.activities.filter(
+      (activity) =>
+        successfulToolActivity(activity, "command_execution") &&
+        isVerificationCommand(commandFromActivity(activity)),
+    ),
+  );
+  return (
+    latestMutation !== null &&
+    latestVerification !== null &&
+    compareActivityOrder(latestVerification, latestMutation) >= 0
+  );
+}
 
 function latestTimestamp(values: ReadonlyArray<string | null | undefined>): string | null {
   let latest: string | null = null;
