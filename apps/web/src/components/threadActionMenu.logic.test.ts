@@ -67,7 +67,7 @@ describe("buildThreadActionMenuItems", () => {
       (item) => item.id === "snooze",
     );
     expect(snooze?.disabled).toBe(true);
-    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour"]);
+    expect(snooze?.children?.map((child) => child.id)).toEqual(["snooze:hour", "snooze:custom"]);
   });
 
   it("disables title regeneration while one is in flight", () => {
