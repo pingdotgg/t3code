@@ -77,6 +77,14 @@ const makeTools = (): ToolsCalls & VoiceToolExecutor => {
       executor.calls.push({ tool: "observeThread", input });
       throw new Error("observeThread is not part of this fixture");
     },
+    async listControls(input) {
+      executor.calls.push({ tool: "listControls", input });
+      return { controls: [] };
+    },
+    async clickControl(input) {
+      executor.calls.push({ tool: "clickControl", input });
+      return { controlId: input.controlId, state: "activated" as const };
+    },
   } as ToolsCalls & VoiceToolExecutor;
   return executor;
 };
@@ -103,10 +111,18 @@ describe("navigating voice tool executor", () => {
 
     await executor.execute("voice.searchThreads", { query: "macroscope" });
     await executor.execute("discoverEnvironments", {});
+    await executor.execute("voice.listControls", { query: "settings" });
+    await executor.execute("voice.clickControl", { controlId: "button#1:Settings" });
 
     const searched = tools.calls.find((call) => call.tool === "searchThreads");
     expect(searched?.input).toEqual({ query: "macroscope" });
     expect(tools.calls.some((call) => call.tool === "discoverEnvironments")).toBe(true);
+    expect(tools.calls.find((call) => call.tool === "listControls")?.input).toEqual({
+      query: "settings",
+    });
+    expect(tools.calls.find((call) => call.tool === "clickControl")?.input).toEqual({
+      controlId: "button#1:Settings",
+    });
     expect(navigator.destinations).toHaveLength(0);
   });
 

@@ -10,6 +10,6 @@ export const allowsThreadCreation = (text: string) =>
 /** Hold the model's audio while an imperative UI request is being resolved.
  * The dispatcher releases the hold for questions, errors and substantive work. */
 export const isUiCommandPrefix = (text: string) =>
-  /^(?:(?:please|can you|could you)\s+)?(?:open|show|switch|go|navigate|make|create|start)\b/i.test(
+  /^(?:(?:please|can you|could you)\s+)?(?:open|show|switch|go|navigate|make|create|start|click|press|tap|toggle|select)\b/i.test(
     text.trim(),
   );

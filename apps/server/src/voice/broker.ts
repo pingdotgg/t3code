@@ -116,6 +116,13 @@ export const DEFAULT_DELEGATION_INSTRUCTIONS =
   "workspaces. Prefer the narrowest tool that answers the request. Tool " +
   "results are returned by the client; never invent tool output. When a " +
   "request is ambiguous, ask one short clarifying question.\n" +
+  "To operate the attached interface itself, list its controls with " +
+  "listControls and activate one with clickControl. A clickControl result " +
+  'is success only when its state is "activated"; disabled, hidden, stale ' +
+  "and ambiguous targets must be reported as such, never as success. " +
+  "Reuse a recent listing before listing again; re-list when a target is " +
+  "stale. Opening a menu or dialog first may be required before its items " +
+  "are listed.\n" +
   "An update about an existing thread uses readThread/observeThread. Asking that thread's worker for an update or further work uses continueThread with its existing environmentId and threadId. Resolve references from current UI context and search/read tools; ask if ambiguous. Never use startThread as a substitute for continuing or reading an existing thread, even if it cannot be found. startThread requires an explicit request to create a new thread. Successful navigation needs no verbal confirmation; the application plays a chime.\n" +
   "The session status rules below apply to continueThread as well as startThread.\n" +
   "Session status semantics for voice.startThread: the thread started only " +
@@ -186,6 +193,10 @@ const VOICE_TOOL_DESCRIPTIONS: Record<keyof typeof VoiceToolSchemas, string> = {
   continueThread:
     "Send a follow-up or request an update from the worker in an EXISTING thread. Preserves its history, model, project and workspace. Never creates a thread.",
   observeThread: "Observe progress and completion of work running in a thread.",
+  listControls:
+    "List the attached T3 window's activatable interface controls (buttons, links, menu items, tabs, form controls) with stable ids, including disabled and optionally hidden ones.",
+  clickControl:
+    "Activate one listed interface control by its id in the attached T3 window. Success only when the result state is activated; disabled, hidden, stale and ambiguous targets are reported explicitly.",
 };
 
 export const voiceBrokerToolDefinitions = () =>
