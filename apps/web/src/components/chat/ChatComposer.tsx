@@ -186,6 +186,7 @@ import {
   COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX,
   getRestingComposerImagePreviewCounts,
   resolveRestingComposerControlsLayout,
+  resolveRestingHiddenBlockIds,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -4853,14 +4854,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const restingHiddenBlockCount = composerControlsInStrip ? restingControlsHiddenBlockCount : 0;
   const composerControlsCompact = !composerControlsInStrip && isComposerFooterCompact;
-  // Which blocks the footer would render, in order, so each block's own
-  // `hidden` prop and the overflow menu read the same slice.
+  // Which blocks the footer would render, in order. The wrapper that takes a
+  // block out of flow, the block's own `hidden` prop, and the overflow menu
+  // all read the one hidden list, so they cannot disagree.
   const restingBlockIds = [
     ...(providerTraitsPicker ? ["traits"] : []),
     "mode",
     ...(showUsageLimitsMeter ? ["usage-limits"] : []),
   ];
-  const hiddenIds = restingBlockIds.slice(restingBlockIds.length - restingHiddenBlockCount);
+  const hiddenIds = resolveRestingHiddenBlockIds(restingBlockIds, restingHiddenBlockCount);
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: "xs",
@@ -5001,11 +5003,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         />
       ) : (
         <>
-          {restingBlockDefs.map((def, index) => {
+          {restingBlockDefs.map((def) => {
             if (!composerControlsInStrip) {
               return <Fragment key={def.id}>{def.content}</Fragment>;
             }
-            const hidden = index >= restingBlockDefs.length - restingHiddenBlockCount;
+            const hidden = hiddenIds.includes(def.id);
             return (
               <div
                 key={def.id}

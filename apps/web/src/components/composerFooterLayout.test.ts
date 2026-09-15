@@ -10,6 +10,7 @@ import {
   resolveScrollToEndClearance,
   resolveRestingComposerControlsLayout,
   resolveRestingComposerControlsNaturalWidth,
+  resolveRestingHiddenBlockIds,
   shouldAnimateComposerRestingTransition,
   shouldUseCompactComposerPrimaryActions,
   shouldUseCompactComposerFooter,
@@ -463,5 +464,126 @@ describe("resolveScrollToEndClearance", () => {
         overlayHeight,
       );
     }
+  });
+});
+
+describe("resolveRestingComposerControlsLayout invariants", () => {
+  const GAP = 4;
+  const OVERFLOW = 24;
+  // Trailing blocks are added from the left, so a 3-block case is the
+  // traits/mode/meter footer and a 1-block case is mode alone.
+  const ALL_BLOCK_WIDTHS = [60, 140, 78];
+  // The meter is deliberately narrower than the overflow trigger it would
+  // otherwise raise, which is the case menulessTrailingCount exists for.
+  const cases = ALL_BLOCK_WIDTHS.map((_, index) => ALL_BLOCK_WIDTHS.slice(0, index + 1));
+
+  const measurement = (blockWidths: readonly number[], menulessTrailingCount: number) => ({
+    gap: GAP,
+    naturalFixedWidth: 149,
+    minimumFixedWidth: 105,
+    blockWidths,
+    overflowWidth: OVERFLOW,
+    menulessTrailingCount,
+  });
+
+  /** The width rule restated, so the assertions never chase the implementation. */
+  const widthAt = (
+    input: ReturnType<typeof measurement>,
+    hiddenCount: number,
+    options?: { withOverflow?: boolean },
+  ) => {
+    const visibleCount = input.blockWidths.length - hiddenCount;
+    const showsOverflow = options?.withOverflow ?? hiddenCount > input.menulessTrailingCount;
+    return (
+      input.naturalFixedWidth +
+      input.blockWidths.slice(0, visibleCount).reduce((sum, width) => sum + width, 0) +
+      (showsOverflow ? OVERFLOW : 0) +
+      GAP * (visibleCount + (showsOverflow ? 1 : 0))
+    );
+  };
+
+  for (const blockWidths of cases) {
+    for (const menulessTrailingCount of [0, 1]) {
+      const input = measurement(blockWidths, menulessTrailingCount);
+      const label = `${blockWidths.length} blocks, ${menulessTrailingCount} menuless`;
+
+      it(`keeps the overflow decision sound across widths (${label})`, () => {
+        const everythingFits = widthAt(input, 0);
+        let previousHiddenCount = blockWidths.length;
+        for (let hostWidth = 0; hostWidth <= everythingFits + 8; hostWidth += 3) {
+          const { hiddenCount } = resolveRestingComposerControlsLayout({ ...input, hostWidth });
+          // (d) and (a): never more blocks than exist, and growing the host
+          // never moves a block back into the overflow menu.
+          expect(hiddenCount).toBeLessThanOrEqual(blockWidths.length);
+          expect(hiddenCount).toBeLessThanOrEqual(previousHiddenCount);
+          previousHiddenCount = hiddenCount;
+          // (b): a partial hide has to actually fit.
+          if (hiddenCount < blockWidths.length) {
+            expect(widthAt(input, hiddenCount)).toBeLessThanOrEqual(hostWidth);
+          }
+          // (c): hiding only the menuless trailing block raises no trigger, so
+          // its width must not have been reserved.
+          if (
+            menulessTrailingCount === 1 &&
+            hiddenCount === 1 &&
+            hiddenCount < blockWidths.length
+          ) {
+            expect(widthAt(input, 1, { withOverflow: false })).toBeLessThanOrEqual(hostWidth);
+          }
+        }
+        expect(
+          resolveRestingComposerControlsLayout({ ...input, hostWidth: everythingFits }),
+        ).toEqual({ hiddenCount: 0, visible: true });
+      });
+
+      it(`hides no more than a menuless run would need (${label})`, () => {
+        // (c) again, from the other side: not reserving the trigger can only
+        // ever keep more blocks on screen.
+        for (let hostWidth = 0; hostWidth <= widthAt(input, 0) + 8; hostWidth += 3) {
+          const menuless = resolveRestingComposerControlsLayout({ ...input, hostWidth });
+          const withMenus = resolveRestingComposerControlsLayout({
+            ...input,
+            menulessTrailingCount: 0,
+            hostWidth,
+          });
+          expect(menuless.hiddenCount).toBeLessThanOrEqual(withMenus.hiddenCount);
+        }
+      });
+    }
+  }
+
+  it("survives a menuless count larger than the block list, and no blocks at all", () => {
+    // (e): the meter can leave between the measurement and the next render,
+    // and the provider-unavailable footer has no blocks to hide at all.
+    for (const blockWidths of [[], [60], [60, 140]]) {
+      for (const menulessTrailingCount of [1, 3, 9]) {
+        for (const hostWidth of [0, 120, 200, 400]) {
+          const layout = resolveRestingComposerControlsLayout({
+            ...measurement(blockWidths, menulessTrailingCount),
+            hostWidth,
+            previous: { hiddenCount: 5, visible: true },
+          });
+          expect(layout.hiddenCount).toBeGreaterThanOrEqual(0);
+          expect(layout.hiddenCount).toBeLessThanOrEqual(blockWidths.length);
+        }
+      }
+    }
+  });
+});
+
+describe("resolveRestingHiddenBlockIds", () => {
+  const blocks = ["traits", "mode", "usage-limits"] as const;
+
+  it("hides the trailing blocks the count covers", () => {
+    expect(resolveRestingHiddenBlockIds(blocks, 0)).toEqual([]);
+    expect(resolveRestingHiddenBlockIds(blocks, 1)).toEqual(["usage-limits"]);
+    expect(resolveRestingHiddenBlockIds(blocks, 3)).toEqual(["traits", "mode", "usage-limits"]);
+  });
+
+  it("clamps a count left over from a longer measurement", () => {
+    // The meter left between the measurement and this render.
+    expect(resolveRestingHiddenBlockIds(["traits", "mode"], 3)).toEqual(["traits", "mode"]);
+    expect(resolveRestingHiddenBlockIds([], 2)).toEqual([]);
+    expect(resolveRestingHiddenBlockIds(blocks, -1)).toEqual([]);
   });
 });
