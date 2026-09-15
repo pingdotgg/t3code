@@ -159,6 +159,7 @@ function makeBranchPullRequest(
 
 interface HarnessOptions {
   readonly snapshot: OrchestrationShellSnapshot;
+  readonly missingThreadDetailIds?: ReadonlyArray<ThreadId>;
   readonly verificationEvidence?: Readonly<
     Record<
       string,
@@ -261,6 +262,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
       getThreadDetailById: (threadId) =>
         Ref.get(snapshots).pipe(
           Effect.map((current) => {
+            if (options.missingThreadDetailIds?.includes(threadId)) return Option.none();
             const thread = current.threads.find((candidate) => candidate.id === threadId);
             if (!thread) return Option.none();
             const evidence = options.verificationEvidence?.[threadId];
@@ -409,6 +411,28 @@ describe("ThreadSettlementReactor", () => {
           const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
           yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
           assert.deepStrictEqual(yield* Ref.get(fixture.commands), []);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+    ),
+  );
+
+  it.effect("keeps a candidate active when its thread detail is no longer available", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(NOW));
+        const fixture = yield* makeHarness({
+          snapshot: makeSnapshot([makeThread("available"), makeThread("missing-detail")]),
+          settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: 3 },
+          missingThreadDetailIds: [ThreadId.make("missing-detail")],
+        });
+
+        yield* Effect.gen(function* () {
+          const reactor = yield* ThreadSettlementReactor.ThreadSettlementReactor;
+          yield* startHarness(reactor, fixture.activation, fixture.snapshotReads);
+          assert.deepStrictEqual(
+            (yield* Ref.get(fixture.commands)).map(({ threadId }) => threadId),
+            [ThreadId.make("available")],
+          );
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
