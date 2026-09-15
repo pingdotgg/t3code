@@ -102,12 +102,26 @@ export function getProviderVersionLabel(version: string | null | undefined) {
 export function getProviderVersionAdvisoryPresentation(
   advisory: ServerProviderVersionAdvisory | undefined,
 ): {
+  readonly title: string;
+  readonly isCheck: boolean;
   readonly detail: string;
   readonly updateCommand: string | null;
   readonly emphasis: "normal" | "strong";
 } | null {
-  if (!advisory || advisory.status === "current" || advisory.status === "unknown") {
+  if (!advisory || advisory.status === "current") {
     return null;
+  }
+  if (advisory.status === "unknown") {
+    return advisory.canUpdate && advisory.updateCommand
+      ? {
+          title: "Check for updates",
+          isCheck: true,
+          detail:
+            "The latest version is unknown. Run the installer to check for and install updates.",
+          updateCommand: advisory.updateCommand,
+          emphasis: "normal",
+        }
+      : null;
   }
 
   const label = "Update available";
@@ -115,6 +129,8 @@ export function getProviderVersionAdvisoryPresentation(
   const versionLabel = getProviderVersionLabel(version);
 
   return {
+    title: label,
+    isCheck: false,
     detail:
       advisory.message ??
       (versionLabel

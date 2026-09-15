@@ -24,6 +24,7 @@ import {
   getProviderUpdateSidebarPillView,
   hasOneClickUpdateProviderCandidate,
   isProviderUpdateCandidate,
+  isProviderSettingsUpdateCandidate,
   isTerminalProviderUpdatePhase,
   localEnvironmentUpdateNotificationKey,
   providerUpdateNotificationKey,
@@ -90,6 +91,26 @@ function updateCandidate(input: Parameters<typeof provider>[0]): ProviderUpdateC
 }
 
 describe("provider update launch notification logic", () => {
+  it("allows verified unknown-version updates only from Settings", () => {
+    const candidate = provider({
+      driver: driver("codex"),
+      advisoryStatus: "unknown",
+      latestVersion: null,
+    });
+    expect(isProviderSettingsUpdateCandidate(candidate)).toBe(true);
+    expect(isProviderUpdateCandidate(candidate)).toBe(false);
+    for (const override of [
+      { enabled: false },
+      { advisoryStatus: "current" as const },
+      { canUpdate: false },
+      { updateCommand: null },
+    ])
+      expect(
+        isProviderSettingsUpdateCandidate(
+          provider({ driver: driver("codex"), advisoryStatus: "unknown", ...override }),
+        ),
+      ).toBe(false);
+  });
   it("detects enabled providers with a latest-version advisory", () => {
     expect(isProviderUpdateCandidate(provider({ driver: driver("codex") }))).toBe(true);
     expect(isProviderUpdateCandidate(provider({ driver: driver("codex"), enabled: false }))).toBe(
@@ -365,11 +386,12 @@ describe("provider update launch notification logic", () => {
     });
   });
 
-  it("keeps unchanged providers actionable from settings", () => {
+  it("reports the reason for an unchanged provider without claiming it is outdated", () => {
     const view = getProviderUpdateProgressToastView({
       providers: [
         provider({
           driver: driver("cursor"),
+          advisoryStatus: "unknown",
           updateState: {
             status: "unchanged",
             startedAt: checkedAt,
@@ -385,8 +407,8 @@ describe("provider update launch notification logic", () => {
     expect(view).toMatchObject({
       phase: "unchanged",
       type: "warning",
-      title: "Provider still needs an update",
-      description: "Cursor still appears outdated. Check provider settings for details.",
+      title: "Provider unchanged",
+      description: "still old",
     });
   });
 
@@ -556,6 +578,7 @@ describe("provider update launch notification logic", () => {
       [
         provider({
           driver: driver("cursor"),
+          advisoryStatus: "current",
           updateState: {
             status: "unchanged",
             startedAt: checkedAt,
@@ -571,7 +594,8 @@ describe("provider update launch notification logic", () => {
     expect(view).toMatchObject({
       key: "unchanged:cursor:2026-04-23T10:00:00.000Z:still old",
       tone: "warning",
-      title: "Cursor still needs an update",
+      title: "Cursor unchanged",
+      description: "still old",
       dismissible: true,
     });
   });

@@ -56,10 +56,9 @@ import { withInstanceIdentity } from "./instanceIdentity.ts";
 import { mergeProviderInstanceEnvironment } from "../ProviderInstanceEnvironment.ts";
 import {
   enrichProviderSnapshotWithVersionAdvisory,
-  makeCachedProviderMaintenanceResolution,
+  makeProviderMaintenanceResolution,
   makePackageManagedProviderMaintenanceResolver,
   normalizeCommandPath,
-  resolveProviderMaintenanceCapabilitiesEffect,
 } from "../providerMaintenance.ts";
 import {
   haveProviderSnapshotSettingsChanged,
@@ -90,6 +89,7 @@ function makeCodexMaintenanceResolver(sharedHomePath: string) {
   return makePackageManagedProviderMaintenanceResolver({
     provider: DRIVER_KIND,
     npmPackageName: "@openai/codex",
+    wingetPackageId: "OpenAI.Codex",
     nativeUpdate: {
       args: ["update"],
       isCommandPath: isCodexStandaloneCommandPath,
@@ -128,8 +128,6 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
     Effect.gen(function* () {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const resetCreditCoordinator = yield* CodexResetCreditCoordinator;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const pathService = yield* Path.Path;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
@@ -161,18 +159,9 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
         binaryPath: expandHomePath(config.binaryPath),
         homePath: homeLayout.effectiveHomePath ?? "",
       } satisfies CodexSettings;
-      const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
-        resolveProviderMaintenanceCapabilitiesEffect(
-          makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
-          {
-            binaryPath: effectiveConfig.binaryPath,
-            env: processEnv,
-          },
-        ).pipe(
-          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.provideService(FileSystem.FileSystem, fileSystem),
-          Effect.provideService(Path.Path, pathService),
-        ),
+      const resolveMaintenance = yield* makeProviderMaintenanceResolution(
+        makeCodexMaintenanceResolver(homeLayout.sharedHomePath),
+        { binaryPath: effectiveConfig.binaryPath, env: processEnv },
       );
 
       // `makeCodexAdapter` and `makeCodexTextGeneration` have `never` error

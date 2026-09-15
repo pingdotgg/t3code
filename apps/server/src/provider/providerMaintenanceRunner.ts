@@ -8,14 +8,18 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
+import { compareSemverVersions } from "@t3tools/shared/semver";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/unstable/http";
@@ -30,6 +34,7 @@ import {
 } from "./providerMaintenance.ts";
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
+import { prepareWindowsUpdateElevation } from "./windowsUpdateElevation.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
@@ -78,6 +83,7 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
     readonly command: string;
     readonly args: ReadonlyArray<string>;
     readonly env?: NodeJS.ProcessEnv;
+    readonly cancel?: Effect.Effect<boolean>;
   }) {
     const collectCommandResult = Effect.fn("ProviderMaintenanceRunner.collectCommandResult")(
       function* () {
@@ -86,7 +92,10 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
         // which a bare ChildProcess.spawn cannot launch (spawn npm ENOENT);
         // resolveSpawnCommand finds the real `.cmd` and routes it through the
         // shell. On Linux/macOS (incl. the WSL backend) this is a no-op.
-        const resolved = yield* resolveSpawnCommand(input.command, input.args);
+        const resolved = yield* resolveSpawnCommand(input.command, input.args, {
+          ...(input.env ? { env: input.env } : {}),
+          extendEnv: true,
+        });
         const child = yield* input.spawner
           .spawn(
             ChildProcess.make(resolved.command, resolved.args, {
@@ -103,7 +112,19 @@ const runProviderMaintenanceCommandWithSpawner = Effect.fn("ProviderMaintenanceR
                 }),
             ),
           );
-        yield* Effect.addFinalizer(() => child.kill().pipe(Effect.ignore));
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            if (input.cancel) {
+              const workerStarted = yield* input.cancel;
+              // Keep the installation lock until the elevated worker has stopped.
+              // If UAC is still pending, stopping the launcher is safe: a late
+              // worker sees cancellation/a dead parent before starting WinGet.
+              if (!workerStarted) yield* child.kill().pipe(Effect.ignore);
+              yield* child.exitCode.pipe(Effect.ignore);
+            }
+            yield* child.kill().pipe(Effect.ignore);
+          }),
+        );
 
         const [stdout, stderr, exitCode] = yield* Effect.all(
           [
@@ -187,12 +208,24 @@ function failureMessage(result: ProviderMaintenanceCommandResult): string {
   return "Update command failed.";
 }
 
+// Scoop's PowerShell entry point can swallow the update script's exit 1.
+const requiresWindowsAdministrator = (
+  action: ProviderMaintenanceCommandAction,
+  result: ProviderMaintenanceCommandResult,
+) =>
+  action.windowsInstaller?.scope === "machine" &&
+  !result.timedOut &&
+  (action.windowsInstaller.manager === "winget"
+    ? result.exitCode !== null && result.exitCode >>> 0 === 0x8a150019
+    : (result.exitCode === 0 || result.exitCode === 1) &&
+      result.stdout.trim() === "ERROR: You need admin rights to update global apps.");
+
 function isOutdatedProvider(provider: ServerProvider | undefined): boolean {
   return provider?.versionAdvisory?.status === "behind_latest";
 }
 
 function isStillInstalled(provider: ServerProvider): boolean {
-  return provider.installed;
+  return provider.installed && (provider.driver === "cursor" || Boolean(provider.version?.trim()));
 }
 
 function makeUpdateState(input: {
@@ -217,6 +250,9 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const httpClient = yield* HttpClient.HttpClient;
   const versionCache = yield* ProviderVersionCache;
+  const platform = yield* HostProcessPlatform;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const runMaintenanceCommand = (update: ProviderMaintenanceCommandAction) =>
     runProviderMaintenanceCommandWithSpawner({
       spawner,
@@ -376,7 +412,60 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
               );
             }
 
-            const result = yield* runMaintenanceCommand(fresh.update);
+            const versionBeforeUpdate = (yield* providerRegistry.getProviders)
+              .find(
+                (candidate) => candidate.driver === provider && candidate.instanceId === instanceId,
+              )
+              ?.version?.trim();
+            let result: ProviderMaintenanceCommandResult = yield* runMaintenanceCommand(
+              fresh.update,
+            );
+            const needsElevation =
+              platform === "win32" && requiresWindowsAdministrator(fresh.update, result);
+            if (needsElevation) {
+              yield* setUpdateState(
+                makeUpdateState({
+                  status: "running",
+                  startedAt,
+                  finishedAt: null,
+                  message: "Approve the Windows administrator prompt to update this provider.",
+                }),
+              );
+              const elevatedUpdate = fresh.update;
+              result = yield* Effect.gen(function* () {
+                const elevated = yield* prepareWindowsUpdateElevation(
+                  elevatedUpdate,
+                  UPDATE_TIMEOUT_MS,
+                  UPDATE_OUTPUT_MAX_BYTES,
+                );
+                const result = yield* runProviderMaintenanceCommandWithSpawner({
+                  spawner,
+                  ...elevated,
+                });
+                const [stdout, stderr] = yield* elevated.readOutput;
+                return {
+                  ...result,
+                  stdout: stdout?.text || result.stdout,
+                  stderr: stderr?.text || result.stderr,
+                  stdoutTruncated: stdout?.truncated ?? result.stdoutTruncated,
+                  stderrTruncated: stderr?.truncated ?? result.stderrTruncated,
+                  timedOut: result.timedOut || result.exitCode === 1460,
+                };
+              }).pipe(
+                Effect.provideService(FileSystem.FileSystem, fs),
+                Effect.provideService(Path.Path, path),
+                Effect.scoped,
+              );
+            }
+            // WinGet reports "no applicable update" as a nonzero exit. Still
+            // verify the selected provider instead of presenting this as failure.
+            if (
+              fresh.update.windowsInstaller?.manager === "winget" &&
+              result.exitCode !== null &&
+              result.exitCode >>> 0 === 0x8a15002b
+            ) {
+              result = { ...result, exitCode: 0 };
+            }
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
@@ -384,7 +473,10 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                   status: "failed",
                   startedAt,
                   finishedAt,
-                  message: failureMessage(result),
+                  message:
+                    needsElevation && result.exitCode === 1223
+                      ? "Update cancelled: the Windows administrator prompt was declined."
+                      : failureMessage(result),
                   output: commandOutput(result),
                 }),
               );
@@ -403,24 +495,35 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
             );
             // "Succeeded" needs the provider to still be installed: an
             // installer that exits 0 and leaves the binary missing is not a
-            // success. A missing version alone is not held against it, since
-            // Cursor's `about` probe can fail transiently on a healthy binary.
+            // success. Only Cursor tolerates a missing version, since its
+            // `about` probe can fail transiently on a healthy binary.
             const couldNotVerify =
               verifiedProviders.length === 0 ||
               verifiedProviders.some((verifiedProvider) => !isStillInstalled(verifiedProvider));
             const stillOutdated = verifiedProviders.some((verifiedProvider) =>
               isOutdatedProvider(verifiedProvider),
             );
+            const versionUnchanged =
+              provider !== "cursor" &&
+              !verifiedProviders.some(
+                (verifiedProvider) =>
+                  verifiedProvider.version?.trim() &&
+                  (!versionBeforeUpdate ||
+                    compareSemverVersions(versionBeforeUpdate, verifiedProvider.version) < 0),
+              );
             return yield* finish(
               makeUpdateState({
-                status: couldNotVerify || stillOutdated ? "unchanged" : "succeeded",
+                status:
+                  couldNotVerify || stillOutdated || versionUnchanged ? "unchanged" : "succeeded",
                 startedAt,
                 finishedAt,
                 message: couldNotVerify
                   ? "Update command completed, but T3 Code could not verify the provider version."
                   : stillOutdated
                     ? "Update command completed, but T3 Code still detects an outdated provider version."
-                    : "Provider updated.",
+                    : versionUnchanged
+                      ? "Update command completed, but the provider version did not advance."
+                      : "Provider updated.",
                 output: commandOutput(result),
               }),
             );
