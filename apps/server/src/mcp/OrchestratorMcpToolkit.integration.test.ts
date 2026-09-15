@@ -626,6 +626,7 @@ describe("orchestrator MCP toolkit", () => {
           ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
+            Layer.provide(registryLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
             Layer.provide(NodeServices.layer),
@@ -1276,9 +1277,11 @@ describe("orchestrator MCP toolkit", () => {
                   providerInstanceId: claudeInstanceId,
                   canRunCrossProviderChildTask: true,
                 }),
+                // No opencode adapter is registered in this harness, so the
+                // capability view must not claim delegation can target it.
                 expect.objectContaining({
                   providerInstanceId: "opencode",
-                  canRunChildTask: true,
+                  canRunChildTask: false,
                 }),
                 // Models advertise their option descriptors so agents can
                 // discover valid target.options ids and values.
@@ -2971,6 +2974,9 @@ describe("orchestrator MCP toolkit", () => {
         const testLayer = McpHttpServer.OrchestratorToolkitRegistrationLive.pipe(
           Layer.provideMerge(McpServer.McpServer.layer),
           Layer.provideMerge(orchestrationLayer),
+          Layer.provide(
+            CodexOrchestratorReplayHarness.makeProviderAdapterRegistryLayer(transcript),
+          ),
           Layer.provide(providerRegistryLayer),
           Layer.provide(unusedScheduledTaskStubLayer),
           Layer.provide(NodeServices.layer),

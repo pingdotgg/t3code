@@ -45,6 +45,3 @@ const BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2: ReadonlyArray<
 export const BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2: ReadonlySet<ProviderDriverKind> = new Set(
   BUILT_IN_PROVIDER_ADAPTER_DRIVERS_V2.map((driver) => driver.driverKind),
 );
-
-export const isBuiltInProviderAdapterDriverV2 = (driver: ProviderDriverKind): boolean =>
-  BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(driver);
