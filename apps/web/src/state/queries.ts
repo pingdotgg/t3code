@@ -1,4 +1,5 @@
 import { useAtomValue } from "@effect/atom-react";
+import { useThrottledValue } from "@tanstack/react-pacer";
 import {
   type CheckpointDiffTarget,
   type ComposerPathSearchTarget,
@@ -29,7 +30,7 @@ import { projectContentSearch, projectEnvironment } from "./projects";
 import { useEnvironmentQuery } from "./query";
 import { vcsEnvironment } from "./vcs";
 
-const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
+const PROJECT_PATH_SEARCH_THROTTLE_MS = 120;
 const COMPOSER_PATH_SEARCH_LIMIT = 80;
 const PROJECT_CONTENT_SEARCH_DEBOUNCE_MS = 120;
 const PROJECT_CONTENT_SEARCH_LIMIT = 500;
@@ -209,17 +210,23 @@ type ProjectPathSearchTarget = ComposerPathSearchTarget & {
   readonly imageOnly?: boolean | undefined;
 };
 
-export function areProjectPathSearchTargetsEqual(
+function areProjectPathSearchScopesEqual(
   left: ProjectPathSearchTarget,
   right: ProjectPathSearchTarget,
 ): boolean {
   return (
     left.environmentId === right.environmentId &&
     left.cwd === right.cwd &&
-    left.query === right.query &&
     left.kind === right.kind &&
     left.imageOnly === right.imageOnly
   );
+}
+
+export function areProjectPathSearchTargetsEqual(
+  left: ProjectPathSearchTarget,
+  right: ProjectPathSearchTarget,
+): boolean {
+  return areProjectPathSearchScopesEqual(left, right) && left.query === right.query;
 }
 
 export function useProjectPathSearch(
@@ -238,32 +245,65 @@ export function useProjectPathSearch(
     }),
     [target.cwd, target.environmentId, target.imageOnly, target.kind, target.query],
   );
-  const debouncedTarget = useDebouncedValue(normalizedTarget, PROJECT_PATH_SEARCH_DEBOUNCE_MS);
+  const isSearchEnabled =
+    normalizedTarget.environmentId !== null &&
+    normalizedTarget.cwd !== null &&
+    normalizedTarget.query !== null &&
+    (allowEmptyQuery || normalizedTarget.query.length > 0);
+  // Keep results moving while typing instead of waiting for a pause between keys.
+  const [throttledTarget] = useThrottledValue(normalizedTarget, {
+    wait: PROJECT_PATH_SEARCH_THROTTLE_MS,
+    leading: true,
+    trailing: true,
+    enabled: isSearchEnabled,
+  });
   const result = useEnvironmentQuery(
-    debouncedTarget.environmentId !== null &&
-      debouncedTarget.cwd !== null &&
-      debouncedTarget.query !== null &&
-      (allowEmptyQuery || debouncedTarget.query.length > 0)
+    isSearchEnabled &&
+      areProjectPathSearchScopesEqual(normalizedTarget, throttledTarget) &&
+      throttledTarget.environmentId !== null &&
+      throttledTarget.cwd !== null &&
+      throttledTarget.query !== null &&
+      (allowEmptyQuery || throttledTarget.query.length > 0)
       ? projectEnvironment.searchEntries({
-          environmentId: debouncedTarget.environmentId,
+          environmentId: throttledTarget.environmentId,
           input: {
-            cwd: debouncedTarget.cwd,
-            query: debouncedTarget.query,
+            cwd: throttledTarget.cwd,
+            query: throttledTarget.query,
             limit,
-            ...(debouncedTarget.kind ? { kind: debouncedTarget.kind } : {}),
-            ...(debouncedTarget.imageOnly ? { imageOnly: true } : {}),
+            ...(throttledTarget.kind ? { kind: throttledTarget.kind } : {}),
+            ...(throttledTarget.imageOnly ? { imageOnly: true } : {}),
           },
         })
       : null,
   );
 
+  const [lastCompleted, setLastCompleted] = useState<{
+    target: ProjectPathSearchTarget;
+    data: NonNullable<typeof result.data>;
+  } | null>(null);
+  const retained =
+    isSearchEnabled &&
+    lastCompleted !== null &&
+    areProjectPathSearchScopesEqual(normalizedTarget, lastCompleted.target)
+      ? lastCompleted
+      : null;
+  if (result.data !== null && lastCompleted?.data !== result.data) {
+    setLastCompleted({ target: throttledTarget, data: result.data });
+  } else if (lastCompleted !== null && retained === null) {
+    setLastCompleted(null);
+  }
+  // A new query atom starts empty. Keep the list mounted until its response arrives.
+  const visibleData = result.data ?? (result.error === null ? retained?.data : null);
+  const visibleQuery = result.data !== null ? throttledTarget.query : retained?.target.query;
+
   return {
-    entries: result.data?.entries ?? [],
+    entries: visibleData?.entries ?? [],
     error: result.error,
     isPending:
-      !areProjectPathSearchTargetsEqual(normalizedTarget, debouncedTarget) || result.isPending,
-    searchedQuery: debouncedTarget.query ?? "",
-    truncated: result.data?.truncated ?? false,
+      isSearchEnabled &&
+      (!areProjectPathSearchTargetsEqual(normalizedTarget, throttledTarget) || result.isPending),
+    searchedQuery: isSearchEnabled ? (visibleQuery ?? "") : "",
+    truncated: visibleData?.truncated ?? false,
     refresh: result.refresh,
   };
 }
