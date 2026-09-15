@@ -63,9 +63,12 @@ export function useAssetUrls(
   const preparedConnection = usePreparedConnection(environmentId);
   const { canReadFiles } = useFilesystemReadAccess(environmentId);
   const allowedResources = useMemo(
-    () => canReadFiles
-      ? resources
-      : resources.filter((resource) => resource._tag !== "workspace-file" && resource._tag !== "media-file"),
+    () =>
+      canReadFiles
+        ? resources
+        : resources.filter(
+            (resource) => resource._tag !== "workspace-file" && resource._tag !== "media-file",
+          ),
     [canReadFiles, resources],
   );
   const results = useAtomValue(
@@ -74,18 +77,16 @@ export function useAssetUrls(
       resources: allowedResources,
     }),
   );
-  return useMemo(
-    () => {
-      if (preparedConnection._tag === "None") return resources.map(() => null);
-      let resultIndex = 0;
-      return resources.map((resource) => {
-        if (!canReadFiles && (resource._tag === "workspace-file" || resource._tag === "media-file")) return null;
-        const result = results[resultIndex++];
-        return result && AsyncResult.isSuccess(result)
-          ? resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl)
-          : null;
-      });
-    },
-    [canReadFiles, preparedConnection, resources, results],
-  );
+  return useMemo(() => {
+    if (preparedConnection._tag === "None") return resources.map(() => null);
+    let resultIndex = 0;
+    return resources.map((resource) => {
+      if (!canReadFiles && (resource._tag === "workspace-file" || resource._tag === "media-file"))
+        return null;
+      const result = results[resultIndex++];
+      return result && AsyncResult.isSuccess(result)
+        ? resolveAssetUrl(preparedConnection.value.httpBaseUrl, result.value.relativeUrl)
+        : null;
+    });
+  }, [canReadFiles, preparedConnection, resources, results]);
 }
