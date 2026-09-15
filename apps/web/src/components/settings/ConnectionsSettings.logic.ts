@@ -70,3 +70,49 @@ export async function applyWslEnableSelection(input: {
   }
   return await bridge.setWslBackendEnabled(true);
 }
+
+/** Sits under the 10s remote request timeout so the hint lands before a dead host errors out. */
+export const ADD_ENVIRONMENT_SLOW_HINT_MS = 8_000;
+
+export function describeAddEnvironmentProgress(input: {
+  readonly mode: "remote" | "ssh";
+  readonly host: string;
+  readonly elapsedMs: number;
+}): { readonly title: string; readonly detail: string; readonly elapsedLabel: string } {
+  const { mode, host, elapsedMs } = input;
+  const totalSeconds = Math.floor(elapsedMs / 1000);
+  const seconds = totalSeconds % 60;
+  const elapsedLabel = `${Math.floor(totalSeconds / 60)}:${String(seconds).padStart(2, "0")}`;
+  const isSlow = elapsedMs >= ADD_ENVIRONMENT_SLOW_HINT_MS;
+
+  if (mode === "ssh") {
+    return {
+      title: `Connecting to ${host} over SSH…`,
+      detail: isSlow
+        ? "Still working. First-time setup installs T3 Code on the remote machine and can take a few minutes."
+        : "Starting the T3 Code server on the remote machine.",
+      elapsedLabel,
+    };
+  }
+  return {
+    title: `Contacting ${host}…`,
+    detail: isSlow
+      ? "Still waiting for the host. Check that it is reachable from this device."
+      : "Verifying the pairing code and saving the environment.",
+    elapsedLabel,
+  };
+}
+
+/** The host a user typed, reduced to what identifies the server: no scheme, path, or pairing token. */
+export function displayPairingHost(input: string): string {
+  const raw = input.trim();
+  for (const candidate of [raw, `http://${raw}`]) {
+    try {
+      const host = new URL(candidate).host;
+      if (host) return host;
+    } catch {
+      // fall through to the next candidate
+    }
+  }
+  return raw;
+}
