@@ -1,3 +1,4 @@
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -645,8 +646,14 @@ function ProviderMark({
   readonly provider: UsageProviderKind;
   readonly className: string;
 }) {
-  const Mark = PROVIDER_PRESENTATION[provider].mark;
-  return <Mark className={cn("shrink-0", className)} aria-hidden />;
+  const presentation = PROVIDER_PRESENTATION[provider];
+  return (
+    <ProviderInstanceIcon
+      driverKind={presentation.driverKind}
+      displayName={presentation.label}
+      iconClassName={className}
+    />
+  );
 }
 
 function Metric({ label, value }: { readonly label: string; readonly value: string }) {
