@@ -385,6 +385,51 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("follows the session cwd when Claude enters and leaves a worktree", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const cwd = "/tmp/claude-adapter-test";
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+        cwd,
+      });
+      const hook = harness.getLastCreateQueryInput()?.options.hooks?.PostToolUse?.[0]?.hooks[0];
+      for (const [toolName, nextCwd, agentId] of [
+        ["EnterWorktree", `${cwd}/.claude/worktrees/feature`, undefined],
+        ["EnterWorktree", `${cwd}/.claude/worktrees/subagent`, "agent-1"],
+        ["ExitWorktree", cwd, undefined],
+      ] as const) {
+        const previousCwd = (yield* adapter.listSessions())[0]?.cwd;
+        if (hook) {
+          yield* Effect.promise(() =>
+            hook(
+              {
+                hook_event_name: "PostToolUse",
+                session_id: "sdk-session",
+                transcript_path: "/tmp/transcript.jsonl",
+                cwd: nextCwd,
+                tool_name: toolName,
+                tool_use_id: "tool-worktree",
+                tool_input: {},
+                tool_response: {},
+                ...(agentId ? { agent_id: agentId } : {}),
+              },
+              undefined,
+              { signal: new AbortController().signal },
+            ),
+          );
+        }
+        assert.equal((yield* adapter.listSessions())[0]?.cwd, agentId ? previousCwd : nextCwd);
+      }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("derives bypass permission mode from full-access runtime policy", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

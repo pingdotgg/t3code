@@ -72,7 +72,11 @@ export interface OrchestrationEngineShape {
    */
   readonly dispatch: (
     command: OrchestrationCommand,
-    options?: { readonly origin?: OrchestrationClientOrigin },
+    options?: {
+      readonly origin?: OrchestrationClientOrigin;
+      // Runs inside the command transaction; must not dispatch other commands.
+      readonly validateBeforeCommit?: Effect.Effect<void, OrchestrationDispatchError>;
+    },
   ) => Effect.Effect<{ sequence: number }, OrchestrationDispatchError, never>;
 
   /**
