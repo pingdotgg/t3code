@@ -1009,7 +1009,8 @@ export function deriveMessagesTimelineRows(input: {
         (entry) =>
           (entry.kind === "message" &&
             entry.message.role === "user" &&
-            entry.message.inputIntent !== "steer") ||
+            entry.message.inputIntent !== "steer" &&
+            entry.message.inputIntent !== "promoted_queued_to_steer") ||
           (entry.kind === "work" && entry.entry.itemType === "notification"),
       ) + 1;
   }
