@@ -3139,7 +3139,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         "config",
         `branch.${input.newRefName}.gh-merge-base`,
         baseBranch,
-      ]);
+      ]).pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("worktree base-ref configuration failed; using base-branch fallback", {
+            worktreePath,
+            cause,
+          }),
+        ),
+      );
     }
 
     return {
