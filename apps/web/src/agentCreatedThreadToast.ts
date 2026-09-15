@@ -36,7 +36,3 @@ export function notifyAgentCreatedThreads(input: {
     );
   }
 }
-
-export function resetAgentCreatedThreadToastsForTests(): void {
-  recentAgentThreadIds.clear();
-}
