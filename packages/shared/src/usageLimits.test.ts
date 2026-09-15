@@ -17,8 +17,10 @@ import {
   collectLimitNotices,
   collectLimitPools,
   elapsedShare,
+  evenPacePercent,
   formatResetsIn,
   limitsNotice,
+  paceGapLabel,
   paceOf,
   providersWithLimits,
   remainingPercent,
@@ -60,9 +62,18 @@ describe("pace", () => {
     expect(paceOf({ ...window, usedPercent: 80 }, now)).toBe("ahead");
   });
 
+  it("marks where even spending would have left the quota and how far off it is", () => {
+    expect(evenPacePercent(window, now)).toBe(40);
+    expect(paceGapLabel(window, now)).toBe("20 pts of headroom");
+    expect(paceGapLabel({ ...window, usedPercent: 60 }, now)).toBe("exactly on pace");
+    expect(paceGapLabel({ ...window, usedPercent: 85 }, now)).toBe("25 pts ahead of pace");
+  });
+
   it("has no pace without a reset or a duration", () => {
     expect(paceOf({ ...window, resetsAt: undefined }, now)).toBeNull();
     expect(paceOf({ ...window, windowDurationMins: undefined }, now)).toBeNull();
+    expect(evenPacePercent({ ...window, resetsAt: undefined }, now)).toBeNull();
+    expect(paceGapLabel({ ...window, windowDurationMins: undefined }, now)).toBeNull();
     expect(formatResetsIn({ ...window, resetsAt: undefined }, now)).toBeNull();
   });
 

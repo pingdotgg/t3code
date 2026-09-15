@@ -9,7 +9,7 @@ import type {
   UsageProviderKind,
 } from "@t3tools/contracts";
 import {
-  elapsedShare,
+  evenPacePercent,
   formatDuration,
   formatResetsIn,
   limitsNotice,
@@ -51,8 +51,7 @@ function WindowRow(props: {
 }) {
   const { window, now } = props;
   const remaining = remainingPercent(window);
-  const elapsed = elapsedShare(window, now);
-  const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
+  const timeLeft = evenPacePercent(window, now);
   const pace = paceOf(window, now);
   const resetsIn = formatResetsIn(window, now);
   return (
