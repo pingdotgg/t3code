@@ -10,12 +10,28 @@ import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { UsageLimitSourceId } from "./usageLimitSourceId.ts";
 
 /**
+ * A budget the provider states in money rather than quota, e.g. a Claude
+ * Enterprise monthly spending limit. Amounts are minor units with the
+ * provider's own `exponent` (`4631` at exponent 2 is 46.31) so nothing is
+ * rounded between the provider and the screen.
+ */
+export const ServerProviderUsageSpend = Schema.Struct({
+  usedMinor: NonNegativeInt,
+  limitMinor: NonNegativeInt,
+  /** ISO 4217 code, `USD`. */
+  currency: TrimmedNonEmptyString,
+  exponent: NonNegativeInt,
+});
+export type ServerProviderUsageSpend = typeof ServerProviderUsageSpend.Type;
+
+/**
  * One rolling quota window a subscription provider reports for the signed-in
  * account, e.g. Claude's five-hour session or Codex's weekly allowance.
  *
  * `id` is stable per provider (`five_hour`, `seven_day_opus`, `primary`) so a
  * sparse turn-driven update lands on the same row a full probe produced.
- * `kind` only orders and labels the bar.
+ * `kind` only orders and labels the bar. `spend` is present when the window
+ * is a spending budget, so clients can show the amounts behind the percent.
  */
 export const ServerProviderUsageWindow = Schema.Struct({
   id: TrimmedNonEmptyString,
@@ -24,6 +40,7 @@ export const ServerProviderUsageWindow = Schema.Struct({
   usedPercent: Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
   resetsAt: Schema.optional(IsoDateTime),
   windowDurationMins: Schema.optional(NonNegativeInt),
+  spend: Schema.optional(ServerProviderUsageSpend),
 });
 export type ServerProviderUsageWindow = typeof ServerProviderUsageWindow.Type;
 

@@ -12,6 +12,7 @@ import {
   elapsedShare,
   formatDuration,
   formatResetsIn,
+  formatSpend,
   limitsNotice,
   paceOf,
   remainingPercent,
@@ -54,7 +55,8 @@ function WindowRow(props: {
   const elapsed = elapsedShare(window, now);
   const timeLeft = elapsed === null ? null : Math.round((1 - elapsed) * 100);
   const pace = paceOf(window, now);
-  const resetsIn = formatResetsIn(window, now);
+  // A budget has no reset to count down to; its amounts take that slot.
+  const resetsIn = window.spend ? `${formatSpend(window.spend)} used` : formatResetsIn(window, now);
   return (
     <View className="gap-1">
       <View className="flex-row items-baseline justify-between gap-3">
