@@ -293,6 +293,7 @@ function chooseLiveActivityDelivery(input: {
               previousAggregate,
               nextAggregate,
               preferences,
+              nowMs: input.nowMs,
             }) ??
             alertForNewlyTerminal({
               previousAggregate,
@@ -744,6 +745,7 @@ export const make = Effect.gen(function* () {
                 previousAggregate,
                 nextAggregate: aggregate,
                 preferences,
+                nowMs: now.epochMilliseconds,
               }) ??
               alertForNewlyTerminal({
                 previousAggregate,

@@ -215,7 +215,7 @@ export const make = Effect.gen(function* () {
       // update the card, but must leave that transition for its own alert job.
       // Registration replay deliberately establishes a silent baseline.
       let acknowledgeAggregate = job.state !== null || job.replay === true || aggregate === null;
-      if (job.state && preferences.value.notificationsEnabled) {
+      if (!job.replay && job.state && preferences.value.notificationsEnabled) {
         const state = yield* rows.getForUserThread({
           userId: job.userId,
           environmentId: job.state.environmentId,

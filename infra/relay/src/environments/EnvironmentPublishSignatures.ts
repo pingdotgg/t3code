@@ -159,6 +159,7 @@ const make = Effect.gen(function* () {
         proof.environmentId !== input.environmentId ||
         proof.threadId !== input.threadId ||
         proof.sub !== input.environmentId ||
+        (proof.replay ?? false) !== (input.request.replay ?? false) ||
         stableStringify(proof.state) !== stableStringify(input.request.state) ||
         (input.request.state !== null &&
           (input.request.state.environmentId !== input.environmentId ||

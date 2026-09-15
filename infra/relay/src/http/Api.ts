@@ -893,6 +893,7 @@ export const serverApi = HttpApiBuilder.group(
             environmentPublicKey: principal.environmentPublicKey,
             threadId: params.threadId,
             state: payload.state,
+            ...(payload.replay ? { replay: true } : {}),
           });
         },
         mapErrorTags({

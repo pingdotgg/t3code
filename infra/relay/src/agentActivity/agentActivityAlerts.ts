@@ -11,19 +11,18 @@ export interface AgentActivityAlert {
   readonly body: string;
 }
 
-export const TERMINAL_NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
+export const NOTIFICATION_FRESHNESS_MS = 2 * 60 * 1_000;
 
-export function isFreshTerminalNotification(updatedAt: string, nowMs: number): boolean {
+export function isFreshNotification(updatedAt: string, nowMs: number): boolean {
   const timestamp = Option.getOrNull(DateTime.make(updatedAt));
-  return (
-    timestamp !== null && nowMs - timestamp.epochMilliseconds <= TERMINAL_NOTIFICATION_FRESHNESS_MS
-  );
+  return timestamp !== null && nowMs - timestamp.epochMilliseconds <= NOTIFICATION_FRESHNESS_MS;
 }
 
 type TransitionInput = {
   readonly previousAggregate: RelayAgentActivityAggregateState | null;
   readonly nextAggregate: RelayAgentActivityAggregateState;
   readonly preferences: RelayAgentAwarenessPreferences | null;
+  readonly nowMs: number;
 };
 
 function rowKey(row: RelayAgentActivityAggregateRow): string {
@@ -63,7 +62,8 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
-      alertAllowedForPhase(input.preferences, row.phase),
+      alertAllowedForPhase(input.preferences, row.phase) &&
+      isFreshNotification(row.updatedAt, input.nowMs),
   );
 }
 
@@ -90,7 +90,7 @@ export function newlyTerminalRows(
 }
 
 export function terminalTransitionRows(
-  input: TransitionInput & { readonly nowMs: number; readonly includeUnobserved?: boolean },
+  input: TransitionInput & { readonly includeUnobserved?: boolean },
 ) {
   return newlyTerminalRows(
     input.previousAggregate,
@@ -99,7 +99,7 @@ export function terminalTransitionRows(
   ).filter((row) => {
     return (
       alertAllowedForPhase(input.preferences, row.phase) &&
-      isFreshTerminalNotification(row.updatedAt, input.nowMs)
+      isFreshNotification(row.updatedAt, input.nowMs)
     );
   });
 }
@@ -123,7 +123,7 @@ export function alertForAttentionTransition(input: TransitionInput): AgentActivi
 }
 
 export function alertForNewlyTerminal(
-  input: TransitionInput & { readonly nowMs: number; readonly includeUnobserved?: boolean },
+  input: TransitionInput & { readonly includeUnobserved?: boolean },
 ): AgentActivityAlert | null {
   return alertForActivityRows(terminalTransitionRows(input));
 }
@@ -146,7 +146,6 @@ export function shouldAlertForActivity(input: {
   return (
     input.preferences?.notificationsEnabled === true &&
     alertAllowedForPhase(input.preferences, input.phase) &&
-    ((input.phase !== "completed" && input.phase !== "failed") ||
-      isFreshTerminalNotification(input.updatedAt, input.nowMs))
+    isFreshNotification(input.updatedAt, input.nowMs)
   );
 }
