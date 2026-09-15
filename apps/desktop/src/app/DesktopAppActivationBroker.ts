@@ -1,4 +1,6 @@
 // @effect-diagnostics globalTimers:off -- This protocol broker owns cancellable request deadlines outside the Effect runtime.
+import * as NodeCrypto from "node:crypto";
+
 import {
   DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
   type DesktopAppActivationFailure,
@@ -10,7 +12,7 @@ interface PendingActivation {
   readonly request: DesktopAppActivationRequest;
   readonly resolve: (response: DesktopAppActivationResponse) => void;
   readonly timeout: ReturnType<typeof setTimeout>;
-  dispatched: boolean;
+  dispatchRequestId: string | null;
 }
 
 type RendererSender = (request: DesktopAppActivationRequest) => void;
@@ -102,7 +104,7 @@ export class DesktopAppActivationBroker {
         request,
         resolve,
         timeout,
-        dispatched: false,
+        dispatchRequestId: null,
       });
     });
 
@@ -119,8 +121,8 @@ export class DesktopAppActivationBroker {
   }
 
   /** True only while the request is pending and has already reached the renderer. */
-  isRequestActive(requestId: string): boolean {
-    return this.#pending.get(requestId)?.dispatched === true;
+  isRequestActive(dispatchRequestId: string): boolean {
+    return this.#findPendingDispatch(dispatchRequestId) !== undefined;
   }
 
   registerRenderer(send: RendererSender): void {
@@ -136,7 +138,7 @@ export class DesktopAppActivationBroker {
       // must not navigate to a conversation the user asked for before it went
       // away. Dispatched workspace requests fail for the same reason, while
       // undispatched workspace requests keep queueing until a renderer returns.
-      if (pending.request.type === "open-thread" || pending.dispatched) {
+      if (pending.request.type === "open-thread" || pending.dispatchRequestId !== null) {
         this.#settle(
           failure(
             pending.request.requestId,
@@ -149,13 +151,10 @@ export class DesktopAppActivationBroker {
   }
 
   complete(response: DesktopAppActivationResponse): void {
-    const pending = this.#pending.get(response.requestId);
-    if (
-      response.ok &&
-      pending !== undefined &&
-      pending.dispatched &&
-      pending.request.type === "open-thread"
-    ) {
+    const pending = this.#findPendingDispatch(response.requestId);
+    if (pending === undefined) return;
+
+    if (response.ok && pending.request.type === "open-thread") {
       // Raise the window only after the renderer confirms the exact target this
       // broker dispatched. A success for another thread or environment must not
       // focus the window, and late, cancelled, superseded or timed-out responses
@@ -165,19 +164,19 @@ export class DesktopAppActivationBroker {
         response.threadId === pending.request.threadId
       ) {
         this.#activate();
-        this.#settle(response);
+        this.#settle({ ...response, requestId: pending.request.requestId });
         return;
       }
       this.#settle(
         failure(
-          response.requestId,
+          pending.request.requestId,
           "thread-open-failed",
           "The desktop app did not open the requested conversation.",
         ),
       );
       return;
     }
-    this.#settle(response);
+    this.#settle({ ...response, requestId: pending.request.requestId });
   }
 
   cancel(requestId: string): void {
@@ -199,15 +198,18 @@ export class DesktopAppActivationBroker {
   #flush(): void {
     const renderer = this.#renderer;
     if (renderer === null) return;
-    if ([...this.#pending.values()].some((pending) => pending.dispatched)) return;
+    if ([...this.#pending.values()].some((pending) => pending.dispatchRequestId !== null)) return;
 
     for (const pending of this.#pending.values()) {
-      if (pending.dispatched) continue;
+      if (pending.dispatchRequestId !== null) continue;
       try {
-        pending.dispatched = true;
-        renderer(pending.request);
+        // This opaque per-dispatch value travels in renderer requestId;
+        // complete() restores the stored client requestId before resolving.
+        const dispatchRequestId = NodeCrypto.randomUUID();
+        pending.dispatchRequestId = dispatchRequestId;
+        renderer({ ...pending.request, requestId: dispatchRequestId });
       } catch {
-        pending.dispatched = false;
+        pending.dispatchRequestId = null;
         // A renderer that throws on send is gone for this request: cancel
         // open-thread work instead of requeueing it. clearRenderer drops the
         // failed sender before it settles and flushes, so this cannot recurse.
@@ -216,6 +218,13 @@ export class DesktopAppActivationBroker {
       }
       return;
     }
+  }
+
+  #findPendingDispatch(dispatchRequestId: string): PendingActivation | undefined {
+    for (const pending of this.#pending.values()) {
+      if (pending.dispatchRequestId === dispatchRequestId) return pending;
+    }
+    return undefined;
   }
 
   #settle(response: DesktopAppActivationResponse): void {
