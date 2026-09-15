@@ -190,6 +190,30 @@ describe("resolveOnboardingProviderLoginCommand", () => {
     ).toBe("/opt/claude-work/bin/claude auth login");
   });
 
+  it("opens omp's own setup flow, since it has no login subcommand", () => {
+    const provider: ServerProvider = {
+      ...readyCodex,
+      driver: ProviderDriverKind.make("omp"),
+      instanceId: ProviderInstanceId.make("omp"),
+    };
+
+    expect(
+      resolveOnboardingProviderLoginCommand(
+        provider,
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          providerInstances: {
+            [provider.instanceId]: {
+              driver: provider.driver,
+              config: { binaryPath: "/opt/omp/bin/omp" },
+            },
+          },
+        },
+        "linux",
+      ),
+    ).toBe("/opt/omp/bin/omp setup");
+  });
+
   it("quotes a Codex path with spaces for PowerShell", () => {
     expect(
       resolveOnboardingProviderLoginCommand(
@@ -333,6 +357,15 @@ describe("resolveOnboardingProviderInstallCommand", () => {
     );
     expect(resolveOnboardingProviderInstallCommand("claudeAgent", platform)).toBe(
       "curl -fsSL https://claude.ai/install.sh | bash",
+    );
+  });
+
+  it("uses omp's own installer, which its self-updater keeps current", () => {
+    expect(resolveOnboardingProviderInstallCommand("omp", "windows")).toBe(
+      "irm https://omp.sh/install.ps1 | iex",
+    );
+    expect(resolveOnboardingProviderInstallCommand("omp", "linux")).toBe(
+      "curl -fsSL https://omp.sh/install | sh",
     );
   });
 });

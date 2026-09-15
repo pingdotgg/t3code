@@ -100,6 +100,7 @@ import { isMacPlatform } from "~/lib/utils";
 import { useOpenPrLink } from "../lib/openPullRequestLink";
 import { releaseComposerDraftUploads } from "../lib/composerDraftUploads";
 import { readLocalApi } from "../localApi";
+import { resolveThreadProviderDisplayName } from "../providerModels";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -388,9 +389,11 @@ function SidebarThreadTooltip({
             <div className="flex min-w-0 items-center gap-2">
               <ProviderInstanceIcon
                 driverKind={driverKind}
-                displayName={
-                  providerEntry?.displayName ?? thread.session?.providerName ?? modelInstanceId
-                }
+                displayName={resolveThreadProviderDisplayName({
+                  configuredDisplayName: providerEntry?.displayName,
+                  sessionProviderName: thread.session?.providerName,
+                  fallbackInstanceId: modelInstanceId,
+                })}
                 accentColor={providerEntry?.accentColor}
                 // Initials would swallow a size-3 glyph: accent dot, name in label.
                 showBadge={showInstanceBadge && providerEntry?.accentColor !== undefined}
@@ -1957,11 +1960,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   <span className="inline-flex shrink-0 items-center">
                     <ProviderInstanceIcon
                       driverKind={driverKind}
-                      displayName={
-                        providerEntry?.displayName ??
-                        thread.session?.providerName ??
-                        modelInstanceId
-                      }
+                      displayName={resolveThreadProviderDisplayName({
+                        configuredDisplayName: providerEntry?.displayName,
+                        sessionProviderName: thread.session?.providerName,
+                        fallbackInstanceId: modelInstanceId,
+                      })}
                       accentColor={providerEntry?.accentColor}
                       showBadge={showInstanceBadge}
                       // Glyph dims, badge stays saturated; offset matches the composer trigger.

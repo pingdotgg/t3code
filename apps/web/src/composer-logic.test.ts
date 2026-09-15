@@ -154,11 +154,35 @@ describe("detectComposerTrigger", () => {
     });
   });
 
-  it("does not keep a subcommand trigger active after /model arguments", () => {
-    const text = "/model spark";
+  it("switches to an argument trigger once a command has a partial argument", () => {
+    const text = "/compact rem";
     const trigger = detectComposerTrigger(text, text.length);
 
-    expect(trigger).toBeNull();
+    expect(trigger).toEqual({
+      kind: "slash-argument",
+      command: "compact",
+      query: "rem",
+      rangeStart: "/compact ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("covers the whole argument token when the caret sits inside it", () => {
+    const text = "/compact remx";
+
+    expect(detectComposerTrigger(text, "/compact rem".length)).toEqual({
+      kind: "slash-argument",
+      command: "compact",
+      query: "rem",
+      rangeStart: "/compact ".length,
+      rangeEnd: text.length,
+    });
+  });
+
+  it("stops triggering once a second argument word is typed", () => {
+    const text = "/compact remote focus here";
+
+    expect(detectComposerTrigger(text, text.length)).toBeNull();
   });
 
   it("detects non-model slash commands while typing", () => {

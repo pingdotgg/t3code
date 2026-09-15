@@ -250,6 +250,19 @@ function resolveSkillDescription(
   return description || null;
 }
 
+/**
+ * A skill path is only openable when it names a file the right panel can read.
+ * Oh My Pi resolves a skill by name through several roots and never reports the
+ * file it came from, so its skills carry an internal `skill://` URL; offering
+ * "View instructions" for one would open a path that does not exist.
+ */
+export function isOpenableSkillPath(path: string): boolean {
+  const trimmed = path.trim();
+  if (trimmed.length === 0) return false;
+  const hasWindowsDrive = /^[A-Za-z]:[\\/]/.test(trimmed);
+  return hasWindowsDrive || !/^[A-Za-z][A-Za-z0-9+.-]*:/.test(trimmed);
+}
+
 type ComposerSkillMetadata = {
   label: string;
   description: string | null;
@@ -300,7 +313,7 @@ function ComposerSkillDecorator(props: {
             props.skillDescription ??
             "No description is available for this skill."}
         </p>
-        {skill?.path ? (
+        {skill?.path && isOpenableSkillPath(skill.path) ? (
           <Button variant="outline" size="sm" onClick={() => actions.openMention(skill.path)}>
             View instructions
           </Button>

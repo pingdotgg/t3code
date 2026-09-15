@@ -32,6 +32,13 @@ import * as AgentSessionScanner from "./AgentSessionScanner.ts";
 const CLAUDE_SESSION_ID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
+/**
+ * Mirrors `OMP_RESUME_VERSION` in provider/Layers/OmpAdapter.ts: its
+ * `parseOmpResume` rejects a cursor carrying any other schema version, and an
+ * imported thread whose cursor it rejects can never resume.
+ */
+const OMP_RESUME_SCHEMA_VERSION = 1;
+
 class AgentSessionUnresumableSessionError extends Schema.TaggedError<AgentSessionUnresumableSessionError>()(
   "AgentSessionUnresumableSessionError",
   {
@@ -94,6 +101,22 @@ function hasImportBlockingActivity(
       ? thread.settledOverride !== "settled"
       : thread.settledOverride !== null || thread.settledAt !== null)
   );
+}
+
+/**
+ * Each adapter parses its own cursor: Codex keys resume by its rollout
+ * conversation id, omp by an ACP session id behind a schema version, and
+ * Claude replays the transcript named by `resume` into a fresh thread id.
+ */
+function resolveImportedResumeCursor(
+  thread: AgentSessionScanner.AgentSessionThread,
+  threadId: ThreadId,
+): Record<string, unknown> {
+  if (thread.source === "codex") return { threadId: thread.providerSessionId };
+  if (thread.source === "omp") {
+    return { schemaVersion: OMP_RESUME_SCHEMA_VERSION, sessionId: thread.providerSessionId };
+  }
+  return { threadId, resume: thread.providerSessionId };
 }
 
 /** Import recent transcript text and persist the cursor needed to resume its provider session. */
@@ -183,6 +206,15 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           });
         }
 
+        // omp resumes through ACP `session/load` keyed by the transcript's
+        // own session id; a blank one leaves the thread unresumable.
+        if (thread.source === "omp" && thread.providerSessionId.trim().length === 0) {
+          return yield* new AgentSessionUnresumableSessionError({
+            source: thread.source,
+            providerSessionId: thread.providerSessionId,
+          });
+        }
+
         if (Option.isSome(existingThread) && existingThread.value.projectId !== input.projectId) {
           return yield* new AgentSessionThreadProjectConflictError({
             threadId,
@@ -230,10 +262,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
               providerInstanceId: thread.providerInstanceId,
               status: "stopped",
               runtimeMode: DEFAULT_RUNTIME_MODE,
-              resumeCursor:
-                thread.source === "codex"
-                  ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+              resumeCursor: resolveImportedResumeCursor(thread, threadId),
               runtimePayload: { cwd: workspaceRoot },
             },
             { onConflict: "ignore" },

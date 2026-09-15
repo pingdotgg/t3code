@@ -8,7 +8,12 @@ import {
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind =
+  | "path"
+  | "pull-request"
+  | "slash-command"
+  | "slash-argument"
+  | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background";
 
@@ -17,6 +22,8 @@ export interface ComposerTrigger {
   query: string;
   rangeStart: number;
   rangeEnd: number;
+  /** Command whose argument is being completed (`slash-argument` only). */
+  command?: string;
 }
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
@@ -220,6 +227,26 @@ export function detectComposerTrigger(text: string, cursorInput: number): Compos
         query: commandQuery,
         rangeStart: lineStart,
         rangeEnd: cursor,
+      };
+    }
+    // `/command <partial>`: the agent describes the argument, so the menu can
+    // offer its choices. Only the first argument completes — later words are
+    // free text (a focus instruction, a path) with nothing to enumerate.
+    const argumentMatch = /^\/(\S+)[ \t]+(\S*)$/.exec(linePrefix);
+    if (argumentMatch) {
+      const query = argumentMatch[2] ?? "";
+      // The caret may sit inside the argument (`/compact rem|x`). Selecting a
+      // choice replaces the whole token, not just the part before the caret,
+      // or the leftover would trail the inserted value.
+      const lineEnd = text.indexOf("\n", cursor);
+      const restOfLine = text.slice(cursor, lineEnd === -1 ? text.length : lineEnd);
+      const tokenRest = /^\S*/.exec(restOfLine)?.[0] ?? "";
+      return {
+        kind: "slash-argument",
+        command: argumentMatch[1] ?? "",
+        query,
+        rangeStart: cursor - query.length,
+        rangeEnd: cursor + tokenRest.length,
       };
     }
   }

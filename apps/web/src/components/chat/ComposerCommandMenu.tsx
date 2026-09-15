@@ -21,6 +21,7 @@ import {
 import { memo, useLayoutEffect, useRef } from "react";
 
 import { type ComposerSlashCommand, type ComposerTriggerKind } from "../../composer-logic";
+import { formatProviderDriverKindLabel } from "../../providerModels";
 import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
@@ -49,6 +50,14 @@ export type ComposerCommandItem =
       type: "provider-slash-command";
       provider: ProviderDriverKind;
       command: ServerProviderSlashCommand;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "slash-argument";
+      /** The literal inserted into the prompt, e.g. `remote` for `/compact`. */
+      value: string;
       label: string;
       description: string;
     }
@@ -156,6 +165,14 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
     props.triggerKind === "slash-command" && props.item.type === "skill" ? props.item.skill : null;
   const pullRequestPresentation =
     props.item.type === "pull-request" ? resolvePullRequestState(props.item.pullRequest) : null;
+  // Provider-supplied slash commands share labels with T3 built-ins (`/model`
+  // from omp/Cursor/Grok/OpenCode vs T3's own `/model`). The badge carries the
+  // provider's brand label so colliding rows read distinctly; dispatch still
+  // uses the item's `type`/`provider`/`command`, untouched below.
+  const providerSlashCommandLabel =
+    props.item.type === "provider-slash-command"
+      ? formatProviderDriverKindLabel(props.item.provider)
+      : null;
 
   return (
     <CommandItem
@@ -208,6 +225,11 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
             kind={skillSourceKind}
             showSkillSuffix={props.triggerKind === "skill"}
           />
+        ) : null}
+        {providerSlashCommandLabel ? (
+          <Badge className="ms-auto" variant="secondary">
+            {providerSlashCommandLabel}
+          </Badge>
         ) : null}
       </span>
     </CommandItem>
