@@ -1,5 +1,7 @@
 "use client";
 
+import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { CheckIcon } from "lucide-react";
 import { useMemo, useState } from "react";
@@ -19,7 +21,7 @@ import {
 import { cn } from "../../lib/utils";
 import { normalizeProviderAccentColor } from "../../providerInstances";
 import { Button } from "../ui/button";
-import { Gemini, GithubCopilotIcon, PiAgentIcon, type Icon } from "../Icons";
+import { Gemini, GithubCopilotIcon, type Icon } from "../Icons";
 import { Dialog } from "../ui/dialog";
 import { Badge } from "../ui/badge";
 import { Input } from "../ui/input";
@@ -351,14 +353,17 @@ export function AddProviderInstanceDialog({
               className="grid grid-cols-1 gap-2 sm:grid-cols-2"
             >
               {DRIVER_OPTIONS.map((option) => {
-                const IconComponent = option.icon;
                 return (
                   <RadioPrimitive.Root
                     key={option.value}
                     value={option.value}
                     className="relative flex cursor-pointer items-center gap-3 rounded-lg bg-card px-3 py-3 text-left text-muted-foreground outline-none ring-1 ring-black/5 hover:bg-zinc-50 focus-visible:ring-2 focus-visible:ring-ring data-checked:bg-primary/8 data-checked:text-foreground data-checked:ring-2 data-checked:ring-primary data-checked:hover:bg-primary/8 dark:bg-white/3 dark:ring-white/5 dark:hover:bg-white/5 dark:data-checked:bg-primary/15 dark:data-checked:ring-primary dark:data-checked:hover:bg-primary/15"
                   >
-                    <IconComponent className="size-4 shrink-0" aria-hidden />
+                    <ProviderInstanceIcon
+                      driverKind={option.value}
+                      displayName={option.label}
+                      iconClassName="size-4"
+                    />
                     <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">
                       {option.label}
                     </span>
