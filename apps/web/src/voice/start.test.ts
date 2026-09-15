@@ -88,6 +88,129 @@ describe("existing-thread follow-ups", () => {
     ).rejects.toBeDefined();
     expect(access.dispatchCommand).not.toHaveBeenCalled();
   });
+
+  it("reports an accepted follow-up as starting instead of echoing the stale pre-dispatch session error", async () => {
+    // The incident: after a server restart the startup reconciliation settles
+    // the orphaned session as error. The provider reactor only projects the
+    // new turn's session-set later, so the post-dispatch read-back still
+    // showed the reconciliation error and the follow-up was narrated as a
+    // dead worker while the work was in fact running.
+    const staleSession = {
+      status: "error",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError:
+        "Provider session did not survive a server restart. Send a new message to continue.",
+      updatedAt: "2026-09-15T01:10:00.000Z",
+    };
+    const { executor, access } = executorWith({
+      threadExists: true,
+      threadSnapshot: vi.fn(async (threadId: string) =>
+        detailSnapshot(detailThread({ id: threadId, session: staleSession })),
+      ),
+    });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    // The dispatch receipt still proves acceptance and the turn identity.
+    expect(access.dispatchCommand as ReturnType<typeof vi.fn>).toHaveBeenCalledOnce();
+    expect(output.dispatchSequence).toBe(42);
+    expect(output.commandId).toBeTruthy();
+    expect(output.messageId).toBeTruthy();
+    // The stale terminal status and its inherited error are not reported as
+    // this follow-up's outcome; the honest in-flight state is.
+    expect(output.session).toEqual({ status: "starting", lastError: null });
+  });
+
+  it("reports a genuine post-dispatch session advance as observed, including a new error", async () => {
+    const staleSession = {
+      status: "error",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: "Provider session did not survive a server restart.",
+      updatedAt: "2026-09-15T01:10:00.000Z",
+    };
+    const advancedSession = {
+      ...staleSession,
+      status: "error",
+      lastError: "provider turn.start failed: model unavailable",
+      updatedAt: "2026-09-15T01:12:00.000Z",
+    };
+    const threadSnapshot = vi
+      .fn()
+      .mockImplementationOnce(async (threadId: string) =>
+        detailSnapshot(detailThread({ id: threadId, session: staleSession })),
+      )
+      .mockImplementationOnce(async (threadId: string) =>
+        detailSnapshot(detailThread({ id: threadId, session: advancedSession })),
+      );
+    const { executor } = executorWith({ threadExists: true, threadSnapshot });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    expect(output.session).toEqual({
+      status: "error",
+      lastError: "provider turn.start failed: model unavailable",
+    });
+  });
+
+  it("reports a follow-up that advanced the session to running as running", async () => {
+    const staleSession = {
+      status: "error",
+      providerName: "codex",
+      runtimeMode: "full-access",
+      activeTurnId: null,
+      lastError: "Provider session did not survive a server restart.",
+      updatedAt: "2026-09-15T01:10:00.000Z",
+    };
+    const threadSnapshot = vi
+      .fn()
+      .mockImplementationOnce(async (threadId: string) =>
+        detailSnapshot(detailThread({ id: threadId, session: staleSession })),
+      )
+      .mockImplementationOnce(async (threadId: string) =>
+        detailSnapshot(
+          detailThread({
+            id: threadId,
+            session: {
+              ...staleSession,
+              status: "running",
+              lastError: null,
+              updatedAt: "2026-09-15T01:12:00.000Z",
+            },
+          }),
+        ),
+      );
+    const { executor } = executorWith({ threadExists: true, threadSnapshot });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    expect(output.session).toEqual({ status: "running", lastError: null });
+  });
+
+  it("reports an unchanged live running session as observed", async () => {
+    // A worker genuinely running across the dispatch stays running; the
+    // follow-up is delivered to a live thread.
+    const { executor } = executorWith({ threadExists: true });
+    const output = await executor.continueThread({
+      requestId: baseInput.requestId,
+      environmentId: envA,
+      threadId: ThreadId.make("existing-plan"),
+      task: "Please give me an update",
+    });
+    expect(output.session).toEqual({ status: "running", lastError: null });
+  });
 });
 
 type TurnStartCommand = Extract<ClientOrchestrationCommand, { type: "thread.turn.start" }>;
