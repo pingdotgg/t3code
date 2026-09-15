@@ -74,6 +74,7 @@ vi.mock("../../localApi", () => ({
 }));
 
 import { ProviderSetupSection } from "./ProviderSetupSection";
+import { ProviderInstallationControls } from "./ProviderInstallationControls";
 
 const environmentId = EnvironmentId.make("remote-google");
 const instanceId = ProviderInstanceId.make("antigravity_work");
@@ -132,7 +133,21 @@ function renderSetup(
   );
   if (!actions) return view;
   const Actions = actions.type as FunctionComponent<Record<string, unknown>>;
-  return Actions(actions.props) as ReactElement<Record<string, unknown>>;
+  const rendered = Actions(actions.props) as ReactElement<Record<string, unknown>>;
+  const installation = visitElements(
+    rendered,
+    (element) => element.type === ProviderInstallationControls,
+  );
+  return (
+    <>
+      {rendered}
+      {installation
+        ? ProviderInstallationControls(
+            installation.props as unknown as Parameters<typeof ProviderInstallationControls>[0],
+          )
+        : null}
+    </>
+  );
 }
 
 function button(view: unknown, label: string) {

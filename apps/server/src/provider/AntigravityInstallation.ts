@@ -7,12 +7,9 @@ import {
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Clock from "effect/Clock";
-import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
-import * as Exit from "effect/Exit";
-import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -39,6 +36,8 @@ import {
   resolveAntigravityReleaseAsset,
   type AntigravityReleaseAsset,
 } from "./antigravityRelease.ts";
+
+import { makeProviderInstallOperation } from "./providerInstallOperation.ts";
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const DOWNLOAD_TIMEOUT = "45 minutes";
@@ -270,7 +269,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const crypto = yield* Crypto.Crypto;
   const http = yield* HttpClient.HttpClient;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const serviceScope = yield* Effect.scope;
   const platform = yield* HostProcessPlatform;
   const arch = yield* HostProcessArchitecture;
   const environment = yield* HostProcessEnvironment;
@@ -289,7 +287,6 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
   const activePath = path.join(managedDirectory, "active.json");
   const gate = yield* Semaphore.make(1);
   const leases = new Map<string, number>();
-  let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
   const state = yield* SubscriptionRef.make<ProviderInstallState>({
     driver: DRIVER,
     operationId: null,
@@ -301,6 +298,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
     canRemove: false,
     message: null,
   });
+
+  const operation = yield* makeProviderInstallOperation(state);
 
   const readRecord = Effect.fn("AntigravityInstallation.readRecord")(function* <A>(
     filePath: string,
@@ -792,49 +791,15 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             `Google does not publish an Antigravity runtime for ${platform}-${arch}. Use a supported remote environment or a custom executable.`,
           );
         }
-        const operationId = yield* crypto.randomUUIDv4;
-        const next: ProviderInstallState = {
-          driver: DRIVER,
-          operationId,
-          phase: "downloading",
-          downloadedBytes: 0,
+        yield* SubscriptionRef.update(state, (value) => ({
+          ...value,
           totalBytes: releaseAsset.archiveBytes,
           version: releaseAsset.version,
-          installedVersion: current.installedVersion,
-          canRemove: current.canRemove,
-          message: "Downloading Google's official Antigravity runtime.",
-        };
-        yield* SubscriptionRef.set(state, next);
-        const work = install(releaseAsset).pipe(
-          Effect.onExit((exit) =>
-            Exit.isFailure(exit)
-              ? SubscriptionRef.update(state, (value) => {
-                  if (value.operationId !== operationId || value.phase === "succeeded")
-                    return value;
-                  const error = Cause.findErrorOption(exit.cause);
-                  const cancelled = Cause.hasInterruptsOnly(exit.cause);
-                  return {
-                    ...value,
-                    phase: cancelled ? "cancelled" : "failed",
-                    message: cancelled
-                      ? "Installation cancelled. The previous runtime is unchanged."
-                      : Option.isSome(error)
-                        ? error.value.detail
-                        : "Could not finish the Antigravity installation. Check disk space and directory access.",
-                  } satisfies ProviderInstallState;
-                })
-              : Effect.void,
-          ),
-          Effect.ignoreCause,
-          Effect.ensuring(
-            Effect.sync(() => {
-              if (running?.operationId === operationId) running = undefined;
-            }),
-          ),
+        }));
+        return yield* operation.start(
+          install(releaseAsset),
+          "Downloading Google's official Antigravity runtime.",
         );
-        const fiber = yield* Effect.forkIn(Effect.interruptible(work), serviceScope);
-        running = { operationId, fiber };
-        return next;
       }).pipe(Effect.uninterruptible),
     )
     .pipe(Effect.mapError(wrapFailure("start", "Could not start the Antigravity installation.")));
@@ -849,10 +814,7 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
             "This installation is no longer current. Refresh its status before cancelling.",
           );
         }
-        if (running?.operationId === operationId && isRunning(current)) {
-          yield* Fiber.interrupt(running.fiber);
-        }
-        return yield* SubscriptionRef.get(state);
+        return yield* operation.cancel(operationId);
       }),
     );
   });

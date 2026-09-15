@@ -35,7 +35,7 @@ export function hasProviderSetup(status: ServerProvider): boolean {
   return (
     status.driver === "antigravity" ||
     status.setup?.canAuthenticate === true ||
-    status.setup?.canInstall === true
+    (status.setup?.canInstall === true && !status.installed)
   );
 }
 

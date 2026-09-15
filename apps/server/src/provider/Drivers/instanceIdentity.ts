@@ -17,9 +17,15 @@ export const withInstanceIdentity =
     readonly displayName: string | undefined;
     readonly accentColor: string | undefined;
     readonly continuationGroupKey: string;
+    readonly setup?: ServerProvider["setup"];
+    readonly managedRuntimeAvailable?: boolean;
   }) =>
   (snapshot: ServerProviderDraft): ServerProvider => ({
     ...snapshot,
+    ...(input.setup ? { setup: input.setup } : {}),
+    installed:
+      snapshot.installed ||
+      (snapshot.status === "disabled" && input.managedRuntimeAvailable === true),
     instanceId: input.instanceId,
     driver: input.driverKind,
     ...(input.displayName ? { displayName: input.displayName } : {}),

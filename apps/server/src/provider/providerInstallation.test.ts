@@ -1,5 +1,5 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { assert, describe, it } from "@effect/vitest";
+import { assert, describe, expect, it } from "@effect/vitest";
 import {
   ProviderDriverKind,
   ProviderInstanceId,
@@ -12,8 +12,9 @@ import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 
-import { layerTest as settingsLayerTest } from "../serverSettings.ts";
+import { layerTest as settingsLayerTest, ServerSettingsService } from "../serverSettings.ts";
 import { AntigravityInstallation } from "./AntigravityInstallation.ts";
+import { ProviderCliInstallation } from "./ProviderCliInstallation.ts";
 import type { ProviderInstance } from "./ProviderDriver.ts";
 import { makeProviderInstallation } from "./providerInstallation.ts";
 import { ProviderInstanceRegistry } from "./Services/ProviderInstanceRegistry.ts";
@@ -40,7 +41,9 @@ function instance(kind = driver): ProviderInstance {
     enabled: false,
     displayName: undefined,
     continuationIdentity: { driverKind: kind, continuationKey: instanceId },
-    get adapter(): never {
+    get adapter(): ProviderInstance["adapter"] {
+      if (kind === "opencode")
+        return { listSessions: () => Effect.succeed([]) } as unknown as ProviderInstance["adapter"];
       throw new Error("Installation must not start a provider session.");
     },
     get snapshot(): never {
@@ -61,10 +64,19 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
   const calls: string[] = [];
   let protectedPaths: ReadonlyArray<string> = [];
   const configured = input.instance ?? instance();
+  const settingsService = yield* ServerSettingsService.pipe(
+    Effect.provide(settingsLayerTest(input.settings)),
+  );
   const router = yield* makeProviderInstallation().pipe(
     Effect.provide(
       Layer.mergeAll(
-        settingsLayerTest(input.settings),
+        Layer.succeed(ServerSettingsService, settingsService),
+        Layer.mock(ProviderCliInstallation)({
+          directory: () => "/managed/opencode",
+          start: (_driver, activate) =>
+            activate("/managed/opencode/version/opencode").pipe(Effect.orDie, Effect.as(state)),
+          changes: () => Stream.succeed(state),
+        }),
         Layer.mock(ProviderInstanceRegistry)({
           getInstance: (id) =>
             Effect.succeed(id === configured.instanceId ? configured : undefined),
@@ -99,10 +111,55 @@ const makeHarness = Effect.fn("providerInstallation.test.makeHarness")(function*
       ),
     ),
   );
-  return { router, calls, protectedPaths: () => protectedPaths };
+  return {
+    router,
+    calls,
+    protectedPaths: () => protectedPaths,
+    settings: settingsService.getSettings,
+  };
 });
 
 describe("provider installation routing", () => {
+  it.effect(
+    "selects the downloaded CLI for the requested instance while preserving its settings",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          instance: instance(ProviderDriverKind.make("opencode")),
+          settings: {
+            providerInstances: {
+              [instanceId]: {
+                driver: ProviderDriverKind.make("opencode"),
+                displayName: "Work OpenCode",
+                config: { binaryPath: "opencode", serverPassword: "keep-me" },
+              },
+            },
+          },
+        });
+        yield* harness.router.start({ instanceId });
+        expect((yield* harness.settings).providerInstances[instanceId]).toMatchObject({
+          displayName: "Work OpenCode",
+          config: { binaryPath: "/managed/opencode/version/opencode", serverPassword: "keep-me" },
+        });
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
+  it.effect("does not replace an external OpenCode server with a local installation", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        instance: instance(ProviderDriverKind.make("opencode")),
+        settings: {
+          providerInstances: {
+            [instanceId]: {
+              driver: ProviderDriverKind.make("opencode"),
+              config: { serverUrl: "https://opencode.example" },
+            },
+          },
+        },
+      });
+      const error = yield* Effect.flip(harness.router.start({ instanceId }));
+      assert.include(error.detail, "server URL");
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  );
   it.effect("allows explicit installation while the provider is disabled", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness();
@@ -113,7 +170,7 @@ describe("provider installation routing", () => {
 
   it.effect("rejects another driver and unknown instances before installation", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ instance: instance(ProviderDriverKind.make("codex")) });
+      const harness = yield* makeHarness({ instance: instance(ProviderDriverKind.make("cursor")) });
       const wrongDriver = yield* Effect.flip(harness.router.start({ instanceId }));
       const missing = yield* Effect.flip(
         harness.router.start({ instanceId: ProviderInstanceId.make("missing") }),

@@ -24,6 +24,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeOpenCodeTextGeneration } from "../../textGeneration/OpenCodeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import { providerCliSetup } from "../providerCliSettings.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
@@ -107,6 +108,7 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
       const serverSettings = yield* ServerSettingsService;
       const eventLoggers = yield* ProviderEventLoggers;
       const processEnv = mergeProviderInstanceEnvironment(environment);
+      const installSetup = yield* providerCliSetup("opencode", config);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -117,8 +119,14 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         displayName,
         accentColor,
         continuationGroupKey: continuationIdentity.continuationKey,
+        setup: installSetup.capabilities,
+        managedRuntimeAvailable: installSetup.available,
       });
-      const effectiveConfig = { ...config, enabled } satisfies OpenCodeSettings;
+      const effectiveConfig = {
+        ...config,
+        enabled,
+        binaryPath: installSetup.binaryPath,
+      } satisfies OpenCodeSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
           binaryPath: effectiveConfig.binaryPath,
@@ -127,6 +135,11 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, pathService),
+          Effect.map((capabilities) =>
+            installSetup.managed
+              ? { ...capabilities, packageName: null, latestVersion: null, update: null }
+              : capabilities,
+          ),
         ),
       );
 

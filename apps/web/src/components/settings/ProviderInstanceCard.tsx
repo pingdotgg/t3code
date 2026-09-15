@@ -373,6 +373,7 @@ interface ProviderInstanceCardProps {
    */
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
+  readonly installationAction?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -415,6 +416,7 @@ export function ProviderInstanceCard({
   onDelete,
   headerAction,
   setup,
+  installationAction,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -695,6 +697,7 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={cn("inline-flex items-center gap-1", readOnly && "opacity-50")}
       >
+        {installationAction}
         {versionAdvisory ? (
           <Popover>
             <PopoverTrigger

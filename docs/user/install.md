@@ -91,6 +91,17 @@ and enable the provider you want. Installation, login, and configuration belong
 to that environment's machine, even when you connect from a phone or another
 computer.
 
+Install Codex, Claude, OpenCode, or Antigravity from its provider settings on the
+selected environment. Codex and OpenCode use official production releases; Claude
+uses its stable channel. Antigravity uses the release supported by your T3 Code
+version. Enable each provider and sign in after installation.
+
+For a CLI installed by T3 Code, use **Update** beside its version at the top of
+provider settings to check the
+official release channel and install the current version. Stop its sessions
+before updating, and disable its instances before removing the downloaded runtime.
+Credentials and thread history are kept when removing it.
+
 | Provider    | Install and authenticate                                                                     |
 | ----------- | -------------------------------------------------------------------------------------------- |
 | Codex       | Install [Codex CLI](https://developers.openai.com/codex/cli), then run `codex login`.        |
@@ -100,10 +111,14 @@ computer.
 | OpenCode    | Install [OpenCode](https://opencode.ai), then run `opencode auth login`.                     |
 | Antigravity | Install and sign in with Google from T3 Code's provider settings.                            |
 
-Provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
+Manually installed provider CLIs must be on the server's `PATH`. If T3 Code cannot find one, set its
 **Binary path** in provider settings, especially when using a version manager.
 Cursor's executable is `cursor-agent`, although its login command is
 `agent login`. Antigravity can use its managed runtime without a `PATH` entry.
+
+T3-managed CLIs do not need a `PATH` entry. To run their login commands in a
+terminal, use the full **Binary path** shown in provider settings in place of
+`codex`, `claude`, or `opencode` above.
 
 When a provider CLI is behind its latest release, its provider card shows the
 available version. **Update now** appears only when T3 Code can tell which

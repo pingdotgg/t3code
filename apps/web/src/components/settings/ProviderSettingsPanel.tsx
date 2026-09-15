@@ -83,6 +83,7 @@ import { ExpandableText } from "./ExpandableText";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
+import { CliProviderInstallationAction } from "./CliProviderInstallationAction";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
 import {
@@ -926,6 +927,19 @@ export function EnvironmentProviderSettings({
               enabled={resolveProviderInstanceEnabled(row.instance)}
               readOnly={readOnly}
               onEnable={() => updateProviderInstance(row, { ...row.instance, enabled: true })}
+            />
+          ) : null
+        }
+        installationAction={
+          mode === "editor" && ["codex", "claudeAgent", "opencode"].includes(row.driver) ? (
+            <CliProviderInstallationAction
+              key={`${environmentId}:${row.instanceId}`}
+              environmentId={environmentId}
+              environmentLabel={environmentLabel}
+              instanceId={row.instanceId}
+              providerName={driverOption?.label ?? row.driver}
+              provider={liveProvider}
+              readOnly={readOnly}
             />
           ) : null
         }

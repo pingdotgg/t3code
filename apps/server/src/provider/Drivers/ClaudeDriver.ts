@@ -26,6 +26,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeClaudeTextGeneration } from "../../textGeneration/ClaudeTextGeneration.ts";
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
+import { providerCliSetup } from "../providerCliSettings.ts";
 import { expandHomePath } from "../../pathExpansion.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -115,7 +116,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const eventLoggers = yield* ProviderEventLoggers;
       const modelManifest = yield* ModelManifest.ModelManifest;
       const modelCatalog = modelManifest.current.pipe(Effect.map(resolveClaudeModelCatalog));
-      const processEnv = mergeProviderInstanceEnvironment(environment);
+      const installSetup = yield* providerCliSetup("claudeAgent", config);
+      const processEnv = {
+        ...mergeProviderInstanceEnvironment(environment),
+        ...(installSetup.managed ? { DISABLE_AUTOUPDATER: "1" } : {}),
+      };
       const fallbackContinuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
         instanceId,
@@ -123,7 +128,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const effectiveConfig = {
         ...config,
         enabled,
-        binaryPath: expandHomePath(config.binaryPath),
+        binaryPath: expandHomePath(installSetup.binaryPath),
       } satisfies ClaudeSettings;
       const resolveMaintenance = yield* makeCachedProviderMaintenanceResolution(
         resolveProviderMaintenanceCapabilitiesEffect(UPDATE, {
@@ -133,6 +138,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
+          Effect.map((capabilities) =>
+            installSetup.managed
+              ? { ...capabilities, packageName: null, latestVersion: null, update: null }
+              : capabilities,
+          ),
         ),
       );
       const continuationGroupKey = yield* makeClaudeContinuationGroupKey(effectiveConfig);
@@ -142,6 +152,8 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
         displayName,
         accentColor,
         continuationGroupKey,
+        setup: installSetup.capabilities,
+        managedRuntimeAvailable: installSetup.available,
       });
 
       // One per instance: the status probe writes the model-scoped bucket
