@@ -13,6 +13,7 @@ import * as SpeechService from "./SpeechService.ts";
 const native = vi.hoisted(() => ({
   backend: "Vulkan0",
   supportsStreaming: true,
+  supportsInitialPrompt: false,
   begin: vi.fn(async () => {}),
   feed: vi.fn(async (_pcm: Float32Array) => ({
     revision: 1,
@@ -84,11 +85,39 @@ const pcm = () => new Uint8Array(new Float32Array([0.25]).buffer);
 beforeEach(() => {
   vi.clearAllMocks();
   native.backend = "Vulkan0";
+  native.supportsInitialPrompt = false;
   readyModels.clear();
   readyModels.add("test-model");
   readyModels.add("fallback-model");
   downloadModel.mockImplementation(async () => "test.gguf");
 });
+
+const customWordsLayer = SpeechService.layer.pipe(
+  Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-custom-words-" })),
+  Layer.provide(
+    ServerSettings.layerTest({ speechModelId: "test-model", speechCustomWords: ["T3 Code"] }),
+  ),
+  Layer.provide(NodeServices.layer),
+);
+
+it.effect("corrects custom words for models without prompt support", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockResolvedValueOnce({ text: "open t 3 code" });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.transcribe(pcm())).toBe("open T3 Code");
+  }).pipe(Effect.provide(customWordsLayer)),
+);
+
+it.effect("passes custom words as an initial prompt when the model supports it", () =>
+  Effect.gen(function* () {
+    native.supportsInitialPrompt = true;
+    const speech = yield* SpeechService.SpeechService;
+    yield* speech.transcribe(pcm());
+    expect(native.transcribe.mock.calls[0]?.[1]).toMatchObject({
+      family: { kind: "whisper", initialPrompt: "T3 Code" },
+    });
+  }).pipe(Effect.provide(customWordsLayer)),
+);
 
 it.effect("holds model ownership until the stream scope closes and preserves silence", () =>
   Effect.gen(function* () {

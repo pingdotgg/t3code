@@ -530,4 +530,8 @@ describe("ServerSettings speech model", () => {
       "handy-computer/parakeet-unified-en-0.6b-gguf",
     );
   });
+
+  it("starts with no custom transcription words", () => {
+    expect(DEFAULT_SERVER_SETTINGS.speechCustomWords).toEqual([]);
+  });
 });

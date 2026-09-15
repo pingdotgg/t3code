@@ -509,6 +509,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     desktopOnly: true,
   },
   {
+    id: "custom-words",
+    title: "Custom words",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["speech voice transcription vocabulary names glossary"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",

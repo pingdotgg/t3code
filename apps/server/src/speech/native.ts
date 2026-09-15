@@ -13,7 +13,8 @@ process.on("message", async (message) => {
       const { TranscribeModel } = await import(message.moduleUrl);
       model = await TranscribeModel.load(message.path, { backend: message.backend });
       process.send({ type: "t3-speech-reply", ok: true, backend: model.backend,
-        supportsStreaming: model.capabilities.supportsStreaming });
+        supportsStreaming: model.capabilities.supportsStreaming,
+        supportsInitialPrompt: model.supports("initial_prompt") });
     } else if (message.kind === "begin") {
       session = model.createSession();
       stream = await session.stream({ timestamps: "none" });
@@ -51,6 +52,7 @@ type Reply = {
   readonly text?: string;
   readonly error?: string;
   readonly supportsStreaming?: boolean;
+  readonly supportsInitialPrompt?: boolean;
   readonly backend?: string;
   readonly revision?: number;
   readonly preview?: SpeechStreamText | null;
@@ -124,10 +126,12 @@ export async function loadNativeSpeechModel(
     await exited.promise;
   };
   let supportsStreaming: boolean;
+  let supportsInitialPrompt: boolean;
   let backend: string;
   try {
     const loaded = await send({ kind: "load", path, moduleUrl, backend: requestedBackend });
     supportsStreaming = loaded.supportsStreaming === true;
+    supportsInitialPrompt = loaded.supportsInitialPrompt === true;
     backend = loaded.backend ?? "unknown";
   } catch (error) {
     await dispose();
@@ -136,6 +140,7 @@ export async function loadNativeSpeechModel(
   return {
     backend,
     supportsStreaming,
+    supportsInitialPrompt,
     begin: async () => {
       await send({ kind: "begin" });
     },
@@ -152,7 +157,11 @@ export async function loadNativeSpeechModel(
     },
     transcribe: async (
       pcm: Float32Array,
-      options: { readonly timestamps: "none"; readonly language?: string },
+      options: {
+        readonly timestamps: "none";
+        readonly language?: string;
+        readonly family?: { readonly kind: "whisper"; readonly initialPrompt: string };
+      },
     ) => {
       const result = await send({ kind: "transcribe", pcm, options });
       if (typeof result.text !== "string") throw new Error("Invalid speech process response.");

@@ -114,6 +114,24 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "updateCustomWords",
+        Effect.fn("environment.voice.updateCustomWords")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech.updateCustomWords(args.payload.words).pipe(
+            Effect.catchTags({
+              SpeechInvalidAudioError: () => failEnvironmentInvalidRequest("invalid_audio"),
+              SpeechUnsupportedPlatformError: () =>
+                failEnvironmentInvalidRequest("speech_unavailable"),
+              SpeechBusyError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechDownloadCancelledError: () => failEnvironmentInvalidRequest("speech_busy"),
+              SpeechModelNotFoundError: () => failEnvironmentInvalidRequest("invalid_command"),
+              SpeechOperationError: (error) => failEnvironmentInternal("internal_error", error),
+            }),
+          );
+        }),
+      )
+      .handle(
         "transcribe",
         Effect.fn("environment.voice.transcribe")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);

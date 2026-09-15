@@ -5,6 +5,7 @@ import {
   getEnvironmentSpeechStatus,
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
+  updateEnvironmentSpeechCustomWords,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -26,6 +27,7 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { usePreparedConnection } from "../../state/session";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
+import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
@@ -149,6 +151,7 @@ export function VoiceSettingsPanel() {
   const [microphones, setMicrophones] = useState<MediaDeviceInfo[]>([]);
   const [loadingMicrophones, setLoadingMicrophones] = useState(false);
   const [operation, setOperation] = useState<string | null>(null);
+  const [customWordDraft, setCustomWordDraft] = useState("");
 
   const refreshMicrophones = useCallback(async () => {
     if (!navigator.mediaDevices?.enumerateDevices) return;
@@ -259,6 +262,36 @@ export function VoiceSettingsPanel() {
       "Selected microphone (Unavailable)")
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
+  const customWords = currentStatus?.supported ? (currentStatus.customWords ?? []) : [];
+  const normalizedCustomWord = customWordDraft
+    .replace(/[<>"']/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const updateCustomWords = (words: readonly string[]) => {
+    if (!prepared) return;
+    setOperation("custom-words");
+    void runtime
+      .runPromise(updateEnvironmentSpeechCustomWords(prepared, words))
+      .then((value) => setStatus({ prepared, value }))
+      .catch((error) => {
+        toastManager.add({
+          type: "error",
+          title: "Could not update custom words",
+          description: error instanceof Error ? error.message : String(error),
+        });
+      })
+      .finally(() => setOperation(null));
+  };
+  const addCustomWord = () => {
+    if (
+      !normalizedCustomWord ||
+      normalizedCustomWord.length > 50 ||
+      customWords.includes(normalizedCustomWord)
+    )
+      return;
+    updateCustomWords([...customWords, normalizedCustomWord]);
+    setCustomWordDraft("");
+  };
   const installed = models.filter((model) => model.state !== "downloadable");
   const available = models.filter((model) => model.state === "downloadable");
 
@@ -370,6 +403,60 @@ export function VoiceSettingsPanel() {
               >
                 <RefreshCwIcon className="size-3.5" />
               </Button>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("custom-words")}
+          description="Help transcription recognize names, technical terms, and uncommon vocabulary."
+          control={
+            <div className="w-full max-w-80 space-y-2">
+              <div className="flex items-center gap-1.5">
+                <Input
+                  value={customWordDraft}
+                  maxLength={50}
+                  placeholder="Add a word or phrase"
+                  disabled={!currentStatus?.supported || operation !== null}
+                  onChange={(event) => setCustomWordDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter") return;
+                    event.preventDefault();
+                    addCustomWord();
+                  }}
+                />
+                <Button
+                  type="button"
+                  size="sm"
+                  disabled={
+                    !normalizedCustomWord ||
+                    normalizedCustomWord.length > 50 ||
+                    customWords.includes(normalizedCustomWord) ||
+                    customWords.length >= 100 ||
+                    operation !== null
+                  }
+                  onClick={addCustomWord}
+                >
+                  Add
+                </Button>
+              </div>
+              {customWords.length > 0 ? (
+                <div className="flex flex-wrap justify-end gap-1">
+                  {customWords.map((word) => (
+                    <Button
+                      key={word}
+                      type="button"
+                      size="xs"
+                      variant="secondary"
+                      disabled={operation !== null}
+                      aria-label={`Remove ${word}`}
+                      onClick={() => updateCustomWords(customWords.filter((item) => item !== word))}
+                    >
+                      {word}
+                      <XIcon className="ml-1 size-3" />
+                    </Button>
+                  ))}
+                </div>
+              ) : null}
             </div>
           }
         />

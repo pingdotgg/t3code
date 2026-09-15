@@ -19,6 +19,7 @@ import {
   removeSpeechModel,
   SPEECH_MODELS,
 } from "./model.ts";
+import { applySpeechCustomWords, normalizeSpeechCustomWords } from "./customWords.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -135,6 +136,9 @@ export class SpeechService extends Context.Service<
       modelId: string,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
+    readonly updateCustomWords: (
+      words: readonly string[],
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
   }
@@ -272,7 +276,9 @@ export const make = Effect.gen(function* () {
 
   const currentStatus = async (): Promise<EnvironmentSpeechStatus> => {
     if (unsupportedReason) return { supported: false, reason: unsupportedReason };
-    const definition = await selectedModel();
+    const settings = await Effect.runPromise(serverSettings.getSettings);
+    const definition =
+      getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
     return {
       supported: true,
       state:
@@ -285,6 +291,7 @@ export const make = Effect.gen(function* () {
       model: definition.name,
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
+      customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
     };
   };
 
@@ -333,6 +340,10 @@ export const make = Effect.gen(function* () {
       const signal = AbortSignal.any([controller.signal, lifetime.signal]);
       let finished = false;
       let loaded: LoadedModel | undefined;
+      const settings = yield* attempt("custom words loading", () =>
+        Effect.runPromise(serverSettings.getSettings),
+      );
+      const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
       yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
           // Cancellation can arrive inside native compute. Kill the owned process before releasing the lease.
@@ -391,7 +402,16 @@ export const make = Effect.gen(function* () {
             byteLength += bytes.byteLength;
             received.push(pcm);
             try {
-              return await streamModel.feed(pcm);
+              const update = await streamModel.feed(pcm);
+              return {
+                ...update,
+                text: update.text
+                  ? {
+                      committed: applySpeechCustomWords(update.text.committed, customWords),
+                      tentative: applySpeechCustomWords(update.text.tentative, customWords),
+                    }
+                  : null,
+              };
             } catch (cause) {
               if (usedCpuFallback || streamModel.backend.toLowerCase() === "cpu") throw cause;
               usedCpuFallback = true;
@@ -407,12 +427,20 @@ export const make = Effect.gen(function* () {
               let update: Awaited<ReturnType<LoadedModel["feed"]>> | undefined;
               for (const chunk of received) update = await streamModel.feed(chunk);
               if (!update) throw cause;
-              return update;
+              return {
+                ...update,
+                text: update.text
+                  ? {
+                      committed: applySpeechCustomWords(update.text.committed, customWords),
+                      tentative: applySpeechCustomWords(update.text.tentative, customWords),
+                    }
+                  : null,
+              };
             }
           }),
         finish: run(async () => {
           const startedAt = performance.now();
-          const text = await streamModel.finish();
+          const text = applySpeechCustomWords(await streamModel.finish(), customWords);
           finished = true;
           return { text: text.trim(), durationMs: performance.now() - startedAt };
         }).pipe(
@@ -449,6 +477,12 @@ export const make = Effect.gen(function* () {
         if (downloading?.modelId === modelId) downloading.controller.abort();
         return currentStatus();
       }),
+    updateCustomWords: (words) =>
+      exclusive("custom words update", async () => {
+        const customWords = normalizeSpeechCustomWords(words);
+        await Effect.runPromise(serverSettings.updateSettings({ speechCustomWords: customWords }));
+        return currentStatus();
+      }),
     transcribe: (pcmBytes) =>
       exclusive("transcription", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
@@ -464,9 +498,22 @@ export const make = Effect.gen(function* () {
           const prepareDurationMs = performance.now() - prepareStartedAt;
           const inferenceStartedAt = performance.now();
           let inferenceModel = loaded;
+          const settings = await Effect.runPromise(serverSettings.getSettings);
+          const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+          const options = {
+            timestamps: "none" as const,
+            ...(customWords.length > 0 && loaded.supportsInitialPrompt
+              ? {
+                  family: {
+                    kind: "whisper" as const,
+                    initialPrompt: customWords.join(", "),
+                  },
+                }
+              : {}),
+          };
           let result: Awaited<ReturnType<LoadedModel["transcribe"]>>;
           try {
-            result = await inferenceModel.transcribe(pcm, { timestamps: "none" });
+            result = await inferenceModel.transcribe(pcm, options);
           } catch (cause) {
             if (model === inferenceModel) {
               model = undefined;
@@ -477,19 +524,20 @@ export const make = Effect.gen(function* () {
               throw new SpeechOperationError({ operation: "inference", cause });
             await inferenceModel.dispose();
             inferenceModel = await loadModel(lifetime.signal, "cpu");
-            result = await inferenceModel
-              .transcribe(pcm, { timestamps: "none" })
-              .catch((fallbackCause) => {
-                if (model === inferenceModel) {
-                  model = undefined;
-                  loadedModelId = undefined;
-                  loading = undefined;
-                }
-                throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
-              });
+            result = await inferenceModel.transcribe(pcm, options).catch((fallbackCause) => {
+              if (model === inferenceModel) {
+                model = undefined;
+                loadedModelId = undefined;
+                loading = undefined;
+              }
+              throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
+            });
           }
           return {
-            text: result.text.trim(),
+            text: (loaded.supportsInitialPrompt
+              ? result.text
+              : applySpeechCustomWords(result.text, customWords)
+            ).trim(),
             backend: inferenceModel.backend,
             prepareDurationMs,
             inferenceDurationMs: performance.now() - inferenceStartedAt,

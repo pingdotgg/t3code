@@ -1,7 +1,12 @@
 import * as Schema from "effect/Schema";
+import * as Effect from "effect/Effect";
 
 export const SpeechModelId = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(160));
 export type SpeechModelId = typeof SpeechModelId.Type;
+
+export const SpeechCustomWord = Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(50));
+export const SpeechCustomWords = Schema.Array(SpeechCustomWord).check(Schema.isMaxLength(100));
+export type SpeechCustomWords = typeof SpeechCustomWords.Type;
 
 export const EnvironmentSpeechModelState = Schema.Literals([
   "downloadable",
@@ -50,6 +55,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     model: Schema.String,
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
+    customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
@@ -57,6 +63,8 @@ export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
 export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
   text: Schema.String,
 });
+
+export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
 
 export const SPEECH_STREAM_PATH = "/ws/voice";

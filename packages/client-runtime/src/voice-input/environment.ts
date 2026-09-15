@@ -141,6 +141,18 @@ export const transcribeEnvironmentPcm = (prepared: PreparedConnection, pcm: Uint
     run: ({ client, headers }) => client.transcribe({ headers, payload: pcm }),
   });
 
+export const updateEnvironmentSpeechCustomWords = (
+  prepared: PreparedConnection,
+  words: readonly string[],
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.updateCustomWords(),
+    run: ({ client, headers }) => client.updateCustomWords({ headers, payload: { words } }),
+  });
+
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",
