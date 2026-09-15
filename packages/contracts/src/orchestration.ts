@@ -1048,6 +1048,10 @@ const ThreadCreateCommand = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  // "agent" marks thread creation initiated by the agent itself (e.g. the
+  // threads MCP toolkit), so clients can surface those differently from
+  // user-created threads. Optional so pre-agent-create payloads decode.
+  source: Schema.optional(Schema.Literal("agent")),
   createdAt: IsoDateTime,
   historyImport: Schema.optional(Schema.Literal(true)),
 });
@@ -1658,6 +1662,7 @@ export const ThreadCreatedPayload = Schema.Struct({
   ),
   branch: Schema.NullOr(TrimmedNonEmptyString),
   worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+  source: Schema.optional(Schema.Literal("agent")),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
