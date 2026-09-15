@@ -14,10 +14,12 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import type * as Scope from "effect/Scope";
 import { ChildProcessSpawner } from "effect/unstable/process";
 import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpSchema from "effect-acp/compat";
 
 import { ServerConfig } from "../../config.ts";
 import {
@@ -28,6 +30,11 @@ import {
 import { AcpRegistryCatalog } from "../../provider/acp/AcpRegistrySupport.ts";
 import { AcpRegistryRuntimeCoordinator } from "../../provider/acp/AcpRegistryRuntimeCoordinator.ts";
 import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import {
+  applyDevinModelSelection,
+  DEVIN_MODEL_OPTION_IDS,
+  prepareDevinSkillPrompt,
+} from "../../provider/acp/DevinCli.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import { ProviderEventLoggers } from "../../provider/Layers/ProviderEventLoggers.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
@@ -56,6 +63,7 @@ export interface AcpRegistryAdapterV2Options {
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly crypto: Crypto.Crypto;
   readonly fileSystem: FileSystem.FileSystem;
+  readonly path: Path.Path;
   readonly idAllocator: IdAllocatorV2["Service"];
   readonly resolver: Pick<AcpRegistryCatalog["Service"], "resolve">;
   readonly runtimeCoordinator?: AcpRegistryRuntimeCoordinator["Service"];
@@ -95,6 +103,8 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
       const context = yield* Layer.build(
         AcpSessionRuntime.layer({
           ...runtimeInput,
+          modelValidation: options.settings.agentId === "devin" ? "agent" : "catalog",
+          cancelBehavior: options.settings.agentId === "devin" ? "wait-for-prompt" : "interrupt",
           spawn:
             processEnvironment === undefined
               ? resolved.spawn
@@ -109,9 +119,31 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
           ),
         ),
       );
-      return yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
+      const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(
         Effect.provide(context),
       );
+      if (options.settings.agentId !== "devin") return runtime;
+      return {
+        ...runtime,
+        prompt: (request) =>
+          Effect.gen(function* () {
+            const prompt: EffectAcpSchema.ContentBlock[] = [];
+            for (const block of request.prompt) {
+              prompt.push(
+                block.type === "text"
+                  ? { ...block, text: yield* prepareDevinSkillPrompt(block.text, resolved.spawn) }
+                  : block,
+              );
+            }
+            return yield* runtime.prompt({ ...request, prompt });
+          }).pipe(
+            Effect.provideService(
+              ChildProcessSpawner.ChildProcessSpawner,
+              options.childProcessSpawner,
+            ),
+            Effect.provideService(Path.Path, options.path),
+          ),
+      } satisfies AcpSessionRuntime.AcpSessionRuntime["Service"];
     });
 }
 
@@ -130,6 +162,20 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
           normalizeSessionUpdate: normalizeDevinSessionUpdate,
           normalizeToolCall: normalizeDevinToolCall,
           extractSubagentUpdate: extractDevinSubagentUpdate,
+          modelOptionIds: DEVIN_MODEL_OPTION_IDS,
+          applyModelSelection: ({ runtime, modelSelection, cwd }) =>
+            options.resolver.resolve(options.settings, cwd, options.environment).pipe(
+              Effect.flatMap(({ spawn }) =>
+                applyDevinModelSelection(spawn, runtime, modelSelection),
+              ),
+              Effect.provideService(
+                ChildProcessSpawner.ChildProcessSpawner,
+                options.childProcessSpawner,
+              ),
+              Effect.mapError((cause) =>
+                EffectAcpErrors.AcpRequestError.invalidParams(cause.message),
+              ),
+            ),
         }
       : {}),
     makeRuntime: options.makeRuntime ?? makeAcpRegistryRuntime(options),
@@ -182,6 +228,7 @@ export type AcpRegistryAdapterV2DriverEnv =
   | ChildProcessSpawner.ChildProcessSpawner
   | Crypto.Crypto
   | FileSystem.FileSystem
+  | Path.Path
   | AcpRegistryCatalog
   | IdAllocatorV2
   | ProviderEventLoggers
@@ -213,6 +260,7 @@ export const AcpRegistryAdapterV2Driver: ProviderAdapterDriver<
         childProcessSpawner,
         crypto,
         fileSystem,
+        path: yield* Path.Path,
         idAllocator,
         resolver,
         ...(Option.isSome(runtimeCoordinator)

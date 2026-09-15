@@ -61,6 +61,7 @@ function makeAcpRegistryProviderAdapterRegistryReplayLayer(transcript: AcpReplay
         childProcessSpawner,
         crypto,
         fileSystem,
+        path,
         idAllocator,
         resolver: {
           resolve: () => Effect.die("ACP registry resolver must not run during replay"),

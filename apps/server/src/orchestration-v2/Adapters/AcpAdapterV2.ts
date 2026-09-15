@@ -228,7 +228,10 @@ export interface AcpAdapterV2Flavor {
     readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
     readonly startResult: AcpSessionRuntimeStartResult;
     readonly modelSelection: ModelSelection;
+    readonly cwd: string;
   }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+  /** Options consumed by native model resolution rather than ACP configuration. */
+  readonly modelOptionIds?: ReadonlyArray<string>;
   /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
   readonly sessionModeForPolicy?: (policy: ProviderAdapterV2RuntimePolicy) => string | undefined;
   /**
@@ -5774,6 +5777,7 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               runtime,
               startResult,
               modelSelection,
+              cwd: runtimePolicy.cwd ?? process.cwd(),
             });
           } else if (
             requestedModel.length > 0 &&
@@ -5811,7 +5815,9 @@ export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV
               };
             });
           }
-          const optionSelections = modelSelection.options ?? [];
+          const optionSelections = (modelSelection.options ?? []).filter(
+            (selection) => !flavor.modelOptionIds?.includes(selection.id),
+          );
           const configOptions = yield* runtime.getConfigOptions;
           const availableConfigIds = new Set(configOptions.map((option) => option.id));
           const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(

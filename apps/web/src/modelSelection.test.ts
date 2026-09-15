@@ -70,6 +70,35 @@ function settingsWithProviderInstances(): UnifiedSettings {
 }
 
 describe("instance-scoped model selection", () => {
+  it("uses advertised catalog policy for an unknown driver", () => {
+    const instanceId = ProviderInstanceId.make("test-account");
+    const snapshot: ServerProvider = {
+      ...provider({ instanceId, provider: ProviderDriverKind.make("test-driver") }),
+      modelPolicy: { catalogScope: "instance", preserveUnavailableModels: true },
+    };
+    const entry = deriveProviderInstanceEntries([snapshot])[0]!;
+    const settings = settingsWithProviderInstances();
+    expect(getAppModelOptionsForInstance(settings, entry, "retired-model")).toEqual([
+      { slug: "retired-model", name: "retired-model", isCustom: false, isUnavailable: true },
+    ]);
+    expect(
+      resolveAppModelSelectionForInstance(instanceId, settings, [snapshot], "retired-model", {
+        preserveUnavailableSelection: true,
+      }),
+    ).toBe("retired-model");
+    expect(
+      deriveEffectiveComposerModelState({
+        draft: null,
+        providers: [snapshot],
+        selectedProvider: snapshot.driver,
+        selectedInstanceId: instanceId,
+        threadModelSelection: null,
+        projectModelSelection: null,
+        settings,
+      }).selectedModel,
+    ).toBe("");
+  });
+
   it("preserves server-provided legacy model metadata", () => {
     const baseProvider = provider({
       instanceId: "claudeAgent",
@@ -354,6 +383,7 @@ describe("instance-scoped model selection", () => {
       availableModel: "gemini-3.1-pro",
       missingModel: "gemini-3.1-pro-high",
     },
+    { driverName: "acpRegistry", availableModel: "swe-2-medium", missingModel: "swe-2-high" },
   ])("$driverName catalog gaps", ({ driverName, availableModel, missingModel }) => {
     it("preserves a selected model when a catalog refresh no longer contains it", () => {
       const providers = [
@@ -788,6 +818,24 @@ describe("instance-scoped model selection", () => {
     expect(
       createModelSelection(instanceId, state.selectedModel, dispatch.modelOptionsForDispatch),
     ).toEqual(createModelSelection(instanceId, "openai/gpt-5.5"));
+  });
+
+  it("drops saved native options when settings fall back to another model", () => {
+    const instance = {
+      ...provider({ instanceId: "codex", models: ["gpt-5.6-luna"] }),
+      modelPolicy: { optionSelection: "exact" } as const,
+    };
+    const settings = {
+      ...settingsWithProviderInstances(),
+      textGenerationModelSelection: {
+        instanceId: instance.instanceId,
+        model: "removed-model",
+        options: [{ id: "removed-option", value: "removed-value" }],
+      },
+    };
+    const selected = resolveAppModelSelectionState(settings, [instance]);
+    expect(selected.model).not.toBe("removed-model");
+    expect(selected.options).toBeUndefined();
   });
 
   it("preserves custom provider instances in settings model selection", () => {

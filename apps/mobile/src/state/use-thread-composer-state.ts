@@ -35,7 +35,7 @@ import { composerContextSendBlockReason, reidentifyComposerContext } from "../li
 import { uuidv4 } from "../lib/uuid";
 
 import { makeQueuedMessageMetadata } from "../lib/commandMetadata";
-import { isModelSelectionUnavailable } from "../lib/modelOptions";
+import { getModelSelectionUnavailableReason } from "../lib/modelOptions";
 import { resolveProviderInteractionMode } from "../features/threads/legacy-plan-mode";
 import {
   convertPastedImagesToAttachments,
@@ -378,14 +378,12 @@ export function useThreadComposerState() {
 
     const modelSelection = draft.modelSelection ?? thread.modelSelection;
     const serverConfig = selectedEnvironmentRuntime?.serverConfig;
+    const modelUnavailableReason = getModelSelectionUnavailableReason(serverConfig, modelSelection);
     if (
       selectedEnvironmentRuntime?.connectionState === "connected" &&
-      isModelSelectionUnavailable(serverConfig, modelSelection)
+      modelUnavailableReason !== null
     ) {
-      Alert.alert(
-        "Antigravity model unavailable",
-        "Set up Antigravity on web or desktop, or choose another model.",
-      );
+      Alert.alert("Model unavailable", modelUnavailableReason);
       return null;
     }
     const provider = serverConfig?.providers.find(

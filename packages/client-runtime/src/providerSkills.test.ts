@@ -238,6 +238,31 @@ describe("resolveProviderSkillSourceKind", () => {
 });
 
 describe("workspace provider snapshots", () => {
+  it("inherits live commands when workspace discovery only owns skills", () => {
+    const workspace = provider.workspaceSnapshots[0]!;
+    const skillsOnly = {
+      ...provider,
+      workspaceSnapshots: [{ ...workspace, slashCommandsSource: "provider" as const }],
+      slashCommands: [{ name: "new-live-command" }],
+    };
+    expect(resolveProviderSlashCommandsForCwd(skillsOnly, workspace.cwd)).toEqual(
+      skillsOnly.slashCommands,
+    );
+    expect(resolveProviderSkillsForCwd(skillsOnly, workspace.cwd)).toEqual(workspace.skills);
+    expect(
+      resolveProviderSlashCommandsForCwd({ ...skillsOnly, slashCommands: [] }, workspace.cwd),
+    ).toEqual([]);
+  });
+
+  it("keeps an explicitly empty workspace command inventory authoritative", () => {
+    const workspace = provider.workspaceSnapshots[0]!;
+    expect(
+      resolveProviderSlashCommandsForCwd(
+        { ...provider, workspaceSnapshots: [{ ...workspace, slashCommands: [] }] },
+        workspace.cwd,
+      ),
+    ).toEqual([]);
+  });
   it("uses the cwd snapshot after a provider session has populated it", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-a")).toEqual([
       { name: "project", path: "/workspace/project-a/SKILL.md", enabled: true },

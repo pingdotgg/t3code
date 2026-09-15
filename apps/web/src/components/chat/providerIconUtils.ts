@@ -1,4 +1,7 @@
+import type { ServerProviderModel } from "@t3tools/contracts";
+
 export type ModelEsque = {
+  fusion?: ServerProviderModel["fusion"];
   slug: string;
   name: string;
   shortName?: string | undefined;

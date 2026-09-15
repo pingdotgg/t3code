@@ -10,8 +10,8 @@ type ModelPickerSearchableModel = {
    */
   providerDisplayName: string;
   name: string;
-  shortName?: string;
-  subProvider?: string;
+  shortName?: string | undefined;
+  subProvider?: string | undefined;
   isFavorite?: boolean;
 };
 

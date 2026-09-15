@@ -1,3 +1,4 @@
+import { TraitsMenuContent, TraitsPicker } from "./TraitsPicker";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
@@ -268,8 +269,7 @@ import {
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
-  renderProviderTraitsMenuContent,
-  renderProviderTraitsPicker,
+  resolveProviderTraitsProps,
 } from "./composerProviderState";
 import { ContextWindowMeter, ContextWindowMeterPlaceholder } from "./ContextWindowMeter";
 import {
@@ -2130,6 +2130,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         provider: selectedProvider,
         model: selectedModel,
         models: selectedProviderModels,
+        modelPolicy: selectedProviderStatus?.modelPolicy,
         promptInjectionState: composerPromptInjectionState,
         modelOptions: composerModelOptions?.[selectedInstanceId],
         planModeEnabled: settings.planModeEnabled,
@@ -2141,6 +2142,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedModel,
       selectedProvider,
       selectedProviderModels,
+      selectedProviderStatus?.modelPolicy,
       settings.planModeEnabled,
     ],
   );
@@ -2732,32 +2734,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [composerDraftTarget, promptRef, scheduleComposerFocus, setComposerDraftPrompt],
   );
 
-  const providerTraitsMenuContent = renderProviderTraitsMenuContent({
+  const providerTraitsProps = resolveProviderTraitsProps({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
     ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
     ...(routeKind === "draft" && draftId ? { draftId } : {}),
     model: selectedModel,
     models: selectedProviderModels,
+    modelPolicy: selectedProviderStatus?.modelPolicy,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     prompt,
-    onPromptChange: setPromptFromTraits,
     planModeEnabled: settings.planModeEnabled,
   });
-  const providerTraitsPickerInput = {
-    provider: selectedProvider,
-    instanceId: selectedInstanceId,
-    ...(routeKind === "server" ? { threadRef: routeThreadRef } : {}),
-    ...(routeKind === "draft" && draftId ? { draftId } : {}),
-    model: selectedModel,
-    models: selectedProviderModels,
-    modelOptions: composerModelOptions?.[selectedInstanceId],
-    prompt,
-    onPromptChange: setPromptFromTraits,
-    planModeEnabled: settings.planModeEnabled,
-    isComposerOwned: true,
-  } satisfies Parameters<typeof renderProviderTraitsPicker>[0];
-  const providerTraitsPicker = renderProviderTraitsPicker(providerTraitsPickerInput);
+  const providerTraitsMenuContent = providerTraitsProps && (
+    <TraitsMenuContent {...providerTraitsProps} onPromptChange={setPromptFromTraits} />
+  );
+  const providerTraitsPicker = providerTraitsProps && (
+    <TraitsPicker {...providerTraitsProps} onPromptChange={setPromptFromTraits} isComposerOwned />
+  );
   const [inlineRestingControlsHost, setInlineRestingControlsHost] = useState<HTMLDivElement | null>(
     null,
   );
@@ -5027,11 +5021,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
   const restingHiddenBlockCount = composerControlsCollapsed ? restingControlsHiddenBlockCount : 0;
   const composerControlsCompact = !composerControlsCollapsed && isComposerFooterCompact;
-  const restingProviderTraitsPicker = renderProviderTraitsPicker({
-    ...providerTraitsPickerInput,
-    size: "xs",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
-  });
+  const restingProviderTraitsPicker = providerTraitsProps && (
+    <TraitsPicker
+      {...providerTraitsProps}
+      onPromptChange={setPromptFromTraits}
+      isComposerOwned
+      size="xs"
+      hidden={composerControlsHidden || restingHiddenBlockCount > 1}
+    />
+  );
   const restingBlockDefs = [
     ...(providerTraitsPicker
       ? [

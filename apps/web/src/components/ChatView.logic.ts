@@ -1,3 +1,4 @@
+import { resolveProviderModelPolicy } from "@t3tools/contracts";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -608,13 +609,15 @@ export function resolveComposerProviderSelection(input: {
     input.entries.find((entry) => entry.instanceId === requestedInstanceId)?.driverKind ??
     input.entries[0]?.driverKind ??
     ProviderDriverKind.make("unconfigured");
+  const lockedEntry = input.entries.find((entry) => entry.instanceId === input.lockedInstanceId);
   const lockedContinuationGroupKey = input.lockedProvider
-    ? (input.entries.find((entry) => entry.instanceId === input.lockedInstanceId)
-        ?.continuationGroupKey ?? null)
+    ? (lockedEntry?.continuationGroupKey ?? null)
     : null;
-  // Missing metadata must not move Antigravity history into another Google profile.
+  // Missing metadata must not move account-bound history into another account.
   const requiresExactInstance =
-    input.lockedProvider === "antigravity" &&
+    input.lockedProvider != null &&
+    resolveProviderModelPolicy(lockedEntry?.snapshot ?? { driver: input.lockedProvider })
+      .catalogScope === "instance" &&
     input.lockedInstanceId != null &&
     lockedContinuationGroupKey === null;
   const compatibleEntries = input.entries.filter(

@@ -15,6 +15,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
@@ -59,6 +60,8 @@ import {
 } from "../acp/AcpRegistryProbe.ts";
 import { AcpRegistryCatalog, type AcpRegistryInspection } from "../acp/AcpRegistrySupport.ts";
 import { AcpRegistryRuntimeCoordinator } from "../acp/AcpRegistryRuntimeCoordinator.ts";
+import { discoverDevinSkills, readDevinModelCatalog } from "../acp/DevinCli.ts";
+import { devinModels } from "../acp/DevinModels.ts";
 
 const DRIVER_KIND = ProviderDriverKind.make("acpRegistry");
 const decodeSettings = Schema.decodeSync(AcpRegistrySettings);
@@ -207,6 +210,10 @@ function baseSnapshot(
     // so selectors must not offer these instances for commit, PR, branch, or
     // title generation.
     supportsTextGeneration: false,
+    modelPolicy:
+      input.settings.agentId === "devin"
+        ? { catalogScope: "instance", preserveUnavailableModels: true, optionSelection: "exact" }
+        : { catalogScope: "instance", preserveUnavailableModels: true },
     enabled: input.settings.enabled,
     installed: input.installed,
     version: input.version,
@@ -244,14 +251,19 @@ export function applyAcpRegistryAvailableCommands(
 export function applyAcpRegistryLiveConfiguration(
   provider: ServerProvider,
   configuration: AcpRegistryLiveConfiguration,
-  customModels: ReadonlyArray<string>,
+  settings: Pick<AcpRegistrySettings, "agentId" | "customModels">,
 ): ServerProvider {
   const { message: _staleProbeMessage, ...snapshot } = provider;
   return {
     ...snapshot,
     status: provider.enabled ? "ready" : provider.status,
     auth: { ...provider.auth, status: "authenticated" },
-    models: modelsFromDiscovery(configuration, customModels),
+    // Devin's CLI catalog owns model families and exact variant options. ACP
+    // advertises cached native IDs and must not replace that richer catalog.
+    models:
+      settings.agentId === "devin"
+        ? provider.models
+        : modelsFromDiscovery(configuration, settings.customModels),
   };
 }
 
@@ -463,6 +475,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       }
       const crypto = yield* Crypto.Crypto;
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
       const hostEnvironment = yield* HostProcessEnvironment;
       const serverConfig = yield* ServerConfig;
       const serverSettings = yield* ServerSettingsService;
@@ -501,6 +514,24 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         settings: effectiveConfig,
         environment: processEnvironment,
       };
+      const enrichmentCache = yield* Ref.make<{
+        readonly generation: number;
+        readonly entry: {
+          readonly provider: ServerProvider;
+          readonly expiresAt: number;
+        } | null;
+      }>({ generation: 0, entry: null });
+      // Only CLI discovery owns Devin's catalog. Readiness and live ACP updates
+      // cannot turn their default placeholder into an authoritative replacement.
+      const currentDevinModels = Ref.get(enrichmentCache).pipe(
+        Effect.map((cache) =>
+          providerModelsFromSettings(
+            cache.entry?.provider.models ?? [],
+            effectiveConfig.customModels,
+            EMPTY_CAPABILITIES,
+          ),
+        ),
+      );
       const withLiveRuntimeState = (provider: ServerProvider) =>
         Option.isNone(runtimeCoordinator)
           ? Effect.succeed(provider)
@@ -517,7 +548,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                     applyAcpRegistryLiveConfiguration(
                       withCommands,
                       liveConfiguration,
-                      effectiveConfig.customModels,
+                      effectiveConfig,
                     ),
                 });
                 return applyAcpRegistryUrlAuthAction(withConfiguration, authAction);
@@ -526,6 +557,11 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
       const checkProvider = checkAcpRegistryProviderReadiness(readinessInput).pipe(
         Effect.provideService(AcpRegistryCatalog, catalog),
         Effect.flatMap(withLiveRuntimeState),
+        Effect.flatMap((provider) =>
+          effectiveConfig.agentId === "devin"
+            ? currentDevinModels.pipe(Effect.map((models) => ({ ...provider, models })))
+            : Effect.succeed(provider),
+        ),
       );
       const enrichProvider = checkAcpRegistryProviderStatus(
         {
@@ -534,17 +570,35 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         },
         probeAcpRegistryConfiguration,
       ).pipe(
+        Effect.flatMap((provider) => {
+          if (effectiveConfig.agentId !== "devin") {
+            return Effect.succeed(provider);
+          }
+          if (provider.auth.status !== "authenticated") {
+            return Effect.succeed(provider);
+          }
+          return catalog.resolve(effectiveConfig, serverConfig.cwd, processEnvironment).pipe(
+            Effect.flatMap(({ spawn }) => readDevinModelCatalog(spawn)),
+            Effect.map(devinModels),
+            Effect.catch((cause) =>
+              Effect.logWarning("Devin model discovery failed", cause).pipe(
+                Effect.andThen(currentDevinModels),
+              ),
+            ),
+            Effect.map((models) => ({
+              ...provider,
+              models: providerModelsFromSettings(
+                models,
+                effectiveConfig.customModels,
+                EMPTY_CAPABILITIES,
+              ),
+            })),
+          );
+        }),
         Effect.provideService(AcpRegistryCatalog, catalog),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(Crypto.Crypto, crypto),
       );
-      const enrichmentCache = yield* Ref.make<{
-        readonly generation: number;
-        readonly entry: {
-          readonly provider: ServerProvider;
-          readonly expiresAt: number;
-        } | null;
-      }>({ generation: 0, entry: null });
       const liveSnapshotSemaphore = yield* Semaphore.make(1);
       const invalidateEnrichmentCache = Ref.update(enrichmentCache, (current) => ({
         generation: current.generation + 1,
@@ -641,11 +695,7 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
                 getSnapshot.pipe(
                   Effect.flatMap((current) =>
                     publishSnapshot(
-                      applyAcpRegistryLiveConfiguration(
-                        current,
-                        configuration,
-                        effectiveConfig.customModels,
-                      ),
+                      applyAcpRegistryLiveConfiguration(current, configuration, effectiveConfig),
                     ),
                   ),
                 ),
@@ -718,6 +768,36 @@ export const AcpRegistryDriver: ProviderDriver<AcpRegistrySettings, AcpRegistryD
         accentColor,
         enabled,
         snapshot,
+        snapshotForCwd:
+          effectiveConfig.agentId === "devin"
+            ? (cwd) =>
+                snapshot.getSnapshot.pipe(
+                  Effect.flatMap((provider) => {
+                    if (!provider.enabled || provider.auth.status !== "authenticated") {
+                      return Effect.succeed(null);
+                    }
+                    return catalog.resolve(effectiveConfig, cwd, processEnvironment).pipe(
+                      Effect.flatMap(({ spawn }) => discoverDevinSkills(spawn)),
+                      Effect.provideService(Path.Path, path),
+                      Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+                      Effect.map((skills) => ({
+                        checkedAt: provider.checkedAt,
+                        status: provider.status,
+                        skills,
+                      })),
+                      Effect.mapError(
+                        (cause) =>
+                          new ProviderDriverError({
+                            driver: DRIVER_KIND,
+                            instanceId,
+                            detail: "Failed to discover Devin workspace skills.",
+                            cause,
+                          }),
+                      ),
+                    );
+                  }),
+                )
+            : undefined,
         orchestrationAdapter,
         textGeneration: makeUnsupportedTextGeneration(),
         acpSessionManagement: {

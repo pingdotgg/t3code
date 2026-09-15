@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import { ProviderInstanceId, ProviderSessionId, ThreadId } from "@t3tools/contracts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
@@ -13,6 +14,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { ServerConfig } from "../../config.ts";
+import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
 import type {
   AcpRegistryAvailableCommands,
   AcpRegistryLiveConfiguration,
@@ -80,6 +82,111 @@ const testLayer = Layer.mergeAll(
 );
 
 describe("AcpRegistryAdapterV2", () => {
+  it.effect(
+    "applies a Devin family selection even when ACP's cached catalog omits its native ID",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-devin-v2-adapter-" });
+        const requestLog = path.join(cwd, "requests.jsonl");
+        const mockAgentPath = yield* path.fromFileUrl(
+          new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+        );
+        const command = writeFakeCli({
+          directory: cwd,
+          name: "devin",
+          platform: yield* HostProcessPlatform,
+          source: `
+          import { appendFileSync as logCatalogProbe } from 'node:fs';
+          if (process.argv.slice(2).join(' ') === 'models list --format json') {
+            logCatalogProbe(process.env.T3_ACP_REQUEST_LOG_PATH, 'models/list ' + process.cwd() + '\\n');
+            console.log(JSON.stringify({ families: [{ slug: 'opus', family_label: 'Opus', variants: [
+              { model_uid: 'fresh-native-model', label: 'Opus High' }
+            ] }] })); process.exit(0);
+          }
+          ${execScriptSource({ scriptPath: mockAgentPath })}
+        `,
+        });
+        const settings = yield* decodeAcpRegistryAdapterSettings({
+          agentId: "devin",
+          commandPath: command,
+        });
+        const instanceId = ProviderInstanceId.make("acpRegistry_devin_fixture");
+        const adapter = makeAcpRegistryAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          instanceId,
+          settings,
+          environment: {},
+          fileSystem,
+          path,
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          idAllocator: yield* IdAllocatorV2,
+          serverConfig: yield* ServerConfig,
+          resolver: {
+            resolve: (_settings, requestedCwd) =>
+              Effect.succeed({
+                agent: {
+                  id: "devin",
+                  name: "Devin",
+                  version: "3000.10.23",
+                  description: "Fixture",
+                  distribution: {},
+                },
+                distribution: "binary",
+                spawn: {
+                  command,
+                  args: ["acp"],
+                  cwd: requestedCwd,
+                  env: { T3_ACP_REQUEST_LOG_PATH: requestLog, T3_ACP_SESSION_LIFECYCLE: "1" },
+                },
+              }),
+          },
+        });
+        const threadId = ThreadId.make("thread-devin-v2-fixture");
+        const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd,
+        });
+        const modelSelection = {
+          instanceId,
+          model: "opus",
+          options: [{ id: "reasoningEffort", value: "high" }],
+        };
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("session-devin-v2-fixture"),
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const resumedCwd = path.join(cwd, "resumed-workspace");
+        yield* fileSystem.makeDirectory(resumedCwd);
+        yield* runtime.resumeThread({
+          providerThread: {
+            ...providerThread,
+            nativeThreadRef: {
+              driver: runtime.providerSession.driver,
+              nativeId: "mock-session-2",
+              strength: "strong",
+            },
+          },
+          modelSelection,
+          runtimePolicy: { ...runtimePolicy, cwd: resumedCwd },
+        });
+        const requests = yield* fileSystem.readFileString(requestLog);
+        assert.include(requests, `models/list ${resumedCwd}`);
+        assert.include(requests, '"value":"fresh-native-model"');
+        assert.notInclude(requests, '"configId":"reasoningEffort"');
+        assert.equal(runtime.providerSession.driver, "acpRegistry");
+      }).pipe(Effect.provide(testLayer), Effect.scoped),
+  );
+
   it("is registered as a generic provider driver with schema defaults", () => {
     assert.isTrue(BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2.has(ACP_REGISTRY_PROVIDER));
     assert.equal(AcpRegistryAdapterV2Driver.driverKind, ACP_REGISTRY_PROVIDER);
@@ -130,6 +237,7 @@ describe("AcpRegistryAdapterV2", () => {
         },
         childProcessSpawner,
         fileSystem,
+        path,
         idAllocator,
         runtimeCoordinator: {
           withForegroundStartup: (agentId, effect) =>

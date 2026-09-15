@@ -106,6 +106,8 @@ export interface AcpSessionRuntimeOptions {
   readonly linuxCgroupController?: AcpLinuxCgroupController | null;
   /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
+  /** Agents with a stale advertised catalog can validate model IDs themselves. */
+  readonly modelValidation?: "catalog" | "agent";
   readonly cancelTimeout?: Duration.Input;
   readonly clientCapabilities?: EffectAcpSchema.InitializeRequest["clientCapabilities"];
   readonly clientInfo: {
@@ -1871,6 +1873,9 @@ export const make = (
       Effect.gen(function* () {
         const configOption = findSessionConfigOption(yield* Ref.get(configOptionsRef), configId);
         if (!configOption) {
+          return;
+        }
+        if (configOption.category === "model" && options.modelValidation === "agent") {
           return;
         }
         if (configOption.type === "boolean") {

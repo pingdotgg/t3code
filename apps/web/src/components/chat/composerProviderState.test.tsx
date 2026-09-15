@@ -1,6 +1,9 @@
+import { withImplicitFastModeDefault } from "@t3tools/client-runtime/providerModelOptions";
 import { describe, expect, it } from "vite-plus/test";
 import {
   ProviderDriverKind,
+  EnvironmentId,
+  ThreadId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
   type ServerProviderModel,
@@ -10,9 +13,7 @@ import { getProviderModelCapabilities } from "../../providerModels";
 import {
   getComposerPromptInjectionState,
   getComposerProviderState,
-  renderProviderTraitsMenuContent,
-  renderProviderTraitsPicker,
-  withImplicitFastModeDefault,
+  resolveProviderTraitsProps,
 } from "./composerProviderState";
 
 // Everything in composerProviderState is now data-driven by the model's
@@ -472,6 +473,21 @@ describe("trait controls fastMode display", () => {
 });
 
 describe("provider traits render guards", () => {
+  it("keeps unavailable OpenCode options available to the traits controls", () => {
+    const options = selections(["variant", "max"], ["agent", "build"]);
+    expect(
+      resolveProviderTraitsProps({
+        provider: ProviderDriverKind.make("opencode"),
+        model: "removed-model",
+        models: [],
+        modelOptions: options,
+        prompt: "",
+        planModeEnabled: false,
+        threadRef: { environmentId: EnvironmentId.make("test"), threadId: ThreadId.make("test") },
+      })?.modelOptions,
+    ).toEqual(options);
+  });
+
   it("returns null when no thread target is provided", () => {
     const models = modelWith([
       selectDescriptor("effort", [{ id: "high", label: "High", isDefault: true }]),
@@ -482,11 +498,44 @@ describe("provider traits render guards", () => {
       models,
       modelOptions: undefined,
       prompt: "",
-      onPromptChange: () => {},
       planModeEnabled: true,
     };
 
-    expect(renderProviderTraitsPicker(args)).toBeNull();
-    expect(renderProviderTraitsMenuContent(args)).toBeNull();
+    expect(resolveProviderTraitsProps(args)).toBeNull();
   });
+});
+
+it("preserves exact catalog options for an unknown driver", () => {
+  const modelOptions = selections(["reasoningEffort", "max"], ["fastMode", true]);
+  const models = modelWith([
+    selectDescriptor("reasoningEffort", [{ id: "high", label: "High", isDefault: true }]),
+  ]);
+  const state = getComposerProviderState({
+    provider: ProviderDriverKind.make("test-account-provider"),
+    modelPolicy: { optionSelection: "exact" },
+    model: MODEL,
+    models,
+    modelOptions,
+    planModeEnabled: false,
+  });
+  expect(state.modelOptionsForDispatch).toEqual(modelOptions);
+  const defaultState = getComposerProviderState({
+    provider: ProviderDriverKind.make("test-account-provider"),
+    modelPolicy: { optionSelection: "exact" },
+    model: MODEL,
+    models: modelWith([{ id: "fastMode", label: "Fast", type: "boolean", currentValue: true }]),
+    modelOptions: undefined,
+    planModeEnabled: false,
+  });
+  expect(defaultState.modelOptionsForDispatch).toBeUndefined();
+  const descriptors = getProviderOptionDescriptors({
+    caps: models[0]!.capabilities!,
+    selections: modelOptions,
+    preserveUnavailableSelections: true,
+  });
+  expect(descriptors[0]?.currentValue).toBe("max");
+  expect(descriptors[1]?.currentValue).toBe(true);
+  expect(descriptors[0]?.type === "select" && descriptors[0].options.at(-1)?.label).toContain(
+    "Unavailable",
+  );
 });

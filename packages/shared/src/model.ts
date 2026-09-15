@@ -9,6 +9,7 @@ import {
   type ProviderOptionSelection,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
+import * as Predicate from "effect/Predicate";
 import * as Schema from "effect/Schema";
 import { copySorted } from "./Array.ts";
 
@@ -190,9 +191,49 @@ function withDescriptorCurrentValue(
 export function getProviderOptionDescriptors(input: {
   caps: ModelCapabilities;
   selections?: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  preserveUnavailableSelections?: boolean;
 }): ReadonlyArray<ProviderOptionDescriptor> {
   const { caps, selections } = input;
   const baseDescriptors = (caps.optionDescriptors ?? []).map(cloneDescriptor);
+
+  // Account catalogs can lose choices. Keep explicit selections visible and let
+  // the provider reject them instead of silently dispatching a different variant.
+  if (input.preserveUnavailableSelections) {
+    for (const selection of selections ?? []) {
+      const index = baseDescriptors.findIndex((descriptor) => descriptor.id === selection.id);
+      const descriptor = baseDescriptors[index];
+      if (!descriptor || (descriptor.type === "boolean") !== Predicate.isBoolean(selection.value)) {
+        const unavailable: ProviderOptionDescriptor = Predicate.isBoolean(selection.value)
+          ? {
+              id: selection.id,
+              label: `${selection.id} (Unavailable)`,
+              type: "boolean",
+              currentValue: selection.value,
+            }
+          : {
+              id: selection.id,
+              label: selection.id,
+              type: "select",
+              currentValue: selection.value,
+              options: [{ id: selection.value, label: `${selection.value} (Unavailable)` }],
+            };
+        if (index < 0) baseDescriptors.push(unavailable);
+        else baseDescriptors[index] = unavailable;
+      } else if (
+        descriptor.type === "select" &&
+        Predicate.isString(selection.value) &&
+        !descriptor.options.some((option) => option.id === selection.value)
+      ) {
+        baseDescriptors[index] = {
+          ...descriptor,
+          options: [
+            ...descriptor.options,
+            { id: selection.value, label: `${selection.value} (Unavailable)` },
+          ],
+        };
+      }
+    }
+  }
 
   return baseDescriptors.map((descriptor) =>
     withDescriptorCurrentValue(

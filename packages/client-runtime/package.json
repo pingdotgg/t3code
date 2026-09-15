@@ -294,6 +294,14 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./fusionModels": {
+      "types": "./src/fusionModels.ts",
+      "default": "./src/fusionModels.ts"
+    },
+    "./providerModelOptions": {
+      "types": "./src/providerModelOptions.ts",
+      "default": "./src/providerModelOptions.ts"
     }
   },
   "scripts": {

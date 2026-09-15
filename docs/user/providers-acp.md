@@ -68,6 +68,20 @@ is running update the picker without waiting for another provider probe.
 Slash commands the agent provides appear under **Provider** in the `/` menu while a session is
 running. Commands the agent names with a `$` prefix appear in T3 Code's `$` skill menu instead.
 
+## Devin
+
+Add **Devin** from ACP Registry. Sign in with `devin auth login` on the server, or set
+`WINDSURF_API_KEY` in the instance's environment variables. If you override the command path,
+point it at Devin CLI; the Devin Desktop launcher cannot run ACP.
+
+Devin's model picker groups the models available to your account into families. Select **Fusion**
+to choose a lead model and sidekick, then use the model options for thinking level, fast mode, or
+context size where supported. Saved models and options stay visible if availability changes;
+choose an available combination before sending again.
+
+Workspace skills appear in the `$` menu using Devin's own skill discovery. Invoke one skill per
+message; Devin expands it as a native slash command, including skills restricted to user invocation.
+
 ## Native sessions
 
 When an agent advertises ACP session listing and import support, expand its provider card,

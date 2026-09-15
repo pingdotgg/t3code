@@ -80,6 +80,13 @@ export const ServerProviderModel = Schema.Struct({
   isCustom: Schema.Boolean,
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
+  /** Lets clients configure a Fusion pairing without parsing its display label or native ID. */
+  fusion: Schema.optional(
+    Schema.Struct({
+      lead: Schema.Struct({ id: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
+      sidekick: Schema.Struct({ id: TrimmedNonEmptyString, name: TrimmedNonEmptyString }),
+    }),
+  ),
   capabilities: Schema.NullOr(ModelCapabilities),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
@@ -123,6 +130,8 @@ export const ServerProviderWorkspaceSnapshot = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   checkedAt: IsoDateTime,
   slashCommands: Schema.Array(ServerProviderSlashCommand),
+  /** Skills-only discovery inherits live commands; the array remains for older clients. */
+  slashCommandsSource: Schema.optionalKey(Schema.Literal("provider")),
   skills: Schema.Array(ServerProviderSkill),
 });
 export type ServerProviderWorkspaceSnapshot = typeof ServerProviderWorkspaceSnapshot.Type;
@@ -211,6 +220,15 @@ export const ServerProvider = Schema.Struct({
   requiresNewThreadForModelChange: Schema.optional(Schema.Boolean),
   supportsConversationRollback: Schema.optional(Schema.Boolean),
   supportsTextGeneration: Schema.optional(Schema.Boolean),
+  // Instance catalogs cannot borrow models from another account or static defaults.
+  modelPolicy: Schema.optional(
+    Schema.Struct({
+      catalogScope: Schema.optional(Schema.Literal("instance")),
+      preserveUnavailableModels: Schema.optional(Schema.Boolean),
+      // Exact options select native variants; never coerce a saved choice or inject defaults.
+      optionSelection: Schema.optional(Schema.Literal("exact")),
+    }),
+  ),
   setup: Schema.optional(
     Schema.Struct({
       canAuthenticate: Schema.Boolean,
@@ -254,6 +272,25 @@ export const ServerProvider = Schema.Struct({
   updateState: Schema.optionalKey(ServerProviderUpdateState),
 });
 export type ServerProvider = typeof ServerProvider.Type;
+
+const LEGACY_MODEL_POLICIES = new Map<string, NonNullable<ServerProvider["modelPolicy"]>>([
+  ["antigravity", { catalogScope: "instance", preserveUnavailableModels: true }],
+  ["opencode", { preserveUnavailableModels: true }],
+  ["acpRegistry", { catalogScope: "instance", preserveUnavailableModels: true }],
+]);
+
+/** Older environments lack policy metadata. Keep their behavior at this compatibility boundary. */
+export function resolveProviderModelPolicy(
+  provider:
+    | {
+        readonly driver?: string;
+        readonly modelPolicy?: ServerProvider["modelPolicy"];
+      }
+    | null
+    | undefined,
+): NonNullable<ServerProvider["modelPolicy"]> {
+  return provider?.modelPolicy ?? LEGACY_MODEL_POLICIES.get(provider?.driver ?? "") ?? {};
+}
 
 // Provider status kinds grow over time (ServerProviderState,
 // ServerProviderAuthStatus, ServerProviderVersionAdvisoryStatus,

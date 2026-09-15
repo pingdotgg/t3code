@@ -1471,6 +1471,34 @@ describe("environment reconnect warning grace", () => {
 });
 
 describe("resolveComposerProviderSelection", () => {
+  it.each(["codex", "claudeAgent", "cursor", "grok"])(
+    "allows a locked %s thread to use another instance without account metadata",
+    (driver) => {
+      const missing = ProviderInstanceId.make("missing-account");
+      const fallback = entry(driver);
+      expect(
+        resolveComposerProviderSelection({
+          entries: [fallback],
+          candidateInstanceIds: [missing],
+          lockedProvider: ProviderDriverKind.make(driver),
+          lockedInstanceId: missing,
+        }).selectedProviderEntry,
+      ).toBe(fallback);
+    },
+  );
+
+  it("keeps ACP threads on their original instance when continuation metadata is absent", () => {
+    const missing = ProviderInstanceId.make("missing-account");
+    expect(
+      resolveComposerProviderSelection({
+        entries: [entry("acpRegistry", "another-account")],
+        candidateInstanceIds: [missing],
+        lockedProvider: ProviderDriverKind.make("acpRegistry"),
+        lockedInstanceId: missing,
+      }).selectedProviderEntry,
+    ).toBeUndefined();
+  });
+
   const catalogModels: ServerProvider["models"] = [
     { slug: "gemini-pro", name: "Gemini Pro", isCustom: false, capabilities: null },
   ];

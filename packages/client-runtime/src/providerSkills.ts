@@ -122,5 +122,8 @@ export function resolveProviderSlashCommandsForCwd(
   provider: ServerProvider,
   cwd: string | null | undefined,
 ): ServerProvider["slashCommands"] {
-  return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
+  const workspace = resolveProviderWorkspaceSnapshot(provider, cwd);
+  return workspace?.slashCommandsSource === "provider"
+    ? provider.slashCommands
+    : (workspace?.slashCommands ?? provider.slashCommands);
 }

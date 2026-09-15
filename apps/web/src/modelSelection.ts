@@ -1,4 +1,5 @@
 import {
+  resolveProviderModelPolicy,
   ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
@@ -79,6 +80,7 @@ function readInstanceCustomModels(
 }
 
 export interface AppModelOption {
+  fusion?: ServerProvider["models"][number]["fusion"];
   slug: string;
   name: string;
   shortName?: string;
@@ -97,8 +99,9 @@ function appendUnavailableDynamicModelSelection(
   provider: ProviderDriverKind,
   selectedModel: string | null | undefined,
   hiddenModels: ReadonlyArray<string>,
+  modelPolicy: ServerProvider["modelPolicy"],
 ): AppModelOption[] {
-  if (provider !== "opencode" && provider !== "antigravity") return options;
+  if (!modelPolicy?.preserveUnavailableModels) return options;
   const slug = normalizeCustomModelSlug(selectedModel);
   if (!slug) return options;
   if (provider === "antigravity" && slug === ANTIGRAVITY_DEFAULT_MODEL) return options;
@@ -119,6 +122,7 @@ function toAppModelOption(model: ServerProvider["models"][number]): AppModelOpti
     isCustom: model.isCustom,
   };
   if (model.shortName) option.shortName = model.shortName;
+  if (model.fusion) option.fusion = model.fusion;
   if (model.subProvider) option.subProvider = model.subProvider;
   if (model.aliases) option.aliases = model.aliases;
   if (model.badge) option.badge = model.badge;
@@ -221,6 +225,9 @@ function getAppModelOptions(
     provider,
     selectedModel,
     preferences.hiddenModels,
+    resolveProviderModelPolicy(
+      providers.find((entry) => entry.instanceId === defaultInstanceId) ?? { driver: provider },
+    ),
   );
 }
 
@@ -269,6 +276,7 @@ export function getAppModelOptionsForInstance(
     entry.driverKind,
     selectedModel,
     preferences.hiddenModels,
+    resolveProviderModelPolicy(entry.snapshot),
   );
 }
 
@@ -308,7 +316,7 @@ export function resolveAppModelSelectionForInstance(
   }
   if (
     resolutionOptions?.preserveUnavailableSelection &&
-    (entry.driverKind === "opencode" || entry.driverKind === "antigravity")
+    resolveProviderModelPolicy(entry.snapshot).preserveUnavailableModels
   ) {
     const unavailableSelection = normalizeCustomModelSlug(selectedModel);
     const hiddenModels = readInstanceModelPreferences(settings, entry.instanceId).hiddenModels;
@@ -432,7 +440,8 @@ export function resolveAppModelSelectionState(
       provider,
       model,
       models: entry.models,
-      modelOptions: selectedEntry ? selection.options : undefined,
+      modelPolicy: resolveProviderModelPolicy(entry.snapshot),
+      modelOptions: selectedEntry && model === selection.model ? selection.options : undefined,
       planModeEnabled: settings.planModeEnabled,
     });
 
