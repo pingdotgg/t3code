@@ -2644,21 +2644,25 @@ describe("ClaudeAdapterLive", () => {
       name: "an assistant-only rate limit",
       messages: [rateLimitAssistant],
       expected: usageLimitMessage,
+      expectedClass: "usage_limit",
     },
     {
       name: "a normal parent response after a rate limit",
       messages: [rateLimitAssistant, { ...rateLimitAssistant, error: undefined }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a server error after a rate limit",
       messages: [rateLimitAssistant, { ...rateLimitAssistant, error: "server_error" }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a subagent rate limit",
       messages: [{ ...rateLimitAssistant, parent_tool_use_id: "nested-tool" }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a subagent response after a parent rate limit",
@@ -2667,8 +2671,9 @@ describe("ClaudeAdapterLive", () => {
         { ...rateLimitAssistant, error: undefined, parent_tool_use_id: "nested-tool" },
       ],
       expected: usageLimitMessage,
+      expectedClass: "usage_limit",
     },
-  ])("classifies the terminal API failure after $name", ({ messages, expected }) => {
+  ])("classifies the terminal API failure after $name", ({ messages, expected, expectedClass }) => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2692,6 +2697,7 @@ describe("ClaudeAdapterLive", () => {
       const errors = events.filter((event) => event.type === "runtime.error");
       assert.equal(errors.length, 1);
       assert.equal(errors[0]?.payload.message, expected);
+      assert.equal(errors[0]?.payload.class, expectedClass);
       assert.equal(completedTurn(events).state, "failed");
       assert.equal(completedTurn(events).errorMessage, expected);
     }).pipe(
