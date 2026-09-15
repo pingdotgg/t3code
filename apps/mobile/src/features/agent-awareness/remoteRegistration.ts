@@ -615,7 +615,11 @@ function logRegistrationDebug(context: string, details?: unknown): void {
   if (!__DEV__) {
     return;
   }
-  console.log(`[agent-awareness] ${context}`, details ?? "");
+  if (details !== undefined) {
+    console.log(`[agent-awareness] ${context}`, details);
+    return;
+  }
+  console.log(`[agent-awareness] ${context}`);
 }
 
 function runRegistrationInBackground(

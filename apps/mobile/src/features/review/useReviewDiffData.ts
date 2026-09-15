@@ -12,7 +12,7 @@ function isReviewDiffDebugLoggingEnabled(): boolean {
   return typeof __DEV__ !== "undefined" ? __DEV__ : false;
 }
 
-function logReviewDiffDiagnostic(message: string, details?: Record<string, unknown>): void {
+export function logReviewDiffDiagnostic(message: string, details?: Record<string, unknown>): void {
   if (!isReviewDiffDebugLoggingEnabled()) {
     return;
   }
