@@ -29,6 +29,7 @@ function normalizeConnectionState(phase: string | undefined): EnvironmentUpdateC
     case "connecting":
     case "reconnecting":
       return "connecting";
+    case "unsupported":
     case "error":
       return "error";
     case "offline":

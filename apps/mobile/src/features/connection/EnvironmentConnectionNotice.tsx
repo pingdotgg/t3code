@@ -16,6 +16,8 @@ function noticeTitle(phase: EnvironmentConnectionPhase, environmentLabel: string
       return `Connecting to ${environmentLabel}...`;
     case "reconnecting":
       return `Reconnecting to ${environmentLabel}...`;
+    case "unsupported":
+      return "Client not supported";
     case "error":
       return `${environmentLabel} is unavailable`;
     case "available":
@@ -31,7 +33,7 @@ function noticeDetail(
   error: string | null,
 ): string {
   if (error) {
-    return `The app will keep retrying automatically. ${error}`;
+    return phase === "reconnecting" ? `The app will keep retrying automatically. ${error}` : error;
   }
 
   switch (phase) {
@@ -40,6 +42,8 @@ function noticeDetail(
     case "connecting":
     case "reconnecting":
       return `The ${resourceName} will load as soon as the environment is ready.`;
+    case "unsupported":
+      return "Use compatible versions of the app and server to connect.";
     case "available":
     case "error":
       return `Reconnect the environment to load the ${resourceName}.`;
@@ -95,7 +99,7 @@ export function EnvironmentConnectionNotice(props: {
           ) : null}
         </Text>
 
-        {props.connection.phase !== "offline" ? (
+        {props.connection.phase !== "offline" && props.connection.phase !== "unsupported" ? (
           <Pressable
             accessibilityRole="button"
             className="mt-1 rounded-full bg-subtle px-4 py-2.5 active:opacity-70"
