@@ -48,6 +48,7 @@ import {
   ProviderRegistryLive,
 } from "./ProviderRegistry.ts";
 import * as ServerConfig from "../../config.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import * as ServerSettingsModule from "../../serverSettings.ts";
 import {
   readProviderStatusCache,
@@ -2290,6 +2291,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(CodexResetCredit.layerTest),
+            Layer.provideMerge(SqlitePersistenceMemory),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
             // NO spawner mock — `ChildProcessSpawner` is supplied by the
@@ -2391,6 +2393,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(CodexResetCredit.layerTest),
+            Layer.provideMerge(SqlitePersistenceMemory),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.updateService(ChildProcessSpawner.ChildProcessSpawner, (spawner) =>
               ChildProcessSpawner.make((command) => {
@@ -2507,6 +2510,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             ),
             Layer.provideMerge(ModelManifest.layerTest),
             Layer.provideMerge(CodexResetCredit.layerTest),
+            Layer.provideMerge(SqlitePersistenceMemory),
             Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
             Layer.provideMerge(NodeServices.layer),
             Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),
@@ -2569,6 +2573,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               Layer.provideMerge(ModelManifest.layerTest),
               Layer.provideMerge(CodexResetCredit.layerTest),
+              Layer.provideMerge(SqlitePersistenceMemory),
               Layer.provideMerge(CodexResetCredit.layerTest),
               Layer.provideMerge(OpenCodeRuntime.OpenCodeRuntimeLive),
               Layer.provideMerge(BackgroundPolicyAlwaysRunLayer),

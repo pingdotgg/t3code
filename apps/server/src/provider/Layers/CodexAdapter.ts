@@ -38,6 +38,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Queue from "effect/Queue";
+import * as SqlClient from "effect/unstable/sql/SqlClient";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
@@ -71,6 +72,7 @@ import {
 } from "./CodexSessionRuntime.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import { resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
+import { recordCodexChildUsage } from "./codexChildUsage.ts";
 import {
   type CodexRateLimitSnapshot,
   codexRateLimitsToUpdate,
@@ -768,8 +770,11 @@ function itemTitle(
   }
 }
 
-function itemDetail(itemType: CanonicalItemType, item: CodexLifecycleItem): string | undefined {
-  const itemRecord = item as Record<string, unknown>;
+function itemDetail(
+  itemType: CanonicalItemType,
+  item: Record<string, unknown>,
+): string | undefined {
+  const itemRecord = item;
   const action = itemRecord.action as Record<string, unknown> | undefined;
   const actionQueries = Array.isArray(action?.queries) ? action.queries : [];
   const candidates = [
@@ -1218,7 +1223,7 @@ function mapCollabAgentEvent(
           ? (tokenUsage.total as Record<string, unknown>)
           : undefined;
       const count = (value: unknown): number | undefined =>
-        typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+        typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
       // Same validation as every other field: RuntimeTaskUsage.totalTokens
       // is NonNegativeInt, so NaN/Infinity/negative wire values must miss.
       const totalTokens = count(total?.totalTokens);
@@ -1259,18 +1264,13 @@ function mapCollabAgentEvent(
           ? (payload.item as Record<string, unknown>)
           : undefined;
       const itemTypeRaw = typeof item?.type === "string" ? item.type : undefined;
-      if (!itemTypeRaw) {
+      if (!item || !itemTypeRaw) {
         return [];
       }
-      // A loose summary from the raw item: the child stream is untyped at
-      // this boundary (synthetic event payload), so read best-effort fields
-      // rather than force a schema decode.
-      const looseSummary =
-        (typeof item?.command === "string" ? item.command : undefined) ??
-        (typeof item?.title === "string" ? item.title : undefined) ??
-        (typeof item?.query === "string" ? item.query : undefined);
       const canonical = toCanonicalItemType(itemTypeRaw);
-      const summary = looseSummary ?? canonical.replaceAll("_", " ");
+      const detail = itemDetail(canonical, item);
+      if (canonical === "assistant_message" && !detail) return [];
+      const summary = detail ?? itemTitle(canonical) ?? canonical.replaceAll("_", " ");
       return [
         {
           ...base,
@@ -2218,6 +2218,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   options?: CodexAdapterLiveOptions,
 ) {
   const boundInstanceId = options?.instanceId ?? ProviderInstanceId.make("codex");
+  const sql = yield* SqlClient.SqlClient;
   const fileSystem = yield* FileSystem.FileSystem;
   const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const crypto = yield* Crypto.Crypto;
@@ -2427,9 +2428,61 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
               }
               return runtimeEvent;
             });
+            for (const [index, mapped] of mappedEvents.entries()) {
+              if (mapped.type !== "task.progress" || !event.method.startsWith("collabAgent/"))
+                continue;
+              const payload = asUnknownRecord(event.payload);
+              const item = asUnknownRecord(payload?.item);
+              const toolItemId =
+                typeof item?.id === "string" &&
+                [
+                  "commandExecution",
+                  "fileChange",
+                  "mcpToolCall",
+                  "dynamicToolCall",
+                  "webSearch",
+                  "imageView",
+                  "imageGeneration",
+                  "collabAgentToolCall",
+                ].includes(String(item.type))
+                  ? item.id
+                  : undefined;
+              if (!toolItemId && !mapped.payload.typedUsage) continue;
+              const usage = yield* recordCodexChildUsage(sql, {
+                threadId: event.threadId,
+                instanceId: boundInstanceId,
+                taskId: mapped.payload.taskId,
+                ...(toolItemId
+                  ? {
+                      toolItemId,
+                      childTurnId:
+                        typeof payload?.childTurnId === "string" ? payload.childTurnId : "",
+                    }
+                  : {}),
+                ...(mapped.payload.typedUsage ? { usage: mapped.payload.typedUsage } : {}),
+              }).pipe(
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not persist Codex child usage", { cause }).pipe(
+                    Effect.as(undefined),
+                  ),
+                ),
+              );
+              // Never replace the durable usage row with a partial snapshot on failure.
+              const progress = { ...mapped.payload };
+              delete progress.typedUsage;
+              mappedEvents[index] = {
+                ...mapped,
+                payload: usage ? { ...progress, typedUsage: usage } : progress,
+              };
+            }
             const runtimeEvents = usageLimitError
               ? [usageLimitError, ...mappedEvents]
-              : mappedEvents;
+              : mappedEvents.filter(
+                  (mapped) =>
+                    event.method !== "collabAgent/tokenUsage" ||
+                    mapped.type !== "task.progress" ||
+                    mapped.payload.typedUsage !== undefined,
+                );
             if (runtimeEvents.length === 0) {
               yield* Effect.logDebug("ignoring unhandled Codex provider event", {
                 method: event.method,

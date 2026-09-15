@@ -36,6 +36,7 @@ import * as TestClock from "effect/testing/TestClock";
 import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
+import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
@@ -244,6 +245,7 @@ const validationLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -314,6 +316,7 @@ const sessionErrorLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -462,6 +465,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -494,6 +498,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -527,6 +532,7 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
       Layer.provideMerge(ServerSettingsService.layerTest()),
       Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(SqlitePersistenceMemory),
       Layer.provideMerge(NodeServices.layer),
     );
 
@@ -581,6 +587,7 @@ const lifecycleLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -1041,6 +1048,88 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
             reasoningTokens: 4,
             hasSubagents: false,
           },
+        ],
+      );
+    }),
+  );
+
+  it.effect("preserves child answers and counts each tool once", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 5)).pipe(
+        Effect.forkChild,
+      );
+      const items = [
+        { type: "commandExecution", id: "tool-1", command: "cat README.md" },
+        { type: "commandExecution", id: "tool-1", command: "cat README.md" },
+        { type: "agentMessage", id: "answer-1", text: "" },
+        { type: "agentMessage", id: "answer-1", text: "The project is T3 Code." },
+      ];
+      for (const [index, item] of items.entries()) {
+        yield* runtime.emit({
+          id: asEventId(`evt-child-item-${index}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:00.000Z",
+          method: "collabAgent/item",
+          threadId: asThreadId("thread-1"),
+          payload: { agentThreadId: "child-answer", item },
+        });
+      }
+      for (const [index, extra] of [
+        { method: "collabAgent/tokenUsage", tokenUsage: { total: { totalTokens: 42 } } },
+        { method: "collabAgent/turnCompleted", turn: { status: "completed" } },
+      ].entries()) {
+        yield* runtime.emit({
+          id: asEventId(`evt-child-state-${index}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:01.000Z",
+          method: extra.method,
+          threadId: asThreadId("thread-1"),
+          payload: { agentThreadId: "child-answer", ...extra },
+        });
+      }
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const progress = events.filter((event) => event.type === "task.progress");
+      NodeAssert.deepStrictEqual(
+        { summary: progress[2]?.payload.summary, usage: progress[3]?.payload.typedUsage },
+        { summary: "The project is T3 Code.", usage: { totalTokens: 42, toolUses: 1 } },
+      );
+      NodeAssert.equal(events[4]?.type === "task.updated" && events[4].payload.status, "idle");
+      yield* adapter.stopSession(asThreadId("thread-1"));
+      const restarted = yield* startLifecycleRuntime();
+      const resumedFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      for (const [index, extra] of [
+        { method: "collabAgent/item", item: items[0] },
+        {
+          method: "collabAgent/item",
+          item: { type: "mcpToolCall", id: "tool-2", server: "filesystem", tool: "read_file" },
+        },
+        {
+          method: "collabAgent/tokenUsage",
+          tokenUsage: { total: { totalTokens: 20, inputTokens: 10 } },
+        },
+      ].entries()) {
+        yield* restarted.runtime.emit({
+          id: asEventId(`evt-child-resumed-${index}`),
+          kind: "notification",
+          provider: ProviderDriverKind.make("codex"),
+          createdAt: "2026-01-01T00:00:02.000Z",
+          method: extra.method,
+          threadId: asThreadId("thread-1"),
+          payload: { agentThreadId: "child-answer", ...extra },
+        });
+      }
+      const resumed = Array.from(yield* Fiber.join(resumedFiber));
+      NodeAssert.deepStrictEqual(
+        resumed.map((event) => (event.type === "task.progress" ? event.payload.typedUsage : null)),
+        [
+          { totalTokens: 42, toolUses: 1 },
+          { totalTokens: 42, toolUses: 2 },
+          { totalTokens: 42, inputTokens: 10, toolUses: 2 },
         ],
       );
     }),
@@ -2557,6 +2646,7 @@ const scopedLifecycleLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -2601,6 +2691,7 @@ const scopedFailureLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
@@ -2653,6 +2744,7 @@ it.effect("flushes managed native logs when the adapter layer shuts down", () =>
         Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
         Layer.provideMerge(ServerSettingsService.layerTest()),
         Layer.provideMerge(providerSessionDirectoryTestLayer),
+        Layer.provideMerge(SqlitePersistenceMemory),
         Layer.provideMerge(NodeServices.layer),
       );
       const context = yield* Layer.buildWithScope(layer, scope);
@@ -2709,6 +2801,7 @@ const usageLimitLayer = it.layer(
     Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(SqlitePersistenceMemory),
     Layer.provideMerge(NodeServices.layer),
   ),
 );
