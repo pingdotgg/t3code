@@ -1,10 +1,12 @@
 import {
   USAGE_CONTRACT_VERSION,
+  USAGE_MERGE_COMPATIBLE_SINCE,
   type EnvironmentId,
   type UsageBucket,
   type UsageDay,
   type UsageProviderKind,
   type UsageSummary,
+  type UsageSource,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -40,6 +42,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSource["status"];
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,7 +60,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -112,6 +115,76 @@ describe("mergeUsage", () => {
     expect(merged.contributingEnvironments).toEqual(["env-a"]);
   });
 
+  it("selects buckets independently for accounts with reversed scan health", () => {
+    const first = { provider: "claude" as const, hostId: "mac", homePath: "/first" };
+    const second = { ...first, homePath: "/second" };
+    const a = environment(
+      "env-a",
+      summary(
+        [bucket({ sourceIndex: 0, costUsd: 10 }), bucket({ sourceIndex: 1, costUsd: 2 })],
+        [first, { ...second, status: "partial" }],
+      ),
+    );
+    const b = environment(
+      "env-b",
+      summary(
+        [bucket({ sourceIndex: 0, costUsd: 1 }), bucket({ sourceIndex: 1, costUsd: 20 })],
+        [{ ...first, status: "partial" }, second],
+      ),
+    );
+    for (const environments of [
+      [a, b],
+      [b, a],
+    ]) {
+      const merged = mergeUsage(environments, USAGE_CONTRACT_VERSION);
+      expect(merged.costUsd).toBe(30);
+      expect(merged.records).toBe(10);
+      expect(merged.totalTokens).toBe(2320);
+      expect(merged.sessions).toBe(2);
+    }
+  });
+
+  it("keeps distinct accounts when environments share only part of their sources", () => {
+    const shared = { provider: "claude" as const, hostId: "mac", homePath: "/shared" };
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [bucket({ sourceIndex: 0, costUsd: 10 }), bucket({ sourceIndex: 1, costUsd: 20 })],
+            [shared, { ...shared, homePath: "/only-a" }],
+          ),
+        ),
+        environment(
+          "env-b",
+          summary(
+            [bucket({ sourceIndex: 0, costUsd: 10 }), bucket({ sourceIndex: 1, costUsd: 30 })],
+            [shared, { ...shared, homePath: "/only-b" }],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.costUsd).toBe(60);
+    expect(merged.sessions).toBe(3);
+    expect(merged.records).toBe(15);
+  });
+
+  it("reports ambiguous older multi-account summaries as stale", () => {
+    const shared = { provider: "claude" as const, hostId: "mac", homePath: "/first" };
+    const merged = mergeUsage(
+      [
+        environment("old", summary([bucket()], [shared, { ...shared, homePath: "/second" }], 5)),
+        environment("new", summary([bucket({ sourceIndex: 0 })], [shared])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(1);
+    expect(merged.staleEnvironments).toEqual(["old"]);
+    expect(merged.duplicateSources).toEqual([]);
+  });
+
   it("drops only the duplicated provider, keeping the environment's other one", () => {
     const sharedClaude = {
       provider: "claude" as const,
@@ -158,7 +231,7 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            USAGE_MERGE_COMPATIBLE_SINCE - 1,
           ),
         ),
       ],
@@ -369,5 +442,36 @@ describe("mergeUsage", () => {
     ]);
     expect(merged.daily).toHaveLength(1);
     expect(merged.daily[0]?.costUsd).toBe(10);
+  });
+});
+
+describe("usage source coverage ownership", () => {
+  const same = { provider: "claude" as const, hostId: "mac", homePath: "/same/.claude" };
+  it.each(["partial", "failed", "missing"] as const)(
+    "prefers complete coverage over an earlier %s source",
+    (status) => {
+      const incomplete = environment(
+        "env-a",
+        summary([bucket({ costUsd: 2 })], [{ ...same, status }]),
+      );
+      const complete = environment("env-b", summary([bucket({ costUsd: 10 })], [same]));
+      for (const environments of [
+        [incomplete, complete],
+        [complete, incomplete],
+      ]) {
+        expect(mergeUsage(environments, USAGE_CONTRACT_VERSION).costUsd).toBe(10);
+      }
+    },
+  );
+  it("retains partial usage when no complete copy exists", () => {
+    expect(
+      mergeUsage(
+        [
+          environment("env-a", summary([], [{ ...same, status: "failed" }])),
+          environment("env-b", summary([bucket({ costUsd: 2 })], [{ ...same, status: "partial" }])),
+        ],
+        USAGE_CONTRACT_VERSION,
+      ).costUsd,
+    ).toBe(2);
   });
 });
