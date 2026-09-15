@@ -595,3 +595,17 @@ export const VoiceToolSchemas = {
 } as const;
 
 export type VoiceToolName = keyof typeof VoiceToolSchemas;
+
+/** API keys are write-only. Omitting apiKey preserves it; null removes it. */
+export const VoiceSettingsUpdate = Schema.Struct({
+  apiKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  liveModel: TrimmedNonEmptyString,
+  backendModel: TrimmedNonEmptyString,
+});
+export type VoiceSettingsUpdate = typeof VoiceSettingsUpdate.Type;
+export const VoiceSettings = Schema.Struct({
+  keyConfigured: Schema.Boolean,
+  liveModel: TrimmedNonEmptyString,
+  backendModel: TrimmedNonEmptyString,
+});
+export type VoiceSettings = typeof VoiceSettings.Type;
