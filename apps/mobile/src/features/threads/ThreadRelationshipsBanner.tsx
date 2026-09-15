@@ -1,5 +1,6 @@
 import * as Haptics from "expo-haptics";
 import { SymbolView, type SFSymbol } from "expo-symbols";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -108,8 +109,13 @@ export function ThreadRelationshipsBanner(props: {
 
   const primaryParent = rows.find(({ edge }) => edge.targetThreadId === props.threadId) ?? rows[0];
   const primaryNode = primaryParent ? graph.nodes.get(primaryParent.threadId) : null;
+  const primaryTitle = primaryNode?.thread?.title ?? "related thread";
+  const primaryDisplayTitle =
+    primaryParent?.edge.kind === "subagent"
+      ? formatSubagentDisplayTitle(primaryTitle)
+      : primaryTitle;
   const summary = primaryParent
-    ? `${relationshipLabel(primaryParent.edge, props.threadId)}: ${primaryNode?.thread?.title ?? "related thread"}`
+    ? `${relationshipLabel(primaryParent.edge, props.threadId)}: ${primaryDisplayTitle}`
     : "Agent session connected";
 
   const openThread = (threadId: ThreadId, archivedThread: boolean) => {
@@ -219,6 +225,7 @@ export function ThreadRelationshipsBanner(props: {
             <ScrollView contentContainerStyle={{ gap: 8 }} showsVerticalScrollIndicator={false}>
               {rows.map(({ threadId, edge }) => {
                 const node = graph.nodes.get(threadId);
+                const title = node?.thread?.title ?? threadId;
                 const availability = threadAvailability(
                   node?.thread ?? null,
                   node?.missing ?? true,
@@ -247,7 +254,7 @@ export function ThreadRelationshipsBanner(props: {
                         {relationshipLabel(edge, props.threadId)}
                       </Text>
                       <Text className="font-t3-medium text-sm text-foreground" numberOfLines={1}>
-                        {node?.thread?.title ?? threadId}
+                        {edge.kind === "subagent" ? formatSubagentDisplayTitle(title) : title}
                       </Text>
                     </View>
                     {availability ? (
