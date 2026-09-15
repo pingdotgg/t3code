@@ -49,6 +49,7 @@ export function getPullRequestDiffStats(input: {
   files: ReadonlyArray<FileDiffMetadata>;
   omittedFileStats: ReadonlyMap<string, PullRequestOmittedFileStat>;
   totals: { additions: number; deletions: number; changedFiles: number } | null;
+  complete: boolean;
 }) {
   const loaded = input.files.reduce(
     (total, file) => {
@@ -65,12 +66,12 @@ export function getPullRequestDiffStats(input: {
     },
     { additions: 0, deletions: 0, changedFiles: 0 },
   );
-  // Some hosts omit totals, and detail can lag a newly pushed patch.
-  return input.totals === null
+  // Detail can lag a push. Use one snapshot's counts, never a maximum per field.
+  return input.complete ||
+    input.totals === null ||
+    (input.totals.additions === 0 &&
+      input.totals.deletions === 0 &&
+      input.totals.changedFiles === 0)
     ? loaded
-    : {
-        additions: Math.max(input.totals.additions, loaded.additions),
-        deletions: Math.max(input.totals.deletions, loaded.deletions),
-        changedFiles: Math.max(input.totals.changedFiles, loaded.changedFiles),
-      };
+    : input.totals;
 }

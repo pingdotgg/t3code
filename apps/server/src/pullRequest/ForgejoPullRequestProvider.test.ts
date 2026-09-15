@@ -84,10 +84,21 @@ it.effect(
         if (request.path.endsWith("/pulls/1")) return json(pull);
         if (request.path.includes("/files?"))
           return json(request.path.endsWith("page=1") ? files : []);
-        if (request.path.includes("/contents/")) {
+        if (request.path.includes("/git/trees/")) {
+          const revision = request.path.includes("/head?") ? "head" : "base";
+          return json({
+            truncated: false,
+            tree: ["old.ts", ...files.map((file) => file.filename)].map((path) => ({
+              path,
+              mode: "100644",
+              sha: `${revision}:${path}`,
+            })),
+          });
+        }
+        if (request.path.includes("/git/blobs/")) {
           const text = request.path.includes("binary.bin")
             ? "\0binary"
-            : request.path.endsWith("ref=head")
+            : request.path.includes("/head%3A")
               ? "after\n"
               : "before\n";
           return json({ encoding: "base64", content: Buffer.from(text).toString("base64") });
@@ -118,9 +129,14 @@ it.effect(
 it.effect("keeps later files reachable when tea truncates a file-content response", () =>
   Effect.gen(function* () {
     api.mockImplementation((request) => {
-      if (request.path.endsWith(".diff") || request.path.includes("/contents/"))
+      if (request.path.endsWith(".diff") || request.path.includes("/git/blobs/"))
         return Effect.succeed({ ...output("partial"), stdoutTruncated: true });
       if (request.path.endsWith("/pulls/1")) return json(pull);
+      if (request.path.includes("/git/trees/"))
+        return json({
+          truncated: false,
+          tree: [{ path: "large.ts", mode: "100644", sha: "blob" }],
+        });
       if (request.path.includes("/files?"))
         return json(
           request.path.endsWith("page=1")
@@ -160,5 +176,50 @@ it.effect("does not mask authentication failures or accept invalid cursors", () 
     const denied = yield* Effect.flip(provider.getDiff(input));
     expect(denied.reason).toBe("unauthenticated");
     expect(api).toHaveBeenCalledTimes(1);
+  }).pipe(Effect.provide(runtime)),
+);
+
+it.effect("preserves executable, symlink, and submodule changes in rebuilt previews", () =>
+  Effect.gen(function* () {
+    const files = [
+      { filename: "tools/script", status: "modified", additions: 0, deletions: 0 },
+      { filename: "link", status: "modified", additions: 0, deletions: 0 },
+      { filename: "module", status: "modified", additions: 1, deletions: 1 },
+    ];
+    api.mockImplementation((request) => {
+      if (request.path.endsWith("/pulls/1")) return json(pull);
+      if (request.path.includes("/files?")) return json(files);
+      if (request.path.includes("/git/trees/")) {
+        const head = request.path.includes("/head");
+        if (request.path.includes("-tools?"))
+          return json({
+            truncated: false,
+            tree: [{ path: "script", mode: head ? "100755" : "100644", sha: "script" }],
+          });
+        if (request.path.endsWith("page=1"))
+          return json({
+            truncated: true,
+            tree: [{ path: "unrelated", mode: "100644", sha: "unused" }],
+          });
+        return json({
+          truncated: false,
+          tree: [
+            { path: "tools", mode: "040000", sha: head ? "head-tools" : "base-tools" },
+            { path: "link", mode: head ? "120000" : "100644", sha: "target" },
+            { path: "module", mode: "160000", sha: head ? "new-commit" : "old-commit" },
+          ],
+        });
+      }
+      if (request.path.includes("/git/blobs/"))
+        return json({ encoding: "base64", content: Buffer.from("target").toString("base64") });
+      return Effect.die(`Unexpected API path: ${request.path}`);
+    });
+    const provider = yield* Provider.make;
+    const result = yield* provider.getDiff({ ...input, cursor: "1" });
+    expect(result.truncated).toBe(false);
+    expect(result.patch).toContain("old mode 100644\nnew mode 100755");
+    expect(result.patch).toContain("old mode 100644\nnew mode 120000");
+    expect(result.patch).toContain("-Subproject commit old-commit\n+Subproject commit new-commit");
+    expect(result.omittedFileStats).toHaveLength(3);
   }).pipe(Effect.provide(runtime)),
 );
