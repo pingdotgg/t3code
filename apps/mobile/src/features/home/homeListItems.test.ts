@@ -15,6 +15,7 @@ import {
   type HomeListItem,
 } from "./homeListItems";
 import type { HomeThreadGroup } from "./homeThreadList";
+import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -86,6 +87,28 @@ function displayStates(
 ): ReadonlyMap<string, HomeGroupDisplayState> {
   return new Map(Object.entries(entries));
 }
+
+describe("threadJumpTarget", () => {
+  it("numbers only displayed threads across groups, skipping collapsed groups and pagination rows", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("collapsed", 3), makeGroup("alpha", 8), makeGroup("beta", 3)],
+      displayStates: displayStates({ collapsed: { collapsed: true, visibleCount: 6 } }),
+    });
+    expect(threadJumpTarget(layout.items, "thread.jump.1")?.id).toBe("alpha-thread-0");
+    expect(threadJumpTarget(layout.items, "thread.jump.7")?.id).toBe("beta-thread-0");
+    expect(threadJumpTarget(layout.items, "thread.jump.9")?.id).toBe("beta-thread-2");
+  });
+
+  it("ignores missing positions and unrelated commands", () => {
+    const layout = buildHomeListLayout({
+      groups: [makeGroup("alpha", 1)],
+      displayStates: displayStates({}),
+    });
+    expect(threadJumpTarget(layout.items, "thread.jump.2")).toBeNull();
+    expect(threadJumpTarget([], "thread.jump.1")).toBeNull();
+    expect(threadJumpTarget(layout.items, "commandPalette")).toBeNull();
+  });
+});
 
 describe("buildHomeListLayout", () => {
   it("renders a header plus all threads for a small group without a show-more row", () => {

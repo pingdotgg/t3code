@@ -87,6 +87,9 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("enterBehavior") { (view: T3ComposerEditorView, behavior: String) in
+        view.setEnterBehavior(behavior)
+      }
       Prop("textPasteThresholdBytes") { (view: T3ComposerEditorView, threshold: Int) in
         view.setTextPasteThresholdBytes(threshold)
       }
