@@ -1,11 +1,15 @@
 import { expect, it } from "@effect/vitest";
 import { describe, vi } from "vite-plus/test";
 import * as NodeHttpPlatform from "@effect/platform-node/NodeHttpPlatform";
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
+import * as HttpClient from "effect/unstable/http/HttpClient";
+import * as HttpMiddleware from "effect/unstable/http/HttpMiddleware";
+import * as HttpRouter from "effect/unstable/http/HttpRouter";
 import { HttpServerResponse } from "effect/unstable/http";
 import { openMediaFile } from "./assets/MediaFile.ts";
 
@@ -18,6 +22,34 @@ import {
 } from "./http.ts";
 
 const fileResponseLayer = Layer.mergeAll(NodeHttpPlatform.layer, NodeServices.layer);
+
+describe("asset compression", () => {
+  it.effect("preserves the content type of compressed HTML files", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-compressed-asset-" });
+      const filePath = path.join(directory, "index.html");
+      const contents = `<!doctype html><title>Preview</title><p>${"content".repeat(512)}</p>`;
+      yield* fs.writeFileString(filePath, contents);
+
+      yield* HttpRouter.add("GET", "/", assetFileResponse({ path: filePath })).pipe(
+        (routes) =>
+          HttpRouter.serve(routes, {
+            middleware: HttpMiddleware.compression(),
+          }),
+        Layer.build,
+      );
+
+      const response = yield* HttpClient.get("/", {
+        headers: { "accept-encoding": "gzip" },
+      });
+      expect(response.headers["content-encoding"]).toBe("gzip");
+      expect(response.headers["content-type"]).toBe("text/html; charset=utf-8");
+      expect(yield* response.text).toBe(contents);
+    }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+});
 
 describe("video asset byte ranges", () => {
   it.effect("uses current descriptor metadata after an in-place truncate or extension", () =>
