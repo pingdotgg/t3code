@@ -714,188 +714,184 @@ describe("orchestration V2 thread fork", () => {
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect(
-    "rolls back a Codex native fork when forking from an earlier completed source turn",
-    () =>
-      Effect.gen(function* () {
-        const rawTranscript = yield* readTranscript(PRIOR_TURN_TRANSCRIPT_PATH);
-        const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
-          Effect.service(FileSystem.FileSystem).pipe(
-            Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
-            Effect.orDie,
-          ),
-        );
-        const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
-          materializeReplayTranscriptWorkspace(rawTranscript, cwd),
-        );
+  it.effect("forks a Codex native thread at the selected native turn boundary", () =>
+    Effect.gen(function* () {
+      const rawTranscript = yield* readTranscript(PRIOR_TURN_TRANSCRIPT_PATH);
+      const cwd = yield* Effect.acquireRelease(makeCheckpointWorkspace, (directory) =>
+        Effect.service(FileSystem.FileSystem).pipe(
+          Effect.flatMap((fs) => fs.remove(directory, { recursive: true, force: true })),
+          Effect.orDie,
+        ),
+      );
+      const transcript = yield* CodexOrchestratorReplayHarness.decodeTranscript(
+        materializeReplayTranscriptWorkspace(rawTranscript, cwd),
+      );
 
-        const materialized = yield* Effect.gen(function* () {
-          const ids = yield* IdAllocatorV2;
-          const projectId = yield* ids.allocate.project({
-            fixtureName: "thread-fork-native-prior-turn",
-          });
-          const sourceThreadId = yield* ids.allocate.thread({
-            fixtureName: "thread-fork-native-prior-turn-source",
+      const materialized = yield* Effect.gen(function* () {
+        const ids = yield* IdAllocatorV2;
+        const projectId = yield* ids.allocate.project({
+          fixtureName: "thread-fork-native-prior-turn",
+        });
+        const sourceThreadId = yield* ids.allocate.thread({
+          fixtureName: "thread-fork-native-prior-turn-source",
+          projectId,
+        });
+        const targetThreadId = ThreadId.make("thread-fork-native-prior-turn-target");
+        const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
+
+        const commands = [
+          {
+            type: "thread.create",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "thread-create-source",
+            }),
+            threadId: sourceThreadId,
             projectId,
-          });
-          const targetThreadId = ThreadId.make("thread-fork-native-prior-turn-target");
-          const firstRunId = ids.derive.run({ threadId: sourceThreadId, ordinal: 1 });
-
-          const commands = [
-            {
-              type: "thread.create",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: "thread-fork-native-prior-turn",
-                commandName: "thread-create-source",
-              }),
-              threadId: sourceThreadId,
-              projectId,
-              title: "Source thread",
-              modelSelection: CODEX_MODEL_SELECTION,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              branch: null,
-              worktreePath: null,
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: "thread-fork-native-prior-turn",
-                commandName: "source-message-alpha",
-              }),
-              threadId: sourceThreadId,
-              messageId: MessageId.make("message-thread-fork-native-prior-turn-alpha"),
-              text: THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
-              attachments: [],
-              modelSelection: CODEX_MODEL_SELECTION,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: "thread-fork-native-prior-turn",
-                commandName: "source-message-beta",
-              }),
-              threadId: sourceThreadId,
-              messageId: MessageId.make("message-thread-fork-native-prior-turn-beta"),
-              text: THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
-              attachments: [],
-              modelSelection: CODEX_MODEL_SELECTION,
-              dispatchMode: { type: "start_immediately" },
-            },
-            {
-              type: "thread.fork",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: CommandId.make("command-thread-fork-native-prior-turn"),
-              sourceThreadId,
-              targetThreadId,
-              sourcePoint: { type: "run", runId: firstRunId },
-              title: "Forked from first response",
-            },
-            {
-              type: "message.dispatch",
-              createdBy: "user",
-              creationSource: "web",
-              commandId: yield* ids.allocate.command({
-                fixtureName: "thread-fork-native-prior-turn",
-                commandName: "target-message-repeat",
-              }),
-              threadId: targetThreadId,
-              messageId: MessageId.make("message-thread-fork-native-prior-turn-repeat"),
-              text: THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
-              attachments: [],
-              modelSelection: CODEX_MODEL_SELECTION,
-              dispatchMode: { type: "start_immediately" },
-            },
-          ] satisfies ReadonlyArray<OrchestrationV2Command>;
-
-          return {
+            title: "Source thread",
+            modelSelection: CODEX_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          },
+          {
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "source-message-alpha",
+            }),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-alpha"),
+            text: THREAD_FORK_NATIVE_PRIOR_TURN_ALPHA_PROMPT,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+          {
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "source-message-beta",
+            }),
+            threadId: sourceThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-beta"),
+            text: THREAD_FORK_NATIVE_PRIOR_TURN_BETA_PROMPT,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+          {
+            type: "thread.fork",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("command-thread-fork-native-prior-turn"),
             sourceThreadId,
             targetThreadId,
-            commands,
-          };
-        }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
-
-        const result = yield* runOrchestratorV2ProviderReplayScenario(
-          {
-            name: "thread_fork_native_prior_turn/codex",
-            transcript,
-            commands: materialized.commands,
-            steps: [
-              { type: "dispatch", command: materialized.commands[0]!, await: true },
-              { type: "advance_clock", duration: "1 millis" },
-              { type: "dispatch", command: materialized.commands[1]!, await: true },
-              { type: "await_thread_idle", threadId: materialized.sourceThreadId },
-              { type: "dispatch", command: materialized.commands[2]!, await: true },
-              { type: "await_thread_idle", threadId: materialized.sourceThreadId },
-              { type: "dispatch", command: materialized.commands[3]!, await: true },
-              { type: "dispatch", command: materialized.commands[4]!, await: true },
-              { type: "await_thread_idle", threadId: materialized.targetThreadId },
-            ],
-            projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
-            runtimePolicyOverride: { cwd, ...CODEX_READ_ONLY_NEVER_POLICY },
+            sourcePoint: { type: "run", runId: firstRunId },
+            title: "Forked from first response",
           },
-          CodexOrchestratorReplayHarness,
-        ).pipe(provideDeterministicTestRuntime);
+          {
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: yield* ids.allocate.command({
+              fixtureName: "thread-fork-native-prior-turn",
+              commandName: "target-message-repeat",
+            }),
+            threadId: targetThreadId,
+            messageId: MessageId.make("message-thread-fork-native-prior-turn-repeat"),
+            text: THREAD_FORK_NATIVE_PRIOR_TURN_REPEAT_PROMPT,
+            attachments: [],
+            modelSelection: CODEX_MODEL_SELECTION,
+            dispatchMode: { type: "start_immediately" },
+          },
+        ] satisfies ReadonlyArray<OrchestrationV2Command>;
 
-        const targetProjection = result.projections.get(materialized.targetThreadId);
-        assert.isDefined(targetProjection);
-        const targetAssistantText = targetProjection.turnItems
-          .filter((item) => item.type === "assistant_message")
-          .map((item) => item.text)
-          .join("\n");
-        assert.include(targetAssistantText, "fork boundary alpha");
-        assert.notInclude(
-          targetAssistantText,
-          "fork boundary beta",
-          "forking from the first source run must not preserve later source turns in native Codex context",
-        );
-        assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+        return {
+          sourceThreadId,
+          targetThreadId,
+          commands,
+        };
+      }).pipe(Effect.provide(idAllocatorLayer), provideDeterministicTestRuntime);
 
-        const visibleItems = targetProjection.visibleTurnItems.map((row) => row.item);
-        assert.deepEqual(
-          visibleItems.slice(0, 2).map((item) => item.type),
-          ["user_message", "assistant_message"],
-          "fork target projection should expose inherited source history through the fork point",
-        );
-        assert.equal(
-          visibleItems[0]?.type === "user_message" ? visibleItems[0].inputIntent : undefined,
-          "turn_start",
-          "inherited fork history should preserve source message intent",
-        );
-        assert.equal(targetProjection.visibleTurnItems[0]?.visibility, "inherited");
-        assert.equal(targetProjection.visibleTurnItems[1]?.visibility, "inherited");
-        const forkMarker = targetProjection.visibleTurnItems.find(
-          (row) => row.item.type === "fork",
-        );
-        assert.isDefined(forkMarker, "fork target projection should include a visible fork marker");
-        assert.equal(forkMarker.visibility, "synthetic");
-        const targetShell = result.shellSnapshot.threads.find(
-          (thread) => thread.id === materialized.targetThreadId,
-        );
-        assert.isDefined(targetShell, "shell snapshot should include the fork target thread");
-        assert.equal(targetShell.visibleItemCount, targetProjection.visibleTurnItems.length);
-        assert.equal(targetShell.lineage.relationshipToParent, "fork");
-        assert.equal(targetShell.forkedFrom?.type, "run");
+      const result = yield* runOrchestratorV2ProviderReplayScenario(
+        {
+          name: "thread_fork_native_prior_turn/codex",
+          transcript,
+          commands: materialized.commands,
+          steps: [
+            { type: "dispatch", command: materialized.commands[0]!, await: true },
+            { type: "advance_clock", duration: "1 millis" },
+            { type: "dispatch", command: materialized.commands[1]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[2]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.sourceThreadId },
+            { type: "dispatch", command: materialized.commands[3]!, await: true },
+            { type: "dispatch", command: materialized.commands[4]!, await: true },
+            { type: "await_thread_idle", threadId: materialized.targetThreadId },
+          ],
+          projectionThreadIds: [materialized.sourceThreadId, materialized.targetThreadId],
+          runtimePolicyOverride: { cwd, ...CODEX_READ_ONLY_NEVER_POLICY },
+        },
+        CodexOrchestratorReplayHarness,
+      ).pipe(provideDeterministicTestRuntime);
 
-        const visibleText = visibleItems
-          .filter((item) => item.type === "user_message" || item.type === "assistant_message")
-          .map((item) => item.text)
-          .join("\n");
-        assert.include(visibleText, "fork boundary alpha");
-        assert.notInclude(
-          visibleText,
-          "fork boundary beta",
-          "fork target visible projection must not inherit source turns after the fork point",
-        );
-      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+      const targetProjection = result.projections.get(materialized.targetThreadId);
+      assert.isDefined(targetProjection);
+      const targetAssistantText = targetProjection.turnItems
+        .filter((item) => item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(targetAssistantText, "fork boundary alpha");
+      assert.notInclude(
+        targetAssistantText,
+        "fork boundary beta",
+        "forking from the first source run must not preserve later source turns in native Codex context",
+      );
+      assert.equal(targetProjection.contextTransfers[0]?.resolution?.strategy, "native_fork");
+
+      const visibleItems = targetProjection.visibleTurnItems.map((row) => row.item);
+      assert.deepEqual(
+        visibleItems.slice(0, 2).map((item) => item.type),
+        ["user_message", "assistant_message"],
+        "fork target projection should expose inherited source history through the fork point",
+      );
+      assert.equal(
+        visibleItems[0]?.type === "user_message" ? visibleItems[0].inputIntent : undefined,
+        "turn_start",
+        "inherited fork history should preserve source message intent",
+      );
+      assert.equal(targetProjection.visibleTurnItems[0]?.visibility, "inherited");
+      assert.equal(targetProjection.visibleTurnItems[1]?.visibility, "inherited");
+      const forkMarker = targetProjection.visibleTurnItems.find((row) => row.item.type === "fork");
+      assert.isDefined(forkMarker, "fork target projection should include a visible fork marker");
+      assert.equal(forkMarker.visibility, "synthetic");
+      const targetShell = result.shellSnapshot.threads.find(
+        (thread) => thread.id === materialized.targetThreadId,
+      );
+      assert.isDefined(targetShell, "shell snapshot should include the fork target thread");
+      assert.equal(targetShell.visibleItemCount, targetProjection.visibleTurnItems.length);
+      assert.equal(targetShell.lineage.relationshipToParent, "fork");
+      assert.equal(targetShell.forkedFrom?.type, "run");
+
+      const visibleText = visibleItems
+        .filter((item) => item.type === "user_message" || item.type === "assistant_message")
+        .map((item) => item.text)
+        .join("\n");
+      assert.include(visibleText, "fork boundary alpha");
+      assert.notInclude(
+        visibleText,
+        "fork boundary beta",
+        "fork target visible projection must not inherit source turns after the fork point",
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
   it.effect("forks a Claude native session from an earlier completed source turn", () =>
