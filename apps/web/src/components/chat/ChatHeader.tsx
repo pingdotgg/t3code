@@ -274,6 +274,15 @@ export const ChatHeader = memo(function ChatHeader({
               defaultValue={renamingTitle}
               onBlur={(event) => {
                 if (renameCommittedRef.current) return;
+                // Focus landing on a navigation button means the rename was
+                // abandoned — discard it rather than persisting a half-draft.
+                if (
+                  event.relatedTarget instanceof HTMLElement &&
+                  event.relatedTarget.closest("button")
+                ) {
+                  setRenaming(null);
+                  return;
+                }
                 commitRename(event.currentTarget.value);
               }}
               onFocus={(event) => event.currentTarget.select()}
