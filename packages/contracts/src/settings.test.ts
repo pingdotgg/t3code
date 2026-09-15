@@ -809,7 +809,7 @@ describe("ServerSettings worktree defaults", () => {
 });
 
 describe("ServerSettings Cursor legacy settings", () => {
-  it("ignores obsolete Cursor CLI settings when reading server settings", () => {
+  it("preserves V1 Cursor CLI settings when reading and writing shared settings", () => {
     const decoded = decodeServerSettings({
       providers: {
         cursor: {
@@ -821,8 +821,10 @@ describe("ServerSettings Cursor legacy settings", () => {
     });
 
     expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(decoded.providers.cursor).not.toHaveProperty("binaryPath");
-    expect(decoded.providers.cursor).not.toHaveProperty("apiEndpoint");
+    expect(encodeServerSettings(decoded).providers.cursor).toMatchObject({
+      binaryPath: "cursor-agent",
+      apiEndpoint: "http://127.0.0.1:3774",
+    });
   });
 
   it("ignores obsolete Cursor CLI settings in patches", () => {
