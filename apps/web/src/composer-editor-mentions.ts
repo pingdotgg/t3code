@@ -19,6 +19,8 @@ export type ComposerPromptSegment =
   | {
       type: "skill";
       name: string;
+      source?: string;
+      path?: string;
     }
   | {
       type: "citation";
@@ -93,6 +95,10 @@ export function collectComposerPromptInlineTokens(text: string) {
   ].sort((left, right) => left.start - right.start);
 }
 
+/**
+ * Split draft text into editor segments while retaining each chip's original source for lossless
+ * serialization.
+ */
 function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegment[] {
   const segments: ComposerPromptSegment[] = [];
   if (!text) {
@@ -127,7 +133,11 @@ function splitPromptTextIntoComposerSegments(text: string): ComposerPromptSegmen
         source: match.source,
       });
     } else {
-      segments.push({ type: "skill", name: match.value });
+      segments.push({
+        type: "skill",
+        name: match.value,
+        ...(match.path ? { source: match.source, path: match.path } : {}),
+      });
     }
 
     cursor = match.end;

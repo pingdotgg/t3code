@@ -89,7 +89,7 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
     }),
   );
 
-  it.effect("prefers user skills on name collisions even with a stray .agents copy", () =>
+  it.effect("keeps user and project sources while ignoring a stray .agents copy", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -123,11 +123,18 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           scope: "user",
           description: "User deploy.",
         },
+        {
+          name: "deploy",
+          path: path.join(workspace, ".claude", "skills", "deploy", "SKILL.md"),
+          enabled: true,
+          scope: "project",
+          description: "Claude deploy.",
+        },
       ]);
     }),
   );
 
-  it.effect("prefers user skills over project skills on name collisions", () =>
+  it.effect("keeps user and project sources on name collisions", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -148,7 +155,8 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       const skills = yield* discoverClaudeSkills({ homePath: configDir }, workspace);
 
-      assert.equal(skills.length, 1);
+      assert.equal(skills.length, 2);
+      assert.equal(skills[1]?.scope, "project");
       assert.equal(skills[0]?.scope, "user");
       assert.equal(skills[0]?.description, "User deploy.");
     }),

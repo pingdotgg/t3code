@@ -123,6 +123,10 @@ const makeFakeInstance = (
       streamChanges: Stream.empty,
       applyUsageLimits: () => Effect.void,
     },
+    snapshotForCwd: (cwd) =>
+      Effect.succeed({
+        skills: [{ name: driverKind, path: `${cwd}/SKILL.md`, enabled: true }],
+      } as unknown as ServerProvider),
     adapter,
     textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],
   };
@@ -155,6 +159,17 @@ const layer = Layer.mergeAll(
 );
 
 it.layer(layer)("ProviderAdapterRegistryLive", (it) => {
+  it.effect("discovers skills through the selected instance's workspace snapshot", () =>
+    Effect.gen(function* () {
+      const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;
+      for (const instance of fakeInstances) {
+        assert.deepEqual(yield* registry.getSkills(instance.instanceId, "/selected-workspace"), [
+          { name: instance.driverKind, path: "/selected-workspace/SKILL.md", enabled: true },
+        ]);
+      }
+    }),
+  );
+
   it("resolves adapters and routing metadata from provider instances", () =>
     Effect.gen(function* () {
       const registry = yield* ProviderAdapterRegistry.ProviderAdapterRegistry;

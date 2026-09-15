@@ -54,6 +54,10 @@ function tokenStartForCursor(text: string, cursor: number): number {
   return index + 1;
 }
 
+/**
+ * Map a visible editor cursor to serialized prompt offsets, treating each inline chip as one
+ * position.
+ */
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
   const collapsedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
@@ -79,7 +83,7 @@ export function expandCollapsedComposerCursor(text: string, cursorInput: number)
       continue;
     }
     if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+      const expandedLength = segment.source?.length ?? segment.name.length + 1;
       if (remaining <= 1) {
         return expandedCursor + (remaining === 0 ? 0 : expandedLength);
       }
@@ -127,6 +131,10 @@ export function clampCollapsedComposerCursor(text: string, cursorInput: number):
   );
 }
 
+/**
+ * Map serialized prompt offsets back to editor positions, collapsing each inline chip to one
+ * position.
+ */
 export function collapseExpandedComposerCursor(text: string, cursorInput: number): number {
   const expandedCursor = clampCursor(text, cursorInput);
   const segments = splitPromptIntoComposerSegments(text);
@@ -155,7 +163,7 @@ export function collapseExpandedComposerCursor(text: string, cursorInput: number
       continue;
     }
     if (segment.type === "skill") {
-      const expandedLength = segment.name.length + 1;
+      const expandedLength = segment.source?.length ?? segment.name.length + 1;
       if (remaining === 0) {
         return collapsedCursor;
       }

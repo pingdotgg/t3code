@@ -13,6 +13,20 @@ function makeSkill(input: Partial<ServerProviderSkill> & Pick<ServerProviderSkil
 }
 
 describe("searchProviderSkills", () => {
+  it("lets users find either same-name skill by its own description", () => {
+    const plugin = makeSkill({
+      name: "code-review",
+      path: "/plugins/review/SKILL.md",
+      description: "Official review",
+    });
+    const personal = makeSkill({
+      name: "code-review",
+      path: "/personal/review/SKILL.md",
+      description: "Standards and spec",
+    });
+    expect(searchProviderSkills([plugin, personal], "standards", Infinity)).toEqual([personal]);
+    expect(searchProviderSkills([plugin, personal], "code-review", Infinity)).toHaveLength(2);
+  });
   it("moves exact ui matches ahead of broader ui matches", () => {
     const skills = [
       makeSkill({
@@ -83,7 +97,7 @@ describe("searchProviderSkills", () => {
     ]);
   });
 
-  it("returns the first enabled definition for each skill name", () => {
+  it("returns distinct sources for the same skill name", () => {
     const skills = [
       makeSkill({ name: "branch-audit", path: "/Users/matt/.codex/skills/branch-audit/SKILL.md" }),
       makeSkill({ name: "browser" }),
@@ -93,6 +107,7 @@ describe("searchProviderSkills", () => {
     expect(searchProviderSkills(skills, "").map((skill) => skill.path)).toEqual([
       "/Users/matt/.codex/skills/branch-audit/SKILL.md",
       "/tmp/browser/SKILL.md",
+      "/Users/matt/.agents/skills/branch-audit/SKILL.md",
     ]);
   });
 });

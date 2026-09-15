@@ -1,6 +1,80 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { collectComposerInlineTokens } from "./composerInlineTokens.ts";
+import {
+  collectComposerInlineTokens,
+  collectSkillReferences,
+  serializeSkillReference,
+} from "./composerInlineTokens.ts";
+
+describe("explicit skill references", () => {
+  it("does not invoke references quoted as code examples", () => {
+    const ref = "[$review](/personal/review/SKILL.md)";
+    expect(collectSkillReferences(`Example: \`${ref}\`\n\n\`\`\`md\n${ref}\n\`\`\``)).toEqual([]);
+  });
+  it.each([
+    "`` [$review](/private/SKILL.md) ``",
+    "`` literal ` [$review](/private/SKILL.md) ``",
+    "`` multi\n [$review](/private/SKILL.md) \nline ``",
+    "```md\n[$review](/private/SKILL.md)",
+    "~~~md\n[$review](/private/SKILL.md)",
+    "````md\n```\n[$review](/private/SKILL.md)\n````",
+    "~~~~md\n~~~\n[$review](/private/SKILL.md)\n~~~~",
+    "```md\n~~~\n[$review](/private/SKILL.md)",
+  ])("ignores references in Markdown code: %s", (text) => {
+    expect(collectSkillReferences(text)).toEqual([]);
+  });
+
+  it.each([
+    ["\\` REF \\`", true],
+    ["\\` REF `", true],
+    ["\\\\` REF `", false],
+    ["` REF \\`", false],
+    ["\\`` REF `", false],
+    ["\\`` REF ``", true],
+  ])("handles escaped backticks outside, but not inside, code spans: %s", (text, detected) => {
+    const skill = { name: "review", path: "/personal/review/SKILL.md" };
+    expect(collectSkillReferences(text.replace("REF", serializeSkillReference(skill)))).toEqual(
+      detected ? [skill] : [],
+    );
+  });
+
+  it("collects references after matching fences and unmatched inline delimiters", () => {
+    const ref = "[$review](/personal/review/SKILL.md)";
+    expect(collectSkillReferences("````md\nignored\n`````\n" + ref)).toEqual([
+      { name: "review", path: "/personal/review/SKILL.md" },
+    ]);
+    expect(collectSkillReferences("`` unmatched " + ref)).toEqual([
+      { name: "review", path: "/personal/review/SKILL.md" },
+    ]);
+  });
+  it.each([
+    "/home/Matt/My Skills (personal)/review?#雪/SKILL.md",
+    "C:\\Users\\Matt\\My Skills (personal)\\review\\SKILL.md",
+    "\\\\server\\skills\\review\\SKILL.md",
+  ])("preserves the selected source through serialization: %s", (path) => {
+    const skill = { name: "code-review", path };
+    const reference = serializeSkillReference(skill);
+    expect(collectSkillReferences(`Use ${reference}, then ${reference}.`)).toEqual([skill]);
+  });
+
+  it("keeps different same-name sources in the same prompt", () => {
+    const skills = [
+      { name: "code-review", path: "/plugins/review/SKILL.md" },
+      { name: "code-review", path: "/personal/review/SKILL.md" },
+    ];
+    expect(collectSkillReferences(skills.map(serializeSkillReference).join(" and "))).toEqual(
+      skills,
+    );
+  });
+
+  it("leaves bare names, external links, and malformed references as text", () => {
+    expect(
+      collectSkillReferences(
+        "$code-review [$review](https://example.com/SKILL.md) [$review](%zz) [$review](relative/SKILL.md)",
+      ),
+    ).toEqual([]);
+  });
+});
 
 describe("collectComposerInlineTokens", () => {
   it("collects file links, mentions, and skills with source ranges", () => {

@@ -415,37 +415,45 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
     }),
   );
 
-  it.effect("maps codex model options before sending a turn", () =>
-    Effect.gen(function* () {
-      const adapter = yield* CodexAdapter;
-      yield* adapter.startSession({
-        provider: ProviderDriverKind.make("codex"),
-        threadId: asThreadId("sess-missing"),
-        runtimeMode: "full-access",
-      });
-      const runtime = sessionRuntimeFactory.lastRuntime;
-      NodeAssert.ok(runtime);
-      runtime.sendTurnImpl.mockClear();
-
-      yield* Effect.ignore(
-        adapter.sendTurn({
+  it.effect(
+    "forwards exact skill selections and maps codex model options before sending a turn",
+    () =>
+      Effect.gen(function* () {
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
           threadId: asThreadId("sess-missing"),
-          input: "hello",
-          modelSelection: createModelSelection(ProviderInstanceId.make("codex"), "gpt-5.3-codex", [
-            { id: "reasoningEffort", value: "high" },
-            { id: "serviceTier", value: "priority" },
-          ]),
-          attachments: [],
-        }),
-      );
+          runtimeMode: "full-access",
+        });
+        const runtime = sessionRuntimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        runtime.sendTurnImpl.mockClear();
 
-      NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
-        input: "hello",
-        model: "gpt-5.3-codex",
-        effort: "high",
-        serviceTier: "priority",
-      });
-    }),
+        yield* Effect.ignore(
+          adapter.sendTurn({
+            threadId: asThreadId("sess-missing"),
+            input: "hello",
+            skills: [{ name: "code-review", path: "/personal/code-review/SKILL.md" }],
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("codex"),
+              "gpt-5.3-codex",
+              [
+                { id: "reasoningEffort", value: "high" },
+                { id: "serviceTier", value: "priority" },
+              ],
+            ),
+            attachments: [],
+          }),
+        );
+
+        NodeAssert.deepStrictEqual(runtime.sendTurnImpl.mock.calls[0]?.[0], {
+          input: "hello",
+          skills: [{ name: "code-review", path: "/personal/code-review/SKILL.md" }],
+          model: "gpt-5.3-codex",
+          effort: "high",
+          serviceTier: "priority",
+        });
+      }),
   );
 
   it.effect("passes configured launch args into the session runtime", () => {

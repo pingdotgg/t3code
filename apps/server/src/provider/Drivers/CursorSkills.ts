@@ -215,6 +215,10 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
   return skills;
 });
 
+/**
+ * Inspect project and user skill roots by source path, returning partial results with a failure
+ * reason when scanning is incomplete.
+ */
 const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -229,7 +233,7 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
   ];
   const roots = [...(cwd ? rootsBelow(cwd, "project") : []), ...rootsBelow(userHome, "user")];
 
-  const skillsByName = new Map<string, ServerProviderSkill>();
+  const skillsByPath = new Map<string, ServerProviderSkill>();
   const budget: CursorSkillScanBudget = {
     remainingEntries: MAX_SKILL_SCAN_ENTRIES,
     remainingBytes: MAX_SKILL_SCAN_BYTES,
@@ -240,11 +244,11 @@ const inspectCursorSkills = Effect.fn("inspectCursorSkills")(function* (
     if (budget.exhausted) break;
     const skills = yield* discoverSkillsInRoot({ ...root, budget });
     for (const skill of skills) {
-      if (!skillsByName.has(skill.name)) skillsByName.set(skill.name, skill);
+      if (!skillsByPath.has(skill.path)) skillsByPath.set(skill.path, skill);
     }
   }
   return {
-    skills: [...skillsByName.values()].sort((left, right) => left.name.localeCompare(right.name)),
+    skills: [...skillsByPath.values()].sort((left, right) => left.name.localeCompare(right.name)),
     failureReason: budget.exhausted
       ? ("scan-budget-exhausted" as const)
       : budget.incomplete
@@ -260,6 +264,10 @@ export const discoverCursorSkills = Effect.fn("discoverCursorSkills")(function* 
   return (yield* inspectCursorSkills(cwd, environment)).skills;
 });
 
+/**
+ * Discover Cursor skill sources for provider snapshots, failing when the scan cannot establish a
+ * complete inventory.
+ */
 export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   cwd?: string,
   environment: NodeJS.ProcessEnv = process.env,
@@ -274,7 +282,7 @@ export const probeCursorSkills = Effect.fn("probeCursorSkills")(function* (
   return inspection.skills;
 });
 
-/** Cursor invokes Agent Skills with `/name`; T3 composers insert `$name`. */
+/** Preserve native invocation for legacy drafts and manually typed `$name` mentions. */
 export function hasCursorSkillMention(prompt: string): boolean {
   return HAS_SKILL_MENTION_PATTERN.test(prompt);
 }
