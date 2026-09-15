@@ -22,6 +22,7 @@ import {
   type ServerSettings as ServerSettingsValue,
   type UsageProviderKind,
   type UsageSource,
+  type UsageSourceStatus,
   type UsagePricing,
   type UsageSummary,
   type UsageSummaryInput,
@@ -47,6 +48,7 @@ import { expandHomePath } from "../pathExpansion.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveCodexHomeLayout } from "../provider/Drivers/CodexHomeLayout.ts";
 import { mergeProviderInstanceEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
+import { resolveOpenCodeDataDir } from "../provider/openCodePaths.ts";
 import { UsageAggregator } from "./usageAggregation.ts";
 import { createOverrideRateTable, parseRateTable, type RateTable } from "./usagePricing.ts";
 import {
@@ -54,6 +56,7 @@ import {
   readDirectoryVolumeId,
   readTranscriptRecords,
 } from "./usageTranscriptReader.ts";
+import { OPENCODE_DB_FILENAME, readOpenCodeRecords } from "./usageOpenCode.ts";
 import {
   decodeScanCache,
   dedupeWithinFile,
@@ -242,9 +245,14 @@ export const make = Effect.gen(function* () {
   const resolveTranscriptDirs = Effect.fn("UsageService.resolveTranscriptDirs")(function* (
     settings: ServerSettingsValue,
   ) {
-    const dirs: Array<{ provider: UsageProviderKind; dir: string; fileName?: string }> = [];
+    const dirs: Array<{
+      readonly provider: UsageProviderKind;
+      readonly dir: string;
+      readonly fileName?: string;
+      readonly dbFileName?: string;
+    }> = [];
     const seen = new Set<string>();
-    for (const driver of ["claudeAgent", "codex", "grok"] as const) {
+    for (const driver of ["claudeAgent", "codex", "grok", "opencode"] as const) {
       // Disabled accounts still have history. Explicit default slots replace
       // the legacy settings, just as they do in the provider registry.
       const instances: Array<Pick<ProviderInstanceConfig, "config" | "environment">> =
@@ -274,12 +282,17 @@ export const make = Effect.gen(function* () {
           home = configured
             ? expandHomePath(configured)
             : environment.CLAUDE_CONFIG_DIR?.trim() || path.join(NodeOS.homedir(), ".claude");
+        } else if (driver === "opencode") {
+          home = resolveOpenCodeDataDir(environment);
         } else {
           home = expandHomePath(
             environment.GROK_HOME?.trim() || path.join(NodeOS.homedir(), ".grok"),
           );
         }
-        const directory = path.resolve(home, provider === "claude" ? "projects" : "sessions");
+        const directory = path.resolve(
+          home,
+          provider === "opencode" ? "." : provider === "claude" ? "projects" : "sessions",
+        );
         // Account aliases and Codex auth overlays can share the same history.
         const dir = yield* fileSystem
           .realPath(directory)
@@ -287,7 +300,12 @@ export const make = Effect.gen(function* () {
         const key = `${provider}\0${dir}`;
         if (seen.has(key)) continue;
         seen.add(key);
-        dirs.push({ provider, dir, ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}) });
+        dirs.push({
+          provider,
+          dir,
+          ...(provider === "grok" ? { fileName: "updates.jsonl" } : {}),
+          ...(provider === "opencode" ? { dbFileName: OPENCODE_DB_FILENAME } : {}),
+        });
       }
     }
     return dirs;
@@ -398,6 +416,9 @@ export const make = Effect.gen(function* () {
     readonly files:
       | readonly { readonly path: string; readonly records: readonly UsageRecord[] }[]
       | null;
+    readonly status?: UsageSourceStatus;
+    readonly message?: string | null;
+    readonly malformedRecords?: number;
   }
 
   const collectDirs = Effect.fn("UsageService.collectDirs")(function* (
@@ -410,8 +431,49 @@ export const make = Effect.gen(function* () {
       Effect.provideService(Path.Path, path),
     );
     const scanned: ScannedDir[] = [];
-    for (const { provider, dir, fileName } of dirs) {
+    for (const { provider, dir, fileName, dbFileName } of dirs) {
       const volumeId = yield* Effect.promise(() => readDirectoryVolumeId(dir));
+      if (dbFileName !== undefined) {
+        // SQLite rows can change in place, so re-read them in bounded batches
+        // instead of using the append-only transcript cache.
+        const dbPath = path.join(dir, dbFileName);
+        const dbExists = yield* fileSystem
+          .exists(dbPath)
+          .pipe(Effect.catchCause(() => Effect.succeed(false)));
+        if (!dbExists) {
+          scanned.push({
+            provider,
+            dir,
+            volumeId,
+            files: null,
+            message: "No OpenCode database on this environment.",
+          });
+          continue;
+        }
+        const result = yield* Effect.promise(() => readOpenCodeRecords(dbPath, windowStartMs));
+        if (!result.ok) {
+          scanned.push({
+            provider,
+            dir,
+            volumeId,
+            files: [],
+            status: "failed",
+            message: "The OpenCode database could not be read.",
+          });
+          continue;
+        }
+        scanned.push({
+          provider,
+          dir,
+          volumeId,
+          files: [{ path: dbPath, records: result.records }],
+          malformedRecords: result.malformedRecords,
+          ...(result.partial
+            ? { status: "partial", message: "Part of the OpenCode database could not be read." }
+            : {}),
+        });
+        continue;
+      }
       const exists = yield* fileSystem
         .exists(dir)
         .pipe(Effect.catchCause(() => Effect.succeed(false)));
@@ -503,7 +565,15 @@ export const make = Effect.gen(function* () {
     const livePaths = new Set<string>();
     const walkedRoots: string[] = [];
 
-    for (const { provider, dir, volumeId, files } of scannedDirs) {
+    for (const {
+      provider,
+      dir,
+      volumeId,
+      files,
+      status,
+      message,
+      malformedRecords,
+    } of scannedDirs) {
       if (files === null) {
         sources.push({
           fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
@@ -512,7 +582,7 @@ export const make = Effect.gen(function* () {
           skippedFiles: 0,
           malformedRecords: 0,
           distinctSessions: 0,
-          message: "No transcript directory on this environment.",
+          message: message ?? "No transcript directory on this environment.",
         });
         continue;
       }
@@ -542,12 +612,12 @@ export const make = Effect.gen(function* () {
 
       sources.push({
         fingerprint: { hostId, provider, resolvedHomePath: dir, volumeId },
-        status: "ok",
+        status: status ?? "ok",
         scannedFiles,
         skippedFiles,
-        malformedRecords: 0,
+        malformedRecords: malformedRecords ?? 0,
         distinctSessions: sessionIds.size,
-        message: null,
+        message: message ?? null,
       });
     }
 

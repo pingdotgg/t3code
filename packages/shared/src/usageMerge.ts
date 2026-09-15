@@ -133,7 +133,7 @@ function claimSources(environments: readonly EnvironmentUsage[]): {
 
   for (const environment of ordered) {
     for (const source of environment.summary.sources) {
-      if (source.status === "missing") continue;
+      if (source.status === "missing" || source.status === "failed") continue;
       const key = fingerprintKey(source.fingerprint);
       if (ownerByFingerprint.has(key)) {
         duplicates.push(`${environment.label}: ${source.fingerprint.resolvedHomePath}`);
@@ -157,7 +157,7 @@ function ownedContribution(
   const ownedProviders = new Set<UsageProviderKind>();
   const sessionsByProvider = new Map<UsageProviderKind, number>();
   for (const source of environment.summary.sources) {
-    if (source.status === "missing") continue;
+    if (source.status === "missing" || source.status === "failed") continue;
     const key = fingerprintKey(source.fingerprint);
     if (ownerByFingerprint.get(key) === environment.environmentId) {
       const provider = source.fingerprint.provider;

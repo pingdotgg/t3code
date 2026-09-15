@@ -6,7 +6,6 @@ import type {
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
-  UsageProviderKind,
 } from "@t3tools/contracts";
 import {
   elapsedShare,
@@ -15,6 +14,7 @@ import {
   limitsNotice,
   paceOf,
   remainingPercent,
+  usageProviderKindForDriver,
 } from "@t3tools/shared/usageLimits";
 import { type ReactNode, useEffect, useEffectEvent, useRef, useState } from "react";
 import { refreshUsageLimits } from "@t3tools/client-runtime/state/usage";
@@ -34,8 +34,7 @@ type Driver = ServerProvider["driver"];
 /** The series colour the usage chart uses for this driver, so the two views read as one. */
 function useBarColor(driver: Driver): string | null {
   const colors = useProviderColors();
-  const kind: UsageProviderKind | null =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : null;
+  const kind = usageProviderKindForDriver(driver);
   return kind ? colors[kind] : null;
 }
 

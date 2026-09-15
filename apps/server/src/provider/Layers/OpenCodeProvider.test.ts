@@ -1,12 +1,18 @@
 import * as NodeAssert from "node:assert/strict";
+// @effect-diagnostics nodeBuiltinImport:off - the probe pins HOME at a fake
+// path so tests never read the developer's real opencode setup.
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
+import { HttpClient } from "effect/unstable/http";
 import { beforeEach } from "vite-plus/test";
 
 import { OpenCodeSettings } from "@t3tools/contracts";
@@ -166,6 +172,14 @@ beforeEach(() => {
 const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
   Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
   Layer.provideMerge(NodeServices.layer),
+  // Tests pin HOME away from any real auth.json, so the Go quota probe never
+  // reaches this client; a loud defect beats an accidental live request.
+  Layer.provideMerge(
+    Layer.succeed(
+      HttpClient.HttpClient,
+      HttpClient.make(() => Effect.die(new Error("HttpClient must not be called in tests"))),
+    ),
+  ),
 );
 
 const makeOpenCodeSettings = (overrides?: Partial<OpenCodeSettings>): OpenCodeSettings =>
@@ -183,15 +197,23 @@ const checkProvider = Effect.fn("checkProvider")(function* (
   cwd = process.cwd(),
   environment?: NodeJS.ProcessEnv,
 ) {
+  // Keep the probe away from the developer's real opencode auth.json.
+  const scopedHome = NodePath.join(NodeOS.tmpdir(), "t3-opencode-test-nohome");
+  const scopedEnvironment = {
+    ...process.env,
+    ...environment,
+    HOME: scopedHome,
+    XDG_DATA_HOME: scopedHome,
+  };
   return yield* Effect.scoped(
     Effect.gen(function* () {
       const serverOwner = yield* OpenCodeServerOwner.make({
         binaryPath: settings.binaryPath,
         directory: cwd,
         ...(settings.serverPassword ? { serverPassword: settings.serverPassword } : {}),
-        ...(environment ? { environment } : {}),
+        environment: scopedEnvironment,
       });
-      return yield* checkOpenCodeProviderStatus(settings, cwd, environment).pipe(
+      return yield* checkOpenCodeProviderStatus(settings, cwd, scopedEnvironment).pipe(
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       );
     }),
@@ -199,6 +221,32 @@ const checkProvider = Effect.fn("checkProvider")(function* (
 });
 
 it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
+  it.effect("does not attach local Go quota to an external OpenCode server", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: { connected: ["opencode-go"], all: [], default: {} },
+        agents: [],
+        skills: [],
+      };
+      const fileSystem = yield* FileSystem.FileSystem;
+      let authReads = 0;
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings({ serverUrl: "http://remote:9999" }),
+      ).pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          readFileString: () => {
+            authReads += 1;
+            return Effect.succeed('{"opencode-go":{"type":"api","key":"local-account"}}');
+          },
+        }),
+      );
+      NodeAssert.equal(snapshot.status, "ready");
+      NodeAssert.equal(snapshot.usageLimits, undefined);
+      NodeAssert.equal(authReads, 0);
+    }),
+  );
+
   it.effect("shows a codex-style missing binary message", () =>
     Effect.gen(function* () {
       runtimeMock.state.runVersionError = new Error("spawn opencode ENOENT");

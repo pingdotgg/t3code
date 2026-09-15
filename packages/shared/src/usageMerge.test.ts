@@ -5,6 +5,7 @@ import {
   type UsageDay,
   type UsageProviderKind,
   type UsageSummary,
+  type UsageSourceStatus,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -40,6 +41,7 @@ function summary(
     homePath: string;
     volumeId?: string;
     distinctSessions?: number;
+    status?: UsageSourceStatus;
   }[],
   contractVersion: number = USAGE_CONTRACT_VERSION,
 ): UsageSummary {
@@ -57,7 +59,7 @@ function summary(
         resolvedHomePath: source.homePath,
         volumeId: source.volumeId ?? `vol-${source.hostId}`,
       },
-      status: "ok" as const,
+      status: source.status ?? "ok",
       scannedFiles: 1,
       skippedFiles: 0,
       malformedRecords: 0,
@@ -92,6 +94,21 @@ describe("mergeUsage", () => {
     expect(merged.costUsd).toBe(20);
     expect(merged.records).toBe(10);
     expect(merged.duplicateSources).toHaveLength(0);
+  });
+
+  it("lets a successful scan own a source after another environment failed", () => {
+    const source = { provider: "opencode" as const, hostId: "host", homePath: "/data/opencode" };
+    const merged = mergeUsage(
+      [
+        environment("env-a", summary([], [{ ...source, status: "failed", distinctSessions: 0 }])),
+        environment("env-b", summary([bucket({ provider: "opencode" })], [source])),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+    expect(merged.costUsd).toBe(10);
+    expect(merged.sessions).toBe(1);
+    expect(merged.duplicateSources).toEqual([]);
+    expect(merged.contributingEnvironments).toEqual(["env-b"]);
   });
 
   it("counts a shared transcript directory once", () => {
@@ -158,7 +175,8 @@ describe("mergeUsage", () => {
           summary(
             [bucket()],
             [{ provider: "claude", hostId: "linux", homePath: "/b" }],
-            USAGE_CONTRACT_VERSION - 2,
+            // Below USAGE_MERGE_COMPATIBLE_SINCE, so its buckets must not merge.
+            USAGE_CONTRACT_VERSION - 3,
           ),
         ),
       ],

@@ -16,6 +16,7 @@ import {
   type ServerProviderUsageLimits,
   type ServerProviderUsageWindow,
   type UsageLimitSourceSnapshots,
+  type UsageProviderKind,
 } from "@t3tools/contracts";
 
 import * as DateTime from "effect/DateTime";
@@ -23,6 +24,27 @@ import * as DateTime from "effect/DateTime";
 const MINUTE = 60_000;
 const HOUR = 60 * MINUTE;
 const DAY = 24 * HOUR;
+
+/**
+ * The usage series a driver's history is charted under, so the limits view can
+ * paint its bars in the same colour. Undefined for drivers without history.
+ */
+export function usageProviderKindForDriver(
+  driver: ServerProvider["driver"],
+): UsageProviderKind | undefined {
+  switch (driver) {
+    case "codex":
+      return "codex";
+    case "claudeAgent":
+      return "claude";
+    case "grok":
+      return "grok";
+    case "opencode":
+      return "opencode";
+    default:
+      return undefined;
+  }
+}
 
 /**
  * Providers that belong on the Limits view: enabled, installed, and one whose

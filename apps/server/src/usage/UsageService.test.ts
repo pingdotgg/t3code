@@ -3,6 +3,7 @@
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
+import * as NodeSqlite from "node:sqlite";
 
 import { assert, describe, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -99,6 +100,8 @@ const serviceLayers = (input: {
     ),
     Layer.provideMerge(
       Layer.succeed(HostProcessEnvironment, {
+        HOME: input.home,
+        XDG_DATA_HOME: NodePath.join(input.home, "data"),
         GROK_HOME: NodePath.join(input.home, "grok"),
         ...input.environment,
       }),
@@ -110,6 +113,78 @@ function totalOutputTokens(summary: { buckets: readonly { totals: { outputTokens
 }
 
 describe("UsageService", () => {
+  it.live("reads OpenCode account homes once, including disabled accounts", () =>
+    Effect.gen(function* () {
+      const { settings, home } = yield* setup;
+      const dataHome = NodePath.join(home, "account-data");
+      const alias = NodePath.join(home, "account-alias");
+      const otherHome = NodePath.join(home, "other-home");
+      yield* Effect.promise(async () => {
+        for (const [dataDir, output] of [
+          [dataHome, 11],
+          [NodePath.join(otherHome, ".local", "share"), 7],
+          [NodePath.join(home, "data"), 100],
+        ] as const) {
+          await NodeFSP.mkdir(NodePath.join(dataDir, "opencode"), { recursive: true });
+          const db = new NodeSqlite.DatabaseSync(NodePath.join(dataDir, "opencode", "opencode.db"));
+          try {
+            db.exec("CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, data TEXT)");
+            db.prepare("INSERT INTO message VALUES (?, ?, ?)").run(
+              `msg_${output}`,
+              `session_${output}`,
+              encodeUnknownJsonString({
+                role: "assistant",
+                providerID: "opencode-go",
+                modelID: "test-model",
+                time: { completed: Date.parse("2026-08-01T10:00:00Z") },
+                tokens: { input: 10, output },
+                cost: 0.01,
+              }),
+            );
+          } finally {
+            db.close();
+          }
+        }
+        await NodeFSP.symlink(dataHome, alias, "junction");
+      });
+      const service = yield* UsageService.make.pipe(
+        Effect.provide(
+          serviceLayers({
+            prefix: "usage-opencode-accounts-test",
+            home,
+            settings: {
+              ...settings,
+              providerInstances: {
+                [ProviderInstanceId.make("opencode")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  enabled: false,
+                  environment: [{ name: "XDG_DATA_HOME", value: dataHome, sensitive: false }],
+                },
+                [ProviderInstanceId.make("opencode-alias")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [{ name: "XDG_DATA_HOME", value: alias, sensitive: false }],
+                },
+                [ProviderInstanceId.make("opencode-other")]: {
+                  driver: ProviderDriverKind.make("opencode"),
+                  environment: [
+                    { name: "HOME", value: otherHome, sensitive: false },
+                    { name: "XDG_DATA_HOME", value: "", sensitive: false },
+                  ],
+                },
+              },
+            },
+          }),
+        ),
+      );
+      const summary = yield* service.readSummary(WINDOW);
+      assert.strictEqual(totalOutputTokens(summary), 18);
+      assert.strictEqual(
+        summary.sources.filter((source) => source.fingerprint.provider === "opencode").length,
+        2,
+      );
+    }).pipe(Effect.scoped),
+  );
+
   it.live("reads configured and disabled accounts once across shared and aliased homes", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

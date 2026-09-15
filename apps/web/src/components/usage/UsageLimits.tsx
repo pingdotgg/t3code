@@ -5,7 +5,6 @@ import {
   ServerProvider,
   ServerProviderResetCredits,
   ServerProviderUsageWindow,
-  UsageProviderKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -15,6 +14,7 @@ import {
   type LimitPace,
   paceOf,
   remainingPercent,
+  usageProviderKindForDriver,
 } from "@t3tools/shared/usageLimits";
 import { GaugeIcon, TrendingDownIcon, TrendingUpIcon } from "lucide-react";
 import { Fragment, useState } from "react";
@@ -46,8 +46,7 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
 
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
-  const kind: UsageProviderKind | undefined =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
+  const kind = usageProviderKindForDriver(driver);
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
 }
 
