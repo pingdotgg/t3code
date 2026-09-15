@@ -145,6 +145,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       },
     );
     const snapshot = vi.spyOn(GhosttyTerminalCore.prototype, "snapshot");
+    const coreResize = vi.spyOn(GhosttyTerminalCore.prototype, "resize");
     const onData = vi.fn<(data: string) => void>();
 
     return {
@@ -153,6 +154,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       paint,
       requestFrame,
       snapshot,
+      coreResize,
       onData,
       get renderedSnapshot() {
         const result = snapshot.mock.results.at(-1);
@@ -208,6 +210,151 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it("restores the PTY layout and suspends paint after a settled narrowing", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    onResize.mockClear();
+
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    harness.snapshot.mockClear();
+    harness.paint.mockClear();
+    vi.advanceTimersByTime(150);
+    harness.flushFrame();
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([
+      [10, 6],
+      [20, 6],
+    ]);
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(onResize).toHaveBeenCalledWith(10, 6);
+    expect(harness.snapshot).not.toHaveBeenCalled();
+    expect(harness.paint).not.toHaveBeenCalled();
+  });
+
+  it("restores the new grid once on output without notifying twice", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    onResize.mockClear();
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    harness.snapshot.mockClear();
+
+    surface.write("redrawn");
+    harness.flushFrame();
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[10, 6]]);
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(harness.snapshot).toHaveBeenCalledOnce();
+  });
+
+  it("restores and repaints after the output fallback timeout", async () => {
+    const harness = createHarness();
+    await harness.create();
+    vi.advanceTimersByTime(150);
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    harness.snapshot.mockClear();
+
+    vi.advanceTimersByTime(250);
+    harness.flushFrame();
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[10, 6]]);
+    expect(harness.snapshot).toHaveBeenCalledOnce();
+  });
+
+  it("notifies an alternate-screen resize without restoring the old grid", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    surface.write("\x1b[?1049h");
+    harness.flushFrame();
+    harness.coreResize.mockClear();
+    onResize.mockClear();
+
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[10, 6]]);
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(onResize).toHaveBeenCalledWith(10, 6);
+  });
+
+  it("notifies a rows-only resize without restoring the old grid", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    onResize.mockClear();
+
+    harness.mount.clientHeight = 120;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[20, 7]]);
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(onResize).toHaveBeenCalledWith(20, 7);
+  });
+
+  it("resumes live reflow and paint when a resize continues during a pending restore", async () => {
+    const harness = createHarness();
+    const onResize = vi.fn();
+    const surface = await harness.create({ onResize });
+    vi.advanceTimersByTime(150);
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    harness.snapshot.mockClear();
+    onResize.mockClear();
+
+    // Resizing the canvas clears it, so a resumed drag must repaint instead of staying blank.
+    harness.mount.clientWidth = 128;
+    harness.resize();
+    harness.flushFrame();
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([
+      [10, 6],
+      [15, 6],
+    ]);
+    expect(harness.snapshot).toHaveBeenCalled();
+
+    vi.advanceTimersByTime(150);
+    expect(onResize).toHaveBeenCalledOnce();
+    expect(onResize).toHaveBeenCalledWith(15, 6);
+    harness.coreResize.mockClear();
+    surface.write("redrawn again");
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[15, 6]]);
+  });
+
+  it("disposes a pending restore without painting or throwing", async () => {
+    const harness = createHarness();
+    const surface = await harness.create();
+    vi.advanceTimersByTime(150);
+    harness.mount.clientWidth = 88;
+    harness.resize();
+    vi.advanceTimersByTime(150);
+    harness.coreResize.mockClear();
+    harness.snapshot.mockClear();
+
+    expect(() => surface.dispose()).not.toThrow();
+    harness.flushFrame();
+
+    expect(harness.coreResize.mock.calls.map(([cols, rows]) => [cols, rows])).toEqual([[10, 6]]);
+    expect(harness.snapshot).not.toHaveBeenCalled();
   });
 
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {

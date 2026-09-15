@@ -42,6 +42,7 @@ import {
 import { Popover, PopoverPopup, PopoverTrigger } from "~/components/ui/popover";
 import { Button } from "~/components/ui/button";
 import { PanelTabCloseButton } from "~/components/ui/panel-tab-close-button";
+import { TerminalSplitPanes } from "~/components/TerminalSplitPanes";
 import { stackedThreadToast, toastManager } from "~/components/ui/toast";
 import { readTextFromClipboard, writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { cn } from "~/lib/utils";
@@ -1106,6 +1107,7 @@ export default function ThreadTerminalDrawer({
     setDrawerHeight(nextHeight);
   });
   const [resizeEpoch, setResizeEpoch] = useState(0);
+  const [splitSizesByGroupId, setSplitSizesByGroupId] = useState<Record<string, number[]>>({});
   const drawerHeightRef = useRef(drawerHeight);
   const lastSyncedHeightRef = useRef(controlledDrawerHeight);
   const onHeightChangeRef = useRef(onHeightChange);
@@ -1225,6 +1227,10 @@ export default function ThreadTerminalDrawer({
     (normalizedTerminalIds.length > 0 ? [resolvedActiveTerminalId] : []);
   const splitDirection =
     resolvedTerminalGroups[resolvedActiveGroupIndex]?.splitDirection ?? "horizontal";
+  const resolvedActiveGroupId = resolvedTerminalGroups[resolvedActiveGroupIndex]?.id;
+  const splitSizeKey = resolvedActiveGroupId
+    ? `${resolvedActiveGroupId}:${splitDirection}`
+    : undefined;
   const hasTerminalSidebar = normalizedTerminalIds.length > 1;
   const isSplitView = visibleTerminalIds.length > 1;
   const showGroupHeaders =
@@ -1494,66 +1500,48 @@ export default function ThreadTerminalDrawer({
         >
           <div className="min-w-0 flex-1">
             {isSplitView ? (
-              <div
-                className="grid h-full w-full min-w-0 gap-0 overflow-hidden"
-                style={
-                  splitDirection === "vertical"
-                    ? {
-                        gridTemplateRows: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                    : {
-                        gridTemplateColumns: `repeat(${visibleTerminalIds.length}, minmax(0, 1fr))`,
-                      }
-                }
-              >
-                {visibleTerminalIds.map((terminalId) => {
+              <TerminalSplitPanes
+                terminalIds={visibleTerminalIds}
+                direction={splitDirection}
+                activeTerminalId={resolvedActiveTerminalId}
+                sizes={splitSizeKey ? splitSizesByGroupId[splitSizeKey] : undefined}
+                onSizesChange={(sizes) => {
+                  if (!splitSizeKey) return;
+                  setSplitSizesByGroupId((previous) => ({
+                    ...previous,
+                    [splitSizeKey]: sizes,
+                  }));
+                }}
+                onPaneActivate={onActiveTerminalChange}
+                onResizeEnd={() => setResizeEpoch((value) => value + 1)}
+                renderTerminal={(terminalId) => {
                   const terminalLaunchLocation = resolveTerminalLaunchLocation(terminalId);
                   return (
-                    <div
-                      key={terminalId}
-                      className={`min-h-0 min-w-0 ${
-                        splitDirection === "vertical"
-                          ? "border-t first:border-t-0"
-                          : "border-l first:border-l-0"
-                      } ${
-                        terminalId === resolvedActiveTerminalId
-                          ? "border-border"
-                          : "border-border/70"
-                      }`}
-                      onMouseDown={() => {
-                        if (terminalId !== resolvedActiveTerminalId) {
-                          onActiveTerminalChange(terminalId);
-                        }
-                      }}
-                    >
-                      <div className="h-full">
-                        <TerminalViewport
-                          advancedTypography={advancedTypography}
-                          threadRef={threadRef}
-                          threadId={threadId}
-                          terminalId={terminalId}
-                          terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
-                          cwd={terminalLaunchLocation.cwd}
-                          {...(terminalLaunchLocation.worktreePath !== undefined
-                            ? { worktreePath: terminalLaunchLocation.worktreePath }
-                            : {})}
-                          {...(terminalLaunchLocation.runtimeEnv
-                            ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
-                            : {})}
-                          onSessionExited={() => onCloseTerminal(terminalId)}
-                          onAddTerminalContext={onAddTerminalContext}
-                          focusRequestId={focusRequestId}
-                          autoFocus={terminalId === resolvedActiveTerminalId}
-                          visible={visible}
-                          resizeEpoch={resizeEpoch}
-                          drawerHeight={drawerHeight}
-                          keybindings={keybindings}
-                        />
-                      </div>
-                    </div>
+                    <TerminalViewport
+                      advancedTypography={advancedTypography}
+                      threadRef={threadRef}
+                      threadId={threadId}
+                      terminalId={terminalId}
+                      terminalLabel={terminalLabelById.get(terminalId) ?? "Terminal"}
+                      cwd={terminalLaunchLocation.cwd}
+                      {...(terminalLaunchLocation.worktreePath !== undefined
+                        ? { worktreePath: terminalLaunchLocation.worktreePath }
+                        : {})}
+                      {...(terminalLaunchLocation.runtimeEnv
+                        ? { runtimeEnv: terminalLaunchLocation.runtimeEnv }
+                        : {})}
+                      onSessionExited={() => onCloseTerminal(terminalId)}
+                      onAddTerminalContext={onAddTerminalContext}
+                      focusRequestId={focusRequestId}
+                      autoFocus={terminalId === resolvedActiveTerminalId}
+                      visible={visible}
+                      resizeEpoch={resizeEpoch}
+                      drawerHeight={drawerHeight}
+                      keybindings={keybindings}
+                    />
                   );
-                })}
-              </div>
+                }}
+              />
             ) : (
               <div className="h-full">
                 <TerminalViewport

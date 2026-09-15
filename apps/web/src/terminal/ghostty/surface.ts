@@ -589,6 +589,11 @@ export class GhosttyTerminalSurface {
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
   private disposed = false;
+  private ptyCols: number | null = null;
+  private ptyRows: number | null = null;
+  private paintSuspended = false;
+  private pendingRestore: { cols: number; rows: number } | null = null;
+  private pendingRestoreTimer: number | null = null;
   private resizeNotifyTimer: number | null = null;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
@@ -764,6 +769,7 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
+    this.applyPendingRestore();
     this.synchronizeMouseTrackingState();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
@@ -776,6 +782,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.lastMouseMotionData = "";
     this.core.resetAndWrite(data);
+    this.applyPendingRestore();
     this.synchronizeMouseTrackingState();
     // A replayed session starts from the visible phase like any other write:
     // reattaching mid-blink must not open on an invisible cursor.
@@ -873,6 +880,13 @@ export class GhosttyTerminalSurface {
     // The DPR transform must be installed even when the target size happens to
     // equal the canvas default 300x150 backing store, so the first fit always
     // schedules a canvas configuration.
+    // Resizing the canvas clears it, so a resize during a pending restore resumes live paint first.
+    if (
+      this.pendingRestore !== null &&
+      (this.canvas.width !== pixelWidth || this.canvas.height !== pixelHeight)
+    ) {
+      this.applyPendingRestore();
+    }
     if (
       this.canvas.width !== pixelWidth ||
       this.canvas.height !== pixelHeight ||
@@ -893,6 +907,9 @@ export class GhosttyTerminalSurface {
     if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
       this.cols = grid.cols;
       this.rows = grid.rows;
+      // A resize that resumes while the shell redraws must keep reflowing and painting live;
+      // the next settle restores the shell's layout again.
+      if (this.pendingRestore !== null) this.applyPendingRestore();
       this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
       this.notifyResize();
       this.forceFullRender = true;
@@ -916,8 +933,51 @@ export class GhosttyTerminalSurface {
     if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
     this.resizeNotifyTimer = window.setTimeout(() => {
       this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize(this.cols, this.rows);
+      if (this.disposed) return;
+      const newCols = this.cols;
+      const newRows = this.rows;
+      if (newCols !== this.ptyCols && !this.core.isAlternateScreen() && this.ptyCols !== null) {
+        // Shells redraw assuming their last known width.
+        this.paintSuspended = true;
+        this.core.resize(this.ptyCols, this.ptyRows!, this.metrics.width, this.metrics.height);
+        this.ptyCols = newCols;
+        this.ptyRows = newRows;
+        this.options.onResize(newCols, newRows);
+        this.pendingRestore = { cols: newCols, rows: newRows };
+        if (this.pendingRestoreTimer !== null) {
+          window.clearTimeout(this.pendingRestoreTimer);
+        }
+        this.pendingRestoreTimer = window.setTimeout(() => this.applyPendingRestore(), 250);
+        return;
+      }
+      this.ptyCols = this.cols;
+      this.ptyRows = this.rows;
+      this.options.onResize(this.cols, this.rows);
+      if (this.pendingRestore !== null && this.pendingRestoreTimer === null) {
+        this.pendingRestoreTimer = window.setTimeout(() => this.applyPendingRestore(), 250);
+      }
     }, 150);
+  }
+
+  private applyPendingRestore(): void {
+    if (this.pendingRestore === null || this.ptyCols === null || this.ptyRows === null) {
+      return;
+    }
+    if (this.pendingRestoreTimer !== null) {
+      window.clearTimeout(this.pendingRestoreTimer);
+    }
+    this.core.resize(
+      this.pendingRestore.cols,
+      this.pendingRestore.rows,
+      this.metrics.width,
+      this.metrics.height,
+    );
+    this.pendingRestore = null;
+    this.pendingRestoreTimer = null;
+    this.paintSuspended = false;
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
+    this.requestRender();
   }
 
   focus(): void {
@@ -1028,6 +1088,10 @@ export class GhosttyTerminalSurface {
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
+    if (this.pendingRestoreTimer !== null) {
+      window.clearTimeout(this.pendingRestoreTimer);
+      this.pendingRestoreTimer = null;
+    }
     if (this.resizeNotifyTimer !== null) {
       window.clearTimeout(this.resizeNotifyTimer);
       this.resizeNotifyTimer = null;
@@ -1035,6 +1099,8 @@ export class GhosttyTerminalSurface {
       // the surface unmounts inside the debounce window.
       this.options.onResize(this.cols, this.rows);
     }
+    if (this.pendingRestore !== null) this.applyPendingRestore();
+    this.pendingRestore = null;
     this.cancelRender();
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
@@ -1781,6 +1847,7 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
+    if (this.paintSuspended) return;
     if (this.disposed || !this.visible || !this.hasSize || this.frame !== 0) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
@@ -1800,6 +1867,7 @@ export class GhosttyTerminalSurface {
   }
 
   private renderFrame(): void {
+    if (this.paintSuspended) return;
     if (this.disposed || !this.visible) return;
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
