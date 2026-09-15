@@ -10242,6 +10242,7 @@ export default function ChatView(props: ChatViewProps) {
                 threadRef={activeThreadRef}
                 miniPlayer={activePreviewMiniPlayer}
                 composerOverlayElement={isDraftHeroState ? null : composerOverlayElement}
+                detailsPanelOpen={inlineThreadPanelOpen}
               />
             ) : null}
 
