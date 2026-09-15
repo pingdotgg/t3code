@@ -122,6 +122,7 @@ const ANDROID_ICON_BY_SF_SYMBOL: Partial<Record<SFSymbol, Icon>> = {
   checkmark: IconCheck,
   "checkmark.circle": IconCircleCheck,
   clock: IconClock,
+  timer: IconClock,
   ticket: IconTicket,
   cloud: IconCloud,
   cube: IconBox,

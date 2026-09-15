@@ -88,6 +88,11 @@ prevent automatic settlement. An open pull request does not prevent inactivity
 settlement, but an old closed or merged pull request does not settle work you
 resumed after it closed.
 
+To keep one thread out of the settled shelf no matter how long it sits idle, open its menu,
+choose **Auto-settle behavior**, and pick **Disabled**. The current option is checked. Pick
+**Enabled** to return to the usual rules. Manual settle, snooze, and archive still work while it
+is disabled.
+
 Change these rules in **Settings → General**. They continue to run when your apps
 are closed. On web and desktop, choose an environment at the top to change only
 its rules, or **All environments** to update connected environments together.
