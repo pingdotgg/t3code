@@ -2808,6 +2808,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     -- in-memory fallback bound identically.
                     ELSE MIN(${window.rowLimit}, ${maxWindowRows})
                   END
+                ), align_boundary AS (
+                  -- The drop boundary is the oldest retained turn start's
+                  -- position in the (ordinal, turn_item_id) order: an
+                  -- equal-ordinal sibling that sorts before it still belongs
+                  -- to the partial turn below and must drop with it, so the
+                  -- cutoff carries the id too, not just the ordinal.
+                  SELECT turns.ordinal AS cut_ordinal, turns.turn_item_id AS cut_id
+                  FROM selected AS turns
+                  WHERE turns.type = 'user_message'
+                    AND json_extract(turns.payload_json, '$.inputIntent')
+                      IN ('turn_start', 'queued_turn')
+                    AND EXISTS (
+                      SELECT 1
+                      FROM eligible AS below
+                      WHERE below.ordinal <
+                        (SELECT MIN(ol.ordinal) FROM selected AS ol)
+                        AND below.type = 'user_message'
+                        AND json_extract(below.payload_json, '$.inputIntent')
+                          IN ('turn_start', 'queued_turn')
+                    )
+                  ORDER BY turns.ordinal ASC, turns.turn_item_id ASC
+                  LIMIT 1
                 ), aligned AS (
                   -- Initial turn-mode snapshots start on a turn boundary: when
                   -- caps stop the window mid-turn and complete newer turns fit,
@@ -2822,25 +2844,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   FROM selected
                   WHERE ${window.userTurnLimit ?? null} IS NULL
                     OR ${window.anchorIsPageBoundary === true ? 1 : null} IS NOT NULL
-                    OR ordinal >= COALESCE(
-                    (
-                      SELECT MIN(turns.ordinal)
-                      FROM selected AS turns
-                      WHERE turns.type = 'user_message'
-                        AND json_extract(turns.payload_json, '$.inputIntent')
-                          IN ('turn_start', 'queued_turn')
-                        AND EXISTS (
-                          SELECT 1
-                          FROM eligible AS below
-                          WHERE below.ordinal <
-                            (SELECT MIN(ol.ordinal) FROM selected AS ol)
-                            AND below.type = 'user_message'
-                            AND json_extract(below.payload_json, '$.inputIntent')
-                              IN ('turn_start', 'queued_turn')
-                        )
-                    ),
-                    (SELECT MIN(oldest.ordinal) FROM selected AS oldest)
-                  )
+                    OR NOT EXISTS (SELECT 1 FROM align_boundary)
+                    OR ordinal > (SELECT cut_ordinal FROM align_boundary)
+                    OR (
+                      ordinal = (SELECT cut_ordinal FROM align_boundary)
+                      AND turn_item_id >= (SELECT cut_id FROM align_boundary)
+                    )
                 ), kept_visible AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type, 1 AS in_window
                   FROM aligned
