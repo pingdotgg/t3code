@@ -40,7 +40,7 @@ function normalizeCommand(value: unknown): string | null {
     /^(?:\/(?:usr\/)?bin\/)?(?:ba|z|)sh\s+-lc\s+(['"])([\s\S]*)\1$/u,
   );
   const command = (shellWrapped?.[2] ?? trimmed).trim();
-  if (/[;&|`]|\$\(/u.test(command)) return null;
+  if (/[\r\n;&|`<>]|\$\(/u.test(command)) return null;
   return command;
 }
 

@@ -187,6 +187,8 @@ describe("verificationAllowsAutoSettlement", () => {
     "vitest --updateSnapshot=true",
     "npm run test:update",
     "npm run test:update-snapshots",
+    "vp test run\nprintf changed > src/app.ts",
+    "vp test run < test-input.txt",
   ])("rejects mutating verification command %s", (command) => {
     const verification = toolActivity({
       id: "verification",
