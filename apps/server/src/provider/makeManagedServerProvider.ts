@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -73,6 +74,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     enrichmentGeneration: 0,
   });
   const settingsRef = yield* Ref.make(initialSettings);
+  const firstProbe = yield* Deferred.make<void>();
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
   const scope = yield* Effect.scope;
 
@@ -150,10 +152,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
       return state.snapshot;
     }
 
-    const probedSnapshot = yield* input.checkProvider;
-    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
-      snapshotStateRef,
-      (state) => {
+    // `firstProbe` settles only once the probed snapshot is readable through
+    // `getSnapshot`, so a waiter never observes the boot placeholder. The
+    // finalizer still releases waiters if the probe fails or is interrupted.
+    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Effect.gen(function* () {
+      const probedSnapshot = yield* input.checkProvider;
+      const probed = yield* Ref.modify(snapshotStateRef, (state) => {
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
@@ -168,10 +172,11 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           { snapshot, generation },
           { snapshot, enrichmentGeneration: generation },
         ] as const;
-      },
-    );
-    yield* Ref.set(settingsRef, nextSettings);
-    yield* PubSub.publish(changesPubSub, nextSnapshot);
+      });
+      yield* Ref.set(settingsRef, nextSettings);
+      yield* PubSub.publish(changesPubSub, probed.snapshot);
+      return probed;
+    }).pipe(Effect.ensuring(Deferred.succeed(firstProbe, undefined)));
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);
     return nextSnapshot;
   });
@@ -285,6 +290,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   return {
     resolveMaintenance: input.resolveMaintenance,
     getSnapshot: Ref.get(snapshotStateRef).pipe(Effect.map((state) => state.snapshot)),
+    awaitFirstProbe: Deferred.await(firstProbe),
     refresh: refreshSnapshot().pipe(Effect.tapError(Effect.logError), Effect.orDie),
     applyUsageLimits,
     get streamChanges() {

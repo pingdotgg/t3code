@@ -1010,6 +1010,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 refresh: Ref.get(nextProvider),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
+                awaitFirstProbe: Effect.void,
               },
               adapter: {} as ProviderInstance["adapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1377,6 +1378,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               ),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1409,6 +1411,121 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             const registry = yield* ProviderRegistry.ProviderRegistry;
             assert.deepStrictEqual(yield* registry.getProviders, [initialProvider]);
             assert.strictEqual(yield* Ref.get(refreshCalls), 0);
+          }).pipe(Effect.provide(runtimeServices));
+        }),
+      );
+
+      it.effect("waits for the first provider probe before taking a workspace snapshot", () =>
+        Effect.gen(function* () {
+          const driver = ProviderDriverKind.make("claudeAgent");
+          const instanceId = ProviderInstanceId.make("claudeAgent");
+          const pendingProvider = {
+            instanceId,
+            driver,
+            status: "warning",
+            enabled: true,
+            installed: false,
+            auth: { status: "unknown" },
+            checkedAt: "2026-06-10T00:00:00.000Z",
+            version: null,
+            models: [],
+            slashCommands: [],
+            skills: [],
+          } as const satisfies ServerProvider;
+          const probedProvider = {
+            ...pendingProvider,
+            status: "ready",
+            installed: true,
+            auth: { status: "authenticated" },
+            checkedAt: "2026-06-10T00:00:01.000Z",
+            version: "2.1.0",
+            slashCommands: [{ name: "compound-engineering:ce-plan" }],
+          } as const satisfies ServerProvider;
+          const scopedProvider = {
+            ...probedProvider,
+            skills: [{ name: "project", path: "/workspace/SKILL.md", enabled: true }],
+          } as const satisfies ServerProvider;
+          const firstProbe = yield* Deferred.make<void>();
+          const machineSnapshot = yield* Ref.make<ServerProvider>(pendingProvider);
+          const snapshotCalls = yield* Ref.make(0);
+          const instance = {
+            instanceId,
+            driverKind: driver,
+            continuationIdentity: {
+              driverKind: driver,
+              continuationKey: "claude:instance:claudeAgent",
+            },
+            displayName: undefined,
+            enabled: true,
+            snapshot: {
+              resolveMaintenance: () =>
+                Effect.succeed(
+                  makeManualOnlyProviderMaintenanceCapabilities({
+                    provider: driver,
+                    packageName: null,
+                  }),
+                ),
+              getSnapshot: Ref.get(machineSnapshot),
+              refresh: Ref.get(machineSnapshot),
+              streamChanges: Stream.empty,
+              applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Deferred.await(firstProbe),
+            },
+            // Mirrors the drivers: the cwd snapshot is whatever the machine
+            // snapshot holds right now, plus workspace-scoped skills.
+            snapshotForCwd: () =>
+              Ref.update(snapshotCalls, (count) => count + 1).pipe(
+                Effect.andThen(Ref.get(machineSnapshot)),
+                Effect.map((snapshot) => ({ ...snapshot, skills: scopedProvider.skills })),
+              ),
+            adapter: {} as ProviderInstance["adapter"],
+            textGeneration: {} as ProviderInstance["textGeneration"],
+          } satisfies ProviderInstance;
+          const instanceRegistryLayer = Layer.succeed(
+            ProviderInstanceRegistry.ProviderInstanceRegistry,
+            {
+              getInstance: (id) => Effect.succeed(id === instanceId ? instance : undefined),
+              listInstances: Effect.succeed([instance]),
+              listUnavailable: Effect.succeed([]),
+              streamChanges: Stream.empty,
+              subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), PubSub.subscribe),
+            },
+          );
+          const scope = yield* Scope.make();
+          yield* Effect.addFinalizer(() => Scope.close(scope, Exit.void));
+          const runtimeServices = yield* Layer.build(
+            ProviderRegistryLive.pipe(
+              Layer.provideMerge(instanceRegistryLayer),
+              Layer.provideMerge(
+                ServerConfig.layerTest(process.cwd(), {
+                  prefix: "t3-provider-registry-first-probe-",
+                }),
+              ),
+              Layer.provideMerge(NodeServices.layer),
+            ),
+          ).pipe(Scope.provide(scope));
+
+          yield* Effect.gen(function* () {
+            const registry = yield* ProviderRegistry.ProviderRegistry;
+            const refresh = yield* registry
+              .refreshWorkspaceSnapshot({ instanceId, cwd: "/workspace" })
+              .pipe(Effect.forkChild);
+            yield* Effect.yieldNow;
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 0);
+            assert.strictEqual((yield* registry.getProviders)[0]?.workspaceSnapshots, undefined);
+
+            yield* Ref.set(machineSnapshot, probedProvider);
+            yield* Deferred.succeed(firstProbe, undefined);
+            const providers = yield* Fiber.join(refresh);
+            assert.strictEqual(yield* Ref.get(snapshotCalls), 1);
+            assert.deepStrictEqual(providers[0]?.workspaceSnapshots, [
+              {
+                cwd: "/workspace",
+                checkedAt: probedProvider.checkedAt,
+                slashCommands: probedProvider.slashCommands,
+                skills: scopedProvider.skills,
+              },
+            ]);
           }).pipe(Effect.provide(runtimeServices));
         }),
       );
@@ -1470,6 +1587,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Effect.void,
             },
             snapshotForCwd,
             adapter: {} as ProviderInstance["adapter"],
@@ -1664,6 +1782,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
+                awaitFirstProbe: Effect.void,
               },
               adapter: {} as ProviderInstance["adapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1691,6 +1810,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 ),
                 streamChanges: Stream.empty,
                 applyUsageLimits: () => Effect.void,
+                awaitFirstProbe: Effect.void,
               },
               adapter: {} as ProviderInstance["adapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1816,6 +1936,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(refreshedProvider),
               streamChanges: Stream.fromPubSub(changes),
               applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -1941,6 +2062,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 refresh: Effect.succeed(authoritativeProvider),
                 streamChanges: Stream.fromPubSub(changes),
                 applyUsageLimits: () => Effect.void,
+                awaitFirstProbe: Effect.void,
               },
               adapter: {} as ProviderInstance["adapter"],
               textGeneration: {} as ProviderInstance["textGeneration"],
@@ -2044,6 +2166,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.die(new Error("simulated refresh failure")),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],
@@ -2141,6 +2264,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               refresh: Effect.succeed(provider),
               streamChanges: Stream.empty,
               applyUsageLimits: () => Effect.void,
+              awaitFirstProbe: Effect.void,
             },
             adapter: {} as ProviderInstance["adapter"],
             textGeneration: {} as ProviderInstance["textGeneration"],

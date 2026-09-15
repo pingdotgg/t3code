@@ -122,6 +122,7 @@ const makeFakeInstance = (
       refresh: Effect.succeed({} as unknown as ServerProvider),
       streamChanges: Stream.empty,
       applyUsageLimits: () => Effect.void,
+      awaitFirstProbe: Effect.void,
     },
     adapter,
     textGeneration: {} as unknown as TextGeneration.TextGeneration["Service"],
