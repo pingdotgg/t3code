@@ -1692,18 +1692,33 @@ export default function GitActionsControl({
               </PopoverPopup>
             </Popover>
           ) : (
-            <Button
-              variant="outline"
-              size="xs"
-              className="ps-[8.5px]"
-              disabled={isGitActionRunning || quickAction.disabled}
-              onClick={runQuickAction}
-            >
-              <GitQuickActionIcon quickAction={quickAction} SourceControlIcon={SourceControlIcon} />
-              <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="outline"
+                    size="xs"
+                    className="ps-[8.5px]"
+                    // The tooltip wrapper replaces data-slot="button", so themed
+                    // toolbar styling needs its own hook.
+                    data-toolbar-control=""
+                    disabled={isGitActionRunning || quickAction.disabled}
+                    onClick={runQuickAction}
+                  />
+                }
+              >
+                <GitQuickActionIcon
+                  quickAction={quickAction}
+                  SourceControlIcon={SourceControlIcon}
+                />
+                <span className="sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5">
+                  {quickAction.label}
+                </span>
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-nowrap">
                 {quickAction.label}
-              </span>
-            </Button>
+              </TooltipPopup>
+            </Tooltip>
           )}
           <GroupSeparator className="hidden @3xl/header-actions:block" />
           <Menu
@@ -1713,12 +1728,30 @@ export default function GitActionsControl({
               }
             }}
           >
-            <MenuTrigger
-              render={<Button aria-label="Git action options" size="icon-xs" variant="outline" />}
-              disabled={isGitActionRunning}
-            >
-              <ChevronDownIcon aria-hidden="true" className="size-4" />
-            </MenuTrigger>
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <MenuTrigger
+                    render={
+                      <Button
+                        aria-label="Git action options"
+                        size="icon-xs"
+                        variant="outline"
+                        // The tooltip wrapper replaces data-slot="menu-trigger",
+                        // so themed toolbar styling needs its own hook.
+                        data-toolbar-control=""
+                      />
+                    }
+                    disabled={isGitActionRunning}
+                  />
+                }
+              >
+                <ChevronDownIcon aria-hidden="true" className="size-4" />
+              </TooltipTrigger>
+              <TooltipPopup side="top" className="whitespace-nowrap">
+                Git action options
+              </TooltipPopup>
+            </Tooltip>
             <MenuPopup align="end" className="w-full">
               {gitActionMenuItems.map((item) => {
                 const disabledReason = getMenuActionDisabledReason({

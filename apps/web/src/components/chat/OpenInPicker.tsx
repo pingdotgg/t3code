@@ -19,6 +19,7 @@ import { ChevronDownIcon, FolderClosedIcon } from "lucide-react";
 import { Button } from "../ui/button";
 import { Group, GroupSeparator } from "../ui/group";
 import { Menu, MenuItem, MenuPopup, MenuShortcut, MenuTrigger } from "../ui/menu";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import {
   AntigravityIcon,
   CursorIcon,
@@ -276,37 +277,67 @@ export const OpenInPicker = memo(function OpenInPicker({
 
   return (
     <Group aria-label="Open in editor">
-      <Button
-        aria-label={compact ? "Open file in preferred editor" : undefined}
-        className="ps-[8.5px]"
-        size="xs"
-        variant="outline"
-        disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
-        onClick={() => openInEditor(preferredEditor)}
-      >
-        {primaryOption?.Icon && (
-          <primaryOption.Icon
-            aria-hidden="true"
-            className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
-          />
-        )}
-        <span
-          className={
-            compact
-              ? "sr-only"
-              : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label={compact ? "Open file in preferred editor" : undefined}
+              className="ps-[8.5px]"
+              size="xs"
+              variant="outline"
+              // The tooltip wrapper replaces data-slot="button", so themed
+              // toolbar styling needs its own hook.
+              data-toolbar-control=""
+              disabled={!preferredEditor || !openInCwd || remote.mode === "remote-unavailable"}
+              onClick={() => openInEditor(preferredEditor)}
+            />
           }
         >
-          Open
-        </span>
-      </Button>
+          {primaryOption?.Icon && (
+            <primaryOption.Icon
+              aria-hidden="true"
+              className={cn("size-3.5", getOpenInIconClass(primaryOption.kind))}
+            />
+          )}
+          <span
+            className={
+              compact
+                ? "sr-only"
+                : "sr-only @3xl/header-actions:not-sr-only @3xl/header-actions:ml-0.5"
+            }
+          >
+            Open
+          </span>
+        </TooltipTrigger>
+        <TooltipPopup side="top" className="whitespace-nowrap">
+          {primaryOption?.label ? `Open in ${primaryOption.label}` : "Open in preferred editor"}
+        </TooltipPopup>
+      </Tooltip>
       <GroupSeparator {...(!compact ? { className: "hidden @3xl/header-actions:block" } : {})} />
       <Menu>
-        <MenuTrigger
-          render={<Button aria-label="Choose editor" size="icon-xs" variant="outline" />}
-        >
-          <ChevronDownIcon aria-hidden="true" className="size-4" />
-        </MenuTrigger>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <MenuTrigger
+                render={
+                  <Button
+                    aria-label="Choose editor"
+                    size="icon-xs"
+                    variant="outline"
+                    // The tooltip wrapper replaces data-slot="menu-trigger", so
+                    // themed toolbar styling needs its own hook.
+                    data-toolbar-control=""
+                  />
+                }
+              />
+            }
+          >
+            <ChevronDownIcon aria-hidden="true" className="size-4" />
+          </TooltipTrigger>
+          <TooltipPopup side="top" className="whitespace-nowrap">
+            Choose editor
+          </TooltipPopup>
+        </Tooltip>
         <MenuPopup align="end">
           {remote.mode === "remote-unavailable" ? (
             <MenuItem disabled>No SSH route to {environmentLabel}</MenuItem>
