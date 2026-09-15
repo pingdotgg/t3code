@@ -11,6 +11,9 @@ import * as ManagedEndpointAllocations from "./ManagedEndpointAllocations.ts";
 import * as ManagedEndpointProvider from "./ManagedEndpointProvider.ts";
 
 export const MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES = 5;
+// A tunnel that never connected is usually a link still being set up: a slow
+// cloudflared download or a user who walked away mid-pairing. Give it an hour.
+export const MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES = 60;
 export const MANAGED_ENDPOINT_SWEEP_PAGE_SIZE = 100;
 export const MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT = 100;
 export const MANAGED_ENDPOINT_SWEEP_LIST_REQUEST_LIMIT = 10;
@@ -23,6 +26,7 @@ export interface ManagedEndpointSweepResult {
   readonly deleted: number;
   readonly wouldDelete: number;
   readonly skippedLegacy: number;
+  readonly skippedOrphan: number;
   readonly failed: number;
   readonly truncated: boolean;
 }
@@ -107,6 +111,7 @@ const emptyResult = (mode: ManagedEndpointCleanupMode): ManagedEndpointSweepResu
   deleted: 0,
   wouldDelete: 0,
   skippedLegacy: 0,
+  skippedOrphan: 0,
   failed: 0,
   truncated: false,
 });
@@ -117,46 +122,19 @@ export const make = Effect.gen(function* () {
   const allocations = yield* ManagedEndpointAllocations.ManagedEndpointAllocations;
   const provider = yield* ManagedEndpointProvider.ManagedEndpointProvider;
 
-  const deleteOrphan = Effect.fn("relay.managed_endpoint_reaper.delete_orphan")(function* (input: {
-    readonly tunnel: ManagedEndpointProvider.ManagedEndpointTunnel & {
-      readonly id: string;
-      readonly name: string;
-    };
-    readonly status: "down" | "inactive";
-    readonly prefix: string;
-    readonly cutoff: DateTime.Utc;
-  }) {
-    const current = yield* tunnels.get(input.tunnel.id).pipe(
-      Effect.map(Option.some),
-      Effect.catchTags({
-        ManagedEndpointTunnelClientError: (error) =>
-          ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
-            ? Effect.succeed(Option.none())
-            : Effect.fail(error),
-      }),
-    );
-    if (Option.isNone(current)) return true;
-    if (!isExpiredManagedTunnel({ ...input, tunnel: current.value })) return false;
-    if ((yield* allocations.listByTunnelNames([input.tunnel.name])).length > 0) return false;
-    return yield* tunnels.delete(input.tunnel.id).pipe(
-      Effect.as(true),
-      Effect.catchTags({
-        ManagedEndpointTunnelClientError: (error) =>
-          ManagedEndpointProvider.isManagedEndpointNotFound(error.cause)
-            ? Effect.succeed(true)
-            : Effect.fail(error),
-      }),
-    );
-  });
-
   const sweep = Effect.gen(function* () {
     const mode = config.managedEndpointCleanupMode ?? "off";
     const namespace = config.managedEndpointNamespace;
     if (mode === "off" || !namespace) return emptyResult(mode);
 
     const now = yield* DateTime.now;
-    const cutoff = DateTime.subtract(now, { minutes: MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES });
-    const cutoffIso = DateTime.formatIso(cutoff);
+    const cutoffFor = (status: "down" | "inactive") =>
+      DateTime.subtract(now, {
+        minutes:
+          status === "down"
+            ? MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES
+            : MANAGED_ENDPOINT_INACTIVE_GRACE_PERIOD_MINUTES,
+      });
     const prefix = managedEndpointTunnelNamePrefix(namespace);
     const slot = Math.floor(
       now.epochMilliseconds / (MANAGED_ENDPOINT_GRACE_PERIOD_MINUTES * 60 * 1_000),
@@ -169,11 +147,12 @@ export const make = Effect.gen(function* () {
         readonly name: string;
       };
       readonly status: "down" | "inactive";
+      readonly cutoff: DateTime.Utc;
     }> = [];
 
-    const statuses =
-      slot % 2 === 0 ? (["down", "inactive"] as const) : (["inactive", "down"] as const);
-    for (const status of statuses) {
+    for (const status of ["down", "inactive"] as const) {
+      const cutoff = cutoffFor(status);
+      const cutoffIso = DateTime.formatIso(cutoff);
       const listPage = (page: number) => {
         listRequests += 1;
         return tunnels.list({
@@ -211,12 +190,18 @@ export const make = Effect.gen(function* () {
           ...response.result
             .map((tunnel) => ({ tunnel, status, prefix, cutoff }))
             .filter(isExpiredManagedTunnel)
-            .map(({ tunnel }) => ({ tunnel, status })),
+            .map(({ tunnel }) => ({ tunnel, status, cutoff })),
         );
       }
     }
 
-    const uniqueExpired = [...new Map(expired.map((entry) => [entry.tunnel.id, entry])).values()];
+    const collected = [...new Map(expired.map((entry) => [entry.tunnel.id, entry])).values()];
+    // Start each sweep one attempt budget further along so a run of
+    // candidates whose deletes keep failing cannot hold the budget forever
+    // and starve everything listed after them.
+    const offset =
+      collected.length === 0 ? 0 : (slot * MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) % collected.length;
+    const uniqueExpired = [...collected.slice(offset), ...collected.slice(0, offset)];
     const recorded = yield* allocations.listByTunnelNames(
       uniqueExpired.map(({ tunnel }) => tunnel.name),
     );
@@ -227,9 +212,11 @@ export const make = Effect.gen(function* () {
     let deleted = 0;
     let wouldDelete = 0;
     let skippedLegacy = 0;
+    let skippedOrphan = 0;
     let failed = 0;
 
-    for (const { tunnel, status } of uniqueExpired) {
+    for (const { tunnel, status, cutoff } of uniqueExpired) {
+      const cutoffIso = DateTime.formatIso(cutoff);
       const allocation = recordedByTunnelName.get(tunnel.name);
       if (
         allocation !== undefined &&
@@ -244,6 +231,13 @@ export const make = Effect.gen(function* () {
         continue;
       }
       if (allocation !== undefined && owner === undefined) continue;
+      // A tunnel with no allocation row cannot be claimed, so a relink that
+      // adopts it by name races any delete here. Count it and leave it for a
+      // manual sweep instead.
+      if (owner === undefined) {
+        skippedOrphan += 1;
+        continue;
+      }
       wouldDelete += 1;
       if (mode === "dry-run") continue;
       if (attempted >= MANAGED_ENDPOINT_SWEEP_ATTEMPT_LIMIT) {
@@ -251,18 +245,15 @@ export const make = Effect.gen(function* () {
         break;
       }
       attempted += 1;
-      const result =
-        owner === undefined
-          ? yield* deleteOrphan({ tunnel, status, prefix, cutoff }).pipe(Effect.result)
-          : yield* provider
-              .release({
-                userId: owner.userId,
-                environmentId: owner.environmentId,
-                expectedTunnelId: tunnel.id,
-                expectedInactiveBefore: cutoffIso,
-                expectedStatus: status,
-              })
-              .pipe(Effect.result);
+      const result = yield* provider
+        .release({
+          userId: owner.userId,
+          environmentId: owner.environmentId,
+          expectedTunnelId: tunnel.id,
+          expectedInactiveBefore: cutoffIso,
+          expectedStatus: status,
+        })
+        .pipe(Effect.result);
       if (result._tag === "Failure") {
         failed += 1;
         yield* Effect.logWarning("Failed to delete an inactive managed tunnel", {
@@ -292,6 +283,7 @@ export const make = Effect.gen(function* () {
       deleted,
       wouldDelete,
       skippedLegacy,
+      skippedOrphan,
       failed,
       truncated,
     };
