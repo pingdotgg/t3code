@@ -3,7 +3,7 @@ import type { SessionPhase } from "../../types";
 export type ComposerDispatchMode = "auto" | "queue" | "steer" | "restart";
 export type ActiveTurnComposerAction = Exclude<ComposerDispatchMode, "auto">;
 
-/** One policy seam for the future configurable active-turn default action. */
+/** Mod+Enter always queues; ordinary sends use the configured follow-up action. */
 export function resolveComposerDispatchMode(input: {
   readonly phase: SessionPhase;
   readonly queueModifier: boolean;
