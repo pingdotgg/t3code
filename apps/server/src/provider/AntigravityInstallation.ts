@@ -135,6 +135,32 @@ const installationError = (operation: string, detail: string, cause?: unknown) =
 const wrapFailure = (operation: string, detail: string) => (cause: unknown) =>
   isInstallationError(cause) ? cause : installationError(operation, detail, cause);
 
+const ANTIGRAVITY_VALIDATION_START_FAILURE =
+  "The downloaded Antigravity runtime could not start in this environment.";
+const ANTIGRAVITY_ILLEGAL_INSTRUCTION_FAILURE =
+  "The downloaded Antigravity runtime stopped with SIGILL. Google Antigravity requires an AVX-capable CPU; use a supported machine or a custom executable.";
+
+function causeIncludesIllegalInstruction(value: unknown, seen = new Set<object>()): boolean {
+  if (typeof value === "string") {
+    return /\bSIGILL\b|illegal instruction/i.test(value);
+  }
+  if (typeof value !== "object" || value === null || seen.has(value)) {
+    return false;
+  }
+  seen.add(value);
+  const candidate = value as { readonly message?: unknown; readonly cause?: unknown };
+  return (
+    causeIncludesIllegalInstruction(candidate.message, seen) ||
+    causeIncludesIllegalInstruction(candidate.cause, seen)
+  );
+}
+
+export function antigravityValidationFailureDetail(cause: unknown): string {
+  return causeIncludesIllegalInstruction(cause)
+    ? ANTIGRAVITY_ILLEGAL_INSTRUCTION_FAILURE
+    : ANTIGRAVITY_VALIDATION_START_FAILURE;
+}
+
 function executableNames(platform: NodeJS.Platform) {
   return platform === "win32"
     ? { executable: "agy_acp_server.exe", harness: "localharness_external.exe" }
@@ -507,11 +533,8 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       Effect.provideService(Path.Path, path),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.provideService(Crypto.Crypto, crypto),
-      Effect.mapError(
-        wrapFailure(
-          "verify",
-          "The downloaded Antigravity runtime could not start in this environment.",
-        ),
+      Effect.mapError((cause) =>
+        wrapFailure("verify", antigravityValidationFailureDetail(cause))(cause),
       ),
     );
 

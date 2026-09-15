@@ -23,6 +23,7 @@ import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawne
 import * as NodeCrypto from "node:crypto";
 
 import {
+  antigravityValidationFailureDetail,
   makeAntigravityInstallation,
   type AntigravityExecutable,
   type AntigravityInstallation,
@@ -36,6 +37,17 @@ const harnessContents = "local harness\n";
 const previousReleaseId = "1".repeat(64);
 const previousVersion = "fixture-old";
 const encodeJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+
+it("explains validation failures caused by illegal CPU instructions", () => {
+  const cause = new Error("ACP transport failed", {
+    cause: new Error("Process interrupted due to receipt of signal: 'SIGILL'"),
+  });
+
+  expect(antigravityValidationFailureDetail(cause)).toContain("requires an AVX-capable CPU");
+  expect(antigravityValidationFailureDetail(new Error("permission denied"))).toBe(
+    "The downloaded Antigravity runtime could not start in this environment.",
+  );
+});
 
 // Small ZIPs made with Python's zipfile module. The unsafe entries are intentional.
 const zipFixtures = {
@@ -421,6 +433,69 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       } else {
         yield* expectPreviousRelease(installation);
       }
+    }),
+  );
+
+  it.effect("surfaces SIGILL from the default validation boundary", () =>
+    Effect.gen(function* () {
+      const exitFailure = PlatformError.systemError({
+        _tag: "Unknown",
+        module: "ChildProcess",
+        method: "exitCode",
+        description: "The validation process stopped unexpectedly.",
+        cause: new Error("Process interrupted due to receipt of signal: 'SIGILL'"),
+      });
+      const encoder = new TextEncoder();
+      let spawnCount = 0;
+      const spawner = ChildProcessSpawner.make(
+        Effect.fn("test.spawnSigillAntigravityValidator")(function* (command) {
+          spawnCount += 1;
+          if (command._tag !== "StandardCommand") {
+            return yield* Effect.die("Expected a standard validation process.");
+          }
+          const helper = command.args[0] === "-e";
+          const exited = yield* Deferred.make<
+            ChildProcessSpawner.ExitCode,
+            PlatformError.PlatformError
+          >();
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(helper ? 1 : 2),
+            exitCode: helper
+              ? Effect.succeed(ChildProcessSpawner.ExitCode(0))
+              : Deferred.await(exited),
+            isRunning: helper
+              ? Effect.succeed(false)
+              : Deferred.isDone(exited).pipe(Effect.map((done) => !done)),
+            kill: () =>
+              Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(Effect.asVoid),
+            unref: Effect.succeed(Effect.void),
+            stdin: helper
+              ? Sink.drain
+              : Sink.forEach(() => Deferred.fail(exited, exitFailure).pipe(Effect.asVoid)),
+            stdout: Stream.empty,
+            stderr: helper
+              ? Stream.make(
+                  encoder.encode(
+                    `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${encodeJsonString(command.args.at(-1))}\n`,
+                  ),
+                )
+              : Stream.never,
+            all: Stream.never,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.never,
+          });
+        }),
+      );
+      const { installation } = yield* makeHarness({ useDefaultValidation: true }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+      );
+
+      yield* installation.start;
+      const state = yield* terminalState(installation);
+
+      expect(spawnCount).toBe(2);
+      expect(state.phase).toBe("failed");
+      expect(state.message).toContain("requires an AVX-capable CPU");
     }),
   );
 
