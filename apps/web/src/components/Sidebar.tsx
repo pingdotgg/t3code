@@ -72,6 +72,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
   type ReactNode,
+  type CSSProperties,
 } from "react";
 import { useParams, useRouter } from "@tanstack/react-router";
 
@@ -211,6 +212,10 @@ import {
 } from "./Sidebar.snooze";
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
 import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
+import {
+  SidebarProjectFaviconColorResolvers,
+  type SidebarProjectFaviconColorSource,
+} from "./SidebarProjectFaviconColors";
 import { ProviderInstanceIcon } from "./chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelLabel } from "./chat/providerIconUtils";
 import {
@@ -1000,6 +1005,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   environmentLabel: string | null;
   environmentMachine: EnvironmentMachineKind;
   project: EnvironmentProject | null;
+  projectFaviconColor: string | null;
   projectDisplayName: string | null;
   providerEntryByInstanceId: ReadonlyMap<string, ProviderInstanceEntry>;
   timestampFormat: TimestampFormat;
@@ -1399,7 +1405,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   // a useful hierarchy nor a reliable hover cue. Status now lives in the row
   // content; surface is reserved for interaction (hover, multi-select, route).
   const rowSurfaceClassName = cn(
-    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none",
+    "group/sidebar-row relative w-full cursor-pointer overflow-hidden rounded-md text-left outline-none select-none focus-visible:outline-2 focus-visible:outline-solid focus-visible:-outline-offset-2 focus-visible:outline-ring",
     variantAction === "unsettle" && "[&:not(:hover):not(:focus-within)_*]:text-secondary-label/70",
     props.isActive
       ? "bg-sidebar-row-active text-sidebar-foreground"
@@ -1419,6 +1425,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
     // color are stacked as background images.
     props.sortable?.isDragging &&
       "bg-[linear-gradient(var(--sidebar-row-active),var(--sidebar-row-active)),linear-gradient(var(--sidebar),var(--sidebar))] text-sidebar-foreground opacity-100 shadow-lg",
+    props.projectFaviconColor &&
+      !props.sortable?.isDragging &&
+      !hasUnsentDraft &&
+      !props.isActive &&
+      !isSelected && [
+        "[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_12%,transparent)] dark:[--sidebar-project-wash:color-mix(in_srgb,var(--sidebar-row-project-color)_18%,transparent)]",
+        "pointer-fine:hover:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)]",
+        "focus-visible:bg-sidebar-row-hover focus-visible:bg-[linear-gradient(to_right,var(--sidebar-project-wash),transparent_85%)] focus-visible:text-sidebar-foreground",
+        "forced-colors:pointer-fine:hover:bg-none forced-colors:focus-visible:bg-none",
+      ],
   );
   // dnd-kit props for the row root. Same bag on both variants: every row in
   // the list translates around the gap as the drag passes it.
@@ -1448,6 +1464,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
         {dropVerbBadge[props.dropVerb]}
       </span>
     ) : null;
+  const rowSurfaceStyle = props.projectFaviconColor
+    ? ({ "--sidebar-row-project-color": props.projectFaviconColor } as CSSProperties)
+    : undefined;
 
   const title = isRenaming ? (
     <input
@@ -1465,7 +1484,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none",
+        "min-w-0 flex-1 text-sm transition-opacity motion-reduce:transition-none group-hover/sidebar-row:text-foreground group-focus-visible/sidebar-row:text-foreground",
         shouldRecede ? "font-normal" : "font-medium",
         variant === "card"
           ? cn(
@@ -1595,6 +1614,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 data-testid="sidebar-row-slim"
                 aria-busy={isRegeneratingTitle || undefined}
                 className={cn(rowSurfaceClassName, "flex h-9 items-center gap-2.5 px-2.5")}
+                style={rowSurfaceStyle}
                 onClick={handleClick}
                 onDoubleClick={handleDoubleClick}
                 onKeyDown={handleKeyDown}
@@ -1748,6 +1768,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
               data-testid="sidebar-row-card"
               aria-busy={isRegeneratingTitle || undefined}
               className={rowSurfaceClassName}
+              style={rowSurfaceStyle}
               onClick={handleClick}
               onDoubleClick={handleDoubleClick}
               onKeyDown={handleKeyDown}
@@ -2317,6 +2338,31 @@ export default function Sidebar() {
       ),
     [serverConfigs],
   );
+  const projectFaviconColorSources = useMemo<SidebarProjectFaviconColorSource[]>(
+    () =>
+      projects.map((project) => ({
+        projectKey: `${project.environmentId}:${project.id}`,
+        environmentId: project.environmentId,
+        cwd: project.workspaceRoot,
+        faviconPath: project.faviconPath,
+        projectIcon: project.projectIcon,
+      })),
+    [projects],
+  );
+  const [projectFaviconColorByKey, setProjectFaviconColorByKey] = useState<
+    ReadonlyMap<string, string>
+  >(() => new Map());
+  const updateProjectFaviconColor = useCallback((projectKey: string, color: string | null) => {
+    setProjectFaviconColorByKey((current) => {
+      if (color === null ? !current.has(projectKey) : current.get(projectKey) === color) {
+        return current;
+      }
+      const next = new Map(current);
+      if (color === null) next.delete(projectKey);
+      else next.set(projectKey, color);
+      return next;
+    });
+  }, []);
   // Rows read the project record for its icon and cwd. Group labels can include
   // a repository owner or a different title, so they travel separately.
   const projectByKey = useMemo(
@@ -4367,6 +4413,10 @@ export default function Sidebar() {
   return (
     <>
       <SidebarChromeHeader isElectron={isElectron} />
+      <SidebarProjectFaviconColorResolvers
+        sources={projectFaviconColorSources}
+        onColor={updateProjectFaviconColor}
+      />
       <SidebarContent
         className="gap-0 min-h-full"
         fixedHeader={
@@ -4698,6 +4748,11 @@ export default function Sidebar() {
                             project={
                               projectByKey.get(`${thread.environmentId}:${thread.projectId}`) ??
                               null
+                            }
+                            projectFaviconColor={
+                              projectFaviconColorByKey.get(
+                                `${thread.environmentId}:${thread.projectId}`,
+                              ) ?? null
                             }
                             projectDisplayName={
                               projectDisplayNameByKey.get(
