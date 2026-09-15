@@ -97,7 +97,11 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const token = yield* bootstrapCredentials.issueOneTimeToken();
       const results = yield* Effect.all(
         Array.from({ length: 8 }, () =>
-          Effect.result(bootstrapCredentials.consume(token.credential)),
+          Effect.result(
+            bootstrapCredentials.consume(token.credential, {
+              requestedScopes: ["orchestration:read"],
+            }),
+          ),
         ),
         {
           concurrency: "unbounded",
@@ -121,20 +125,30 @@ it.layer(NodeServices.layer)("PairingGrantStore.layer", (it) => {
       const bootstrapCredentials = yield* PairingGrantStore.PairingGrantStore;
       const token = yield* bootstrapCredentials.issueOneTimeToken({
         proofKeyThumbprint: "client-proof-key-thumbprint",
+        scopes: ["orchestration:read"],
       });
 
       const missing = yield* Effect.flip(bootstrapCredentials.consume(token.credential));
       const wrong = yield* Effect.flip(
         bootstrapCredentials.consume(token.credential, {
           proofKeyThumbprint: "other-proof-key-thumbprint",
+          requestedScopes: ["access:write"],
+        }),
+      );
+      const forbiddenScope = yield* Effect.flip(
+        bootstrapCredentials.consume(token.credential, {
+          proofKeyThumbprint: "client-proof-key-thumbprint",
+          requestedScopes: ["access:write"],
         }),
       );
       const consumed = yield* bootstrapCredentials.consume(token.credential, {
         proofKeyThumbprint: "client-proof-key-thumbprint",
+        requestedScopes: ["orchestration:read"],
       });
 
       expect(missing.message).toContain("proof key mismatch");
       expect(wrong.message).toContain("proof key mismatch");
+      expect(forbiddenScope._tag).toBe("BootstrapCredentialScopeNotGrantedError");
       expect(consumed.proofKeyThumbprint).toBe("client-proof-key-thumbprint");
     }).pipe(Effect.provide(makePairingGrantStoreLayer())),
   );
