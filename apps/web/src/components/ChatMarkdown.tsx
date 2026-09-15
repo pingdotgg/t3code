@@ -141,6 +141,7 @@ import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import {
   chatMarkdownClipboardPayload,
   serializeTableElementToCsv,
+  serializeTableElementToHtml,
   serializeTableElementToMarkdown,
 } from "../markdown-clipboard";
 import { remarkNormalizeListItemIndentation } from "../markdown-list-indentation";
@@ -333,10 +334,18 @@ const WINDOWS_DRIVE_PATH_REGEX = /^[A-Za-z]:[\\/]/;
 const MAX_HIGHLIGHT_CACHE_ENTRIES = 500;
 const MAX_HIGHLIGHT_CACHE_MEMORY_BYTES = 50 * 1024 * 1024;
 
+type TableCopyFormat = "markdown" | "csv" | "html";
+
+const TABLE_COPY_SERIALIZERS: Record<TableCopyFormat, (table: Element) => string> = {
+  markdown: serializeTableElementToMarkdown,
+  csv: serializeTableElementToCsv,
+  html: serializeTableElementToHtml,
+};
+
 interface MarkdownActionFailureContext {
   readonly operation: string;
   readonly target?: string;
-  readonly format?: "markdown" | "csv";
+  readonly format?: TableCopyFormat;
   readonly language?: string;
   readonly fenceTitle?: string;
   readonly copyTarget?: string;
@@ -726,18 +735,15 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
     setExpanded((value) => !value);
   }
 
-  const handleCopy = useCallback((format: "markdown" | "csv") => {
+  const handleCopy = useCallback((format: TableCopyFormat) => {
     const table = containerRef.current?.querySelector("table");
-    if (!table || typeof navigator === "undefined" || navigator.clipboard == null) {
-      return;
-    }
-    const text =
-      format === "markdown"
-        ? serializeTableElementToMarkdown(table)
-        : serializeTableElementToCsv(table);
-    void navigator.clipboard
-      .writeText(text)
-      .then(() => {
+    if (!table) return;
+    const text = TABLE_COPY_SERIALIZERS[format](table);
+    // HTML also rides the rich flavor so mail clients and editors paste a real table.
+    const extraFlavors = format === "html" ? { "text/html": text } : undefined;
+    void writeTextToClipboard(text, "table", extraFlavors)
+      .then((didCopy) => {
+        if (!didCopy) return;
         if (copiedTimerRef.current != null) {
           clearTimeout(copiedTimerRef.current);
         }
@@ -816,6 +822,7 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
           <MenuPopup align="end">
             <MenuItem onClick={() => handleCopy("markdown")}>Copy as Markdown</MenuItem>
             <MenuItem onClick={() => handleCopy("csv")}>Copy as CSV</MenuItem>
+            <MenuItem onClick={() => handleCopy("html")}>Copy as HTML</MenuItem>
           </MenuPopup>
         </Menu>
       </div>

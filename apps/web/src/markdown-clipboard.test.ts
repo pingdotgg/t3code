@@ -1,6 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
-import { serializeRenderedMarkdownFragment } from "./markdown-clipboard";
+import {
+  serializeRenderedMarkdownFragment,
+  serializeTableElementToCsv,
+  serializeTableElementToHtml,
+} from "./markdown-clipboard";
 import { EnvironmentId, MessageId, ThreadId } from "@t3tools/contracts";
 import {
   collectAssistantCitations,
@@ -82,6 +86,37 @@ class FakeElement {
     };
     return search(this);
   }
+
+  /** Supports only the `:scope > a > b, :scope > c` paths the table serializers ask for. */
+  querySelectorAll(selector: string): FakeElement[] {
+    const found: FakeElement[] = [];
+    for (const path of selector.split(",")) {
+      const tags = path.trim().replace(":scope > ", "").split(" > ");
+      let level: FakeElement[] = [this];
+      for (const tag of tags) {
+        level = level.flatMap((element) =>
+          element.children.filter((child) => child.tagName === tag.toUpperCase()),
+        );
+      }
+      found.push(...level);
+    }
+    return found;
+  }
+}
+
+function tableRow(tag: "TH" | "TD", cells: ReadonlyArray<string | FakeElement>): FakeElement {
+  return new FakeElement("TR").append(
+    ...cells.map((cell) =>
+      cell instanceof FakeElement ? cell : new FakeElement(tag).append(new FakeText(cell)),
+    ),
+  );
+}
+
+function renderedTable(header: ReadonlyArray<string>, body: ReadonlyArray<ReadonlyArray<string>>) {
+  return new FakeElement("TABLE").append(
+    new FakeElement("THEAD").append(tableRow("TH", header)),
+    new FakeElement("TBODY").append(...body.map((cells) => tableRow("TD", cells))),
+  );
 }
 
 function asNode(element: FakeElement): Node {
@@ -275,6 +310,56 @@ describe("serializeRenderedMarkdownFragment", () => {
 
     expect(serializeRenderedMarkdownFragment(asNode(container))).toBe(
       "Hello World (Document template)",
+    );
+  });
+});
+
+describe("serializeTableElementToHtml", () => {
+  it("emits a clean table with header, body, escaping, and alignment", () => {
+    const amount = new FakeElement("TD", [], { align: "right" }).append(new FakeText("1,200"));
+    const table = renderedTable(
+      ["Name", "Amount"],
+      [
+        ["A & B <Ltd>", "3"],
+        ["Bob", "unused"],
+      ],
+    );
+    table.querySelector("tbody")!.children[1]!.childNodes[1] = amount;
+
+    expect(serializeTableElementToHtml(asNode(table) as Element)).toBe(
+      [
+        "<table>",
+        "  <thead>",
+        "    <tr><th>Name</th><th>Amount</th></tr>",
+        "  </thead>",
+        "  <tbody>",
+        "    <tr><td>A &amp; B &lt;Ltd&gt;</td><td>3</td></tr>",
+        '    <tr><td>Bob</td><td style="text-align:right">1,200</td></tr>',
+        "  </tbody>",
+        "</table>",
+      ].join("\n"),
+    );
+  });
+
+  it("keeps the first row in the body when it is not a header", () => {
+    const table = new FakeElement("TABLE").append(tableRow("TD", ["only", "cells"]));
+
+    expect(serializeTableElementToHtml(asNode(table) as Element)).toBe(
+      "<table>\n  <tbody>\n    <tr><td>only</td><td>cells</td></tr>\n  </tbody>\n</table>",
+    );
+  });
+
+  it("returns an empty string for a table without rows", () => {
+    expect(serializeTableElementToHtml(asNode(new FakeElement("TABLE")) as Element)).toBe("");
+  });
+});
+
+describe("serializeTableElementToCsv", () => {
+  it("quotes cells containing commas or quotes", () => {
+    const table = renderedTable(["Name", "Note"], [['Say "hi"', "a, b"]]);
+
+    expect(serializeTableElementToCsv(asNode(table) as Element)).toBe(
+      'Name,Note\n"Say ""hi""","a, b"',
     );
   });
 });
