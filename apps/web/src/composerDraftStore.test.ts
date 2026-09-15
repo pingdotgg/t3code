@@ -835,6 +835,34 @@ describe("composerDraftStore project draft thread mapping", () => {
     resetComposerDraftStore();
   });
 
+  it("persists the explicit worktree branch with the draft thread", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "development",
+      envMode: "worktree",
+      environmentSelection: "auto",
+    });
+    store.setDraftThreadContext(draftId, { worktreeBranch: "jm/indiv/juh/ehrungen" });
+    const persistApi = useComposerDraftStore.persist as unknown as {
+      getOptions: () => {
+        merge: (
+          persistedState: unknown,
+          currentState: ReturnType<typeof useComposerDraftStore.getState>,
+        ) => ReturnType<typeof useComposerDraftStore.getState>;
+      };
+    };
+    const persisted = partializeComposerDraftStoreState(useComposerDraftStore.getState());
+
+    expect(persisted.draftThreadsByThreadKey[draftId]?.worktreeBranch).toBe(
+      "jm/indiv/juh/ehrungen",
+    );
+    expect(persisted.draftThreadsByThreadKey[draftId]?.environmentSelection).toBe("manual");
+
+    const hydrated = persistApi.getOptions().merge(persisted, useComposerDraftStore.getState());
+    expect(hydrated.draftThreadsByThreadKey[draftId]?.worktreeBranch).toBe("jm/indiv/juh/ehrungen");
+  });
+
   it("clears composer data for one environment without touching another", () => {
     const store = useComposerDraftStore.getState();
     const localThreadRef = scopeThreadRef(TEST_ENVIRONMENT_ID, threadId);

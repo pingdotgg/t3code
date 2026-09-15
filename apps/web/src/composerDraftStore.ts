@@ -316,6 +316,9 @@ const PersistedDraftThreadState = Schema.Struct({
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(Schema.String),
+  worktreeBranch: Schema.NullOr(Schema.String).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   worktreePath: Schema.NullOr(Schema.String),
   envMode: DraftThreadEnvModeSchema,
   startFromOrigin: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
@@ -409,6 +412,7 @@ export interface DraftSessionState {
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
   branch: string | null;
+  worktreeBranch: string | null;
   worktreePath: string | null;
   envMode: DraftThreadEnvMode;
   startFromOrigin: boolean;
@@ -458,6 +462,7 @@ interface ComposerDraftStoreState {
     options?: {
       threadId?: ThreadId;
       branch?: string | null;
+      worktreeBranch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
@@ -474,6 +479,7 @@ interface ComposerDraftStoreState {
     options?: {
       threadId?: ThreadId;
       branch?: string | null;
+      worktreeBranch?: string | null;
       worktreePath?: string | null;
       createdAt?: string;
       envMode?: DraftThreadEnvMode;
@@ -488,6 +494,7 @@ interface ComposerDraftStoreState {
     threadRef: ComposerThreadTarget,
     options: {
       branch?: string | null;
+      worktreeBranch?: string | null;
       worktreePath?: string | null;
       projectRef?: ScopedProjectRef;
       createdAt?: string;
@@ -1473,6 +1480,7 @@ function createDraftThreadState(
   options?: {
     threadId?: ThreadId;
     branch?: string | null;
+    worktreeBranch?: string | null;
     worktreePath?: string | null;
     createdAt?: string;
     envMode?: DraftThreadEnvMode;
@@ -1499,6 +1507,12 @@ function createDraftThreadState(
         ? null
         : (existingThread?.branch ?? null)
       : (options.branch ?? null);
+  const nextWorktreeBranch =
+    options?.worktreeBranch === undefined
+      ? projectChanged
+        ? null
+        : (existingThread?.worktreeBranch ?? null)
+      : (options.worktreeBranch ?? null);
   const nextStartFromOrigin =
     options?.startFromOrigin === undefined
       ? (existingThread?.startFromOrigin ?? false)
@@ -1525,6 +1539,7 @@ function createDraftThreadState(
     interactionMode:
       options?.interactionMode ?? existingThread?.interactionMode ?? DEFAULT_INTERACTION_MODE,
     branch: nextBranch,
+    worktreeBranch: nextWorktreeBranch,
     worktreePath: nextWorktreePath,
     envMode:
       options?.envMode ?? (nextWorktreePath ? "worktree" : (existingThread?.envMode ?? "local")),
@@ -1560,6 +1575,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
     left.branch === right.branch &&
+    left.worktreeBranch === right.worktreeBranch &&
     left.worktreePath === right.worktreePath &&
     left.envMode === right.envMode &&
     left.startFromOrigin === right.startFromOrigin &&
@@ -1661,6 +1677,7 @@ function normalizePersistedDraftThreads(
       const projectId = candidateDraftThread.projectId;
       const createdAt = candidateDraftThread.createdAt;
       const branch = candidateDraftThread.branch;
+      const worktreeBranch = candidateDraftThread.worktreeBranch;
       const worktreePath = candidateDraftThread.worktreePath;
       const startFromOrigin = candidateDraftThread.startFromOrigin === true;
       const normalizedWorktreePath = typeof worktreePath === "string" ? worktreePath : null;
@@ -1708,6 +1725,7 @@ function normalizePersistedDraftThreads(
             ? candidateDraftThread.interactionMode
             : DEFAULT_INTERACTION_MODE,
         branch: typeof branch === "string" ? branch : null,
+        worktreeBranch: typeof worktreeBranch === "string" ? worktreeBranch : null,
         worktreePath: normalizedWorktreePath,
         envMode: normalizeDraftThreadEnvMode(candidateDraftThread.envMode, normalizedWorktreePath),
         startFromOrigin,
@@ -1768,6 +1786,7 @@ function normalizePersistedDraftThreads(
           runtimeMode: DEFAULT_RUNTIME_MODE,
           interactionMode: DEFAULT_INTERACTION_MODE,
           branch: null,
+          worktreeBranch: null,
           worktreePath: null,
           envMode: "local",
           startFromOrigin: false,
@@ -2472,6 +2491,7 @@ function toHydratedDraftThreadState(
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
     branch: persistedDraftThread.branch,
+    worktreeBranch: persistedDraftThread.worktreeBranch,
     worktreePath: persistedDraftThread.worktreePath,
     envMode: persistedDraftThread.envMode,
     startFromOrigin: persistedDraftThread.startFromOrigin,
@@ -2734,13 +2754,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
                   ? null
                   : existing.branch
                 : (options.branch ?? null);
+            const nextWorktreeBranch =
+              options.worktreeBranch === undefined
+                ? projectChanged
+                  ? null
+                  : existing.worktreeBranch
+                : (options.worktreeBranch ?? null);
             const nextStartFromOrigin =
               options.startFromOrigin === undefined
                 ? existing.startFromOrigin
                 : options.startFromOrigin;
             const environmentSelection =
               options.environmentSelection ??
-              (options.branch != null || options.worktreePath != null
+              (options.branch != null ||
+              options.worktreeBranch != null ||
+              options.worktreePath != null
                 ? "manual"
                 : existing.environmentSelection);
             const nextDraftThread: DraftThreadState = {
@@ -2762,6 +2790,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               runtimeMode: options.runtimeMode ?? existing.runtimeMode,
               interactionMode: options.interactionMode ?? existing.interactionMode,
               branch: nextBranch,
+              worktreeBranch: nextWorktreeBranch,
               worktreePath: nextWorktreePath,
               envMode:
                 options.envMode ?? (nextWorktreePath ? "worktree" : (existing.envMode ?? "local")),
@@ -2778,6 +2807,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               nextDraftThread.runtimeMode === existing.runtimeMode &&
               nextDraftThread.interactionMode === existing.interactionMode &&
               nextDraftThread.branch === existing.branch &&
+              nextDraftThread.worktreeBranch === existing.worktreeBranch &&
               nextDraftThread.worktreePath === existing.worktreePath &&
               nextDraftThread.envMode === existing.envMode &&
               nextDraftThread.startFromOrigin === existing.startFromOrigin &&

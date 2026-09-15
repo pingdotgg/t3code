@@ -203,6 +203,7 @@ export function resolveBranchTriggerLabel(input: {
   resolvedActiveBranch: string | null;
   resolvedActiveBranchIsRemote: boolean | null;
   startFromOrigin: boolean;
+  worktreeBranch?: string | null;
 }): string {
   const {
     activeWorktreePath,
@@ -210,15 +211,17 @@ export function resolveBranchTriggerLabel(input: {
     resolvedActiveBranch,
     resolvedActiveBranchIsRemote,
     startFromOrigin,
+    worktreeBranch,
   } = input;
   if (!resolvedActiveBranch) {
     return "Select ref";
   }
   if (effectiveEnvMode === "worktree" && !activeWorktreePath) {
-    // Only the server can determine a local branch's configured remote.
-    return startFromOrigin && resolvedActiveBranchIsRemote === false
-      ? `From ${resolvedActiveBranch} (remote)`
-      : `From ${resolvedActiveBranch}`;
+    const baseRef =
+      startFromOrigin && resolvedActiveBranchIsRemote === false
+        ? `${resolvedActiveBranch} (remote)`
+        : resolvedActiveBranch;
+    return worktreeBranch ? `${worktreeBranch} from ${baseRef}` : `From ${baseRef}`;
   }
   return resolvedActiveBranch;
 }

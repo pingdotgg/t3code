@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import { dedupeRemoteBranchesWithLocalMatches } from "@t3tools/shared/git";
 import {
   deriveLocalBranchNameFromRemoteRef,
+  resolveBranchTriggerLabel,
   resolveBranchSelectionTarget,
   resolveDraftEnvModeAfterBranchChange,
   resolveEffectiveEnvMode,
@@ -276,4 +277,20 @@ describe("sanitizeNewRefName", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
   });
+});
+
+describe("explicit worktree branch", () => {
+  it("shows an explicit worktree branch with its origin base", () => {
+    expect(
+      resolveBranchTriggerLabel({
+        activeWorktreePath: null,
+        effectiveEnvMode: "worktree",
+        resolvedActiveBranch: "development",
+        resolvedActiveBranchIsRemote: false,
+        startFromOrigin: true,
+        worktreeBranch: "jm/indiv/juh/ehrungen",
+      }),
+    ).toBe("jm/indiv/juh/ehrungen from development (remote)");
+  });
+
 });
