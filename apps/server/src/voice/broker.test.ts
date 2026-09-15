@@ -483,6 +483,10 @@ describe("voice broker routes", () => {
         expect(upstreamBody.session.delegation.responses.tools.map((tool) => tool.name)).toContain(
           "searchThreads",
         );
+        // Client-local UI control tools are advertised like every other tool.
+        expect(upstreamBody.session.delegation.responses.tools.map((tool) => tool.name)).toEqual(
+          expect.arrayContaining(["listControls", "clickControl"]),
+        );
         expect(upstreamBody.transport).toEqual({ type: "webrtc", sdp: "offer-sdp" });
       }),
     ),

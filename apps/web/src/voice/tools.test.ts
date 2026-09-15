@@ -1042,3 +1042,38 @@ describe("observeThread", () => {
     expect(access.subscribeThread).not.toHaveBeenCalled();
   });
 });
+
+// ---------------------------------------------------------------------------
+// listControls / clickControl (client-local UI control seam)
+// ---------------------------------------------------------------------------
+
+describe("listControls and clickControl", () => {
+  it("refuse explicitly when the host exposes no UI control source", async () => {
+    const executor = createVoiceToolExecutor(hostMock({}));
+    await expect(executor.listControls({})).resolves.toEqual({
+      controls: [],
+      error: expect.objectContaining({ code: "invalid_request" }),
+    });
+    await expect(executor.clickControl({ controlId: "button#1:Run" })).resolves.toMatchObject({
+      controlId: "button#1:Run",
+      state: "unsupported",
+    });
+  });
+
+  it("delegate to the host's client-local UI control seam unchanged", async () => {
+    const listControls = vi.fn(async () => ({ controls: [] }));
+    const clickControl = vi.fn(async () => ({
+      controlId: "button#1:Run",
+      state: "activated" as const,
+    }));
+    const host = {
+      ...hostMock({}),
+      uiControls: { listControls, clickControl },
+    } as unknown as VoiceToolHost;
+    const executor = createVoiceToolExecutor(host);
+    await executor.listControls({ query: "run" });
+    expect(listControls).toHaveBeenCalledWith({ query: "run" });
+    await executor.clickControl({ controlId: "button#1:Run" });
+    expect(clickControl).toHaveBeenCalledWith({ controlId: "button#1:Run" });
+  });
+});

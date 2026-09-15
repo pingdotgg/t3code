@@ -33,6 +33,10 @@ import {
   type VoiceEnvironmentOutcome,
   type VoiceListModelsInput,
   type VoiceListModelsOutput,
+  type VoiceListControlsInput,
+  type VoiceListControlsOutput,
+  type VoiceClickControlInput,
+  type VoiceClickControlOutput,
   type VoiceModelOption,
   type VoiceObserveThreadInput,
   type VoiceObserveThreadOutput,
@@ -86,6 +90,7 @@ import { environmentSession, readPreparedConnection } from "../state/session";
 import { serverEnvironment } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { buildThreadRouteParams } from "../threadRoutes";
+import { createDomVoiceControlHost } from "./ui/domControls";
 
 // ---------------------------------------------------------------------------
 // Constants (frozen contract bounds)
@@ -167,6 +172,21 @@ export interface VoiceEnvironmentAccess {
 export interface VoiceToolHost {
   readonly catalogEnvironments: () => ReadonlyArray<VoiceEnvironmentCatalogEntry>;
   readonly openEnvironment: (environmentId: EnvironmentId) => VoiceEnvironmentAccess | null;
+  /** Enumeration and activation of the attached UI's visible controls.
+      Client-local by design (the attached client owns UI execution, so remote
+      sessions work); optional so environments whose client cannot see a UI
+      get an explicit unsupported refusal instead of a fabricated list. */
+  readonly uiControls?: VoiceUiControlHost;
+}
+
+/** Enumerates and activates the attached client's own interface controls
+    (buttons, links, menu items, tabs, form controls) with stable,
+    re-resolvable identities. Implementations report disabled, hidden, stale
+    and ambiguous targets explicitly and never claim an activation that did
+    not dispatch. */
+export interface VoiceUiControlHost {
+  readonly listControls: (input: VoiceListControlsInput) => Promise<VoiceListControlsOutput>;
+  readonly clickControl: (input: VoiceClickControlInput) => Promise<VoiceClickControlOutput>;
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +804,8 @@ export interface VoiceToolExecutor {
   readonly startThread: (input: VoiceStartThreadInput) => Promise<VoiceStartThreadOutput>;
   readonly continueThread: (input: VoiceContinueThreadInput) => Promise<VoiceStartThreadOutput>;
   readonly observeThread: (input: VoiceObserveThreadInput) => Promise<VoiceObserveThreadOutput>;
+  readonly listControls: (input: VoiceListControlsInput) => Promise<VoiceListControlsOutput>;
+  readonly clickControl: (input: VoiceClickControlInput) => Promise<VoiceClickControlOutput>;
 }
 
 export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor {
@@ -1601,6 +1623,34 @@ export function createVoiceToolExecutor(host: VoiceToolHost): VoiceToolExecutor 
         running: derived.running,
       };
     },
+
+    async listControls(input) {
+      const ui = host.uiControls;
+      if (ui === undefined) {
+        return {
+          controls: [],
+          error: {
+            code: "invalid_request",
+            message:
+              "This client does not expose its interface controls, so none can be listed or activated here.",
+          },
+        };
+      }
+      return ui.listControls(input);
+    },
+
+    async clickControl(input) {
+      const ui = host.uiControls;
+      if (ui === undefined) {
+        return {
+          controlId: input.controlId,
+          state: "unsupported",
+          message:
+            "This client does not expose its interface controls, so none can be listed or activated here.",
+        };
+      }
+      return ui.clickControl(input);
+    },
   };
 }
 
@@ -1786,5 +1836,10 @@ export function createWebVoiceToolHost(): VoiceToolHost {
       }
       return createPreparedEnvironmentAccess(prepared);
     },
+
+    // UI control execution stays in this attached client: enumeration and
+    // activation read and click the live document of the window the voice
+    // session runs in, so remote sessions operate the real UI.
+    uiControls: createDomVoiceControlHost(),
   };
 }
