@@ -5216,6 +5216,43 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         }),
     );
 
+    it.effect("uses the branch leaf only for an explicitly named new ref worktree path", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const pathService = yield* Path.Path;
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const temporary = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "t3code/deadbeef",
+        });
+        assert.equal(pathService.basename(temporary.worktree.path), "t3code-deadbeef");
+
+        const created = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: initialBranch,
+          newRefName: "jm/indiv/juh/ehrungen",
+        });
+        assert.equal(pathService.basename(created.worktree.path), "ehrungen");
+        assert.equal(
+          yield* git(created.worktree.path, ["branch", "--show-current"]),
+          "jm/indiv/juh/ehrungen",
+        );
+
+        yield* driver.createRef({ cwd, refName: "jm/indiv/juh/existing" });
+        const existing = yield* driver.createWorktree({
+          cwd,
+          path: null,
+          refName: "jm/indiv/juh/existing",
+        });
+        assert.equal(pathService.basename(existing.worktree.path), "jm-indiv-juh-existing");
+      }),
+    );
+
     it.effect("keeps a worktree whose untracked files status is configured to hide", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
