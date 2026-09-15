@@ -28,10 +28,11 @@ function isHostOf(hostname: string, apex: string, label?: string): boolean {
  * anything else — an issue, a commit, a repository root, a host this cannot tell apart from an
  * ordinary link. A doubtful match is worse than no match, so nothing here guesses.
  *
- * Each host is recognised by the path shape it alone uses, guarded by a hostname it could
- * plausibly be served from, since self-hosted installs are named whatever their admin chose:
- * GitLab's `/-/` marker is unique enough to trust on any hostname, while `/pull/` is generic
- * enough that it is only believed from a GitHub-ish host.
+ * Each host is recognised by the path shape it alone uses. Bitbucket and Azure DevOps are cloud
+ * hosts, so their shapes are only believed from the hostnames they are served from; GitLab and
+ * GitHub are self-hosted under names their admins chose — `git.corp.com` says nothing about what
+ * runs on it — so their shapes are read on any hostname. `/pull/{n}` below `/{owner}/{repo}` is
+ * the last thing tried, since it is the least distinctive of the four.
  *
  * Nothing here tries to tell a lookalike hostname from a real one — `github.com.evil.test` and
  * the rest are an open set, and blocking spellings of it costs real hosts (`gitlab.com.br` is a
@@ -48,11 +49,6 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
   if (url.protocol !== "https:" && url.protocol !== "http:") return null;
   const host = url.hostname.toLowerCase();
 
-  // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}
-  if (isHostOf(host, "github.com", "github")) {
-    const match = /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname);
-    if (match) return claim(host, match);
-  }
   // Forgejo and Gitea use /pulls/ on arbitrary self-hosted domains.
   const forgejo = /^\/([^/]+(?:\/[^/]+)+)\/pulls\/(\d+)(?:\/|$)/u.exec(url.pathname);
   if (forgejo) {
@@ -74,7 +70,10 @@ export function parseChangeRequestUrl(targetUrl: string): ChangeRequestLink | nu
     const match = /^\/((?:[^/]+\/)*_git\/[^/]+)\/pullrequest\/(\d+)(?:\/|$)/u.exec(url.pathname);
     return claim(host, match);
   }
-  return null;
+  // GitHub, and any Enterprise install: /{owner}/{repo}/pull/{n}. An Enterprise host is named
+  // whatever its admin chose, so there is no hostname to ask about — a `ghe.com` tenant and a
+  // refined `git.corp.com` are as much GitHub as github.com is.
+  return claim(host, /^\/([^/]+\/[^/]+)\/pull\/(\d+)(?:\/|$)/u.exec(url.pathname));
 }
 
 function claim(host: string, match: RegExpExecArray | null): ChangeRequestLink | null {
@@ -95,6 +94,7 @@ export function changeRequestUrlFor(
 ): string | null {
   switch (kind) {
     case "github":
+    case "github-enterprise":
       return `https://${host}/${repository}/pull/${number}`;
     case "forgejo": {
       try {

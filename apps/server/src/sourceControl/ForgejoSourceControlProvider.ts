@@ -85,7 +85,8 @@ export const makeDiscovery = Effect.gen(function* () {
         (remote && ForgejoCli.matchForgejoLogin(logins, remote)) ||
         logins.find((entry) => entry.default === "true") ||
         logins[0];
-      const fj = yield* probeSourceControlProvider({
+      // Only the `gh` spec expands into several rows; every other spec answers with exactly one.
+      const [fj] = yield* probeSourceControlProvider({
         cwd,
         process,
         spec: {
@@ -113,11 +114,11 @@ export const makeDiscovery = Effect.gen(function* () {
         },
       });
       // A configured fj account owns its requests, including authentication errors.
-      if (fj.status === "available" && (login || Result.isFailure(credentials))) {
-        if (login && fj.auth.status === "authenticated" && cli.getAccount) {
+      if (fj!.status === "available" && (login || Result.isFailure(credentials))) {
+        if (login && fj!.auth.status === "authenticated" && cli.getAccount) {
           const account = yield* cli.getAccount({ cwd, baseUrl: login.url }).pipe(Effect.result);
           return {
-            ...fj,
+            ...fj!,
             auth: Result.isSuccess(account)
               ? providerAuth({
                   status: "authenticated",
@@ -131,10 +132,10 @@ export const makeDiscovery = Effect.gen(function* () {
                 }),
           };
         }
-        return fj;
+        return fj!;
       }
-      const tea = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
-      return tea.status === "available" || fj.status === "missing" ? tea : fj;
+      const [tea] = yield* probeSourceControlProvider({ cwd, process, spec: discovery });
+      return tea!.status === "available" || fj!.status === "missing" ? tea! : fj!;
     }),
     refineUnknownRemote: Effect.fn("ForgejoSourceControlProvider.refineUnknownRemote")(
       function* (input: {

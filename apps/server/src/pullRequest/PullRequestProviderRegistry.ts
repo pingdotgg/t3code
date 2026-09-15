@@ -49,6 +49,7 @@ export function fromProviders(
 export const make = Effect.map(
   Effect.all([
     GitHubPullRequestProvider.make,
+    GitHubPullRequestProvider.makeProvider("github-enterprise"),
     GitLabPullRequestProvider.make,
     ForgejoPullRequestProvider.make,
     BitbucketPullRequestProvider.make,

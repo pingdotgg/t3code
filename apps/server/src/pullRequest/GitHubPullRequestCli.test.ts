@@ -2532,6 +2532,36 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads the viewer from the host it was asked about", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("gho_token")));
+      mockedExecute.mockReturnValueOnce(
+        // @effect-diagnostics-next-line preferSchemaOverJson:off
+        Effect.succeed(output(JSON.stringify({ id: 42, login: "octocat" }))),
+      );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "ghe.example.com" });
+
+      assert.strictEqual(login, "octocat");
+      // Neither call reads repository context: without the host they answer for github.com,
+      // which on an Enterprise install is either a different account or none at all.
+      assert.deepStrictEqual(mockedExecute.mock.calls[0]![0].args, [
+        "auth",
+        "token",
+        "--hostname",
+        "ghe.example.com",
+      ]);
+      assert.deepStrictEqual(mockedExecute.mock.calls[1]![0].args, [
+        "api",
+        "user",
+        "--hostname",
+        "ghe.example.com",
+      ]);
+      assert.strictEqual(mockedExecute.mock.calls[1]![0].env?.GH_HOST, "ghe.example.com");
+    }),
+  );
+
   it.effect("accounts for the avatar lookup in the GraphQL budget", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(

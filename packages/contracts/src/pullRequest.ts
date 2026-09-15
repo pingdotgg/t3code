@@ -1162,6 +1162,12 @@ const PROVIDER_REQUIREMENT: Partial<
       "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
     unauthenticated: "GitHub CLI is not authenticated. Run `gh auth login` and retry.",
   },
+  "github-enterprise": {
+    missing:
+      "GitHub CLI (`gh`) is required to browse change requests on this host. Install it from https://cli.github.com/ and reload.",
+    unauthenticated:
+      "GitHub CLI is not authenticated for this Enterprise host. Run `gh auth login --hostname <host>` and retry.",
+  },
   forgejo: {
     missing:
       "Install Forgejo CLI (`fj` 0.6 or later) from https://codeberg.org/forgejo-contrib/forgejo-cli or Gitea CLI (`tea` 0.16 or later) from https://gitea.com/gitea/tea to browse Forgejo pull requests.",
