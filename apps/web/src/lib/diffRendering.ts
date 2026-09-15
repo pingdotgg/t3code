@@ -163,8 +163,13 @@ export function resolveFileDiffPreviousPath(fileDiff: FileDiffMetadata): string 
   return raw;
 }
 
+/**
+ * Stable across re-renders of the same file, distinct for every block in a
+ * patch. A type change (regular file to symlink) arrives as a deletion and an
+ * addition of the same path, so the change type is part of the identity.
+ */
 export function buildFileDiffIdentityKey(fileDiff: FileDiffMetadata): string {
-  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}`;
+  return `${resolveFileDiffPreviousPath(fileDiff)}\u0000${resolveFileDiffPath(fileDiff)}\u0000${fileDiff.type}`;
 }
 
 export function buildFileDiffRenderKey(fileDiff: FileDiffMetadata): string {
