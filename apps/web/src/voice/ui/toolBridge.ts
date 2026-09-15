@@ -95,5 +95,9 @@ function dispatchPerTool(
       return tools.openThread(input as Parameters<typeof tools.openThread>[0]);
     case "observeThread":
       return tools.observeThread(input as Parameters<typeof tools.observeThread>[0]);
+    case "listControls":
+      return tools.listControls(input as Parameters<typeof tools.listControls>[0]);
+    case "clickControl":
+      return tools.clickControl(input as Parameters<typeof tools.clickControl>[0]);
   }
 }

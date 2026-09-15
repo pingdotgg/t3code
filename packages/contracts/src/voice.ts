@@ -423,6 +423,104 @@ export const VoiceObserveThreadOutput = Schema.Struct({
 export type VoiceObserveThreadOutput = typeof VoiceObserveThreadOutput.Type;
 
 // ---------------------------------------------------------------------------
+// Tool 10: voice.listControls / Tool 11: voice.clickControl (client-local UI)
+// ---------------------------------------------------------------------------
+
+/** Activatable control roles the client-local enumeration recognizes.
+    Anything without one of these roles (plain divs, decorative images) is
+    unsupported and never listed; the supported/unsupported mapping is
+    documented in docs/user/voice-controls.md. */
+export const VoiceUiControlRole = Schema.Literals([
+  "button",
+  "link",
+  "menuitem",
+  "menuitemcheckbox",
+  "menuitemradio",
+  "tab",
+  "switch",
+  "checkbox",
+  "radio",
+  "option",
+]);
+export type VoiceUiControlRole = typeof VoiceUiControlRole.Type;
+
+export const VoiceUiControlState = Schema.Literals(["enabled", "disabled", "hidden"]);
+export type VoiceUiControlState = typeof VoiceUiControlState.Type;
+
+export const VoiceUiControl = Schema.Struct({
+  /** Opaque, per-element id assigned by the attached client, stable for the
+      session while the element stays attached. Resolution re-finds the exact
+      element at click time; a collected or detached element is reported
+      stale. Names and occurrence describe context and never address a
+      click, so a surviving same-named control is never retargeted. */
+  controlId: TrimmedNonEmptyString,
+  role: VoiceUiControlRole,
+  /** Accessible name; empty when the control exposes none. */
+  name: TrimmedString,
+  state: VoiceUiControlState,
+  /** 1-based position among the currently attached controls sharing the
+      role and accessible name (DOM order). Context for disambiguation in
+      speech; the controlId remains the only click address. */
+  occurrence: NonNegativeInt,
+  /** True when another currently attached control shares the role and
+      accessible name; use occurrence to say which one. */
+  ambiguous: Schema.optional(Schema.Boolean),
+});
+export type VoiceUiControl = typeof VoiceUiControl.Type;
+
+export const VoiceListControlsInput = Schema.Struct({
+  /** Case-insensitive substring filter over accessible names. Absent lists
+      everything. */
+  query: Schema.optional(TrimmedString.check(Schema.isMaxLength(120))),
+  /** Hidden controls are excluded by default; include them on an explicit
+      spoken request. Disabled controls are always listed with their state. */
+  includeHidden: Schema.optional(Schema.Boolean),
+  /** Upper bound on returned controls, default 60, hard maximum 200. */
+  limit: Schema.optional(NonNegativeInt),
+});
+export type VoiceListControlsInput = typeof VoiceListControlsInput.Type;
+
+export const VoiceListControlsOutput = Schema.Struct({
+  controls: Schema.Array(VoiceUiControl),
+  /** True when more matching controls exist beyond the limit. */
+  truncated: Schema.optional(Schema.Boolean),
+  /** Present only when the attached client exposes no UI control source.
+      Execution is client-local: a client that cannot see a UI refuses here
+      instead of pretending to enumerate. */
+  error: Schema.optional(VoiceToolError),
+});
+export type VoiceListControlsOutput = typeof VoiceListControlsOutput.Type;
+
+export const VoiceClickControlInput = Schema.Struct({
+  controlId: TrimmedNonEmptyString,
+});
+export type VoiceClickControlInput = typeof VoiceClickControlInput.Type;
+
+/** Activation states. "activated" is dispatch-level evidence: the id resolved
+    to a visible, enabled control that received a real activation (pointer and
+    click sequence). Every other state is an explicit refusal; a click result
+    is success only when state is "activated". */
+export const VoiceClickControlState = Schema.Literals([
+  "activated",
+  "disabled",
+  "hidden",
+  "not_found",
+  "ambiguous",
+  "unsupported",
+]);
+export type VoiceClickControlState = typeof VoiceClickControlState.Type;
+
+export const VoiceClickControlOutput = Schema.Struct({
+  controlId: TrimmedNonEmptyString,
+  state: VoiceClickControlState,
+  /** Accessible name of the control the id resolved to, when found. */
+  name: Schema.optional(TrimmedString),
+  role: Schema.optional(VoiceUiControlRole),
+  message: Schema.optional(TrimmedString),
+});
+export type VoiceClickControlOutput = typeof VoiceClickControlOutput.Type;
+
+// ---------------------------------------------------------------------------
 // Broker wire contracts (client <-> apps/server voice route)
 // ---------------------------------------------------------------------------
 
@@ -595,6 +693,14 @@ export const VoiceToolSchemas = {
   observeThread: {
     input: VoiceObserveThreadInput,
     output: VoiceObserveThreadOutput,
+  },
+  listControls: {
+    input: VoiceListControlsInput,
+    output: VoiceListControlsOutput,
+  },
+  clickControl: {
+    input: VoiceClickControlInput,
+    output: VoiceClickControlOutput,
   },
 } as const;
 
