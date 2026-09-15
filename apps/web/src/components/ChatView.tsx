@@ -3175,12 +3175,13 @@ export default function ChatView(props: ChatViewProps) {
     (isSendBusy || phase === "connecting" || phase === "running") &&
     compactRequestIsActive &&
     !compactionSettled;
-  // The server records a running worktree setup on the thread and projects a
-  // placeholder "starting" session for the same window. Either one, with no
-  // turn yet, means the bootstrap is still going: that is how a reload or
-  // another client sees it, so it counts as working like the local dispatch
-  // that started it. Both signals are cleared on every failure path and on
-  // restart, so this cannot outlive the setup.
+  // The server records a running worktree setup on the thread for the whole
+  // bootstrap window. That record, with no turn yet, is how a reload or another
+  // client sees a worktree still being prepared, so it counts as working like
+  // the local dispatch that started it. It settles on every failure path and
+  // on restart, so this cannot outlive the setup. The placeholder "starting"
+  // session is not used here: an ordinary first turn projects one too, and it
+  // already drives the connecting state on its own.
   const recordedWorktreeSetup = useMemo(
     () => findRecordedWorktreeSetup(activeThread?.activities ?? [], routeThreadRef.threadId),
     [activeThread?.activities, routeThreadRef.threadId],
@@ -3189,8 +3190,7 @@ export default function ChatView(props: ChatViewProps) {
     activeServerThread !== null &&
     activeServerThread.id === routeThreadRef.threadId &&
     activeServerThread.latestTurn === null &&
-    (activeServerThread.session?.status === "starting" ||
-      recordedWorktreeSetup?.phase === "running");
+    recordedWorktreeSetup?.phase === "running";
   const isWorking =
     phase === "running" ||
     isSendBusy ||
