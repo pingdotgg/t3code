@@ -36,6 +36,8 @@ import {
 } from "./forgejoPullRequestJson.ts";
 
 const quotePath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const isOversizedResponse = (error: PullRequestProviderError) =>
+  error.detail.includes("oversized") || error.detail.includes("exceeded the output limit");
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -415,12 +417,7 @@ export const make = Effect.gen(function* () {
           path: input.commit
             ? `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}.diff`
             : `${pullPath(input)}.diff`,
-        }).pipe(
-          Effect.catchIf(
-            (error) => error.detail.includes("oversized"),
-            () => Effect.succeed(null),
-          ),
-        );
+        }).pipe(Effect.catchIf(isOversizedResponse, () => Effect.succeed(null)));
         if (direct !== null && !direct.stdoutTruncated)
           return { patch: direct.stdout, truncated: false, nextCursor: null };
       }
@@ -480,12 +477,7 @@ export const make = Effect.gen(function* () {
                 changeType,
               },
               revisions,
-            ).pipe(
-              Effect.catchIf(
-                (error) => error.detail.includes("oversized"),
-                () => Effect.succeed(null),
-              ),
-            );
+            ).pipe(Effect.catchIf(isOversizedResponse, () => Effect.succeed(null)));
             if (
               contents === null ||
               contents.oldContents.includes("\0") ||
