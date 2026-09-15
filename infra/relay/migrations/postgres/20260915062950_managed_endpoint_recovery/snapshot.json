@@ -1,8 +1,8 @@
 {
   "version": "8",
   "dialect": "postgres",
-  "id": "652b5aca-ea64-49e4-aa44-ea1e9a9f20bd",
-  "prevIds": ["2374caff-40bf-423c-9255-55e76dddbc2a"],
+  "id": "1bf86e6d-8ae5-4a2f-8f88-6b3ca69c26ac",
+  "prevIds": ["1109ed23-036c-4c39-a459-52422a7ffd99"],
   "ddl": [
     {
       "isRlsEnabled": false,
@@ -1049,12 +1049,25 @@
     {
       "type": "integer",
       "typeSchema": null,
-      "notNull": true,
+      "notNull": false,
       "dimensions": 0,
       "default": null,
       "generated": null,
       "identity": null,
       "name": "ios_major_version",
+      "entityType": "columns",
+      "schema": "public",
+      "table": "relay_mobile_devices"
+    },
+    {
+      "type": "integer",
+      "typeSchema": null,
+      "notNull": false,
+      "dimensions": 0,
+      "default": null,
+      "generated": null,
+      "identity": null,
+      "name": "android_api_level",
       "entityType": "columns",
       "schema": "public",
       "table": "relay_mobile_devices"
