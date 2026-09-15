@@ -114,6 +114,8 @@ export interface RestingComposerControlsMeasurement {
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
+  /** Trailing blocks that have no overflow menu entry, so hiding only them shows no trigger. */
+  menulessTrailingCount?: number;
 }
 
 function restingComposerControlsWidth(
@@ -124,6 +126,7 @@ function restingComposerControlsWidth(
 ): number {
   const { blockWidths, gap } = input;
   const visibleCount = blockWidths.length - hiddenCount;
+  const showsOverflow = hiddenCount > (input.menulessTrailingCount ?? 0);
   return (
     fixedWidth +
     blockWidths
@@ -136,8 +139,8 @@ function restingComposerControlsWidth(
             : width),
         0,
       ) +
-    (hiddenCount > 0 ? input.overflowWidth : 0) +
-    gap * (visibleCount + (hiddenCount > 0 ? 1 : 0))
+    (showsOverflow ? input.overflowWidth : 0) +
+    gap * (visibleCount + (showsOverflow ? 1 : 0))
   );
 }
 
