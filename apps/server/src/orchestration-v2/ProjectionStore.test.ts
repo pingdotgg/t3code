@@ -3763,6 +3763,133 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }),
   );
 
+  it.effect("drops an equal-ordinal sibling that sorts before the retained turn start", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const suffix = "align-sibling";
+      const threadId = ThreadId.make(`thread:${suffix}`);
+      yield* projectionStore.apply({
+        id: EventId.make(`event:${suffix}:thread`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make(`project:${suffix}`),
+          title: "Alignment sibling window",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+
+      // Turn A spans ordinals 1-9; turn B's turn start sits at ordinal 10.
+      // A second row shares ordinal 10 but sorts before the turn start in the
+      // (ordinal, turn_item_id) order, so it is the tail of the partial turn
+      // below the alignment boundary — not part of turn B. An ordinal-only
+      // cutoff would leak it into the initial window.
+      const turnStartId = `item:${suffix}:zz-turn`;
+      const siblingId = `item:${suffix}:0-tail`;
+      const itemPayload = (id: string, ordinal: number, isTurnStart: boolean) => ({
+        id,
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal,
+        status: "completed",
+        title: null,
+        startedAt: nowIso,
+        completedAt: nowIso,
+        updatedAt: nowIso,
+        type: isTurnStart ? "user_message" : "command_execution",
+        ...(isTurnStart
+          ? {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: `message:${suffix}:${ordinal}`,
+              inputIntent: "turn_start",
+              text: `turn ${ordinal}`,
+              attachments: [],
+            }
+          : { input: `command ${ordinal}`, output: "ok", exitCode: 0 }),
+      });
+      const rows = [
+        ...Array.from({ length: 9 }, (_, index) => {
+          const ordinal = index + 1;
+          const id = `item:${suffix}:${ordinal}`;
+          return {
+            turn_item_id: id,
+            thread_id: threadId,
+            run_id: null,
+            node_id: null,
+            provider_thread_id: null,
+            provider_turn_id: null,
+            parent_item_id: null,
+            ordinal,
+            type: ordinal === 1 ? "user_message" : "command_execution",
+            status: "completed",
+            updated_at: nowIso,
+            payload_json: encodeUnknownJsonString(itemPayload(id, ordinal, ordinal === 1)),
+          };
+        }),
+        ...[siblingId, turnStartId].map((id) => ({
+          turn_item_id: id,
+          thread_id: threadId,
+          run_id: null,
+          node_id: null,
+          provider_thread_id: null,
+          provider_turn_id: null,
+          parent_item_id: null,
+          ordinal: 10,
+          type: id === turnStartId ? "user_message" : "command_execution",
+          status: "completed",
+          updated_at: nowIso,
+          payload_json: encodeUnknownJsonString(itemPayload(id, 10, id === turnStartId)),
+        })),
+      ];
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows)}`;
+
+      const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+        userTurnLimit: 10,
+        maxWindowRows: 2,
+      });
+      assert.deepEqual(
+        snapshot.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        [turnStartId],
+      );
+      // The dropped sibling stays eligible history: paging reaches it through
+      // the cursor instead of the initial window leaking it early.
+      assert.isTrue(snapshot.hasOlderHistory);
+    }),
+  );
+
   const seedForkMarkerThreads = Effect.fn("seedForkMarkerThreads")(function* (
     suffix: string,
     options?: { readonly sourceOrdinalStart?: number },
