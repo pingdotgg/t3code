@@ -835,6 +835,27 @@ describe("composerDraftStore project draft thread mapping", () => {
     resetComposerDraftStore();
   });
 
+  it("drops the inherited local branch when switching a draft to a new worktree", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      branch: "codex/issue-10557",
+      envMode: "local",
+      startFromOrigin: false,
+    });
+
+    store.setDraftThreadContext(draftId, {
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+
+    expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+      branch: null,
+      envMode: "worktree",
+      startFromOrigin: true,
+    });
+  });
+
   it("persists the explicit worktree branch with the draft thread", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, {
