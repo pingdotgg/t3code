@@ -235,7 +235,7 @@ for (const kind of ["merge_requests", "issues"]) {
           assert.deepStrictEqual(input.args, [
             "api",
             "--hostname",
-            "gitlab.example.test",
+            "gitlab.com",
             `projects/group%2Fsubgroup%2Fproject/${kind}/42`,
           ]);
           assert.strictEqual(input.maxOutputBytes, 32_000);
@@ -254,7 +254,7 @@ for (const kind of ["merge_requests", "issues"]) {
       });
       const lookup = provider.resolveLink?.({
         cwd: "/unrelated",
-        url: new URL(`https://gitlab.example.test/group/subgroup/project/-/${kind}/42`),
+        url: new URL(`https://gitlab.com/group/subgroup/project/-/${kind}/42`),
       });
       assert.ok(lookup);
       assert.deepStrictEqual(yield* lookup, {
@@ -264,7 +264,7 @@ for (const kind of ["merge_requests", "issues"]) {
       assert.strictEqual(
         provider.resolveLink?.({
           cwd: "/unrelated",
-          url: new URL("https://gitlab.example.test/owner/repo"),
+          url: new URL("https://gitlab.com/owner/repo"),
         }),
         undefined,
       );

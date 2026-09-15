@@ -23,7 +23,7 @@ it.effect(
       const result = yield* resolveThreadTitleLinks({
         cwd: "/tmp/project",
         message:
-          "https://docs.test/guide https://forge.test/change/1#discussion https://forge.test/change/1?view=full https://forge.test/change/2. https://forge.test/change/3",
+          "https://docs.test/guide [https://forge.test/change/1] https://forge.test/change/1#discussion https://forge.test/change/1?view=full `https://forge.test/change/2` https://forge.test/change/2. https://forge.test/change/3",
       }).pipe(
         Effect.provide(
           registry({

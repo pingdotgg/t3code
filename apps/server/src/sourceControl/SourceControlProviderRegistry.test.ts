@@ -319,7 +319,7 @@ it.effect(
       for (const [url, expected] of [
         ["https://github.com/team/project/issues/1", { title: "GitHub issue", body: null }],
         [
-          "https://gitlab.example.test/team/sub/project/-/merge_requests/2",
+          "https://gitlab.com/team/sub/project/-/merge_requests/2",
           { title: "GitLab MR", body: "Nested project" },
         ],
       ] as const) {
@@ -329,6 +329,8 @@ it.effect(
       }
       for (const url of [
         "https://example.test/team/project/issues/1",
+        "https://github.attacker.test/team/project/issues/1",
+        "https://gitlab.attacker.test/team/project/-/issues/1",
         "https://github.com/team/project",
         "https://codeberg.org/team/project/issues/1",
         "https://bitbucket.org/team/project/pull-requests/1",

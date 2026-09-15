@@ -215,32 +215,21 @@ export const make = Effect.gen(function* () {
         );
     };
 
-  return SourceControlProvider.SourceControlProvider.of({
-    kind: "github",
-    resolveLink: (input) => {
-      const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
-        input.url.pathname,
-      );
-      if (!match) return undefined;
-      return Effect.fn("GitHubSourceControlProvider.resolveLink")(
-        function* () {
-          const result = yield* github.execute({
-            cwd: input.cwd,
-            args: [
-              "api",
-              "--hostname",
-              input.url.host,
-              `repos/${match[1]}/${match[2]}/issues/${match[3]}`,
-              "--jq",
-              "{title, body}",
-            ],
-            env: { GH_PROMPT_DISABLED: "1" },
-            timeoutMs: 3_000,
-            maxOutputBytes: 32_000,
-          });
-          const subject = yield* decodeLinkSubject(result.stdout);
-          return { title: subject.title, body: subject.body };
-        },
+  const readLinkSubject = Effect.fn("GitHubSourceControlProvider.readLinkSubject")(function* (
+    input: { readonly cwd: string; readonly url: URL },
+    endpoint: string,
+  ) {
+    return yield* github
+      .execute({
+        cwd: input.cwd,
+        args: ["api", "--hostname", input.url.host, endpoint, "--jq", "{title, body}"],
+        env: { GH_PROMPT_DISABLED: "1" },
+        timeoutMs: 3_000,
+        maxOutputBytes: 32_000,
+      })
+      .pipe(
+        Effect.flatMap((result) => decodeLinkSubject(result.stdout)),
+        Effect.map((subject) => ({ title: subject.title, body: subject.body })),
         Effect.mapError(
           (cause) =>
             new SourceControlProviderError({
@@ -251,7 +240,19 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
-      )();
+      );
+  });
+
+  return SourceControlProvider.SourceControlProvider.of({
+    kind: "github",
+    resolveLink: (input) => {
+      // Automatic enrichment must not send ambient CLI credentials to a host from message text.
+      if (input.url.host !== "github.com") return undefined;
+      const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
     },
     listChangeRequests,
     getChangeRequest: (input) =>

@@ -112,29 +112,20 @@ export const discovery = {
 export const make = Effect.gen(function* () {
   const gitlab = yield* GitLabCli.GitLabCli;
 
-  return SourceControlProvider.SourceControlProvider.of({
-    kind: "gitlab",
-    resolveLink: (input) => {
-      const match = /^\/(.+)\/-\/(merge_requests|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
-        input.url.pathname,
-      );
-      if (!match) return undefined;
-      return Effect.fn("GitLabSourceControlProvider.resolveLink")(
-        function* () {
-          const result = yield* gitlab.execute({
-            cwd: input.cwd,
-            args: [
-              "api",
-              "--hostname",
-              input.url.host,
-              `projects/${encodeURIComponent(match[1]!)}/${match[2]}/${match[3]}`,
-            ],
-            timeoutMs: 3_000,
-            maxOutputBytes: 32_000,
-          });
-          const subject = yield* decodeLinkSubject(result.stdout);
-          return { title: subject.title, body: subject.description };
-        },
+  const readLinkSubject = Effect.fn("GitLabSourceControlProvider.readLinkSubject")(function* (
+    input: { readonly cwd: string; readonly url: URL },
+    endpoint: string,
+  ) {
+    return yield* gitlab
+      .execute({
+        cwd: input.cwd,
+        args: ["api", "--hostname", input.url.host, endpoint],
+        timeoutMs: 3_000,
+        maxOutputBytes: 32_000,
+      })
+      .pipe(
+        Effect.flatMap((result) => decodeLinkSubject(result.stdout)),
+        Effect.map((subject) => ({ title: subject.title, body: subject.description })),
         Effect.mapError(
           (cause) =>
             new SourceControlProviderError({
@@ -145,7 +136,22 @@ export const make = Effect.gen(function* () {
               cause,
             }),
         ),
-      )();
+      );
+  });
+
+  return SourceControlProvider.SourceControlProvider.of({
+    kind: "gitlab",
+    resolveLink: (input) => {
+      // Automatic enrichment must not send ambient CLI credentials to a host from message text.
+      if (input.url.host !== "gitlab.com") return undefined;
+      const match = /^\/(.+)\/-\/(merge_requests|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return readLinkSubject(
+        input,
+        `projects/${encodeURIComponent(match[1]!)}/${match[2]}/${match[3]}`,
+      );
     },
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);

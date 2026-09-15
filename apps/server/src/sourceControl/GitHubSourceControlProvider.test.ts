@@ -409,7 +409,7 @@ for (const kind of ["pull", "issues"]) {
           assert.deepStrictEqual(input.args, [
             "api",
             "--hostname",
-            "github.example.test",
+            "github.com",
             "repos/owner/repo/issues/42",
             "--jq",
             "{title, body}",
@@ -427,7 +427,7 @@ for (const kind of ["pull", "issues"]) {
       });
       const lookup = provider.resolveLink?.({
         cwd: "/unrelated",
-        url: new URL(`https://github.example.test/owner/repo/${kind}/42`),
+        url: new URL(`https://github.com/owner/repo/${kind}/42`),
       });
       assert.ok(lookup);
       assert.deepStrictEqual(yield* lookup, {
@@ -437,7 +437,7 @@ for (const kind of ["pull", "issues"]) {
       assert.strictEqual(
         provider.resolveLink?.({
           cwd: "/unrelated",
-          url: new URL("https://github.example.test/owner/repo"),
+          url: new URL("https://github.com/owner/repo"),
         }),
         undefined,
       );
