@@ -115,6 +115,32 @@ it.effect(
     }).pipe(Effect.provide(runtime)),
 );
 
+it.effect("keeps later files reachable when tea truncates a file-content response", () =>
+  Effect.gen(function* () {
+    api.mockImplementation((request) => {
+      if (request.path.endsWith(".diff") || request.path.includes("/contents/"))
+        return Effect.succeed({ ...output("partial"), stdoutTruncated: true });
+      if (request.path.endsWith("/pulls/1")) return json(pull);
+      if (request.path.includes("/files?"))
+        return json(
+          request.path.endsWith("page=1")
+            ? [{ filename: "large.ts", status: "modified", additions: 100000, deletions: 10 }]
+            : [],
+        );
+      return Effect.die(`Unexpected API path: ${request.path}`);
+    });
+    const provider = yield* Provider.make;
+    const first = yield* provider.getDiff(input);
+    expect(first.truncated).toBe(true);
+    expect(first.patch).toContain('"b/large.ts"');
+    expect(first.omittedFileStats).toEqual([
+      { path: "large.ts", additions: 100000, deletions: 10 },
+    ]);
+    expect(first.nextCursor).toBe("2");
+    expect((yield* provider.getDiff({ ...input, cursor: "2" })).nextCursor).toBeNull();
+  }).pipe(Effect.provide(runtime)),
+);
+
 it.effect("does not mask authentication failures or accept invalid cursors", () =>
   Effect.gen(function* () {
     const provider = yield* Provider.make;

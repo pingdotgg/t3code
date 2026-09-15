@@ -1104,15 +1104,20 @@ function PullRequestCodeTab({
           </span>
           {withheldContent ? (
             <Tooltip>
-              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
-                <InfoIcon
-                  aria-label="Some of this diff was not shown"
-                  className="size-3.5 text-muted-foreground"
-                />
+              <TooltipTrigger
+                render={
+                  <Button
+                    variant="ghost-muted"
+                    size="icon-micro"
+                    aria-label="Some file previews are incomplete"
+                  />
+                }
+              >
+                <InfoIcon className="size-3.5" />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                The host withheld part of this diff — a binary file, or a change too large to
-                inline.
+                Some file previews are incomplete because the files are binary or exceed the preview
+                limit.
               </TooltipPopup>
             </Tooltip>
           ) : null}
