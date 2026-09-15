@@ -43,12 +43,28 @@ describe("resolveFileContextMenuAbsolutePath", () => {
     ).toBeNull();
   });
 
-  it("rejects absolute paths without a workspace root, matching diff path resolution", () => {
+  it("passes absolute environment-host paths through unchanged", () => {
+    expect(
+      resolveFileContextMenuAbsolutePath({
+        ...BASE_TARGET,
+        filePath: "/absolute/src/index.ts",
+      }),
+    ).toBe("/absolute/src/index.ts");
     expect(
       resolveFileContextMenuAbsolutePath({
         ...BASE_TARGET,
         workspaceRoot: undefined,
-        filePath: "/absolute/src/index.ts",
+        filePath: "C:\\temp\\report.pdf",
+      }),
+    ).toBe("C:\\temp\\report.pdf");
+  });
+
+  it("returns null for relative paths without a workspace root, matching diff path resolution", () => {
+    expect(
+      resolveFileContextMenuAbsolutePath({
+        ...BASE_TARGET,
+        workspaceRoot: undefined,
+        filePath: "src/index.ts",
       }),
     ).toBeNull();
   });

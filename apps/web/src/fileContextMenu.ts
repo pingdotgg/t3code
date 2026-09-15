@@ -35,13 +35,20 @@ export type FileContextMenuAction =
 
 export interface FileContextMenuTarget {
   readonly environmentId: EnvironmentId | null;
-  /** Repo- or workspace-relative file path, as shown in diffs. */
+  /**
+   * Repo- or workspace-relative path (as shown in diffs), or an absolute
+   * environment-host path (as carried by markdown file links pointing outside
+   * the workspace).
+   */
   readonly filePath: string;
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot?: string | undefined;
 }
 
-/** Absolute path on the environment host, or null when it cannot be resolved. */
+function isEnvironmentAbsolutePath(path: string): boolean {
+  return path.startsWith("/") || /^[a-zA-Z]:/.test(path);
+}
+
 /**
  * Absolute path on the environment host for a diff-style target, resolving
  * repo-relative paths through the workspace root like every other diff
@@ -49,6 +56,9 @@ export interface FileContextMenuTarget {
  * treat as "no file actions available".
  */
 export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget): string | null {
+  // Markdown file links can point outside the workspace with an absolute
+  // environment-host path; there is nothing to resolve.
+  if (isEnvironmentAbsolutePath(target.filePath)) return target.filePath;
   const workspaceFilePath = resolveDiffPathForWorkspace({
     filePath: target.filePath,
     workspaceRoot: target.workspaceRoot,
