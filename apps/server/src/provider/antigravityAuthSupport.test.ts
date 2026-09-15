@@ -3,7 +3,11 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -508,6 +512,46 @@ it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
       yield* fs.writeFileString(profile.tokenPath, "synthetic-token-fixture");
       yield* prepareAntigravityProfile({ profileDirectory: profile.geminiHome });
       expect(yield* fs.readFileString(profile.tokenPath)).toBe("synthetic-token-fixture");
+    }),
+  );
+
+  it.effect("uses the hidden browser helper when the host is a single executable", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const temporaryDirectory = yield* fs.makeTempDirectoryScoped();
+      const executablePath = "/opt/t3-runtime/t3";
+      let helperCommand: ChildProcess.StandardCommand | undefined;
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: temporaryDirectory,
+        platform: "linux",
+      }).pipe(
+        Effect.provideService(HostProcessExecutablePath, executablePath),
+        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            if (!ChildProcess.isStandardCommand(command)) return spawner.spawn(command);
+            helperCommand = command;
+            const url = command.args.at(-1) ?? "";
+            return spawner.spawn(
+              ChildProcess.make(process.execPath, [
+                "-e",
+                `process.stderr.write(${JSON.stringify(
+                  `${ANTIGRAVITY_AUTH_BROWSER_MARKER}${JSON.stringify(url)}\n`,
+                )})`,
+              ]),
+            );
+          }),
+        ),
+      );
+
+      expect(helperCommand?.command).toBe(executablePath);
+      expect(helperCommand?.args).toEqual([
+        "__antigravity-browser",
+        "https://example.invalid/t3-antigravity-browser-preflight",
+      ]);
+      expect(profile.browserCommand).toBe(`'/opt/t3-runtime/t3' '__antigravity-browser' '%s'`);
     }),
   );
 
