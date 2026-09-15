@@ -5,6 +5,7 @@ import {
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
+  extractTodosAsPlanFromToolCallInput,
 } from "./CursorAcpExtension.ts";
 
 describe("CursorAcpExtension", () => {
@@ -105,6 +106,84 @@ describe("CursorAcpExtension", () => {
         { step: "Unknown status", status: "pending" },
       ],
     });
+  });
+
+  it("maps Cursor CLI TODO_STATUS_* values onto plan statuses", () => {
+    expect(
+      extractTodosAsPlan({
+        toolCallId: "todos-cli-1",
+        todos: [
+          { id: "1", content: "Inspect state", status: "TODO_STATUS_COMPLETED" },
+          { id: "2", content: "Apply fix", status: "TODO_STATUS_IN_PROGRESS" },
+          { id: "3", content: "Write tests", status: "TODO_STATUS_PENDING" },
+        ],
+        merge: false,
+      }),
+    ).toEqual({
+      plan: [
+        { step: "Inspect state", status: "completed" },
+        { step: "Apply fix", status: "inProgress" },
+        { step: "Write tests", status: "pending" },
+      ],
+    });
+  });
+
+  it("projects Cursor CLI updateTodos tool-call input into a plan", () => {
+    const expected = {
+      plan: [
+        { step: "Inspect mock ACP state", status: "completed" },
+        { step: "Implement the requested change", status: "inProgress" },
+      ],
+    };
+    expect(
+      extractTodosAsPlanFromToolCallInput({
+        _toolName: "updateTodos",
+        todos: [
+          {
+            id: "1",
+            content: "Inspect mock ACP state",
+            status: "TODO_STATUS_COMPLETED",
+            createdAt: "2026-09-11T01:00:00.000Z",
+            updatedAt: "2026-09-11T01:00:00.000Z",
+            dependencies: [],
+          },
+          {
+            id: "2",
+            content: "Implement the requested change",
+            status: "TODO_STATUS_IN_PROGRESS",
+          },
+        ],
+      }),
+    ).toEqual(expected);
+    expect(
+      extractTodosAsPlanFromToolCallInput({
+        _toolName: "TodoWrite",
+        todos: [
+          { content: "Inspect mock ACP state", status: "TODO_STATUS_COMPLETED" },
+          { content: "Implement the requested change", status: "TODO_STATUS_IN_PROGRESS" },
+        ],
+      }),
+    ).toEqual(expected);
+  });
+
+  it("ignores tool-call input that is not Cursor updateTodos", () => {
+    expect(
+      extractTodosAsPlanFromToolCallInput({
+        _toolName: "editFile",
+        todos: [{ content: "Should not become a plan", status: "TODO_STATUS_IN_PROGRESS" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      extractTodosAsPlanFromToolCallInput({
+        todos: [{ content: "Missing tool name", status: "TODO_STATUS_PENDING" }],
+      }),
+    ).toBeUndefined();
+    expect(
+      extractTodosAsPlanFromToolCallInput({
+        _toolName: "TodoWrite",
+        todos: [],
+      }),
+    ).toBeUndefined();
   });
 
   it("falls back to the title when content is present but blank", () => {
