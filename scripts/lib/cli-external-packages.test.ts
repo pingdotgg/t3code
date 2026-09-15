@@ -9,9 +9,10 @@ import * as Schema from "effect/Schema";
 
 import serverPackageJson from "../../apps/server/package.json" with { type: "json" };
 
+import { findEsmImportsOfExternalPackages } from "./cli-executable-imports.ts";
+
 import {
   CLI_RUNTIME_EXTERNAL_PREFIXES,
-  findEsmImportsOfExternalPackages,
   findInlinedExternalPackages,
   selectCliRuntimeExternalDependencies,
   shouldBundleCliDependency,
