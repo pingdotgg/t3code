@@ -24,5 +24,10 @@ Add names, technical terms, and other uncommon vocabulary under **Custom words**
 The words are stored on the selected transcription environment and apply to every
 web or desktop client that uses it.
 
+**Remove filler words** deletes common hesitation sounds from completed
+transcriptions. It uses conservative language-aware rules so words with a real
+meaning in another language are preserved when the transcription language is
+uncertain. The setting is stored on the selected transcription environment.
+
 On iOS 26 or newer, transcription uses Apple's on-device speech model instead of
 the environment service.

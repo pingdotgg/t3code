@@ -119,6 +119,44 @@ it.effect("passes custom words as an initial prompt when the model supports it",
   }).pipe(Effect.provide(customWordsLayer)),
 );
 
+it.effect("removes filler words from batch transcription", () =>
+  Effect.gen(function* () {
+    native.transcribe.mockResolvedValueOnce({ text: "Um, I uhh think this works." });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.transcribe(pcm())).toBe("I think this works.");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("removes filler words when a stream is finalized", () =>
+  Effect.gen(function* () {
+    native.finish.mockResolvedValueOnce("Um, I uhh think this works.");
+    const speech = yield* SpeechService.SpeechService;
+    const result = yield* Effect.gen(function* () {
+      const stream = yield* speech.startStream;
+      return yield* stream.finish;
+    }).pipe(Effect.scoped);
+    expect(result).toBe("I think this works.");
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("preserves filler words when removal is disabled", () => {
+  const disabledLayer = SpeechService.layer.pipe(
+    Layer.provide(ServerConfig.layerTest("/tmp", { prefix: "speech-fillers-disabled-" })),
+    Layer.provide(
+      ServerSettings.layerTest({
+        speechModelId: "test-model",
+        speechRemoveFillerWords: false,
+      }),
+    ),
+    Layer.provide(NodeServices.layer),
+  );
+  return Effect.gen(function* () {
+    native.transcribe.mockResolvedValueOnce({ text: "Um, I uhh think this works." });
+    const speech = yield* SpeechService.SpeechService;
+    expect(yield* speech.transcribe(pcm())).toBe("Um, I uhh think this works.");
+  }).pipe(Effect.provide(disabledLayer));
+});
+
 it.effect("holds model ownership until the stream scope closes and preserves silence", () =>
   Effect.gen(function* () {
     const speech = yield* SpeechService.SpeechService;

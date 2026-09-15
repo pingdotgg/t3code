@@ -20,6 +20,7 @@ import {
   SPEECH_MODELS,
 } from "./model.ts";
 import { applySpeechCustomWords, normalizeSpeechCustomWords } from "./customWords.ts";
+import { removeSpeechFillerWords } from "./fillerWords.ts";
 
 const SAMPLE_RATE = 16_000;
 const MAX_SPEECH_DURATION_SECONDS = 5 * 60;
@@ -138,6 +139,9 @@ export class SpeechService extends Context.Service<
     readonly transcribe: (pcmBytes: Uint8Array) => Effect.Effect<string, SpeechError>;
     readonly updateCustomWords: (
       words: readonly string[],
+    ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
+    readonly updateFillerWordRemoval: (
+      enabled: boolean,
     ) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
     readonly startStream: Effect.Effect<SpeechStream, SpeechError, Scope.Scope>;
     readonly removeModel: (modelId: string) => Effect.Effect<EnvironmentSpeechStatus, SpeechError>;
@@ -292,6 +296,7 @@ export const make = Effect.gen(function* () {
       size: definition.size,
       supportsStreaming: definition.supportsStreaming,
       customWords: normalizeSpeechCustomWords(settings.speechCustomWords),
+      removeFillerWords: settings.speechRemoveFillerWords,
     };
   };
 
@@ -344,6 +349,11 @@ export const make = Effect.gen(function* () {
         Effect.runPromise(serverSettings.getSettings),
       );
       const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+      const removeFillerWords = settings.speechRemoveFillerWords;
+      const definition =
+        getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+      const fillerWordLanguage =
+        definition.languages.length === 1 ? definition.languages[0] : undefined;
       yield* Effect.addFinalizer(() =>
         Effect.promise(async () => {
           // Cancellation can arrive inside native compute. Kill the owned process before releasing the lease.
@@ -440,7 +450,10 @@ export const make = Effect.gen(function* () {
           }),
         finish: run(async () => {
           const startedAt = performance.now();
-          const text = applySpeechCustomWords(await streamModel.finish(), customWords);
+          const corrected = applySpeechCustomWords(await streamModel.finish(), customWords);
+          const text = removeFillerWords
+            ? removeSpeechFillerWords(corrected, fillerWordLanguage)
+            : corrected;
           finished = true;
           return { text: text.trim(), durationMs: performance.now() - startedAt };
         }).pipe(
@@ -483,6 +496,13 @@ export const make = Effect.gen(function* () {
         await Effect.runPromise(serverSettings.updateSettings({ speechCustomWords: customWords }));
         return currentStatus();
       }),
+    updateFillerWordRemoval: (enabled) =>
+      exclusive("filler word removal update", async () => {
+        await Effect.runPromise(
+          serverSettings.updateSettings({ speechRemoveFillerWords: enabled }),
+        );
+        return currentStatus();
+      }),
     transcribe: (pcmBytes) =>
       exclusive("transcription", async () => {
         if (unsupportedReason) throw new SpeechUnsupportedPlatformError({ platform, architecture });
@@ -500,6 +520,11 @@ export const make = Effect.gen(function* () {
           let inferenceModel = loaded;
           const settings = await Effect.runPromise(serverSettings.getSettings);
           const customWords = normalizeSpeechCustomWords(settings.speechCustomWords);
+          const removeFillerWords = settings.speechRemoveFillerWords;
+          const definition =
+            getSpeechModel(settings.speechModelId) ?? getSpeechModel(DEFAULT_SPEECH_MODEL_ID)!;
+          const fillerWordLanguage =
+            definition.languages.length === 1 ? definition.languages[0] : undefined;
           const options = {
             timestamps: "none" as const,
             ...(customWords.length > 0 && loaded.supportsInitialPrompt
@@ -533,10 +558,13 @@ export const make = Effect.gen(function* () {
               throw new SpeechOperationError({ operation: "inference", cause: fallbackCause });
             });
           }
+          const corrected = loaded.supportsInitialPrompt
+            ? result.text
+            : applySpeechCustomWords(result.text, customWords);
           return {
-            text: (loaded.supportsInitialPrompt
-              ? result.text
-              : applySpeechCustomWords(result.text, customWords)
+            text: (removeFillerWords
+              ? removeSpeechFillerWords(corrected, fillerWordLanguage)
+              : corrected
             ).trim(),
             backend: inferenceModel.backend,
             prepareDurationMs,

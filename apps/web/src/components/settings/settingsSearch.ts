@@ -516,6 +516,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["speech voice transcription vocabulary names glossary"],
   },
   {
+    id: "remove-filler-words",
+    title: "Remove filler words",
+    to: "/settings/voice",
+    desktopOnly: true,
+    searchTerms: ["voice speech transcription hesitation um uh cleanup"],
+  },
+  {
     id: "auto-settle-inactive-threads",
     title: "Auto-settle inactive threads",
     to: "/settings/threads",

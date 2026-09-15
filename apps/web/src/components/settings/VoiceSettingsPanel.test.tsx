@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("@t3tools/client-runtime/voice-input", () => ({
   getEnvironmentSpeechStatus: () => Promise.resolve({ supported: true }),
+  updateEnvironmentSpeechFillerWordRemoval: () => Promise.resolve({ supported: true }),
   getEnvironmentSpeechModels: () =>
     mocks.listModels() ??
     Promise.resolve({

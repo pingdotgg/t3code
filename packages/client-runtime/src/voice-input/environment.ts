@@ -153,6 +153,18 @@ export const updateEnvironmentSpeechCustomWords = (
     run: ({ client, headers }) => client.updateCustomWords({ headers, payload: { words } }),
   });
 
+export const updateEnvironmentSpeechFillerWordRemoval = (
+  prepared: PreparedConnection,
+  enabled: boolean,
+) =>
+  request({
+    group: "voice",
+    prepared,
+    method: "POST",
+    path: (baseUrl) => makeEnvironmentHttpApiUrlBuilder(baseUrl).voice.updateFillerWordRemoval(),
+    run: ({ client, headers }) => client.updateFillerWordRemoval({ headers, payload: { enabled } }),
+  });
+
 export const removeEnvironmentSpeechModel = (prepared: PreparedConnection, modelId: string) =>
   request({
     group: "voice",

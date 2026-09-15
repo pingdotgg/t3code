@@ -6,6 +6,7 @@ import {
   removeEnvironmentSpeechModel,
   selectEnvironmentSpeechModel,
   updateEnvironmentSpeechCustomWords,
+  updateEnvironmentSpeechFillerWordRemoval,
 } from "@t3tools/client-runtime/voice-input";
 import type {
   EnvironmentId,
@@ -29,6 +30,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Switch } from "../ui/switch";
 import { toastManager } from "../ui/toast";
 import { searchableSetting } from "./settingsSearch";
 import { SettingsPageContainer, SettingsRow, SettingsSection } from "./settingsLayout";
@@ -263,6 +265,9 @@ export function VoiceSettingsPanel() {
     : "System default";
   const currentStatus = status?.prepared === prepared ? status.value : null;
   const customWords = currentStatus?.supported ? (currentStatus.customWords ?? []) : [];
+  const removeFillerWords = currentStatus?.supported
+    ? (currentStatus.removeFillerWords ?? true)
+    : true;
   const normalizedCustomWord = customWordDraft
     .replace(/[<>"']/g, "")
     .replace(/\s+/g, " ")
@@ -458,6 +463,32 @@ export function VoiceSettingsPanel() {
                 </div>
               ) : null}
             </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("remove-filler-words")}
+          description="Remove common hesitation words while preserving ambiguous words in multilingual transcription."
+          control={
+            <Switch
+              aria-label="Remove filler words"
+              checked={removeFillerWords}
+              disabled={!currentStatus?.supported || operation !== null}
+              onCheckedChange={(enabled) => {
+                if (!prepared) return;
+                setOperation("filler-words");
+                void runtime
+                  .runPromise(updateEnvironmentSpeechFillerWordRemoval(prepared, enabled))
+                  .then((value) => setStatus({ prepared, value }))
+                  .catch((error) => {
+                    toastManager.add({
+                      type: "error",
+                      title: "Could not update filler word removal",
+                      description: error instanceof Error ? error.message : String(error),
+                    });
+                  })
+                  .finally(() => setOperation(null));
+              }}
+            />
           }
         />
       </SettingsSection>

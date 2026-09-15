@@ -17,6 +17,7 @@ describe("environment speech contracts", () => {
         size: 35_466_912,
         supportsStreaming: false,
         customWords: ["T3 Code"],
+        removeFillerWords: false,
       }),
     ).toEqual({
       supported: true,
@@ -26,6 +27,7 @@ describe("environment speech contracts", () => {
       size: 35_466_912,
       supportsStreaming: false,
       customWords: ["T3 Code"],
+      removeFillerWords: false,
     });
     expect(decodeStatus({ supported: false, reason: "unsupported platform" })).toEqual({
       supported: false,
@@ -43,7 +45,7 @@ describe("environment speech contracts", () => {
         size: 1,
         supportsStreaming: false,
       }),
-    ).toMatchObject({ customWords: [] });
+    ).toMatchObject({ customWords: [], removeFillerWords: true });
     expect(() =>
       decodeStatus({
         supported: true,

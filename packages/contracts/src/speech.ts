@@ -56,6 +56,7 @@ export const EnvironmentSpeechStatus = Schema.Union([
     size: Schema.Finite,
     supportsStreaming: Schema.Boolean,
     customWords: SpeechCustomWords.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+    removeFillerWords: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   }),
 ]);
 export type EnvironmentSpeechStatus = typeof EnvironmentSpeechStatus.Type;
@@ -65,6 +66,7 @@ export const EnvironmentSpeechTranscriptionResult = Schema.Struct({
 });
 
 export const EnvironmentSpeechCustomWordsRequest = Schema.Struct({ words: SpeechCustomWords });
+export const EnvironmentSpeechFillerWordsRequest = Schema.Struct({ enabled: Schema.Boolean });
 export type EnvironmentSpeechTranscriptionResult = typeof EnvironmentSpeechTranscriptionResult.Type;
 
 export const SPEECH_STREAM_PATH = "/ws/voice";

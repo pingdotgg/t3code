@@ -132,6 +132,16 @@ export const speechHttpApiLayer = HttpApiBuilder.group(
         }),
       )
       .handle(
+        "updateFillerWordRemoval",
+        Effect.fn("environment.voice.updateFillerWordRemoval")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
+          return yield* speech
+            .updateFillerWordRemoval(args.payload.enabled)
+            .pipe(Effect.catch((error) => failEnvironmentInternal("internal_error", error)));
+        }),
+      )
+      .handle(
         "transcribe",
         Effect.fn("environment.voice.transcribe")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
