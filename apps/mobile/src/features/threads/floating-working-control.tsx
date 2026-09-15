@@ -69,11 +69,12 @@ export function FloatingWorkingControl(props: {
   const { width: windowWidth } = useWindowDimensions();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const labelWidth = Math.max(0, Math.min(overlayWidth, windowWidth) - CONTROL_HEIGHT - 16);
-  const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
+  const showSeparateScrollToEnd = props.status?.kind === "connection" && props.showScrollToEnd;
+  const separationProgress = useSharedValue(showSeparateScrollToEnd ? 1 : 0);
 
   useEffect(() => {
-    separationProgress.value = withTiming(props.showScrollToEnd ? 1 : 0, CONTROL_TIMING);
-  }, [props.showScrollToEnd, separationProgress]);
+    separationProgress.value = withTiming(showSeparateScrollToEnd ? 1 : 0, CONTROL_TIMING);
+  }, [separationProgress, showSeparateScrollToEnd]);
 
   const arrowTransformStyle = useAnimatedStyle(() => ({
     transform: [{ translateX: -CONTROL_SEPARATION * (1 - separationProgress.value) }],
@@ -117,9 +118,11 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // Only the connection label is a button (tap to reconnect); the others
-  // pass touches through to the feed like before.
-  const statusInteractive = props.status?.kind === "connection";
+  const combinesStatusAndScroll =
+    props.status !== null && props.status.kind !== "connection" && props.showScrollToEnd;
+  // Connection keeps its reconnect action and separate scroll button. Other
+  // statuses become one large scroll target only while that action is visible.
+  const statusInteractive = props.status?.kind === "connection" || combinesStatusAndScroll;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
@@ -139,6 +142,7 @@ export function FloatingWorkingControl(props: {
             }
             status={props.status}
             onLayout={handleLabelLayout}
+            onScrollToEnd={combinesStatusAndScroll ? props.onScrollToEnd : undefined}
           />
         </View>
       </>
@@ -165,51 +169,58 @@ export function FloatingWorkingControl(props: {
             isInteractive={statusInteractive}
             pointerEvents={statusInteractive ? "box-none" : "none"}
             className="h-11 items-center justify-center overflow-hidden rounded-full"
-            style={capsuleStyle}
+            style={props.status.kind === "connection" ? capsuleStyle : undefined}
           >
             {statusContent}
           </AnimatedGlassView>
 
-          <AnimatedGlassView
-            colorScheme={props.colorScheme}
-            glassEffectStyle="regular"
-            isInteractive
-            pointerEvents={props.showScrollToEnd ? "auto" : "none"}
-            accessibilityElementsHidden={!props.showScrollToEnd}
-            importantForAccessibility={props.showScrollToEnd ? "auto" : "no-hide-descendants"}
-            className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
-            style={arrowTransformStyle}
-          >
-            <Animated.View style={arrowContentStyle}>
-              <ScrollToEndButton disabled={!props.showScrollToEnd} onPress={props.onScrollToEnd} />
-            </Animated.View>
-          </AnimatedGlassView>
+          {props.status.kind === "connection" ? (
+            <AnimatedGlassView
+              colorScheme={props.colorScheme}
+              glassEffectStyle="regular"
+              isInteractive
+              pointerEvents={props.showScrollToEnd ? "auto" : "none"}
+              accessibilityElementsHidden={!props.showScrollToEnd}
+              importantForAccessibility={props.showScrollToEnd ? "auto" : "no-hide-descendants"}
+              className="h-11 w-11 items-center justify-center overflow-hidden rounded-full"
+              style={arrowTransformStyle}
+            >
+              <Animated.View style={arrowContentStyle}>
+                <ScrollToEndButton
+                  disabled={!props.showScrollToEnd}
+                  onPress={props.onScrollToEnd}
+                />
+              </Animated.View>
+            </AnimatedGlassView>
+          ) : null}
         </UniwindGlassContainer>
       ) : props.status !== null ? (
         <View pointerEvents="box-none" className="flex-row items-center gap-4">
           <Animated.View
             pointerEvents={statusInteractive ? "box-none" : "none"}
             className="h-11 items-center justify-center overflow-hidden rounded-full border border-border bg-card shadow-md shadow-black/10"
-            style={capsuleStyle}
+            style={props.status.kind === "connection" ? capsuleStyle : undefined}
           >
             {statusContent}
           </Animated.View>
 
-          <Animated.View
-            pointerEvents={props.showScrollToEnd ? "auto" : "none"}
-            accessibilityElementsHidden={!props.showScrollToEnd}
-            importantForAccessibility={props.showScrollToEnd ? "auto" : "no-hide-descendants"}
-            style={[arrowTransformStyle, arrowContentStyle]}
-          >
-            <ControlPill
-              accessibilityLabel="Scroll to end"
-              activateOnPressIn
-              className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
-              disabled={!props.showScrollToEnd}
-              icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
-              onPress={props.onScrollToEnd}
-            />
-          </Animated.View>
+          {props.status.kind === "connection" ? (
+            <Animated.View
+              pointerEvents={props.showScrollToEnd ? "auto" : "none"}
+              accessibilityElementsHidden={!props.showScrollToEnd}
+              importantForAccessibility={props.showScrollToEnd ? "auto" : "no-hide-descendants"}
+              style={[arrowTransformStyle, arrowContentStyle]}
+            >
+              <ControlPill
+                accessibilityLabel="Scroll to end"
+                activateOnPressIn
+                className="h-11 w-11 border border-border bg-card shadow-md shadow-black/10"
+                disabled={!props.showScrollToEnd}
+                icon={{ ios: "chevron.down", android: "keyboard_arrow_down" }}
+                onPress={props.onScrollToEnd}
+              />
+            </Animated.View>
+          ) : null}
         </View>
       ) : NATIVE_LIQUID_GLASS_SUPPORTED ? (
         <UniwindGlassView
@@ -233,9 +244,18 @@ export function FloatingWorkingControl(props: {
   );
 }
 
-function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) => void }) {
+function CompactingLabel(props: {
+  readonly onLayout: (event: LayoutChangeEvent) => void;
+  readonly onScrollToEnd?: () => void;
+}) {
   return (
-    <StatusLabelRow accessibilityLabel="Compacting" className="gap-1.5" onLayout={props.onLayout}>
+    <StatusLabelRow
+      accessibilityLabel={props.onScrollToEnd ? "Scroll to end" : "Compacting"}
+      className="gap-1.5"
+      onLayout={props.onLayout}
+      onPress={props.onScrollToEnd}
+      showScrollIndicator={props.onScrollToEnd !== undefined}
+    >
       <SymbolView
         name="arrow.down.right.and.arrow.up.left"
         size={13}
@@ -250,6 +270,7 @@ function CompactingLabel(props: { readonly onLayout: (event: LayoutChangeEvent) 
 function FloatingStatusLabel(props: {
   readonly status: FloatingWorkingStatus;
   readonly onLayout: (event: LayoutChangeEvent) => void;
+  readonly onScrollToEnd?: () => void;
 }) {
   // Keyed by kind so a swap mounts a fresh row and the two cross-fade while
   // the capsule animates to the new row's measured width.
@@ -257,9 +278,11 @@ function FloatingStatusLabel(props: {
     return (
       <StatusLabelRow
         key="syncing"
-        accessibilityLabel={props.status.label}
+        accessibilityLabel={props.onScrollToEnd ? "Scroll to end" : props.status.label}
         className="gap-2"
         onLayout={props.onLayout}
+        onPress={props.onScrollToEnd}
+        showScrollIndicator={props.onScrollToEnd !== undefined}
       >
         <ActivityIndicator size="small" colorClassName="accent-icon-muted" />
         <Text className="shrink font-t3-medium text-xs text-foreground" numberOfLines={1}>
@@ -269,7 +292,13 @@ function FloatingStatusLabel(props: {
     );
   }
   if (props.status.kind === "compacting") {
-    return <CompactingLabel key="compacting" onLayout={props.onLayout} />;
+    return (
+      <CompactingLabel
+        key="compacting"
+        onLayout={props.onLayout}
+        onScrollToEnd={props.onScrollToEnd}
+      />
+    );
   }
   if (props.status.kind === "connection") {
     return (
@@ -299,9 +328,11 @@ function FloatingStatusLabel(props: {
     return (
       <StatusLabelRow
         key="preparing"
-        accessibilityLabel={props.status.label}
+        accessibilityLabel={props.onScrollToEnd ? "Scroll to end" : props.status.label}
         className="gap-1.5"
         onLayout={props.onLayout}
+        onPress={props.onScrollToEnd}
+        showScrollIndicator={props.onScrollToEnd !== undefined}
       >
         <SymbolView
           name="arrow.triangle.branch"
@@ -322,7 +353,12 @@ function FloatingStatusLabel(props: {
     );
   }
   return (
-    <WorkingDuration key="working" startedAt={props.status.startedAt} onLayout={props.onLayout} />
+    <WorkingDuration
+      key="working"
+      startedAt={props.status.startedAt}
+      onLayout={props.onLayout}
+      onScrollToEnd={props.onScrollToEnd}
+    />
   );
 }
 
@@ -334,6 +370,7 @@ function StatusLabelRow(props: {
   readonly children: ReactNode;
   readonly onLayout: (event: LayoutChangeEvent) => void;
   readonly onPress?: () => void;
+  readonly showScrollIndicator?: boolean;
 }) {
   const rowClassName = `h-11 flex-row items-center px-4 ${props.className ?? ""}`;
   return (
@@ -346,11 +383,14 @@ function StatusLabelRow(props: {
       {props.onPress ? (
         <Pressable
           accessibilityLabel={props.accessibilityLabel}
-          accessibilityRole={props.accessibilityRole}
+          accessibilityRole={props.accessibilityRole ?? "button"}
           className={`${rowClassName} active:opacity-70`}
           onPress={props.onPress}
         >
           {props.children}
+          {props.showScrollIndicator ? (
+            <SymbolView name="chevron.down" size={14} tintColorClassName="foreground" />
+          ) : null}
         </Pressable>
       ) : (
         <View accessible accessibilityLabel={props.accessibilityLabel} className={rowClassName}>
@@ -364,6 +404,7 @@ function StatusLabelRow(props: {
 function WorkingDuration(props: {
   readonly startedAt: string;
   readonly onLayout: (event: LayoutChangeEvent) => void;
+  readonly onScrollToEnd?: () => void;
 }) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
@@ -377,7 +418,13 @@ function WorkingDuration(props: {
   const label = `Working for ${duration}`;
 
   return (
-    <StatusLabelRow accessibilityLabel={label} onLayout={props.onLayout}>
+    <StatusLabelRow
+      accessibilityLabel={props.onScrollToEnd ? "Scroll to end" : label}
+      className={props.onScrollToEnd ? "gap-1.5" : undefined}
+      onLayout={props.onLayout}
+      onPress={props.onScrollToEnd}
+      showScrollIndicator={props.onScrollToEnd !== undefined}
+    >
       <Text className="font-t3-medium text-xs text-foreground">Working for </Text>
       <SystemText
         className="text-xs text-foreground"
