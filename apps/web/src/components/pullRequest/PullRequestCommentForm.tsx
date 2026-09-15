@@ -6,7 +6,7 @@ import type { EnvironmentId, PullRequestDetailView, PullRequestRef } from "@t3to
 import { SendIcon } from "lucide-react";
 import { useState, type RefObject } from "react";
 
-import { useAtomCommand } from "~/state/use-atom-command";
+import { useSourceControlCommand } from "~/state/use-source-control-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
 
 import { Button } from "../ui/button";
@@ -38,7 +38,7 @@ export function PullRequestCommentForm({
 }) {
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
+  const postComment = useSourceControlCommand(pullRequestEnvironment.comment, { reportFailure: false });
   const followUpAction =
     detail.state === "open" &&
     detail.capabilities.actions.includes("close") &&
