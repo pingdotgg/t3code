@@ -62,6 +62,7 @@ function makeLayer(input: {
   const serviceLayer = SourceControlRepositoryService.layer.pipe(
     Layer.provide(
       Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+        resolveLink: () => undefined,
         get: () => Effect.succeed(input.provider ?? makeProvider()),
       }),
     ),

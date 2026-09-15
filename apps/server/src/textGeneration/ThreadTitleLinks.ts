@@ -1,55 +1,46 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
-import * as ProcessRunner from "../processRunner.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 
-const Subject = Schema.fromJsonString(
-  Schema.Struct({
-    title: Schema.String,
-    body: Schema.NullOr(Schema.String),
-  }),
+const encodeSubject = Schema.encodeEffect(
+  Schema.fromJsonString(Schema.Struct({ title: Schema.String, body: Schema.String })),
 );
-const decodeSubject = Schema.decodeUnknownEffect(Subject);
-const encodeSubject = Schema.encodeEffect(Subject);
 
-/** Read only explicit GitHub references. The issues endpoint also returns PR subjects. */
+/** Providers select supported links before the title lookup budget is applied. */
 export const resolveThreadTitleLinks = Effect.fn("resolveThreadTitleLinks")(function* (input: {
   message: string;
   cwd: string;
 }) {
-  const runner = yield* ProcessRunner.ProcessRunner;
-  const references = Array.from(
-    input.message.matchAll(
-      /https:\/\/github\.com\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?=$|[\s/#?)>.,])/g,
-    ),
-  );
-  const unique = [...new Map(references.map((match) => [match[0], match])).values()].slice(0, 2);
+  const providers = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
+  const links = new Map<string, NonNullable<ReturnType<typeof providers.resolveLink>>>();
+  for (const match of input.message.matchAll(/https:\/\/[^\s<>"')\]`]+/g)) {
+    let url: URL;
+    try {
+      url = new URL(match[0].replace(/[.,;!?]+$/, ""));
+    } catch {
+      continue;
+    }
+    url.hash = "";
+    url.search = "";
+    if (links.has(url.href)) continue;
+    const lookup = providers.resolveLink({ cwd: input.cwd, url });
+    if (!lookup) continue;
+    links.set(url.href, lookup);
+    if (links.size === 2) break;
+  }
   const subjects = yield* Effect.forEach(
-    unique,
-    (match) =>
-      Effect.gen(function* () {
-        const result = yield* runner.run({
-          command: "gh",
-          args: [
-            "api",
-            `repos/${match[1]}/${match[2]}/issues/${match[3]}`,
-            "--jq",
-            "{title, body}",
-          ],
-          cwd: input.cwd,
-          timeout: "3 seconds",
-          maxOutputBytes: 32_000,
-          env: { ...process.env, GH_PROMPT_DISABLED: "1" },
-        });
-        if (result.code !== 0) return `${match[0]}: unavailable`;
-        const subject = yield* decodeSubject(result.stdout);
-        const summary = yield* encodeSubject({
-          title: subject.title.slice(0, 300),
-          body: subject.body?.slice(0, 1_200) ?? "",
-        });
-        return `${match[0]}\n${summary}`;
-      }).pipe(
+    links,
+    ([url, lookup]) =>
+      lookup.pipe(
+        Effect.flatMap((subject) =>
+          encodeSubject({
+            title: subject.title.slice(0, 300),
+            body: subject.body?.slice(0, 1_200) ?? "",
+          }),
+        ),
+        Effect.map((summary) => `${url}\n${summary}`),
         Effect.timeout("3 seconds"),
-        Effect.catch(() => Effect.succeed(`${match[0]}: unavailable`)),
+        Effect.catch(() => Effect.succeed(`${url}: unavailable`)),
       ),
     { concurrency: 2 },
   );
