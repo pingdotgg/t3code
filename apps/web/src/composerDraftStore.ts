@@ -1241,6 +1241,8 @@ export function deriveEffectiveComposerModelState(input: {
   projectModelSelection: ModelSelection | null | undefined;
   settings: UnifiedSettings;
 }): EffectiveComposerModelState {
+  const requiresInstanceCatalog =
+    input.selectedProvider === "antigravity" || input.selectedProvider === "muse";
   const baseModelCandidate =
     input.threadModelSelection?.model ?? input.projectModelSelection?.model ?? null;
   const preserveThreadModel =
@@ -1257,8 +1259,8 @@ export function deriveEffectiveComposerModelState(input: {
           { preserveUnavailableSelection: preserveThreadModel },
         )
       : null) ??
-    // Antigravity has no static model or cross-account catalog fallback.
-    (input.selectedProvider === "antigravity" && input.selectedInstanceId ? "" : null) ??
+    // Account-bound catalogs cannot borrow another instance's default model.
+    (requiresInstanceCatalog && input.selectedInstanceId ? "" : null) ??
     resolveAppModelSelection(
       input.selectedProvider,
       input.settings,
@@ -1275,7 +1277,7 @@ export function deriveEffectiveComposerModelState(input: {
     ? input.draft?.modelSelectionByProvider?.[input.selectedInstanceId]
     : undefined;
   const legacySelection =
-    input.selectedProvider === "antigravity" &&
+    requiresInstanceCatalog &&
     input.selectedInstanceId &&
     input.selectedInstanceId !== defaultInstanceIdForDriver(input.selectedProvider)
       ? undefined
@@ -1292,7 +1294,7 @@ export function deriveEffectiveComposerModelState(input: {
         activeSelection.model,
         { preserveUnavailableSelection: true },
       ) ??
-      (input.selectedProvider === "antigravity" ? "" : null) ??
+      (requiresInstanceCatalog ? "" : null) ??
       resolveAppModelSelection(
         input.selectedProvider,
         input.settings,

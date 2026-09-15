@@ -977,10 +977,10 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
         assert.deepStrictEqual(afterFailure.models, [authoritativeProvider.models[0]!]);
       });
 
-      describe("Codex model inventories", () => {
+      describe.each(["codex", "muse"])("%s model inventories", (driverName) => {
         const cachedProvider = {
-          instanceId: ProviderInstanceId.make("codex-personal"),
-          driver: ProviderDriverKind.make("codex"),
+          instanceId: ProviderInstanceId.make(`${driverName}-personal`),
+          driver: ProviderDriverKind.make(driverName),
           status: "ready",
           enabled: true,
           installed: true,
@@ -993,7 +993,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             "kindle-alpha",
             "ultima-alpha",
             "solstice-alpha",
-          ].map((slug) => ({ slug, name: slug, isCustom: false, capabilities: null })),
+          ].map((slug, index) => ({
+            slug,
+            name: slug,
+            isCustom: false,
+            isDefault: index === 4,
+            capabilities: null,
+          })),
           slashCommands: [],
           skills: [],
         } satisfies ServerProvider;
@@ -1007,7 +1013,13 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           ...cachedProvider,
           checkedAt: "2026-09-04T19:01:00.000Z",
           models: [
-            { slug: "gpt-6-astra", name: "GPT 6 Astra", isCustom: false, capabilities: null },
+            {
+              slug: `${driverName}-discovered`,
+              name: "Discovered model",
+              isCustom: false,
+              isDefault: true,
+              capabilities: null,
+            },
             cachedProvider.models[0]!,
             customModel,
           ],
@@ -1026,7 +1038,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           installed: true,
         } satisfies ServerProvider;
 
-        it("drops retired alpha models after discovery, including without OpenAI authentication", () => {
+        it("drops retired models and their default marker after discovery, including without known authentication", () => {
           for (const authStatus of ["authenticated", "unknown"] as const) {
             assert.deepStrictEqual(
               mergeProviderSnapshot(cachedProvider, {
@@ -1034,6 +1046,12 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 auth: { status: authStatus },
               }).models,
               refreshedProvider.models,
+            );
+            assert.strictEqual(
+              mergeProviderSnapshot(cachedProvider, refreshedProvider).models.filter(
+                (model) => model.isDefault,
+              ).length,
+              1,
             );
           }
         });
@@ -1061,6 +1079,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
             { ...emptyProvider, status: "error", installed: false, auth: { status: "unknown" } },
             emptyProvider,
             { ...emptyProvider, models: [] },
+            { ...emptyProvider, status: "warning", auth: { status: "unknown" }, models: [] },
           ] satisfies ReadonlyArray<ServerProvider>;
 
           for (const provider of clearedProviders) {
@@ -1085,7 +1104,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
               driverKind: cachedProvider.driver,
               continuationIdentity: {
                 driverKind: cachedProvider.driver,
-                continuationKey: "codex:instance:codex-personal",
+                continuationKey: `${driverName}:instance:${driverName}-personal`,
               },
               displayName: undefined,
               enabled: true,
@@ -1150,7 +1169,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           }).pipe(
             Effect.provide(
               ServerConfig.layerTest(process.cwd(), {
-                prefix: "t3-codex-retired-model-cache-",
+                prefix: `t3-${driverName}-retired-model-cache-`,
               }).pipe(Layer.provideMerge(NodeServices.layer)),
             ),
           ),
@@ -2771,6 +2790,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
                 "codex",
                 "cursor",
                 "grok",
+                "muse",
                 "opencode",
                 "pi",
               ]);

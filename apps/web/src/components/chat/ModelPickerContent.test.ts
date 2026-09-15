@@ -57,6 +57,8 @@ describe("shouldIncludeModelPickerOption", () => {
     ["opencode", "warning"],
     ["antigravity", "error"],
     ["antigravity", "warning"],
+    ["muse", "error"],
+    ["muse", "warning"],
   ] as const)(
     "keeps only the active synthetic %s row when the provider status is %s",
     (driver, status) => {
