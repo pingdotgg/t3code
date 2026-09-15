@@ -12,27 +12,27 @@ export interface PullRequestListLine {
   readonly stack: { readonly kind: ThreadPullRequestChain["kind"]; readonly size: number } | null;
 }
 
-function activityAt(link: ThreadPullRequestLink): number {
-  const ms = Date.parse(link.snapshot?.updatedAt ?? link.linkedAt);
-  return Number.isNaN(ms) ? 0 : ms;
-}
-
 function chainKeyOf(chain: ThreadPullRequestChain): string {
   const bottom = chain.layers[0]!;
   return `${bottom.host}/${bottom.repository}#${bottom.number}`;
 }
 
 /**
- * Flattens chains into indented lines, newest first. A stack sorts by its most recent layer and
- * then reads bottom to top beneath that slot, so the layer you would review first is at the
- * bottom of the indent and a fresh push anywhere in the stack floats the whole stack up.
+ * Flattens chains into indented lines, sorting by latest activity or highest PR number.
+ * Stacks sort by their highest layer value and stay together in bottom-to-top order.
  */
 export function pullRequestListLines(
   chains: ReadonlyArray<ThreadPullRequestChain>,
+  sort: "activity" | "number" = "activity",
 ): ReadonlyArray<PullRequestListLine> {
+  const sortValue = (link: ThreadPullRequestLink): number => {
+    if (sort === "number") return link.number;
+    const ms = Date.parse(link.snapshot?.updatedAt ?? link.linkedAt);
+    return Number.isNaN(ms) ? 0 : ms;
+  };
   const ordered = [...chains].sort(
     (left, right) =>
-      Math.max(...right.layers.map(activityAt)) - Math.max(...left.layers.map(activityAt)),
+      Math.max(...right.layers.map(sortValue)) - Math.max(...left.layers.map(sortValue)),
   );
   return ordered.flatMap((chain) => {
     const chainKey = chainKeyOf(chain);
