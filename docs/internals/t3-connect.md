@@ -70,25 +70,37 @@ teardown retains enough state to retry. See the
 Cloudflare bills a tunnel whether or not a connector is attached, so a laptop
 that sleeps with a linked environment leaves a paid tunnel behind. The relay's
 five-minute maintenance job can reclaim those tunnels. `RELAY_TUNNEL_CLEANUP_MODE`
-selects `off`, `dry-run`, or `enabled`, with `off` as the default. A candidate is
-a same-stage tunnel that Cloudflare reports down for at least five minutes, or
-one that never connected and is at least that old.
+selects `off`, `dry-run`, or `enabled`, with `off` as the default. The mode is
+read at deploy time, so changing it means a relay deploy, not a variable flip.
+A candidate is a same-stage tunnel that Cloudflare reports down for at least
+five minutes, or one that never connected and is at least an hour old. The
+longer grace for never-connected tunnels covers a pairing still in progress.
 
-Cleanup deletes only tunnels whose host has registered recovery, or tunnels with
-no allocation record at all. Allocations without recovery registration belong to
-hosts that cannot replace a deleted tunnel and are left alone. Allocations with
-no recorded tunnel ID, or a different tunnel ID, are skipped because a provision
-may own them. Each sweep is bounded: at most ten list requests, 100 deletions, a
-two-minute deadline, and an early stop on a Cloudflare rate limit. See the
+Cleanup deletes only tunnels whose host has registered recovery. Allocations
+without recovery registration belong to hosts that cannot replace a deleted
+tunnel and are left alone. Allocations with no recorded tunnel ID, or a
+different tunnel ID, are skipped because a provision may own them. A tunnel with
+no allocation row at all is counted as `skippedOrphan` and never deleted: there
+is no row to lock, so a relink that adopts it by name could race the delete.
+Clear those by hand. Each sweep is bounded: at most ten list requests, 100 deletions, a
+two-minute deadline, and an early stop on a Cloudflare rate limit. Each sweep
+starts one budget further along the candidate list, so a block of deletes that
+keep failing cannot starve the tunnels listed after them. See the
 [reaper](../../infra/relay/src/environments/ManagedEndpointReaper.ts).
 
 A host registers recovery at startup by sending its tunnel ID and loopback
 origin with a short-lived signature from the environment key. Registration
-touches Cloudflare only when the local host or port changed. The host stores a
-confirmed-origin marker with the connector config, and a later boot starts the
-connector before registration only when that marker matches the current config
-and port. If the connector exits, or `cloudflared` reports repeated tunnel
-authorization rejections, the host asks the relay for a replacement. The relay
+touches Cloudflare only when the local host or port changed, and once per
+existing allocation on the first registration after the upgrade because the
+stored origin is empty. First registrations are jittered so an auto-update wave
+does not hit the relay at once. The host stores a confirmed-origin marker with
+the connector config, and a later boot starts the connector before registration
+only when that marker matches the current config and port. Registration retries
+for ten minutes. If the relay stays unreachable past that, the host starts its
+stored config anyway and reconciles the origin on the next successful
+registration. If the connector exits, or `cloudflared` reports repeated tunnel
+rejections, the host asks the relay for a replacement, at most once every two
+minutes. The relay
 provisions under the same allocation, so the hostname and DNS record survive
 and clients keep their bindings. Every mutation on an allocation bumps its
 `generation`, and deletion locks the row at the generation it claimed, so a

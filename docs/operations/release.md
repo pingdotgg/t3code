@@ -164,13 +164,15 @@ because those builds register recovery and replace a deleted tunnel after wake.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
    legacy and are never candidates.
 3. Set `dry-run`, deploy, and read the sweep counters (`scanned`, `wouldDelete`, `skippedLegacy`,
-   `failed`, `truncated`) across several sweeps.
+   `skippedOrphan`, `failed`, `truncated`) across several sweeps.
 4. Run the disposable-host canary below.
 5. Set `enabled` only after the canary recovers without a server restart.
 
-The job runs every five minutes with a five-minute grace period, so a candidate is usually removed
-five to ten minutes after it goes down. One sweep attempts at most 100 deletions, so a backlog takes
-longer.
+The job runs every five minutes with a five-minute grace period for tunnels that lost their
+connector, so a candidate is usually removed five to ten minutes after it goes down. Tunnels that
+never connected wait an hour. One sweep attempts at most 100 deletions, so a backlog takes longer.
+`RELAY_TUNNEL_CLEANUP_MODE` is read at deploy time. Changing it, including turning cleanup off during
+an incident, needs a relay deploy.
 
 To roll back, set cleanup to `off` and deploy the relay before downgrading any host. Keep the
 recovery endpoints deployed while current server builds are in use. The nullable columns can stay.
