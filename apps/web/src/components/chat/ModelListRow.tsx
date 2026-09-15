@@ -5,7 +5,6 @@ import {
   getDisplayModelName,
   getTriggerDisplayModelLabel,
   type ModelEsque,
-  PROVIDER_ICON_BY_PROVIDER,
 } from "./providerIconUtils";
 import { ComboboxItem } from "../ui/combobox";
 import { Button } from "../ui/button";
@@ -44,7 +43,6 @@ export const ModelListRow = memo(function ModelListRow(props: {
   disabledReason?: string | null;
   onToggleFavorite: () => void;
 }) {
-  const ProviderIcon = PROVIDER_ICON_BY_PROVIDER[props.driverKind] ?? null;
   const providerLabel = props.model.subProvider
     ? `${props.providerDisplayName} · ${props.model.subProvider}`
     : props.providerDisplayName;
@@ -89,18 +87,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
         </div>
         {props.showProvider && (
           <div className="mt-1 flex items-center gap-1.5">
-            {props.driverKind === "acpRegistry" ? (
-              <ProviderInstanceIcon
-                driverKind={props.driverKind}
-                displayName={props.providerDisplayName}
-                acpRegistryAgentId={props.acpRegistryAgentId}
-                acpRegistryIconUrl={props.acpRegistryIconUrl}
-                className="size-3"
-                iconClassName="size-3"
-              />
-            ) : ProviderIcon ? (
-              <ProviderIcon className="size-3 shrink-0" />
-            ) : null}
+            <ProviderInstanceIcon
+              driverKind={props.driverKind}
+              displayName={props.providerDisplayName}
+              acpRegistryAgentId={props.acpRegistryAgentId}
+              acpRegistryIconUrl={props.acpRegistryIconUrl}
+              className="size-3"
+              iconClassName="size-3"
+            />
             <span className="truncate text-xs font-normal leading-snug text-muted-foreground/70">
               {providerLabel}
             </span>
