@@ -112,6 +112,13 @@ export type VoiceLiveClientEvent =
       readonly type: "transcript";
       readonly channel: "input" | "output";
       readonly delta: string;
+      /** Stable key for the utterance this delta belongs to (`in-3`,
+          `out-2`). The Live transcript deltas carry no item ids, so the
+          client derives boundaries from the protocol events it does see:
+          a channel flip (user spoke after the assistant, or vice versa)
+          and `session.delegation.created` (which closes the accumulated
+          input utterance). Consumers key ordered chat entries on this. */
+      readonly utterance: string;
     }
   | { readonly type: "usage"; readonly usage: VoiceSessionUsage }
   | { readonly type: "track"; readonly track: VoiceLiveMediaStreamTrack }
@@ -241,6 +248,30 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
   // channel); the continuation is deduplicated per response.
   let trackedResponseId: string | undefined;
   let inputTranscript = "";
+  // Utterance-boundary state: the Live transcript deltas carry no item ids,
+  // so the client derives them (see the transcript event's `utterance` doc).
+  let inputUtteranceSeq = 0;
+  let outputUtteranceSeq = 0;
+  let inputUtteranceOpen = false;
+  let outputUtteranceOpen = false;
+  let lastTranscriptChannel: "input" | "output" | undefined;
+  const nextUtteranceKey = (channel: "input" | "output"): string => {
+    const open = channel === "input" ? inputUtteranceOpen : outputUtteranceOpen;
+    const flipped = lastTranscriptChannel !== undefined && lastTranscriptChannel !== channel;
+    if (!open || flipped) {
+      if (channel === "input") {
+        inputUtteranceSeq += 1;
+        inputUtteranceOpen = true;
+      } else {
+        outputUtteranceSeq += 1;
+        outputUtteranceOpen = true;
+      }
+    }
+    lastTranscriptChannel = channel;
+    return `${channel === "input" ? "in" : "out"}-${
+      channel === "input" ? inputUtteranceSeq : outputUtteranceSeq
+    }`;
+  };
   const creationByDelegation = new Map<string, boolean>();
   let speechSuppressed = false;
   let navigationConfirmed = false;
@@ -590,6 +621,11 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
             hasSubstantiveTools = false;
             creationByDelegation.set(delegation.id, allowsThreadCreation(inputTranscript));
             inputTranscript = "";
+            // The delegation closes the accumulated input utterance and any
+            // pre-delegation speech; the next deltas on either channel start
+            // new utterances.
+            inputUtteranceOpen = false;
+            outputUtteranceOpen = false;
           }
           if (delegation.target === "client" && typeof delegation.id === "string") {
             emit({ type: "delegation", id: delegation.id });
@@ -606,7 +642,12 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
           inputTranscript += delta;
           if (/\p{L}/u.test(inputTranscript))
             setSpeechSuppressed(isUiCommandPrefix(inputTranscript));
-          emit({ type: "transcript", channel: "input", delta });
+          emit({
+            type: "transcript",
+            channel: "input",
+            delta,
+            utterance: nextUtteranceKey("input"),
+          });
         }
         break;
       }
@@ -622,7 +663,12 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
             emitMark("utterance_end", "no annotated recorded-input endpoint", "unavailable");
             emitMark("first_output_transcript_delta");
           }
-          emit({ type: "transcript", channel: "output", delta });
+          emit({
+            type: "transcript",
+            channel: "output",
+            delta,
+            utterance: nextUtteranceKey("output"),
+          });
         }
         break;
       }
@@ -884,7 +930,17 @@ export const createVoiceLiveClient = (options: VoiceLiveClientOptions): VoiceLiv
         })
       )
         return false;
-      return sendOnChannel({ type: "response.create" });
+      if (!sendOnChannel({ type: "response.create" })) return false;
+      // Typed text is a complete user utterance of its own; surface it so the
+      // ordered transcript shows what was asked.
+      inputUtteranceOpen = false;
+      emit({
+        type: "transcript",
+        channel: "input",
+        delta: text,
+        utterance: nextUtteranceKey("input"),
+      });
+      return true;
     },
     getState: () => state,
     getSessionId: () => sessionId,

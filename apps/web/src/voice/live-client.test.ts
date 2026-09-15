@@ -433,6 +433,7 @@ describe("voice live client", () => {
       type: "transcript",
       channel: "output",
       delta: "Which thread?",
+      utterance: "out-1",
     });
     harness.client.setSpeechSuppressed?.(true);
     harness.peerConnection.channel.receive({
@@ -575,8 +576,8 @@ describe("voice live client", () => {
 
     const transcripts = harness.events.filter((event) => event.type === "transcript");
     expect(transcripts).toEqual([
-      { type: "transcript", channel: "output", delta: "Hel" },
-      { type: "transcript", channel: "output", delta: "lo" },
+      { type: "transcript", channel: "output", delta: "Hel", utterance: "out-1" },
+      { type: "transcript", channel: "output", delta: "lo", utterance: "out-1" },
     ]);
   });
 
@@ -597,12 +598,97 @@ describe("voice live client", () => {
       type: "transcript",
       channel: "input",
       delta: "find the thread",
+      utterance: "in-1",
     });
     const usage = harness.events.find((event) => event.type === "usage");
     expect(usage).toMatchObject({
       type: "usage",
       usage: { sessionId: "live_sess_1", usage: { input_tokens: 5 } },
     });
+  });
+
+  it("starts a new utterance on each channel flip across a multi-turn conversation", async () => {
+    const harness = makeClient();
+    await startToLive(harness);
+    const transcriptsOf = (channel: "input" | "output") =>
+      harness.events
+        .filter((event) => event.type === "transcript" && event.channel === channel)
+        .map((event) => (event as { utterance: string; delta: string }).utterance);
+
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "find ",
+    });
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "the thread",
+    });
+    expect(transcriptsOf("input")).toEqual(["in-1", "in-1"]);
+
+    harness.peerConnection.channel.receive({
+      type: "session.output_transcript.delta",
+      delta: "Opening ",
+    });
+    harness.peerConnection.channel.receive({
+      type: "session.output_transcript.delta",
+      delta: "it now.",
+    });
+    expect(transcriptsOf("output")).toEqual(["out-1", "out-1"]);
+
+    // The user speaks again: a fresh input utterance, and the next assistant
+    // speech after it is a fresh output utterance too.
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "now search it",
+    });
+    expect(transcriptsOf("input")).toEqual(["in-1", "in-1", "in-2"]);
+    harness.peerConnection.channel.receive({
+      type: "session.output_transcript.delta",
+      delta: "Done.",
+    });
+    expect(transcriptsOf("output")).toEqual(["out-1", "out-1", "out-2"]);
+  });
+
+  it("closes the accumulated input utterance at session.delegation.created", async () => {
+    const harness = makeClient();
+    await startToLive(harness);
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "open it",
+    });
+    // A real delegation announcement carries the delegation object.
+    harness.peerConnection.channel.receive({
+      type: "session.delegation.created",
+      delegation: { id: "del_1", target: "responses" },
+    });
+    // The user interrupts with more speech after the delegation boundary.
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "actually wait",
+    });
+
+    const keys = harness.events
+      .filter((event) => event.type === "transcript" && event.channel === "input")
+      .map((event) => (event as { utterance: string }).utterance);
+    expect(keys).toEqual(["in-1", "in-2"]);
+  });
+
+  it("shows typed text as its own input utterance after a successful send", async () => {
+    const harness = makeClient();
+    await startToLive(harness);
+    harness.peerConnection.channel.receive({
+      type: "session.input_transcript.delta",
+      delta: "spoken words",
+    });
+
+    expect(harness.client.sendText?.("typed request")).toBe(true);
+
+    const typed = harness.events.filter(
+      (event) =>
+        event.type === "transcript" && (event as { delta: string }).delta === "typed request",
+    );
+    expect(typed).toHaveLength(1);
+    expect(typed[0]).toMatchObject({ channel: "input", utterance: "in-2" });
   });
 
   it("closes with session.close, waits for session.closed, then closes broker accounting", async () => {

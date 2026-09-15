@@ -209,8 +209,7 @@ export function VoicePanel() {
         onClear={() => controller.clear()}
       />
       <VoiceTranscript
-        inputTranscript={panelState.inputTranscript}
-        outputTranscript={panelState.outputTranscript}
+        utterances={panelState.utterances}
         inFlightTool={panelState.inFlightTool}
         error={panelState.error}
         navigationStatus={panelState.navigationStatus}

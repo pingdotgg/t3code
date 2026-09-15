@@ -61,6 +61,7 @@ export function createCommandSession(
   let speech = "";
   let revision = 0;
   let closed = false;
+  let typedUtteranceSeq = 0;
   let actionQueue: Promise<unknown> = Promise.resolve();
   const enqueueAction = <T>(
     current: () => boolean,
@@ -251,7 +252,14 @@ export function createCommandSession(
     },
     sendText(text) {
       if (closed || client.getState() !== "live" || !text.trim()) return false;
-      emit({ type: "transcript", channel: "input", delta: `${text}\n` });
+      // Each typed message is its own user utterance (the wrapped client's
+      // voice-derived keys never collide with the typed- prefix).
+      emit({
+        type: "transcript",
+        channel: "input",
+        delta: `${text}\n`,
+        utterance: `typed-${++typedUtteranceSeq}`,
+      });
       void run(text);
       return true;
     },
