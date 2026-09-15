@@ -272,7 +272,14 @@ const scenarioExpectations = {
     approvalRequestCount: 0,
   },
   thread_rollback: {
-    outgoing: ["initialize", "initialized", "thread/start", "turn/start", "thread/rollback"],
+    outgoing: [
+      "initialize",
+      "initialized",
+      "thread/start",
+      "turn/start",
+      "thread/read",
+      "thread/rollback",
+    ],
     incoming: ["turn/started", "turn/completed", "item/agentMessage/delta"],
     turnStartCount: 3,
     turnCompletedCount: 3,
