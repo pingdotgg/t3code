@@ -244,27 +244,43 @@ export function renderGhosttySnapshot(options: {
     }
   }
 
-  if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
+  if (snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
     const left = padding + snapshot.cursorX * metrics.width;
     const top = originY + snapshot.cursorY * metrics.height;
-    context.fillStyle = cssColor(snapshot.cursor);
-    if (!focused) {
-      // An unfocused terminal draws a hollow cursor so the active pane is obvious.
-      context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
-    } else if (snapshot.cursorStyle === 0) {
-      context.fillRect(left, top, 2, metrics.height);
-    } else if (snapshot.cursorStyle === 2) {
-      context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
-    } else if (snapshot.cursorStyle === 3) {
-      context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+    if (cursorOn) {
+      context.fillStyle = cssColor(snapshot.cursor);
+      if (!focused) {
+        // An unfocused terminal draws a hollow cursor so the active pane is obvious.
+        context.strokeStyle = cssColor(snapshot.cursor);
+        context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      } else if (snapshot.cursorStyle === 0) {
+        context.fillRect(left, top, 2, metrics.height);
+      } else if (snapshot.cursorStyle === 2) {
+        context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
+      } else if (snapshot.cursorStyle === 3) {
+        context.strokeStyle = cssColor(snapshot.cursor);
+        context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      } else {
+        context.fillRect(left, top, metrics.width, metrics.height);
+        const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
+        if (cell?.text) {
+          context.font = fontForCell(cell, fontSize, fontFamily);
+          context.fillStyle = cssColor(snapshot.background);
+          context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+        }
+      }
     } else {
+      // During the blink off phase, explicitly clear the full cursor cell to
+      // erase any subpixel edge remnants left by bar, underline, or stroke
+      // cursors whose thin geometry may not be fully covered by the row
+      // background fill alone.
+      context.fillStyle = cssColor(snapshot.background);
       context.fillRect(left, top, metrics.width, metrics.height);
+      // Redraw the cell text so the glyph remains visible under the cleared cursor.
       const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
-      if (cell?.text) {
+      if (cell && !cell.invisible && cell.text.length > 0) {
         context.font = fontForCell(cell, fontSize, fontFamily);
-        context.fillStyle = cssColor(snapshot.background);
+        context.fillStyle = cssColor(cell.foreground);
         context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
       }
     }
