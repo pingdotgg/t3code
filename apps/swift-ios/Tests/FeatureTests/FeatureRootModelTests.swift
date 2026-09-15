@@ -9,6 +9,103 @@ import XCTest
 @MainActor
 @Suite("Feature root model")
 struct FeatureRootModelTests {
+    @Test(arguments: [[1, 2, 3], [3, 2, 1]])
+    func selectedThreadOwnsLoadsAcrossRapidNavigation(completionOrder: [Int]) async throws {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let started = AsyncStream<Int>.makeStream()
+        let returned = AsyncStream<Int>.makeStream()
+        var starts = started.stream.makeAsyncIterator()
+        var returns = returned.stream.makeAsyncIterator()
+        var continuations: [Int: CheckedContinuation<Void, Never>] = [:]
+        var loadIDs: [String] = []
+        var cancelledLoads: [Int] = []
+        defer {
+            model.selectThread(nil)
+            started.continuation.finish()
+            returned.continuation.finish()
+            for continuation in continuations.values { continuation.resume() }
+        }
+        client.loadThreadHandler = { id in
+            loadIDs.append(id)
+            let index = loadIDs.count
+            started.continuation.yield(index)
+            await withCheckedContinuation { continuations[index] = $0 }
+            if Task.isCancelled { cancelledLoads.append(index) }
+            returned.continuation.yield(index)
+            // Simulate a transport that returns a late result despite cancellation.
+            return FeatureThreadDetail(
+                thread: FeatureThread(id: id, projectID: "project", title: id),
+                messages: [.init(id: "message-\(index)", role: .assistant, text: "Response \(index)")]
+            )
+        }
+
+        for (offset, id) in ["first", "second", "first"].enumerated() {
+            model.selectThread(id)
+            #expect(await starts.next() == offset + 1)
+        }
+        // Showing the same selection again must keep its in-flight load.
+        model.selectThread("first")
+        #expect(loadIDs == ["first", "second", "first"])
+        #expect(client.releasedThreadIDs == ["first", "second"])
+
+        for index in completionOrder {
+            let pending = continuations.removeValue(forKey: index)
+            let continuation = try #require(pending)
+            continuation.resume()
+            #expect(await returns.next() == index)
+            if index != 3 {
+                #expect(model.details["first"]?.messages.first?.text != "Response 1")
+                #expect(model.details["second"] == nil)
+            }
+        }
+        #expect(cancelledLoads.sorted() == [1, 2])
+        #expect(model.details["first"]?.messages.first?.text == "Response 3")
+        #expect(model.detailLoadStates["first"] == nil)
+        model.selectThread(nil)
+        #expect(client.releasedThreadIDs == ["first", "second", "first"])
+    }
+
+    @Test
+    func leavingSelectionCancelsItsRefreshAndIgnoresRetriesFromOldViews() async throws {
+        let client = FeatureClientStub()
+        let model = testRootModel(client: client)
+        let started = AsyncStream<Void>.makeStream()
+        let returned = AsyncStream<Bool>.makeStream()
+        var starts = started.stream.makeAsyncIterator()
+        var returns = returned.stream.makeAsyncIterator()
+        var pending: CheckedContinuation<Void, Never>?
+        defer {
+            model.selectThread(nil)
+            pending?.resume()
+            started.continuation.finish()
+            returned.continuation.finish()
+        }
+        client.loadThreadHandler = { id in
+            started.continuation.yield(())
+            await withCheckedContinuation { pending = $0 }
+            returned.continuation.yield(Task.isCancelled)
+            return .init(thread: .init(id: id, projectID: "project", title: id))
+        }
+        model.selectThread("first")
+        _ = await starts.next()
+        var continuation = try #require(pending)
+        pending = nil
+        continuation.resume()
+        #expect(await returns.next() == false)
+
+        model.reloadSelectedThread("first")
+        _ = await starts.next()
+        model.selectThread(nil)
+        model.reloadSelectedThread("first")
+        continuation = try #require(pending)
+        pending = nil
+        continuation.resume()
+        #expect(await returns.next() == true)
+        #expect(client.releasedThreadIDs == ["first"])
+        #expect(model.detailLoadStates["first"] == nil)
+    }
+
     @Test
     func rewindLocksSendingAndSavesRecoveredInputAfterLeavingTheThread() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -2309,11 +2406,13 @@ struct FeatureRootModelTests {
             return nil
         }
         defer {
+            model.selectThread(nil)
             pendingLoad?.resume(returning: cached)
             loads.continuation.finish()
             uploads.continuation.finish()
         }
 
+        model.selectThread(thread.id)
         let controller = UIHostingController(rootView: ThreadDetailView(
             model: model, thread: thread, submitMessage: { _ in false }, draftStore: draftStore
         ))
@@ -3814,6 +3913,7 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
     var beforeSaveSettings: (@MainActor () async throws -> Void)?
     var loadThreadError: (any Error)?
     var loadThreadHandler: ((String) async throws -> FeatureThreadDetail)?
+    var releasedThreadIDs: [String] = []
     var preuploadHandler: ((FeatureUploadAttachment, String) async throws -> FeatureUploadedAttachmentReference?)?
     var beforeLoadThreadReturn: (() async -> Void)?
     var loadEarlierCallCount = 0
@@ -3961,6 +4061,10 @@ private final class FeatureClientStub: FeatureClient, T3ConnectCapable {
             return threadDetail
         }
         return FeatureThreadDetail(thread: createdThread)
+    }
+
+    func releaseThread(id: String) {
+        releasedThreadIDs.append(id)
     }
 
     func loadEarlierThreadTurns(id: String) async throws -> FeatureThreadDetail? {

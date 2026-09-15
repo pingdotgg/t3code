@@ -177,9 +177,12 @@ public struct WorkspaceView: View {
         .onChange(of: selectedThreadIsAvailable) { _, isAvailable in
             if !isAvailable { closeSelectedThread() }
         }
-        .onChange(of: selectedThreadID) { _, newValue in
+        .onChange(of: selectedThreadID, initial: true) { _, newValue in
+            model.selectThread(newValue)
             preferredCompactColumn = newValue == nil ? .sidebar : .detail
         }
+        .onAppear { model.selectThread(selectedThreadID) }
+        .onDisappear { model.selectThread(nil) }
         .onChange(of: selectedProjectIsAvailable) { _, isAvailable in
             if !isAvailable { selectedProjectID = nil }
         }
@@ -297,7 +300,7 @@ public struct WorkspaceView: View {
                 model: model,
                 thread: thread,
                 submitMessage: submitMessage,
-                onNavigateBack: closeSelectedThread
+                onNavigateBack: { preferredCompactColumn = .sidebar }
             )
             .id(id)
         } else {
