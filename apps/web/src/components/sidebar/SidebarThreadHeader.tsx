@@ -122,9 +122,10 @@ export function SidebarThreadHeader({
           </Button>
         ) : null}
       </div>
-      {/* Segmented well: the icons read as one control instead of three loose
-          buttons competing with the search field beside them. */}
-      <div className="flex shrink-0 items-center rounded-md bg-sidebar-control-surface/60 p-px">
+      {/* Unfilled like the search field beside it: the buttons carry their own
+          hover states, and a background well reads far louder on themed
+          palettes than on the base light and dark ones. */}
+      <div className="flex shrink-0 items-center">
         {hasProjects ? (
           <>
             {projectScope}
