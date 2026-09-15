@@ -1,4 +1,3 @@
-import * as Option from "effect/Option";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
@@ -21,6 +20,8 @@ import {
   type ThreadId,
   type ThreadLinkedPullRequest,
   type RunId,
+  WORKTREE_SETUP_ACTIVITY_KIND,
+  WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
@@ -44,6 +45,7 @@ import {
   type TurnDiffSummary,
 } from "../types";
 import { type ComposerImageAttachment, type DraftThreadState } from "../composerDraftStore";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentThreadShells, environmentThreadDetails } from "../state/threads";
@@ -265,6 +267,52 @@ export function toolGroupConsumesUpwardNavigation(target: EventTarget | null): b
     if (element === group) break;
   }
   return false;
+}
+
+const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnapshot);
+
+/**
+ * The worktree setup the server recorded on the thread, if any: running once
+ * the bootstrap created the thread, then the settled outcome. It is what a
+ * reload or a second client renders, and what tells them to attach the live
+ * stream while it still says running.
+ */
+export function findRecordedWorktreeSetup(
+  activities: ReadonlyArray<{ readonly kind: string; readonly payload: unknown }>,
+  threadId: ThreadId,
+): WorktreeSetupSnapshot | null {
+  for (let index = activities.length - 1; index >= 0; index -= 1) {
+    const activity = activities[index]!;
+    if (activity.kind !== WORKTREE_SETUP_ACTIVITY_KIND) continue;
+    const decoded = decodeWorktreeSetupSnapshot(activity.payload);
+    if (Option.isSome(decoded) && decoded.value.threadId === threadId) return decoded.value;
+  }
+  return null;
+}
+
+/**
+ * Which setup snapshot the timeline shows, if any. The live stream wins while
+ * it has a newer sequence; the recorded activity covers everything else. A
+ * running setup always shows. Once settled, the card stays only while it
+ * still says something the turn does not: the turn has not started yet, or a
+ * stage failed and the turn is still running so the exit code stays reachable.
+ */
+export function resolveVisibleWorktreeSetup(input: {
+  live: WorktreeSetupSnapshot | null;
+  recorded: WorktreeSetupSnapshot | null;
+  turnStarted: boolean;
+  isWorking: boolean;
+}): WorktreeSetupSnapshot | null {
+  const snapshot =
+    input.live && (!input.recorded || input.live.sequence >= input.recorded.sequence)
+      ? input.live
+      : input.recorded;
+  if (!snapshot) return null;
+  if (snapshot.phase === "running") return snapshot;
+  if (snapshot.phase !== "done") return snapshot;
+  if (!input.turnStarted) return snapshot;
+  const stageFailed = snapshot.stages.some((stage) => stage.status === "failed");
+  return stageFailed && input.isWorking ? snapshot : null;
 }
 
 export function resolveDraftHeroState(input: {
