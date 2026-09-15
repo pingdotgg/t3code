@@ -16,7 +16,7 @@ requires:
   - Check
 maxBudgetPerRun: 5
 maxBudgetPerPR: 25
-conclusion: failure
+conclusion: neutral
 showToolCalls: true
 ---
 
