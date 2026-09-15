@@ -99,6 +99,35 @@ it.effect("reads project shells without loading threads or resolving excluded pr
   }).pipe(Effect.provide(layer));
 });
 
+it.effect("orders project shells by created_at regardless of insertion order", () => {
+  const layer = OrchestrationProjectionSnapshotQueryLive.pipe(
+    Layer.provide(ThreadBackgroundLiveness.layer),
+    Layer.provide(ThreadPlanProgress.layer),
+    Layer.provide(
+      Layer.succeed(RepositoryIdentityResolver.RepositoryIdentityResolver, {
+        resolve: () => Effect.succeed(null),
+      }),
+    ),
+    Layer.provideMerge(SqlitePersistenceMemory),
+  );
+  return Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const query = yield* ProjectionSnapshotQuery;
+    // Inserted later-first on purpose: the query must return ORDER BY created_at ASC,
+    // project_id ASC rather than rowid order.
+    yield* sql`INSERT INTO projection_projects
+      (project_id, title, workspace_root, scripts_json, created_at, updated_at, deleted_at)
+      VALUES
+      ('order-late', 'Later', '/order-late', '[]', '2026-09-02T00:00:00Z', '2026-09-02T00:00:00Z', NULL),
+      ('order-early', 'Earlier', '/order-early', '[]', '2026-09-01T00:00:00Z', '2026-09-01T00:00:00Z', NULL)`;
+    const shells = yield* query.getProjectShells();
+    assert.deepStrictEqual(
+      shells.map((shell) => shell.id),
+      [asProjectId("order-early"), asProjectId("order-late")],
+    );
+  }).pipe(Effect.provide(layer));
+});
+
 const projectionSnapshotLayer = it.layer(
   OrchestrationProjectionSnapshotQueryLive.pipe(
     Layer.provide(ThreadBackgroundLiveness.layer),
