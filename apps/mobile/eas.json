@@ -40,6 +40,14 @@
         "buildType": "apk"
       }
     },
+    "v2-preview": {
+      "extends": "production",
+      "distribution": "store",
+      "channel": "v2-preview",
+      "env": {
+        "T3CODE_MOBILE_UPDATES_ENABLED": "0"
+      }
+    },
     "production": {
       "corepack": true,
       "env": {
@@ -52,6 +60,13 @@
     }
   },
   "submit": {
+    "v2-preview": {
+      "extends": "production",
+      "android": {
+        "track": "alpha",
+        "releaseStatus": "completed"
+      }
+    },
     "production": {
       "ios": {
         "ascAppId": "6787819824"
