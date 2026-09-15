@@ -288,12 +288,13 @@ export function CloudEnvironmentConnectRows({
     const statusText = savedConnection
       ? savedConnection.statusText
       : availability === "online"
-        ? "Available · Relay online"
+        ? "T3 Connect · Not added · Relay online"
         : availability === "offline"
-          ? "Available · Relay offline"
+          ? "T3 Connect · Not added · Relay offline"
           : availability === "checking"
-            ? "Available · Checking relay status…"
-            : (Option.getOrNull(error)?.message ?? "Available · Relay status unavailable");
+            ? "T3 Connect · Not added · Checking relay status…"
+            : (Option.getOrNull(error)?.message ??
+              "T3 Connect · Not added · Relay status unavailable");
     if (selection) {
       return (
         <label
@@ -386,7 +387,7 @@ export function CloudEnvironmentConnectRows({
               disabled={connectingEnvironmentIds.size > 0}
               onClick={() => void connectEnvironment(environment)}
             >
-              {connectingEnvironmentIds.has(environment.environmentId) ? "Connecting…" : "Connect"}
+              {connectingEnvironmentIds.has(environment.environmentId) ? "Adding…" : "Add"}
             </Button>
           )}
         </div>
