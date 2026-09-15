@@ -1887,9 +1887,13 @@ const make = Effect.gen(function* () {
                 ? null
                 : (thread.session?.lastError ?? null);
         // Set by the runtime.error that precedes a failed turn.completed, so
-        // it rides along with lastError instead of being re-derived here.
+        // it rides along with lastError instead of being re-derived here. An
+        // event that replaces the stored error describes a different failure,
+        // so the inherited class must not outlive the error it classified.
         const lastErrorClass =
-          status === "ready" || status === "interrupted"
+          status === "ready" ||
+          status === "interrupted" ||
+          lastError !== (thread.session?.lastError ?? null)
             ? null
             : (thread.session?.lastErrorClass ?? null);
 
