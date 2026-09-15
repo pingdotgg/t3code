@@ -1,4 +1,5 @@
 import { useNavigation } from "@react-navigation/native";
+import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@t3tools/contracts";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceState } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
+import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
 import {
   filterCommandPaletteItems,
   nextPaletteIndex,
@@ -67,6 +69,8 @@ function PaletteRow(props: {
   readonly item: CommandPaletteItem;
   readonly index: number;
   readonly selected: boolean;
+  readonly searchMatch?: EnvironmentThreadSearchMatch;
+  readonly searchQuery: string;
   readonly onSelect: () => void;
 }) {
   return (
@@ -88,7 +92,9 @@ function PaletteRow(props: {
         <Text numberOfLines={1} className="text-base">
           {props.item.title}
         </Text>
-        {props.item.detail ? (
+        {props.searchMatch ? (
+          <ThreadSearchMatchExcerpt match={props.searchMatch} query={props.searchQuery} compact />
+        ) : props.item.detail ? (
           <Text numberOfLines={1} className="text-sm text-foreground-muted">
             {props.item.detail}
           </Text>
@@ -135,6 +141,15 @@ export function CommandPalette(props: {
   const matchedThreadKeys = useMemo(
     () =>
       new Set(search.matches.map((match) => scopedThreadKey(match.environmentId, match.threadId))),
+    [search.matches],
+  );
+  const contentMatchByKey = useMemo(
+    () =>
+      new Map(
+        search.matches
+          .filter((match) => match.source === "user" || match.source === "assistant")
+          .map((match) => [scopedThreadKey(match.environmentId, match.threadId), match]),
+      ),
     [search.matches],
   );
   const items = useMemo(() => {
@@ -440,6 +455,10 @@ export function CommandPalette(props: {
                     item={item}
                     index={index}
                     selected={item.key === selectedKey}
+                    searchMatch={
+                      item.kind === "thread" ? contentMatchByKey.get(item.key) : undefined
+                    }
+                    searchQuery={query}
                     onSelect={() => close(item.run)}
                   />
                 )}
