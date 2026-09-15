@@ -18,12 +18,17 @@ import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 const environmentId = EnvironmentId.make("environment-device-test");
 const threadId = ThreadId.make("thread-device-test");
-const invocation = (capabilities: ReadonlyArray<McpInvocationContext.McpCapability>) => ({
+const invocation = (
+  capabilities: ReadonlyArray<McpInvocationContext.McpCapability>,
+  unavailableCapabilities?: ReadonlyArray<McpInvocationContext.McpCapability>,
+) => ({
   environmentId,
   threadId,
   providerSessionId: "provider-session-device-test",
   providerInstanceId: ProviderInstanceId.make("codex"),
   capabilities: new Set(capabilities),
+  unavailableCapabilities:
+    unavailableCapabilities === undefined ? undefined : new Set(unavailableCapabilities),
   issuedAt: 1,
 });
 const client = McpSchema.McpServerClient.of({
@@ -145,6 +150,25 @@ it.effect("registers the device tools and returns the screenshot as image conten
           expect.objectContaining({
             type: "text",
             text: expect.stringContaining("start a fresh provider session"),
+          }),
+        ]),
+      );
+
+      const unavailable = yield* server
+        .callTool({ name: "device_list", arguments: {} })
+        .pipe(
+          Effect.provideService(
+            McpInvocationContext.McpInvocationContext,
+            invocation(["preview"], ["device"]),
+          ),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+      expect(unavailable.isError).toBe(true);
+      expect(unavailable.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining("could not read agent-access settings"),
           }),
         ]),
       );

@@ -878,7 +878,7 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         browser: settings.enableAgentBrowserAccess,
         device: settings.enableAgentDeviceAccess,
       };
-      if (!browserOverridden && !deviceOverridden) return environment;
+      if (!browserOverridden && !deviceOverridden) return { ...environment, readFailed: false };
       // Provider-only runtimes may omit orchestration. An unresolved project
       // must not bypass an explicit project override, but a capability no
       // project overrides keeps its environment value.
@@ -886,20 +886,21 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
         browser: browserOverridden ? false : environment.browser,
         device: deviceOverridden ? false : environment.device,
       };
-      if (Option.isNone(projectionQuery)) return denied;
+      if (Option.isNone(projectionQuery)) return { ...denied, readFailed: false };
       const thread = yield* projectionQuery.value.getThreadShellById(threadId);
-      if (Option.isNone(thread)) return denied;
+      if (Option.isNone(thread)) return { ...denied, readFailed: false };
       const resolved = resolveProjectSettings(settings, thread.value.projectId).settings;
       return {
         browser: resolved.enableAgentBrowserAccess,
         device: resolved.enableAgentDeviceAccess,
+        readFailed: false,
       };
     },
     Effect.catch((cause) =>
       Effect.logWarning(
         "Could not read server settings; withholding agent browser and device access for this session.",
         { cause },
-      ).pipe(Effect.as({ browser: false, device: false })),
+      ).pipe(Effect.as({ browser: false, device: false, readFailed: true })),
     ),
   );
 
@@ -910,7 +911,12 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
     const access = yield* agentAccessSettings(threadId);
     if (access.browser) capabilities.add("preview");
     if (access.device) capabilities.add("device");
-    return capabilities;
+    return {
+      capabilities,
+      unavailableCapabilities: access.readFailed
+        ? new Set<McpInvocationContext.McpCapability>(["preview", "device"])
+        : undefined,
+    };
   });
 
   /** Install only the local CLI here. device_open supplies a separate config for each host. */
@@ -942,8 +948,13 @@ const makeProviderService = Effect.fn("makeProviderService")(function* (
 
   const prepareMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
     Effect.gen(function* () {
-      const capabilities = yield* agentAccessCapabilities(threadId);
-      const credential = yield* issueMcpCredential({ threadId, providerInstanceId, capabilities });
+      const { capabilities, unavailableCapabilities } = yield* agentAccessCapabilities(threadId);
+      const credential = yield* issueMcpCredential({
+        threadId,
+        providerInstanceId,
+        capabilities,
+        unavailableCapabilities,
+      });
       if (credential) {
         const deviceEnvironment = capabilities.has("device")
           ? yield* agentDeviceEnvironment

@@ -66,15 +66,26 @@ export function agentDeviceQuickStart(
   ].join("\n");
 }
 
-const requireDeviceAccess = McpInvocationContext.requireMcpCapability("device").pipe(
-  Effect.mapError(
-    () =>
+const requireDeviceAccess = Effect.flatMap(
+  McpInvocationContext.McpInvocationContext,
+  (invocation) => {
+    if (invocation.capabilities.has("device")) return Effect.succeed(invocation);
+    if (invocation.unavailableCapabilities?.has("device")) {
+      return Effect.fail(
+        new DeviceToolUnavailableError({
+          reason:
+            "T3 could not read agent-access settings when this provider session started, so device access was withheld. Fix the server settings read error, then start a fresh provider session.",
+        }),
+      );
+    }
+    return Effect.fail(
       new DeviceAgentAccessDisabledError({
         setting: "enableAgentDeviceAccess",
         settingScope: "project-or-environment",
         requiresFreshProviderSession: true,
       }),
-  ),
+    );
+  },
 );
 
 const pickDevice = (
@@ -119,7 +130,10 @@ const pickDevice = (
   });
 
 const toolError = (
-  error: DeviceError | DeviceToolUnavailableError | DeviceAgentAccessDisabledError,
+  error:
+    | DeviceError
+    | DeviceToolUnavailableError
+    | DeviceAgentAccessDisabledError,
 ) => error;
 
 const handlers = {
