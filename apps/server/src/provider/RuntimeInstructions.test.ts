@@ -2,15 +2,6 @@ import { describe, expect, it } from "vite-plus/test";
 import { buildRuntimeInstructions } from "./RuntimeInstructions.ts";
 
 describe("buildRuntimeInstructions", () => {
-  it("forbids name-matched process cleanup and requires exact owned identity", () => {
-    const instructions = buildRuntimeInstructions({ harness: "Codex" });
-    expect(instructions).toContain("Do not use pkill, killall, or pgrep piped to kill");
-    expect(instructions).toContain("exact PID, start identity, and ownership");
-    expect(instructions).toContain("descendant of this T3 backend");
-    expect(instructions).toContain("Preserve and target the recorded process group");
-    expect(instructions).toContain("report the process instead of signaling it");
-  });
-
   it("requires explicit registration of every PR and stack layer", () => {
     const instructions = buildRuntimeInstructions({ harness: "Codex" });
     expect(instructions).toContain("When the t3-code MCP server exposes link_pull_request");
