@@ -1,6 +1,10 @@
 const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
 When the t3-code MCP server exposes link_pull_request, you must use it to register every pull request you create or work on for this thread. Call link_pull_request with the full PR URL immediately after creating a PR or starting work on an existing PR. For a stack, call it for every layer, not just the current branch or the top PR. This applies when creating or updating PRs through gh, gh stack, another CLI, or the host API: those operations do not register the PRs with this thread. Linking an already-linked PR is safe. Before finishing PR work, call list_thread_pull_requests and link any PR from your work that is missing. Do not link unrelated PRs mentioned only as background. If a linking call fails, report that failure instead of claiming the PR is linked.
-</pull_request_linking>`;
+</pull_request_linking>
+
+<worktree_handoff>
+When the t3-code MCP server exposes t3_worktree_handoff and you create a git worktree to continue this thread's work in, call t3_worktree_handoff with the worktree's absolute path right after creating it. Until you do, T3 Code shows the thread on the project checkout and opens that folder instead of the worktree. Do not call it for worktrees you create for other purposes.
+</worktree_handoff>`;
 
 /** Shared runtime context; omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
