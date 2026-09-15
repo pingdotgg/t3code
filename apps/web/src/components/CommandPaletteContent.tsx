@@ -1,6 +1,15 @@
 import { ArrowDownIcon, ArrowUpIcon } from "lucide-react";
+import { useAtomValue } from "@effect/atom-react";
+import { useParams } from "@tanstack/react-router";
 import { type ComponentProps, type ReactNode, useLayoutEffect, useRef } from "react";
 
+import { pickerNavigationKeyForEvent } from "../keybindings";
+import { isPreviewFocused } from "../lib/previewFocus";
+import { isTerminalFocused } from "../lib/terminalFocus";
+import { selectActiveRightPanel, useRightPanelStore } from "../rightPanelStore";
+import { primaryServerKeybindingsAtom } from "../state/server";
+import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
+import { resolveThreadRouteTarget } from "../threadRoutes";
 import { Command, CommandFooter, CommandInput, CommandPanel } from "./ui/command";
 import { Kbd, KbdGroup } from "./ui/kbd";
 
@@ -34,6 +43,22 @@ export function CommandPaletteContent({
   ...commandProps
 }: CommandPaletteContentProps) {
   const inputRef = useRef<HTMLInputElement>(null);
+  const keybindings = useAtomValue(primaryServerKeybindingsAtom);
+  const routeTarget = useParams({
+    strict: false,
+    select: (params) => resolveThreadRouteTarget(params),
+  });
+  const routeThreadRef = routeTarget?.kind === "server" ? routeTarget.threadRef : null;
+  const terminalOpen = useTerminalUiStateStore((state) =>
+    routeThreadRef
+      ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
+      : false,
+  );
+  const previewOpen = useRightPanelStore((state) =>
+    routeThreadRef
+      ? selectActiveRightPanel(state.byThreadKey, routeThreadRef) === "preview"
+      : false,
+  );
 
   // Direct-open flows replace the initial palette view after the dialog has
   // already moved focus. Reclaim it when the replacement input mounts so
@@ -42,11 +67,41 @@ export function CommandPaletteContent({
     inputRef.current?.focus();
   }, []);
 
+  const onInputKeyDown: NonNullable<ComponentProps<typeof CommandInput>["onKeyDown"]> = (event) => {
+    const navigationKey = pickerNavigationKeyForEvent(event, keybindings, {
+      context: {
+        terminalFocus: isTerminalFocused(),
+        terminalOpen,
+        previewFocus: isPreviewFocused(),
+        previewOpen,
+        modelPickerOpen: false,
+        pickerFocus: true,
+      },
+    });
+    if (!navigationKey || event.nativeEvent.isComposing) {
+      inputProps.onKeyDown?.(event);
+      return;
+    }
+
+    event.preventDefault();
+    event.stopPropagation();
+    event.preventBaseUIHandler();
+    event.currentTarget.dispatchEvent(
+      new globalThis.KeyboardEvent("keydown", {
+        key: navigationKey,
+        code: navigationKey,
+        bubbles: true,
+        cancelable: true,
+        repeat: event.repeat,
+      }),
+    );
+  };
+
   return (
-    <div className="contents" data-testid={testId}>
+    <div className="contents" data-keybinding-picker-focus="" data-testid={testId}>
       <Command {...commandProps}>
         <div className="relative">
-          <CommandInput {...inputProps} ref={inputRef} />
+          <CommandInput {...inputProps} ref={inputRef} onKeyDown={onInputKeyDown} />
           {inputAccessory}
         </div>
         <CommandPanel className={panelClassName}>{children}</CommandPanel>

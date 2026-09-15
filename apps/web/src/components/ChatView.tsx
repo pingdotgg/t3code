@@ -9654,6 +9654,7 @@ export default function ChatView(props: ChatViewProps) {
                             settings={settings}
                             keybindings={keybindings}
                             terminalOpen={Boolean(terminalUiState.terminalOpen)}
+                            previewOpen={activeRightPanelKind === "preview"}
                             gitCwd={gitCwd}
                             pullRequestProjectId={
                               supportsPullRequests ? (activeProject?.id ?? null) : null

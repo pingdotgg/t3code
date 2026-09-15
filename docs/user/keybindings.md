@@ -75,7 +75,7 @@ Join modifiers and a key with `+`, such as `mod+shift+d` or `ctrl+l`.
 ## When conditions
 
 Available context keys are `terminalFocus`, `terminalOpen`, `previewFocus`,
-`previewOpen`, and `modelPickerOpen`. Unknown keys evaluate to `false`.
+`previewOpen`, `modelPickerOpen`, and `pickerFocus`. Unknown keys evaluate to `false`.
 
 Combine keys with `!` for not, `&&` for and, `||` for or, and parentheses:
 
@@ -97,6 +97,17 @@ shortcut; assign one in **Settings → Keybindings**.
 `chat.new` may ask you to choose a project when there is more than one.
 `chat.newLocal` skips that chooser. Both use your
 [new-thread defaults](./thread-sidebar.md#start-a-thread).
+
+`picker.previous` and `picker.next` move through command-palette results and composer file, skill,
+or slash-command suggestions. They have no default shortcuts; Up Arrow and Down Arrow always keep
+their native behavior. To add Emacs-style picker navigation without changing those keys, use:
+
+```json
+[
+  { "key": "ctrl+p", "command": "picker.previous", "when": "pickerFocus" },
+  { "key": "ctrl+n", "command": "picker.next", "when": "pickerFocus" }
+]
+```
 
 ## Reserved shortcuts
 
