@@ -36,6 +36,20 @@ import { createNavigatingVoiceToolExecutor } from "./toolBridge";
     pre-client mic/mint work folded into "connecting". */
 export type VoicePanelPhase = "idle" | "connecting" | "live" | "closing" | "closed" | "error";
 
+/** One ordered chat entry in the voice panel: a speaker-labeled utterance
+    accumulated from the live client's transcript deltas. The client assigns
+    the stable `utterance` key per boundary (channel flip, delegation);
+    consecutive deltas sharing the key append to the same entry. */
+export interface VoiceUtterance {
+  readonly id: string;
+  readonly channel: "input" | "output";
+  readonly text: string;
+}
+
+/** Upper bound on retained utterances; the panel shows the latest window and
+    the transcript cannot grow without bound across a long session. */
+const MAX_UTTERANCES = 200;
+
 export interface VoicePanelState {
   readonly phase: VoicePanelPhase;
   /** True from connect() until the client exists (mic capture + broker port
@@ -43,8 +57,8 @@ export interface VoicePanelState {
   readonly starting: boolean;
   readonly micMuted: boolean;
   readonly error: VoiceToolError | null;
-  readonly inputTranscript: string;
-  readonly outputTranscript: string;
+  /** Ordered chat utterances, oldest first, speaker-labeled by channel. */
+  readonly utterances: ReadonlyArray<VoiceUtterance>;
   /** Tool name while delegated backend work is in flight (drives the
       visible work indicator so interruption + correction stays usable). */
   readonly inFlightTool: string | null;
@@ -132,8 +146,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     starting: false,
     micMuted: false,
     error: null,
-    inputTranscript: "",
-    outputTranscript: "",
+    utterances: [],
     inFlightTool: null,
     navigationStatus: null,
     navigationFailed: false,
@@ -198,10 +211,28 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         break;
       }
       case "transcript": {
-        if (event.channel === "input") {
-          state.inputTranscript += event.delta;
+        // Late or interleaved deltas fold by the client-assigned utterance
+        // key: the matching entry appends in place (keeping its position so
+        // the reading order stays stable), a new key opens a new entry in
+        // arrival order.
+        const key = `${event.channel}:${event.utterance}`;
+        const index = state.utterances.findIndex((utterance) => utterance.id === key);
+        if (index >= 0) {
+          const existing = state.utterances[index]!;
+          state.utterances = state.utterances.with(index, {
+            ...existing,
+            text: existing.text + event.delta,
+          });
         } else {
-          state.outputTranscript += event.delta;
+          state.utterances = [
+            ...state.utterances,
+            { id: key, channel: event.channel, text: event.delta },
+          ];
+          if (state.utterances.length > MAX_UTTERANCES) {
+            state.utterances = state.utterances.slice(state.utterances.length - MAX_UTTERANCES);
+          }
+        }
+        if (event.channel === "output") {
           // The model is speaking usefully after a navigation: mark it once.
           navigator.onOutputTranscriptDelta();
         }
@@ -261,8 +292,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     state.error = null;
     state.navigationStatus = null;
     state.navigationFailed = false;
-    state.inputTranscript = "";
-    state.outputTranscript = "";
+    state.utterances = [];
     state.inFlightTool = null;
     emitChange();
     try {
@@ -378,8 +408,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
 
   const clear = (): void => {
     state.error = null;
-    state.inputTranscript = "";
-    state.outputTranscript = "";
+    state.utterances = [];
     state.inFlightTool = null;
     state.navigationStatus = null;
     state.navigationFailed = false;

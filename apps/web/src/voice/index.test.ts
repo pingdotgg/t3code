@@ -777,8 +777,13 @@ describe("voice panel controller disposal", () => {
     expect(harness.controller.getState().phase).toBe("closed");
 
     // Late client events after disposal apply no state.
-    harness.clients[0]!.emit({ type: "transcript", channel: "input", delta: "late" });
-    expect(harness.controller.getState().inputTranscript).toBe("");
+    harness.clients[0]!.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "late",
+      utterance: "in-1",
+    });
+    expect(harness.controller.getState().utterances).toEqual([]);
   });
 
   it("disposal while a connect is pending acquires nothing afterward", async () => {

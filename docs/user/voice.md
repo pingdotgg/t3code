@@ -37,9 +37,14 @@ name, and reports back when longer research finishes.
 ## Using voice
 
 The voice panel sits in the corner of the chat surface. Press **Connect** and allow microphone
-access. Speak normally; you will see your words and the replies appear as transcripts. Use **Mute**
-to stop the microphone without ending the session, and **End** to close it. While T3 is working on
-your behalf, the panel shows which tool is running.
+access. Speak normally; the panel keeps a running transcript like a chat, oldest entry first, with
+each of your utterances labeled **You** and each of the assistant's labeled **Assistant**. Words
+appear in place as they are recognized, and an utterance you interrupt or add to late still lands
+on its own entry. The transcript keeps the latest 200 entries and scrolls only while you are
+already reading the newest one; scroll up to reread history without being pulled back down. Use
+**Mute** to stop the microphone without ending the session, and **End** to close it. While T3 is
+working on your behalf, the panel shows which tool is running. **Clear** empties the transcript
+and status lines, and reconnecting starts a fresh transcript.
 
 When voice opens a thread, a short chime confirms that the window reached the destination.
 Successful navigation does not need a spoken title or sentence. Errors and necessary questions

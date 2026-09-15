@@ -242,16 +242,130 @@ describe("voice panel controller", () => {
     expect(harness.controller.getState().starting).toBe(false);
   });
 
-  it("renders transcripts from client transcript events per channel", async () => {
+  it("folds transcript deltas into ordered speaker-labeled utterances", async () => {
     const harness = makeHarness();
     await harness.controller.connect();
 
-    harness.fakeClient.emit({ type: "transcript", channel: "input", delta: "find the " });
-    harness.fakeClient.emit({ type: "transcript", channel: "input", delta: "macroscope thread" });
-    harness.fakeClient.emit({ type: "transcript", channel: "output", delta: "Opening it now." });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "find the ",
+      utterance: "in-1",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "macroscope thread",
+      utterance: "in-1",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "Opening it now.",
+      utterance: "out-1",
+    });
 
-    expect(harness.controller.getState().inputTranscript).toBe("find the macroscope thread");
-    expect(harness.controller.getState().outputTranscript).toBe("Opening it now.");
+    expect(harness.controller.getState().utterances).toEqual([
+      { id: "input:in-1", channel: "input", text: "find the macroscope thread" },
+      { id: "output:out-1", channel: "output", text: "Opening it now." },
+    ]);
+  });
+
+  it("keeps interleaved multi-turn utterances in arrival order with per-utterance streaming", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "catch me up",
+      utterance: "in-1",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "On the ",
+      utterance: "out-1",
+    });
+    // The user interrupts while the assistant is mid-sentence, then the
+    // assistant resumes its answer as a new utterance.
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "just the Oracle project",
+      utterance: "in-2",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "Oracle project.",
+      utterance: "out-2",
+    });
+
+    expect(harness.controller.getState().utterances).toEqual([
+      { id: "input:in-1", channel: "input", text: "catch me up" },
+      { id: "output:out-1", channel: "output", text: "On the " },
+      { id: "input:in-2", channel: "input", text: "just the Oracle project" },
+      { id: "output:out-2", channel: "output", text: "Oracle project." },
+    ]);
+  });
+
+  it("appends a late delta to its matching utterance even after newer entries exist", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "Part one.",
+      utterance: "out-1",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "go on",
+      utterance: "in-1",
+    });
+    // A late delta carrying the earlier utterance key still lands on its
+    // owner; the entry order reflects arrival, keyed folding stays exact.
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: " Part one continued.",
+      utterance: "out-1",
+    });
+
+    const utterances = harness.controller.getState().utterances;
+    expect(utterances).toHaveLength(2);
+    expect(utterances[0]).toEqual({
+      id: "output:out-1",
+      channel: "output",
+      text: "Part one. Part one continued.",
+    });
+    expect(utterances[1]).toEqual({
+      id: "input:in-1",
+      channel: "input",
+      text: "go on",
+    });
+  });
+
+  it("bounds retained utterances to the latest window", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+
+    for (let index = 0; index < 205; index++) {
+      harness.fakeClient.emit({
+        type: "transcript",
+        channel: "input",
+        delta: `u${index}`,
+        utterance: `in-${index + 1}`,
+      });
+    }
+
+    const utterances = harness.controller.getState().utterances;
+    expect(utterances).toHaveLength(200);
+    expect(utterances[0]?.text).toBe("u5");
+    expect(utterances[utterances.length - 1]?.text).toBe("u204");
   });
 
   it("shows the in-flight tool while delegated work runs and clears it on completion", async () => {
@@ -320,19 +434,53 @@ describe("voice panel controller", () => {
     expect(harness.controller.getState().phase).toBe("closed");
   });
 
-  it("clears transcripts, errors, and navigation display", async () => {
+  it("clears utterances, errors, and navigation display", async () => {
     const harness = makeHarness();
     await harness.controller.connect();
-    harness.fakeClient.emit({ type: "transcript", channel: "input", delta: "hello" });
-    harness.fakeClient.emit({ type: "transcript", channel: "output", delta: "hi" });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "hello",
+      utterance: "in-1",
+    });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "hi",
+      utterance: "out-1",
+    });
     await harness.controller.end();
 
     harness.controller.clear();
 
-    expect(harness.controller.getState().inputTranscript).toBe("");
-    expect(harness.controller.getState().outputTranscript).toBe("");
+    expect(harness.controller.getState().utterances).toEqual([]);
     expect(harness.controller.getState().error).toBeNull();
     expect(harness.controller.getState().navigationStatus).toBeNull();
+  });
+
+  it("resets utterances when reconnecting after a session ends", async () => {
+    const harness = makeHarness();
+    await harness.controller.connect();
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "hello",
+      utterance: "in-1",
+    });
+    await harness.controller.end();
+
+    await harness.controller.connect();
+
+    expect(harness.controller.getState().utterances).toEqual([]);
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "fresh start",
+      utterance: "in-1",
+    });
+    expect(harness.controller.getState().utterances).toEqual([
+      { id: "input:in-1", channel: "input", text: "fresh start" },
+    ]);
   });
 
   it("records a failed navigation readably in the navigation status", async () => {
@@ -355,7 +503,12 @@ describe("voice panel controller", () => {
     await harness.controller.connect();
 
     // Output speech before any navigation: no first_useful_speech.
-    harness.fakeClient.emit({ type: "transcript", channel: "output", delta: "hello" });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "hello",
+      utterance: "out-1",
+    });
     expect(
       harness.fakeClient.emittedMarks.filter((mark) => mark.mark === "first_useful_speech"),
     ).toHaveLength(0);
@@ -376,7 +529,12 @@ describe("voice panel controller", () => {
     expect(ackMarks[0]?.detail).toBe("env-1/thread-1");
 
     // The first output delta after the acknowledgment fires first_useful_speech.
-    harness.fakeClient.emit({ type: "transcript", channel: "output", delta: "Here it is." });
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "output",
+      delta: "Here it is.",
+      utterance: "out-2",
+    });
     const speechMarks = harness.fakeClient.emittedMarks.filter(
       (mark) => mark.mark === "first_useful_speech",
     );
