@@ -411,6 +411,7 @@ function deriveWorkLogEntries(
   const ordered = Arr.sort(activities, activityOrder);
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
+    // Mobile has no setup card, so a failed setup surfaces as an error row.
     if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
     if (activity.kind === "tool.started") continue;
     // Like web: an agent's task.started row anchors its batch. It has a fixed
