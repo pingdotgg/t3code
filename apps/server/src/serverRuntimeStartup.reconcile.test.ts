@@ -999,3 +999,112 @@ it.effect("settles failed opt-in recovery without retrying the provider turn", (
     });
   }),
 );
+
+const compacting = (thread: ReturnType<typeof makeThread>) => ({
+  ...thread,
+  session: { ...thread.session, statusDetail: "compacting" as const },
+});
+
+it.effect("clears the compaction detail when an orphaned session settles as an error", () =>
+  Effect.gen(function* () {
+    const thread = compacting(
+      makeThread("thread-compacting-orphan", "running", TurnId.make("turn-compacting-orphan")),
+    );
+    const dispatched: OrchestrationCommand[] = [];
+
+    yield* runReconciliation({
+      threads: [thread],
+      directory: {
+        getBinding: () => Effect.succeed(Option.none()),
+        upsert: () => Effect.die("unused"),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+
+    const [command] = dispatched;
+    assert.equal(command?.type, "thread.session.set");
+    assert.deepStrictEqual(
+      command?.type === "thread.session.set"
+        ? {
+            status: command.session.status,
+            activeTurnId: command.session.activeTurnId,
+            hasStatusDetail: "statusDetail" in command.session,
+          }
+        : null,
+      { status: "error", activeTurnId: null, hasStatusDetail: false },
+    );
+  }),
+);
+
+it.effect("clears the compaction detail when restart continuation resumes the session", () =>
+  Effect.gen(function* () {
+    const turnId = TurnId.make("turn-compacting-continued");
+    const thread = compacting(makeThread("thread-compacting-continued", "running", turnId));
+    const cleared = yield* Deferred.make<void>();
+    const dispatched: OrchestrationCommand[] = [];
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId: thread.id,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId,
+      status: "running",
+      resumeCursor: { threadId: thread.id },
+      runtimePayload: { activeTurnId: turnId },
+    };
+
+    yield* runReconciliation({
+      threads: [thread],
+      continueAfterRestart: true,
+      providerService: {
+        ...makeProviderService(),
+        getCapabilities: () =>
+          Effect.succeed({ sessionModelSwitch: "in-session", promptlessTurnContinuation: true }),
+        sendTurn: (input) =>
+          Effect.succeed({ threadId: input.threadId, turnId: TurnId.make("turn-continued") }),
+      },
+      directory: {
+        getBinding: () => Effect.sync(() => Option.some(binding)),
+        upsert: (next) =>
+          Effect.gen(function* () {
+            binding = next;
+            const payload = next.runtimePayload;
+            if (
+              payload !== null &&
+              typeof payload === "object" &&
+              !Array.isArray(payload) &&
+              "continueAfterServerUpdate" in payload &&
+              payload.continueAfterServerUpdate === null
+            ) {
+              yield* Deferred.succeed(cleared, undefined);
+            }
+          }),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: (command) =>
+        Effect.sync(() => dispatched.push(command)).pipe(
+          Effect.as({ sequence: dispatched.length }),
+        ),
+    });
+    yield* Deferred.await(cleared);
+
+    assert.deepStrictEqual(
+      dispatched.map(
+        (command) =>
+          command.type === "thread.session.set" && {
+            status: command.session.status,
+            hasStatusDetail: "statusDetail" in command.session,
+          },
+      ),
+      [{ status: "starting", hasStatusDetail: false }],
+    );
+  }),
+);

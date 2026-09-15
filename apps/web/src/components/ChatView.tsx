@@ -3180,10 +3180,14 @@ export default function ChatView(props: ChatViewProps) {
         const payload = activity.payload as { readonly requestId?: unknown } | null | undefined;
         return payload?.requestId === pendingCompactionMessage.id;
       }));
+  // Two sources, one label: the user's own `/compact` (tracked through its
+  // request message, which exists before the provider says anything) and the
+  // provider compacting on its own mid-turn, which only the session reports.
   const isCompacting =
-    (isSendBusy || phase === "connecting" || phase === "running") &&
-    compactRequestIsActive &&
-    !compactionSettled;
+    activeThread?.session?.statusDetail === "compacting" ||
+    ((isSendBusy || phase === "connecting" || phase === "running") &&
+      compactRequestIsActive &&
+      !compactionSettled);
   // The server records a running worktree setup on the thread for the whole
   // bootstrap window. That record, with no turn yet, is how a reload or another
   // client sees a worktree still being prepared, so it counts as working like
