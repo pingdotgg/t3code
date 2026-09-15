@@ -227,10 +227,13 @@ export function clampPreviewMiniPlayerPosition(
     const span = spanOf(x, player.width);
     return {
       x,
-      y: Math.max(
-        Math.min(inside.y, floorFor(span, container, obstacles) - gap - player.height),
-        ceilingFor(span, obstacles) + gap,
-        gap,
+      y: Math.min(
+        container.height - gap - player.height,
+        Math.max(
+          Math.min(inside.y, floorFor(span, container, obstacles) - gap - player.height),
+          ceilingFor(span, obstacles) + gap,
+          gap,
+        ),
       ),
     };
   };
@@ -288,7 +291,14 @@ export function resolvePreviewMiniPlayerFrame(input: {
   const size = fitPreviewMiniPlayerWidth(
     width ?? defaultPreviewMiniPlayerWidth(source),
     source,
-    availableArea(container, obstacles, position && width ? spanOf(position.x, width) : null),
+    availableArea(
+      container,
+      // A stored player keeps its size under the details card — the card's
+      // ceiling is a placement concern, not a sizing one, and the clamp pass
+      // relocates the frame into columns the card leaves open.
+      position && width ? { composer: obstacles.composer, detailsCard: null } : obstacles,
+      position && width ? spanOf(position.x, width) : null,
+    ),
   );
   const { detailsCard } = obstacles;
   const anchored =

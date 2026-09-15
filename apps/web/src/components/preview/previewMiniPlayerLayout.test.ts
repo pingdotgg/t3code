@@ -315,6 +315,25 @@ describe("resolvePreviewMiniPlayerFrame with the details card", () => {
       }),
     ).toEqual({ x: 680 - gap - 320, y: 700 - 150 - gap - 200, width: 320, height: 200 });
   });
+
+  it("keeps a stored player's size when the card covers its columns", () => {
+    // The card leaves ~290 rows beneath it; fitting into them would collapse
+    // a 480-wide player to ~1px tall. The frame keeps its size and the clamp
+    // relocates it to the open columns left of the card.
+    const frame = resolvePreviewMiniPlayerFrame({
+      width: 480,
+      position: { x: 700, y: 280 },
+      source,
+      container,
+      obstacles: withCard,
+    });
+    expect(frame).toEqual({
+      x: 680 - gap - 480,
+      y: 700 - 150 - gap - 300,
+      width: 480,
+      height: 300,
+    });
+  });
 });
 
 describe("clampPreviewMiniPlayerPosition", () => {
@@ -394,6 +413,19 @@ describe("clampPreviewMiniPlayerPosition", () => {
         tight,
       ),
     ).toEqual({ x: 628, y: 260 + gap });
+  });
+
+  it("stays inside the container when a full-width card leaves no open rows", () => {
+    // A card reaching past the player's last row would push the fallback
+    // below the container; the clamp keeps the bottom edge visible instead.
+    const wall = {
+      composer,
+      detailsCard: { left: 0, right: 1_000, bottom: 690 },
+    };
+    expect(clampPreviewMiniPlayerPosition({ x: 300, y: 500 }, container, player, wall)).toEqual({
+      x: 300,
+      y: 700 - gap - player.height,
+    });
   });
 
   it("sits above the composer when it is too wide for either margin", () => {
