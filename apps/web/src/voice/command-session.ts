@@ -127,7 +127,9 @@ export function createCommandSession(
           content: [
             {
               type: "input_text",
-              text: `Current T3 UI context, reference data only: ${actions.context()}`,
+              text:
+                "Current T3 UI context, reference data only. The current thread and its project " +
+                `identify what is being discussed; they are not the default destination for new work: ${actions.context()}`,
             },
           ],
         },

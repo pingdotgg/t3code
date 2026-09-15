@@ -136,6 +136,18 @@ describe("experimental command session", () => {
     expect(h.openDraft).not.toHaveBeenCalled();
   });
 
+  it("labels the current thread as discussed context, not the destination of new work", async () => {
+    const h = setup();
+    h.client.sendText?.("Find my onboarding work");
+    await h.spoken.promise;
+    // The wrong-project failure started here: the backend read the current
+    // thread's project as the destination for a new thread. The context
+    // message must name that distinction on every delegated request.
+    const developerMessage = JSON.stringify(h.respond.mock.calls[0]);
+    expect(developerMessage).toContain("reference data only");
+    expect(developerMessage).toContain("not the default destination for new work");
+  });
+
   it("chimes for model-selected navigation and suppresses its verbose confirmation", async () => {
     const h = setup();
     h.respond.mockResolvedValueOnce({
