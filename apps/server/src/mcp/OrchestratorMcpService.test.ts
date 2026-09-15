@@ -410,8 +410,15 @@ describe("OrchestratorMcpService", () => {
       projection: OrchestrationV2ThreadProjection,
       writes: Ref.Ref<number>,
       listedTask: ScheduledTask = privilegedTask,
-    ) =>
-      Layer.mergeAll(
+      captured?: Ref.Ref<ReadonlyArray<unknown>>,
+    ) => {
+      const record = (input: unknown) =>
+        Ref.update(writes, (count) => count + 1).pipe(
+          Effect.andThen(
+            captured === undefined ? Effect.void : Ref.update(captured, (all) => [...all, input]),
+          ),
+        );
+      return Layer.mergeAll(
         NodeServices.layer,
         Layer.mock(ThreadManagementService)({
           getThreadProjection: () => Effect.succeed(projection),
@@ -431,16 +438,12 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistryV2)({ list: () => Effect.succeed([]) }),
         Layer.mock(ScheduledTaskService)({
           list: () => Effect.succeed({ tasks: [listedTask] }),
-          upsert: () =>
-            Ref.update(writes, (count) => count + 1).pipe(Effect.as({ task: listedTask })),
-          update: () =>
-            Ref.update(writes, (count) => count + 1).pipe(
-              Effect.as(Option.some({ task: listedTask })),
-            ),
-          delete: () =>
-            Ref.update(writes, (count) => count + 1).pipe(Effect.as({ id: scheduledTaskId })),
+          upsert: (input) => record(input).pipe(Effect.as({ task: listedTask })),
+          update: (input) => record(input).pipe(Effect.as(Option.some({ task: listedTask }))),
+          delete: (input) => record(input).pipe(Effect.as({ id: scheduledTaskId })),
         }),
       );
+    };
 
     it.effect("rejects schedule mutations when the caller owns no live run", () =>
       Effect.gen(function* () {
@@ -554,6 +557,45 @@ describe("OrchestratorMcpService", () => {
           assert.equal(yield* Ref.get(writes), 0);
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),
+    );
+
+    it.effect(
+      "pins the authorizing run and destination modes into every scheduled-task write",
+      () =>
+        Effect.gen(function* () {
+          const writes = yield* Ref.make(0);
+          const captured = yield* Ref.make<ReadonlyArray<unknown>>([]);
+          const projection = callerProjection("full-access", "default", [liveRun]);
+          const dependencies = scheduleDeps(projection, writes, privilegedTask, captured);
+          yield* Effect.gen(function* () {
+            const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+            yield* service.scheduleTask(schedScope, {
+              prompt: "check in",
+              schedule: { type: "interval", everyMs: 60_000 },
+            });
+            // The live-run pin applies to de-escalating writes too: the
+            // service re-checks it inside the transaction, so a mutation
+            // landing after the authorizing run settled must fail there.
+            yield* service.updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+            });
+            yield* service.deleteScheduledTask(schedScope, { scheduledTaskId });
+            const calls = (yield* Ref.get(captured)) as ReadonlyArray<Record<string, unknown>>;
+            assert.equal(calls.length, 3);
+            for (const call of calls) {
+              assert.deepEqual(call["expectedActiveRun"], {
+                id: liveRun.id,
+                threadId: parentThreadId,
+                providerInstanceId: ProviderInstanceId.make("codex"),
+              });
+            }
+            // Creation also pins the modes the snapshot authorized so a
+            // concurrent destination-mode change fails the upsert.
+            assert.equal(calls[0]?.["expectedExecutionRuntimeMode"], "full-access");
+            assert.equal(calls[0]?.["expectedExecutionInteractionMode"], "default");
+          }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+        }),
     );
 
     it.effect(

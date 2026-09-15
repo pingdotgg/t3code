@@ -4,6 +4,7 @@ import {
   CommandId,
   IsoDateTime,
   ProjectId,
+  RunId,
   ScheduledTaskId,
   ThreadId,
   TrimmedNonEmptyString,
@@ -14,6 +15,7 @@ import {
   OrchestrationV2CreationSource,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
 } from "./orchestrationV2.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 
 /** 24-hour "HH:MM" wall-clock time. Mirrors `parseTimeOfDay` on the server. */
@@ -122,6 +124,18 @@ export const ScheduledTaskListResult = Schema.Struct({
 });
 export type ScheduledTaskListResult = typeof ScheduledTaskListResult.Type;
 
+/**
+ * Pins the live caller-owned run a schedule mutation was authorized under.
+ * Re-checked inside the write transaction: a mutation that commits after the
+ * provider run settled is rejected instead of carrying a dead run's
+ * authorization into unattended state.
+ */
+const ScheduledTaskExpectedActiveRun = Schema.Struct({
+  id: RunId,
+  threadId: ThreadId,
+  providerInstanceId: ProviderInstanceId,
+});
+
 export const ScheduledTaskUpsertInput = Schema.Struct({
   id: Schema.optional(ScheduledTaskId),
   commandId: Schema.optional(CommandId),
@@ -137,6 +151,13 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   interactionMode: ProviderInteractionMode,
   createdBy: Schema.optional(OrchestrationV2Actor),
   creationSource: Schema.optional(OrchestrationV2CreationSource),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
+  // Same atomic precondition as update: the modes the created task's runs
+  // execute under — the bound thread's modes — are re-resolved inside the
+  // transaction so a concurrent mode change on the destination fails the
+  // write rather than persisting a task authorized against a stale snapshot.
+  expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
+  expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
@@ -172,6 +193,7 @@ export const ScheduledTaskUpdateInput = Schema.Struct({
   // caller's authorization.
   expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
   expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
 });
 export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
 
@@ -193,6 +215,7 @@ export const ScheduledTaskDeleteInput = Schema.Struct({
   expectedInteractionMode: Schema.optional(ProviderInteractionMode),
   expectedExecutionRuntimeMode: Schema.optional(RuntimeMode),
   expectedExecutionInteractionMode: Schema.optional(ProviderInteractionMode),
+  expectedActiveRun: Schema.optional(ScheduledTaskExpectedActiveRun),
 });
 export type ScheduledTaskDeleteInput = typeof ScheduledTaskDeleteInput.Type;
 
