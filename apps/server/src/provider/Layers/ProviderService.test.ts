@@ -986,6 +986,89 @@ it.effect("ProviderServiceLive rejects new sessions for disabled custom instance
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+it.effect(
+  "ProviderServiceLive resumes a stopped session when switching to an instance with shared resume state",
+  () =>
+    Effect.gen(function* () {
+      const primaryInstanceId = ProviderInstanceId.make("codex");
+      const overlayInstanceId = ProviderInstanceId.make("codex_b");
+      const codex = makeFakeCodexAdapter();
+      const unsupported = () =>
+        new ProviderUnsupportedError({
+          provider: CODEX_DRIVER,
+        });
+      const instanceIds = new Set<ProviderInstanceId>([primaryInstanceId, overlayInstanceId]);
+      const registry: ProviderAdapterRegistry.ProviderAdapterRegistry["Service"] = {
+        getByInstance: (requestedInstanceId) =>
+          instanceIds.has(requestedInstanceId)
+            ? Effect.succeed(codex.adapter)
+            : Effect.fail(unsupported()),
+        getInstanceInfo: (requestedInstanceId) =>
+          instanceIds.has(requestedInstanceId)
+            ? Effect.succeed({
+                instanceId: requestedInstanceId,
+                driverKind: CODEX_DRIVER,
+                displayName: undefined,
+                enabled: true,
+                continuationIdentity: {
+                  driverKind: CODEX_DRIVER,
+                  continuationKey: "codex:home:/Users/example/.codex",
+                },
+              })
+            : Effect.fail(unsupported()),
+        listInstances: () => Effect.succeed(Array.from(instanceIds)),
+        subscribeChanges: Effect.flatMap(PubSub.unbounded<void>(), (pubsub) =>
+          PubSub.subscribe(pubsub),
+        ),
+      };
+      const runtimeRepositoryLayer = ProviderSessionRuntime.layer.pipe(
+        Layer.provide(SqlitePersistenceMemory),
+      );
+      const providerLayer = makeProviderServiceLive().pipe(
+        Layer.provide(NodeServices.layer),
+        Layer.provide(Layer.succeed(ProviderAdapterRegistry.ProviderAdapterRegistry, registry)),
+        Layer.provide(ProviderSessionDirectoryLive.pipe(Layer.provide(runtimeRepositoryLayer))),
+        Layer.provide(defaultServerSettingsLayer),
+        Layer.provide(serverConfigTestLayer),
+        Layer.provide(AnalyticsService.layerTest),
+        Layer.provide(
+          Layer.succeed(
+            ProviderEventLoggers.ProviderEventLoggers,
+            ProviderEventLoggers.NoOpProviderEventLoggers,
+          ),
+        ),
+      );
+
+      const threadId = asThreadId("thread-instance-switch");
+      const cwd = fixtureCwd("project-instance-switch");
+      yield* Effect.gen(function* () {
+        const provider = yield* ProviderService.ProviderService;
+        const initial = yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: primaryInstanceId,
+          threadId,
+          cwd,
+          runtimeMode: "full-access",
+        });
+        yield* provider.stopSession({ threadId });
+        codex.startSession.mockClear();
+
+        const resumed = yield* provider.startSession(threadId, {
+          provider: CODEX_DRIVER,
+          providerInstanceId: overlayInstanceId,
+          threadId,
+          runtimeMode: "full-access",
+        });
+
+        assert.equal(resumed.providerInstanceId, overlayInstanceId);
+        assert.equal(codex.startSession.mock.calls.length, 1);
+        const startPayload = codex.startSession.mock.calls[0]?.[0];
+        assert.deepEqual(startPayload?.resumeCursor, initial.resumeCursor);
+        assert.equal(startPayload?.cwd, cwd);
+      }).pipe(Effect.provide(providerLayer));
+    }).pipe(Effect.provide(NodeServices.layer)),
+);
+
 const routing = makeProviderServiceLayer();
 
 const customCompactionDriver = ProviderDriverKind.make("custom-compaction-provider");
