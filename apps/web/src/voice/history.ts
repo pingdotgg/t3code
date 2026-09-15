@@ -324,7 +324,23 @@ export function sanitizeToolResult(output: unknown): VoiceHistoryToolResult | un
     return controls.length > 0 ? controls : undefined;
   };
   const controls =
-    record.controls !== undefined ? asControls(record.controls) : asControls(record.control);
+    record.controls !== undefined
+      ? asControls(record.controls)
+      : // A clickControl result is flat at top level (the real contract
+        // shape: {controlId, name?, role?, state?, message?}), both for an
+        // activation and for a refusal; synthesize its single control entry
+        // so the outcome (state, message) survives sanitization.
+        (asControls(record.control) ??
+        (record.controlId === undefined
+          ? undefined
+          : asControls([
+              {
+                controlId: record.controlId,
+                ...(record.name !== undefined ? { name: record.name } : {}),
+                ...(record.state !== undefined ? { state: record.state } : {}),
+                ...(record.message !== undefined ? { message: record.message } : {}),
+              },
+            ])));
   const string = (key: string): string | undefined => {
     const raw = asString(record[key]);
     return raw === undefined ? undefined : capText(raw);
