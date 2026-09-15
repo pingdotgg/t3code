@@ -2422,8 +2422,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
 
-  // Report edge transitions, including content/inset changes without a scroll,
-  // without rerendering the screen for each scroll event.
+  // Subscribe to edge transitions without updating the screen on every scroll.
   useLayoutEffect(() => {
     const listState = props.listRef.current?.getState();
     const onIsAtEndChange = props.onIsAtEndChange;
@@ -2506,6 +2505,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         // Reconcile follow before a later layout or resume can re-pin it.
         const listState = props.listRef.current?.getState();
         if (listState) {
+          // Row resizing can change the end without notifying the edge subscription.
+          props.onIsAtEndChange?.(listState.isAtEnd);
           transitionEndFollow({
             type: "disclosure-settled",
             isAtEnd: listState.isAtEnd,
@@ -2518,7 +2519,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         disclosureSettleSecondFrameRef.current = null;
       });
     });
-  }, [props.listRef, transitionEndFollow]);
+  }, [props.listRef, props.onIsAtEndChange, transitionEndFollow]);
 
   const suspendEndScrollMaintenanceForDisclosure = useCallback((anchorKey: string | null) => {
     disclosureAnchorKeyRef.current = anchorKey;
