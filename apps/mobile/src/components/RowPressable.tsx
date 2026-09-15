@@ -5,7 +5,7 @@ import { GestureDetector } from "react-native-gesture-handler";
 import { cn } from "../lib/cn";
 import { useHoverGesture } from "../lib/useHoverGesture";
 
-/** Shared row feedback, layered over the background so selection stays visible. */
+/** Pointer feedback layered over selection. Touch-down may be the start of a scroll. */
 export function RowPressable({
   children,
   className,
@@ -24,7 +24,7 @@ export function RowPressable({
             <View
               pointerEvents="none"
               className={cn("absolute inset-0", interactionClassName)}
-              style={{ opacity: props.disabled ? 0 : pressed ? 0.2 : hovered ? 0.1 : 0 }}
+              style={{ opacity: props.disabled || !hovered ? 0 : pressed ? 0.2 : 0.1 }}
             />
             {children}
           </>
