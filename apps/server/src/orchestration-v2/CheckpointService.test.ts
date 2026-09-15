@@ -41,7 +41,7 @@ it.effect("materializes the captured baseline at the requested scope ordinal", (
       Layer.mergeAll(
         idAllocatorLayer,
         Layer.mock(CheckpointStore.CheckpointStore)({
-          isGitRepository: () => Effect.succeed(true),
+          supportsCheckpoints: () => Effect.succeed(true),
           hasCheckpointRef,
         }),
       ),
