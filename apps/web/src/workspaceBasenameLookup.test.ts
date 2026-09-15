@@ -2,22 +2,9 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   claimWorkspaceBasenameLookup,
-  needsWorkspaceBasenameLookup,
+  needsLiteralWorkspaceFileCheck,
   pickWorkspaceBasenameMatch,
 } from "./workspaceBasenameLookup";
-
-describe("needsWorkspaceBasenameLookup", () => {
-  it("flags bare filenames", () => {
-    expect(needsWorkspaceBasenameLookup("ChatView.tsx")).toBe(true);
-    expect(needsWorkspaceBasenameLookup("Makefile")).toBe(true);
-  });
-
-  it("leaves anything with a directory alone", () => {
-    expect(needsWorkspaceBasenameLookup("apps/web/src/components/ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("apps\\web\\ChatView.tsx")).toBe(false);
-    expect(needsWorkspaceBasenameLookup("   ")).toBe(false);
-  });
-});
 
 describe("pickWorkspaceBasenameMatch", () => {
   const entries = [
@@ -26,9 +13,39 @@ describe("pickWorkspaceBasenameMatch", () => {
   ];
 
   it("takes the first exact filename match, not the closest fuzzy one", () => {
-    expect(pickWorkspaceBasenameMatch("ChatView.tsx", entries)).toBe(
-      "apps/web/src/components/ChatView.tsx",
-    );
+    expect(
+      pickWorkspaceBasenameMatch("ChatView.tsx", [
+        ...entries,
+        { path: "apps/desktop/src/ChatView.tsx", kind: "file" },
+      ]),
+    ).toBe("apps/web/src/components/ChatView.tsx");
+  });
+
+  it("matches a slashed path as a suffix wherever it actually lives", () => {
+    expect(
+      pickWorkspaceBasenameMatch("docs/GROUPS_PLAN.md", [
+        { path: "BudgetLens/docs/GROUPS_PLAN.md", kind: "file" },
+        { path: "docs/other.md", kind: "file" },
+      ]),
+    ).toBe("BudgetLens/docs/GROUPS_PLAN.md");
+  });
+
+  it("does not let a suffix match straddle a segment boundary", () => {
+    expect(
+      pickWorkspaceBasenameMatch("docs/plan.md", [{ path: "src/mydocs/plan.md", kind: "file" }]),
+    ).toBeNull();
+    expect(
+      pickWorkspaceBasenameMatch("plan.md", [{ path: "src/plan.md.bak", kind: "file" }]),
+    ).toBeNull();
+  });
+
+  it("prefers the exact suffix over a basename-only twin", () => {
+    expect(
+      pickWorkspaceBasenameMatch("docs/plan.md", [
+        { path: "other/plan.md", kind: "file" },
+        { path: "BudgetLens/docs/plan.md", kind: "file" },
+      ]),
+    ).toBe("BudgetLens/docs/plan.md");
   });
 
   it("ignores directories", () => {
@@ -74,10 +91,37 @@ describe("pickWorkspaceBasenameMatch", () => {
   });
 });
 
+describe("needsLiteralWorkspaceFileCheck", () => {
+  it("checks the disk when a slashed hit names a different file than the chip", () => {
+    expect(
+      needsLiteralWorkspaceFileCheck("docs/GROUPS_PLAN.md", "BudgetLens/docs/GROUPS_PLAN.md"),
+    ).toBe(true);
+  });
+
+  it("skips the disk when the hit is the literal path", () => {
+    expect(
+      needsLiteralWorkspaceFileCheck(
+        "apps/web/src/components/ChatView.tsx",
+        "apps/web/src/components/ChatView.tsx",
+      ),
+    ).toBe(false);
+  });
+
+  it("skips the disk when there is no hit", () => {
+    expect(needsLiteralWorkspaceFileCheck("docs/plan.md", null)).toBe(false);
+  });
+
+  it("skips the disk for bare names, which keep the ranked-first hit", () => {
+    expect(needsLiteralWorkspaceFileCheck("ChatView.tsx", "apps/web/src/ChatView.tsx")).toBe(
+      false,
+    );
+  });
+});
+
 describe("claimWorkspaceBasenameLookup", () => {
   it("keeps only the newest claim, whatever order the lookups settle in", () => {
-    const first = claimWorkspaceBasenameLookup();
-    const second = claimWorkspaceBasenameLookup();
+    const first = claimWorkspaceBasenameLookup("thread-a");
+    const second = claimWorkspaceBasenameLookup("thread-a");
 
     // The older lookup answering last must not reopen the panel behind the
     // newer one.
@@ -86,7 +130,13 @@ describe("claimWorkspaceBasenameLookup", () => {
   });
 
   it("stays valid while it is the only claim", () => {
-    const only = claimWorkspaceBasenameLookup();
+    const only = claimWorkspaceBasenameLookup("thread-a");
     expect(only()).toBe(true);
+  });
+
+  it("keeps another thread's in-flight claim valid", () => {
+    const threadA = claimWorkspaceBasenameLookup("thread-a");
+    claimWorkspaceBasenameLookup("thread-b");
+    expect(threadA()).toBe(true);
   });
 });
