@@ -516,7 +516,7 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
     }),
   );
 
-  it.effect("reads the conversation through the REST API, pinned to a version", () =>
+  it.effect("reads the conversation through the REST API, signed in and pinned to a version", () =>
     Effect.gen(function* () {
       mockedExecute.mockReturnValueOnce(
         Effect.succeed(
@@ -547,6 +547,9 @@ layer("AzureDevOpsPullRequestCli.layer", (it) => {
       expect(argsOfCall(0)).toContain(
         "https://dev.azure.com/acme/platform/_apis/git/r/web/pullRequests/42/threads?api-version=7.1",
       );
+      // Without an audience `az rest` sends no token to dev.azure.com and gets the sign-in page.
+      const args = argsOfCall(0);
+      expect(args[args.indexOf("--resource") + 1]).toBe("499b84ac-1321-427f-aa17-267ca6975798");
     }),
   );
 

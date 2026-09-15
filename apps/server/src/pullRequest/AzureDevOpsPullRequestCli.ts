@@ -111,6 +111,12 @@ export type AzureDevOpsPullRequestCliError =
 
 /** The version every REST call below is pinned to, so a new default cannot reshape a response. */
 const REST_API_VERSION = "7.1";
+/**
+ * The Entra application id of Azure DevOps, which `az rest` needs named to attach a token at all.
+ * It infers the audience for Azure's own endpoints and not for `dev.azure.com`, so without this
+ * the request goes out bare and Azure answers with its sign-in page instead of the threads.
+ */
+const AZURE_DEVOPS_RESOURCE_ID = "499b84ac-1321-427f-aa17-267ca6975798";
 const PULL_REQUEST_LIST_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 
 export class AzureDevOpsPullRequestCli extends Context.Service<
@@ -454,6 +460,8 @@ export const make = Effect.gen(function* () {
           "rest",
           "--method",
           "get",
+          "--resource",
+          AZURE_DEVOPS_RESOURCE_ID,
           "--url",
           `${input.threadsUrl}?api-version=${REST_API_VERSION}`,
         ],
