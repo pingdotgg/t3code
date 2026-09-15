@@ -46,6 +46,7 @@ import {
   WorkspaceBreadcrumbItem,
   WorkspaceBreadcrumbSeparator,
 } from "../WorkspaceBreadcrumb";
+import { subscribeThreadRename } from "../../threadRenameBus";
 import { cn } from "~/lib/utils";
 
 interface ChatHeaderProps {
@@ -189,6 +190,10 @@ export const ChatHeader = memo(function ChatHeader({
     renameCommittedRef.current = false;
     setRenaming({ threadId: activeThreadId, title: activeThreadTitle });
   }, [activeThreadId, activeThreadTitle]);
+  useEffect(() => {
+    if (!isServerThread) return;
+    return subscribeThreadRename(activeThreadRef, startRename);
+  }, [activeThreadRef, isServerThread, startRename]);
   const commitRename = useCallback(
     (title: string) => {
       setRenaming(null);
