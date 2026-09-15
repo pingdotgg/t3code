@@ -36,6 +36,7 @@ interface FakeCodexInput {
   forbidReasoningEffort?: boolean;
   requireArg?: string;
   forbidArg?: string;
+  requireIntegrationContext?: string;
   stdinMustContain?: string;
   stdinMustNotContain?: string;
 }
@@ -52,6 +53,7 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
     forbidReasoningEffort: input.forbidReasoningEffort ?? false,
     requireArg: input.requireArg ?? null,
     forbidArg: input.forbidArg ?? null,
+    requireIntegrationContext: input.requireIntegrationContext ?? null,
     stdinMustContain: input.stdinMustContain ?? null,
     stdinMustNotContain: input.stdinMustNotContain ?? null,
     stderr: input.stderr ?? null,
@@ -98,6 +100,12 @@ function makeFakeCodexBinary(dir: string, input: FakeCodexInput) {
         "}",
         "if (check.forbidArg !== null && originalArgs.includes(` ${check.forbidArg} `)) {",
         '  fail("forbidden arg: " + check.forbidArg, 9);',
+        "}",
+        "if (",
+        "  check.requireIntegrationContext !== null &&",
+        "  process.env.T3CODE_INTEGRATION_CONTEXT !== check.requireIntegrationContext",
+        ") {",
+        '  fail("integration context mismatch", 10);',
         "}",
         'if (check.requireImage && !seenImage) fail("missing --image input", 2);',
         "if (",
@@ -181,6 +189,33 @@ it.layer(CodexTextGenerationTestLayer)("CodexTextGeneration", (it) => {
       ),
     );
   }
+  it.effect("marks auxiliary codex exec subprocesses with the auxiliary integration context", () =>
+    withFakeCodexEnv(
+      {
+        output: JSON.stringify({ title: "Auxiliary title" }),
+        requireIntegrationContext: JSON.stringify({
+          version: 1,
+          kind: "auxiliary",
+          environmentId: "environment-codex-aux",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* fileSystem.writeFileString(
+            serverConfig.environmentIdPath,
+            "environment-codex-aux\n",
+          );
+          const result = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: DEFAULT_TEST_MODEL_SELECTION,
+          });
+          expect(result.title).toBe("Auxiliary title");
+        }),
+    ),
+  );
   it.effect("generates and sanitizes commit messages without branch by default", () =>
     withFakeCodexEnv(
       {

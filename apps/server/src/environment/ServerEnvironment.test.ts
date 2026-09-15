@@ -1,4 +1,10 @@
+// @effect-diagnostics nodeBuiltinImport:off - computes the expected desktop control address from the same Node temp directory and path primitives the server uses.
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
+import { HostProcessPlatform, HostProcessUserId } from "@t3tools/shared/hostProcess";
 import { expect, it } from "@effect/vitest";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
@@ -73,6 +79,29 @@ const makeServerConfig = Effect.fn(function* (baseDir: string) {
     startupPresentation: "browser",
   } satisfies ServerConfig.ServerConfig["Service"];
 });
+
+const describeWithDesktopHost = (
+  serverConfig: ServerConfig.ServerConfig["Service"],
+  overrides: Partial<ServerConfig.ServerConfig["Service"]>,
+  host: { readonly platform: NodeJS.Platform; readonly userId: number | undefined },
+) =>
+  Effect.gen(function* () {
+    const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
+    return yield* serverEnvironment.getDescriptor;
+  }).pipe(
+    Effect.provide(
+      ServerEnvironment.layer.pipe(
+        Layer.provide(ServerSecretStore.layer),
+        Layer.provide(ServerConfig.layer({ ...serverConfig, ...overrides })),
+        Layer.provide(
+          Layer.merge(
+            Layer.succeed(HostProcessPlatform, host.platform),
+            Layer.succeed(HostProcessUserId, host.userId),
+          ),
+        ),
+      ),
+    ),
+  );
 
 it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
   it.effect.each([
@@ -259,6 +288,138 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
 
       const web = yield* describeWith({ mode: "web", desktopTelemetryControlFd: 5 });
       expect(web.capabilities.desktopAppUpdate).toBeUndefined();
+    }),
+  );
+
+  it.effect("advertises the native desktop control address for a custom data directory", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-control-test-",
+      });
+      // A trailing separator must resolve to the same address the desktop
+      // shell computes from its own state directory.
+      const serverConfig = yield* makeServerConfig(`${baseDir}${NodePath.sep}`);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+
+      const platform = yield* HostProcessPlatform;
+      const userId = yield* HostProcessUserId;
+      const descriptor = yield* describeWithDesktopHost(
+        serverConfig,
+        { mode: "desktop", desktopTelemetryControlFd: 5 },
+        { platform, userId },
+      );
+      const expected = resolveDesktopAppControlAddress({
+        stateDir: NodePath.resolve(serverConfig.stateDir),
+        platform,
+        tempDir: NodeOS.tmpdir(),
+        userId,
+        joinPath: NodePath.join,
+      });
+
+      expect(descriptor.capabilities.desktopAppUpdate).toBe(true);
+      expect(descriptor.capabilities.desktopAppControl).toEqual({
+        version: 1,
+        address: expected.address,
+      });
+    }),
+  );
+
+  it.effect("advertises a Windows named-pipe desktop control address on a Windows host", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-control-win-test-",
+      });
+      const serverConfig = yield* makeServerConfig(baseDir);
+      yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+
+      const descriptor = yield* describeWithDesktopHost(
+        serverConfig,
+        { mode: "desktop", desktopTelemetryControlFd: 5 },
+        { platform: "win32", userId: undefined },
+      );
+      const expected = resolveDesktopAppControlAddress({
+        stateDir: NodePath.resolve(serverConfig.stateDir),
+        platform: "win32",
+        tempDir: NodeOS.tmpdir(),
+        userId: undefined,
+        joinPath: NodePath.join,
+      });
+
+      expect(expected.directory).toBeNull();
+      expect(descriptor.capabilities.desktopAppControl?.address).toMatch(
+        /^\\\\\.\\pipe\\t3code-app-[0-9a-f]{24}$/,
+      );
+      expect(descriptor.capabilities.desktopAppControl).toEqual({
+        version: 1,
+        address: expected.address,
+      });
+    }),
+  );
+
+  it.effect(
+    "omits desktopAppControl without the control fd, outside desktop mode, and on unsupported platforms",
+    () =>
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const baseDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "t3-server-environment-desktop-control-omit-test-",
+        });
+        const serverConfig = yield* makeServerConfig(baseDir);
+        yield* fileSystem.makeDirectory(serverConfig.stateDir, { recursive: true });
+        const host = { platform: "linux" as NodeJS.Platform, userId: 1000 };
+
+        const withoutFd = yield* describeWithDesktopHost(serverConfig, { mode: "desktop" }, host);
+        expect(withoutFd.capabilities.desktopAppControl).toBeUndefined();
+
+        const web = yield* describeWithDesktopHost(
+          serverConfig,
+          { mode: "web", desktopTelemetryControlFd: 5 },
+          host,
+        );
+        expect(web.capabilities.desktopAppControl).toBeUndefined();
+
+        const unsupported = yield* describeWithDesktopHost(
+          serverConfig,
+          { mode: "desktop", desktopTelemetryControlFd: 5 },
+          { platform: "aix", userId: 1000 },
+        );
+        expect(unsupported.capabilities.desktopAppControl).toBeUndefined();
+      }),
+  );
+
+  it.effect("gives different desktop control addresses for different data directories", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const firstBaseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-control-first-",
+      });
+      const secondBaseDir = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "t3-server-environment-desktop-control-second-",
+      });
+      const firstConfig = yield* makeServerConfig(firstBaseDir);
+      const secondConfig = yield* makeServerConfig(secondBaseDir);
+      yield* fileSystem.makeDirectory(firstConfig.stateDir, { recursive: true });
+      yield* fileSystem.makeDirectory(secondConfig.stateDir, { recursive: true });
+      const host = { platform: "linux" as NodeJS.Platform, userId: 1000 };
+
+      const first = yield* describeWithDesktopHost(
+        firstConfig,
+        { mode: "desktop", desktopTelemetryControlFd: 5 },
+        host,
+      );
+      const second = yield* describeWithDesktopHost(
+        secondConfig,
+        { mode: "desktop", desktopTelemetryControlFd: 5 },
+        host,
+      );
+
+      expect(first.capabilities.desktopAppControl?.address).toBeDefined();
+      expect(second.capabilities.desktopAppControl?.address).toBeDefined();
+      expect(first.capabilities.desktopAppControl?.address).not.toBe(
+        second.capabilities.desktopAppControl?.address,
+      );
     }),
   );
 

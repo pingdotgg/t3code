@@ -54,6 +54,40 @@ export class DesktopAppActivationBroker {
       );
     }
 
+    // Bound: this private first version only targets an already running,
+    // renderer-ready T3 Code window. It never creates or reopens a closed
+    // window, so an open-thread request with no renderer fails immediately
+    // instead of queueing for a window that may never appear. Check this
+    // before superseding so a rejected request cannot disturb pending work.
+    if (request.type === "open-thread" && this.#renderer === null) {
+      return Promise.resolve(
+        failure(
+          request.requestId,
+          "renderer-unavailable",
+          "No running T3 Code window can open that conversation.",
+        ),
+      );
+    }
+
+    // A newer open-thread request replaces older pending open-thread requests:
+    // only the latest target matters, and an already-stale navigation must not
+    // run. Open-workspace requests keep their original ordering. Settle the
+    // whole batch without flushing so a superseded request is never dispatched
+    // from inside this loop; the single flush below dispatches the new head.
+    if (request.type === "open-thread") {
+      for (const pending of this.#pending.values()) {
+        if (pending.request.type === "open-thread") {
+          this.#settleWithoutFlush(
+            failure(
+              pending.request.requestId,
+              "request-superseded",
+              "A newer request replaced this one before it was handled.",
+            ),
+          );
+        }
+      }
+    }
+
     const response = new Promise<DesktopAppActivationResponse>((resolve) => {
       const timeout = setTimeout(() => {
         this.#settle(
@@ -72,9 +106,21 @@ export class DesktopAppActivationBroker {
       });
     });
 
-    this.#activate();
+    // Open-thread requests must not raise the previous conversation before the
+    // renderer confirms the new target, so they skip activation here and let
+    // complete() decide once the target is validated. Workspace behavior stays
+    // exactly as before: focus immediately, then queue until the renderer is
+    // ready.
+    if (request.type !== "open-thread") {
+      this.#activate();
+    }
     this.#flush();
     return response;
+  }
+
+  /** True only while the request is pending and has already reached the renderer. */
+  isRequestActive(requestId: string): boolean {
+    return this.#pending.get(requestId)?.dispatched === true;
   }
 
   registerRenderer(send: RendererSender): void {
@@ -85,7 +131,12 @@ export class DesktopAppActivationBroker {
   clearRenderer(): void {
     this.#renderer = null;
     for (const pending of this.#pending.values()) {
-      if (pending.dispatched) {
+      // A lost renderer invalidates every open-thread target, whether it was
+      // already dispatched or still queued, because a later reopened window
+      // must not navigate to a conversation the user asked for before it went
+      // away. Dispatched workspace requests fail for the same reason, while
+      // undispatched workspace requests keep queueing until a renderer returns.
+      if (pending.request.type === "open-thread" || pending.dispatched) {
         this.#settle(
           failure(
             pending.request.requestId,
@@ -98,6 +149,34 @@ export class DesktopAppActivationBroker {
   }
 
   complete(response: DesktopAppActivationResponse): void {
+    const pending = this.#pending.get(response.requestId);
+    if (
+      response.ok &&
+      pending !== undefined &&
+      pending.dispatched &&
+      pending.request.type === "open-thread"
+    ) {
+      // Raise the window only after the renderer confirms the exact target this
+      // broker dispatched. A success for another thread or environment must not
+      // focus the window, and late, cancelled, superseded or timed-out responses
+      // no longer have a pending request and never activate.
+      if (
+        response.environmentId === pending.request.environmentId &&
+        response.threadId === pending.request.threadId
+      ) {
+        this.#activate();
+        this.#settle(response);
+        return;
+      }
+      this.#settle(
+        failure(
+          response.requestId,
+          "thread-open-failed",
+          "The desktop app did not open the requested conversation.",
+        ),
+      );
+      return;
+    }
     this.#settle(response);
   }
 
@@ -129,18 +208,26 @@ export class DesktopAppActivationBroker {
         renderer(pending.request);
       } catch {
         pending.dispatched = false;
-        this.#renderer = null;
+        // A renderer that throws on send is gone for this request: cancel
+        // open-thread work instead of requeueing it. clearRenderer drops the
+        // failed sender before it settles and flushes, so this cannot recurse.
+        // Undispatched workspace requests still requeue as before.
+        this.clearRenderer();
       }
       return;
     }
   }
 
   #settle(response: DesktopAppActivationResponse): void {
+    this.#settleWithoutFlush(response);
+    this.#flush();
+  }
+
+  #settleWithoutFlush(response: DesktopAppActivationResponse): void {
     const pending = this.#pending.get(response.requestId);
     if (!pending) return;
     clearTimeout(pending.timeout);
     this.#pending.delete(response.requestId);
     pending.resolve(response);
-    this.#flush();
   }
 }

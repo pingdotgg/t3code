@@ -16,6 +16,8 @@ export const WINDOW_FULLSCREEN_STATE_CHANNEL = "desktop:window-fullscreen-state"
 export const DESKTOP_APP_ACTIVATION_READY_CHANNEL = "desktop:app-activation-ready";
 export const DESKTOP_APP_ACTIVATION_COMPLETE_CHANNEL = "desktop:app-activation-complete";
 export const DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL = "desktop:app-activation-request";
+export const DESKTOP_APP_ACTIVATION_IS_REQUEST_ACTIVE_CHANNEL =
+  "desktop:app-activation-is-request-active";
 export const UPDATE_STATE_CHANNEL = "desktop:update-state";
 export const UPDATE_GET_STATE_CHANNEL = "desktop:update-get-state";
 export const UPDATE_SET_CHANNEL_CHANNEL = "desktop:update-set-channel";

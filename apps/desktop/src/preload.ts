@@ -247,6 +247,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_READY_CHANNEL, ready),
     complete: (response) =>
       ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_COMPLETE_CHANNEL, response),
+    isRequestActive: (requestId) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_ACTIVATION_IS_REQUEST_ACTIVE_CHANNEL, requestId),
     onRequest: (listener) => {
       const wrappedListener = (_event: Electron.IpcRendererEvent, request: unknown) => {
         if (typeof request !== "object" || request === null) return;

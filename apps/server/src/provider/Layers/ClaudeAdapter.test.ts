@@ -50,6 +50,7 @@ import { ProviderAdapterProcessError, ProviderAdapterValidationError } from "../
 import type { ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
 import type { ClaudeScopedLimitNames } from "./claudeUsageLimits.ts";
 import { makeClaudeAdapter, type ClaudeAdapterLiveOptions } from "./ClaudeAdapter.ts";
+import { T3CODE_INTEGRATION_CONTEXT } from "../providerIntegrationContext.ts";
 const decodeClaudeSettings = Schema.decodeSync(ClaudeSettings);
 const encodeUnknownJsonString = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 
@@ -2801,6 +2802,41 @@ describe("ClaudeAdapterLive", () => {
         );
         assert(completed.payload.errorMessage?.includes(`from ${encodeUnknownJsonString(cwd)}`));
         assert(!completed.payload.errorMessage?.includes("CLAUDE_CONFIG_DIR="));
+      }).pipe(
+        Effect.provideService(Random.Random, makeDeterministicRandomService()),
+        Effect.provide(harness.layer),
+      );
+    },
+  );
+
+  it.effect(
+    "stamps the conversation integration context into the spawned query environment",
+    () => {
+      const baseDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3code-claude-ctx-"));
+      const environmentIdPath = NodePath.join(baseDir, "userdata", "environment-id");
+      NodeFS.mkdirSync(NodePath.dirname(environmentIdPath), { recursive: true });
+      NodeFS.writeFileSync(environmentIdPath, "environment-claude\n");
+      const harness = makeHarness({ cwd: "/tmp/synthetic-claude-ctx", baseDir });
+      return Effect.gen(function* () {
+        const adapter = yield* ClaudeAdapter;
+        yield* adapter.startSession({
+          threadId: THREAD_ID,
+          provider: ProviderDriverKind.make("claudeAgent"),
+          runtimeMode: "full-access",
+          cwd: "/tmp/synthetic-claude-ctx",
+        });
+        const actualQuery = harness.getLastCreateQueryInput();
+        assert(actualQuery !== undefined);
+        const raw = actualQuery.options.env?.[T3CODE_INTEGRATION_CONTEXT];
+        assert.equal(typeof raw, "string");
+        // @effect-diagnostics-next-line preferSchemaOverJson:off - inspect the subprocess wire value independently of its producer.
+        assert.deepEqual(JSON.parse(raw as string), {
+          version: 1,
+          kind: "conversation",
+          environmentId: "environment-claude",
+          threadId: "thread-claude-1",
+          providerInstanceId: "claudeAgent",
+        });
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
         Effect.provide(harness.layer),

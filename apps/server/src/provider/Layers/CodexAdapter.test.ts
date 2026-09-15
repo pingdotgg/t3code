@@ -47,6 +47,7 @@ import {
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
+import { T3CODE_INTEGRATION_CONTEXT } from "../providerIntegrationContext.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
 // Test-local service tag so the rest of the file can keep using `yield* CodexAdapter`.
@@ -296,6 +297,66 @@ validationLayer("CodexAdapterLive validation", (it) => {
         threadId: asThreadId("thread-1"),
         runtimeMode: "full-access",
       });
+    }),
+  );
+});
+
+const integrationContextRuntimeFactory = makeRuntimeFactory();
+const integrationDriverEnvironment: NodeJS.ProcessEnv = {
+  PATH: process.env.PATH,
+  T3CODE_INTEGRATION_CONTEXT: JSON.stringify({ stale: true }),
+};
+const integrationDriverEnvironmentSnapshot = { ...integrationDriverEnvironment };
+const integrationContextLayer = it.layer(
+  Layer.effect(
+    CodexAdapter,
+    Effect.gen(function* () {
+      const codexConfig = decodeCodexSettings({});
+      return yield* makeCodexAdapter(codexConfig, {
+        instanceId: ProviderInstanceId.make("codex_personal"),
+        environment: integrationDriverEnvironment,
+        makeRuntime: integrationContextRuntimeFactory.factory,
+      });
+    }),
+  ).pipe(
+    Layer.provideMerge(
+      ServerConfig.layerTest(process.cwd(), { prefix: "t3code-codex-integration-context-" }),
+    ),
+    Layer.provideMerge(ServerSettingsService.layerTest()),
+    Layer.provideMerge(providerSessionDirectoryTestLayer),
+    Layer.provideMerge(NodeServices.layer),
+  ),
+);
+
+integrationContextLayer("CodexAdapterLive integration context", (it) => {
+  it.effect("stamps the conversation context for the bound instance", () =>
+    Effect.gen(function* () {
+      const serverConfig = yield* ServerConfig;
+      NodeFS.mkdirSync(NodePath.dirname(serverConfig.environmentIdPath), { recursive: true });
+      NodeFS.writeFileSync(serverConfig.environmentIdPath, "environment-codex\n");
+      const adapter = yield* CodexAdapter;
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("sess-context"),
+        runtimeMode: "full-access",
+      });
+      const runtime = integrationContextRuntimeFactory.lastRuntime;
+      NodeAssert.ok(runtime);
+      const raw = runtime.options.environment?.[T3CODE_INTEGRATION_CONTEXT];
+      NodeAssert.equal(typeof raw, "string");
+      // @effect-diagnostics-next-line preferSchemaOverJson:off - inspect the subprocess wire value independently of its producer.
+      NodeAssert.deepStrictEqual(JSON.parse(raw as string), {
+        version: 1,
+        kind: "conversation",
+        environmentId: "environment-codex",
+        threadId: "sess-context",
+        providerInstanceId: "codex_personal",
+      });
+      // The provider driver environment passed to the adapter is never mutated.
+      NodeAssert.deepStrictEqual(
+        integrationDriverEnvironment,
+        integrationDriverEnvironmentSnapshot,
+      );
     }),
   );
 });
