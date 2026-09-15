@@ -119,7 +119,7 @@ const ListScheduledTasksTool = Tool.make("list_scheduled_tasks", {
 
 const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
   description:
-    "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run whose runtime/interaction modes cover the modes the task's runs will execute under — the bound destination thread's modes, or the task's own modes once unbound. Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run. Enabling or binding a task to an archived thread fails until the thread is unarchived.",
+    "Update an existing scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run. Edits that can arm or redirect execution — enabling, changing the prompt or schedule, or rebinding — additionally require the caller's runtime/interaction modes to cover the modes the task's runs will execute under (the bound destination thread's modes, or the task's own modes once unbound); disabling and renaming do not, so any caller may pause a misbehaving task. Only the provided fields change; omit a field to leave it as-is. Use enabled=false to pause a task without deleting it. Set bindToCurrentThread to move the task between posting into this thread and launching a fresh thread per run. Enabling or binding a task to an archived thread fails until the thread is unarchived.",
   parameters: OrchestratorMcpUpdateScheduledTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -131,7 +131,7 @@ const UpdateScheduledTaskTool = Tool.make("update_scheduled_task", {
 
 const DeleteScheduledTaskTool = Tool.make("delete_scheduled_task", {
   description:
-    "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run whose runtime/interaction modes cover the modes the task's runs execute under — the bound destination thread's modes, or the task's own modes when unbound. The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
+    "Permanently delete a scheduled task by scheduledTaskId (from list_scheduled_tasks). Requires a live caller-owned run; deletion cannot arm work, so no mode coverage is required. The task stops running immediately. To keep it but stop runs, use update_scheduled_task with enabled=false instead.",
   parameters: OrchestratorMcpDeleteScheduledTaskInput,
   success: OrchestratorMcpDeleteScheduledTaskResult,
   failure: OrchestratorMcpFailure,

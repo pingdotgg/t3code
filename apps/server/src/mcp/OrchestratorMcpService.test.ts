@@ -498,10 +498,59 @@ describe("OrchestratorMcpService", () => {
             .updateScheduledTask(schedScope, { scheduledTaskId, enabled: true })
             .pipe(Effect.flip);
           assert.equal(error.code, "runtime_mode_escalation_denied");
-          const deleted = yield* service
-            .deleteScheduledTask(schedScope, { scheduledTaskId })
+          assert.equal(yield* Ref.get(writes), 0);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("permits disabling and deleting a task whose modes exceed the caller's", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("approval-required", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          // De-escalating operations arm nothing, so a restricted caller
+          // may still pause or delete a privileged task in its project.
+          const disabled = yield* service.updateScheduledTask(schedScope, {
+            scheduledTaskId,
+            enabled: false,
+          });
+          assert.equal(disabled.scheduledTaskId, scheduledTaskId);
+          const deleted = yield* service.deleteScheduledTask(schedScope, {
+            scheduledTaskId,
+          });
+          assert.equal(deleted.deleted, true);
+          assert.equal(yield* Ref.get(writes), 2);
+        }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
+      }),
+    );
+
+    it.effect("still requires mode coverage when a disable rides with arming fields", () =>
+      Effect.gen(function* () {
+        const writes = yield* Ref.make(0);
+        const projection = callerProjection("approval-required", "default", [liveRun]);
+        const dependencies = scheduleDeps(projection, writes);
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          // enabled=false cannot launder a prompt or rebinding change past
+          // the check — the update still touches execution-relevant state.
+          const prompted = yield* service
+            .updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+              prompt: "tampered",
+            })
             .pipe(Effect.flip);
-          assert.equal(deleted.code, "runtime_mode_escalation_denied");
+          assert.equal(prompted.code, "runtime_mode_escalation_denied");
+          const rebound = yield* service
+            .updateScheduledTask(schedScope, {
+              scheduledTaskId,
+              enabled: false,
+              bindToCurrentThread: false,
+            })
+            .pipe(Effect.flip);
+          assert.equal(rebound.code, "runtime_mode_escalation_denied");
           assert.equal(yield* Ref.get(writes), 0);
         }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(dependencies))));
       }),

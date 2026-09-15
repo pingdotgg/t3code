@@ -1250,17 +1250,24 @@ const make = Effect.gen(function* () {
           parent.thread.projectId,
           input.scheduledTaskId,
         );
-        // The modes that will govern the task's next run — its bound
-        // destination thread's, or its stored modes once unbound — must not
-        // exceed the caller's, or a restricted caller could arm work it could
-        // never dispatch directly.
-        const executionModes = yield* scheduledTaskExecutionModes(
-          scope,
-          parent,
-          existing,
-          input.bindToCurrentThread,
-        );
-        yield* requireTaskModeAccess(parent, executionModes);
+        // Mode coverage is required only when the edit can arm or redirect
+        // execution — enabling, changing the prompt or schedule, or
+        // rebinding. An update that only disables and/or renames cannot arm
+        // privileged work, so a restricted caller may still stop a
+        // misbehaving task (the service-level setEnabled carries no mode
+        // check either); the expected* pins are likewise authorization
+        // artifacts and are unnecessary for an unconditional de-escalation.
+        const deEscalatingOnly =
+          input.enabled !== true &&
+          input.prompt === undefined &&
+          input.schedule === undefined &&
+          input.bindToCurrentThread === undefined;
+        const executionModes = deEscalatingOnly
+          ? undefined
+          : yield* scheduledTaskExecutionModes(scope, parent, existing, input.bindToCurrentThread);
+        if (executionModes !== undefined) {
+          yield* requireTaskModeAccess(parent, executionModes);
+        }
         // Atomic scoped partial update: only the fields the caller provided
         // are written, and only while the task still exists in this project.
         // A delete racing the edit surfaces as task_not_found instead of the
@@ -1273,11 +1280,15 @@ const make = Effect.gen(function* () {
           .update({
             id: input.scheduledTaskId,
             projectId: parent.thread.projectId,
-            expectedThreadId: existing.threadId,
-            expectedRuntimeMode: existing.runtimeMode,
-            expectedInteractionMode: existing.interactionMode,
-            expectedExecutionRuntimeMode: executionModes.runtimeMode,
-            expectedExecutionInteractionMode: executionModes.interactionMode,
+            ...(executionModes === undefined
+              ? {}
+              : {
+                  expectedThreadId: existing.threadId,
+                  expectedRuntimeMode: existing.runtimeMode,
+                  expectedInteractionMode: existing.interactionMode,
+                  expectedExecutionRuntimeMode: executionModes.runtimeMode,
+                  expectedExecutionInteractionMode: executionModes.interactionMode,
+                }),
             ...(input.title === undefined ? {} : { title: input.title }),
             ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
             ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
@@ -1314,22 +1325,16 @@ const make = Effect.gen(function* () {
           parent.thread.projectId,
           input.scheduledTaskId,
         );
-        const executionModes = yield* scheduledTaskExecutionModes(
-          scope,
-          parent,
-          existing,
-          undefined,
-        );
-        yield* requireTaskModeAccess(parent, executionModes);
+        // Deletion cannot arm privileged work, so mode coverage is not
+        // required — a restricted caller may still clean up a task whose
+        // modes exceed its own (the service-level delete carries no mode
+        // check either). expectedProjectId keeps the operation scoped: a
+        // task moved to another project between the lookup and the write
+        // cannot be deleted through this caller's project.
         yield* scheduledTasks
           .delete({
             id: existing.id,
             expectedProjectId: existing.projectId,
-            expectedThreadId: existing.threadId,
-            expectedRuntimeMode: existing.runtimeMode,
-            expectedInteractionMode: existing.interactionMode,
-            expectedExecutionRuntimeMode: executionModes.runtimeMode,
-            expectedExecutionInteractionMode: executionModes.interactionMode,
           })
           .pipe(
             Effect.mapError((error) =>
