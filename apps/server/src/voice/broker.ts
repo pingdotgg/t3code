@@ -87,6 +87,22 @@ const ACTION_FEEDBACK_POLICY =
   "For navigation and simple UI commands, remain silent before and after success. The app plays a chime after verified completion. Do not read out the thread title. Speak errors and necessary clarification.";
 const EXISTING_THREAD_POLICY =
   "For an update about an existing thread use readThread/observeThread. To ask its worker for an update or further work use continueThread with the existing environmentId and threadId. Never replace a missing or ambiguous existing target with startThread. Only create a new thread when explicitly requested.";
+/** Destination-project policy for startThread. Pinned alongside the
+ * session-status semantics because the recorded wrong-project failure placed
+ * a new thread in the project of the thread being discussed: the subject of
+ * a conversation and the destination of new work are separate decisions, and
+ * any future instruction edit must keep this distinction. */
+const DESTINATION_PROJECT_POLICY =
+  "voice.startThread's projectId selects the project the new work belongs " +
+  "to. Decide it from the task's subject, using discoverProjects metadata " +
+  "(project titles and workspace roots). A destination the user explicitly " +
+  "names by project title or workspace root must be used as given. The " +
+  "currently open thread, its project, and any thread being discussed are " +
+  "conversation context only and are never the default destination of new " +
+  "work, even when the new task continues or investigates that thread's " +
+  "topic. When the destination project is ambiguous, ask one short " +
+  "clarifying question instead of defaulting to the discussed, open, " +
+  "first-listed, or most recently mentioned project.";
 
 export const DEFAULT_LIVE_INSTRUCTIONS =
   "You are Oracle, a concise voice assistant inside T3 Code.\n" +
@@ -123,7 +139,7 @@ export const DEFAULT_DELEGATION_INSTRUCTIONS =
   "Reuse a recent listing before listing again; re-list when a target is " +
   "stale. Opening a menu or dialog first may be required before its items " +
   "are listed.\n" +
-  "An update about an existing thread uses readThread/observeThread. Asking that thread's worker for an update or further work uses continueThread with its existing environmentId and threadId. Resolve references from current UI context and search/read tools; ask if ambiguous. Never use startThread as a substitute for continuing or reading an existing thread, even if it cannot be found. startThread requires an explicit request to create a new thread. Successful navigation needs no verbal confirmation; the application plays a chime.\n" +
+  "An update about an existing thread uses readThread/observeThread. Asking that thread's worker for an update or further work uses continueThread with its existing environmentId and threadId. Resolve references to existing threads from current UI context and search/read tools; ask if ambiguous. Never use startThread as a substitute for continuing or reading an existing thread, even if it cannot be found. startThread requires an explicit request to create a new thread. Successful navigation needs no verbal confirmation; the application plays a chime.\n" +
   "The session status rules below apply to continueThread as well as startThread.\n" +
   "Session status semantics for voice.startThread: the thread started only " +
   'when the returned session.status is "starting", "running", or ' +
@@ -148,7 +164,8 @@ export const DEFAULT_DELEGATION_INSTRUCTIONS =
   'other tool result that contains an "error" field, including a ' +
   "single-environment result whose environment.error is present, is a " +
   "failure and must be reported to the user as a failure, never reframed " +
-  "as success.";
+  "as success.\n" +
+  DESTINATION_PROJECT_POLICY;
 
 // ---------------------------------------------------------------------------
 // Broker errors (frozen VoiceToolError codes over HTTP)
@@ -183,13 +200,15 @@ const voiceToolName = (tool: keyof typeof VoiceToolSchemas) => `voice.${String(t
 
 const VOICE_TOOL_DESCRIPTIONS: Record<keyof typeof VoiceToolSchemas, string> = {
   discoverEnvironments: "List connected T3 environments with connectivity and granted scopes.",
-  discoverProjects: "List projects in one environment.",
+  discoverProjects:
+    "List projects in one environment, with titles and workspace roots that identify where work belongs.",
   listModels: "List available models per provider in one environment.",
   searchThreads: "Search thread titles and messages across connected environments.",
   readThread: "Read a bounded excerpt of one thread's conversation.",
   readProject: "Summarize a project and list its recent threads.",
   openThread: "Open a thread in the user's attached T3 window and acknowledge it.",
-  startThread: "Create and start a new T3 thread with an explicit model.",
+  startThread:
+    "Create and start a new T3 thread with an explicit model in the project the work belongs to.",
   continueThread:
     "Send a follow-up or request an update from the worker in an EXISTING thread. Preserves its history, model, project and workspace. Never creates a thread.",
   observeThread: "Observe progress and completion of work running in a thread.",
@@ -426,7 +445,7 @@ const makeBroker = Effect.gen(function* () {
         instructions:
           config.instructions === undefined
             ? DEFAULT_LIVE_INSTRUCTIONS
-            : `${config.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}`,
+            : `${config.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}\n${DESTINATION_PROJECT_POLICY}`,
         delegation: input.clientDelegation
           ? undefined
           : {
@@ -436,7 +455,7 @@ const makeBroker = Effect.gen(function* () {
                 instructions:
                   config.delegation.instructions === undefined
                     ? DEFAULT_DELEGATION_INSTRUCTIONS
-                    : `${config.delegation.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}`,
+                    : `${config.delegation.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}\n${DESTINATION_PROJECT_POLICY}`,
                 tools: (Object.keys(VoiceToolSchemas) as Array<keyof typeof VoiceToolSchemas>).map(
                   (name) => {
                     const document = Schema.toJsonSchemaDocument(
@@ -566,9 +585,10 @@ const makeBroker = Effect.gen(function* () {
           instructions:
             (config.delegation.instructions === undefined
               ? DEFAULT_DELEGATION_INSTRUCTIONS
-              : `${config.delegation.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}`) +
+              : `${config.delegation.instructions}\n${ACTION_FEEDBACK_POLICY}\n${EXISTING_THREAD_POLICY}\n${DESTINATION_PROJECT_POLICY}`) +
             "\nApplication results in the history describe actions already completed. Do not repeat them. " +
-            "Use provided current UI context to resolve references. Never claim a draft is a running worker. " +
+            "Use provided current UI context to resolve references to existing threads and their identities, " +
+            "not to choose the destination project of a new thread. Never claim a draft is a running worker. " +
             "Return a short factual answer or ask one clarification when necessary.",
           input: input.input,
           tools,

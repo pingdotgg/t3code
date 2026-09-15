@@ -355,6 +355,36 @@ describe("voice broker routes", () => {
       }),
     ),
   );
+  it.effect("appends the destination-project policy to custom delegation instructions", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const { state, handlers } = yield* makeTest({
+          secrets: {
+            [OPENAI_API_KEY_SECRET_NAME]: "test-key",
+            "voice-broker-config": '{"delegationInstructions":"custom reasoning"}',
+          },
+        });
+        yield* runHandler(handlers.mintSession, {
+          method: "POST",
+          path: MINT_PATH,
+          token: OPERATE_TOKEN,
+          body: { transport: { type: "webrtc", sdp: "offer-sdp" } },
+        }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+        const delegation = (
+          state.recorded[0]?.body as {
+            session?: { delegation?: { responses?: { instructions?: string } } };
+          }
+        )?.session?.delegation?.responses;
+        expect(delegation?.instructions).toContain("custom reasoning");
+        // An override replaces the default wholesale, so the destination
+        // policy must travel with the appended policy stack, not only inside
+        // the default constant.
+        expect(delegation?.instructions).toContain(
+          "voice.startThread's projectId selects the project the new work belongs to",
+        );
+      }),
+    ),
+  );
   it.effect("preserves SDP line endings across request validation and answer decoding", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -782,6 +812,33 @@ describe("voice broker routes", () => {
       /The whole result is a failure only when no environment has status "ok" or "partial"/,
     );
     expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(/never reframed as success/);
+  });
+
+  it("pins the destination-project policy in the delegation instructions", () => {
+    // The recorded wrong-project failure: a new thread created to
+    // investigate a topic was placed in the project of the thread being
+    // discussed. These phrases are the required policy; future edits to the
+    // instructions must keep every one of them.
+    // Explicit destination: an explicitly named project is used as given.
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(
+      /voice\.startThread's projectId selects the project the new work belongs to/,
+    );
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(/discoverProjects metadata/);
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(
+      /a destination the user explicitly names by project title or workspace root must be used as given/i,
+    );
+    // Discussed thread: conversation context is never the default
+    // destination, even when the task continues that thread's topic.
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(
+      /are never the default destination of new work/,
+    );
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(
+      /even when the new task continues or investigates that thread's topic/,
+    );
+    // Ambiguous destination: ask instead of silently defaulting.
+    expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(
+      /When the destination project is ambiguous, ask one short clarifying question/,
+    );
   });
 });
 
