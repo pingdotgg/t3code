@@ -417,9 +417,18 @@ function SidebarThreadTooltip({
             </div>
           ) : null}
           {thread.session?.lastError ? (
-            <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
+            <div
+              className={cn(
+                "flex min-w-0 items-center gap-2",
+                thread.session.lastErrorClass === "usage_limit"
+                  ? "text-amber-700 dark:text-amber-300"
+                  : "text-red-600 dark:text-red-400",
+              )}
+            >
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
-              <div className="min-w-0 truncate">Error occurred</div>
+              <div className="min-w-0 truncate">
+                {thread.session.lastErrorClass === "usage_limit" ? "Limited" : "Error occurred"}
+              </div>
             </div>
           ) : null}
         </div>
