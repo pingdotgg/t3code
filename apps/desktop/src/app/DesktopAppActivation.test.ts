@@ -5,10 +5,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import {
+  EnvironmentId,
   ProjectId,
   ThreadId,
   type DesktopAppActivationRequest,
-  type DesktopAppActivationResponse,
+  type DesktopAppControlResponse,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import { HostProcessPlatform, HostProcessUserId } from "@t3tools/shared/hostProcess";
@@ -44,8 +45,22 @@ function request(requestId: string, platform: NodeJS.Platform): DesktopAppActiva
   };
 }
 
-function exchange(address: string, payload: DesktopAppActivationRequest) {
-  return new Promise<DesktopAppActivationResponse>((resolve, reject) => {
+function openThreadRequest(
+  requestId: string,
+  platform: NodeJS.Platform,
+): DesktopAppActivationRequest {
+  return {
+    version: 1,
+    requestId,
+    type: "open-thread",
+    platform: platform === "win32" ? "win32" : platform === "darwin" ? "darwin" : "linux",
+    environmentId: EnvironmentId.make("primary"),
+    threadId: ThreadId.make("thread-1"),
+  };
+}
+
+function exchange(address: string, payload: unknown) {
+  return new Promise<DesktopAppControlResponse>((resolve, reject) => {
     const socket = NodeNet.createConnection(address);
     socket.setEncoding("utf8");
     let buffer = "";
@@ -56,7 +71,7 @@ function exchange(address: string, payload: DesktopAppActivationRequest) {
       const newline = buffer.indexOf("\n");
       if (newline === -1) return;
       socket.destroy();
-      resolve(JSON.parse(buffer.slice(0, newline)) as DesktopAppActivationResponse);
+      resolve(JSON.parse(buffer.slice(0, newline)) as DesktopAppControlResponse);
     });
   });
 }
@@ -131,6 +146,139 @@ describe("desktop app control server", () => {
         });
 
         await expect(canceled).resolves.toBe("request-canceled");
+        await server.close();
+        openServers.splice(openServers.indexOf(server), 1);
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
+
+  it.effect("answers a capabilities probe without invoking activation", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const userId = yield* HostProcessUserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-probe-test-"));
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const received: DesktopAppActivationRequest[] = [];
+        const server = await startDesktopAppControlServer({
+          ...target,
+          userId,
+          handle: async (input) => {
+            received.push(input);
+            return {
+              version: 1,
+              requestId: input.requestId,
+              ok: true,
+              projectId: ProjectId.make("project-1"),
+              threadId: ThreadId.make("thread-1"),
+            };
+          },
+          cancel: () => undefined,
+        });
+        openServers.push(server);
+
+        const response = await exchange(target.address, {
+          version: 1,
+          requestId: "probe-1",
+          type: "get-capabilities",
+        });
+
+        expect(received).toHaveLength(0);
+        expect(response).toEqual({
+          version: 1,
+          requestId: "probe-1",
+          ok: true,
+          type: "capabilities",
+          operations: ["open-workspace", "open-thread"],
+          environmentScope: "primary",
+        });
+
+        await server.close();
+        openServers.splice(openServers.indexOf(server), 1);
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
+
+  it.effect("roundtrips an existing-thread request", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const userId = yield* HostProcessUserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-thread-test-"));
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const received: DesktopAppActivationRequest[] = [];
+        const server = await startDesktopAppControlServer({
+          ...target,
+          userId,
+          handle: async (input) => {
+            received.push(input);
+            return {
+              version: 1,
+              requestId: input.requestId,
+              ok: true,
+              environmentId: EnvironmentId.make("primary"),
+              projectId: ProjectId.make("project-1"),
+              threadId: ThreadId.make("thread-1"),
+            };
+          },
+          cancel: () => undefined,
+        });
+        openServers.push(server);
+
+        const response = await exchange(target.address, openThreadRequest("thread-1", platform));
+
+        expect(received).toEqual([openThreadRequest("thread-1", platform)]);
+        expect(response).toMatchObject({
+          ok: true,
+          requestId: "thread-1",
+          environmentId: "primary",
+          projectId: "project-1",
+          threadId: "thread-1",
+        });
+
+        await server.close();
+        openServers.splice(openServers.indexOf(server), 1);
+        await NodeFSP.rm(root, { recursive: true, force: true });
+      });
+    }),
+  );
+
+  it.effect("rejects a malformed control request", () =>
+    Effect.gen(function* () {
+      const platform = yield* HostProcessPlatform;
+      const userId = yield* HostProcessUserId;
+      yield* Effect.promise(async () => {
+        const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "t3-app-invalid-test-"));
+        const target = makeTarget(NodePath.join(root, "userdata"), platform, userId);
+        const received: DesktopAppActivationRequest[] = [];
+        const server = await startDesktopAppControlServer({
+          ...target,
+          userId,
+          handle: async (input) => {
+            received.push(input);
+            return {
+              version: 1,
+              requestId: input.requestId,
+              ok: true,
+              projectId: ProjectId.make("project-1"),
+              threadId: ThreadId.make("thread-1"),
+            };
+          },
+          cancel: () => undefined,
+        });
+        openServers.push(server);
+
+        const response = await exchange(target.address, {
+          version: 1,
+          requestId: "bad-1",
+          type: "open-thread",
+        });
+
+        expect(received).toHaveLength(0);
+        expect(response).toMatchObject({ ok: false, code: "invalid-request" });
+
         await server.close();
         openServers.splice(openServers.indexOf(server), 1);
         await NodeFSP.rm(root, { recursive: true, force: true });

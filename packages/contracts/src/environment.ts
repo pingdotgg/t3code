@@ -167,6 +167,23 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       desktop servers whose app predates the remote trigger, where clients
       must keep telling the user to update the app on that machine. */
   desktopAppUpdate: Schema.optionalKey(Schema.Boolean),
+  /** Local-only control socket the desktop app supervising this server
+      listens on. Clients treat this as an untrusted hint, not authorization
+      or proof the listener is ready: they must probe the socket and validate
+      the target environment/thread before activating. Absent on headless
+      servers, WSL-hosted backends without a native control fd, and platforms
+      with no desktop shell. */
+  desktopAppControl: Schema.optionalKey(
+    Schema.Struct({
+      version: Schema.Literal(1),
+      address: TrimmedNonEmptyString.check(Schema.isMaxLength(256)),
+    }),
+  ),
+  /** Server stamps `T3CODE_INTEGRATION_CONTEXT` into the subprocess
+      environments of T3-managed provider conversations, so provider hooks can
+      recognize that an event is owned by T3. The literal is the context
+      schema version; absent on servers that predate the marker. */
+  providerIntegrationContext: Schema.optionalKey(Schema.Literal(1)),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

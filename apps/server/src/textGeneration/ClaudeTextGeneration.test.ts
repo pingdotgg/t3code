@@ -105,6 +105,11 @@ function makeFakeClaudeBinary(dir: string) {
         '  fail("CLAUDE_CONFIG_DIR was " + (process.env.CLAUDE_CONFIG_DIR ?? ""), 5);',
         "}",
         "",
+        "const contextMustBe = process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE;",
+        "if (contextMustBe && process.env.T3CODE_INTEGRATION_CONTEXT !== contextMustBe) {",
+        '  fail("integration context mismatch: " + (process.env.T3CODE_INTEGRATION_CONTEXT ?? "unset"), 13);',
+        "}",
+        "",
         "const stderrText = process.env.T3_FAKE_CLAUDE_STDERR;",
         "if (stderrText) {",
         '  process.stderr.write(stderrText + "\\n");',
@@ -128,6 +133,7 @@ function withFakeClaudeEnv<A, E, R>(
     argsMustNotContain?: string;
     stdinMustContain?: string;
     configDirMustBe?: string;
+    contextMustBe?: string;
     cwdMustNotBe?: string;
     claudeConfig?: Partial<ClaudeSettings>;
   },
@@ -146,6 +152,7 @@ function withFakeClaudeEnv<A, E, R>(
     const previousArgsMustNotContain = process.env.T3_FAKE_CLAUDE_ARGS_MUST_NOT_CONTAIN;
     const previousStdinMustContain = process.env.T3_FAKE_CLAUDE_STDIN_MUST_CONTAIN;
     const previousConfigDirMustBe = process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+    const previousContextMustBe = process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE;
     const previousCwdMustNotBe = process.env.T3_FAKE_CLAUDE_CWD_MUST_NOT_BE;
 
     yield* Effect.acquireRelease(
@@ -193,6 +200,12 @@ function withFakeClaudeEnv<A, E, R>(
           process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = input.configDirMustBe;
         } else {
           delete process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE;
+        }
+
+        if (input.contextMustBe !== undefined) {
+          process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE = input.contextMustBe;
+        } else {
+          delete process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE;
         }
       }),
       () =>
@@ -246,6 +259,12 @@ function withFakeClaudeEnv<A, E, R>(
           } else {
             process.env.T3_FAKE_CLAUDE_CONFIG_DIR_MUST_BE = previousConfigDirMustBe;
           }
+
+          if (previousContextMustBe === undefined) {
+            delete process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE;
+          } else {
+            process.env.T3_FAKE_CLAUDE_CONTEXT_MUST_BE = previousContextMustBe;
+          }
         }),
     );
 
@@ -292,6 +311,37 @@ it.layer(ClaudeTextGenerationTestLayer)("ClaudeTextGeneration", (it) => {
           });
 
           expect(generated.subject).toBe("Add important change");
+        }),
+    ),
+  );
+
+  it.effect("marks auxiliary claude subprocesses with the auxiliary integration context", () =>
+    withFakeClaudeEnv(
+      {
+        output: JSON.stringify({ structured_output: { title: "Auxiliary title" } }),
+        contextMustBe: JSON.stringify({
+          version: 1,
+          kind: "auxiliary",
+          environmentId: "environment-claude-aux",
+        }),
+      },
+      (textGeneration) =>
+        Effect.gen(function* () {
+          const serverConfig = yield* ServerConfig.ServerConfig;
+          const fileSystem = yield* FileSystem.FileSystem;
+          yield* fileSystem.writeFileString(
+            serverConfig.environmentIdPath,
+            "environment-claude-aux\n",
+          );
+          const generated = yield* textGeneration.generateThreadTitle({
+            cwd: process.cwd(),
+            message: "Describe this change",
+            modelSelection: createModelSelection(
+              ProviderInstanceId.make("claudeAgent"),
+              SYNTHETIC_CLAUDE_STANDARD_MODEL,
+            ),
+          });
+          expect(generated.title).toBe("Auxiliary title");
         }),
     ),
   );

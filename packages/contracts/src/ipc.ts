@@ -1334,6 +1334,12 @@ export interface DesktopBridge {
     setReady: (ready: boolean) => Promise<void>;
     complete: (response: DesktopAppActivationResponse) => Promise<void>;
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
+    /**
+     * Whether the shell still considers this request active. Optional: older
+     * shells lack it, and open-thread callers must fail safely rather than
+     * assume a request is still live.
+     */
+    isRequestActive?: (requestId: string) => Promise<boolean>;
   };
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the

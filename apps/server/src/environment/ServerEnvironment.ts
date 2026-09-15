@@ -1,9 +1,17 @@
+// @effect-diagnostics nodeBuiltinImport:off - the desktop control address is defined in terms of Node's temp directory and platform.
+import * as NodeOS from "node:os";
+
 import {
   EnvironmentId,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   type ExecutionEnvironmentDescriptor,
 } from "@t3tools/contracts";
-import { HostProcessArchitecture, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
+import {
+  HostProcessArchitecture,
+  HostProcessPlatform,
+  HostProcessUserId,
+} from "@t3tools/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -187,6 +195,7 @@ export const make = Effect.gen(function* () {
   const identity = yield* ServerEnvironmentIdentity;
   const hostPlatform = yield* HostProcessPlatform;
   const hostArchitecture = yield* HostProcessArchitecture;
+  const userId = yield* HostProcessUserId;
   const environmentId = yield* identity.getEnvironmentId;
   const cwdBaseName = path.basename(serverConfig.cwd).trim();
   const label = yield* resolveServerEnvironmentLabel({ cwdBaseName });
@@ -202,12 +211,30 @@ export const make = Effect.gen(function* () {
   // the fd and correctly do not advertise.
   const desktopAppUpdate =
     serverSelfUpdate === "desktop-managed" && serverConfig.desktopTelemetryControlFd !== undefined;
+  // The address is a hint the client still has to probe and validate, and it
+  // is only meaningful where a native desktop shell exists. Reusing
+  // desktopAppUpdate's gate keeps WSL and headless servers -- which never
+  // receive the control fd -- from advertising it.
+  const platformOsValue = platformOs(hostPlatform);
+  const desktopAppControl =
+    desktopAppUpdate && platformOsValue !== "unknown"
+      ? {
+          version: 1 as const,
+          address: resolveDesktopAppControlAddress({
+            stateDir: path.resolve(serverConfig.stateDir),
+            platform: hostPlatform,
+            tempDir: NodeOS.tmpdir(),
+            userId,
+            joinPath: path.join,
+          }).address,
+        }
+      : undefined;
 
   const descriptor: ExecutionEnvironmentDescriptor = {
     environmentId,
     label,
     platform: {
-      os: platformOs(hostPlatform),
+      os: platformOsValue,
       arch: platformArch(hostArchitecture),
       ...(machine === null ? {} : { machine }),
     },
@@ -237,6 +264,7 @@ export const make = Effect.gen(function* () {
       threadPullRequestLinking: true,
       environmentIcon: true,
       projectCloneTracking: true,
+      providerIntegrationContext: 1,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverSelfUpdate === "boot-service" || desktopAppUpdate
         ? {
@@ -245,6 +273,7 @@ export const make = Effect.gen(function* () {
           }
         : {}),
       ...(desktopAppUpdate ? { desktopAppUpdate: true } : {}),
+      ...(desktopAppControl === undefined ? {} : { desktopAppControl }),
     },
   };
 

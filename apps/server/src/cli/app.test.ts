@@ -48,6 +48,11 @@ const pathExists = (path: string) =>
     ),
   );
 
+const isOpenWorkspaceRequest = (
+  request: DesktopAppActivationRequest,
+): request is Extract<DesktopAppActivationRequest, { type: "open-workspace" }> =>
+  request.type === "open-workspace";
+
 async function startFakeDesktop(input: {
   readonly baseDir: string;
   readonly stateSubdirectory?: "userdata" | "dev";
@@ -198,7 +203,11 @@ describe("t3 app", () => {
         yield* runCli(["app"], { T3CODE_HOME: baseDir });
         yield* runCli(["app", explicitPath, "--base-dir", baseDir]);
 
-        expect(desktop.received.map((request) => request.workspaceRoot)).toEqual([
+        // open-thread shares the union, so assert the discriminator and narrow
+        // before reading workspace-only fields rather than casting the union.
+        expect(desktop.received.every((request) => request.type === "open-workspace")).toBe(true);
+        const workspaceRequests = desktop.received.filter(isOpenWorkspaceRequest);
+        expect(workspaceRequests.map((request) => request.workspaceRoot)).toEqual([
           workingDirectory,
           explicitPath,
         ]);

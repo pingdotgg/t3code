@@ -48,6 +48,7 @@ import * as EffectCodexSchema from "effect-codex-app-server/schema";
 import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { withProviderIntegrationContext } from "../providerIntegrationContext.ts";
 
 import {
   ProviderAdapterRequestError,
@@ -2303,7 +2304,22 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
           sessionScopeTransferred ? Effect.void : Scope.close(sessionScope, Exit.void),
         );
         const createRuntime = options?.makeRuntime ?? makeCodexSessionRuntime;
-        const runtime = yield* createRuntime(runtimeInput).pipe(
+        const conversationEnvironment = yield* withProviderIntegrationContext(
+          runtimeInput.environment,
+          {
+            kind: "conversation",
+            threadId: input.threadId,
+            providerInstanceId: boundInstanceId,
+          },
+        ).pipe(
+          Effect.provideService(FileSystem.FileSystem, fileSystem),
+          Effect.provideService(ServerConfig, serverConfig),
+        );
+        const runtime = yield* createRuntime(
+          conversationEnvironment === undefined
+            ? runtimeInput
+            : { ...runtimeInput, environment: conversationEnvironment },
+        ).pipe(
           Effect.provideService(Scope.Scope, sessionScope),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, childProcessSpawner),
           Effect.provideService(Crypto.Crypto, crypto),

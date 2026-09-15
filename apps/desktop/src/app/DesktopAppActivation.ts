@@ -6,7 +6,10 @@ import * as NodeOS from "node:os";
 import {
   DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
   DesktopAppActivationRequest,
+  DesktopAppControlRequest,
   type DesktopAppActivationResponse,
+  type DesktopAppCapabilitiesSuccess,
+  type DesktopAppControlResponse,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import { HostProcessUserId } from "@t3tools/shared/hostProcess";
@@ -29,6 +32,7 @@ import { makeComponentLogger } from "./DesktopObservability.ts";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
+const isDesktopAppControlRequest = Schema.is(DesktopAppControlRequest);
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
 
 export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
@@ -54,6 +58,17 @@ function invalidResponse(requestId: string, message: string): DesktopAppActivati
     ok: false,
     code: "invalid-request",
     message,
+  };
+}
+
+function capabilitiesResponse(requestId: string): DesktopAppCapabilitiesSuccess {
+  return {
+    version: DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
+    requestId,
+    ok: true,
+    type: "capabilities",
+    operations: ["open-workspace", "open-thread"],
+    environmentScope: "primary",
   };
 }
 
@@ -115,7 +130,7 @@ export async function startDesktopAppControlServer(input: {
 
     socket.setTimeout(5_000, () => socket.destroy());
 
-    const finish = (response: DesktopAppActivationResponse) => {
+    const finish = (response: DesktopAppControlResponse) => {
       responseSent = true;
       if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
     };
@@ -142,6 +157,18 @@ export async function startDesktopAppControlServer(input: {
         return;
       }
 
+      if (!isDesktopAppControlRequest(parsed)) {
+        finish(
+          invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
+        );
+        return;
+      }
+      if (parsed.type === "get-capabilities") {
+        // Answer probes immediately: no window focus, no renderer wait, and no
+        // request bookkeeping, so a capability check never activates anything.
+        finish(capabilitiesResponse(parsed.requestId));
+        return;
+      }
       if (!isDesktopAppActivationRequest(parsed)) {
         finish(
           invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
@@ -208,6 +235,7 @@ export class DesktopAppActivation extends Context.Service<
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
+    readonly isRequestActive: (requestId: string) => boolean;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
 
@@ -301,6 +329,7 @@ export const make = Effect.gen(function* () {
       });
     }),
     complete: (response) => Effect.sync(() => broker.complete(response)),
+    isRequestActive: (requestId) => broker.isRequestActive(requestId),
   });
 });
 

@@ -25,3 +25,18 @@ export const complete = DesktopIpc.makeIpcMethod({
     yield* activation.complete(response);
   }),
 });
+
+/**
+ * Read-only liveness probe used by the renderer immediately before and after
+ * navigating to an existing thread. It answers from the broker's pending set
+ * and never itself activates a window.
+ */
+export const isRequestActive = DesktopIpc.makeIpcMethod({
+  channel: IpcChannels.DESKTOP_APP_ACTIVATION_IS_REQUEST_ACTIVE_CHANNEL,
+  payload: Schema.String,
+  result: Schema.Boolean,
+  handler: Effect.fn("desktop.ipc.appActivation.isRequestActive")(function* (requestId) {
+    const activation = yield* DesktopAppActivation.DesktopAppActivation;
+    return activation.isRequestActive(requestId);
+  }),
+});
