@@ -29,7 +29,7 @@ export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   return (
     <span
       className={cn(
-        "relative isolate inline-flex shrink-0 items-center justify-center overflow-visible",
+        "relative isolate z-30 inline-flex shrink-0 items-center justify-center overflow-visible",
         props.className,
       )}
       style={accentStyle}
