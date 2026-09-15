@@ -10,7 +10,6 @@ import {
   TextInput,
   useWindowDimensions,
   View,
-  type CellRendererProps,
 } from "react-native";
 
 import { GestureHandlerRootView } from "react-native-gesture-handler";
@@ -62,22 +61,6 @@ function itemIcon(item: CommandPaletteItem): AppSymbolName {
   if (item.kind === "project") return "folder";
   if (item.kind === "thread") return "text.bubble";
   return ACTION_ICONS[item.key] ?? "ellipsis";
-}
-
-function PaletteCell({
-  children,
-  style,
-  onLayout,
-  onFocusCapture,
-}: CellRendererProps<CommandPaletteItem>) {
-  // Keep gesture-enabled rows behind stable native cell boundaries as
-  // virtualization inserts and removes cells from the scroll content.
-  const viewProps = { style, onLayout, onFocusCapture };
-  return (
-    <View {...viewProps} collapsable={false}>
-      {children}
-    </View>
-  );
 }
 
 function PaletteRow(props: {
@@ -437,7 +420,6 @@ export function CommandPalette(props: {
               </View>
               <FlatList
                 ref={listRef}
-                CellRendererComponent={PaletteCell}
                 data={results}
                 extraData={selectedKey}
                 keyboardShouldPersistTaps="handled"

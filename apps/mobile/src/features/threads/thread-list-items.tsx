@@ -397,7 +397,6 @@ export const PendingTaskListRow = memo(function PendingTaskListRow(props: {
       onPress={() => onSelectPendingTask(pendingTask)}
       style={{
         borderRadius: SIDEBAR_ROW_RADIUS,
-        cursor: "pointer",
         minHeight: 64,
         justifyContent: "center",
         paddingHorizontal: 12,
@@ -757,7 +756,6 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
         style={{
           backgroundColor: visuallySelected ? effectiveSelectedBackground : backgroundColor,
           borderRadius: SIDEBAR_ROW_RADIUS,
-          cursor: "pointer",
           minHeight: 64,
           justifyContent: "center",
           paddingHorizontal: 12,
