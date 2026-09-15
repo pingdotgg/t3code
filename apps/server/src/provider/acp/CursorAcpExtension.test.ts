@@ -2,6 +2,8 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   CursorListAvailableModelsResponse,
+  classifyCursorTaskToolCall,
+  cursorTaskToolFields,
   extractAskQuestions,
   extractPlanMarkdown,
   extractTodosAsPlan,
@@ -150,5 +152,54 @@ describe("CursorAcpExtension", () => {
     });
 
     expect(decoded.models[0]?.configOptions?.[0]?.id).toBe("reasoning");
+  });
+
+  it("classifies Cursor Task launches and rejects ask, plan, and shell tools", () => {
+    expect(
+      cursorTaskToolFields({
+        toolCallId: "task-1",
+        title: "Task",
+        kind: "other",
+        status: "inProgress",
+        data: {
+          rawInput: {
+            subagent_type: "reviewer-subagent",
+            description: "Ship reviewer-subagent",
+            run_in_background: true,
+          },
+        },
+      }),
+    ).toEqual({ title: "Ship reviewer-subagent", role: "reviewer-subagent" });
+    expect(
+      classifyCursorTaskToolCall({
+        toolCallId: "task-title-only",
+        title: "Task",
+        kind: "other",
+        data: {},
+      }),
+    ).toBe(true);
+    expect(
+      classifyCursorTaskToolCall({
+        toolCallId: "ask-1",
+        title: "Need input",
+        kind: "other",
+        data: { rawInput: { questions: [{ id: "q", prompt: "Go?" }] } },
+      }),
+    ).toBe(false);
+    expect(
+      classifyCursorTaskToolCall({
+        toolCallId: "plan-1",
+        title: "Plan",
+        data: { rawInput: { plan: "# Plan", todos: [] } },
+      }),
+    ).toBe(false);
+    expect(
+      classifyCursorTaskToolCall({
+        toolCallId: "sh-1",
+        title: "Task",
+        kind: "execute",
+        data: { rawInput: { command: ["echo"] } },
+      }),
+    ).toBe(false);
   });
 });
