@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +20,12 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
+
+const decodeLinkSubject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ title: Schema.String, body: Schema.NullOr(Schema.String) }),
+  ),
+);
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
@@ -208,8 +215,56 @@ export const make = Effect.gen(function* () {
         );
     };
 
+  const readLinkSubject = Effect.fn("GitHubSourceControlProvider.readLinkSubject")(function* (
+    input: { readonly cwd: string; readonly url: URL },
+    endpoint: string,
+  ) {
+    const result = yield* github
+      .execute({
+        cwd: input.cwd,
+        args: ["api", "--hostname", input.url.host, endpoint, "--jq", "{title, body}"],
+        env: { GH_PROMPT_DISABLED: "1" },
+        timeoutMs: 3_000,
+        maxOutputBytes: 32_000,
+      })
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "resolveLink",
+              cwd: input.cwd,
+              detail: "The linked subject could not be read.",
+              cause,
+            }),
+        ),
+      );
+    const subject = yield* decodeLinkSubject(result.stdout).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SourceControlProviderError({
+            provider: "github",
+            operation: "resolveLink.decode",
+            cwd: input.cwd,
+            detail: "The linked subject could not be read.",
+            cause,
+          }),
+      ),
+    );
+    return { title: subject.title, body: subject.body };
+  });
+
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
+    resolveLink: (input) => {
+      // Automatic enrichment must not send ambient CLI credentials to a host from message text.
+      if (input.url.host !== "github.com") return undefined;
+      const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return readLinkSubject(input, `repos/${match[1]}/${match[2]}/issues/${match[3]}`);
+    },
     listChangeRequests,
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(
