@@ -1,9 +1,12 @@
 import type { FileDiffMetadata } from "@pierre/diffs";
+import { preloadFileTree } from "@pierre/trees";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildDiffFileTreeUpdates,
+  compareDiffFileTreeEntries,
   collectDirectoryPaths,
+  diffFileTreePositions,
   diffFileTreeEntries,
 } from "./diffFileTree.logic";
 
@@ -37,6 +40,34 @@ describe("collectDirectoryPaths", () => {
       "apps/",
       "apps/web/",
       "apps/web/src/",
+    ]);
+  });
+});
+
+describe("diff tree reading order", () => {
+  it("places folders and files where their first diff appears", () => {
+    const paths = [
+      "apps/mobile/src/state/shell.ts",
+      "apps/mobile/src/features/threads/route.ts",
+      "apps/mobile/src/features/threads/screen.tsx",
+    ];
+    const positions = diffFileTreePositions(paths);
+    const tree = preloadFileTree({
+      paths,
+      initialExpansion: "open",
+      flattenEmptyDirectories: true,
+      sort: compareDiffFileTreeEntries(() => positions),
+    });
+    const rows = [...tree.shadowHtml.matchAll(/data-item-path="([^"]+)"/g)].map(
+      (match) => match[1],
+    );
+    expect(rows).toEqual([
+      "apps/mobile/src/",
+      "apps/mobile/src/state/",
+      "apps/mobile/src/state/shell.ts",
+      "apps/mobile/src/features/threads/",
+      "apps/mobile/src/features/threads/route.ts",
+      "apps/mobile/src/features/threads/screen.tsx",
     ]);
   });
 });
