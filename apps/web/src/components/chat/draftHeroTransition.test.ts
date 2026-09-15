@@ -56,8 +56,9 @@ describe("runMobileComposerTransition", () => {
       finishTransition = resolve;
     });
     const dataset: Record<string, string> = {};
+    const style = { setProperty: vi.fn(), removeProperty: vi.fn() };
     vi.stubGlobal("document", {
-      documentElement: { dataset },
+      documentElement: { dataset, style },
       getAnimations: () => [],
       startViewTransition: (update: () => void | Promise<void>) => {
         void update();
@@ -68,7 +69,10 @@ describe("runMobileComposerTransition", () => {
       matchMedia: (query: string) => ({ matches: query === "(max-width: 639px)" }),
     });
 
-    const transition = runMobileComposerTransition(() => undefined);
+    const transition = runMobileComposerTransition(() => undefined, {
+      active: true,
+      durationMs: 240,
+    });
     await Promise.resolve();
 
     let handoffComplete = false;
@@ -85,11 +89,12 @@ describe("runMobileComposerTransition", () => {
 
   it("uses a scoped view transition on mobile", async () => {
     const dataset: Record<string, string> = {};
+    const style = { setProperty: vi.fn(), removeProperty: vi.fn() };
     const startViewTransition = vi.fn((update: () => void | Promise<void>) => ({
       finished: Promise.resolve(update()).then(() => undefined),
     }));
     vi.stubGlobal("document", {
-      documentElement: { dataset },
+      documentElement: { dataset, style },
       startViewTransition,
     });
     vi.stubGlobal("window", {
@@ -97,11 +102,33 @@ describe("runMobileComposerTransition", () => {
     });
     const update = vi.fn();
 
-    await runMobileComposerTransition(update);
+    await runMobileComposerTransition(update, { active: true, durationMs: 360 });
 
     expect(startViewTransition).toHaveBeenCalledOnce();
     expect(update).toHaveBeenCalledOnce();
+    expect(style.setProperty).toHaveBeenCalledWith(
+      "--mobile-composer-transition-duration",
+      "360ms",
+    );
+    expect(style.removeProperty).toHaveBeenCalledWith("--mobile-composer-transition-duration");
     expect(dataset).not.toHaveProperty("mobileComposerRouteTransition");
+  });
+
+  it("updates without a view transition when panel animations are inactive", async () => {
+    const startViewTransition = vi.fn();
+    vi.stubGlobal("document", {
+      documentElement: { dataset: {} },
+      startViewTransition,
+    });
+    vi.stubGlobal("window", {
+      matchMedia: () => ({ matches: true }),
+    });
+    const update = vi.fn();
+
+    await runMobileComposerTransition(update, { active: false, durationMs: 360 });
+
+    expect(startViewTransition).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledOnce();
   });
 
   it("updates without a view transition when reduced motion is preferred", async () => {
@@ -115,7 +142,7 @@ describe("runMobileComposerTransition", () => {
     });
     const update = vi.fn();
 
-    await runMobileComposerTransition(update);
+    await runMobileComposerTransition(update, { active: true, durationMs: 360 });
 
     expect(startViewTransition).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledOnce();
