@@ -19,10 +19,6 @@ import {
   MenuSubPopup,
   MenuSubTrigger,
 } from "../ui/menu";
-import {
-  resolvePrimaryOperateAccess,
-  resolveRemoteOperateAccess,
-} from "./ProviderSettingsPanel.logic";
 
 /**
  * Why the picker is inert, in the order the user can do something about it.

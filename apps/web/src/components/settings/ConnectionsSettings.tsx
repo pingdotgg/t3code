@@ -2259,10 +2259,7 @@ export function ConnectionsSettings() {
   const canReadAccess = useEnvironmentScope(primaryEnvironmentId, AuthAccessReadScope);
   const canWriteAccess = useEnvironmentScope(primaryEnvironmentId, AuthAccessWriteScope);
   const canReadRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayReadScope);
-  const canMaintain = useEnvironmentScope(
-    primaryEnvironmentId,
-    AuthEnvironmentMaintainScope,
-  );
+  const canMaintain = useEnvironmentScope(primaryEnvironmentId, AuthEnvironmentMaintainScope);
   const canManageRelay = useEnvironmentScope(primaryEnvironmentId, AuthRelayWriteScope);
   const canManageLocalBackend = !isLocalEnvironmentDisabled() && canMaintain;
   const authAccessChanges = useEnvironmentQuery(
@@ -3745,7 +3742,7 @@ export function ConnectionsSettings() {
             ) : null}
           </SettingsSection>
 
-          {isLocalBackendRemotelyReachable && (canReadAccess || canWriteAccess) ? (
+          {canReadAccess || canWriteAccess ? (
             <FoldedSettingsSection
               id="authorized-clients"
               title="Authorized clients"
