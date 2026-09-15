@@ -31,7 +31,11 @@ import {
   parseSessionUpdateEvent,
   type AcpToolCallState,
 } from "../acp/AcpRuntimeModel.ts";
-import { makeAntigravityAdapter, type AntigravityAdapterOptions } from "./AntigravityAdapter.ts";
+import {
+  ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE,
+  makeAntigravityAdapter,
+  type AntigravityAdapterOptions,
+} from "./AntigravityAdapter.ts";
 
 const instanceId = ProviderInstanceId.make("antigravity-test");
 const threadId = ThreadId.make("antigravity-thread");
@@ -1221,6 +1225,34 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(h.controls.closed).toBe(1);
       expect(yield* h.adapter.hasSession(threadId)).toBe(false);
     }),
+  );
+
+  it.effect(
+    "replaces a dropped streamGenerateContent transport error with a readable message",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Keep going" })
+          .pipe(Effect.flip, Effect.forkChild);
+        const prompt = yield* h.nextPrompt;
+        yield* Deferred.fail(
+          prompt.result,
+          AcpErrors.AcpRequestError.internalError(
+            'model unreachable: doRequest: error sending request: Post "http://127.0.0.1:1/v1beta1/projects/redacted/locations/us/publishers/google/models/gemini-3.8-flash-high:streamGenerateContent?alt=sse": EOF',
+          ),
+        );
+        const failure = yield* Fiber.join(sending);
+        expect(failure._tag).toBe("ProviderAdapterRequestError");
+        expect(failure.message).toContain(ANTIGRAVITY_STREAM_DISCONNECTED_MESSAGE);
+        expect(failure.message).not.toContain("doRequest");
+        expect(failure.message).not.toContain("EOF");
+      }),
   );
 
   it.effect("serves client file reads and writes only inside the session roots", () =>
