@@ -407,6 +407,39 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
+/**
+ * The one window a compact meter shows, or null when there is nothing to draw.
+ * The session window wins when the provider reports one: it is the number
+ * Claude Code and Codex put in their own status lines, and the one that moves
+ * while you work. Providers without a session window fall back to whichever
+ * window has the least left, ties going to the shortest. The choice never
+ * depends on the clock, so deciding whether to mount the meter does not need one.
+ */
+export function usageLimitsMeterWindow(
+  limits: ServerProviderUsageLimits | undefined,
+): ServerProviderUsageWindow | null {
+  if (!limits || limitsNotice(limits) !== null) return null;
+  return (
+    limits.windows.find((window) => window.kind === "session") ??
+    [...limits.windows].sort(
+      (left, right) =>
+        remainingPercent(left) - remainingPercent(right) ||
+        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+    )[0] ??
+    null
+  );
+}
+
+/**
+ * Whether a reading can still be trusted. A window that has rolled over since
+ * it was read must render as unknown, never as its number: the quota it
+ * reports belongs to a window that no longer exists.
+ */
+export function windowExpired(window: ServerProviderUsageWindow, now: number): boolean {
+  const resetsAt = resetMillis(window);
+  return resetsAt !== null && resetsAt <= now;
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);

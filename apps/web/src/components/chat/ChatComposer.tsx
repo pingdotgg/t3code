@@ -29,6 +29,7 @@ import type {
   RuntimeMode,
   ScopedThreadRef,
   ServerProvider,
+  ServerProviderUsageLimits,
   ThreadId,
   SnapShotSource,
 } from "@t3tools/contracts";
@@ -48,7 +49,7 @@ import {
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
-import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
+import { USAGE_LIMITS_COMMAND, usageLimitsMeterWindow } from "@t3tools/shared/usageLimits";
 import {
   Fragment,
   memo,
@@ -922,6 +923,7 @@ function ComposerCommandMenuLayer(props: { anchor: HTMLElement | null; children:
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectValue } from "../ui/select";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { UsageLimitsMeter } from "./UsageLimitsMeter";
 import { toastManager } from "../ui/toast";
 import {
   FileIcon,
@@ -1310,6 +1312,11 @@ export interface ChatComposerProps {
   bannerItems: readonly ComposerBannerStackItem[];
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
+  /** Subscription usage for the selected provider, for the opt-in footer meter. */
+  usageLimits?: ServerProviderUsageLimits | undefined;
+  usageLimitsProviderLabel: string;
+  /** Opens the same panel /usage-limits does; undefined when there is nothing to show. */
+  onOpenUsageLimits?: (() => void) | undefined;
   environmentUnavailable: {
     readonly label: string;
     readonly connection: EnvironmentConnectionPresentation;
@@ -4837,11 +4844,23 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const restingHiddenBlockCount = composerControlsInStrip ? restingControlsHiddenBlockCount : 0;
+  // The block only exists when there is a reading to draw, so an unsupported
+  // provider leaves no separator hanging in the footer.
+  const showUsageLimitsMeter =
+    settings.usageLimitsMeterEnabled && usageLimitsMeterWindow(props.usageLimits) !== null;
   const composerControlsCompact = !composerControlsInStrip && isComposerFooterCompact;
+  // Which blocks the footer would render, in order, so each block's own
+  // `hidden` prop and the overflow menu read the same slice.
+  const restingBlockIds = [
+    ...(providerTraitsPicker ? ["traits"] : []),
+    "mode",
+    ...(showUsageLimitsMeter ? ["usage-limits"] : []),
+  ];
+  const hiddenIds = restingBlockIds.slice(restingBlockIds.length - restingHiddenBlockCount);
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: "xs",
-    hidden: composerControlsHidden || restingHiddenBlockCount > 1,
+    hidden: composerControlsHidden || hiddenIds.includes("traits"),
   });
   const restingBlockDefs = [
     ...(providerTraitsPicker
@@ -4865,16 +4884,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           interactionMode={interactionMode}
           runtimeMode={runtimeMode}
           size={composerControlsInStrip ? "xs" : "sm"}
-          hidden={composerControlsHidden || restingHiddenBlockCount > 0}
+          hidden={composerControlsHidden || hiddenIds.includes("mode")}
           onToggleInteractionMode={toggleInteractionMode}
           onRuntimeModeChange={handleRuntimeModeChange}
         />
       ),
     },
+    // Trailing, so the least load-bearing control is the first into overflow.
+    // It has no menu entry there: the meter is a glance, not an action.
+    ...(showUsageLimitsMeter
+      ? [
+          {
+            id: "usage-limits",
+            content: (
+              <>
+                <ComposerControlSeparator size={composerControlsInStrip ? "xs" : "sm"} />
+                <UsageLimitsMeter
+                  limits={props.usageLimits}
+                  providerLabel={props.usageLimitsProviderLabel}
+                  size={composerControlsInStrip ? "xs" : "sm"}
+                  onOpen={props.onOpenUsageLimits}
+                />
+              </>
+            ),
+          },
+        ]
+      : []),
   ];
-  const hiddenRestingBlockIds = restingBlockDefs
-    .slice(restingBlockDefs.length - restingHiddenBlockCount)
-    .map((def) => def.id);
+  // The meter has no menu entry: it is a glance, not an action. Hiding only
+  // the meter must not raise an overflow trigger holding nothing new.
+  const overflowIds = hiddenIds.filter((id) => id !== "usage-limits");
   const composerControls = showProviderUnavailable ? (
     <Button
       type="button"
@@ -4981,23 +5020,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           {composerControlsInStrip ? (
             <div
               data-resting-controls-overflow
-              aria-hidden={hiddenRestingBlockIds.length === 0 || undefined}
-              inert={hiddenRestingBlockIds.length === 0 || undefined}
+              aria-hidden={overflowIds.length === 0 || undefined}
+              inert={overflowIds.length === 0 || undefined}
               className={cn(
                 "min-w-0 shrink-0",
-                hiddenRestingBlockIds.length === 0 && "pointer-events-none invisible absolute",
+                overflowIds.length === 0 && "pointer-events-none invisible absolute",
               )}
             >
               <CompactComposerControlsMenu
                 interactionMode={interactionMode}
                 runtimeMode={runtimeMode}
                 size="xs"
-                hidden={composerControlsHidden || hiddenRestingBlockIds.length === 0}
-                showInteractionModeToggle={
-                  planModeUiEnabled && hiddenRestingBlockIds.includes("mode")
-                }
+                hidden={composerControlsHidden || overflowIds.length === 0}
+                showInteractionModeToggle={planModeUiEnabled && overflowIds.includes("mode")}
                 traitsMenuContent={
-                  hiddenRestingBlockIds.includes("traits") ? providerTraitsMenuContent : undefined
+                  overflowIds.includes("traits") ? providerTraitsMenuContent : undefined
                 }
                 onToggleInteractionMode={toggleInteractionMode}
                 onRuntimeModeChange={handleRuntimeModeChange}
