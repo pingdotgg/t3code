@@ -22,7 +22,9 @@ import {
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
   type AuthEnvironmentScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
+  AuthOrchestrationReadScope,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -2994,6 +2996,11 @@ const makeWsRpcLayer = (
               });
             }),
             { "rpc.aggregate": "workspace" },
+            [
+              input.resource._tag === "workspace-file" || input.resource._tag === "media-file"
+                ? AuthFilesystemReadScope
+                : AuthOrchestrationReadScope,
+            ],
           ),
         [WS_METHODS.subscribeVcsStatus]: (input) =>
           observeRpcStream(

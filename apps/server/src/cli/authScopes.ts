@@ -1,8 +1,8 @@
-import { AuthEnvironmentScope } from "@t3tools/contracts";
+import { AuthGrantScope } from "@t3tools/contracts";
 import { Flag } from "effect/unstable/cli";
 
-export const authScopesFlag = (defaults: ReadonlyArray<AuthEnvironmentScope>) =>
-  Flag.choice("scope", AuthEnvironmentScope.literals).pipe(
+export const authScopesFlag = (defaults: ReadonlyArray<AuthGrantScope>) =>
+  Flag.choice("scope", AuthGrantScope.literals).pipe(
     Flag.withDescription(
       `Authorization scope to grant. Repeat for multiple scopes; replaces the default set: ${defaults.join(", ")}.`,
     ),

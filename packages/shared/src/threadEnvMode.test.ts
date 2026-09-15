@@ -29,6 +29,28 @@ describe("resolveDefaultThreadEnvMode", () => {
 });
 
 describe("isDefaultThreadEnvModeSettled", () => {
+  it("waits for file permission before accepting a fallback while the file query is paused", () => {
+    const sources = {
+      explicitMode: undefined,
+      projectSetting: null,
+      projectFilePending: false,
+      projectFilePermissionPending: true,
+    };
+    expect(isDefaultThreadEnvModeSettled(sources)).toBe(false);
+    expect(
+      isDefaultThreadEnvModeSettled({
+        ...sources,
+        projectFilePermissionPending: false,
+        projectFilePending: true,
+      }),
+    ).toBe(false);
+    expect(isDefaultThreadEnvModeSettled({ ...sources, projectFilePermissionPending: false })).toBe(
+      true,
+    );
+    expect(isDefaultThreadEnvModeSettled({ ...sources, explicitMode: "local" })).toBe(true);
+    expect(isDefaultThreadEnvModeSettled({ ...sources, projectSetting: "local" })).toBe(true);
+  });
+
   it("settles on an explicit pick or project setting even while the file loads", () => {
     expect(
       isDefaultThreadEnvModeSettled({

@@ -19,7 +19,7 @@ export function resolveDefaultThreadEnvMode(sources: {
 
 /**
  * True once the resolved default can no longer change: an explicit pick or a
- * source that outranks t3.json decided, or the file read settled. While
+ * source that outranks t3.json decided, or its permission lookup and file read settled. While
  * false, nothing may persist the provisional default (for example into a
  * draft's workspace selection) — it could differ from the final value.
  */
@@ -27,10 +27,11 @@ export function isDefaultThreadEnvModeSettled(sources: {
   readonly explicitMode: ThreadEnvMode | undefined;
   readonly projectSetting: ThreadEnvMode | null | undefined;
   readonly projectFilePending: boolean;
+  readonly projectFilePermissionPending?: boolean;
 }): boolean {
   return (
     sources.explicitMode !== undefined ||
     sources.projectSetting != null ||
-    !sources.projectFilePending
+    (!sources.projectFilePending && !sources.projectFilePermissionPending)
   );
 }

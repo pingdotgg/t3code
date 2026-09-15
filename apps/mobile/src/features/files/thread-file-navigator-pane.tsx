@@ -1,3 +1,5 @@
+import { resolveFilesystemReadAccess } from "@t3tools/client-runtime/state/filesystem";
+import { environmentSession } from "../../state/session";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
 import { useCallback, useMemo, useState, type ComponentProps } from "react";
@@ -13,6 +15,8 @@ import {
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { nativeHeaderScrollEdgeEffects } from "../../native/StackHeader";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
+import { useEnvironmentQuery } from "../../state/query";
+import { useEnvironmentPresentation } from "../../state/presentation";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { FileTreeBrowser } from "./FileTreeBrowser";
 import { useFileTreeEntries } from "./useFileTreeEntries";
@@ -34,9 +38,20 @@ export function ThreadFileNavigatorPane(props: {
   const foregroundColor = theme["--color-foreground"];
   const sheetColor = theme["--color-sheet"];
   const headerScrollEdgeEffects = nativeHeaderScrollEdgeEffects(Platform.OS, Platform.Version);
+  const fileAccessSession = useEnvironmentQuery(
+    environmentSession.sessionStateAtom(props.environmentId),
+  );
+  const fileEnvironment = useEnvironmentPresentation(props.environmentId);
+  const fileAccess = resolveFilesystemReadAccess({
+    isCatalogReady: fileEnvironment.isReady,
+    connection: fileEnvironment.presentation?.connection ?? null,
+    session: fileAccessSession.data,
+    sessionError: fileAccessSession.error,
+  });
+  const { canReadFiles } = fileAccess;
   const entriesQuery = useFileTreeEntries({
     environmentId: props.environmentId,
-    cwd: props.cwd,
+    cwd: canReadFiles ? props.cwd : null,
     searchQuery,
   });
   const handlePreviewFile = useCallback(
@@ -83,8 +98,14 @@ export function ThreadFileNavigatorPane(props: {
       entries={entriesQuery.entries}
       loadedDirectories={entriesQuery.loadedDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
-      error={entriesQuery.error}
-      isPending={entriesQuery.isPending}
+      error={
+        canReadFiles
+          ? entriesQuery.error
+          : fileAccess.isPending
+            ? null
+            : (fileAccess.error ?? "This connection cannot read host files.")
+      }
+      isPending={fileAccess.isPending || entriesQuery.isPending}
       searchQuery={searchQuery}
       searchTruncated={entriesQuery.searchTruncated}
       selectedPath={props.selectedPath}
