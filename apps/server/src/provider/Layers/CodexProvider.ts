@@ -77,6 +77,12 @@ export interface CodexAppServerProviderSnapshot {
   readonly skills: ReadonlyArray<ServerProviderSkill>;
 }
 
+export interface CodexConfigModelDefaults {
+  readonly model?: string | null | undefined;
+  readonly reasoningEffort?: string | null | undefined;
+  readonly serviceTier?: string | null | undefined;
+}
+
 const REASONING_EFFORT_LABELS: Readonly<Record<string, string>> = {
   none: "None",
   minimal: "Minimal",
@@ -243,8 +249,15 @@ export function applyPreferredCodexDefaultModel(
   if (!preferredSlug) {
     return models;
   }
+  return setDefaultModel(models, preferredSlug);
+}
+
+function setDefaultModel(
+  models: ReadonlyArray<ServerProviderModel>,
+  defaultModel: string,
+): ReadonlyArray<ServerProviderModel> {
   return models.map((model) => {
-    if (model.slug === preferredSlug) {
+    if (model.slug === defaultModel) {
       return model.isDefault ? model : { ...model, isDefault: true };
     }
     if (!model.isDefault) {
@@ -252,6 +265,105 @@ export function applyPreferredCodexDefaultModel(
     }
     const { isDefault: _isDefault, ...rest } = model;
     return rest;
+  });
+}
+
+function applyConfiguredSelectDefault(
+  capabilities: ModelCapabilities | null,
+  optionId: string,
+  configuredValue: string | null | undefined,
+): ModelCapabilities | null {
+  const value = configuredValue?.trim();
+  if (!capabilities || !value) {
+    return capabilities;
+  }
+
+  let matched = false;
+  const optionDescriptors = (capabilities.optionDescriptors ?? []).map((descriptor) => {
+    if (
+      descriptor.type !== "select" ||
+      descriptor.id !== optionId ||
+      !descriptor.options.some((option) => option.id === value)
+    ) {
+      return descriptor;
+    }
+
+    matched = true;
+    return {
+      ...descriptor,
+      currentValue: value,
+      options: descriptor.options.map((option) => {
+        const { isDefault: _isDefault, ...rest } = option;
+        return option.id === value ? { ...rest, isDefault: true } : rest;
+      }),
+    };
+  });
+
+  return matched ? { ...capabilities, optionDescriptors } : capabilities;
+}
+
+/**
+ * Strip a select's current value and default marker so clients resolve it to
+ * no selection. Used when the effective value cannot be read, where showing
+ * the catalog default would claim a tier Codex may not actually apply.
+ */
+function withUnknownSelectDefault(
+  capabilities: ModelCapabilities | null,
+  optionId: string,
+): ModelCapabilities | null {
+  if (!capabilities) {
+    return capabilities;
+  }
+
+  let matched = false;
+  const optionDescriptors = (capabilities.optionDescriptors ?? []).map((descriptor) => {
+    if (descriptor.type !== "select" || descriptor.id !== optionId) {
+      return descriptor;
+    }
+    matched = true;
+    const { currentValue: _currentValue, ...rest } = descriptor;
+    return {
+      ...rest,
+      options: descriptor.options.map(({ isDefault: _isDefault, ...option }) => option),
+    };
+  });
+
+  return matched ? { ...capabilities, optionDescriptors } : capabilities;
+}
+
+/**
+ * Use Codex's effective config for a new thread when it names an available
+ * model. Reasoning effort is model-specific, so it only lands on the default
+ * model; the service tier is global in Codex, so every model that supports the
+ * configured tier shows it. Missing config values retain T3's catalog-based
+ * fallbacks. A `null` config means Codex's configuration could not be read,
+ * which leaves the tier unknown rather than presenting catalog Standard for a
+ * tier Codex may silently override.
+ */
+export function applyCodexConfigModelDefaults(
+  models: ReadonlyArray<ServerProviderModel>,
+  config: CodexConfigModelDefaults | null,
+): ReadonlyArray<ServerProviderModel> {
+  const configuredModel = config?.model?.trim();
+  const configuredModelAvailable =
+    configuredModel !== undefined &&
+    configuredModel.length > 0 &&
+    models.some((model) => model.slug === configuredModel);
+  const modelsWithDefault = configuredModelAvailable
+    ? setDefaultModel(models, configuredModel)
+    : applyPreferredCodexDefaultModel(models);
+  const defaultModel = modelsWithDefault.find((model) => model.isDefault)?.slug;
+
+  return modelsWithDefault.map((model) => {
+    const withReasoning = applyConfiguredSelectDefault(
+      model.capabilities,
+      "reasoningEffort",
+      model.slug === defaultModel ? config?.reasoningEffort : undefined,
+    );
+    const capabilities = config
+      ? applyConfiguredSelectDefault(withReasoning, "serviceTier", config.serviceTier)
+      : withUnknownSelectDefault(withReasoning, "serviceTier");
+    return capabilities === model.capabilities ? model : { ...model, capabilities };
   });
 }
 
@@ -338,6 +450,18 @@ const requestAllCodexModels = Effect.fn("requestAllCodexModels")(function* (
   } while (cursor);
 
   return models;
+});
+
+const readCodexConfigModelDefaults = Effect.fn("readCodexConfigModelDefaults")(function* (
+  client: CodexClient.CodexAppServerClient["Service"],
+  cwd: string,
+) {
+  const response = yield* client.request("config/read", { cwd, includeLayers: false });
+  return {
+    model: response.config.model,
+    reasoningEffort: response.config.model_reasoning_effort,
+    serviceTier: response.config.service_tier,
+  };
 });
 
 export function buildCodexInitializeParams(): CodexSchema.V1InitializeParams {
@@ -433,12 +557,13 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     } satisfies CodexAppServerProviderSnapshot;
   }
 
-  const [skillsResponse, models, rateLimits] = yield* Effect.all(
+  const [skillsResponse, models, configDefaults, rateLimits] = yield* Effect.all(
     [
       client.request("skills/list", {
         cwds: [input.cwd],
       }),
       requestAllCodexModels(client),
+      readCodexConfigModelDefaults(client, input.cwd).pipe(Effect.orElseSucceed(() => null)),
       // Usage is an enrichment: a failure or a slow answer degrades to "no
       // usage this probe" rather than costing the account and models.
       client.request("account/rateLimits/read", undefined).pipe(
@@ -467,8 +592,9 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
     account: accountResponse,
     rateLimits,
     version,
-    models: applyPreferredCodexDefaultModel(
+    models: applyCodexConfigModelDefaults(
       appendCustomCodexModels(models, input.customModels ?? []),
+      configDefaults,
     ),
     skills: parseCodexSkillsListResponse(skillsResponse, input.cwd),
   } satisfies CodexAppServerProviderSnapshot;
