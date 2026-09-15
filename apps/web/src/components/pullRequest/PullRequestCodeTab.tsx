@@ -419,6 +419,11 @@ function PullRequestCodeTab({
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
     parsedSlices.some((parsed) => parsed?.kind === "raw");
+  // Omitted previews can still carry complete counts. GitLab can withhold hunks without
+  // reporting their statistics, so those slices must retain the detail totals.
+  const incompleteStats =
+    parsedSlices.some((parsed) => parsed?.kind === "raw") ||
+    loadedSlices.some((slice) => slice.truncated && slice.omittedFileStats.length === 0);
 
   // Placing a conversation takes more than its file being in the diff: its line has to fall
   // inside a hunk that was rendered. One that does not is drawn nowhere, so it belongs in the
@@ -562,7 +567,7 @@ function PullRequestCodeTab({
       getPullRequestDiffStats({
         files,
         omittedFileStats,
-        complete: loadedSlices.length > 0 && nextCursor === null && !withheldContent,
+        complete: loadedSlices.length > 0 && nextCursor === null && !incompleteStats,
         totals:
           commit === null
             ? {
@@ -581,7 +586,7 @@ function PullRequestCodeTab({
       omittedFileStats,
       loadedSlices.length,
       nextCursor,
-      withheldContent,
+      incompleteStats,
     ],
   );
   const fileCount = lineStat.changedFiles;
