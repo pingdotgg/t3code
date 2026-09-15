@@ -2,11 +2,11 @@ import { assert, describe } from "@effect/vitest";
 
 import { createOxlintRuleHarness } from "../test/utils.ts";
 
-const rule = createOxlintRuleHarness("t3code/no-hermes-unsupported-array-methods", {
+const rule = createOxlintRuleHarness("t3code/no-hermes-unsupported-apis", {
   filename: "fixture.ts",
 });
 
-describe("t3code/no-hermes-unsupported-array-methods", () => {
+describe("t3code/no-hermes-unsupported-apis", () => {
   rule.valid("allows in-place sort on a copy", `const sorted = [...items].sort(compare);`);
 
   rule.valid("allows in-place reverse on a copy", `const reversed = [...items].reverse();`);
@@ -54,4 +54,26 @@ describe("t3code/no-hermes-unsupported-array-methods", () => {
     "ignores a template-literal property with substitutions",
     "const value = items[`to${suffix}`]();",
   );
+
+  rule.valid("allows supported Intl constructors", `new Intl.NumberFormat();`);
+  rule.valid("allows feature detection", `const supported = typeof Intl.Segmenter === "function";`);
+  rule.valid("allows unrelated Segmenter constructors", `new custom.Segmenter();`);
+  rule.valid("ignores dynamic computed names", `new Intl[Segmenter](); items[toSorted]();`);
+
+  for (const expression of [
+    "new Intl.Segmenter(undefined, { granularity: 'grapheme' })",
+    "new Intl['Segmenter']()",
+    "new Intl[`Segmenter`]()",
+    "new globalThis.Intl.Segmenter()",
+    "new globalThis['Intl']['Segmenter']()",
+    "new global.Intl.Segmenter()",
+    "new window.Intl.Segmenter()",
+    "Intl.Segmenter()",
+    "Intl.Segmenter?.()",
+  ]) {
+    rule.invalid(`reports ${expression}`, `${expression};`, (output) => {
+      assert.match(output, /Hermes does not implement Intl\.Segmenter/);
+      assert.match(output, /portable implementation/);
+    });
+  }
 });
