@@ -170,6 +170,92 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
     }),
   );
 
+  it.effect("evicts large raw notifications by payload size and releases the budget on read", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const handled = yield* Queue.unbounded<number>();
+      let handledCount = 0;
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+        onNotification: () => Queue.offer(handled, ++handledCount).pipe(Effect.asVoid),
+      });
+      const send = (index: number, text: string) =>
+        Queue.offer(
+          input,
+          encoder.encode(
+            `${encodeUnknownJsonString({
+              jsonrpc: "2.0",
+              method: "x/large",
+              params: { index, text },
+            })}\n`,
+          ),
+        ).pipe(Effect.andThen(Queue.take(handled)));
+      const text = "x".repeat(17 * 1024 * 1024);
+      for (let index = 0; index < 4; index++) {
+        assert.equal(yield* send(index, text), index + 1);
+      }
+      const retained = yield* transport.incoming.pipe(Stream.take(3), Stream.runCollect);
+      assert.deepEqual(
+        retained.map((entry) => (entry.params as { index: number }).index),
+        [1, 2, 3],
+      );
+
+      for (let index = 4; index < 7; index++) {
+        yield* send(index, text);
+      }
+      const refilled = yield* transport.incoming.pipe(Stream.take(3), Stream.runCollect);
+      assert.deepEqual(
+        refilled.map((entry) => (entry.params as { index: number }).index),
+        [4, 5, 6],
+      );
+
+      // Reading releases the budget: subsequent small notifications retain the
+      // full count allowance instead of being evicted against stale byte totals.
+      for (let index = 0; index < 32; index++) {
+        yield* send(index, "small");
+      }
+      const small = yield* transport.incoming.pipe(Stream.take(32), Stream.runCollect);
+      assert.deepEqual(
+        small.map((entry) => entry.params),
+        Array.from({ length: 32 }, (_, index) => ({ index, text: "small" })),
+      );
+      assert.equal(handledCount, 39);
+    }),
+  );
+
+  it.effect("wakes concurrent raw notification consumers", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+      const read = transport.incoming.pipe(Stream.take(1), Stream.runCollect);
+      const first = yield* read.pipe(Effect.forkScoped);
+      const second = yield* read.pipe(Effect.forkScoped);
+      yield* Queue.offer(
+        input,
+        encoder.encode(
+          [0, 1]
+            .map((index) =>
+              encodeUnknownJsonString({
+                jsonrpc: "2.0",
+                method: "x/test",
+                params: { index },
+              }),
+            )
+            .join("\n") + "\n",
+        ),
+      );
+      const received = [...(yield* Fiber.join(first)), ...(yield* Fiber.join(second))];
+      assert.deepEqual(
+        received.map((entry) => (entry.params as { index: number }).index).sort(),
+        [0, 1],
+      );
+    }),
+  );
+
   it.effect("keeps invalid core notification values only in the schema cause", () =>
     Effect.gen(function* () {
       const secret = "acp-core-notification-secret-sentinel";
@@ -287,6 +373,46 @@ it.layer(NodeServices.layer)("effect-acp protocol", (it) => {
         },
       });
       assert.notInclude(encodeUnknownJsonString(event), secret);
+    }),
+  );
+
+  it.effect("decodes wire messages larger than the previous 16 MiB default", () =>
+    Effect.gen(function* () {
+      const { stdio, input } = yield* makeInMemoryStdio();
+      const transport = yield* AcpProtocol.makeAcpPatchedProtocol({
+        stdio,
+        serverRequestMethods: new Set(),
+      });
+
+      const notifications =
+        yield* Deferred.make<ReadonlyArray<AcpProtocol.AcpIncomingNotification>>();
+      yield* transport.incoming.pipe(
+        Stream.take(1),
+        Stream.runCollect,
+        Effect.flatMap((notificationChunk) => Deferred.succeed(notifications, notificationChunk)),
+        Effect.forkScoped,
+      );
+
+      // 17 MiB exceeds Effect's ndjson default; cursor sessions replay larger
+      // tool results on session/load.
+      const largeText = "x".repeat(17 * 1024 * 1024);
+      yield* Queue.offer(
+        input,
+        yield* encodeJsonl(SessionUpdateNotification, {
+          jsonrpc: "2.0",
+          method: "session/update",
+          params: {
+            sessionId: "session-1",
+            update: {
+              sessionUpdate: "agent_message_chunk",
+              content: { type: "text", text: largeText },
+            },
+          },
+        }),
+      );
+
+      const [update] = yield* Deferred.await(notifications);
+      assert.equal(update?._tag, "SessionUpdate");
     }),
   );
 
