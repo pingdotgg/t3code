@@ -57,7 +57,6 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
 export function makeAssistantStreamingFilter(mode: ResponseStreamingMode) {
   const delivered = new Map<string, { text: string; at: number }>();
   return (event: ProviderAdapterV2Event, now: number): ProviderAdapterV2Event | null => {
-    if (mode === "token") return event;
     if (
       event.type === "node.updated" &&
       event.node.kind === "assistant_message" &&
