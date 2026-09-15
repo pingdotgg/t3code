@@ -4,20 +4,21 @@ import {
   withAssistantCitationComment,
 } from "@t3tools/shared/assistantCitations";
 import {
+  detectComposerTrigger as detectSharedComposerTrigger,
+  type ComposerTrigger as SharedComposerTrigger,
+} from "@t3tools/shared/composerTrigger";
+import {
   splitPromptIntoComposerSegments,
   type ComposerPromptSegment,
 } from "./composer-editor-mentions";
 
-export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
+export type ComposerTriggerKind = Exclude<SharedComposerTrigger["kind"], "slash-model">;
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background";
 
-export interface ComposerTrigger {
+export type ComposerTrigger = Omit<SharedComposerTrigger, "kind"> & {
   kind: ComposerTriggerKind;
-  query: string;
-  rangeStart: number;
-  rangeEnd: number;
-}
+};
 
 export function formatAssistantCitationForComposer(citation: AssistantCitation, comment = "") {
   return `${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `;
@@ -44,14 +45,6 @@ function clampCursor(text: string, cursor: number): number {
 
 function isWhitespace(char: string): boolean {
   return char === " " || char === "\n" || char === "\t" || char === "\r";
-}
-
-function tokenStartForCursor(text: string, cursor: number): number {
-  let index = cursor - 1;
-  while (index >= 0 && !isWhitespace(text[index] ?? "")) {
-    index -= 1;
-  }
-  return index + 1;
 }
 
 export function expandCollapsedComposerCursor(text: string, cursorInput: number): number {
@@ -206,53 +199,20 @@ export function isCollapsedCursorAdjacentToInlineToken(
   return false;
 }
 
+/** Adapts shared trigger detection to the web model picker, which opens from the command row. */
 export function detectComposerTrigger(text: string, cursorInput: number): ComposerTrigger | null {
-  const cursor = clampCursor(text, cursorInput);
-  const lineStart = text.lastIndexOf("\n", Math.max(0, cursor - 1)) + 1;
-  const linePrefix = text.slice(lineStart, cursor);
-
-  if (linePrefix.startsWith("/")) {
-    const commandMatch = /^\/(\S*)$/.exec(linePrefix);
-    if (commandMatch) {
-      const commandQuery = commandMatch[1] ?? "";
-      return {
-        kind: "slash-command",
-        query: commandQuery,
-        rangeStart: lineStart,
-        rangeEnd: cursor,
-      };
-    }
-  }
-
-  const tokenStart = tokenStartForCursor(text, cursor);
-  const token = text.slice(tokenStart, cursor);
-  const pullRequestMatch = /^#([\p{L}\p{N}][\p{L}\p{N}_-]*)?$/u.exec(token);
-  if (pullRequestMatch) {
-    return {
-      kind: "pull-request",
-      query: pullRequestMatch[1] ?? "",
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
-  }
-  if (token.startsWith("$")) {
-    return {
-      kind: "skill",
-      query: token.slice(1),
-      rangeStart: tokenStart,
-      rangeEnd: cursor,
-    };
-  }
-  if (!token.startsWith("@")) {
+  const trigger = detectSharedComposerTrigger(text, cursorInput, isWhitespace);
+  if (!trigger) {
     return null;
   }
+  if (trigger.kind !== "slash-model") {
+    return { ...trigger, kind: trigger.kind };
+  }
 
-  return {
-    kind: "path",
-    query: token.slice(1),
-    rangeStart: tokenStart,
-    rangeEnd: cursor,
-  };
+  const token = text.slice(trigger.rangeStart, trigger.rangeEnd);
+  return /^\/model$/i.test(token)
+    ? { ...trigger, kind: "slash-command", query: token.slice(1) }
+    : null;
 }
 
 export function parseStandaloneComposerSlashCommand(
