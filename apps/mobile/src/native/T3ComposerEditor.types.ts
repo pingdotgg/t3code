@@ -2,6 +2,10 @@ import type { OrchestrationMessageContext, ServerProviderSkill } from "@t3tools/
 import type { Ref } from "react";
 import type { StyleProp, TextStyle, ViewStyle } from "react-native";
 
+import type { ComposerEnterBehavior } from "../lib/composerEnterBehavior";
+
+export type { ComposerEnterBehavior };
+
 export type ComposerEditorSelection = {
   readonly start: number;
   readonly end: number;
@@ -61,6 +65,11 @@ export interface ComposerEditorProps {
   readonly onPasteText?: (paste: ComposerTextPaste) => void;
   readonly onFocus?: () => void;
   readonly onBlur?: () => void;
-  /** Hardware keyboard submission: Command-Return, or Return without Shift on iPad. */
+  /**
+   * Hardware-keyboard Return behavior on iOS. No-op on Android, which has no
+   * hardware Return handling.
+   */
+  readonly enterBehavior?: ComposerEnterBehavior;
+  /** Hardware keyboard submission: Command-Return, or Return when `enterBehavior` is "send". */
   readonly onSubmit?: () => void;
 }

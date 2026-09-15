@@ -45,6 +45,11 @@ private struct ComposerChipStyle {
   let textColor: UIColor
 }
 
+private enum ComposerEnterBehavior: String {
+  case send
+  case newline
+}
+
 private final class ComposerTextAttachment: NSTextAttachment {
   let source: String
   let label: String
@@ -93,6 +98,7 @@ private final class ComposerTextView: UITextView {
   var isReadOnly = false
   var textPasteThresholdBytes = 0
   var maxInputChars = Int.max
+  var enterBehavior: ComposerEnterBehavior = .send
   private var bypassTextPasteInterception = false
 
   override var keyCommands: [UIKeyCommand]? {
@@ -106,7 +112,7 @@ private final class ComposerTextView: UITextView {
     submit.discoverabilityTitle = "Send Message"
     submit.wantsPriorityOverSystemBehavior = true
     commands.append(submit)
-    if UIDevice.current.userInterfaceIdiom == .pad {
+    if enterBehavior == .send {
       let submitOnReturn = UIKeyCommand(
         input: "\r",
         modifierFlags: [],
@@ -684,6 +690,10 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func setSpellCheck(_ spellCheck: Bool) {
     textView.spellCheckingType = spellCheck ? .yes : .no
+  }
+
+  func setEnterBehavior(_ behavior: String) {
+    textView.enterBehavior = ComposerEnterBehavior(rawValue: behavior) ?? .send
   }
 
   func setTextPasteThresholdBytes(_ threshold: Int) {

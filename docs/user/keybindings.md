@@ -38,7 +38,8 @@ choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
 to show only actions.
 
 In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
-also sends.
+also sends. To make Return insert a new line instead, change the Return key
+behavior in Settings → Keyboard.
 
 ## Edit the configuration file
 

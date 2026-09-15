@@ -59,6 +59,7 @@ import { SettingsClientStorageRouteScreen } from "./features/settings/SettingsCl
 import { SettingsDiagnosticsRouteScreen } from "./features/diagnostics/SettingsDiagnosticsRouteScreen";
 import { SettingsAuthRouteScreen } from "./features/settings/SettingsAuthRouteScreen";
 import { SettingsEnvironmentsRouteScreen } from "./features/settings/SettingsEnvironmentsRouteScreen";
+import { SettingsKeyboardRouteScreen } from "./features/settings/SettingsKeyboardRouteScreen";
 import { SettingsLegalRouteScreen } from "./features/settings/SettingsLegalRouteScreen";
 import {
   SettingsOpenSourceLicenseRouteScreen,
@@ -193,6 +194,13 @@ const SettingsContentStack = createNativeStackNavigator({
       linking: "project-grouping",
       options: {
         title: "Project Grouping",
+      },
+    }),
+    SettingsKeyboard: createNativeStackScreen({
+      screen: SettingsKeyboardRouteScreen,
+      linking: "keyboard",
+      options: {
+        title: "Keyboard",
       },
     }),
     SettingsClientStorage: createNativeStackScreen({
