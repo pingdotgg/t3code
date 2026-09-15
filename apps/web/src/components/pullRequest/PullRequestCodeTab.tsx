@@ -562,6 +562,7 @@ function PullRequestCodeTab({
       getPullRequestDiffStats({
         files,
         omittedFileStats,
+        complete: loadedSlices.length > 0 && nextCursor === null && !withheldContent,
         totals:
           commit === null
             ? {
@@ -571,7 +572,17 @@ function PullRequestCodeTab({
               }
             : null,
       }),
-    [commit, detail.additions, detail.deletions, detail.changedFiles, files, omittedFileStats],
+    [
+      commit,
+      detail.additions,
+      detail.deletions,
+      detail.changedFiles,
+      files,
+      omittedFileStats,
+      loadedSlices.length,
+      nextCursor,
+      withheldContent,
+    ],
   );
   const fileCount = lineStat.changedFiles;
   const remainingFileCount = commit === null ? Math.max(1, fileCount - files.length) : 1;

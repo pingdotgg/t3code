@@ -255,6 +255,40 @@ export const make = Effect.gen(function* () {
       return { oldContents, newContents };
     },
   );
+  const readDiffFile = Effect.fn("ForgejoPullRequestProvider.readDiffFile")(function* (
+    input: ProviderRepositoryRef,
+    revision: string,
+    filePath: string,
+  ) {
+    const Entry = Schema.Struct({ path: Schema.String, mode: Schema.String, sha: Schema.String });
+    let entry: typeof Entry.Type | undefined;
+    let tree = revision;
+    // Walk only the relevant directories; recursive trees can exceed the API's output limit.
+    for (const segment of filePath.split("/")) {
+      entry = undefined;
+      for (let page = 1; ; page++) {
+        const result = yield* read(
+          {
+            ...input,
+            path: `${repoPath(input)}/git/trees/${encodeURIComponent(tree)}?per_page=100&page=${page}`,
+          },
+          Schema.Struct({ tree: Schema.NullOr(Schema.Array(Entry)), truncated: Schema.Boolean }),
+        );
+        entry = result.tree?.find((candidate) => candidate.path === segment);
+        if (entry || !result.truncated || !result.tree?.length) break;
+      }
+      if (!entry) return yield* failure("getDiff", `Could not find ${filePath} in ${revision}.`);
+      tree = entry.sha;
+    }
+    if (!entry) return yield* failure("getDiff", "Missing file path.");
+    if (entry.mode === "160000")
+      return { mode: entry.mode, contents: `Subproject commit ${entry.sha}\n` };
+    const blob = yield* read(
+      { ...input, path: `${repoPath(input)}/git/blobs/${encodeURIComponent(entry.sha)}` },
+      Schema.Struct({ content: Schema.String, encoding: Schema.Literal("base64") }),
+    );
+    return { mode: entry.mode, contents: Buffer.from(blob.content, "base64").toString("utf8") };
+  });
   const provider: PullRequestProviderApi = {
     kind: "forgejo",
     capabilities: CAPABILITIES,
@@ -469,26 +503,33 @@ export const make = Effect.gen(function* () {
               quotePath(newPath),
             ]);
             const header = `diff --git ${oldLabel} ${newLabel}\n`;
-            const contents = yield* getDiffFileContents(
-              {
-                ...input,
-                oldPath,
-                newPath,
-                changeType,
-              },
-              revisions,
+            if (!revisions) return yield* failure("getDiff", "Missing diff revisions.");
+            const contents = yield* Effect.all(
+              [
+                changeType === "new" || !revisions.oldRef
+                  ? Effect.succeed(null)
+                  : readDiffFile(input, revisions.oldRef, oldPath),
+                changeType === "deleted"
+                  ? Effect.succeed(null)
+                  : readDiffFile(
+                      { ...input, repository: revisions.headRepository },
+                      revisions.newRef,
+                      newPath,
+                    ),
+              ],
+              { concurrency: 2 },
             ).pipe(Effect.catchIf(isOversizedResponse, () => Effect.succeed(null)));
             if (
               contents === null ||
-              contents.oldContents.includes("\0") ||
-              contents.newContents.includes("\0")
+              contents[0]?.contents.includes("\0") ||
+              contents[1]?.contents.includes("\0")
             )
               return { patch: `${header}Binary files differ\n`, truncated: true };
             const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-diff-" });
             yield* Effect.all(
               [
-                fs.writeFileString(path.join(directory, "old"), contents.oldContents),
-                fs.writeFileString(path.join(directory, "new"), contents.newContents),
+                fs.writeFileString(path.join(directory, "old"), contents[0]?.contents ?? ""),
+                fs.writeFileString(path.join(directory, "new"), contents[1]?.contents ?? ""),
               ],
               { concurrency: 2 },
             );
@@ -512,16 +553,17 @@ export const make = Effect.gen(function* () {
             });
             if (result.exitCode > 1) return yield* failure("getDiff", result.stderr);
             const hunks = result.stdout.indexOf("@@ ");
-            const mode =
-              changeType === "new"
-                ? "new file mode 100644\n"
-                : changeType === "deleted"
-                  ? "deleted file mode 100644\n"
-                  : oldPath !== newPath
-                    ? `rename from ${oldName}\nrename to ${newName}\n`
-                    : "";
+            const mode = !contents[0]
+              ? `new file mode ${contents[1]?.mode}\n`
+              : !contents[1]
+                ? `deleted file mode ${contents[0].mode}\n`
+                : contents[0].mode !== contents[1].mode
+                  ? `old mode ${contents[0].mode}\nnew mode ${contents[1].mode}\n`
+                  : "";
+            const rename =
+              oldPath !== newPath ? `rename from ${oldName}\nrename to ${newName}\n` : "";
             return {
-              patch: `${header}${mode}--- ${changeType === "new" ? "/dev/null" : oldLabel}\n+++ ${changeType === "deleted" ? "/dev/null" : newLabel}\n${hunks < 0 ? "" : result.stdout.slice(hunks).replace(/\n?$/, "\n")}`,
+              patch: `${header}${mode}${rename}--- ${!contents[0] ? "/dev/null" : oldLabel}\n+++ ${!contents[1] ? "/dev/null" : newLabel}\n${hunks < 0 ? "" : result.stdout.slice(hunks).replace(/\n?$/, "\n")}`,
               truncated: result.stdoutTruncated,
             };
           }).pipe(
