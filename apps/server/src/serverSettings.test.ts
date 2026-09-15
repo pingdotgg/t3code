@@ -966,6 +966,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
 
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "  ~/Development  ",
+        worktreeBaseDirectory: "  ~/Worktrees  ",
         observability: {
           otlpTracesUrl: "  http://localhost:4318/v1/traces  ",
           otlpMetricsUrl: "  http://localhost:4318/v1/metrics  ",
@@ -973,6 +974,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       });
 
       assert.equal(next.addProjectBaseDirectory, "~/Development");
+      assert.equal(next.worktreeBaseDirectory, "~/Worktrees");
       assert.deepEqual(next.observability, {
         otlpTracesUrl: "http://localhost:4318/v1/traces",
         otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -1007,6 +1009,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       const fileSystem = yield* FileSystem.FileSystem;
       const next = yield* serverSettings.updateSettings({
         addProjectBaseDirectory: "~/Development",
+        worktreeBaseDirectory: "~/Worktrees",
+        worktreePathLayout: "flat",
+        projectSettingsOverrides: {
+          [ProjectId.make("project")]: {
+            worktreeBaseDirectory: "/srv/project-worktrees",
+            worktreePathLayout: "nested",
+          },
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",
@@ -1029,6 +1039,14 @@ it.layer(NodeServices.layer)("server settings", (it) => {
       // @effect-diagnostics-next-line preferSchemaOverJson:off
       assert.deepEqual(JSON.parse(raw), {
         addProjectBaseDirectory: "~/Development",
+        worktreeBaseDirectory: "~/Worktrees",
+        worktreePathLayout: "flat",
+        projectSettingsOverrides: {
+          [ProjectId.make("project")]: {
+            worktreeBaseDirectory: "/srv/project-worktrees",
+            worktreePathLayout: "nested",
+          },
+        },
         observability: {
           otlpTracesUrl: "http://localhost:4318/v1/traces",
           otlpMetricsUrl: "http://localhost:4318/v1/metrics",

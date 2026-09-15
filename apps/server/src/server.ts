@@ -38,6 +38,7 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import { pullRequestHttpApiLayer } from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import { ProjectionProjectRepositoryLive } from "./persistence/Layers/ProjectionProjects.ts";
 import { layerConfig as SqlitePersistenceLayerLive } from "./persistence/Layers/Sqlite.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
 import * as AnalyticsService from "./telemetry/AnalyticsService.ts";
@@ -271,6 +272,11 @@ const ProviderLayerLive = ProviderServiceLive.pipe(
 
 const PersistenceLayerLive = Layer.empty.pipe(Layer.provideMerge(SqlitePersistenceLayerLive));
 
+const GitVcsDriverLayerLive = GitVcsDriver.layer.pipe(
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(ProjectionProjectRepositoryLive.pipe(Layer.provide(PersistenceLayerLive))),
+);
+
 const VcsDriverRegistryLayerLive = VcsDriverRegistry.layer.pipe(
   Layer.provide(VcsProjectConfig.layer),
 );
@@ -285,7 +291,7 @@ const SourceControlProviderRegistryLayerLive = SourceControlProviderRegistry.lay
       ForgejoCli.layer,
     ),
   ),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 
@@ -335,7 +341,7 @@ const PullRequestServiceLive = PullRequestService.layer.pipe(
 const GitManagerLayerLive = GitManager.layer.pipe(
   Layer.provideMerge(ProjectSetupScriptRunner.layer.pipe(Layer.provide(ServerSettingsLayerLive))),
   Layer.provideMerge(WorktreeSetupTracker.layer),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
   Layer.provideMerge(
     TextGeneration.layer.pipe(Layer.provide(SourceControlProviderRegistryLayerLive)),
@@ -344,7 +350,7 @@ const GitManagerLayerLive = GitManager.layer.pipe(
 
 const GitLayerLive = Layer.empty.pipe(
   Layer.provideMerge(GitManagerLayerLive),
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
 );
 
 const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
@@ -353,7 +359,7 @@ const GitWorkflowLayerLive = GitWorkflowService.layer.pipe(
 );
 
 const SourceControlRepositoryServiceLayerLive = SourceControlRepositoryService.layer.pipe(
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(SourceControlProviderRegistryLayerLive),
 );
 
@@ -362,7 +368,9 @@ const ProjectCloneTrackerLayerLive = ProjectCloneTracker.layer.pipe(
 );
 
 const ReviewLayerLive = ReviewService.layer.pipe(
-  Layer.provideMerge(GitVcsDriver.layer),
+  Layer.provide(ServerSettingsLayerLive),
+  Layer.provide(ProjectionProjectRepositoryLive.pipe(Layer.provide(PersistenceLayerLive))),
+  Layer.provideMerge(GitVcsDriverLayerLive),
   Layer.provideMerge(VcsDriverRegistryLayerLive),
 );
 

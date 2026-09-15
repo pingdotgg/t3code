@@ -727,6 +727,24 @@ export const make = Effect.gen(function* () {
     } as const;
   });
 
+  // Preserve the candidate's own repository identity while excluding sessions
+  // started anywhere inside a linked worktree, including through symlink aliases.
+  const readProjectGitIdentity = Effect.fn("AgentSessionScanner.readProjectGitIdentity")(function* (
+    realPath: string,
+  ) {
+    const identity = yield* readGitIdentity(realPath);
+    if (identity._tag !== "NotGit") return identity;
+    let directory = path.dirname(realPath);
+    while (directory !== realPath) {
+      const ancestor = yield* readGitIdentity(directory);
+      if (ancestor._tag === "Worktree") return ancestor;
+      if (ancestor._tag === "Repository") break;
+      realPath = directory;
+      directory = path.dirname(directory);
+    }
+    return identity;
+  });
+
   // A large history snapshot can precede session metadata. Read bounded
   // chunks until a complete record names its cwd or the safety budget ends.
   const readCwd = Effect.fn("AgentSessionScanner.readCwd")(function* (
@@ -1238,7 +1256,7 @@ export const make = Effect.gen(function* () {
         if (isExcludedProjectPath(realPath)) {
           key = "";
         } else {
-          const gitIdentity = yield* readGitIdentity(resolved);
+          const gitIdentity = yield* readProjectGitIdentity(realPath);
           if (gitIdentity._tag === "Worktree") {
             key = "";
           } else {
@@ -1332,6 +1350,9 @@ export const make = Effect.gen(function* () {
     const root = path.resolve(expandHomePath(workspaceRoot));
     const realRoot = yield* fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root));
     if (isExcludedProjectPath(root) || isExcludedProjectPath(realRoot)) return Stream.empty;
+    // A custom base can also contain ordinary checkouts. Only Git metadata
+    // identifies linked worktrees there, including after the setting changes.
+    if ((yield* readProjectGitIdentity(realRoot))._tag === "Worktree") return Stream.empty;
     const rootIdentity = yield* directoryIdentity(root);
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const cutoffMs = nowMs - RECENT_THREAD_WINDOW_MS;

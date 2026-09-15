@@ -76,6 +76,8 @@ interface ScannerTestInput {
   readonly importedWorkspaceRoots?: ReadonlyArray<string>;
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
+  readonly worktreeBaseDirectory?: string;
+  readonly projectSettingsOverrides?: ContractServerSettings["projectSettingsOverrides"];
   readonly providerInstances?: ContractServerSettings["providerInstances"];
 }
 
@@ -84,6 +86,8 @@ const makeScannerTestLayer = (input: ScannerTestInput) =>
     Layer.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({
+          worktreeBaseDirectory: input.worktreeBaseDirectory ?? "",
+          projectSettingsOverrides: input.projectSettingsOverrides ?? {},
           providers: {
             claudeAgent: { homePath: input.claudeHomePath },
             codex: { homePath: input.codexHomePath },
@@ -997,6 +1001,84 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
 
         expect(result.candidates).toEqual([]);
       }),
+    );
+
+    it.effect(
+      "keeps ordinary projects under custom worktree bases while excluding linked worktrees",
+      () =>
+        Effect.gen(function* () {
+          const path = yield* Path.Path;
+          const fileSystem = yield* FileSystem.FileSystem;
+          const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+          yield* TestClock.setTime(nowMs);
+          const claudeHomePath = yield* makeTempDir("t3code-claude-home-");
+          const codexHomePath = yield* makeTempDir("t3code-codex-home-");
+          const customRoot = yield* makeTempDir("custom-worktrees-");
+          const customRootAlias = path.join(claudeHomePath, "worktree-base-alias");
+          yield* fileSystem.symlink(customRoot, customRootAlias);
+          const projectCwd = path.join(customRoot, "ordinary", "repo");
+          const worktreeCwd = path.join(customRoot, "repo", "branch");
+          yield* fileSystem.makeDirectory(path.join(projectCwd, ".git"), { recursive: true });
+          yield* fileSystem.makeDirectory(worktreeCwd, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(worktreeCwd, ".git"),
+            `gitdir: ${path.join(projectCwd, ".git", "worktrees", "branch")}\n`,
+          );
+          const descendantCwd = path.join(worktreeCwd, "packages", "app");
+          yield* fileSystem.makeDirectory(descendantCwd, { recursive: true });
+          const descendantAlias = path.join(claudeHomePath, "descendant-alias");
+          yield* fileSystem.symlink(descendantCwd, descendantAlias);
+          for (const [id, cwd] of [
+            ["ordinary", projectCwd],
+            ["worktree", worktreeCwd],
+            ["descendant", descendantCwd],
+            ["descendant-alias", descendantAlias],
+          ] as const) {
+            yield* writeTranscript({
+              filePath: path.join(
+                codexHomePath,
+                "sessions",
+                "2026",
+                "08",
+                "24",
+                `rollout-${id}.jsonl`,
+              ),
+              contents: [
+                encodeTranscriptRecord({ type: "session_meta", payload: { id, cwd } }),
+                encodeTranscriptRecord({
+                  type: "event_msg",
+                  payload: { type: "user_message", message: "Review this project" },
+                }),
+              ].join("\n"),
+              mtimeMs: nowMs,
+            });
+          }
+          for (const settings of [
+            { worktreeBaseDirectory: customRoot },
+            { worktreeBaseDirectory: customRootAlias },
+            {
+              projectSettingsOverrides: {
+                [ProjectId.make("custom")]: { worktreeBaseDirectory: customRoot },
+              },
+            },
+            { worktreeBaseDirectory: "" },
+          ]) {
+            const input = { claudeHomePath, codexHomePath, ...settings };
+            expect((yield* runScan(input)).candidates.map((candidate) => candidate.path)).toEqual([
+              projectCwd,
+            ]);
+            expect(
+              (yield* runRecentThreads({ ...input, workspaceRoot: projectCwd })).map(
+                (thread) => thread.providerSessionId,
+              ),
+            ).toEqual(["ordinary"]);
+            expect(yield* runRecentThreads({ ...input, workspaceRoot: worktreeCwd })).toEqual([]);
+            expect(yield* runRecentThreads({ ...input, workspaceRoot: descendantCwd })).toEqual([]);
+            expect(yield* runRecentThreads({ ...input, workspaceRoot: descendantAlias })).toEqual(
+              [],
+            );
+          }
+        }),
     );
 
     it.effect("excludes sandboxes reached through a symlink into the worktrees dir", () =>

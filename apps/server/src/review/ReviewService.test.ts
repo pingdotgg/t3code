@@ -5,6 +5,9 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as PlatformError from "effect/PlatformError";
 
+import * as ServerSettings from "../serverSettings.ts";
+import { ProjectId, type ServerSettings as Settings } from "@t3tools/contracts";
+
 import { ServerConfig } from "../config.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -13,9 +16,11 @@ import * as ReviewService from "./ReviewService.ts";
 function makeLayer(input: {
   readonly workspaceRoot: string;
   readonly baseDir: string;
+  readonly settings?: Partial<Settings>;
   readonly detectCalls?: Array<{ readonly cwd: string }>;
 }) {
   return ReviewService.layer.pipe(
+    Layer.provide(ServerSettings.layerTest(input.settings ?? {})),
     Layer.provide(
       Layer.mock(VcsDriverRegistry.VcsDriverRegistry)({
         get: () => Effect.die("unexpected VCS registry get"),
@@ -105,6 +110,29 @@ describe("ReviewService", () => {
       assert.strictEqual(result.cwd, workspaceRoot);
       assert.deepStrictEqual(result.sources, []);
       assert.deepStrictEqual(detectCalls, [{ cwd: workspaceRoot }]);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("accepts custom environment and project worktree roots", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const workspaceRoot = yield* fs.makeTempDirectoryScoped({ prefix: "review-workspace-" });
+      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "review-base-" });
+      const customRoot = yield* fs.makeTempDirectoryScoped({ prefix: "custom-worktrees-" });
+      for (const settings of [
+        { worktreeBaseDirectory: customRoot },
+        {
+          projectSettingsOverrides: {
+            [ProjectId.make("custom")]: { worktreeBaseDirectory: customRoot },
+          },
+        },
+      ]) {
+        const result = yield* Effect.gen(function* () {
+          const review = yield* ReviewService.ReviewService;
+          return yield* review.getDiffPreview({ cwd: customRoot });
+        }).pipe(Effect.provide(makeLayer({ workspaceRoot, baseDir, settings })));
+        assert.strictEqual(result.cwd, customRoot);
+      }
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

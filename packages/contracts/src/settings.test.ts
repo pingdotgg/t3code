@@ -872,3 +872,33 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
+
+describe("worktree locations", () => {
+  it("defaults older settings to the T3 worktrees directory", () => {
+    expect(decodeServerSettings({}).worktreeBaseDirectory).toBe("");
+    expect(decodeServerSettings({}).worktreePathLayout).toBe("nested");
+  });
+
+  it.each(["", "/srv/worktrees", "~/worktrees", "C:\\worktrees", "\\\\server\\worktrees"])(
+    "accepts %s for environments and projects",
+    (worktreeBaseDirectory) => {
+      const patch = {
+        worktreeBaseDirectory,
+        projectSettingsOverrides: { project: { worktreeBaseDirectory } },
+      };
+      expect(decodeServerSettingsPatch(patch)).toEqual(patch);
+    },
+  );
+
+  it.each(["relative/worktrees", "C:worktrees", "~someone/worktrees"])(
+    "rejects ambiguous location %s",
+    (worktreeBaseDirectory) => {
+      expect(() => decodeServerSettingsPatch({ worktreeBaseDirectory })).toThrow();
+      expect(() =>
+        decodeServerSettingsPatch({
+          projectSettingsOverrides: { project: { worktreeBaseDirectory } },
+        }),
+      ).toThrow();
+    },
+  );
+});

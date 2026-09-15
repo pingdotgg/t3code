@@ -600,6 +600,12 @@ export function useSettingsRestore(onRestored?: () => void) {
       DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
         ? ["New worktrees start from origin"]
         : []),
+      ...(settings.worktreeBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.worktreeBaseDirectory
+        ? ["Worktree location"]
+        : []),
+      ...(settings.worktreePathLayout !== DEFAULT_UNIFIED_SETTINGS.worktreePathLayout
+        ? ["Worktree layout"]
+        : []),
       ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
         ? ["Add project base directory"]
         : []),
@@ -636,6 +642,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.confirmThreadDelete,
       settings.confirmThreadUnpin,
       settings.composerCollapseOnScroll,
+      settings.worktreeBaseDirectory,
+      settings.worktreePathLayout,
       settings.addProjectBaseDirectory,
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
@@ -765,6 +773,8 @@ export function useSettingsRestore(onRestored?: () => void) {
       providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
       defaultThreadEnvMode: DEFAULT_UNIFIED_SETTINGS.defaultThreadEnvMode,
       newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      worktreeBaseDirectory: DEFAULT_UNIFIED_SETTINGS.worktreeBaseDirectory,
+      worktreePathLayout: DEFAULT_UNIFIED_SETTINGS.worktreePathLayout,
       addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
       confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
@@ -2149,6 +2159,8 @@ export function GeneralSettingsPanel() {
   const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
   const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
   const mixedBackgroundActivity = useScopedSettingsMixed(["backgroundActivity"]);
+  const mixedWorktreePathLayout = useScopedSettingsMixed(["worktreePathLayout"]);
+  const mixedWorktreeBaseDirectory = useScopedSettingsMixed(["worktreeBaseDirectory"]);
   const mixedAddProjectBaseDirectory = useScopedSettingsMixed(["addProjectBaseDirectory"]);
   const mixedTextGenerationModel = useScopedSettingsMixed(["textGenerationModelSelection"]);
   const backgroundActivityDescription =
@@ -2780,6 +2792,70 @@ export function GeneralSettingsPanel() {
               }
               aria-label="Start new worktrees from origin by default"
             />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["worktreeBaseDirectory"]}
+          {...searchableSetting("worktree-location")}
+          description="Base folder on the server for new worktrees, grouped by project and branch. Use an absolute path or ~/. Leave empty for the T3 home worktrees folder. Existing worktrees stay in place."
+          resetAction={
+            mixedWorktreeBaseDirectory || settings.worktreeBaseDirectory !== "" ? (
+              <SettingResetButton
+                label="worktree location"
+                onClick={() => updateSettings({ worktreeBaseDirectory: "" })}
+              />
+            ) : null
+          }
+          control={
+            <DraftInput
+              size="sm"
+              className="w-full sm:w-72"
+              value={mixedWorktreeBaseDirectory ? "" : settings.worktreeBaseDirectory}
+              onCommit={(next) => updateSettings({ worktreeBaseDirectory: next })}
+              placeholder={mixedWorktreeBaseDirectory ? "Mixed" : "Default worktrees folder"}
+              spellCheck={false}
+              aria-label="Worktree location"
+            />
+          }
+        />
+        <SettingsRow
+          serverScoped
+          settingKeys={["worktreePathLayout"]}
+          {...searchableSetting("worktree-layout")}
+          description="Folder layout beneath the worktree location. Applies to new worktrees only. Slashes in branch names become hyphens."
+          resetAction={
+            mixedWorktreePathLayout || settings.worktreePathLayout !== "nested" ? (
+              <SettingResetButton
+                label="worktree layout"
+                onClick={() => updateSettings({ worktreePathLayout: "nested" })}
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={mixedWorktreePathLayout ? null : settings.worktreePathLayout}
+              onValueChange={(value) => {
+                if (value === "nested" || value === "flat")
+                  updateSettings({ worktreePathLayout: value });
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-72" aria-label="Worktree layout">
+                <SelectValue>
+                  {(value: "nested" | "flat" | null) =>
+                    value === null
+                      ? "Mixed"
+                      : value === "flat"
+                        ? "<repo-name>-<branch>"
+                        : "<repo-name>/<branch>"
+                  }
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                <SelectItem value="nested">{"<repo-name>/<branch>"}</SelectItem>
+                <SelectItem value="flat">{"<repo-name>-<branch>"}</SelectItem>
+              </SelectPopup>
+            </Select>
           }
         />
         <SettingsRow
