@@ -14,6 +14,25 @@ import {
 
 const KEY = "t3code:voice-overlay:v1";
 
+// The suite runs under whichever environment the runner resolves (jsdom,
+// node, or a node shim): provide the minimal storage surface when it is
+// missing instead of depending on one runner's global.
+if (typeof globalThis.localStorage === "undefined") {
+  const store = new Map<string, string>();
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: {
+      getItem: (key: string) => (store.has(key) ? (store.get(key) as string) : null),
+      setItem: (key: string, value: string) => {
+        store.set(key, String(value));
+      },
+      clear: () => {
+        store.clear();
+      },
+    },
+  });
+}
+
 beforeEach(() => {
   localStorage.clear();
 });
