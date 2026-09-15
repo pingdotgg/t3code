@@ -210,6 +210,37 @@ it.effect("does not wait for an in-flight detail read to display a preview", () 
   }),
 );
 
+it.effect("keeps previews warm when another project finishes a turn", () =>
+  Effect.gen(function* () {
+    const reads: string[] = [];
+    const service = yield* makeService({
+      projects: [
+        project({ id: "p1", title: "web", workspaceRoot: "/w", repository: "acme/web" }),
+        project({ id: "p2", title: "docs", workspaceRoot: "/d", repository: "acme/docs" }),
+      ],
+      providers: [
+        fakeProvider("github", {
+          getChangeRequestPreview: (input) =>
+            Effect.sync(() => {
+              reads.push(input.repository);
+              return changeRequest(1, "2026-07-02T00:00:00Z");
+            }),
+        }),
+      ],
+    });
+    const web = { projectId: "p1" as ProjectId, repository: "acme/web", number: 1 };
+    const docs = { projectId: "p2" as ProjectId, repository: "acme/docs", number: 1 };
+    yield* service.preview(web);
+    yield* service.preview(docs);
+    yield* service.preview({ ...web, host: "github.com" });
+    assert.deepStrictEqual(reads, ["acme/web", "acme/docs"]);
+    yield* service.refreshAfterTurn(web.projectId);
+    yield* service.preview(web);
+    yield* service.preview(docs);
+    assert.deepStrictEqual(reads, ["acme/web", "acme/docs", "acme/web"]);
+  }),
+);
+
 it.effect("uses full detail for hosts without a narrow preview", () =>
   Effect.gen(function* () {
     let reads = 0;
