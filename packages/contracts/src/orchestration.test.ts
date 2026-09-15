@@ -66,6 +66,9 @@ function getOptionValue(
 const decodeThreadCreatedPayload = Schema.decodeUnknownEffect(ThreadCreatedPayload);
 const decodeOrchestrationCommand = Schema.decodeUnknownEffect(OrchestrationCommand);
 const decodeOrchestrationEvent = Schema.decodeUnknownEffect(OrchestrationEvent);
+const decodeLegacyThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(
+  Schema.Struct({ threadId: Schema.String, updatedAt: Schema.String }),
+);
 const decodeThreadMetaUpdatedPayload = Schema.decodeUnknownEffect(ThreadMetaUpdatedPayload);
 const decodeDispatchCommandError = Schema.decodeUnknownEffect(OrchestrationDispatchCommandError);
 const decodeSnapShotAccessibility = Schema.decodeUnknownEffect(SnapShotAccessibility);
@@ -646,6 +649,25 @@ it.effect("decodes thread settle and unsettle commands", () =>
   }),
 );
 
+it.effect("decodes thread visited-state commands", () =>
+  Effect.gen(function* () {
+    const view = yield* decodeOrchestrationCommand({
+      type: "thread.visit",
+      commandId: "cmd-view-1",
+      threadId: "thread-1",
+      visitedAt: "2026-01-01T00:00:00.000Z",
+    });
+    const markUnread = yield* decodeOrchestrationCommand({
+      type: "thread.mark-unread",
+      commandId: "cmd-mark-unread-1",
+      threadId: "thread-1",
+    });
+
+    assert.strictEqual(view.type, "thread.visit");
+    assert.strictEqual(markUnread.type, "thread.mark-unread");
+  }),
+);
+
 it.effect("defaults settled fields when decoding historical thread data", () =>
   Effect.gen(function* () {
     const common = {
@@ -681,6 +703,8 @@ it.effect("defaults settled fields when decoding historical thread data", () =>
 
     assert.strictEqual(thread.settledOverride, null);
     assert.strictEqual(thread.settledAt, null);
+    assert.strictEqual(thread.lastVisitedAt, undefined);
+    assert.strictEqual(shell.lastVisitedAt, undefined);
     assert.strictEqual(shell.settledOverride, null);
     assert.strictEqual(shell.settledAt, null);
     // Pre-link servers omit the array entirely.
@@ -879,6 +903,33 @@ it.effect("decodes thread settled and unsettled events", () =>
 
     assert.strictEqual(settled.type, "thread.settled");
     assert.strictEqual(unsettled.type, "thread.unsettled");
+  }),
+);
+
+it.effect("stores viewed state in metadata events that older decoders can read", () =>
+  Effect.gen(function* () {
+    const lastVisitedAt = "2026-01-02T00:00:00.000Z";
+    const updatedAt = "2026-01-01T00:00:00.000Z";
+    const viewed = yield* decodeOrchestrationEvent({
+      sequence: 1,
+      eventId: "event-viewed-1",
+      aggregateKind: "thread",
+      aggregateId: "thread-1",
+      type: "thread.meta-updated",
+      occurredAt: lastVisitedAt,
+      commandId: "cmd-viewed-1",
+      causationEventId: null,
+      correlationId: "cmd-viewed-1",
+      metadata: {},
+      payload: { threadId: "thread-1", lastVisitedAt, updatedAt },
+    });
+    const legacyPayload = yield* decodeLegacyThreadMetaUpdatedPayload(viewed.payload);
+
+    assert.strictEqual(viewed.type, "thread.meta-updated");
+    if (viewed.type === "thread.meta-updated") {
+      assert.strictEqual(viewed.payload.lastVisitedAt, lastVisitedAt);
+    }
+    assert.deepEqual(legacyPayload, { threadId: "thread-1", updatedAt });
   }),
 );
 

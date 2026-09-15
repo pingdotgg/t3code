@@ -51,4 +51,17 @@ describe("ExecutionEnvironmentDescriptor", () => {
       }).capabilities.fileAttachments,
     ).toEqual({ maxUploadBytes: 50 * 1024 * 1024 });
   });
+
+  it("treats a missing thread visited-state capability as unsupported", () => {
+    expect(decodeDescriptor(descriptor).capabilities.threadVisitedTracking).toBeUndefined();
+  });
+
+  it("preserves an advertised thread visited-state capability", () => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, threadVisitedTracking: true },
+      }).capabilities.threadVisitedTracking,
+    ).toBe(true);
+  });
 });

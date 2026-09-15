@@ -116,6 +116,7 @@ import {
   useThreadSelectionStore,
 } from "../threadSelectionStore";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadVisitedState } from "../hooks/useThreadVisitedState";
 import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
@@ -1054,7 +1055,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const threadKey = scopedThreadKey(threadRef);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(props.isActive);
   const isRegeneratingTitle = thread.titleRegeneration != null;
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  // The server watermark wins when the server tracks visits; older servers
+  // leave lastVisitedAt undefined and this device's local marker applies.
+  const lastVisitedAt = thread.lastVisitedAt ?? localLastVisitedAt;
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const openPrLink = useOpenPrLink();
   const runningTerminalIds = useThreadRunningTerminalIds({
@@ -2220,13 +2224,12 @@ export default function Sidebar() {
   const setSelectionAnchor = useThreadSelectionStore((s) => s.setAnchor);
   const toggleThreadSelection = useThreadSelectionStore((s) => s.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((s) => s.rangeSelectTo);
-  const markThreadUnread = useUiStateStore((s) => s.markThreadUnread);
-  const markThreadVisited = useUiStateStore((s) => s.markThreadVisited);
+  const { markUnread, markVisited } = useThreadVisitedState();
   const acknowledgeWoke = useCallback(
     (threadRef: ScopedThreadRef, visitedAt: string) => {
-      markThreadVisited(scopedThreadKey(threadRef), visitedAt);
+      markVisited(threadRef, visitedAt);
     },
-    [markThreadVisited],
+    [markVisited],
   );
   const routeTarget = useParams({
     strict: false,
@@ -3942,7 +3945,11 @@ export default function Sidebar() {
       if (clicked.value === "mark-unread") {
         for (const threadKey of threadKeys) {
           const thread = threadByKeyRef.current.get(threadKey);
-          markThreadUnread(threadKey, thread?.latestTurn?.completedAt);
+          if (!thread) continue;
+          markUnread(
+            scopeThreadRef(thread.environmentId, thread.id),
+            thread.latestTurn?.completedAt,
+          );
         }
         clearSelection();
         return;
@@ -3994,7 +4001,7 @@ export default function Sidebar() {
       clearSelection,
       confirmThreadDelete,
       deleteThread,
-      markThreadUnread,
+      markUnread,
       performSnooze,
       removeFromSelection,
       serverConfigs,
@@ -4143,7 +4150,10 @@ export default function Sidebar() {
             return;
           }
           case "mark-unread":
-            markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+            markUnread(
+              scopeThreadRef(thread.environmentId, thread.id),
+              thread.latestTurn?.completedAt,
+            );
             return;
           case "copy-path":
             if (!threadWorkspacePath) {
@@ -4241,7 +4251,7 @@ export default function Sidebar() {
       copyThreadIdToClipboard,
       deleteThread,
       handleMultiSelectContextMenu,
-      markThreadUnread,
+      markUnread,
       openProjectSettings,
       projectByKey,
       serverConfigs,

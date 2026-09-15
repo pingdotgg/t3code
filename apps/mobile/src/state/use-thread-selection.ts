@@ -76,6 +76,7 @@ function threadDetailToShell(
     activeOrderKey: thread.activeOrderKey,
     pinnedAt: thread.pinnedAt,
     pinOrderKey: thread.pinOrderKey,
+    lastVisitedAt: thread.lastVisitedAt,
     snoozedUntil: thread.snoozedUntil ?? null,
     snoozedAt: thread.snoozedAt ?? null,
     session: thread.session,

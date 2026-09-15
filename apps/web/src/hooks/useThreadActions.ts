@@ -2,7 +2,6 @@ import {
   parseScopedThreadKey,
   scopeProjectRef,
   scopeThreadRef,
-  scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
@@ -34,12 +33,12 @@ import {
   readThreadShells,
 } from "../state/entities";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
-import { useUiStateStore } from "../uiStateStore";
 import { buildThreadRouteParams, resolveThreadRouteRef } from "../threadRoutes";
 import { formatWorktreePathForDisplay, getOrphanedWorktreePathForThread } from "../worktreeCleanup";
 import { stackedThreadToast, toastManager } from "../components/ui/toast";
 import { useClientSettings } from "./useSettings";
 import { useAtomCommand } from "../state/use-atom-command";
+import { useThreadVisitedState } from "./useThreadVisitedState";
 
 export class ThreadArchiveBlockedError extends Schema.TaggedError<ThreadArchiveBlockedError>()(
   "ThreadArchiveBlockedError",
@@ -222,7 +221,7 @@ export function useThreadActions() {
     (store) => store.clearProjectDraftThreadById,
   );
   const clearTerminalUiState = useTerminalUiStateStore((state) => state.clearTerminalUiState);
-  const markThreadVisited = useUiStateStore((state) => state.markThreadVisited);
+  const { markVisited } = useThreadVisitedState();
   const router = useRouter();
   const handleNewThread = useNewThreadHandler();
   // Keep a ref so archiveThread can call handleNewThread without appearing in
@@ -276,7 +275,7 @@ export function useThreadActions() {
       }
       const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
       if (wokeAt !== null) {
-        markThreadVisited(scopedThreadKey(threadRef), wokeAt);
+        markVisited(threadRef, wokeAt);
       }
       refreshArchivedThreadsForEnvironment(threadRef.environmentId);
       opts.onArchived?.();
@@ -293,7 +292,7 @@ export function useThreadActions() {
 
       return archiveResult;
     },
-    [archiveThreadMutation, getCurrentRouteThreadRef, markThreadVisited, resolveThreadTarget],
+    [archiveThreadMutation, getCurrentRouteThreadRef, markVisited, resolveThreadTarget],
   );
 
   const unarchiveThread = useCallback(
@@ -522,11 +521,11 @@ export function useThreadActions() {
         input: { threadId: target.threadId },
       });
       if (result._tag === "Success" && wokeAt !== null) {
-        markThreadVisited(scopedThreadKey(target), wokeAt);
+        markVisited(target, wokeAt);
       }
       return result;
     },
-    [markThreadVisited, resolveThreadTarget, settleThreadMutation],
+    [markVisited, resolveThreadTarget, settleThreadMutation],
   );
 
   const unsettleThread = useCallback(

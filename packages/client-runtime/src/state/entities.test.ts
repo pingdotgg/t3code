@@ -215,6 +215,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/stale-worktree",
       activeOrderKey: "t",
       unsettledAt: "2026-03-09T10:00:00.000Z",
+      lastVisitedAt: "2026-06-01T00:00:00.000Z",
       deletedAt: null,
       messages,
       proposedPlans: [],
@@ -229,6 +230,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      lastVisitedAt: "2026-06-01T00:05:00.000Z",
     };
 
     const merged = mergeEnvironmentThread(detail, shell);
@@ -239,6 +241,7 @@ describe("environment entity projections", () => {
       worktreePath: "/repo/current-worktree",
       activeOrderKey: "f",
       unsettledAt: "2026-03-09T12:00:00.000Z",
+      lastVisitedAt: "2026-06-01T00:05:00.000Z",
     });
     expect(merged?.messages).toBe(messages);
   });

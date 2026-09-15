@@ -263,6 +263,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useRemoveClonedProject } from "../hooks/useRemoveClonedProject";
 import { useOpenPanelPullRequestUrl } from "../hooks/useOpenPanelPullRequestUrl";
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadVisitedState } from "../hooks/useThreadVisitedState";
 import { resolveAppModelSelectionForInstance } from "../modelSelection";
 import { confirmTerminalClose, isTerminalCloseConfirmPending } from "../lib/terminalCloseConfirm";
 import { isPreviewFocused } from "../lib/previewFocus";
@@ -348,6 +349,7 @@ import {
   useThread,
   useThreadRefs,
   useThreadShell,
+  useServerConfigs,
 } from "../state/entities";
 import { environmentShell } from "../state/shell";
 import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
@@ -1561,7 +1563,8 @@ export default function ChatView(props: ChatViewProps) {
       },
     };
   }, [routeKind, routeThreadRef, routeThreadState]);
-  const markThreadVisited = useUiStateStore((store) => store.markThreadVisited);
+  const { markVisited } = useThreadVisitedState();
+  const serverConfigs = useServerConfigs();
   const settings = useEnvironmentSettings(environmentId);
   const setStickyComposerModelSelection = useComposerDraftStore(
     (store) => store.setStickyModelSelection,
@@ -2056,23 +2059,83 @@ export default function ChatView(props: ChatViewProps) {
   const activeRunningTurnId =
     (activeThread?.session?.status === "running" ? activeThread.session.activeTurnId : null) ??
     (activeLatestTurn?.state === "running" ? activeLatestTurn.turnId : null);
-  // Reading a finished thread clears the sidebar's Done badge. The visit is
-  // stamped at the turn's completion time — not now/updatedAt — so it clears
-  // exactly the completion the user is looking at: a wake or completion that
-  // lands later still gets its signal (markThreadVisited never moves the
-  // timestamp backwards).
+  // Reading a completed thread stamps its visited watermark at the shell's
+  // updatedAt and clears the Done badge everywhere. The badge only compares
+  // completedAt to the watermark, so the visit is sent when a completion is
+  // unseen, not while a turn streams: mid-turn visits would be an event per
+  // client per bump for no visible change. Only a focused, visible document
+  // counts as reading; a completion that lands in a background tab stays
+  // unread until the user comes back, and the listeners stay attached so a
+  // later refocus visits. lastVisitedAt is read through a ref and kept out
+  // of the deps: another client (or this one, from the menu) marking the
+  // thread unread must not trigger an immediate re-visit. A new completion
+  // changes completedAt, which is a dep, so it is still visited.
+  // The environment config decides whether the visit is a server command or
+  // a local write, and the command needs a live socket, so wait for both:
+  // a visit sent early would be misfiled locally or fail silently. Both are
+  // deps, so the effect re-runs once config lands or the socket reconnects.
+  const serverThreadEnvironmentId = serverThread?.environmentId;
+  const serverThreadId = serverThread?.id;
+  const serverThreadCompletedAt = serverThread?.latestTurn?.completedAt;
+  const serverThreadUpdatedAtRef = useRef(serverThread?.updatedAt);
+  serverThreadUpdatedAtRef.current = serverThread?.updatedAt;
+  const serverThreadLastVisitedAtRef = useRef(serverThread?.lastVisitedAt);
+  serverThreadLastVisitedAtRef.current = serverThread?.lastVisitedAt;
+  const serverThreadConfigLoaded =
+    serverThreadEnvironmentId !== undefined && serverConfigs.has(serverThreadEnvironmentId);
+  // Only the server command needs a live socket; the legacy local write
+  // keeps working offline as it did before. An environment the catalog does
+  // not know yet counts as not connected, and the effect re-runs once it
+  // appears with a live socket.
+  const serverThreadSupportsVisitedTracking =
+    serverThreadEnvironmentId !== undefined &&
+    serverConfigs.get(serverThreadEnvironmentId)?.environment.capabilities.threadVisitedTracking ===
+      true;
+  const serverThreadConnected =
+    !serverThreadSupportsVisitedTracking ||
+    (serverThreadEnvironmentId !== undefined &&
+      environmentById.get(serverThreadEnvironmentId)?.connection.phase === "connected");
   useEffect(() => {
-    const completedAt = serverThread?.latestTurn?.completedAt;
-    if (!serverThread?.id || !completedAt) return;
-    markThreadVisited(
-      scopedThreadKey(scopeThreadRef(serverThread.environmentId, serverThread.id)),
-      completedAt,
-    );
+    if (
+      !serverThreadEnvironmentId ||
+      !serverThreadId ||
+      !serverThreadCompletedAt ||
+      !serverThreadConfigLoaded ||
+      !serverThreadConnected
+    ) {
+      return;
+    }
+    const threadRef = scopeThreadRef(serverThreadEnvironmentId, serverThreadId);
+    const completedAtMs = Date.parse(serverThreadCompletedAt);
+    if (!Number.isFinite(completedAtMs)) return;
+    const visit = () => {
+      if (document.visibilityState !== "visible" || !document.hasFocus()) return;
+      const lastVisitedAtMs = Date.parse(serverThreadLastVisitedAtRef.current ?? "");
+      if (Number.isFinite(lastVisitedAtMs) && lastVisitedAtMs >= completedAtMs) return;
+      // The watermark is updatedAt so later activity still compares as
+      // unseen; it is at least completedAt once a turn has completed.
+      const updatedAtMs = Date.parse(serverThreadUpdatedAtRef.current ?? "");
+      markVisited(
+        threadRef,
+        Number.isFinite(updatedAtMs) && updatedAtMs > completedAtMs
+          ? (serverThreadUpdatedAtRef.current as string)
+          : serverThreadCompletedAt,
+      );
+    };
+    visit();
+    window.addEventListener("focus", visit);
+    document.addEventListener("visibilitychange", visit);
+    return () => {
+      window.removeEventListener("focus", visit);
+      document.removeEventListener("visibilitychange", visit);
+    };
   }, [
-    markThreadVisited,
-    serverThread?.environmentId,
-    serverThread?.id,
-    serverThread?.latestTurn?.completedAt,
+    markVisited,
+    serverThreadCompletedAt,
+    serverThreadConfigLoaded,
+    serverThreadConnected,
+    serverThreadEnvironmentId,
+    serverThreadId,
   ]);
   useEffect(() => {
     setMountedTerminalThreadKeys((currentThreadIds) => {
@@ -5944,12 +6007,14 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadShell?.snoozedUntil, activeThreadSnoozed, snoozeWakeTick]);
   const acknowledgeActiveThreadWoke = useCallback(() => {
     if (activeThreadRef === null || activeThreadWokeAt === null) return;
-    markThreadVisited(scopedThreadKey(activeThreadRef), activeThreadWokeAt);
-  }, [activeThreadRef, activeThreadWokeAt, markThreadVisited]);
+    markVisited(activeThreadRef, activeThreadWokeAt);
+  }, [activeThreadRef, activeThreadWokeAt, markVisited]);
   // Mirror of the sidebar's Woke pill for the open thread.
-  const activeThreadLastVisitedAt = useUiStateStore((store) =>
+  const activeThreadLocalLastVisitedAt = useUiStateStore((store) =>
     activeThreadKey === null ? undefined : store.threadLastVisitedAtById[activeThreadKey],
   );
+  const activeThreadLastVisitedAt =
+    activeThreadShell?.lastVisitedAt ?? activeThreadLocalLastVisitedAt;
   const activeThreadWokeVisible = useMemo(() => {
     if (activeThreadWokeAt === null) return false;
     if (activeThreadShell?.settledOverride === "settled") return false;

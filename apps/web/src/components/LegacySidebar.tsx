@@ -116,6 +116,7 @@ import { useNewThreadHandler } from "../hooks/useHandleNewThread";
 import { useDesktopUpdateState } from "../state/desktopUpdate";
 
 import { useThreadActions } from "../hooks/useThreadActions";
+import { useThreadVisitedState } from "../hooks/useThreadVisitedState";
 import { projectEnvironment } from "../state/projects";
 import { threadEnvironment, useEnvironmentThread } from "../state/threads";
 import { useEnvironment, useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -401,7 +402,8 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     return () => window.removeEventListener("dragend", clearFileDrag);
   }, [isFileDragOver]);
   const { leaseLiveStatus, rowRef } = useSidebarRowSubscriptionLease(isActive);
-  const lastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
+  const lastVisitedAt = thread.lastVisitedAt ?? localLastVisitedAt;
   const isSelected = useThreadSelectionStore((state) => state.selectedThreadKeys.has(threadKey));
   const runningTerminalIds = useThreadRunningTerminalIds({
     environmentId: thread.environmentId,
@@ -1195,7 +1197,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
   const queuePendingFileDrop = useSidebarPendingFileDropStore((s) => s.queuePendingFileDrop);
   const clearPendingFileDrop = useSidebarPendingFileDropStore((s) => s.clearPendingFileDrop);
   const { isMobile, setOpenMobile } = useSidebar();
-  const markThreadUnread = useUiStateStore((state) => state.markThreadUnread);
+  const { markUnread } = useThreadVisitedState();
   const setProjectExpanded = useUiStateStore((state) => state.setProjectExpanded);
   const toggleThreadSelection = useThreadSelectionStore((state) => state.toggleThread);
   const rangeSelectTo = useThreadSelectionStore((state) => state.rangeSelectTo);
@@ -1268,9 +1270,11 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
     useShallow((state) =>
       projectThreads.map(
         (thread) =>
+          thread.lastVisitedAt ??
           state.threadLastVisitedAtById[
             scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))
-          ] ?? null,
+          ] ??
+          null,
       ),
     ),
   );
@@ -1902,8 +1906,8 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       );
 
       if (clicked === "mark-unread") {
-        for (const { threadKey, thread } of selectedThreadEntries) {
-          markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        for (const { threadRef, thread } of selectedThreadEntries) {
+          markUnread(threadRef, thread.latestTurn?.completedAt);
         }
         clearSelection();
         return;
@@ -1991,7 +1995,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       archiveThread,
       clearSelection,
       deleteThread,
-      markThreadUnread,
+      markUnread,
       removeFromSelection,
     ],
   );
@@ -2292,7 +2296,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       }
 
       if (clicked === "mark-unread") {
-        markThreadUnread(threadKey, thread.latestTurn?.completedAt);
+        markUnread(threadRef, thread.latestTurn?.completedAt);
         return;
       }
       if (clicked === "copy-path") {
@@ -2345,7 +2349,7 @@ const SidebarProjectItem = memo(function SidebarProjectItem(props: SidebarProjec
       deleteThread,
       handleNewThread,
       isMobile,
-      markThreadUnread,
+      markUnread,
       memberProjectByScopedKey,
       project.projectKey,
       project.workspaceRoot,

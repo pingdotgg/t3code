@@ -617,6 +617,89 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.visit": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const visitedAt = DateTime.make(command.visitedAt);
+      if (Option.isNone(visitedAt)) {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: `thread ${command.threadId} visit time ${command.visitedAt} is not a valid timestamp`,
+        });
+      }
+      const occurredAt = yield* nowIso;
+      // Clients stamp the thread state they saw (the shell's updatedAt), never
+      // wall clock, so a skewed device clock cannot mark future activity read.
+      const cappedVisitedAt =
+        DateTime.Order(visitedAt.value, DateTime.makeUnsafe(occurredAt)) <= 0
+          ? DateTime.formatIso(visitedAt.value)
+          : occurredAt;
+      // The watermark never moves backward: a stale visit arriving after a
+      // newer one (or after a mark-unread) re-emits the current value.
+      const previousVisitedAt = thread.lastVisitedAt ?? thread.createdAt;
+      const lastVisitedAt = DateTime.make(previousVisitedAt).pipe(
+        Option.filter(
+          (previous) => DateTime.Order(previous, DateTime.makeUnsafe(cappedVisitedAt)) >= 0,
+        ),
+        Option.as(previousVisitedAt),
+        Option.getOrElse(() => cappedVisitedAt),
+      );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          lastVisitedAt,
+          // updatedAt is echoed, not bumped: reading a thread must not reorder it.
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
+    case "thread.mark-unread": {
+      const thread = yield* requireThread({
+        readModel,
+        command,
+        threadId: command.threadId,
+      });
+      const occurredAt = yield* nowIso;
+      // Unread means "visited just before the latest completion". With no
+      // completion to sit behind (running turn, never ran) there is nothing
+      // to mark, so the current watermark is kept.
+      const previousVisitedAt = thread.lastVisitedAt ?? thread.createdAt;
+      const latestCompletedAt = thread.latestTurn?.completedAt;
+      const lastVisitedAt =
+        latestCompletedAt == null
+          ? previousVisitedAt
+          : DateTime.make(latestCompletedAt).pipe(
+              Option.map(DateTime.subtractDuration("1 millis")),
+              Option.map(DateTime.formatIso),
+              Option.getOrElse(() => previousVisitedAt),
+            );
+      return {
+        ...(yield* withEventBase({
+          aggregateKind: "thread",
+          aggregateId: command.threadId,
+          occurredAt,
+          commandId: command.commandId,
+        })),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: command.threadId,
+          lastVisitedAt,
+          updatedAt: thread.updatedAt,
+        },
+      };
+    }
+
     case "thread.snooze": {
       const thread = yield* requireThreadNotArchived({
         readModel,

@@ -29,6 +29,8 @@ import {
   settleThread,
   stopThreadSession,
   unsettleThread,
+  visitThread,
+  markThreadUnread,
 } from "./commands.ts";
 
 const TEST_CRYPTO_LAYER = Layer.succeed(
@@ -211,6 +213,37 @@ describe("environment commands", () => {
           commandId: "reorder-command",
           threadId: "thread-1",
           orderKey: "mf",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("dispatches thread visited-state commands without client timestamps", () =>
+    Effect.gen(function* () {
+      const dispatched: ClientOrchestrationCommand[] = [];
+      const supervisor = yield* makeSupervisor(dispatched);
+
+      yield* visitThread({
+        commandId: CommandId.make("view-command"),
+        threadId: ThreadId.make("thread-1"),
+        visitedAt: "2026-01-01T00:00:00.000Z",
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+      yield* markThreadUnread({
+        commandId: CommandId.make("mark-unread-command"),
+        threadId: ThreadId.make("thread-1"),
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      expect(dispatched).toEqual([
+        {
+          type: "thread.visit",
+          commandId: "view-command",
+          threadId: "thread-1",
+          visitedAt: "2026-01-01T00:00:00.000Z",
+        },
+        {
+          type: "thread.mark-unread",
+          commandId: "mark-unread-command",
+          threadId: "thread-1",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

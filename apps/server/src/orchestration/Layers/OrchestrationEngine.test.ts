@@ -331,6 +331,70 @@ describe("OrchestrationEngine", () => {
       }
     },
   );
+  it("persists thread visits through backward-compatible metadata events", async () => {
+    const system = await createOrchestrationSystem();
+    const { engine } = system;
+    const createdAt = "2026-01-01T00:00:00.000Z";
+    const lastVisitedAt = "2026-01-01T00:05:00.000Z";
+
+    await system.run(
+      engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-visited-state-project-create"),
+        projectId: asProjectId("project-visited-state"),
+        title: "Visited project",
+        workspaceRoot: "/tmp/project-visited-state",
+        defaultModelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        createdAt,
+      }),
+    );
+    await system.run(
+      engine.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("cmd-visited-state-thread-create"),
+        threadId: ThreadId.make("thread-visited-state"),
+        projectId: asProjectId("project-visited-state"),
+        title: "Visited thread",
+        modelSelection: {
+          instanceId: ProviderInstanceId.make("codex"),
+          model: "gpt-5-codex",
+        },
+        interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+        runtimeMode: "full-access",
+        branch: null,
+        worktreePath: null,
+        createdAt,
+      }),
+    );
+
+    expect((await system.readModel()).threads[0]?.lastVisitedAt).toBe(createdAt);
+
+    const receipt = await system.run(
+      engine.dispatch({
+        type: "thread.visit",
+        commandId: CommandId.make("cmd-visited-state-view"),
+        threadId: ThreadId.make("thread-visited-state"),
+        visitedAt: lastVisitedAt,
+      }),
+    );
+    const snapshot = await system.readModel();
+    const events = await system.run(
+      Stream.runCollect(engine.readEvents(receipt.sequence - 1, 1)).pipe(
+        Effect.map((chunk): OrchestrationEvent[] => Array.from(chunk)),
+      ),
+    );
+
+    expect(snapshot.threads[0]).toMatchObject({ lastVisitedAt, updatedAt: createdAt });
+    expect(events[0]).toMatchObject({
+      type: "thread.meta-updated",
+      payload: { lastVisitedAt, updatedAt: createdAt },
+    });
+
+    await system.dispose();
+  });
 
   it("bootstraps command handling from persisted projections without reading the full snapshot", async () => {
     let nextSequence = 8;

@@ -83,6 +83,13 @@ export function shouldPublishAgentAwarenessEvent(event: OrchestrationEvent): boo
     case "thread.runtime-mode-set":
     case "thread.interaction-mode-set":
       return false;
+    case "thread.meta-updated":
+      return (
+        event.payload.lastVisitedAt === undefined ||
+        Object.keys(event.payload).some(
+          (key) => key !== "threadId" && key !== "updatedAt" && key !== "lastVisitedAt",
+        )
+      );
     case "thread.activity-appended":
       return (
         event.payload.activity.kind === "approval.requested" ||

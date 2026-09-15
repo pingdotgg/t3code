@@ -235,6 +235,42 @@ describe.sequential("signRelayAgentActivityPublishProof", () => {
     ).toBe(true);
   });
 
+  it("does not publish visited-state-only metadata updates", () => {
+    const now = "2026-05-25T00:00:00.000Z";
+    const base = {
+      sequence: 1,
+      eventId: "evt-1",
+      commandId: CommandId.make("cmd-1"),
+      aggregateKind: "thread",
+      aggregateId: "thread-1" as ThreadId,
+      occurredAt: now,
+      metadata: {},
+    };
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+          lastVisitedAt: now,
+          updatedAt: now,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(false);
+    expect(
+      AgentAwarenessRelay.shouldPublishAgentAwarenessEvent({
+        ...base,
+        type: "thread.meta-updated",
+        payload: {
+          threadId: "thread-1" as ThreadId,
+          title: "Renamed thread",
+          lastVisitedAt: now,
+          updatedAt: now,
+        },
+      } as unknown as OrchestrationEvent),
+    ).toBe(true);
+  });
+
   it("deduplicates awareness state updates whose only change is their event timestamp", () => {
     expect(AgentAwarenessRelay.agentAwarenessPublishIdentity(state)).toBe(
       AgentAwarenessRelay.agentAwarenessPublishIdentity({

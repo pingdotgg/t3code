@@ -524,6 +524,29 @@ describe("applyThreadDetailEvent", () => {
       expect(unlinked.thread.pullRequests).toEqual([]);
       expect(unlinked.thread.linkedPullRequest).toBeNull();
     });
+
+    it("patches lastVisitedAt without changing the thread update time", () => {
+      const lastVisitedAt = "2026-04-01T05:00:00.000Z";
+      const result = applyThreadDetailEvent(baseThread, {
+        ...baseEventFields,
+        sequence: 5,
+        occurredAt: lastVisitedAt,
+        aggregateKind: "thread",
+        aggregateId: ThreadId.make("thread-1"),
+        type: "thread.meta-updated",
+        payload: {
+          threadId: ThreadId.make("thread-1"),
+          lastVisitedAt,
+          updatedAt: baseThread.updatedAt,
+        },
+      });
+
+      expect(result.kind).toBe("updated");
+      if (result.kind === "updated") {
+        expect(result.thread.lastVisitedAt).toBe(lastVisitedAt);
+        expect(result.thread.updatedAt).toBe(baseThread.updatedAt);
+      }
+    });
   });
 
   describe("thread.message-sent", () => {

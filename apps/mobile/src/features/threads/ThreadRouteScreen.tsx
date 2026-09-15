@@ -22,7 +22,7 @@ import {
   projectScriptRuntimeEnv,
   resolveProjectScripts,
 } from "@t3tools/shared/projectScripts";
-import { Alert, Platform, ScrollView, View } from "react-native";
+import { Alert, AppState, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useWorkspaceState } from "../../state/workspace";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
@@ -88,6 +88,7 @@ import {
   ThreadInspectorContentStack,
   type ThreadInspectorMode,
 } from "./thread-inspector-content-stack";
+import { resolveVisitWatermark, shouldAcknowledgeThreadVisit } from "./threadVisitedState";
 
 interface ThreadInspectorSelection {
   readonly routeThreadIdentity: string | null;
@@ -303,6 +304,78 @@ function ThreadRouteContent(
   const routeConnectionState =
     routeEnvironmentRuntime?.connectionState ?? (environmentId ? "available" : connectionState);
   const routeConnectionError = routeEnvironmentRuntime?.connectionError ?? null;
+  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
+  const supportsVisitedTracking =
+    serverConfig?.environment.capabilities.threadVisitedTracking === true;
+  const visitThread = useAtomCommand(threadEnvironment.visit, { reportFailure: false });
+  const [appState, setAppState] = useState(() => AppState.currentState);
+  useEffect(() => {
+    const subscription = AppState.addEventListener("change", setAppState);
+    return () => subscription.remove();
+  }, []);
+  // Reading a completed thread stamps its visited watermark at the shell's
+  // updatedAt so the Done indicator clears on every client. Files, Review,
+  // and Terminal are native pushes that blur this route, so a completion that
+  // lands behind them stays unread until the user comes back. The completion
+  // comes from the loaded detail so a slow or failed message load cannot mark
+  // a completion read before the user can see it; a cached detail (stream
+  // paused while the thread was not in use) still shows its messages, so it
+  // counts as loaded. lastVisitedAt and updatedAt are read through refs and
+  // kept out of the deps: another client marking the thread unread must not
+  // trigger an immediate re-visit, and streaming activity bumps must not
+  // send a visit per bump. A new completion changes completedAt, which is a
+  // dep, so it is still visited.
+  const selectedThreadEnvironmentId = selectedThread?.environmentId ?? null;
+  const selectedThreadId = selectedThread?.id ?? null;
+  const selectedThreadDetailLoaded =
+    selectedThreadDetailState.status === "live" || selectedThreadDetailState.status === "cached";
+  const selectedThreadCompletedAt = selectedThreadDetail?.latestTurn?.completedAt ?? null;
+  const selectedThreadUpdatedAtRef = useRef(selectedThread?.updatedAt);
+  selectedThreadUpdatedAtRef.current = selectedThread?.updatedAt;
+  const selectedThreadLastVisitedAtRef = useRef(selectedThread?.lastVisitedAt);
+  selectedThreadLastVisitedAtRef.current = selectedThread?.lastVisitedAt;
+  useFocusEffect(
+    useCallback(() => {
+      if (
+        selectedThreadEnvironmentId === null ||
+        selectedThreadId === null ||
+        selectedThreadCompletedAt === null
+      ) {
+        return;
+      }
+      if (
+        !shouldAcknowledgeThreadVisit({
+          appState,
+          connectionState: routeConnectionState,
+          supported: supportsVisitedTracking,
+          detailLoaded: selectedThreadDetailLoaded,
+          completedAt: selectedThreadCompletedAt,
+          lastVisitedAt: selectedThreadLastVisitedAtRef.current,
+        })
+      ) {
+        return;
+      }
+      void visitThread({
+        environmentId: selectedThreadEnvironmentId,
+        input: {
+          threadId: selectedThreadId,
+          visitedAt: resolveVisitWatermark({
+            updatedAt: selectedThreadUpdatedAtRef.current,
+            completedAt: selectedThreadCompletedAt,
+          }),
+        },
+      });
+    }, [
+      appState,
+      routeConnectionState,
+      selectedThreadCompletedAt,
+      selectedThreadDetailLoaded,
+      selectedThreadEnvironmentId,
+      selectedThreadId,
+      supportsVisitedTracking,
+      visitThread,
+    ]),
+  );
   const selectedThreadWithDraftSettings = useMemo(
     () =>
       selectedThread
@@ -852,7 +925,6 @@ function ThreadRouteContent(
           detailDeleted: selectedThreadDetailState.status === "deleted",
           connectionState: routeConnectionState,
         });
-  const serverConfig = routeEnvironmentRuntime?.serverConfig ?? null;
   const renderThreadRouteBody = (showActionControls: boolean) => (
     <>
       <ThreadGitControls {...threadGitControlProps} showActionControls={showActionControls} />

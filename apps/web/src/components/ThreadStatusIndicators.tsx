@@ -481,9 +481,10 @@ export function ThreadStatusLabel({
  */
 export function ThreadRowLeadingStatus({ thread }: { thread: SidebarThreadSummary }) {
   const threadRef = scopeThreadRef(thread.environmentId, thread.id);
-  const lastVisitedAt = useUiStateStore(
+  const localLastVisitedAt = useUiStateStore(
     (state) => state.threadLastVisitedAtById[scopedThreadKey(threadRef)],
   );
+  const lastVisitedAt = thread.lastVisitedAt ?? localLastVisitedAt;
   const pullRequest = useLinkedThreadPullRequest(
     thread.environmentId,
     thread.linkedPullRequest,
