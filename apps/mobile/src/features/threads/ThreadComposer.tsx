@@ -104,6 +104,7 @@ import {
   type ExistingThreadSettingsRouteSession,
   useExistingThreadSettingsRoutePresentation,
 } from "./ThreadSettingsSheet";
+import { composerSettingsToolbarLayout } from "./composer-draft-expansion";
 import {
   useThreadSettingsSheetPresentation,
   type NavigationWithFinishTransitioning,
@@ -415,6 +416,10 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const isExpanded = isFocused || settingsSheetPresentation.keepsComposerExpanded;
   const showsCompactDictation = isVoiceInputPresented && !isExpanded;
   const isToolbarVisible = isExpanded || isVoiceInputPresented;
+  const settingsToolbar = composerSettingsToolbarLayout({
+    isExpanded,
+    isVoicePresented: isVoiceInputPresented,
+  });
   const attachmentBlockReason = composerAttachmentUploadBlockReason({
     environmentId: props.environmentId,
     attachments: props.draftAttachments,
@@ -726,7 +731,6 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             <Animated.View
               className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
-              layout={COMPOSER_LAYOUT_TRANSITION}
             >
               <ComposerEditor
                 draftKey={composerOwnerKey}
@@ -900,21 +904,16 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             ) : null}
             {isExpanded ? <View className="h-1" /> : null}
           </ComposerDictationDraftContent>
+          {settingsToolbar.mount ? (
           <Animated.View
             accessibilityElementsHidden={!isToolbarVisible}
             collapsable={false}
             importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
-            layout={COMPOSER_LAYOUT_TRANSITION}
             pointerEvents={isToolbarVisible ? "auto" : "none"}
             style={
-              isExpanded
-                ? undefined
-                : {
-                    position: "absolute",
-                    bottom: 2,
-                    left: 0,
-                    right: 0,
-                  }
+              settingsToolbar.overlayEditor
+                ? { position: "absolute", bottom: 2, left: 0, right: 0 }
+                : undefined
             }
           >
             <ComposerDictationToolbar
@@ -991,6 +990,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
               </ComposerToolbarRow>
             </ComposerDictationToolbar>
           </Animated.View>
+          ) : null}
         </ComposerSurface>
       </Animated.View>
 
