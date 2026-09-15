@@ -7,6 +7,11 @@ import {
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { environmentSession, readPreparedConnection } from "../../state/session";
 import { requestVoiceSettings } from "../../voice/ui/brokerPort";
+import {
+  useVoiceOverlayPreferences,
+  VOICE_ACTIVATION_LABELS,
+  VOICE_ACTIVATION_MODES,
+} from "../../voice/ui/overlayPreferences";
 import { useVoiceFastCommands } from "../../voice/ui/preferences";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -165,8 +170,27 @@ function VoiceEnvironmentSettings({ environmentId }: { environmentId: Environmen
 export function VoiceSettingsSection() {
   const { environment } = useSettingsScope();
   const [fastCommands, setFastCommands] = useVoiceFastCommands();
+  const [overlay, setOverlay] = useVoiceOverlayPreferences();
   return (
     <SettingsSection id="voice" title="Voice">
+      <SettingsRow
+        title="Activation"
+        description="How a voice session starts on this device. Always listening keeps a paid live session connected until you press End; hold to talk and double-press work on the corner button and in the panel."
+      >
+        <select
+          aria-label="Voice activation"
+          value={overlay.activation}
+          onChange={(event) =>
+            setOverlay({ activation: event.target.value as typeof overlay.activation })
+          }
+        >
+          {VOICE_ACTIVATION_MODES.map((mode) => (
+            <option key={mode} value={mode}>
+              {VOICE_ACTIVATION_LABELS[mode]}
+            </option>
+          ))}
+        </select>
+      </SettingsRow>
       <SettingsRow
         title="Fast commands"
         description="Open exact thread matches and create empty drafts quickly. More nuanced requests still use the reasoning model. This preference applies on this device."

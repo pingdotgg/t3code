@@ -36,15 +36,34 @@ name, and reports back when longer research finishes.
 
 ## Using voice
 
-The voice panel sits in the corner of the chat surface. Press **Connect** and allow microphone
-access. Speak normally; the panel keeps a running transcript like a chat, oldest entry first, with
-each of your utterances labeled **You** and each of the assistant's labeled **Assistant**. Words
-appear in place as they are recognized, and an utterance you interrupt or add to late still lands
-on its own entry. The transcript keeps the latest 200 entries and scrolls only while you are
-already reading the newest one; scroll up to reread history without being pulled back down. Use
-**Mute** to stop the microphone without ending the session, and **End** to close it. While T3 is
-working on your behalf, the panel shows which tool is running. **Clear** empties the transcript
-and status lines, and reconnecting starts a fresh transcript.
+Voice lives in a small corner button on the chat surface. Click it to expand the full panel; press
+**Connect** and allow microphone access. Speak normally; the panel keeps a running transcript like
+a chat, oldest entry first, with each of your utterances labeled **You** and each of the
+assistant's labeled **Assistant**. Words appear in place as they are recognized, and an utterance
+you interrupt or add to late still lands on its own entry. The transcript keeps the latest 200
+entries and scrolls only while you are already reading the newest one; scroll up to reread history
+without being pulled back down. Use **Mute** to stop the microphone without ending the session,
+and **End** to close it. While T3 is working on your behalf, the panel shows which tool is
+running. **Clear** empties the transcript and status lines, and reconnecting starts a fresh
+transcript.
+
+**Minimize and dragging.** The panel's **Minimize** button collapses it back to the corner button
+(the session keeps running while collapsed). The corner button and the panel's header are both
+draggable anywhere in the window; the position is remembered on this device. While a live session
+runs and nobody has spoken or used tools for a while, the panel collapses to the corner button on
+its own; click the button to bring it back.
+
+**Activation modes.** Settings → Integrations → Voice → Activation (a device-local preference)
+controls how a session starts:
+
+- **Manual** (default): press **Connect** to start.
+- **Always listening**: the session connects on its own and reconnects after drops, until you
+  press **End** or an error occurs. This keeps a billed live session open; end it when you are
+  done.
+- **Hold to talk**: press and hold the corner button (or **Hold to talk** in the panel) to talk;
+  release to end. A quick tap still expands the panel.
+- **Double-press to toggle**: double-press the corner button (or double-click **Talk** in the
+  panel) to start or stop listening; a lone click expands the panel.
 
 When voice opens a thread, a short chime confirms that the window reached the destination.
 Successful navigation does not need a spoken title or sentence. Errors and necessary questions
