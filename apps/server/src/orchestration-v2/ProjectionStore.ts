@@ -58,6 +58,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
+  bytesOfJson,
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
   projectedRowEncodedBytes,
@@ -1034,6 +1035,72 @@ function localVisibleTurnItems(
 ): Array<OrchestrationV2ProjectedTurnItem> {
   return activeLocalTurnItems(projection);
 }
+
+// `ORDER BY turn_item_id` compares ids as UTF-8 bytes under SQLite's BINARY
+// collation; JS `<` compares UTF-16 code units and diverges for supplementary
+// characters, so the tie-break encodes first. Binding also diverges on lone
+// surrogates: node:sqlite substitutes U+FFFD (Buffer's utf8 does the same)
+// while bun:sqlite stores raw surrogate bytes (WTF-8), so the encoder follows
+// the runtime.
+const wtf8Bytes = (value: string): Uint8Array => {
+  const bytes: Array<number> = [];
+  // bun:sqlite consumes a leading BOM from the UTF-16 buffer:
+  // U+FEFF is stripped, and U+FFFE marks the rest big-endian —
+  // every subsequent unit is byte-swapped before encoding.
+  const first = value.charCodeAt(0);
+  const swapped = first === 0xfffe;
+  const start = swapped || first === 0xfeff ? 1 : 0;
+  const unitAt = (index: number): number => {
+    const code = value.charCodeAt(index);
+    return swapped ? ((code & 0xff) << 8) | (code >> 8) : code;
+  };
+  for (let index = start; index < value.length; index += 1) {
+    const code = unitAt(index);
+    // bun:sqlite's UTF-8 conversion pairs ANY surrogate code unit
+    // with the following unit, masking both to 10 bits — a lone
+    // high surrogate before 'x' encodes U+10078, not ED A0 80.
+    if (code >= 0xd800 && code <= 0xdfff && index + 1 < value.length) {
+      const point = 0x10000 + ((code & 0x3ff) << 10) + (unitAt(index + 1) & 0x3ff);
+      bytes.push(
+        0xf0 | (point >> 18),
+        0x80 | ((point >> 12) & 0x3f),
+        0x80 | ((point >> 6) & 0x3f),
+        0x80 | (point & 0x3f),
+      );
+      index += 1;
+      continue;
+    }
+    if (code < 0x80) {
+      bytes.push(code);
+    } else if (code < 0x800) {
+      bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+    } else {
+      // A lone surrogate with no following unit lands here:
+      // ED A0-BF 80-BF, matching bun:sqlite's raw bind.
+      bytes.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+    }
+  }
+  return Uint8Array.from(bytes);
+};
+const isBunRuntime = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
+const compareUtf8 = (left: string, right: string): number =>
+  isBunRuntime
+    ? Buffer.compare(wtf8Bytes(left), wtf8Bytes(right))
+    : Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+
+// The cohort decode path for retained rows: oversized or over-deep stored
+// payloads are compacted to the row cap before schema decode, so every item
+// the window compares against is the bounded form.
+const boundRetainedPayloadJson = (payloadJson: string, maxRowPayloadBytes: number): string =>
+  Buffer.byteLength(payloadJson, "utf8") > maxRowPayloadBytes ||
+  jsonDepthExceeds(payloadJson, THREAD_HISTORY_PREVIEW_HARD_DEPTH)
+    ? JSON.stringify(
+        compactProjectedHistoryPayloadToLimit(
+          parseBoundedPayloadJson(payloadJson),
+          maxRowPayloadBytes,
+        ),
+      )
+    : payloadJson;
 
 function inheritedVisibleTurnItemsFromLocalItems(
   items: ReadonlyArray<OrchestrationV2TurnItem>,
@@ -2704,18 +2771,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ), billed AS (
                   -- Turn windows must not materialize unbounded rows or bytes: a
                   -- single long turn can exceed every policy bound. Bill each row
-                  -- at most the per-row payload cap so oversized rows stay in the
-                  -- window (compacted below) while their budget cost stays sane.
+                  -- at its emitted size: previews preserve identity members
+                  -- whole, so a row can legitimately ship more than the per-row
+                  -- cap and billing it at the cap would let many such rows
+                  -- overflow the byte budget. A row bigger than the whole window
+                  -- budget still stays reachable — the kept_visible unions below
+                  -- (newest row, anchor, and the row below an anchor) survive
+                  -- every cap, so it pages one position at a time.
                   -- The byte filter below keeps a newest-first prefix of this
                   -- ordering and the row cap never exceeds maxWindowRows, so no
                   -- row older than the newest maxWindowRows candidates can ever
                   -- be selected. Limiting here keeps the payload-length reads
                   -- and the suffix-sum scan O(window), not O(history).
                   SELECT eligible.*,
-                    MIN(
-                      LENGTH(CAST(eligible.payload_json AS BLOB)),
-                      ${maxRowPayloadBytes}
-                    ) AS bill_bytes
+                    LENGTH(CAST(eligible.payload_json AS BLOB)) AS bill_bytes
                   FROM eligible
                   WHERE eligible.ordinal >= (SELECT ordinal FROM boundary)
                   ORDER BY eligible.ordinal DESC, eligible.turn_item_id DESC
@@ -2938,15 +3007,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         // applies to every fetched collection, not just turn items: the thread
         // row and cohort payloads carry the same preview contract.
         const boundFetchedPayloadJson = (payloadJson: string) =>
-          Buffer.byteLength(payloadJson, "utf8") > maxRowPayloadBytes ||
-          jsonDepthExceeds(payloadJson, THREAD_HISTORY_PREVIEW_HARD_DEPTH)
-            ? JSON.stringify(
-                compactProjectedHistoryPayloadToLimit(
-                  parseBoundedPayloadJson(payloadJson),
-                  maxRowPayloadBytes,
-                ),
-              )
-            : payloadJson;
+          boundRetainedPayloadJson(payloadJson, maxRowPayloadBytes);
         const boundFetchedRows = (rows: ReadonlyArray<PayloadRow>) =>
           window === undefined
             ? rows
@@ -3561,6 +3622,130 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           };
         }
 
+        // Ancestor segments share this call's window budget: without a
+        // remaining cap each source read returns up to maxWindowRows of its
+        // own, so a fork chain decodes and accumulates depth × window rows
+        // before the wire page trims them. Rows this segment will emit count
+        // against what ancestors may spend — suppressed local reads are
+        // pass-throughs on the way to a deeper anchor and consume nothing.
+        // The rows this segment contributes to the merged timeline: under a
+        // requiredRunId fork read the kept items at-or-before the fork run —
+        // including rows of runs rolled back after the fork, which local
+        // visibility hides but visibleTurnItemsThroughRun restores into the
+        // descendant's inherited prefix. Billing only the locally-visible set
+        // would let each rolled-back ancestor row evade the shared budget.
+        const localVisibleRows = withVisibleTurnItems(projection).visibleTurnItems;
+        const requiredRun =
+          window?.requiredRunId === undefined
+            ? undefined
+            : projection.runs.find((run) => run.id === window.requiredRunId);
+        const runOrdinalById =
+          requiredRun === undefined
+            ? undefined
+            : new Map(projection.runs.map((run) => [run.id, run.ordinal]));
+        const contributedItems: ReadonlyArray<OrchestrationV2TurnItem> =
+          window === undefined || window.requiredRunId === undefined
+            ? localVisibleRows.map((row) => row.item)
+            : requiredRun === undefined || runOrdinalById === undefined
+              ? []
+              : projection.turnItems.filter(
+                  (item) =>
+                    !hiddenTurnItemIds.has(String(item.id)) &&
+                    isTurnItemAtOrBeforeRun({
+                      historyOrigin: projection.thread.historyOrigin,
+                      itemRunId: item.runId,
+                      runOrdinalById,
+                      sourceRunOrdinal: requiredRun.ordinal,
+                    }),
+                );
+        // The anchor row is already-delivered boundary, not page content:
+        // billing it would let a single oversized anchor consume the whole
+        // budget, skip every ancestor, and dead-end the cursor on an empty
+        // page. The boundary is exempted by identity, never by an ordering
+        // approximation of it: SQLite orders the stored turn_item_id bytes,
+        // while the decoded ids here can fold differently under another
+        // driver's binding (a Bun-written surrogate group read under Node
+        // collapses to one value) — an ordering pick could exempt a whole
+        // collision group instead of the one delivered row. The stored rowid
+        // identifies the boundary when the anchor resolved; ordinal-only
+        // marker anchors fall back to the ordinal group's stored-order
+        // maximum, matching the fork-cutoff pick.
+        const anchorOrdinal =
+          localWindow?.anchorIsPageBoundary === true ? localWindow.anchorOrdinal : undefined;
+        const anchorRowId =
+          localWindow?.anchorIsPageBoundary === true ? localWindow.anchorRowId : undefined;
+        const anchorItem =
+          anchorOrdinal === undefined
+            ? undefined
+            : yield* Effect.gen(function* () {
+                const rows = yield* sql<{ readonly payload_json: string }>`
+                  SELECT COALESCE(bounded_json, payload_json) AS payload_json
+                  FROM orchestration_v2_projection_turn_items
+                  WHERE (
+                    ${anchorRowId ?? null} IS NOT NULL
+                    AND rowid = ${anchorRowId ?? null}
+                  ) OR (
+                    ${anchorRowId ?? null} IS NULL
+                    AND thread_id = ${threadId}
+                    AND ordinal = ${anchorOrdinal}
+                  )
+                  ORDER BY turn_item_id DESC
+                  LIMIT 1
+                `;
+                const row = rows[0];
+                if (row === undefined) return undefined;
+                // Decode through the same bounded path the cohort items came
+                // through so the size comparison below compares like forms.
+                const decoded = yield* Effect.option(
+                  decodeTurnItemPayload(
+                    boundRetainedPayloadJson(
+                      row.payload_json,
+                      window?.maxRowPayloadBytes ?? THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
+                    ),
+                  ),
+                );
+                return decoded._tag === "Some"
+                  ? { itemId: String(decoded.value.id), encodedBytes: bytesOfJson(decoded.value) }
+                  : undefined;
+              });
+        // Exactly one row is exempt: the delivered boundary. Distinct stored
+        // rows can decode to the same item id when a driver's binding folded
+        // the written bytes differently than it decodes now (a Bun-written
+        // surrogate group read under Node collapses to one value), so the
+        // boundary is picked out of a collision group by its own decoded
+        // size — every other twin is undelivered content and keeps consuming
+        // budget. A group whose rows all share the boundary's size bills
+        // identically whichever row is skipped.
+        const boundaryIndex =
+          anchorItem === undefined
+            ? -1
+            : contributedItems.findIndex(
+                (item) =>
+                  item.ordinal === anchorOrdinal &&
+                  String(item.id) === anchorItem.itemId &&
+                  bytesOfJson(item) === anchorItem.encodedBytes,
+              );
+        const pageRows =
+          boundaryIndex === -1
+            ? contributedItems
+            : contributedItems.filter((_, index) => index !== boundaryIndex);
+        const spentRows =
+          window === undefined || (localWindow?.rowLimit ?? 0) <= 0 ? 0 : pageRows.length;
+        const spentBytes =
+          spentRows === 0 ? 0 : pageRows.reduce((total, item) => total + bytesOfJson(item), 0);
+        const remainingRows = (window?.maxWindowRows ?? THREAD_HISTORY_MAX_WINDOW_ROWS) - spentRows;
+        const remainingBytes =
+          (window?.maxWindowBytes ?? THREAD_HISTORY_MAX_WINDOW_BYTES) - spentBytes;
+        if (window !== undefined && (remainingRows <= 0 || remainingBytes <= 0)) {
+          return {
+            projection: withVisibleTurnItems(projection),
+            // Skipped ancestors may still hold older rows; over-reporting
+            // emits a cursor whose final page simply comes back empty.
+            hasOlderHistory: true,
+            hiddenTurnItemIds,
+          };
+        }
+
         const sourceWindow =
           window === undefined
             ? undefined
@@ -3679,8 +3864,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   userTurnLimit: window.userTurnLimit,
                   requiredRunId: forkedFrom.runId,
                   requiredRunRowId,
-                  maxWindowRows: window.maxWindowRows,
-                  maxWindowBytes: window.maxWindowBytes,
+                  maxWindowRows: remainingRows,
+                  maxWindowBytes: remainingBytes,
                   maxRowPayloadBytes: window.maxRowPayloadBytes,
                   suppressLocal: anchor === undefined || anchorIsInDescendant,
                   ...(anchor === undefined || anchorIsInDescendant
@@ -5773,47 +5958,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               const maxWindowBytes = options.maxWindowBytes ?? THREAD_HISTORY_MAX_WINDOW_BYTES;
               const maxRowPayloadBytes =
                 options.maxRowPayloadBytes ?? THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES;
-              const capped: typeof candidates = [];
-              let billedBytes = 0;
-              let headIndex = candidates.length;
-              for (
-                let index = candidates.length - 1;
-                index >= start && capped.length < maxWindowRows;
-                index -= 1
-              ) {
-                billedBytes += Math.min(
-                  projectedRowEncodedBytes(candidates[index]!),
-                  maxRowPayloadBytes,
-                );
-                if (billedBytes > maxWindowBytes && capped.length > 0) break;
-                headIndex = index;
-                capped.push(candidates[index]!);
-              }
-              capped.reverse();
-              // Mirror the SQL alignment (initial turn-mode snapshots only): when
-              // complete newer turns fit, drop a partial oldest turn; a single
-              // oversized turn still pages in parts. Anchored reads skip the drop
-              // — a page collapsing to its anchor dead-ends the cursor. The drop
-              // also requires a turn start below the window — without one the
-              // leading rows are the indivisible pre-first-turn segment and must
-              // stay reachable.
-              const firstTurnIndex =
-                options.userTurnLimit === undefined || hasAnchor
-                  ? -1
-                  : capped.findIndex((row) => isThreadHistoryTurnStart(row.item));
-              const hasTurnStartBelow = candidates
-                .slice(start, headIndex)
-                .some((row) => isThreadHistoryTurnStart(row.item));
-              // Mirror the SQL below-anchor retention: a page anchored on its
-              // oldest surviving row must still surface one row below the anchor
-              // — the selector drops the anchor itself, so anchor-only pages
-              // dead-end the cursor while older rows remain.
-              const aligned =
-                firstTurnIndex > 0 && hasTurnStartBelow ? capped.slice(firstTurnIndex) : capped;
-              const windowStartIndex = headIndex + (capped.length - aligned.length);
-              if (hasAnchor && windowStartIndex >= anchorIndex - 1 && anchorIndex - 2 >= 0) {
-                aligned.unshift(candidates[anchorIndex - 2]!);
-              }
               // Bound decoded values through the schema codec, exactly like the
               // SQL path's preview-then-decode: compaction runs on the encoded
               // JSON (decoded-only shapes like DateTime are never rebuilt by
@@ -5855,12 +5999,79 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 encode: (value: A) => Effect.Effect<unknown, E>,
                 decode: (json: string) => Effect.Effect<A, E>,
               ) => Effect.forEach(rows, (row) => boundRow(row, encode, decode));
-              const bounded = yield* Effect.forEach(aligned, (row) =>
-                Effect.map(
-                  boundRow(row.item, encodeTurnItemPayloadValue, decodeTurnItemPayload),
+              // Over-cap rows run boundRow once here so billing sees the true
+              // emitted size; aligned rows reuse the bound item instead of
+              // encoding it twice.
+              const boundItems = new WeakMap<
+                OrchestrationV2ProjectedTurnItem,
+                OrchestrationV2TurnItem
+              >();
+              const capped: typeof candidates = [];
+              let billedBytes = 0;
+              let headIndex = candidates.length;
+              for (
+                let index = candidates.length - 1;
+                index >= start && capped.length < maxWindowRows;
+                index -= 1
+              ) {
+                // Bill the emitted size, like SQL bills LENGTH(bounded_json):
+                // compaction preserves identity members whole, so an over-cap
+                // row can legitimately ship more than the per-row cap and
+                // billing it at the cap would let many such rows overflow the
+                // byte budget. The over-cap path must measure the bound row —
+                // direct compaction of the decoded item hands deep subtrees to
+                // the recursive JSON.stringify and overflows the stack.
+                const row = candidates[index]!;
+                const rawRowBytes = projectedRowEncodedBytes(row);
+                if (rawRowBytes > maxRowPayloadBytes) {
+                  const boundItem = yield* boundRow(
+                    row.item,
+                    encodeTurnItemPayloadValue,
+                    decodeTurnItemPayload,
+                  );
+                  boundItems.set(row, boundItem);
+                  billedBytes += projectedRowEncodedBytes({ ...row, item: boundItem });
+                } else {
+                  billedBytes += rawRowBytes;
+                }
+                if (billedBytes > maxWindowBytes && capped.length > 0) break;
+                headIndex = index;
+                capped.push(row);
+              }
+              capped.reverse();
+              // Mirror the SQL alignment (initial turn-mode snapshots only): when
+              // complete newer turns fit, drop a partial oldest turn; a single
+              // oversized turn still pages in parts. Anchored reads skip the drop
+              // — a page collapsing to its anchor dead-ends the cursor. The drop
+              // also requires a turn start below the window — without one the
+              // leading rows are the indivisible pre-first-turn segment and must
+              // stay reachable.
+              const firstTurnIndex =
+                options.userTurnLimit === undefined || hasAnchor
+                  ? -1
+                  : capped.findIndex((row) => isThreadHistoryTurnStart(row.item));
+              const hasTurnStartBelow = candidates
+                .slice(start, headIndex)
+                .some((row) => isThreadHistoryTurnStart(row.item));
+              // Mirror the SQL below-anchor retention: a page anchored on its
+              // oldest surviving row must still surface one row below the anchor
+              // — the selector drops the anchor itself, so anchor-only pages
+              // dead-end the cursor while older rows remain.
+              const aligned =
+                firstTurnIndex > 0 && hasTurnStartBelow ? capped.slice(firstTurnIndex) : capped;
+              const windowStartIndex = headIndex + (capped.length - aligned.length);
+              if (hasAnchor && windowStartIndex >= anchorIndex - 1 && anchorIndex - 2 >= 0) {
+                aligned.unshift(candidates[anchorIndex - 2]!);
+              }
+              const bounded = yield* Effect.forEach(aligned, (row) => {
+                const bound = boundItems.get(row);
+                return Effect.map(
+                  bound === undefined
+                    ? boundRow(row.item, encodeTurnItemPayloadValue, decodeTurnItemPayload)
+                    : Effect.succeed(bound),
                   (item) => ({ ...row, item }),
-                ),
-              );
+                );
+              });
               // Mirror the SQL retained set: turnItems carries the window cohort
               // plus interrupt-request dependencies of in-window results — not
               // the full stored projection, which would put every historical row
@@ -5876,62 +6087,6 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               // Mirror the SQL latest-row watermark: unanchored reads retain the
               // thread's newest stored row even when eligibility filters it out
               // (e.g. a rolled-back run) so latestLocalTurnOrdinal matches.
-              // `ORDER BY ordinal DESC, turn_item_id DESC` compares ids as UTF-8
-              // bytes under SQLite's BINARY collation; JS `>` compares UTF-16
-              // code units and diverges for supplementary characters, so the
-              // tie-break encodes first. Binding also diverges on lone
-              // surrogates: node:sqlite substitutes U+FFFD (Buffer's utf8 does
-              // the same) while bun:sqlite stores raw surrogate bytes (WTF-8),
-              // so the encoder follows the runtime.
-              const wtf8Bytes = (value: string): Uint8Array => {
-                const bytes: Array<number> = [];
-                // bun:sqlite consumes a leading BOM from the UTF-16 buffer:
-                // U+FEFF is stripped, and U+FFFE marks the rest big-endian —
-                // every subsequent unit is byte-swapped before encoding.
-                const first = value.charCodeAt(0);
-                const swapped = first === 0xfffe;
-                const start = swapped || first === 0xfeff ? 1 : 0;
-                const unitAt = (index: number): number => {
-                  const code = value.charCodeAt(index);
-                  return swapped ? ((code & 0xff) << 8) | (code >> 8) : code;
-                };
-                for (let index = start; index < value.length; index += 1) {
-                  const code = unitAt(index);
-                  // bun:sqlite's UTF-8 conversion pairs ANY surrogate code unit
-                  // with the following unit, masking both to 10 bits — a lone
-                  // high surrogate before 'x' encodes U+10078, not ED A0 80.
-                  if (code >= 0xd800 && code <= 0xdfff && index + 1 < value.length) {
-                    const point = 0x10000 + ((code & 0x3ff) << 10) + (unitAt(index + 1) & 0x3ff);
-                    bytes.push(
-                      0xf0 | (point >> 18),
-                      0x80 | ((point >> 12) & 0x3f),
-                      0x80 | ((point >> 6) & 0x3f),
-                      0x80 | (point & 0x3f),
-                    );
-                    index += 1;
-                    continue;
-                  }
-                  if (code < 0x80) {
-                    bytes.push(code);
-                  } else if (code < 0x800) {
-                    bytes.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
-                  } else {
-                    // A lone surrogate with no following unit lands here:
-                    // ED A0-BF 80-BF, matching bun:sqlite's raw bind.
-                    bytes.push(
-                      0xe0 | (code >> 12),
-                      0x80 | ((code >> 6) & 0x3f),
-                      0x80 | (code & 0x3f),
-                    );
-                  }
-                }
-                return Uint8Array.from(bytes);
-              };
-              const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
-              const compareUtf8 = (left: string, right: string): number =>
-                isBun
-                  ? Buffer.compare(wtf8Bytes(left), wtf8Bytes(right))
-                  : Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
               const watermarkId =
                 hasAnchor || options.requiredRunId !== undefined
                   ? null
