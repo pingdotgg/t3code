@@ -4195,6 +4195,133 @@ it.effect("ProviderSessionManagerV2 bounds the adapter-op drain for a long-lived
 );
 
 it.effect(
+  "ProviderSessionManagerV2 does not serialize a replacement behind an abandoned in-band call's attach lock",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const turnEntered = yield* Deferred.make<void>();
+      const turnGate = yield* Deferred.make<void>();
+      const secondTurnEntered = yield* Deferred.make<void>();
+      const closes = yield* Ref.make(0);
+      const startTurnCalls = yield* Ref.make(0);
+      yield* Effect.gen(function* () {
+        const manager = yield* ProviderSessionManagerV2;
+        const idAllocator = yield* IdAllocatorV2;
+        const projectionStore = yield* ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-drain-lock");
+        const first = yield* makeThreadSessionFixture(threadId);
+        const providerSessionId = yield* first.allocate;
+        const firstRuntime = yield* first.open(providerSessionId);
+        yield* firstRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+        const appThread = (yield* projectionStore.getThreadProjection(threadId)).thread;
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        // The first turn call parks inside the adapter (in-band OpenCode
+        // shape) still holding its runtime's attach lock.
+        const turn = yield* firstRuntime
+          .startTurn({
+            appThread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "long lived",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(turnEntered);
+        const closing = yield* manager.close(providerSessionId).pipe(Effect.exit, Effect.forkChild);
+        yield* TestClock.adjust("25 seconds");
+        for (let i = 0; i < 16; i += 1) yield* Effect.yieldNow;
+        const closeExit = closing.pollUnsafe();
+        assert.isDefined(closeExit);
+        assert.isTrue(
+          closeExit !== undefined && Exit.isSuccess(closeExit) && Exit.isSuccess(closeExit.value),
+        );
+        // The abandoned call still holds its lock, but a same-id reopen
+        // installs a new runtime — the replacement's turn on the same
+        // thread must not wait behind a lock the dead runtime may never
+        // release.
+        const replacementRuntime = yield* first.open(providerSessionId);
+        yield* replacementRuntime.events.pipe(Stream.runDrain, Effect.forkScoped);
+        const secondRunId = idAllocator.derive.run({ threadId, ordinal: 2 });
+        const secondTurn = yield* replacementRuntime
+          .startTurn({
+            appThread,
+            threadId,
+            runId: secondRunId,
+            runOrdinal: 2,
+            providerTurnOrdinal: 2,
+            attemptId: idAllocator.derive.runAttempt({
+              runId: secondRunId,
+              attemptOrdinal: 1,
+            }),
+            rootNodeId: idAllocator.derive.rootNode({ runId: secondRunId }),
+            providerThread: makeProviderThread({
+              idAllocator,
+              threadId,
+              providerSessionId,
+              now,
+            }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 2 }),
+              text: "replacement turn",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        for (let i = 0; i < 24; i += 1) yield* Effect.yieldNow;
+        yield* Deferred.await(secondTurnEntered);
+        yield* Fiber.await(secondTurn);
+        // The original abandoned call is still parked and settles honestly
+        // once released.
+        assert.isUndefined(turn.pollUnsafe());
+        yield* Deferred.succeed(turnGate, undefined);
+        yield* Fiber.await(turn);
+      }).pipe(
+        Effect.ensuring(Deferred.succeed(turnGate, undefined)),
+        Effect.provide(
+          makeTestLayer({
+            state,
+            idleTimeoutMs: 3_600_000,
+            driver: ProviderDriverKind.make("opencode"),
+            beforeClose: Ref.getAndUpdate(closes, (n) => n + 1),
+            startTurn: () =>
+              Ref.getAndUpdate(startTurnCalls, (n) => n + 1).pipe(
+                Effect.flatMap((n) =>
+                  n === 0
+                    ? Deferred.succeed(turnEntered, undefined).pipe(
+                        Effect.andThen(Deferred.await(turnGate)),
+                      )
+                    : Deferred.succeed(secondTurnEntered, undefined),
+                ),
+              ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
   "ProviderSessionManagerV2 does not abandon an acquire-then-return turn call at the drain bound",
   () =>
     Effect.gen(function* () {
