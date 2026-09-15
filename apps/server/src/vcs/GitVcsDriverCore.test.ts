@@ -2350,6 +2350,34 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("serializes concurrent pulls of the same working tree", () =>
+      Effect.gen(function* () {
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        const pathService = yield* Path.Path;
+        const origin = yield* makeTmpDir("git-pull-origin-");
+        yield* initRepoWithCommit(origin);
+        const parent = yield* makeTmpDir("git-pull-parent-");
+        const clone = pathService.join(parent, "clone");
+        yield* git(parent, ["clone", origin, clone]);
+        yield* git(clone, ["config", "user.email", "test@test.com"]);
+        yield* git(clone, ["config", "user.name", "Test"]);
+        yield* writeTextFile(origin, "remote.txt", "remote\n");
+        yield* git(origin, ["add", "remote.txt"]);
+        yield* git(origin, ["commit", "-m", "remote change"]);
+        const expectedHead = yield* git(origin, ["rev-parse", "HEAD"]);
+
+        const results = yield* Effect.all(
+          [driver.pullCurrentBranch(clone), driver.pullCurrentBranch(clone)],
+          { concurrency: 2 },
+        );
+        assert.deepEqual(results.map((result) => result.status).sort(), [
+          "pulled",
+          "skipped_up_to_date",
+        ]);
+        assert.equal(yield* git(clone, ["rev-parse", "HEAD"]), expectedHead);
+      }),
+    );
+
     it.effect("allows pushes to run longer than the default command timeout", () =>
       Effect.gen(function* () {
         const delegate = yield* ChildProcessSpawner.ChildProcessSpawner;

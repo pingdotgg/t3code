@@ -51,49 +51,59 @@ export class DesktopPreReadyElectronOptions extends Context.Service<
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const platform = yield* HostProcessPlatform;
-  return yield* Effect.sync((): DesktopPreReadyElectronOptions["Service"] => {
-    const linuxPasswordStoreCommandLine =
-      platform === "linux"
-        ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
-        : null;
-    const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
+  const linuxPasswordStoreCommandLine =
+    platform === "linux"
+      ? readCommandLineSwitchValue(Electron.app.commandLine, "password-store")
+      : null;
+  const linux = platform === "linux" ? resolveEarlyLinuxElectronOptionsFromProcess() : null;
 
-    if (linux !== null) {
-      // The portal also requires a valid desktop entry. An AppImage update may
-      // have removed the executable referenced by the previous launch's entry.
+  if (linux !== null) {
+    // The portal also requires a valid desktop entry. An AppImage update may
+    // have removed the executable referenced by the previous launch's entry.
+    try {
+      const applicationsDir = NodePath.posix.join(
+        process.env.XDG_DATA_HOME?.trim() ||
+          NodePath.posix.join(NodeOS.homedir(), ".local", "share"),
+        "applications",
+      );
+      NodeFS.mkdirSync(applicationsDir, { recursive: true });
+      const desktopEntryPath = NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName);
+      const newEntryContent = renderUrlHandlerDesktopEntry({
+        displayName: resolveDesktopAppBranding({
+          isDevelopment: linux.isDevelopment,
+          appVersion: Electron.app.getVersion(),
+        }).displayName,
+        execTarget: process.env.APPIMAGE?.trim() || process.execPath,
+        scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
+      });
+      // Only rewrite the desktop entry when content actually changed to avoid
+      // unnecessary filesystem writes and desktop database notifications on every
+      // cold boot. A missing or unreadable entry is treated as absent content so
+      // the initial launch still writes it. Both sides are compared unchanged —
+      // trimming only one side would force a rewrite on every boot when the
+      // written content ends in a newline.
+      let existingContent: string | null = null;
       try {
-        const applicationsDir = NodePath.posix.join(
-          process.env.XDG_DATA_HOME?.trim() ||
-            NodePath.posix.join(NodeOS.homedir(), ".local", "share"),
-          "applications",
-        );
-        NodeFS.mkdirSync(applicationsDir, { recursive: true });
-        NodeFS.writeFileSync(
-          NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
-          renderUrlHandlerDesktopEntry({
-            displayName: resolveDesktopAppBranding({
-              isDevelopment: linux.isDevelopment,
-              appVersion: Electron.app.getVersion(),
-            }).displayName,
-            execTarget: process.env.APPIMAGE?.trim() || process.execPath,
-            scheme: ElectronProtocol.getDesktopScheme(linux.isDevelopment),
-          }),
-          "utf8",
-        );
+        existingContent = NodeFS.readFileSync(desktopEntryPath, "utf8");
       } catch {
-        // The URL handler retries with the full environment and logs failures.
+        // Missing or unreadable entry is treated as absent.
       }
-      // Chromium caches its portal registration during startup. Set the identity
-      // before any asynchronous work can initialize it with Electron's default.
-      Electron.app.setDesktopName(linux.linuxDesktopEntryName);
-      Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
-      if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
-        Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+      if (existingContent !== newEntryContent) {
+        NodeFS.writeFileSync(desktopEntryPath, newEntryContent, "utf8");
       }
+    } catch {
+      // The URL handler retries with the full environment and logs failures.
     }
+    // Chromium caches its portal registration during startup. Set the identity
+    // before any asynchronous work can initialize it with Electron's default.
+    Electron.app.setDesktopName(linux.linuxDesktopEntryName);
+    Electron.app.commandLine.appendSwitch("class", linux.linuxWmClass);
+    if (linux.passwordStore !== null && linuxPasswordStoreCommandLine === null) {
+      Electron.app.commandLine.appendSwitch("password-store", linux.passwordStore);
+    }
+  }
 
-    return { linux, linuxPasswordStoreCommandLine };
-  });
+  return { linux, linuxPasswordStoreCommandLine };
 }).pipe(Effect.withSpan("desktop.electron.configureBeforeReady"));
 
 // Keep Electron's strict pre-ready setup isolated so later runtime layers cannot

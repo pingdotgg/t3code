@@ -137,6 +137,12 @@ private enum TerminalInputSequence {
 private final class TerminalInputField: UITextField {
   var onDeleteBackward: (() -> Void)?
   var onInsert: ((String) -> Void)?
+  /// Uptime of the last deleteBackward(). Most keyboards route Backspace
+  /// through deleteBackward() AND the delegate's empty-replacement callback
+  /// for the same keypress; the delegate reads this to avoid emitting DEL
+  /// twice. Third-party keyboards that bypass deleteBackward (#11449) leave
+  /// it stale, so it is only honored within a short window.
+  var lastDeleteBackwardAt: TimeInterval = 0
 
   private static let hardwareKeyCommands = TerminalHardwareKeyEncoder.makeKeyCommands(
     action: #selector(handleHardwareKeyCommand(_:))
@@ -147,6 +153,7 @@ private final class TerminalInputField: UITextField {
   }
 
   override func deleteBackward() {
+    lastDeleteBackwardAt = ProcessInfo.processInfo.systemUptime
     onDeleteBackward?()
     super.deleteBackward()
   }
@@ -410,6 +417,14 @@ public final class T3TerminalView: ExpoView, UITextFieldDelegate {
       return false
     }
 
+    // The empty-replacement path fires for the same keypress that already
+    // went through deleteBackward() on most keyboards — emitting here too
+    // would delete two characters. Only emit for keyboards that bypass
+    // deleteBackward() entirely (#11449).
+    let deleteHandled = ProcessInfo.processInfo.systemUptime - inputField.lastDeleteBackwardAt < 1.0
+    if !deleteHandled {
+      emitInput("\u{7F}")
+    }
     return false
   }
 

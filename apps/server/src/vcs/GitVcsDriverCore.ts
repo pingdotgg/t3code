@@ -3583,6 +3583,20 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ]),
       ),
     );
+  // Serializes pull operations per working tree. The startup auto-pull runs in
+  // the background after commands are accepted, so a client-issued pull for the
+  // same workspace could otherwise overlap its `git pull --ff-only` and fail on
+  // the repository lock.
+  const pullLocksByCwd = new Map<string, Semaphore.Semaphore>();
+  const withPullLock = <A, E>(cwd: string, effect: Effect.Effect<A, E>): Effect.Effect<A, E> => {
+    const key = normalizeRepositoryPathsCacheKey(cwd);
+    let lock = pullLocksByCwd.get(key);
+    if (lock === undefined) {
+      lock = Semaphore.makeUnsafe(1);
+      pullLocksByCwd.set(key, lock);
+    }
+    return lock.withPermit(effect);
+  };
   const initRepoWithListRefsInvalidation: GitVcsDriver.GitVcsDriver["Service"]["initRepo"] = (
     input,
   ) =>
@@ -3608,7 +3622,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, commit(cwd, subject, body, options)),
     pushCurrentBranch: (cwd, fallbackBranch, options) =>
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
-    pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
+    pullCurrentBranch: (cwd) =>
+      withPullLock(cwd, withListRefsInvalidation(cwd, pullCurrentBranch(cwd))),
     readRangeContext,
     getReviewDiffPreview,
     getReviewDiffFileContents,
