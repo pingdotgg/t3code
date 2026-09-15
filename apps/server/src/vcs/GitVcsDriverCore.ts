@@ -2718,14 +2718,17 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     if (!input.baseRef || !input.headRef) {
       return yield* reviewDiffFileError(
         input,
-        "Branch diff file expansion requires both base and head refs.",
+        "Diff file expansion requires both base and head refs.",
       );
     }
-    const mergeBase = yield* runGitStdout(
-      "GitVcsDriver.getReviewDiffFileContents.mergeBase",
-      input.cwd,
-      ["merge-base", input.baseRef, input.headRef],
-    ).pipe(Effect.map((value) => value.trim()));
+    const mergeBase =
+      input.sourceKind === "revision-range"
+        ? input.baseRef
+        : yield* runGitStdout("GitVcsDriver.getReviewDiffFileContents.mergeBase", input.cwd, [
+            "merge-base",
+            input.baseRef,
+            input.headRef,
+          ]).pipe(Effect.map((value) => value.trim()));
     if (mergeBase.length === 0) {
       return yield* reviewDiffFileError(input, "Could not resolve the branch comparison base.");
     }

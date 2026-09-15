@@ -236,3 +236,53 @@ index ff61c90..1e170e5 100644
      }
    },
    "publishConfig": {
+diff --git a/dist/components/FileDiff.js b/dist/components/FileDiff.js
+--- a/dist/components/FileDiff.js
++++ b/dist/components/FileDiff.js
+@@ -80,6 +80,7 @@
+ 	fileDiff;
+ 	renderRange;
+ 	pendingFiles;
++	autoLoadedDiff;
+ 	appliedPreAttributes;
+ 	lastRenderedHeaderHTML;
+ 	cachedHeaderHTML;
+@@ -456,7 +457,10 @@
+ 		if (lineAnnotations != null) this.setLineAnnotations(lineAnnotations);
+ 		if (this.fileDiff == null) return false;
+ 		if (this.fileDiff.editSessionDirty === true && this.shouldSelfHealEditSession()) finishEditSessionForDiff(this.fileDiff, this.options.parseDiffOptions);
+-		if (expandUnchanged) this.loadFilesIfNecessary();
++		if (!collapsed && this.autoLoadedDiff !== this.fileDiff) {
++			this.autoLoadedDiff = this.fileDiff;
++			this.loadFilesIfNecessary();
++		} else if (expandUnchanged) this.loadFilesIfNecessary();
+ 		this.hunksRenderer.setOptions(this.getHunksRendererOptions(this.options));
+ 		this.syncInteractionOptions();
+ 		this.hunksRenderer.setLineAnnotations(this.lineAnnotations);
+diff --git a/dist/utils/renderDiffWithHighlighter.js b/dist/utils/renderDiffWithHighlighter.js
+--- a/dist/utils/renderDiffWithHighlighter.js
++++ b/dist/utils/renderDiffWithHighlighter.js
+@@ -98,10 +98,12 @@
+ 		if (bucket.deletionContent.length === 0 && bucket.additionContent.length === 0) continue;
+ 		const deletionFile = {
+ 			name: diff.prevName ?? diff.name,
++			lang: diff.isPartial && bucket.deletionInfo[0]?.lineNumber > 1 ? "text" : void 0,
+ 			contents: bucket.deletionContent.value
+ 		};
+ 		const additionFile = {
+ 			name: diff.name,
++			lang: diff.isPartial && bucket.additionInfo[0]?.lineNumber > 1 ? "text" : void 0,
+ 			contents: bucket.additionContent.value
+ 		};
+ 		const { deletionLines, additionLines } = renderTwoFiles({
+@@ -217,8 +219,8 @@
+ 	};
+ }
+ function renderTwoFiles({ deletionFile, additionFile, deletionInfo, additionInfo, highlighter, deletionDecorations, additionDecorations, languageOverride, options: { theme: themeOrThemes = DEFAULT_THEMES, ...options } }) {
+-	const deletionLang = languageOverride ?? getFiletypeFromFileName(deletionFile.name);
+-	const additionLang = languageOverride ?? getFiletypeFromFileName(additionFile.name);
++	const deletionLang = deletionFile.lang ?? languageOverride ?? getFiletypeFromFileName(deletionFile.name);
++	const additionLang = additionFile.lang ?? languageOverride ?? getFiletypeFromFileName(additionFile.name);
+ 	const { state, transformers } = createTransformerWithState(options.useTokenTransformer);
+ 	const hastConfig = (() => {
+ 		return typeof themeOrThemes === "string" ? {

@@ -1247,6 +1247,32 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("loads exact checkpoint revisions rather than their shared parent", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTmpDir();
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* git(cwd, ["checkout", "-b", "checkpoint-before"]);
+        yield* writeTextFile(cwd, "README.md", "before turn\n");
+        yield* git(cwd, ["commit", "-am", "before"]);
+        yield* git(cwd, ["checkout", "-b", "checkpoint-after", initialBranch]);
+        yield* writeTextFile(cwd, "README.md", "after turn\n");
+        yield* git(cwd, ["commit", "-am", "after"]);
+
+        const contents = yield* driver.getReviewDiffFileContents(
+          makeReviewDiffFileContentsInput(cwd, {
+            sourceKind: "revision-range",
+            baseRef: "checkpoint-before",
+            headRef: "checkpoint-after",
+          }),
+        );
+        assert.deepStrictEqual(contents, {
+          oldContents: "before turn\n",
+          newContents: "after turn\n",
+        });
+      }),
+    );
+
     it.effect("loads merge-base and head contents for branch diff expansion", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

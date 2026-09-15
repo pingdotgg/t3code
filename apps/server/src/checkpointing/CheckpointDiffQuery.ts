@@ -175,7 +175,14 @@ export const make = Effect.gen(function* () {
         })
         .pipe(Effect.withSpan("checkpoint.turnDiff.diffCheckpoints"));
 
-      const turnDiff = buildTurnDiffResult(input, diff);
+      const turnDiff = {
+        ...buildTurnDiffResult(input, diff),
+        fileContentsSource: {
+          cwd: workspaceCwd,
+          baseRef: fromCheckpointRef,
+          headRef: toCheckpointRef,
+        },
+      };
       if (!isTurnDiffResult(turnDiff)) {
         return yield* new CheckpointDiffResultInvalidError({
           operation,
@@ -280,7 +287,14 @@ export const make = Effect.gen(function* () {
       });
     }
 
-    return turnDiff satisfies OrchestrationGetFullThreadDiffResult;
+    return {
+      ...turnDiff,
+      fileContentsSource: {
+        cwd: workspaceCwd,
+        baseRef: checkpointRefForThreadTurn(input.threadId, 0),
+        headRef: threadContext.value.toCheckpointRef,
+      },
+    } satisfies OrchestrationGetFullThreadDiffResult;
   });
 
   return CheckpointDiffQuery.of({

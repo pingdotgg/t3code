@@ -10,7 +10,6 @@ import type {
   PullRequestRef,
   ReviewDiffFileContentsInput,
   ReviewDiffFileContentsResult,
-  ReviewDiffPreviewSourceKind,
 } from "@t3tools/contracts";
 
 import { resolveFileDiffPath } from "./diffRendering";
@@ -18,7 +17,7 @@ import { resolveFileDiffPath } from "./diffRendering";
 interface GitDiffFileContentsSource {
   readonly environmentId: EnvironmentId;
   readonly cwd: string;
-  readonly sourceKind: ReviewDiffPreviewSourceKind;
+  readonly sourceKind: ReviewDiffFileContentsInput["sourceKind"];
   readonly baseRef: string | null;
   readonly headRef: string | null;
   /** The comparison identity Pierre carries into its hydrated render cache. */

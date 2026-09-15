@@ -144,6 +144,11 @@ describe("CheckpointDiffQuery.layer", () => {
         fromTurnCount: 0,
         toTurnCount: 4,
         diff: "full thread diff patch",
+        fileContentsSource: {
+          cwd: "/tmp/worktree",
+          baseRef: checkpointRefForThreadTurn(threadId, 0),
+          headRef: toCheckpointRef,
+        },
       });
     }),
   );
@@ -245,6 +250,11 @@ describe("CheckpointDiffQuery.layer", () => {
         fromTurnCount: 0,
         toTurnCount: 1,
         diff: "diff patch",
+        fileContentsSource: {
+          cwd: "/tmp/workspace",
+          baseRef: expectedFromRef,
+          headRef: toCheckpointRef,
+        },
       });
     }),
   );

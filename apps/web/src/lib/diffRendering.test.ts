@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vite-plus/test";
+import { getSharedHighlighter, hydratePartialDiff, renderDiffWithHighlighter } from "@pierre/diffs";
 import {
   buildFileDiffContentVersion,
   buildFileDiffIdentityKey,
@@ -32,6 +33,62 @@ describe("buildPatchCacheKey", () => {
 });
 
 describe("getRenderablePatch", () => {
+  it("does not guess docstring tokens without context and restores them after hydration", async () => {
+    const oldContents = [
+      "def example():",
+      '    """',
+      ...Array.from({ length: 15 }, (_, index) => `    Line ${index}: and in is not bool.`),
+      '    """',
+      "    return True",
+      "",
+    ].join("\n");
+    const newContents = oldContents.replace("Line 9:", "Line nine:");
+    const parsed = getRenderablePatch(
+      [
+        "diff --git a/example.py b/example.py",
+        "--- a/example.py",
+        "+++ b/example.py",
+        "@@ -12 +12 @@",
+        "-    Line 9: and in is not bool.",
+        "+    Line nine: and in is not bool.",
+      ].join("\n"),
+    );
+    if (parsed?.kind !== "files") throw new Error("Expected a parsed diff");
+    const file = parsed.files[0]!;
+    file.lang = "python";
+    const highlighter = await getSharedHighlighter({
+      themes: ["pierre-dark"],
+      langs: ["python"],
+      preferredHighlighter: "shiki-wasm",
+    });
+    const options = {
+      theme: "pierre-dark",
+      lineDiffType: "none",
+      useTokenTransformer: false,
+      tokenizeMaxLineLength: 1000,
+      maxLineDiffLength: 1000,
+    } as const;
+    const partial = renderDiffWithHighlighter(file, highlighter, options);
+    expect(JSON.stringify(partial.code.additionLines)).not.toContain("#FF678D");
+    expect(JSON.stringify(partial.code.deletionLines)).not.toContain("#FF678D");
+
+    const hydrated = hydratePartialDiff("clone", file, {
+      oldFile: { name: "example.py", contents: oldContents },
+      newFile: { name: "example.py", contents: newContents },
+    });
+    const result = renderDiffWithHighlighter(hydrated, highlighter, options);
+    for (const side of ["additionLines", "deletionLines"] as const) {
+      expect(result.code[side][11]).toMatchObject({
+        children: [
+          expect.objectContaining({
+            properties: { style: "color:#5ECC71" },
+          }),
+        ],
+      });
+      expect(JSON.stringify(result.code[side][18])).toContain("#FF678D");
+    }
+  });
+
   it("compacts partial hunk render offsets for virtualized review diffs", () => {
     const patch = [
       "diff --git a/example.ts b/example.ts",

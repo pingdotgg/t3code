@@ -309,8 +309,20 @@ export default function DiffPanel({
     (source) => source.kind === (selectedGitScope === "unstaged" ? "working-tree" : "branch-range"),
   );
   const currentLoadDiffFiles = useMemo<FileDiffContentsLoader | undefined>(() => {
+    if (!activeThread) return undefined;
+    if (selectedTurnId !== null) {
+      const source = activeCheckpointDiff.data?.fileContentsSource;
+      return source
+        ? createGitDiffFileContentsLoader(getDiffFileContents, {
+            ...source,
+            environmentId: activeThread.environmentId,
+            sourceKind: "revision-range",
+            cacheKey: `${source.baseRef}:${source.headRef}`,
+          })
+        : undefined;
+    }
     const preview = branchDiffPreview.data;
-    if (selectedTurnId !== null || !activeThread || !preview || !selectedGitSource) {
+    if (!preview || !selectedGitSource) {
       return undefined;
     }
 
@@ -323,6 +335,7 @@ export default function DiffPanel({
       cacheKey: selectedGitSource.diffHash,
     });
   }, [
+    activeCheckpointDiff.data,
     activeThread,
     branchDiffPreview.data,
     getDiffFileContents,
@@ -397,9 +410,9 @@ export default function DiffPanel({
   const renderablePatch = useMemo(
     () =>
       getRenderablePatch(selectedPatch, `diff-panel:${resolvedTheme}`, {
-        compactPartialHunkOffsets: selectedTurnId === null,
+        compactPartialHunkOffsets: true,
       }),
-    [resolvedTheme, selectedPatch, selectedTurnId],
+    [resolvedTheme, selectedPatch],
   );
   const renderableFiles = useMemo(() => {
     if (!renderablePatch || renderablePatch.kind !== "files") {
