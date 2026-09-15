@@ -325,10 +325,10 @@ describe("resolveAndActivateControl", () => {
     expect(activations).toEqual([]);
   });
 
-  it("activates despite volatile context deltas like ticking durations", () => {
-    // Visible container text picks up ticking durations and relative
-    // timestamps between listing and clicking; digits and time separators
-    // are ignored so an honest click is never refused as stale.
+  it("refuses a recycled row whose title differs only numerically", () => {
+    // Context comparison is exact: "Phase 3.1" and "Phase 3.2" are different
+    // targets even though the name and the element are the same, so clicking
+    // the old id must refuse instead of activating the wrong row.
     const registry = createControlIdRegistry<{ tag: string }>();
     const activations: string[] = [];
     const element = candidate(
@@ -336,7 +336,7 @@ describe("resolveAndActivateControl", () => {
       "Settle thread",
       "enabled",
       activations,
-      "Fix login bug 04:12",
+      "Phase 3.1",
     ).element;
     const id = listControlCandidates(
       [
@@ -344,7 +344,7 @@ describe("resolveAndActivateControl", () => {
           element,
           role: "button",
           name: "Settle thread",
-          context: "Fix login bug 04:12",
+          context: "Phase 3.1",
           state: "enabled",
           activate: () => {},
         },
@@ -359,18 +359,62 @@ describe("resolveAndActivateControl", () => {
           element,
           role: "button",
           name: "Settle thread",
-          context: "Fix login bug 04:13",
+          context: "Phase 3.2",
           state: "enabled",
-          activate: () => {
-            activations.push("button:Settle thread");
-          },
+          activate: () => {},
         },
       ],
       registry,
       { controlId: id },
     );
 
-    expect(resolution.state).toBe("activated");
-    expect(activations).toEqual(["button:Settle thread"]);
+    expect(resolution).toMatchObject({ state: "not_found" });
+    expect(activations).toEqual([]);
+  });
+
+  it("keeps context exact across the board (no digit normalization)", () => {
+    // Task 123 and Task 124 are different threads; a context comparison that
+    // ignored digits would retarget between them.
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const activations: string[] = [];
+    const element = candidate(
+      "button",
+      "Settle thread",
+      "enabled",
+      activations,
+      "Task 123",
+    ).element;
+    const id = listControlCandidates(
+      [
+        {
+          element,
+          role: "button",
+          name: "Settle thread",
+          context: "Task 123",
+          state: "enabled",
+          activate: () => {},
+        },
+      ],
+      {},
+      registry,
+    ).controls[0]!.controlId;
+
+    expect(
+      resolveAndActivateControl(
+        [
+          {
+            element,
+            role: "button",
+            name: "Settle thread",
+            context: "Task 124",
+            state: "enabled",
+            activate: () => {},
+          },
+        ],
+        registry,
+        { controlId: id },
+      ),
+    ).toMatchObject({ state: "not_found" });
+    expect(activations).toEqual([]);
   });
 });
