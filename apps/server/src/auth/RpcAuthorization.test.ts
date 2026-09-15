@@ -2,6 +2,7 @@ import {
   AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
+  AuthSourceControlWriteScope,
   AuthRelayReadScope,
   AuthRelayWriteScope,
   WS_METHODS,
@@ -61,6 +62,19 @@ describe("RPC authorization scopes", () => {
     );
     expect(requiredScopeForRpcMethod(WS_METHODS.pullRequestsRequestReviewers)).toBe(
       requiredScopeForRpcMethod(WS_METHODS.pullRequestsComment),
+    );
+  });
+
+  it("requires source control writes to start, retry, or cancel project clones", () => {
+    for (const method of [
+      WS_METHODS.projectCloneStart,
+      WS_METHODS.projectCloneRetry,
+      WS_METHODS.projectCloneCancel,
+    ]) {
+      expect(requiredScopeForRpcMethod(method)).toBe(AuthSourceControlWriteScope);
+    }
+    expect(requiredScopeForRpcMethod(WS_METHODS.subscribeProjectClones)).toBe(
+      AuthOrchestrationReadScope,
     );
   });
 
