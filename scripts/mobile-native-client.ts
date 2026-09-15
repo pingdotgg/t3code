@@ -206,8 +206,8 @@ async function main() {
       }
     },
     build: async () => {
-      console.error(
-        "Native client is missing, stale, or unverified. Building and installing a development client...",
+      process.stderr.write(
+        "Native client is missing, stale, or unverified. Building and installing a development client...\n",
       );
       const tracked = NodeChildProcess.execFileSync(
         "git",
@@ -248,7 +248,7 @@ async function main() {
     },
   };
   if (mode === "ensure") {
-    console.log(JSON.stringify(await ensureClient(operations)));
+    process.stdout.write(JSON.stringify(await ensureClient(operations)) + "\n");
   } else {
     const current = await operations.fingerprint();
     const status = clientStatus(
@@ -256,7 +256,7 @@ async function main() {
       await operations.installedBinary(),
       await operations.readRecord(),
     );
-    console.log(
+    process.stdout.write(
       JSON.stringify({
         status,
         fingerprint: current,
@@ -264,7 +264,7 @@ async function main() {
           status === "compatible"
             ? "Start Metro with vp run dev:client"
             : `node scripts/mobile-native-client.ts ensure ${platform} ${device}`,
-      }),
+      }) + "\n",
     );
     process.exitCode = status === "compatible" ? 0 : 2;
   }
@@ -275,7 +275,7 @@ if (
   NodePath.resolve(process.argv[1]) === NodeURL.fileURLToPath(import.meta.url)
 ) {
   main().catch((error: unknown) => {
-    console.error(error instanceof Error ? error.message : String(error));
+    process.stderr.write((error instanceof Error ? error.message : String(error)) + "\n");
     process.exitCode = 1;
   });
 }
