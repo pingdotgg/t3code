@@ -36,8 +36,6 @@ const PREVIEW_TABLES = [
   "orchestration_v2_projection_subagents",
 ] as const;
 
-const BACKFILL_PAGE_SIZE = 200;
-
 export default Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
 
@@ -46,6 +44,8 @@ export default Effect.gen(function* () {
 
     let lastRowId = 0;
     while (true) {
+      // One payload at a time: a fixed-row page can stage hundreds of
+      // unbounded payload_json values at once and exhaust startup memory.
       const rows = yield* sql<{
         readonly row_id: number;
         readonly payload_json: string;
@@ -58,25 +58,24 @@ export default Effect.gen(function* () {
           -- which keeps the check identical across sqlite engines.
           AND LENGTH(CAST(payload_json AS BLOB)) > 1600
         ORDER BY rowid ASC
-        LIMIT ${BACKFILL_PAGE_SIZE}
+        LIMIT 1
       `;
-      for (const row of rows) {
-        // Over-depth payloads are spliced down textually before JSON.parse,
-        // so even nesting past the JS parser stack still yields a preview;
-        // only source text that is not valid JSON at all stays NULL — such a
-        // row was already unreadable to bounded queries.
-        let preview: string | null = null;
-        try {
-          preview = boundedPayloadPreviewJson(row.payload_json);
-        } catch {
-          preview = null;
-        }
-        if (preview !== null) {
-          yield* sql`UPDATE ${sql.literal(table)} SET bounded_json = ${preview} WHERE rowid = ${row.row_id}`;
-        }
-        lastRowId = row.row_id;
+      const row = rows[0];
+      if (row === undefined) break;
+      // Over-depth payloads are spliced down textually before JSON.parse,
+      // so even nesting past the JS parser stack still yields a preview;
+      // only source text that is not valid JSON at all stays NULL — such a
+      // row was already unreadable to bounded queries.
+      let preview: string | null = null;
+      try {
+        preview = boundedPayloadPreviewJson(row.payload_json);
+      } catch {
+        preview = null;
       }
-      if (rows.length < BACKFILL_PAGE_SIZE) break;
+      if (preview !== null) {
+        yield* sql`UPDATE ${sql.literal(table)} SET bounded_json = ${preview} WHERE rowid = ${row.row_id}`;
+      }
+      lastRowId = row.row_id;
       yield* Effect.yieldNow;
     }
   }
