@@ -112,3 +112,16 @@ it.effect(
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
+
+describe("device hub platform discovery", () => {
+  it.each(["linux", "win32"] as const)("limits discovery to Android on %s", (platform) => {
+    const args = LocalDeviceHost.__testing.hubArguments("hub.mjs", 1234, platform);
+    expect(args.slice(args.indexOf("--platform"))).toEqual(["--platform", "android"]);
+  });
+
+  it("keeps both platforms available on macOS", () => {
+    expect(LocalDeviceHost.__testing.hubArguments("hub.mjs", 1234, "darwin")).not.toContain(
+      "--platform",
+    );
+  });
+});

@@ -140,7 +140,7 @@ async function install(name, version, entry) {
     for (let attempt = 0; attempt < 5; attempt++) {
       const hubPort = await port();
       const log = fs.openSync(path.join(state, 'hub.log'), 'a');
-      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device'], {
+      const child = spawn(process.execPath, [hubEntry, '--port', String(hubPort), '--host', '127.0.0.1', '--hide-sidebar', '--hide-boot-device', ...(process.platform === 'darwin' ? [] : ['--platform', 'android'])], {
         cwd: state, detached: true, stdio: ['ignore', log, log], env: { ...process.env, FORCE_COLOR: '0', NO_COLOR: '1' },
       });
       try { await new Promise((resolve, reject) => { child.once('spawn', resolve); child.once('error', reject); }); }
