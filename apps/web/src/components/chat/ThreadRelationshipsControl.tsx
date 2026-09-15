@@ -1,4 +1,5 @@
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   deriveThreadRelationshipGraph,
   immediateThreadRelationships,
@@ -117,7 +118,7 @@ function relationshipThreadTitle(input: {
   readonly isSubagent: boolean;
 }): string {
   if (!input.isSubagent) return input.title;
-  return input.title.replace(/^Subagent:\s*/i, "");
+  return formatSubagentDisplayTitle(input.title);
 }
 
 export function ThreadRelationshipsPanel(props: {
