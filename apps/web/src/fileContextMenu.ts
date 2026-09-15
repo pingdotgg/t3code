@@ -22,7 +22,7 @@ import { readLocalApi } from "./localApi";
 import { serverEnvironment } from "./state/server";
 import { shellEnvironment } from "./state/shell";
 import { useAtomCommand } from "./state/use-atom-command";
-import { resolvePathLinkTarget } from "./terminal-links";
+import { isAbsolutePath, resolvePathLinkTarget } from "./terminal-links";
 import { toastManager } from "./components/ui/toast";
 import { useAtomValue } from "@effect/atom-react";
 
@@ -35,13 +35,16 @@ export type FileContextMenuAction =
 
 export interface FileContextMenuTarget {
   readonly environmentId: EnvironmentId | null;
-  /** Repo- or workspace-relative file path, as shown in diffs. */
+  /**
+   * Repo- or workspace-relative path (as shown in diffs), or an absolute
+   * environment-host path (as carried by markdown file links pointing outside
+   * the workspace).
+   */
   readonly filePath: string;
   readonly workspaceRoot: string | undefined;
   readonly repositoryRoot?: string | undefined;
 }
 
-/** Absolute path on the environment host, or null when it cannot be resolved. */
 /**
  * Absolute path on the environment host for a diff-style target, resolving
  * repo-relative paths through the workspace root like every other diff
@@ -49,6 +52,11 @@ export interface FileContextMenuTarget {
  * treat as "no file actions available".
  */
 export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget): string | null {
+  // Markdown file links can point outside the workspace with an absolute
+  // environment-host path; there is nothing to resolve. isAbsolutePath needs
+  // a separator after a drive colon, so drive-relative C:notes.md is treated
+  // as workspace-relative, and UNC shares pass through.
+  if (isAbsolutePath(target.filePath)) return target.filePath;
   const workspaceFilePath = resolveDiffPathForWorkspace({
     filePath: target.filePath,
     workspaceRoot: target.workspaceRoot,
@@ -56,9 +64,7 @@ export function resolveFileContextMenuAbsolutePath(target: FileContextMenuTarget
   });
   if (workspaceFilePath === null) return null;
   if (target.workspaceRoot === undefined) {
-    return workspaceFilePath.startsWith("/") || /^[a-zA-Z]:/.test(workspaceFilePath)
-      ? workspaceFilePath
-      : null;
+    return isAbsolutePath(workspaceFilePath) ? workspaceFilePath : null;
   }
   return resolvePathLinkTarget(workspaceFilePath, target.workspaceRoot);
 }
@@ -79,11 +85,20 @@ export interface FileContextMenuCapabilities {
 export function buildFileContextMenuItems(input: {
   readonly hasAbsolutePath: boolean;
   readonly capabilities: FileContextMenuCapabilities;
+  /**
+   * Set when the caller already renders its own top-level open row (the file
+   * chip's "Open in <editor>"). The default-app Open folds into "Open with"
+   * so the menu keeps one primary open action plus alternatives.
+   */
+  readonly hasPrimaryOpenItem?: boolean;
 }): readonly ContextMenuItem<FileContextMenuAction>[] {
   // Without a resolvable absolute path nothing here can act on the file.
   if (!input.hasAbsolutePath) return [];
   const items: ContextMenuItem<FileContextMenuAction>[] = [];
-  if (input.capabilities.canOpenDefault) {
+  const editorIds = input.capabilities.editorIds.filter((id) => id !== "file-manager");
+  const nestDefaultOpen =
+    input.capabilities.canOpenDefault && input.hasPrimaryOpenItem === true && editorIds.length > 0;
+  if (input.capabilities.canOpenDefault && !nestDefaultOpen) {
     items.push({ id: "open", label: "Open", icon: "pencil" });
   }
   if (input.capabilities.revealLabel !== undefined) {
@@ -93,15 +108,17 @@ export function buildFileContextMenuItems(input: {
       icon: "folder-tree",
     });
   }
-  const editorIds = input.capabilities.editorIds.filter((id) => id !== "file-manager");
   if (editorIds.length > 0) {
     items.push({
       id: "open-with",
       label: "Open with",
-      children: editorIds.map((editorId) => ({
-        id: `editor:${editorId}` as FileContextMenuAction,
-        label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
-      })),
+      children: [
+        ...(nestDefaultOpen ? ([{ id: "open", label: "Default Application" }] as const) : []),
+        ...editorIds.map((editorId) => ({
+          id: `editor:${editorId}` as FileContextMenuAction,
+          label: EDITOR_LABEL_BY_ID.get(editorId) ?? editorId,
+        })),
+      ],
     });
   }
   return items;
@@ -181,10 +198,14 @@ export function useFileContextMenu(environmentId: EnvironmentId | null) {
     };
 
     return {
-      buildItems: (target: FileContextMenuTarget) =>
+      buildItems: (
+        target: FileContextMenuTarget,
+        options?: { readonly hasPrimaryOpenItem?: boolean },
+      ) =>
         buildFileContextMenuItems({
           hasAbsolutePath: resolveFileContextMenuAbsolutePath(target) !== null,
           capabilities,
+          ...options,
         }),
       capabilities,
       activate,
