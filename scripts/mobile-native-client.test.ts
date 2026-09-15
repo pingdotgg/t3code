@@ -7,6 +7,7 @@ import {
   clientStatus,
   ensureClient,
   hashBundle,
+  installedBinary,
   type NativeClientRecord,
 } from "./mobile-native-client.ts";
 
@@ -81,4 +82,19 @@ it("detects native library and resource replacement independent of the install d
   } finally {
     await NodeFSP.rm(root, { recursive: true, force: true });
   }
+});
+
+it("recognizes Android APK installs with randomized tilde paths and rejects failed hash reads", async () => {
+  let hashOutput = "a".repeat(64) + "  /data/app/~~random==/com.t3tools.t3code.dev-abc==/base.apk";
+  const run = (_program: string, args: string[]) => {
+    if (args.includes("list")) return "package:com.t3tools.t3code.dev";
+    if (args.includes("path"))
+      return "package:/data/app/~~random==/com.t3tools.t3code.dev-abc==/base.apk";
+    return hashOutput;
+  };
+  const binary = await installedBinary("android", "emulator-5554", run);
+  assert.match(binary!, /^[a-f0-9]{64}$/);
+  hashOutput = "sha256sum: read error";
+  await expect(installedBinary("android", "emulator-5554", run)).rejects.toThrow("Could not hash");
+  assert.equal(await installedBinary("android", "emulator-5554", () => ""), null);
 });

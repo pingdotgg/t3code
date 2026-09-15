@@ -141,16 +141,16 @@ function validateDevice(platform: NativePlatform, device: string) {
   }
 }
 
-async function installedBinary(platform: NativePlatform, device: string) {
+export async function installedBinary(platform: NativePlatform, device: string, run = command) {
   if (platform === "ios") {
     // Listing apps distinguishes an absent app from a failed simctl command.
-    const apps = command("xcrun", ["simctl", "listapps", device]);
+    const apps = run("xcrun", ["simctl", "listapps", device]);
     if (!apps.includes(`"${bundleId}"`)) return null;
-    return hashBundle(command("xcrun", ["simctl", "get_app_container", device, bundleId, "app"]));
+    return hashBundle(run("xcrun", ["simctl", "get_app_container", device, bundleId, "app"]));
   }
-  const installed = command("adb", ["-s", device, "shell", "pm", "list", "packages", bundleId]);
+  const installed = run("adb", ["-s", device, "shell", "pm", "list", "packages", bundleId]);
   if (!installed.split("\n").some((line) => line.trim() === `package:${bundleId}`)) return null;
-  const packages = command("adb", ["-s", device, "shell", "pm", "path", bundleId]);
+  const packages = run("adb", ["-s", device, "shell", "pm", "path", bundleId]);
   const apks = packages
     .split("\n")
     .filter((line) => line.startsWith("package:"))
@@ -158,8 +158,8 @@ async function installedBinary(platform: NativePlatform, device: string) {
     .sort();
   if (apks.length === 0) return null;
   const hashes = apks.map((apk) => {
-    if (!/^\/[\w/+=.-]+\.apk$/.test(apk)) throw new Error("Unexpected installed APK path.");
-    const hash = command("adb", ["-s", device, "shell", "sha256sum", apk]).split(/\s/)[0];
+    if (!/^\/[\w/+=.~-]+\.apk$/.test(apk)) throw new Error("Unexpected installed APK path.");
+    const hash = run("adb", ["-s", device, "shell", "sha256sum", apk]).split(/\s/)[0];
     if (!hash || !/^[a-f0-9]{64}$/.test(hash)) throw new Error("Could not hash installed APK.");
     return hash;
   });
