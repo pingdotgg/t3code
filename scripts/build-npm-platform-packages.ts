@@ -88,9 +88,22 @@ export function npmPlatformPackageName(platformKey: CliArchivePlatformKey): stri
   return `${NPM_PLATFORM_PACKAGE_SCOPE}/t3-${platformKey}`;
 }
 
-/** package.json for one platform package; `os`/`cpu` let npm skip the other five. */
-export function npmPlatformPackageManifest(platformKey: CliArchivePlatformKey, version: string) {
+/**
+ * package.json for one platform package; `os`/`cpu` let npm skip the other
+ * five. The archive's runtime `node_modules` (native addons and their
+ * loaders) ships inside the tarball, and npm only keeps a nested tree it can
+ * account for: anything not declared is extraneous and pruned on the next
+ * `npm install` in that project, which then breaks the executable. Declaring
+ * every bundled package as a bundled dependency at the exact version on disk
+ * makes npm treat the tree as part of this package and leave it alone.
+ */
+export function npmPlatformPackageManifest(
+  platformKey: CliArchivePlatformKey,
+  version: string,
+  bundled: Readonly<Record<string, string>>,
+) {
   const [os, cpu] = platformKey.split("-") as [string, string];
+  const bundleDependencies = Object.keys(bundled).sort();
   return {
     name: npmPlatformPackageName(platformKey),
     version,
@@ -101,8 +114,37 @@ export function npmPlatformPackageManifest(platformKey: CliArchivePlatformKey, v
     cpu: [cpu],
     files: ["t3", "t3.exe", "client", "resource-monitor", "node_modules"],
     preferUnplugged: true,
+    dependencies: Object.fromEntries(bundleDependencies.map((name) => [name, bundled[name]])),
+    bundleDependencies,
   };
 }
+
+const PackageVersion = Schema.Struct({ version: Schema.String });
+const decodePackageVersion = Schema.decodeUnknownEffect(Schema.fromJsonString(PackageVersion));
+
+/** Every top-level package under `node_modules`, scoped ones included, at the version its manifest names. */
+const readBundledPackages = Effect.fn("readBundledPackages")(function* (nodeModulesDir: string) {
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const bundled: Record<string, string> = {};
+  const packageDirs: Array<{ readonly name: string; readonly dir: string }> = [];
+  for (const entry of yield* fs.readDirectory(nodeModulesDir)) {
+    if (entry.startsWith(".")) continue;
+    const dir = path.join(nodeModulesDir, entry);
+    if (entry.startsWith("@")) {
+      for (const scoped of yield* fs.readDirectory(dir)) {
+        packageDirs.push({ name: `${entry}/${scoped}`, dir: path.join(dir, scoped) });
+      }
+    } else {
+      packageDirs.push({ name: entry, dir });
+    }
+  }
+  for (const { name, dir } of packageDirs) {
+    const manifest = yield* fs.readFileString(path.join(dir, "package.json"));
+    bundled[name] = (yield* decodePackageVersion(manifest)).version;
+  }
+  return bundled;
+});
 
 /**
  * README for one platform package. Without one at the package root, npm
@@ -302,9 +344,10 @@ const stagePlatformPackage = Effect.fn("stagePlatformPackage")(function* (input:
   if (executableName === "t3") {
     yield* fs.chmod(executable, 0o755);
   }
+  const bundled = yield* readBundledPackages(path.join(contentDir, "node_modules"));
   yield* fs.writeFileString(
     path.join(contentDir, "package.json"),
-    `${yield* encodePackageJson(npmPlatformPackageManifest(input.key, input.version))}\n`,
+    `${yield* encodePackageJson(npmPlatformPackageManifest(input.key, input.version, bundled))}\n`,
   );
   yield* fs.writeFileString(
     path.join(contentDir, "README.md"),
@@ -346,7 +389,7 @@ const stageLauncherPackage = Effect.fn("stageLauncherPackage")(function* (input:
   // Older service updaters and launchers run this exact path with Node.
   // Keep it in the package so they can preflight and start the new executable.
   yield* fs.makeDirectory(path.join(stageDir, "dist"));
-  yield* fs.writeFileString(path.join(stageDir, "dist/bin.mjs"), legacyCliLauncherScript("npm"));
+  yield* fs.writeFileString(path.join(stageDir, "dist/bin.mjs"), legacyCliLauncherScript());
   const readme = yield* path.fromFileUrl(new URL("../apps/server/README.md", import.meta.url));
   if (yield* fs.exists(readme)) {
     yield* fs.copyFile(readme, path.join(stageDir, "README.md"));

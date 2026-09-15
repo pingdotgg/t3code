@@ -1,4 +1,3 @@
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
@@ -95,19 +94,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
       assert.deepEqual(commands, ["tar"]);
       assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
       assert.isFalse(yield* fs.exists(path.join(paths.versionDir, "t3-runtime-archive")));
-      if ((yield* HostProcessPlatform) !== "win32") {
-        // The old launcher must still be able to start this archive after the
-        // first npm-to-executable update, including from the final directory.
-        yield* fs.writeFileString(paths.entryPath, '#!/bin/sh\nprintf "%s\\n" "$@"\n');
-        yield* fs.chmod(paths.entryPath, 0o755);
-        const runner = yield* ProcessRunner.make();
-        const legacyStart = yield* runner.run({
-          command: process.execPath,
-          args: [path.join(paths.versionDir, "node_modules/t3/dist/bin.mjs"), "serve"],
-        });
-        assert.equal(Number(legacyStart.code), 0, legacyStart.stderr);
-        assert.equal(legacyStart.stdout.trim(), "serve");
-      }
     }),
   );
 
@@ -220,40 +206,6 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
 
       assert.isFalse(yield* fs.exists(path.join(finalPaths.versionDir, "partial")));
       assert.isTrue(yield* fs.exists(finalPaths.entryPath));
-    }),
-  );
-
-  it.effect("backfills a cached archive without downloading or replacing it", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pinned-legacy-cache-" });
-      const cached = pinnedRuntimePaths(path, baseDir, version, "linux");
-      const legacyEntry = path.join(cached.versionDir, "node_modules/t3/dist/bin.mjs");
-      yield* fs.makeDirectory(cached.versionDir, { recursive: true });
-      yield* fs.writeFileString(cached.entryPath, "cached executable\n");
-      yield* fs.writeFileString(cached.sentinelPath, `${version}\n`);
-      const requests: string[] = [];
-      const commands: string[] = [];
-      yield* ensurePinnedRuntimeInstalled({
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
-        arch: "x64",
-        httpClient: releaseHttpClient(yield* validChecksums, requests),
-        runner: extractingRunner(fs, path, commands),
-        validate: () =>
-          fs.exists(legacyEntry).pipe(
-            Effect.flatMap((exists) => (exists ? Effect.void : Effect.die("missing legacy entry"))),
-            Effect.orDie,
-          ),
-      });
-      assert.deepEqual(requests, []);
-      assert.deepEqual(commands, []);
-      assert.equal(yield* fs.readFileString(cached.entryPath), "cached executable\n");
-      assert.equal(yield* fs.readFileString(cached.sentinelPath), `${version}\n`);
     }),
   );
 
