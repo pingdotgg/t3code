@@ -123,6 +123,19 @@ export function PullRequestCommentComposer({
             placeholder="Leave a comment"
             aria-label="Comment on this pull request"
             onChange={(event) => setBody(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.nativeEvent.isComposing || event.keyCode === 229) return;
+              if (
+                event.key === "Enter" &&
+                (event.metaKey || event.ctrlKey) &&
+                !event.shiftKey &&
+                !event.altKey
+              ) {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!event.repeat) void submit("comment");
+              }
+            }}
           />
           <div className="flex flex-wrap justify-end gap-2">
             {followUpAction === null ? null : (
