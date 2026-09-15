@@ -11,10 +11,14 @@
  * element itself at click time. A control that disappeared between listing
  * and clicking is reported stale and requires relisting; a surviving
  * same-named sibling is never retargeted, and the listed name and occurrence
- * are context for the model, never the click address. There is no
- * per-button registry to maintain: any control with a supported role is
- * discoverable, including disabled and hidden ones (state-marked), and open
- * menus and dialogs contribute their items like any other visible control.
+ * are context for the model, never the click address. Click time also
+ * revalidates the element against its listing: a label or visible context
+ * that changed (a recycled row showing a different thread, a re-captioned
+ * button) refuses the click instead of activating what the model did not
+ * choose. There is no per-button registry to maintain: any control with a
+ * supported role is discoverable, including disabled and hidden ones
+ * (state-marked), and open menus and dialogs contribute their items like any
+ * other visible control.
  */
 import type {
   VoiceClickControlInput,
@@ -61,6 +65,10 @@ export interface VoiceControlCandidate<E extends object = object> {
   readonly role: VoiceUiControlRole;
   /** Accessible name at scan time; context only. */
   readonly name: string;
+  /** Visible text of the enclosing container that identifies which instance
+      of a repeated control this is (for example the thread row title), when
+      one exists. Disambiguation context; never a click address. */
+  readonly context?: string;
   readonly state: VoiceUiControlState;
   /** Performs the real activation. Never throws for a refused target: the
       resolution checks state before calling. */
@@ -71,14 +79,24 @@ export interface VoiceControlCandidate<E extends object = object> {
 // Opaque per-element identity registry
 // ---------------------------------------------------------------------------
 
+/** What a control showed when it was listed. Click time compares this against
+    what the element shows now so a reused or relabeled element is refused
+    instead of activated under the model's stale intent. */
+export interface VoiceControlDescriptor {
+  readonly name: string;
+  readonly context: string;
+}
+
 export interface VoiceControlIdRegistry<E extends object> {
   /** The stable id for one element: the same object always gets the same id
-      for the registry's lifetime, so relistings do not churn ids and a click
-      re-resolves to exactly the listed element. */
-  idFor(element: E): string;
+      for the registry's lifetime, and each listing refreshes the descriptor
+      the id resolves against. */
+  idFor(element: E, descriptor?: VoiceControlDescriptor): string;
   /** The element a listed id was assigned to, or undefined once the element
       has been collected (a stale reference). */
   elementOf(controlId: string): E | undefined;
+  /** What the element showed at its most recent listing. */
+  descriptorOf(controlId: string): VoiceControlDescriptor | undefined;
 }
 
 /** Opaque, monotonic ids (`ctl-1`, `ctl-2`, ...) backed by a WeakMap per
@@ -88,16 +106,23 @@ export function createControlIdRegistry<E extends object>(): VoiceControlIdRegis
   let counter = 0;
   const idByElement = new WeakMap<E, string>();
   const elementById = new Map<string, WeakRef<E>>();
+  const descriptorById = new Map<string, VoiceControlDescriptor>();
   return {
-    idFor(element) {
+    idFor(element, descriptor) {
       const existing = idByElement.get(element);
       if (existing !== undefined) {
+        if (descriptor !== undefined) {
+          descriptorById.set(existing, descriptor);
+        }
         return existing;
       }
       counter += 1;
       const id = `ctl-${counter}`;
       idByElement.set(element, id);
       elementById.set(id, new WeakRef(element));
+      if (descriptor !== undefined) {
+        descriptorById.set(id, descriptor);
+      }
       return id;
     },
     elementOf(controlId) {
@@ -106,9 +131,13 @@ export function createControlIdRegistry<E extends object>(): VoiceControlIdRegis
       if (element === undefined) {
         // Prune the dead entry so the map cannot grow without bound.
         elementById.delete(controlId);
+        descriptorById.delete(controlId);
         return undefined;
       }
       return element;
+    },
+    descriptorOf(controlId) {
+      return descriptorById.get(controlId);
     },
   };
 }
@@ -151,13 +180,15 @@ export function listControlCandidates<E extends object>(
   );
   const controls: VoiceUiControl[] = filtered.slice(0, limit).map((candidate) => {
     const key = `${candidate.role}\u0000${candidate.name}`;
+    const context = candidate.context ?? "";
     return {
-      controlId: registry.idFor(candidate.element),
+      controlId: registry.idFor(candidate.element, { name: candidate.name, context }),
       role: candidate.role,
       name: candidate.name,
       state: candidate.state,
       occurrence: occurrences.get(candidate)!,
       ...(countsByKey.get(key)! > 1 ? { ambiguous: true } : {}),
+      ...(context.length > 0 ? { context } : {}),
     };
   });
   return {
@@ -185,12 +216,23 @@ export type VoiceControlResolution =
 
 const notFound = (message: string): VoiceControlResolution => ({ state: "not_found", message });
 
+/** Context comparison tolerant of the volatile substrings visible container
+    text picks up between listing and clicking (ticking durations, relative
+    timestamps, countdowns): digits and time separators are dropped, leaving
+    the identifying words. A recycled row's new title survives this
+    normalization differently and refuses the click. */
+const sameContext = (left: string, right: string): boolean =>
+  left.replace(/[\d:]/g, "") === right.replace(/[\d:]/g, "");
+
 /** Re-resolves a listed id against the CURRENT candidates by element identity
     and activates it. An id whose element is collected or no longer matches a
     supported candidate is `not_found` (stale); a fabricated id is
     `unsupported`. The listed name and occurrence never participate in
     resolution, so a surviving same-named sibling can never be clicked by
-    another control's id. */
+    another control's id. The element must also still show what its listing
+    recorded: a changed accessible name or visible context means the element
+    was reused or relabeled, and the click is refused instead of activating
+    what the model did not choose. */
 export function resolveAndActivateControl<E extends object>(
   candidates: ReadonlyArray<VoiceControlCandidate<E>>,
   registry: VoiceControlIdRegistry<E>,
@@ -211,6 +253,19 @@ export function resolveAndActivateControl<E extends object>(
     return notFound(
       `"${controlId}" is stale: its control is no longer attached. Call listControls to refresh.`,
     );
+  }
+  const listed = registry.descriptorOf(controlId);
+  if (listed !== undefined) {
+    if (target.name !== listed.name) {
+      return notFound(
+        `"${controlId}" is stale: the control now reads "${target.name}" instead of the listed "${listed.name}". Call listControls to refresh.`,
+      );
+    }
+    if (!sameContext(target.context ?? "", listed.context)) {
+      return notFound(
+        `"${controlId}" is stale: its surrounding context changed after it was listed. Call listControls to refresh.`,
+      );
+    }
   }
   if (target.state === "disabled") {
     return {
@@ -308,22 +363,52 @@ function controlRoleOf(element: Element): VoiceUiControlRole | null {
   return null;
 }
 
+/** An ancestor fieldset with a disabled attribute disables every contained
+    control except those inside the fieldset's first legend child (HTML's
+    actually-disabled rule, which the button/input `disabled` IDL attributes
+    do not reflect on their own). The content attribute is read directly:
+    it is the only input the rule needs, and it behaves identically in every
+    DOM implementation. */
+function disabledByAncestorFieldset(element: Element): boolean {
+  let node = element.parentElement;
+  while (node !== null) {
+    if (
+      node.tagName.toLowerCase() === "fieldset" &&
+      node.hasAttribute("disabled") &&
+      !(
+        node.firstElementChild?.tagName.toLowerCase() === "legend" &&
+        node.firstElementChild.contains(element)
+      )
+    ) {
+      return true;
+    }
+    node = node.parentElement;
+  }
+  return false;
+}
+
 function controlStateOf(element: Element): VoiceUiControlState {
-  if (element.getAttribute("aria-hidden") === "true" || element.getClientRects().length === 0) {
+  if (
+    element.getAttribute("aria-hidden") === "true" ||
+    element.closest("[inert]") !== null ||
+    element.getClientRects().length === 0
+  ) {
     return "hidden";
   }
   if (element.getAttribute("aria-disabled") === "true") {
     return "disabled";
   }
   const ownerWindow = element.ownerDocument.defaultView;
-  if (
-    ownerWindow !== null &&
-    element instanceof ownerWindow.HTMLButtonElement &&
-    element.disabled
-  ) {
+  if (ownerWindow === null) {
+    return "enabled";
+  }
+  if (element instanceof ownerWindow.HTMLButtonElement && element.disabled) {
     return "disabled";
   }
-  if (ownerWindow !== null && element instanceof ownerWindow.HTMLInputElement && element.disabled) {
+  if (element instanceof ownerWindow.HTMLInputElement && element.disabled) {
+    return "disabled";
+  }
+  if (disabledByAncestorFieldset(element)) {
     return "disabled";
   }
   return "enabled";
@@ -350,6 +435,41 @@ const CANDIDATE_SELECTOR = [
   '[role="radio"]',
   '[role="option"]',
 ].join(", ");
+
+/** Bounds for the visible-context walk: enough levels to leave a list item,
+    table row or card container, but bounded so a deep tree cannot turn one
+    scan into a document-wide textContent sweep. */
+const CONTEXT_MAX_ANCESTORS = 8;
+const CONTEXT_MAX_LENGTH = 160;
+
+/** Visible text of the nearest enclosing container that carries identifying
+    context beyond the control's own name (for a repeated row action, the
+    row's title). The control's own name is stripped so sibling instances of
+    the same control never leak into each other's context, and a container
+    whose remaining text is empty does not qualify. Returns "" when no
+    bounded ancestor adds context. `textContentCache` memoizes ancestor text
+    within one scan so repeated controls in a shared container do not resweep
+    the same subtree. */
+function visibleContext(
+  element: Element,
+  name: string,
+  textContentCache: Map<Element, string>,
+): string {
+  let node = element.parentElement;
+  for (let depth = 0; node !== null && depth < CONTEXT_MAX_ANCESTORS; depth += 1) {
+    let text = textContentCache.get(node);
+    if (text === undefined) {
+      text = collapseWhitespace(node.textContent ?? "");
+      textContentCache.set(node, text);
+    }
+    const context = collapseWhitespace(name.length === 0 ? text : text.split(name).join(" "));
+    if (context.length > 0) {
+      return context.length > CONTEXT_MAX_LENGTH ? context.slice(0, CONTEXT_MAX_LENGTH) : context;
+    }
+    node = node.parentElement;
+  }
+  return "";
+}
 
 function elementCenter(element: Element): { clientX: number; clientY: number } {
   const rect = element.getBoundingClientRect();
@@ -394,15 +514,20 @@ function dispatchPointerSequence(element: HTMLElement, role: VoiceUiControlRole)
   element.click();
 }
 
-function candidateFromElement(element: Element): VoiceControlCandidate<Element> | null {
+function candidateFromElement(
+  element: Element,
+  textContentCache: Map<Element, string>,
+): VoiceControlCandidate<Element> | null {
   const role = controlRoleOf(element);
   if (role === null) {
     return null;
   }
+  const name = accessibleName(element);
   return {
     element,
     role,
-    name: accessibleName(element),
+    name,
+    context: visibleContext(element, name, textContentCache),
     state: controlStateOf(element),
     activate: () => {
       if (element instanceof element.ownerDocument.defaultView!.HTMLElement) {
@@ -416,8 +541,9 @@ function currentCandidates(): VoiceControlCandidate<Element>[] {
   if (typeof document === "undefined") {
     return [];
   }
+  const textContentCache = new Map<Element, string>();
   return [...document.querySelectorAll(CANDIDATE_SELECTOR)]
-    .map(candidateFromElement)
+    .map((element) => candidateFromElement(element, textContentCache))
     .filter((candidate): candidate is VoiceControlCandidate<Element> => candidate !== null);
 }
 

@@ -131,6 +131,70 @@ describe("dom adapter: roles and states", () => {
       [2, true],
     ]);
   });
+
+  it("surfaces the containing row title as context for repeated controls", async () => {
+    // Occurrence order alone is not enough to pick the intended thread; the
+    // visible row title must reach the model as disambiguation context.
+    document.body.innerHTML = `
+      <ul>
+        <li><span>Fix login bug</span><button aria-label="Settle thread"></button></li>
+        <li><span>Fix signup bug</span><button aria-label="Settle thread"></button></li>
+      </ul>
+    `;
+    const output = await controls().listControls({});
+    expect(output.controls.map((control) => control.context)).toEqual([
+      "Fix login bug",
+      "Fix signup bug",
+    ]);
+    const host = controls();
+    const loginRowId = (await host.listControls({})).controls[0]!.controlId;
+    expect(await host.clickControl({ controlId: loginRowId })).toMatchObject({
+      state: "activated",
+      name: "Settle thread",
+    });
+  });
+
+  it("marks controls inside a disabled fieldset disabled, honoring the legend exception", async () => {
+    document.body.innerHTML = `
+      <fieldset disabled>
+        <legend><button id="exempt">Legend action</button></legend>
+        <button id="blocked">Retry</button>
+      </fieldset>
+      <fieldset disabled><legend>Options</legend><button id="inner">Inner</button></fieldset>
+    `;
+    const output = await controls().listControls({});
+    const states = new Map(output.controls.map((control) => [control.name, control.state]));
+    expect(states.get("Retry")).toBe("disabled");
+    expect(states.get("Legend action")).toBe("enabled");
+    // A first legend that merely labels the fieldset does not exempt
+    // controls that follow it.
+    expect(states.get("Inner")).toBe("disabled");
+
+    const host = controls();
+    const listed = await host.listControls({});
+    const blockedId = listed.controls.find((control) => control.name === "Retry")!.controlId;
+    const events: string[] = [];
+    document.getElementById("blocked")!.addEventListener("click", () => events.push("click"));
+    expect(await host.clickControl({ controlId: blockedId })).toMatchObject({
+      state: "disabled",
+      name: "Retry",
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("treats controls under an inert ancestor as hidden and refuses them", async () => {
+    document.body.innerHTML = `
+      <div inert><button id="background">Background action</button></div>
+      <button id="dialog">Dialog action</button>
+    `;
+    const output = await controls().listControls({});
+    expect(output.controls.map((control) => control.name)).toEqual(["Dialog action"]);
+    const withHidden = await controls().listControls({ includeHidden: true });
+    expect(withHidden.controls.map((control) => [control.name, control.state])).toEqual([
+      ["Background action", "hidden"],
+      ["Dialog action", "enabled"],
+    ]);
+  });
 });
 
 describe("dom adapter: activation", () => {
@@ -237,5 +301,34 @@ describe("dom adapter: activation", () => {
     document.body.innerHTML = `<button>Run</button>`;
     const result = await controls().clickControl({ controlId: "ctl-404" });
     expect(result.state).toBe("not_found");
+  });
+
+  it("refuses a recycled row element whose visible context changed, until relisted", async () => {
+    // A virtualized list can reuse the same row element for a different
+    // thread. The listed id must not settle the new thread under the old
+    // listing's intent, and a relist must make the element clickable again.
+    document.body.innerHTML = `
+      <li><span>Fix login bug</span><button aria-label="Settle thread" id="row"></button></li>
+    `;
+    const host = controls();
+    const listedId = (await host.listControls({})).controls[0]!.controlId;
+
+    const clicks: string[] = [];
+    document.getElementById("row")!.addEventListener("click", () => clicks.push("clicked"));
+
+    document.querySelector("span")!.textContent = "Fix signup bug";
+
+    expect(await host.clickControl({ controlId: listedId })).toMatchObject({
+      state: "not_found",
+    });
+    expect(clicks).toEqual([]);
+
+    const relisted = await host.listControls({});
+    expect(relisted.controls.map((control) => control.controlId)).toEqual([listedId]);
+    expect(relisted.controls[0]!.context).toBe("Fix signup bug");
+    expect(await host.clickControl({ controlId: listedId })).toMatchObject({
+      state: "activated",
+    });
+    expect(clicks).toEqual(["clicked"]);
   });
 });
