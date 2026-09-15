@@ -213,3 +213,15 @@ export function isSshAuthFailure(error: unknown): boolean {
     /too many authentication failures/u.test(normalized)
   );
 }
+
+export function isSshPasswordRetryable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error);
+  const match = /permission denied \(([^)]*)\)/iu.exec(message);
+  const methods = match?.[1]
+    ?.toLowerCase()
+    .split(",")
+    .map((method) => method.trim());
+  return (
+    methods?.some((method) => method === "password" || method === "keyboard-interactive") ?? false
+  );
+}
