@@ -835,6 +835,82 @@ export class GhosttyTerminalCore {
     return text;
   }
 
+  searchRows(): { texts: string[]; wraps: boolean[] } {
+    this.ensureActive();
+    const output = this.formatScreenPlainText();
+    const texts = output === "" ? [] : output.split("\n");
+    const totalRows = this.scrollbarState()?.total ?? texts.length;
+    return { texts, wraps: this.readRowWrapFlags(totalRows) };
+  }
+
+  private formatScreenPlainText(): string {
+    const runtime = this.runtime;
+    const optionsLayout = runtime.layout("GhosttyFormatterTerminalOptions");
+    const extraLayout = runtime.layout("GhosttyFormatterTerminalExtra");
+    const screenLayout = runtime.layout("GhosttyFormatterScreenExtra");
+    const options = runtime.alloc(optionsLayout.size);
+    const formatterSlot = runtime.allocOpaque();
+    const written = runtime.call("ghostty_wasm_alloc_usize");
+    let formatter = 0;
+    try {
+      runtime.setField(options, "GhosttyFormatterTerminalOptions", "size", optionsLayout.size);
+      runtime.setField(options, "GhosttyFormatterTerminalOptions", "emit", 0);
+      runtime.setField(options, "GhosttyFormatterTerminalOptions", "unwrap", 0);
+      runtime.setField(options, "GhosttyFormatterTerminalOptions", "trim", 0);
+      const extraOffset = optionsLayout.fields.extra!.offset;
+      runtime.view(options + extraOffset, extraLayout.size).setUint32(0, extraLayout.size, true);
+      runtime
+        .view(options + extraOffset + extraLayout.fields.screen!.offset, screenLayout.size)
+        .setUint32(0, screenLayout.size, true);
+      this.assertSuccess(
+        "ghostty_formatter_terminal_new",
+        runtime.call("ghostty_formatter_terminal_new", 0, formatterSlot, this.terminal, options),
+      );
+      formatter = runtime.readPointer(formatterSlot);
+      return this.encodeOutput(written, (output, outputSize) =>
+        runtime.call("ghostty_formatter_format_buf", formatter, output, outputSize, written),
+      );
+    } finally {
+      if (formatter !== 0) runtime.call("ghostty_formatter_free", formatter);
+      runtime.call("ghostty_wasm_free_usize", written);
+      runtime.freeOpaque(formatterSlot);
+      runtime.free(options, optionsLayout.size);
+    }
+  }
+  private readRowWrapFlags(totalRows: number): boolean[] {
+    const runtime = this.runtime;
+    const pointLayout = runtime.layout("GhosttyPoint");
+    const gridReferenceLayout = runtime.layout("GhosttyGridRef");
+    const point = runtime.alloc(pointLayout.size);
+    const gridReference = runtime.alloc(gridReferenceLayout.size);
+    const scratch = runtime.alloc(16);
+    const wraps: boolean[] = [];
+    try {
+      runtime.setField(point, "GhosttyPoint", "tag", 2);
+      const pointValue = pointLayout.fields.value!;
+      for (let index = 0; index < totalRows; index += 1) {
+        runtime.view(point + pointValue.offset, pointValue.size).setUint16(0, 0, true);
+        runtime.view(point + pointValue.offset, pointValue.size).setUint32(4, index, true);
+        runtime.setField(gridReference, "GhosttyGridRef", "size", gridReferenceLayout.size);
+        const rowAvailable =
+          runtime.call("ghostty_terminal_grid_ref", this.terminal, point, gridReference) ===
+            GHOSTTY_SUCCESS &&
+          runtime.call("ghostty_grid_ref_row", gridReference, scratch) === GHOSTTY_SUCCESS;
+        const rawRow = runtime.view(scratch, 8).getBigUint64(0, true);
+        runtime.bytes(scratch + 8, 1)[0] = 0;
+        const wrapAvailable =
+          rowAvailable &&
+          runtime.call("ghostty_row_get", rawRow, 1, scratch + 8) === GHOSTTY_SUCCESS;
+        wraps.push(wrapAvailable && runtime.bytes(scratch + 8, 1)[0] !== 0);
+      }
+      return wraps;
+    } finally {
+      runtime.free(point, pointLayout.size);
+      runtime.free(gridReference, gridReferenceLayout.size);
+      runtime.free(scratch, 16);
+    }
+  }
+
   viewportPointToScreen(col: number, row: number): { x: number; y: number } | null {
     return this.convertPoint(col, row, 1, 2);
   }

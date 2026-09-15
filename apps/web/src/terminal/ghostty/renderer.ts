@@ -17,10 +17,30 @@ export interface GhosttyCellRange {
   readonly end: { readonly x: number; readonly y: number };
 }
 
+/** A find match on one viewport row; columns are inclusive. */
+export interface GhosttySearchHighlight {
+  readonly row: number;
+  readonly startColumn: number;
+  readonly endColumn: number;
+  readonly active: boolean;
+}
+
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
+const DEFAULT_SEARCH_MATCH_BACKGROUND = "rgba(234, 179, 8, 0.32)";
+const DEFAULT_SEARCH_ACTIVE_MATCH_BACKGROUND = "rgba(249, 115, 22, 0.62)";
 
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
+}
+
+function groupHighlightsByRow(highlights: readonly GhosttySearchHighlight[]) {
+  const highlightsByRow = new Map<number, GhosttySearchHighlight[]>();
+  for (const highlight of highlights) {
+    const rowHighlights = highlightsByRow.get(highlight.row);
+    if (rowHighlights) rowHighlights.push(highlight);
+    else highlightsByRow.set(highlight.row, [highlight]);
+  }
+  return highlightsByRow;
 }
 
 function sameTextStyle(left: GhosttyCell, right: GhosttyCell): boolean {
@@ -106,6 +126,7 @@ export function renderGhosttySnapshot(options: {
   readonly hoveredLinkRange?: GhosttyCellRange | null;
   /** Vertical origin of row 0; defaults to the horizontal padding. */
   readonly originY?: number;
+  readonly searchHighlights?: readonly GhosttySearchHighlight[];
 }): void {
   const {
     context,
@@ -136,6 +157,10 @@ export function renderGhosttySnapshot(options: {
   if (snapshot.cursorVisible && snapshot.cursorY >= 0 && !rowsToDraw.includes(snapshot.cursorY)) {
     rowsToDraw.push(snapshot.cursorY);
   }
+
+  const highlightsByRow = options.searchHighlights?.length
+    ? groupHighlightsByRow(options.searchHighlights)
+    : null;
 
   if (forceFull) {
     context.save();
@@ -183,6 +208,18 @@ export function renderGhosttySnapshot(options: {
         }
       }
       backgroundStart = backgroundEnd;
+    }
+
+    for (const highlight of highlightsByRow?.get(rowIndex) ?? []) {
+      const left = padding + highlight.startColumn * metrics.width;
+      const width = Math.min(
+        (highlight.endColumn - highlight.startColumn + 1) * metrics.width,
+        snapshot.cols * metrics.width - (left - padding),
+      );
+      context.fillStyle = highlight.active
+        ? DEFAULT_SEARCH_ACTIVE_MATCH_BACKGROUND
+        : DEFAULT_SEARCH_MATCH_BACKGROUND;
+      context.fillRect(left, top, width, metrics.height);
     }
 
     let runStart = 0;
