@@ -50,6 +50,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import * as Semaphore from "effect/Semaphore";
 import * as HttpEffect from "effect/unstable/http/HttpEffect";
 import { HttpServerRequest, HttpServerResponse } from "effect/unstable/http";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
@@ -70,6 +71,7 @@ import {
   CLOUD_ENDPOINT_RUNTIME_CONFIG,
   CLOUD_LINKED_USER_ID,
   CLOUD_MINT_PUBLIC_KEY,
+  decodeRuntimeConfig,
   encodeEndpointRuntimeConfigJson,
   PUBLISH_AGENT_ACTIVITY_SECRET,
   RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
@@ -451,8 +453,11 @@ const cloudLinkProofHandler = Effect.fn("environment.cloud.linkProof")(
   ),
 );
 
-const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
-  dependencies: CloudHttpDependencies,
+// ponytail: one environment per server; use per-environment locks if that changes.
+const cloudConfigSemaphore = Semaphore.makeUnsafe(1);
+
+export const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(function* (
+  dependencies: Pick<CloudHttpDependencies, "secrets" | "endpointRuntime">,
   payload: RelayEnvironmentConfigRequest,
 ) {
   yield* validateRelayConfigPayload(payload);
@@ -461,40 +466,90 @@ const applyCloudRelayConfig = Effect.fn("environment.cloud.applyRelayConfig")(fu
     cloudUserId: payload.cloudUserId,
   });
   yield* validateCloudMintPublicKey(payload.cloudMintPublicKey);
-  const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
-    payload.endpointRuntime,
+  const updates = [
+    [RELAY_URL_SECRET, stringToBytes(payload.relayUrl)],
+    [RELAY_ISSUER_SECRET, stringToBytes(payload.relayIssuer ?? payload.relayUrl)],
+    [CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId)],
+    [RELAY_ENVIRONMENT_CREDENTIAL_SECRET, stringToBytes(payload.environmentCredential)],
+    [CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey)],
+    [
+      CLOUD_ENDPOINT_RUNTIME_CONFIG,
+      payload.endpointRuntime
+        ? stringToBytes(yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime))
+        : null,
+    ],
+  ] as const;
+  const previous = yield* Effect.forEach(updates, ([name]) =>
+    dependencies.secrets.get(name).pipe(Effect.map((value) => ({ name, value }))),
   );
-  const ok =
-    endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
-  if (!ok) {
-    return yield* new EnvironmentCloudEndpointUnavailableError({
-      message: "Managed endpoint runtime could not be started.",
-      endpointRuntimeStatus,
+  const savedRuntime = previous.find(({ name }) => name === CLOUD_ENDPOINT_RUNTIME_CONFIG)!.value;
+  const previousRuntime = Option.flatMap(savedRuntime, (value) =>
+    decodeRuntimeConfig(bytesToString(value)),
+  );
+  if (payload.endpointRuntime && Option.isSome(savedRuntime) && Option.isNone(previousRuntime)) {
+    return yield* new EnvironmentHttpConflictError({
+      message:
+        "Saved managed endpoint configuration is invalid. Unlink the environment before enabling T3 Connect.",
     });
   }
-
-  yield* dependencies.secrets.set(RELAY_URL_SECRET, stringToBytes(payload.relayUrl));
-  yield* dependencies.secrets.set(
-    RELAY_ISSUER_SECRET,
-    stringToBytes(payload.relayIssuer ?? payload.relayUrl),
-  );
-  yield* dependencies.secrets.set(CLOUD_LINKED_USER_ID, stringToBytes(payload.cloudUserId));
-  yield* dependencies.secrets.set(
-    RELAY_ENVIRONMENT_CREDENTIAL_SECRET,
-    stringToBytes(payload.environmentCredential),
-  );
-  yield* dependencies.secrets.set(CLOUD_MINT_PUBLIC_KEY, stringToBytes(payload.cloudMintPublicKey));
-  if (payload.endpointRuntime) {
-    const endpointRuntimeJson = yield* encodeEndpointRuntimeConfigJson(payload.endpointRuntime);
-    yield* dependencies.secrets.set(
-      CLOUD_ENDPOINT_RUNTIME_CONFIG,
-      stringToBytes(endpointRuntimeJson),
+  let attempted = 0;
+  let runtimeChanged = false;
+  let rollbackError: EnvironmentCloudEndpointUnavailableError | undefined;
+  return yield* Effect.gen(function* () {
+    for (const [name, value] of updates) {
+      // set can fail after rename, so restore the failing write as well.
+      attempted++;
+      yield* value === null
+        ? dependencies.secrets.remove(name)
+        : dependencies.secrets.set(name, value);
+    }
+    runtimeChanged = true;
+    const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+      payload.endpointRuntime,
     );
-  } else {
-    yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
-  }
-  return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
-});
+    const ok =
+      endpointRuntimeStatus.status === "disabled" || endpointRuntimeStatus.status === "running";
+    if (!ok) {
+      return yield* new EnvironmentCloudEndpointUnavailableError({
+        message: "Managed endpoint runtime could not be started.",
+        endpointRuntimeStatus,
+      });
+    }
+    return { ok, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
+  }).pipe(
+    Effect.onError((cause) =>
+      Effect.gen(function* () {
+        yield* Effect.forEach(previous.slice(0, attempted), ({ name, value }) =>
+          (Option.isSome(value)
+            ? dependencies.secrets.set(name, value.value)
+            : dependencies.secrets.remove(name)
+          ).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logError("Could not restore environment relay secret.", { name, cause }),
+            ),
+          ),
+        );
+        if (runtimeChanged) {
+          const endpointRuntimeStatus = yield* dependencies.endpointRuntime.applyConfig(
+            Option.getOrNull(previousRuntime),
+          );
+          if (
+            endpointRuntimeStatus.status !== "disabled" &&
+            endpointRuntimeStatus.status !== "running"
+          ) {
+            rollbackError = new EnvironmentCloudEndpointUnavailableError({
+              message:
+                "Managed endpoint runtime could not be restored after a failed configuration update.",
+              endpointRuntimeStatus,
+            });
+            yield* Effect.logError(rollbackError.message, { cause, endpointRuntimeStatus });
+          }
+        }
+      }),
+    ),
+    Effect.mapError((error) => rollbackError ?? error),
+  );
+}, cloudConfigSemaphore.withPermit);
 
 const cloudRelayConfigHandler = Effect.fn("environment.cloud.relayConfig")(
   function* (dependencies: CloudHttpDependencies, payload: RelayEnvironmentConfigRequest) {
@@ -740,7 +795,7 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
     yield* dependencies.secrets.remove(CLOUD_ENDPOINT_RUNTIME_CONFIG);
   }
   return true;
-});
+}, cloudConfigSemaphore.withPermit);
 
 const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function* (
   dependencies: CloudHttpDependencies,
@@ -768,7 +823,7 @@ const readCloudLinkState = Effect.fn("environment.cloud.readLinkState")(function
       ? bytesToString(publishAgentActivity.value) === "true"
       : false,
   } satisfies EnvironmentCloudLinkStateResult;
-});
+}, cloudConfigSemaphore.withPermit);
 
 const cloudLinkStateHandler = Effect.fn("environment.cloud.linkState")(
   function* (dependencies: CloudHttpDependencies) {
@@ -800,6 +855,7 @@ const cloudUnlinkHandler = Effect.fn("environment.cloud.unlink")(
     yield* setCliDesiredCloudLink(false);
     return { ok: true, endpointRuntimeStatus } satisfies EnvironmentCloudRelayConfigResult;
   },
+  cloudConfigSemaphore.withPermit,
   Effect.catchIf(
     ServerSecretStore.isSecretStoreError,
     failEnvironmentCloudInternalError("Could not remove environment relay configuration."),
