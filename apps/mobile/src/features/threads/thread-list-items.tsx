@@ -663,7 +663,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             ? materialYouStyleLayoutActive
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
-            : "bg-foreground"
+            : "bg-primary"
         }
         accessibilityHint="Swipe left for archive and delete actions"
         accessibilityLabel={threadAccessibilityLabel}
@@ -743,7 +743,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
             ? materialYouStyleLayoutActive
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
-            : "bg-foreground"
+            : "bg-primary"
         }
         accessibilityHint="Opens the thread"
         accessibilityLabel={threadAccessibilityLabel}

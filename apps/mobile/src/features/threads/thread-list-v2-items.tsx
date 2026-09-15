@@ -938,7 +938,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ? materialYouStyleLayoutActive
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
-            : "bg-foreground"
+            : "bg-primary"
         }
         className={sidebarPane || materialYouStyleLayoutActive ? undefined : "bg-screen"}
         accessibilityHint={swipeAccessibilityHint}
@@ -988,7 +988,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             ? materialYouStyleLayoutActive
               ? "bg-thread-selected-foreground"
               : "bg-user-bubble-foreground"
-            : "bg-foreground"
+            : "bg-primary"
         }
         accessibilityHint={swipeAccessibilityHint}
         accessibilityLabel={

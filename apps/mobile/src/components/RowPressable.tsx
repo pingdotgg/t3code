@@ -9,7 +9,7 @@ import { useHoverGesture } from "../lib/useHoverGesture";
 export function RowPressable({
   children,
   className,
-  interactionClassName = "bg-foreground",
+  interactionClassName = "bg-primary",
   ...props
 }: Omit<ComponentProps<typeof Pressable>, "children"> & {
   readonly children: ReactNode;
