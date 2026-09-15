@@ -1336,7 +1336,7 @@ export function deriveMessagesTimelineRows(input: {
 export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
 /** True once the bootstrap handed off to the agent (async setup script may still run). */
-function worktreeSetupAgentStarted(snapshot: WorktreeSetupSnapshot): boolean {
+export function worktreeSetupAgentStarted(snapshot: WorktreeSetupSnapshot): boolean {
   return snapshot.stages.some((stage) => stage.id === "agent" && stage.status === "done");
 }
 

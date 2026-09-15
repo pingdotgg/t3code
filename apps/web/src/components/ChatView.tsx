@@ -349,7 +349,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -3493,14 +3493,47 @@ export default function ChatView(props: ChatViewProps) {
   const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
   const worktreeSetupActive =
     worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
+  // A thread reopened mid-setup has no dispatch ref: this view remounted.
+  // The server projects a starting session before any message or turn exists
+  // for exactly that window, so follow the setup stream from the thread's own
+  // state. The ref is adopted below so the card then follows the same
+  // lifecycle as the original send, including an async setup script that
+  // keeps running after the agent's turn lands.
+  const resumedWorktreeSetupRef =
+    !worktreeSetupActive &&
+    isServerThread &&
+    activeThreadRef !== null &&
+    activeThreadShell?.session?.status === "starting" &&
+    activeThreadShell.latestTurn === null &&
+    activeThreadShell.latestUserMessageAt === null
+      ? activeThreadRef
+      : null;
+  useEffect(() => {
+    if (!resumedWorktreeSetupRef) return;
+    // Only a ref owned by this route survives adoption. This component is
+    // reused across routes, so a ref left by another thread's send is stale
+    // here and would leave the resumed setup with no target after handoff.
+    setWorktreeSetupRef((current) =>
+      current?.ownerKey === worktreeSetupOwnerKey
+        ? current
+        : { ...resumedWorktreeSetupRef, ownerKey: worktreeSetupOwnerKey },
+    );
+  }, [resumedWorktreeSetupRef, worktreeSetupOwnerKey]);
   // The setup runs on the environment that received the dispatch, so both
   // the subscription and cancel target that one even if the draft's machine
   // picker changes underneath.
+  const worktreeSetupTarget = useMemo(
+    () =>
+      worktreeSetupActive
+        ? { environmentId: worktreeSetupRef.environmentId, threadId: worktreeSetupRef.threadId }
+        : resumedWorktreeSetupRef,
+    [resumedWorktreeSetupRef, worktreeSetupActive, worktreeSetupRef],
+  );
   const worktreeSetupQuery = useEnvironmentQuery(
-    worktreeSetupActive
+    worktreeSetupTarget
       ? vcsEnvironment.worktreeSetup({
-          environmentId: worktreeSetupRef.environmentId,
-          input: { threadId: worktreeSetupRef.threadId },
+          environmentId: worktreeSetupTarget.environmentId,
+          input: { threadId: worktreeSetupTarget.threadId },
         })
       : null,
   );
@@ -3511,7 +3544,7 @@ export default function ChatView(props: ChatViewProps) {
     if (latestWorktreeSetup) setHeldWorktreeSetup(latestWorktreeSetup);
   }, [latestWorktreeSetup]);
   const worktreeSetup =
-    worktreeSetupActive && heldWorktreeSetup?.threadId === worktreeSetupRef.threadId
+    worktreeSetupTarget !== null && heldWorktreeSetup?.threadId === worktreeSetupTarget.threadId
       ? heldWorktreeSetup
       : null;
   // A finished card is dropped once the agent's turn shows in the timeline:
@@ -3537,16 +3570,32 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (worktreeSetupSettledKey) pendingWorktreeSetupByThreadKey.delete(worktreeSetupSettledKey);
   }, [worktreeSetupSettledKey]);
+  // Sends wait for the agent handoff, not for the setup script: an async
+  // script keeps the snapshot running while the agent already works, and a
+  // follow-up must not be held behind a slow install. A resumed setup has no
+  // snapshot until its first stream event, so that gap blocks as well. The
+  // gap is judged by the shell, not by the resumed ref, since adopting the
+  // ref clears it before the query has delivered anything.
+  const worktreeSetupAwaitingFirstSnapshot =
+    worktreeSetup === null &&
+    worktreeSetupTarget !== null &&
+    isServerThread &&
+    activeThreadShell?.session?.status === "starting" &&
+    activeThreadShell.latestTurn === null;
+  const worktreeSetupBlocksSend =
+    worktreeSetup !== null
+      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
+      : worktreeSetupAwaitingFirstSnapshot;
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
   const onCancelWorktreeSetup = useCallback(() => {
-    if (!worktreeSetup || !worktreeSetupRef || worktreeSetup.phase !== "running") return;
+    if (!worktreeSetup || !worktreeSetupTarget || worktreeSetup.phase !== "running") return;
     void cancelWorktreeSetup({
-      environmentId: worktreeSetupRef.environmentId,
+      environmentId: worktreeSetupTarget.environmentId,
       input: { threadId: worktreeSetup.threadId },
     });
-  }, [cancelWorktreeSetup, worktreeSetup, worktreeSetupRef]);
+  }, [cancelWorktreeSetup, worktreeSetup, worktreeSetupTarget]);
   // The setup terminal belongs to the thread that was set up. A failed
   // bootstrap deletes that thread and closes its terminals, so only offer the
   // terminal while the setup thread is still the active one.
@@ -9313,7 +9362,9 @@ export default function ChatView(props: ChatViewProps) {
                                   ? "Sending feedback"
                                   : threadDetailLoading
                                     ? "Messages loading"
-                                    : projectCloneSendBlockReason
+                                    : worktreeSetupBlocksSend
+                                      ? "Preparing worktree"
+                                      : projectCloneSendBlockReason
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
