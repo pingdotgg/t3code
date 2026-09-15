@@ -3,6 +3,15 @@ import { describe, expect, it } from "@effect/vitest";
 import { extractToolActivityPresentation } from "./toolPresentation.ts";
 
 describe("extractToolActivityPresentation", () => {
+  it("uses retained tool metadata without inventing identity for sparse updates", () => {
+    const payload = { itemType: "dynamic_tool_call", title: "Tool updated" };
+    expect(
+      extractToolActivityPresentation({ ...payload, data: { toolName: "Read" } }, "Tool updated"),
+    ).toEqual({ toolTitle: "Read file" });
+    expect(extractToolActivityPresentation(payload, "Tool updated")).toEqual({});
+    expect(extractToolActivityPresentation({ itemType: "web_search" }, "Web search")).toEqual({});
+  });
+
   it("reads provider-neutral presentation fields", () => {
     expect(
       extractToolActivityPresentation({

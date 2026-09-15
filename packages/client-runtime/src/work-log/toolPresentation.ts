@@ -4,8 +4,11 @@ import type {
   ToolActivitySource,
   ToolActivitySurface,
 } from "@t3tools/contracts";
+import { isToolLifecycleItemType } from "@t3tools/contracts";
+import { deriveToolActivityPresentation, isGenericToolLabel } from "@t3tools/shared/toolActivity";
 
 export interface ExtractedToolActivityPresentation {
+  readonly toolTitle?: string;
   readonly toolSurface?: ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
   readonly toolSource?: ToolActivitySource;
@@ -107,8 +110,17 @@ function activitySource(value: unknown): ToolActivitySource | undefined {
 
 export function extractToolActivityPresentation(
   payloadValue: unknown,
+  fallbackSummary?: string,
 ): ExtractedToolActivityPresentation {
   const payload = asRecord(payloadValue);
+  const title = typeof payload?.title === "string" ? payload.title.trim() : undefined;
+  const label = title || fallbackSummary;
+  const toolTitle =
+    isGenericToolLabel(label) &&
+    typeof payload?.itemType === "string" &&
+    isToolLifecycleItemType(payload.itemType)
+      ? deriveToolActivityPresentation({ itemType: payload.itemType, data: payload.data }).summary
+      : title;
   const toolSurface =
     payload?.toolSurface === "browser" || payload?.toolSurface === "computer"
       ? payload.toolSurface
@@ -116,6 +128,7 @@ export function extractToolActivityPresentation(
   const toolIcon = activityIcon(payload?.toolIcon);
   const toolSource = activitySource(payload?.toolSource);
   return {
+    ...(toolTitle && !isGenericToolLabel(toolTitle) ? { toolTitle } : {}),
     ...(toolSurface ? { toolSurface } : {}),
     ...(toolIcon ? { toolIcon } : {}),
     ...(toolSource ? { toolSource } : {}),

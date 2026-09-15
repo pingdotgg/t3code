@@ -61,6 +61,7 @@ function extractToolCommand(data: Record<string, unknown> | undefined, title: st
     normalizeCommandValue(itemResult?.command),
     normalizeCommandValue(data?.command),
     normalizeCommandValue(rawInput?.command),
+    normalizeCommandValue(asRecord(data?.input)?.command),
   ];
   const direct = candidates.find((candidate) => candidate !== undefined);
   if (direct) {
@@ -109,7 +110,15 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
   if (!record) {
     return;
   }
-  for (const key of ["path", "filePath", "relativePath", "filename", "newPath", "oldPath"]) {
+  for (const key of [
+    "path",
+    "filePath",
+    "file_path",
+    "relativePath",
+    "filename",
+    "newPath",
+    "oldPath",
+  ]) {
     const candidate = maybePathLike(asTrimmedString(record[key]));
     if (!candidate || seen.has(candidate)) {
       continue;
@@ -120,7 +129,17 @@ function collectPaths(value: unknown, paths: string[], seen: Set<string>, depth:
       return;
     }
   }
-  for (const nestedKey of ["locations", "item", "input", "result", "rawInput", "data", "changes"]) {
+  for (const nestedKey of [
+    "locations",
+    "item",
+    "input",
+    "arguments",
+    "result",
+    "rawInput",
+    "data",
+    "changes",
+    "files",
+  ]) {
     if (!(nestedKey in record)) {
       continue;
     }
@@ -162,10 +181,15 @@ function classifyToolAction(input: {
   const itemType = input.itemType ?? undefined;
   const kind = asTrimmedString(input.data?.kind)?.toLowerCase();
   const title = asTrimmedString(input.title)?.toLowerCase();
-  if (itemType === "command_execution" || kind === "execute" || title === "terminal") {
+  if (
+    itemType === "command_execution" ||
+    kind === "execute" ||
+    title === "terminal" ||
+    title === "bash"
+  ) {
     return "command";
   }
-  if (kind === "read" || title === "read file") {
+  if (kind === "read" || title === "read file" || title === "read") {
     return "read";
   }
   if (
@@ -173,11 +197,21 @@ function classifyToolAction(input: {
     kind === "edit" ||
     kind === "move" ||
     kind === "delete" ||
-    kind === "write"
+    kind === "write" ||
+    title === "edit" ||
+    title === "write"
   ) {
     return "file_change";
   }
-  if (itemType === "web_search" || kind === "search" || title === "find" || title === "grep") {
+  if (
+    itemType === "web_search" ||
+    kind === "search" ||
+    title === "find" ||
+    title === "grep" ||
+    title === "glob" ||
+    title === "websearch" ||
+    title === "web_search"
+  ) {
     return "search";
   }
   return "other";
@@ -196,20 +230,32 @@ export interface ToolActivityPresentation {
   readonly detail?: string | undefined;
 }
 
+export function isGenericToolLabel(value: string | null | undefined): boolean {
+  return !value?.trim() || /^tool(?: started| updated| completed)?$/iu.test(value.trim());
+}
+
 export function deriveToolActivityPresentation(
   input: ToolActivityPresentationInput,
 ): ToolActivityPresentation {
-  const title = asTrimmedString(input.title);
+  const data = asRecord(input.data);
+  const item = asRecord(data?.item);
+  const itemTool = asTrimmedString(item?.tool);
+  const server = asTrimmedString(item?.server);
+  const title =
+    (isGenericToolLabel(input.title) ? undefined : asTrimmedString(input.title)) ??
+    asTrimmedString(data?.toolName) ??
+    asTrimmedString(data?.tool) ??
+    (itemTool && server ? `${server}.${itemTool}` : itemTool);
   const detail = stripTrailingExitCode(asTrimmedString(input.detail));
   const fallbackSummary = asTrimmedString(input.fallbackSummary) ?? "Tool";
-  const data = asRecord(input.data);
   const command = extractToolCommand(data, title);
-  const primaryPath = extractPrimaryPath(data);
   const action = classifyToolAction({
     itemType: input.itemType,
     title,
     data,
   });
+  const primaryPath =
+    action === "read" || action === "file_change" ? extractPrimaryPath(data) : undefined;
 
   if (action === "command") {
     return {
@@ -238,12 +284,19 @@ export function deriveToolActivityPresentation(
   }
 
   if (action === "search") {
-    const query =
-      asTrimmedString(asRecord(data?.rawInput)?.query) ??
-      asTrimmedString(asRecord(data?.rawInput)?.pattern) ??
-      asTrimmedString(asRecord(data?.rawInput)?.searchTerm);
+    const query = [asRecord(data?.rawInput), asRecord(data?.input), asRecord(item?.arguments)]
+      .map(
+        (args) =>
+          asTrimmedString(args?.query) ??
+          asTrimmedString(args?.pattern) ??
+          asTrimmedString(args?.searchTerm),
+      )
+      .find((value) => value !== undefined);
     return {
-      summary: "Searched files",
+      summary:
+        input.itemType === "web_search" || /^web_?search$/iu.test(title ?? "")
+          ? "Searched the web"
+          : "Searched files",
       ...(query ? { detail: query } : {}),
     };
   }

@@ -463,8 +463,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null;
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
-  const toolPresentation = extractToolActivityPresentation(payload);
+  const toolPresentation = extractToolActivityPresentation(payload, activity.summary);
+  const title = toolPresentation.toolTitle ?? null;
   // Terminal task updates carry identity so they replace each child's progress row.
   const isTaskActivity =
     activity.kind === "task.started" ||
@@ -1018,7 +1018,9 @@ export function workEntryRowLabel(entry: WorkLogEntry, expanded = false): string
   if (entry.agentSpawn) return agentSpawnLabel(entry.agentSpawn);
   const presentation = resolveWorkEntryToolPresentation(entry);
   if (presentation) return presentation.displayName;
-  if (expanded && entry.command?.trim()) return "Command";
+  if (expanded && entry.command?.trim()) {
+    return commandWorkEntryLabel(entry.command, entry.toolLifecycleStatus);
+  }
   const preview = workEntryPreview(entry);
   if (expanded) return preview?.trim() || workEntryHeading(entry);
   const compactPreview = preview === null ? null : collapseWhitespace(stripShellWrapper(preview));
@@ -1379,10 +1381,6 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     command: null,
     rawCommand: null,
   };
-}
-
-function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
 }
 
 function stripTrailingExitCode(value: string): {
@@ -2079,20 +2077,26 @@ function liveToolActivitySummary(activity: ThreadFeedActivity, presentTense: boo
   if (presentation) return presentation.displayName;
   const command = activity.workEntry.command?.trim();
   if (command) {
-    const program = commandProgramName(command);
-    const verb =
-      status === "inProgress"
-        ? "Running"
-        : status === "failed"
-          ? "Failed"
-          : status === "declined"
-            ? "Declined"
-            : status === "stopped"
-              ? "Stopped"
-              : "Ran";
-    return `${verb} ${program ?? "command"}`;
+    return commandWorkEntryLabel(command, status);
   }
-  return activity.detail ?? activity.summary;
+  return workEntryRowLabel(activity.workEntry);
+}
+
+function commandWorkEntryLabel(
+  command: string,
+  status: WorkLogToolLifecycleStatus | undefined,
+): string {
+  const verb =
+    status === "inProgress"
+      ? "Running"
+      : status === "failed"
+        ? "Failed"
+        : status === "declined"
+          ? "Declined"
+          : status === "stopped"
+            ? "Stopped"
+            : "Ran";
+  return `${verb} ${commandProgramName(command) ?? "command"}`;
 }
 
 export function setPendingUserInputCustomAnswer(

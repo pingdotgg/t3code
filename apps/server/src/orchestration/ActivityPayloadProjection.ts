@@ -1,4 +1,9 @@
-import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
+import {
+  deriveToolActivityPresentation,
+  isGenericToolLabel,
+  projectQuestionToolInput,
+} from "@t3tools/shared/toolActivity";
+import { isToolLifecycleItemType } from "@t3tools/contracts";
 import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
@@ -425,10 +430,28 @@ function projectAcpContent(value: unknown): Record<string, unknown> | undefined 
 export function projectActivityPayload(
   activity: OrchestrationThreadActivity,
 ): OrchestrationThreadActivity {
-  const payload = asRecord(activity.payload);
+  let payload = asRecord(activity.payload);
   const data = asRecord(payload?.data);
   if (!payload || !data) {
     return activity;
+  }
+
+  // Derive identity before slimming drops primary arguments, including historical rows.
+  if (
+    typeof payload.itemType === "string" &&
+    isToolLifecycleItemType(payload.itemType) &&
+    isGenericToolLabel(asTrimmedString(payload.title) ?? activity.summary)
+  ) {
+    const presentation = deriveToolActivityPresentation({ itemType: payload.itemType, data });
+    if (!isGenericToolLabel(presentation.summary)) {
+      payload = {
+        ...payload,
+        title: presentation.summary.slice(0, 180),
+        ...(!payload.detail && presentation.detail
+          ? { detail: presentation.detail.slice(0, 180) }
+          : {}),
+      };
+    }
   }
 
   const itemStatus = asRecord(data.item)?.status;

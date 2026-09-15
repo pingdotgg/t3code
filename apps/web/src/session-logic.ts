@@ -550,8 +550,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
       : null;
   const commandPreview = extractToolCommand(payload);
   const changedFiles = extractChangedFiles(payload);
-  const title = extractToolTitle(payload);
-  const toolPresentation = extractToolActivityPresentation(payload);
+  const toolPresentation = extractToolActivityPresentation(payload, activity.summary);
+  const title = toolPresentation.toolTitle ?? null;
   const isTaskActivity =
     activity.kind === "task.started" ||
     activity.kind === "task.progress" ||
@@ -1140,10 +1140,6 @@ function extractToolCommand(payload: Record<string, unknown> | null): {
     command: null,
     rawCommand: null,
   };
-}
-
-function extractToolTitle(payload: Record<string, unknown> | null): string | null {
-  return asTrimmedString(payload?.title);
 }
 
 function extractToolCallId(payload: Record<string, unknown> | null): string | null {

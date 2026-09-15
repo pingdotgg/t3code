@@ -21,6 +21,63 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * assertions are the tripwire.
  */
 describe("projectActivityPayload", () => {
+  it.each([
+    {
+      data: { toolName: "Read", input: { file_path: "/repo/app.ts" } },
+      title: "Read file",
+      detail: "/repo/app.ts",
+    },
+    {
+      data: { kind: "read", locations: [{ path: "/repo/app.ts" }] },
+      title: "Read file",
+      detail: "/repo/app.ts",
+    },
+    {
+      data: { tool: "grep", input: { pattern: "cleanup" } },
+      title: "Searched files",
+      detail: "cleanup",
+    },
+    {
+      data: { toolName: "WebSearch", input: { query: "React cleanup" } },
+      title: "Searched the web",
+      detail: "React cleanup",
+    },
+    {
+      data: { toolName: "Edit", input: { file_path: "/repo/app.ts" } },
+      title: "Changed files",
+      detail: "/repo/app.ts",
+    },
+    {
+      data: { item: { tool: "list_issues", server: "github" } },
+      title: "github.list_issues",
+      detail: undefined,
+    },
+  ])("retains untitled $title identity before slimming", ({ data, title, detail }) => {
+    const itemType = "item" in data ? "mcp_tool_call" : "dynamic_tool_call";
+    const source = activity({ itemType, data });
+    const projected = projectActivityPayload(source);
+    expect(projected.payload).toMatchObject({ title, ...(detail ? { detail } : {}) });
+    expect(source.payload).toEqual({ itemType, data });
+    expect(projectActivityPayload(projected)).toEqual(projected);
+  });
+
+  it("bounds inferred targets without replacing existing output or useful labels", () => {
+    const data = { toolName: "Read", input: { file_path: `/repo/${"a".repeat(1000)}.ts` } };
+    expect(
+      projectActivityPayload(activity({ itemType: "dynamic_tool_call", data })).payload,
+    ).toMatchObject({ title: "Read file", detail: data.input.file_path.slice(0, 180) });
+    expect(
+      projectActivityPayload(
+        activity({ itemType: "dynamic_tool_call", detail: "Permission denied", data }),
+      ).payload,
+    ).toMatchObject({ title: "Read file", detail: "Permission denied" });
+    expect(
+      projectActivityPayload(
+        activity({ itemType: "dynamic_tool_call", title: "Inspect config", data }),
+      ).payload,
+    ).toMatchObject({ title: "Inspect config" });
+  });
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({

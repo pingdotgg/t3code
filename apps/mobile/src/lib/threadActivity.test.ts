@@ -291,6 +291,50 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("retains untitled tool identity through sparse lifecycle updates", () => {
+    const turnId = TurnId.make("untitled-turn");
+    const activities = ["tool.updated", "tool.updated", "tool.completed"].map((kind, index) =>
+      makeActivity({
+        id: EventId.make(`untitled-${index}`),
+        kind,
+        tone: "tool",
+        summary: kind === "tool.completed" ? "Tool" : "Tool updated",
+        createdAt: `2026-09-15T00:00:0${index}.000Z`,
+        turnId,
+        payload: {
+          itemType: "dynamic_tool_call",
+          toolCallId: "read-1",
+          ...(index === 0 ? { data: { toolName: "Read", kind: "read" } } : {}),
+        },
+      }),
+    );
+    for (let count = 1; count <= activities.length; count++) {
+      const [group] = buildThreadFeed(
+        makeThread({
+          id: ThreadId.make("untitled-tools"),
+          projectId: ProjectId.make("project-1"),
+          title: "Untitled tools",
+          activities: activities.slice(0, count),
+        }),
+      );
+      expect(group?.type).toBe("activity-group");
+      if (group?.type !== "activity-group") return;
+      expect(group.activities).toHaveLength(1);
+      expect(workEntryRowLabel(group.activities[0]!.workEntry)).toBe("Read file");
+      const rows = deriveThreadFeedPresentation(
+        [group],
+        {
+          turnId,
+          state: count < activities.length ? "running" : "completed",
+          startedAt: activities[0]!.createdAt,
+          completedAt: count < activities.length ? null : activities.at(-1)!.createdAt,
+        },
+        new Set([turnId]),
+      );
+      expect(rows.find((row) => row.type === "work-toggle")?.summary).toBe("Read file");
+    }
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");
@@ -579,7 +623,10 @@ describe("buildThreadFeed", () => {
     expect(row?.workEntry.detail).toBe(command);
     expect(row?.getFullDetail()).toBe(`${command}\n\n${command}`);
     expect(row?.canExpand).toBe(true);
-    expect(workEntryRowLabel(row!.workEntry, true)).toBe("Command");
+    expect(workEntryRowLabel(row!.workEntry, true)).toBe("Ran printf");
+    expect(workEntryRowLabel({ ...row!.workEntry, toolLifecycleStatus: "inProgress" }, true)).toBe(
+      "Running printf",
+    );
   });
 
   it.each([
