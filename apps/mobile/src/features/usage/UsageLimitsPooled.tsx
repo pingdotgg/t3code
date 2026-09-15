@@ -18,7 +18,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
-import { ProviderIcon } from "../../components/ProviderIcon";
+import { ProviderIcon, ProviderInstanceIcon } from "../../components/ProviderIcon";
 import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { environmentPresentations } from "../../state/presentation";
 import { ResetCredits } from "./UsageLimitsSection";
@@ -32,6 +32,23 @@ function accountName(account: LimitAccount) {
   if (!account.email) return DRIVER_LABEL[account.driver] ?? String(account.driver);
   const [local = "", domain = ""] = account.email.split("@");
   return `${local[0] ?? ""}${domain[0] ?? ""}`.toUpperCase() || "Account";
+}
+
+/**
+ * The account's own mark, matching the web Limits bar: the provider glyph with
+ * its account initials badge. Replaces the position number that was hard to map
+ * to an account.
+ */
+function AccountAvatar({ account }: { readonly account: LimitAccount }) {
+  return (
+    <ProviderInstanceIcon
+      provider={account.driver}
+      size={20}
+      displayName={accountName(account)}
+      accentColor={account.accentColor}
+      showBadge={Boolean(account.displayName ?? account.email)}
+    />
+  );
 }
 
 /** The spent share comes back at reset. SVG keeps the hatching static on both platforms. */
@@ -115,13 +132,13 @@ function PoolWindowCard({
         </Text>
       ) : null}
       <View className="flex-row gap-1">
-        {pool.columns.map(({ account, window }, index) => {
+        {pool.columns.map(({ account, window }) => {
           if (!window) return <View key={account.key} className="h-7 min-w-0 flex-1" />;
           return (
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left`}
+              accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="h-7 min-w-0 flex-1 overflow-hidden rounded-md bg-subtle"
@@ -132,16 +149,14 @@ function PoolWindowCard({
                 pending={Boolean(window.resetsAt)}
               />
               <View pointerEvents="none" className="absolute inset-0 items-center justify-center">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                  {index + 1}
-                </Text>
+                <AccountAvatar account={account} />
               </View>
             </Pressable>
           );
         })}
       </View>
       <View>
-        {pool.columns.map(({ account, window }, index) => {
+        {pool.columns.map(({ account, window }) => {
           if (!window) return null;
           const credits = account.limits.resetCredits?.availableCount ?? 0;
           const resetsIn = formatResetsIn(window, now);
@@ -149,16 +164,12 @@ function PoolWindowCard({
             <Pressable
               key={account.key}
               accessibilityRole="button"
-              accessibilityLabel={`Segment ${index + 1}, ${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
+              accessibilityLabel={`${accountName(account)}, ${remainingPercent(window)}% left${resetsIn ? `, ${resetsIn}` : ""}${credits ? `, ${credits} reset credits banked` : ""}`}
               accessibilityHint="Show account details"
               onPress={() => openAccount(account)}
               className="min-h-[44px] flex-row items-center gap-2 active:opacity-60"
             >
-              <View className="size-5 items-center justify-center overflow-hidden rounded-md bg-subtle-strong">
-                <Text className="text-xs font-t3-medium tabular-nums text-foreground">
-                  {index + 1}
-                </Text>
-              </View>
+              <AccountAvatar account={account} />
               <Text
                 numberOfLines={1}
                 className="min-w-0 flex-1 text-sm font-t3-medium text-foreground"
