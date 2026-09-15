@@ -2,6 +2,7 @@ import {
   ArrowLeftIcon,
   ChartNoAxesColumnIcon,
   GitPullRequestIcon,
+  LibraryBigIcon,
   SettingsIcon,
 } from "lucide-react";
 import type { ReactNode } from "react";
@@ -142,17 +143,22 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
         ? "settings"
         : /^\/projects\/[^/]+\/?$/.test(location.pathname)
           ? "project-settings"
-          : location.pathname === "/usage"
-            ? "usage"
-            : location.pathname === "/pull-requests"
-              ? "pull-requests"
-              : null,
+          : location.pathname === "/skills"
+            ? "skills"
+            : location.pathname === "/usage"
+              ? "usage"
+              : location.pathname === "/pull-requests"
+                ? "pull-requests"
+                : null,
   });
   const { environments } = useEnvironments();
   // The page reads every connected server, so one of them offering pull requests is enough for
   // the link to lead somewhere.
   const pullRequestsSupported = environments.some(
     (environment) => environment.serverConfig?.environment.capabilities.pullRequests === true,
+  );
+  const skillsSupported = environments.some(
+    (environment) => environment.serverConfig?.environment.capabilities.skills === true,
   );
   const closeMobileSidebar = useCallback(() => {
     if (isMobile) {
@@ -169,6 +175,11 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const handleSettingsClick = useCallback(() => {
     closeMobileSidebar();
     void navigate({ to: "/settings" });
+  }, [closeMobileSidebar, navigate]);
+
+  const handleSkillsClick = useCallback(() => {
+    closeMobileSidebar();
+    void navigate({ to: "/skills" });
   }, [closeMobileSidebar, navigate]);
 
   const handleUsageClick = useCallback(() => {
@@ -208,6 +219,13 @@ export const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
               icon={<GitPullRequestIcon />}
               label="Pull Requests"
               onClick={handlePullRequestsClick}
+            />
+          ) : null}
+          {skillsSupported ? (
+            <SidebarUtilityItem
+              icon={<LibraryBigIcon />}
+              label="Skills"
+              onClick={handleSkillsClick}
             />
           ) : null}
           <SidebarUtilityItem

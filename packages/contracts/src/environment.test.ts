@@ -14,6 +14,18 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("treats missing skills support as unsupported and preserves advertised support", () => {
+    expect(decodeDescriptor(descriptor).capabilities.skills).toBeUndefined();
+    for (const skills of [true, false]) {
+      expect(
+        decodeDescriptor({
+          ...descriptor,
+          capabilities: { ...descriptor.capabilities, skills },
+        }).capabilities.skills,
+      ).toBe(skills);
+    }
+  });
+
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });

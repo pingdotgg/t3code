@@ -82,7 +82,8 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     skillsByName.set(name, {
       name,
       path,
-      enabled: record.userInvocable !== false,
+      enabled: record.enabled !== false,
+      ...(record.userInvocable === false ? { userInvocable: false } : {}),
       ...(scope ? { scope } : {}),
       ...(description ? { description } : {}),
     });

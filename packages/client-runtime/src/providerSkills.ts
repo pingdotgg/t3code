@@ -1,4 +1,5 @@
 import type {
+  AgentSkillSummary,
   ServerProvider,
   ServerProviderSkill,
   ServerProviderSlashCommand,
@@ -123,4 +124,60 @@ export function resolveProviderSlashCommandsForCwd(
   cwd: string | null | undefined,
 ): ServerProvider["slashCommands"] {
   return resolveProviderWorkspaceSnapshot(provider, cwd)?.slashCommands ?? provider.slashCommands;
+}
+
+export type SkillCatalogFilters = {
+  instanceId: string;
+  status: "all" | "enabled" | "disabled";
+  invocation: "all" | "user" | "agent" | "both" | "neither";
+  scope: string;
+  query: string;
+};
+
+/** Invocation policy before enabled status is applied; disabled skills retain their policy. */
+export function skillInvocationLabel(
+  skill: Pick<ServerProviderSkill, "userInvocable" | "userInvocationOnly">,
+): string {
+  const user = skill.userInvocable !== false;
+  const agent = skill.userInvocationOnly !== true;
+  return user ? (agent ? "User and agent" : "User only") : agent ? "Agent only" : "Neither";
+}
+
+export function filterSkillCatalog(
+  skills: ReadonlyArray<AgentSkillSummary>,
+  filters: SkillCatalogFilters,
+): Array<AgentSkillSummary> {
+  const query = filters.query.trim().toLowerCase();
+  return skills.flatMap((skill) => {
+    const installations = skill.installations.filter((entry) => {
+      if (filters.instanceId !== "all" && entry.instanceId !== filters.instanceId) return false;
+      if (filters.scope !== "all" && (entry.scope ?? "unspecified") !== filters.scope) return false;
+      if (filters.status !== "all" && entry.enabled !== (filters.status === "enabled"))
+        return false;
+      const user = entry.userInvocable !== false;
+      const agent = entry.userInvocationOnly !== true;
+      if (filters.invocation === "user" && !user) return false;
+      if (filters.invocation === "agent" && !agent) return false;
+      if (filters.invocation === "both" && !(user && agent)) return false;
+      if (filters.invocation === "neither" && (user || agent)) return false;
+      return (
+        !query ||
+        [
+          entry.name,
+          entry.displayName,
+          entry.description,
+          entry.shortDescription,
+          entry.path,
+          skill.resolvedPath,
+          entry.providerName,
+          entry.instanceId,
+          entry.provider,
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(query)
+      );
+    });
+    return installations.length ? [{ ...skill, installations }] : [];
+  });
 }

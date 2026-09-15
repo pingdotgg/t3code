@@ -2,6 +2,8 @@ import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  filterSkillCatalog,
+  skillInvocationLabel,
   dedupeProviderSkillsByName,
   formatProviderSkillDisplayName,
   getProviderSlashCommandsForSlashMenu,
@@ -251,4 +253,54 @@ describe("workspace provider snapshots", () => {
     expect(resolveProviderSkillsForCwd(provider, "/workspace/project-b")).toEqual(provider.skills);
     expect(resolveProviderSlashCommandsForCwd(provider, null)).toEqual(provider.slashCommands);
   });
+});
+
+it("filters each installation before grouping without mixing provider policies", () => {
+  const personal = {
+    ...provider.skills[0]!,
+    instanceId: ProviderInstanceId.make("personal"),
+    provider: provider.driver,
+    providerName: "Personal",
+    providerEnabled: true,
+    enabled: false,
+    userInvocationOnly: true,
+  };
+  const work = {
+    ...personal,
+    instanceId: ProviderInstanceId.make("work"),
+    providerName: "Work",
+    name: "work-alias",
+    enabled: true,
+    userInvocationOnly: false,
+    userInvocable: false,
+  };
+  const group = {
+    id: "shared-file",
+    resolvedPath: "/global/SKILL.md",
+    installations: [personal, work],
+  };
+  const filters = {
+    instanceId: "all",
+    status: "all",
+    invocation: "all",
+    scope: "all",
+    query: "",
+  } as const;
+  expect(filterSkillCatalog([group], filters)[0]?.installations).toHaveLength(2);
+  expect(
+    filterSkillCatalog([group], { ...filters, status: "disabled", invocation: "user" })[0]
+      ?.installations,
+  ).toEqual([personal]);
+  expect(
+    filterSkillCatalog([group], { ...filters, instanceId: "work", status: "disabled" }),
+  ).toEqual([]);
+  expect(
+    filterSkillCatalog([group], { ...filters, invocation: "agent", query: "work-alias" })[0]
+      ?.installations,
+  ).toEqual([work]);
+  expect(filterSkillCatalog([group], { ...filters, invocation: "both" })).toEqual([]);
+  expect(skillInvocationLabel(personal)).toBe("User only");
+  expect(skillInvocationLabel(work)).toBe("Agent only");
+  expect(skillInvocationLabel({})).toBe("User and agent");
+  expect(skillInvocationLabel({ userInvocable: false, userInvocationOnly: true })).toBe("Neither");
 });

@@ -75,7 +75,7 @@ describe("discoverGrokSkills", () => {
     ),
   );
 
-  it.effect("disables skills the CLI marks as not user-invocable", () =>
+  it.effect("preserves invocation restrictions separately from enabled status", () =>
     Effect.gen(function* () {
       const skills = yield* discoverGrokSkills({ binaryPath: "grok" }, {});
 
@@ -84,7 +84,8 @@ describe("discoverGrokSkills", () => {
           name: "internal-helper",
           path: "/opt/grok/bundled/skills/internal-helper/SKILL.md",
           scope: "bundled",
-          enabled: false,
+          enabled: true,
+          userInvocable: false,
         },
       ]);
     }).pipe(

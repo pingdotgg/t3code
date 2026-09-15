@@ -31,6 +31,7 @@ import {
   PullRequestDiffLoader,
   pullRequestDiffLoaderLayer,
 } from "./pullRequestDiffHttp.ts";
+import { fetchEnvironmentSkill, fetchEnvironmentSkills } from "./skills.ts";
 import { fetchEnvironmentSessionState } from "./session.ts";
 import { fetchEnvironmentShellSnapshot } from "./shellSnapshotHttp.ts";
 import { fetchEnvironmentThreadSnapshot } from "./threadSnapshotHttp.ts";
@@ -179,6 +180,39 @@ const LOADERS: ReadonlyArray<{
     HttpClient.HttpClient
   >;
 }> = [
+  {
+    name: "skills catalog",
+    method: "GET",
+    path: "/api/skills",
+    response: { skills: [], issues: [] },
+    load: (input) =>
+      fetchEnvironmentSkills(input.prepared, {}).pipe(
+        Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
+        Effect.provideService(
+          RemoteEnvironmentAuthorization,
+          Option.getOrThrow(input.remoteAuthorization),
+        ),
+      ),
+  },
+  {
+    name: "skill instructions",
+    method: "GET",
+    path: "/api/skills/file-id",
+    response: {
+      id: "file-id",
+      resolvedPath: "/skills/SKILL.md",
+      installations: [],
+      content: "Instructions",
+    },
+    load: (input) =>
+      fetchEnvironmentSkill(input.prepared, {}, { id: "file-id" }).pipe(
+        Effect.provideService(ManagedRelayDpopSigner, Option.getOrThrow(input.signer)),
+        Effect.provideService(
+          RemoteEnvironmentAuthorization,
+          Option.getOrThrow(input.remoteAuthorization),
+        ),
+      ),
+  },
   {
     name: "PR diff",
     method: "POST",
