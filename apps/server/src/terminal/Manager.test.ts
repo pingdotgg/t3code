@@ -1430,7 +1430,7 @@ it.layer(
         if (
           process.writes
             .join("")
-            .includes(query.endsWith("\u001b[c") ? "\u001b[?1;2c" : "\u001b]4;5;rgb:")
+            .includes(query.endsWith("\u001b[c") ? "\u001b[?62;22c" : "\u001b]4;5;rgb:")
         ) {
           process.emitData("setup completed\n");
         }
@@ -1439,10 +1439,10 @@ it.layer(
       for (const character of query) process.emitData(character);
       yield* Deferred.await(done);
       const paletteReplies =
-        "\u001b]4;4;rgb:0000/0000/eeee\u001b\\\u001b]4;5;rgb:cdcd/0000/cdcd\u001b\\";
+        "\u001b]4;4;rgb:8181/a2a2/bebe\u001b\\\u001b]4;5;rgb:b2b2/9494/bbbb\u001b\\";
       expect(process.writes.join("")).toBe(
         query.endsWith("\u001b[c")
-          ? "\u001b]10;rgb:e5e5/e5e5/e5e5\u001b\\" + paletteReplies + "\u001b[?1;2c"
+          ? "\u001b]10;rgb:e5e5/e5e5/e5e5\u001b\\" + paletteReplies + "\u001b[?62;22c"
           : paletteReplies,
       );
 

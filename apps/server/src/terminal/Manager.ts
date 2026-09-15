@@ -1088,9 +1088,9 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-// Palette probes must work before any client attaches. Answer with the xterm
-// default palette and consume the probes so clients cannot send duplicate replies.
-// Client themes are local to each display and cannot define a shared PTY's palette.
+// Setup runs before a Ghostty client may attach. Use libghostty-vt's default
+// indexed palette and fixed foreground/background fallbacks for these unattended
+// terminals. Consume answered probes so attaching a client cannot reply twice.
 function colorQueryReply(content: string): string {
   if (/^(10|11|12);\?$/.test(content)) {
     const color = content.startsWith("11;") ? "0000/0000/0000" : "e5e5/e5e5/e5e5";
@@ -1104,22 +1104,22 @@ function colorQueryReply(content: string): string {
     .map(Number);
   if (indices.some((index) => index > 255)) return "";
   const ansi = [
-    "000000",
-    "cd0000",
-    "00cd00",
-    "cdcd00",
-    "0000ee",
-    "cd00cd",
-    "00cdcd",
-    "e5e5e5",
-    "7f7f7f",
-    "ff0000",
-    "00ff00",
-    "ffff00",
-    "5c5cff",
-    "ff00ff",
-    "00ffff",
-    "ffffff",
+    "1d1f21",
+    "cc6666",
+    "b5bd68",
+    "f0c674",
+    "81a2be",
+    "b294bb",
+    "8abeb7",
+    "c5c8c6",
+    "666666",
+    "d54e53",
+    "b9ca4a",
+    "e7c547",
+    "7aa6da",
+    "c397d8",
+    "70c0b1",
+    "eaeaea",
   ];
   return indices
     .map((index) => {
@@ -1173,9 +1173,9 @@ function sanitizeTerminalOutputChunk(
             const sequence = input.slice(index, cursor + 1);
             const body = input.slice(index + 2, cursor);
             // A primary DA reply also terminates batched color probes in CLIs
-            // such as vp. Advertise basic VT100 capabilities without a client.
+            // such as vp. Match the reply from our vendored libghostty-vt.
             if (serverOwnedQueries && input[cursor] === "c" && (body === "" || body === "0")) {
-              replies += "\u001b[?1;2c";
+              replies += "\u001b[?62;22c";
             } else if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
               append(sequence);
             } else {
@@ -1235,7 +1235,7 @@ function sanitizeTerminalOutputChunk(
           const sequence = input.slice(index, cursor + 1);
           const body = input.slice(index + 1, cursor);
           if (serverOwnedQueries && input[cursor] === "c" && (body === "" || body === "0")) {
-            replies += "\u001b[?1;2c";
+            replies += "\u001b[?62;22c";
           } else if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
             append(sequence);
           } else {
