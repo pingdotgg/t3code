@@ -22,6 +22,8 @@ import {
   paceOf,
   providersWithLimits,
   remainingPercent,
+  usageLimitsMeterWindow,
+  windowExpired,
 } from "./usageLimits.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
@@ -1006,5 +1008,69 @@ describe("isUsageLimitsCommand", () => {
     expect(isUsageLimitsCommand("/usage-limits explain")).toBe(false);
     expect(isUsageLimitsCommand("Explain /usage-limits")).toBe(false);
     expect(isUsageLimitsCommand("/usage")).toBe(false);
+  });
+});
+
+describe("usageLimitsMeterWindow", () => {
+  const limits = (windows: ReadonlyArray<Record<string, unknown>>) => ({
+    checkedAt: "2026-09-03T11:00:00.000Z",
+    windows: windows as never,
+  });
+
+  it("has nothing to show without a usable reading", () => {
+    expect(usageLimitsMeterWindow(undefined)).toBeNull();
+    expect(usageLimitsMeterWindow(limits([]))).toBeNull();
+    expect(usageLimitsMeterWindow(limits([window]))).not.toBeNull();
+    expect(
+      usageLimitsMeterWindow({ ...limits([window]), unavailable: { reason: "unsupported" } }),
+    ).toBeNull();
+    expect(
+      usageLimitsMeterWindow({ ...limits([window]), unavailable: { reason: "probeFailed" } }),
+    ).toBeNull();
+  });
+
+  it("prefers the session window even when another has less left", () => {
+    const chosen = usageLimitsMeterWindow(
+      limits([
+        { ...window, id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 90 },
+        { ...window, usedPercent: 40 },
+      ]),
+    );
+
+    expect(chosen?.kind).toBe("session");
+    expect(chosen ? remainingPercent(chosen) : null).toBe(60);
+  });
+
+  it("falls back to the window with the least left, ties to the shorter", () => {
+    expect(
+      usageLimitsMeterWindow(
+        limits([
+          { ...window, id: "monthly", kind: "monthly", label: "Monthly", usedPercent: 20 },
+          { ...window, id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 90 },
+        ]),
+      )?.id,
+    ).toBe("weekly");
+    expect(
+      usageLimitsMeterWindow(
+        limits([
+          { ...window, id: "monthly", kind: "monthly", label: "Monthly" },
+          { ...window, id: "weekly", kind: "weekly", label: "Weekly" },
+        ]),
+      )?.kind,
+    ).toBe("weekly");
+  });
+});
+
+describe("windowExpired", () => {
+  it("expires a window at and after its reset, not before", () => {
+    expect(windowExpired(window, now)).toBe(false);
+    expect(windowExpired(window, Date.parse(window.resetsAt))).toBe(true);
+    expect(windowExpired(window, now + 5 * 60 * 60_000)).toBe(true);
+  });
+
+  it("never expires a window that reports no reset", () => {
+    expect(windowExpired({ ...window, resetsAt: undefined }, now + 365 * 24 * 60 * 60_000)).toBe(
+      false,
+    );
   });
 });
