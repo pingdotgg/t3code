@@ -1170,6 +1170,11 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             turnId: event.payload.turnId,
             role: event.payload.role,
             text: nextText,
+            ...(event.payload.actualModel !== undefined
+              ? { actualModel: event.payload.actualModel }
+              : previousMessage?.actualModel !== undefined
+                ? { actualModel: previousMessage.actualModel }
+                : {}),
             ...(nextAttachments !== undefined ? { attachments: [...nextAttachments] } : {}),
             ...((event.payload.context ?? previousMessage?.context) !== undefined
               ? { context: event.payload.context ?? previousMessage?.context }

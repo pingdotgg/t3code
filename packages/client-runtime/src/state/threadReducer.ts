@@ -380,6 +380,9 @@ export function applyThreadDetailEvent(
         id: event.payload.messageId,
         role: event.payload.role,
         text: event.payload.text,
+        ...(event.payload.actualModel !== undefined
+          ? { actualModel: event.payload.actualModel }
+          : {}),
         ...(event.payload.attachments !== undefined
           ? { attachments: event.payload.attachments }
           : {}),
@@ -403,6 +406,7 @@ export function applyThreadDetailEvent(
               : entry.text,
           streaming: message.streaming,
           ...(message.turnId !== undefined ? { turnId: message.turnId } : {}),
+          ...(message.actualModel !== undefined ? { actualModel: message.actualModel } : {}),
           ...(message.streaming ? {} : { updatedAt: message.updatedAt }),
           ...(message.attachments !== undefined ? { attachments: message.attachments } : {}),
           ...(message.context !== undefined ? { context: message.context } : {}),

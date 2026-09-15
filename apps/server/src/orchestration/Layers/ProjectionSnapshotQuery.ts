@@ -34,6 +34,7 @@ import {
   ThreadPullRequestSnapshot,
   ThreadPullRequestStack,
   type ThreadPullRequestLink,
+  TrimmedNonEmptyString,
 } from "@t3tools/contracts";
 import { legacyLinkedPullRequestOf } from "@t3tools/shared/threadPullRequests";
 import * as Arr from "effect/Array";
@@ -112,6 +113,7 @@ const ProjectionProjectDbRowSchema = ProjectionProject.mapFields(
 const ProjectionThreadMessageDbRowSchema = ProjectionThreadMessage.mapFields(
   Struct.assign({
     isStreaming: Schema.Number,
+    actualModel: Schema.NullOr(TrimmedNonEmptyString),
     attachments: Schema.NullOr(Schema.fromJsonString(Schema.Array(ChatAttachment))),
     context: Schema.NullOr(Schema.fromJsonString(OrchestrationMessageContext)),
   }),
@@ -691,6 +693,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turn_id AS "turnId",
           role,
           text,
+          actual_model AS "actualModel",
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
@@ -1290,6 +1293,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
         turn_id AS "turnId",
         role,
         text,
+        actual_model AS "actualModel",
         attachments_json AS "attachments",
         context_json AS "context",
         is_streaming AS "isStreaming",
@@ -1323,6 +1327,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turn_id AS "turnId",
           role,
           text,
+          actual_model AS "actualModel",
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
@@ -1736,6 +1741,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           turn_id AS "turnId",
           role,
           text,
+          actual_model AS "actualModel",
           attachments_json AS "attachments",
           context_json AS "context",
           is_streaming AS "isStreaming",
@@ -2146,6 +2152,7 @@ pending_approval_requests AS (
                   id: row.messageId,
                   role: row.role,
                   text: row.text,
+                  ...(row.actualModel !== null ? { actualModel: row.actualModel } : {}),
                   ...(row.attachments !== null ? { attachments: row.attachments } : {}),
                   ...(row.context !== null ? { context: row.context } : {}),
                   turnId: row.turnId,
@@ -3273,6 +3280,7 @@ pending_approval_requests AS (
         text: row.text,
         turnId: row.turnId,
         streaming: row.isStreaming === 1,
+        ...(row.actualModel !== null ? { actualModel: row.actualModel } : {}),
         createdAt: row.createdAt,
         updatedAt: row.updatedAt,
         ...(row.attachments !== null ? { attachments: row.attachments } : {}),
@@ -3531,6 +3539,7 @@ pending_approval_requests AS (
             id: row.messageId,
             role: row.role,
             text: row.text,
+            ...(row.actualModel !== null ? { actualModel: row.actualModel } : {}),
             turnId: row.turnId,
             streaming: row.isStreaming === 1,
             createdAt: row.createdAt,
