@@ -4,6 +4,7 @@ import type {
   ThreadUserInputQuestion,
 } from "@t3tools/client-runtime/state/thread-requests";
 import { turnItemIsWorkspacePreparation } from "@t3tools/client-runtime/state/turn-item-presentation";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import { extractToolActivityPresentation } from "@t3tools/client-runtime/work-log/tool-presentation";
 import { commandProgramName } from "@t3tools/client-runtime/work-log/command-label";
 import {
@@ -457,6 +458,7 @@ function itemSummary(
   if (item.type === "system_notice") return item.message;
   if (item.type === "compaction") return contextCompactionLabel(item);
   const title = item.title?.trim();
+  if (item.type === "subagent") return formatSubagentDisplayTitle(title || "Subagent");
   if (title) return toolPresentation?.displayName ?? capitalizePhrase(title);
   switch (item.type) {
     case "reasoning":
@@ -489,8 +491,6 @@ function itemSummary(
       return "Thread forked";
     case "thread_created":
       return "Thread created";
-    case "subagent":
-      return "Subagent";
     case "dynamic_tool":
       return toolPresentation?.displayName ?? item.toolName ?? "Tool call";
     case "proposed_plan":
