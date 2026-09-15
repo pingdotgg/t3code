@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  CommandId,
   CheckpointId,
   CodexSettings,
   EnvironmentId,
@@ -33,11 +34,14 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
-import { ChildProcess } from "effect/unstable/process";
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import type { EventNdjsonLogger } from "../../provider/Layers/EventNdjsonLogger.ts";
 import { layer as idAllocatorLayer, IdAllocatorV2 } from "../IdAllocator.ts";
+import { OrchestrationEffectWorkerV2 } from "../EffectWorker.ts";
+import { OrchestratorV2 } from "../Orchestrator.ts";
+import { makeOrchestratorV2ReplayLayerWithRegistry } from "../testkit/ProviderReplayHarness.ts";
 import {
   ProviderAdapterForkThreadError,
   ProviderAdapterOpenSessionError,
@@ -65,9 +69,16 @@ import {
   resolveCodexForkBoundary,
   resolveCodexRollbackTurnCount,
 } from "./CodexAdapterV2.ts";
-import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
+import {
+  makeReplayServerConfig,
+  makeCodexProviderAdapterRegistryReplayLayer,
+} from "./CodexAdapterV2.testkit.ts";
 
 const encodeUnknownJson = Schema.encodeUnknownSync(Schema.fromJsonString(Schema.Unknown));
+const replayTranscriptJson = Schema.fromJsonString(CodexReplay.CodexAppServerReplayTranscript);
+const encodeReplayTranscriptJson = Schema.encodeEffect(replayTranscriptJson);
+const decodeReplayTranscriptJson = Schema.decodeUnknownEffect(replayTranscriptJson);
+const encodeStringJson = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
 describe("CodexAdapterV2 file change approvals", () => {
   it("uses nonblank reasons before sorted file operations and renamed paths", () => {
@@ -2813,6 +2824,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
           assert.equal(harness.terminalEvents()[0]?.status, "completed");
           assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.isTrue(
+            yield* harness.runtime.hasPendingBackgroundWorkForThread!(harness.providerThread),
+          );
           assert.lengthOf(harness.continuationRequests, 0);
           const terminalIndex = harness.events.findIndex((event) => event.type === "turn.terminal");
 
@@ -2856,6 +2870,279 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
       ),
   );
+
+  for (const terminated of [true, false, "still_running"] as const) {
+    const stillRunning = terminated === "still_running";
+    const transcript = makeCodexReplayTranscript({
+      scenario: `codex-bg-stop-${terminated}`,
+      entries: [
+        ...backgroundExecTranscript.entries.slice(0, -1),
+        {
+          type: "expect_outbound",
+          label: "terminate-background-command",
+          frame: {
+            id: 4,
+            method: "thread/backgroundTerminals/terminate",
+            params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+          },
+        },
+        {
+          type: "emit_inbound",
+          label: "terminate-background-command",
+          frame: { id: 4, result: { terminated: terminated === true } },
+        },
+        ...(terminated !== true
+          ? [
+              {
+                type: "expect_outbound" as const,
+                frame: {
+                  id: 5,
+                  method: "thread/backgroundTerminals/list",
+                  params: { threadId: BG_NATIVE_THREAD },
+                },
+              },
+              {
+                type: "emit_inbound" as const,
+                frame: {
+                  id: 5,
+                  result: { data: stillRunning ? [{ processId: "4242" }] : [], nextCursor: null },
+                },
+              },
+            ]
+          : []),
+        ...(stillRunning
+          ? [
+              {
+                type: "expect_outbound" as const,
+                frame: {
+                  id: 6,
+                  method: "thread/backgroundTerminals/terminate",
+                  params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+                },
+              },
+              {
+                type: "emit_inbound" as const,
+                frame: { id: 6, result: { terminated: false } },
+              },
+              {
+                type: "expect_outbound" as const,
+                frame: {
+                  id: 7,
+                  method: "thread/backgroundTerminals/list",
+                  params: { threadId: BG_NATIVE_THREAD },
+                },
+              },
+              {
+                type: "emit_inbound" as const,
+                frame: { id: 7, result: { data: [{ processId: "4242" }], nextCursor: null } },
+              },
+              {
+                type: "expect_outbound" as const,
+                frame: {
+                  id: 8,
+                  method: "thread/backgroundTerminals/terminate",
+                  params: { threadId: BG_NATIVE_THREAD, processId: "4242" },
+                },
+              },
+              {
+                type: "emit_inbound" as const,
+                frame: { id: 8, result: { terminated: true } },
+              },
+            ]
+          : []),
+        backgroundExecTranscript.entries.at(-1)!,
+      ],
+    });
+
+    it.effect(`stops a command after root completion when termination returns ${terminated}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const stopped = yield* Deferred.make<void>();
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.status === "interrupted"
+              ? Deferred.succeed(stopped, undefined)
+              : Effect.void,
+          );
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make("attempt-codex-bg-stop"),
+              text: BG_PROMPT,
+            }),
+          );
+          yield* harness.firstTerminal;
+          const terminal = harness.terminalEvents()[0]!;
+          assert.equal(terminal.status, "completed");
+          assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          assert.isFalse(
+            yield* harness.runtime.hasPendingBackgroundWorkForThread!({
+              ...harness.providerThread,
+              id: ProviderThreadId.make("unrelated-provider-thread"),
+            }),
+          );
+          if (stillRunning) {
+            const failed = yield* harness.runtime
+              .interruptTurn({
+                providerThread: harness.providerThread,
+                providerTurnId: terminal.providerTurnId,
+                requestRuntimeRestart: true,
+              })
+              .pipe(Effect.exit);
+            assert.equal(failed._tag, "Failure");
+            assert.isTrue(yield* harness.hasPendingBackgroundWork);
+          }
+          yield* harness.runtime.interruptTurn({
+            providerThread: harness.providerThread,
+            providerTurnId: stillRunning
+              ? ProviderTurnId.make("later-completed-turn")
+              : terminal.providerTurnId,
+            requestRuntimeRestart: true,
+          });
+          yield* Deferred.await(stopped);
+          assert.isFalse(yield* harness.hasPendingBackgroundWork);
+          assert.lengthOf(harness.terminalEvents(), 1);
+          assert.equal(harness.terminalEvents()[0]?.status, "completed");
+          assert.lengthOf(harness.continuationRequests, 0);
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+    if (terminated === true) {
+      it.effect("interrupts a completed run's background command through orchestration", () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const fs = yield* FileSystem.FileSystem;
+            const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-bg-stop-workspace-" });
+            const localTranscript = yield* decodeReplayTranscriptJson(
+              (yield* encodeReplayTranscriptJson(transcript)).replaceAll(
+                yield* encodeStringJson("/workspace"),
+                yield* encodeStringJson(cwd),
+              ),
+            );
+            const replayDriver = yield* CodexReplay.makeReplayDriver(localTranscript);
+            const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+            assert.equal(
+              Number(
+                yield* spawner.exitCode(ChildProcess.make("git", ["init", "--quiet"], { cwd })),
+              ),
+              0,
+            );
+            assert.equal(
+              Number(
+                yield* spawner.exitCode(
+                  ChildProcess.make(
+                    "git",
+                    [
+                      "-c",
+                      "user.name=Test",
+                      "-c",
+                      "user.email=test@example.com",
+                      "commit",
+                      "--allow-empty",
+                      "--quiet",
+                      "-m",
+                      "Initial commit",
+                    ],
+                    { cwd },
+                  ),
+                ),
+              ),
+              0,
+            );
+            yield* Effect.gen(function* () {
+              const orchestrator = yield* OrchestratorV2;
+              const worker = yield* OrchestrationEffectWorkerV2;
+              const threadId = ThreadId.make("thread:background-stop");
+              yield* orchestrator.dispatch({
+                type: "thread.create",
+                commandId: CommandId.make("create-background-stop"),
+                threadId,
+                projectId: ProjectId.make("project:background-stop"),
+                title: "Background stop",
+                modelSelection: CODEX_TEST_MODEL_SELECTION,
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                branch: null,
+                worktreePath: cwd,
+                createdBy: "user",
+                creationSource: "web",
+              });
+              const waiting = yield* orchestrator.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) => event.type === "run.updated" && event.payload.status === "waiting",
+                ),
+                Stream.runHead,
+                Effect.forkChild({ startImmediately: true }),
+              );
+              yield* orchestrator.dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make("start-background-stop"),
+                threadId,
+                messageId: MessageId.make("message:background-stop"),
+                text: BG_PROMPT,
+                attachments: [],
+                createdBy: "user",
+                creationSource: "web",
+                dispatchMode: { type: "start_immediately" },
+              });
+              yield* worker.drain();
+              assert.isNull((yield* Ref.get(replayDriver.state)).failure);
+              yield* Fiber.join(waiting);
+              yield* worker.drain();
+              const projection = yield* orchestrator.getThreadProjection(threadId);
+              const run = projection.runs.at(-1)!;
+              assert.equal(run.status, "completed");
+              assert.equal(
+                (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks?.length,
+                1,
+              );
+              const stopped = yield* orchestrator.streamDomainEvents.pipe(
+                Stream.filter(
+                  (event) =>
+                    event.type === "turn-item.updated" &&
+                    event.payload.type === "command_execution" &&
+                    event.payload.status === "interrupted",
+                ),
+                Stream.runHead,
+                Effect.forkChild({ startImmediately: true }),
+              );
+              yield* orchestrator.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make("stop-background-command"),
+                threadId,
+                runId: run.id,
+              });
+              yield* worker.drain();
+              yield* Fiber.join(stopped);
+              assert.equal(
+                (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)?.status,
+                "completed",
+              );
+              assert.deepEqual(
+                (yield* orchestrator.getThreadShell(threadId))?.pendingBackgroundTasks,
+                [],
+              );
+            }).pipe(
+              Effect.provide(
+                makeOrchestratorV2ReplayLayerWithRegistry(
+                  { name: "codex-background-stop", runtimePolicyOverride: { cwd } },
+                  makeCodexProviderAdapterRegistryReplayLayer({
+                    transcript: localTranscript,
+                    driver: replayDriver,
+                  }),
+                  { runEffectWorker: false },
+                ),
+              ),
+            );
+          }).pipe(Effect.provide(NodeServices.layer)),
+        ),
+      );
+    }
+  }
 
   const PRE_SETTLE_SCENARIO = "codex-bg-exec-pre-settle";
   const PRE_SETTLE_NATIVE_THREAD = "native-codex-pre-settle-thread";
