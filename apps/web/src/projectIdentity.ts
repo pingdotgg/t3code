@@ -1,8 +1,10 @@
+import { PROJECT_ICON_COLORS } from "./projectIconColors";
+import type { ProjectIconColor } from "@t3tools/contracts";
+
 /** Visual identity tokens for a generated project badge. */
 export interface ProjectIdentity {
   readonly monogram: string;
-  readonly background: string;
-  readonly highlight: string;
+  readonly color: ProjectIconColor;
 }
 
 function normalizeProjectName(projectName: string): string {
@@ -23,21 +25,19 @@ function projectMonogram(projectName: string): string {
   return Array.from(`${first}${second}`.toUpperCase()).slice(0, 2).join("");
 }
 
-function projectHue(projectName: string): number {
+function projectColor(projectName: string): ProjectIconColor {
   const seed = normalizeProjectName(projectName).toLocaleLowerCase("en-US") || "project";
-  let hue = 0;
+  let index = 0;
   for (const glyph of seed) {
-    hue = (hue * 31 + (glyph.codePointAt(0) ?? 0)) % 360;
+    index = (index * 31 + (glyph.codePointAt(0) ?? 0)) % PROJECT_ICON_COLORS.length;
   }
-  return hue;
+  return PROJECT_ICON_COLORS[index]?.value ?? "blue";
 }
 
 /** Derives the stable monogram and generated colors used when a project has no icon. */
 export function deriveProjectIdentity(projectName: string): ProjectIdentity {
-  const hue = projectHue(projectName);
   return {
     monogram: projectMonogram(projectName),
-    background: `hsl(${hue} 48% 36%)`,
-    highlight: `hsl(${(hue + 24) % 360} 58% 48%)`,
+    color: projectColor(projectName),
   };
 }
