@@ -39,7 +39,11 @@ describe("resolveUsageAccess", () => {
   it("distinguishes a failed check from a resolved grant without diagnostics access", () => {
     const denied = resolveUsageAccess({
       connectionPhase: "connected",
-      session: { authenticated: true, scopes: [AuthOrchestrationReadScope] },
+      session: {
+        authenticated: true,
+        scopes: [AuthOrchestrationReadScope],
+        auth: { serverUpdateScope: "environment:maintain" },
+      },
       hasSessionError: false,
     });
     const failed = resolveUsageAccess({

@@ -30,10 +30,18 @@ authenticate the upgrade with their cookie. A successful handshake grants no
 extra authority: [every RPC declares a required
 scope](../../apps/server/src/auth/RpcAuthorization.ts).
 
-Self-update must work across authorization protocol changes. New servers advertise
-`auth.serverUpdateScope`; only an older server that omits it uses
-`orchestration:operate` for updates. An unchanged grant on an upgraded server must
-still include `environment:maintain`.
+Scope changes must not prevent older clients from connecting. Token exchange
+intersects recognized requests with the pairing grant; retired and unknown names
+are dropped. A request with no granted scopes fails before consuming the link.
+Stored credentials are never expanded when scopes split.
+
+Auth responses keep `scopes` within the original wire vocabulary and include
+`permissions` for the exact grant. New clients use `permissions` when present,
+even if empty. Older servers omit it, so clients use legacy parent checks for
+features those servers already support. These client checks never change server
+authorization. Permission errors likewise retain a legacy `requiredScope` and
+add the exact `requiredPermission`, so a denied RPC stays decodable by old clients.
+Unknown response permissions are ignored; grant inputs stay strict.
 
 Desktop restarts forget the previous local bearer token, so its reusable
 bootstrap grant replaces earlier sessions for the same subject and method.

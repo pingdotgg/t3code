@@ -3,6 +3,8 @@ import {
   type AuthSessionState,
   type FilesystemBrowseEntry,
   WS_METHODS,
+  sessionGrantsScope,
+  type SessionGrantInput,
 } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -24,7 +26,7 @@ import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 export function resolveFilesystemReadAccess(input: {
   readonly isCatalogReady: boolean;
   readonly connection: Pick<EnvironmentConnectionPresentation, "phase" | "error"> | null;
-  readonly session: Pick<AuthSessionState, "authenticated" | "scopes"> | null;
+  readonly session: SessionGrantInput | null;
   readonly sessionError: string | null;
 }) {
   if (input.sessionError !== null) {
@@ -45,9 +47,7 @@ export function resolveFilesystemReadAccess(input: {
     };
   }
   return {
-    canReadFiles:
-      input.session.authenticated &&
-      input.session.scopes?.includes(AuthFilesystemReadScope) === true,
+    canReadFiles: sessionGrantsScope(input.session, AuthFilesystemReadScope),
     isPending: false,
     error: null,
   };

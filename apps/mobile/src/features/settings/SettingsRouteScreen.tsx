@@ -48,6 +48,7 @@ import {
   DEFAULT_SERVER_SETTINGS,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  sessionGrantsScope,
 } from "@t3tools/contracts";
 import { supportsSharedSettingsSync } from "@t3tools/client-runtime/state/shared-settings";
 import { useThreadListV2Enabled } from "../threads/use-thread-list-v2-enabled";
@@ -636,8 +637,7 @@ function AutoSettleSettingsRows() {
             canWriteSettings:
               result._tag === "Initial"
                 ? null
-                : session?.authenticated === true &&
-                  session.scopes?.includes(AuthSettingsWriteScope) === true,
+                : session !== null && sessionGrantsScope(session, AuthSettingsWriteScope),
           };
         }),
       ),

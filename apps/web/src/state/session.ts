@@ -1,6 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
 import { createEnvironmentSessionAtoms } from "@t3tools/client-runtime/state/session";
-import type { AuthEnvironmentScope, AuthSessionState, EnvironmentId } from "@t3tools/contracts";
+import {
+  type AuthEnvironmentScope,
+  type AuthSessionState,
+  type EnvironmentId,
+  sessionGrantsScope,
+} from "@t3tools/contracts";
 import { useMemo } from "react";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -22,12 +27,15 @@ export function useEnvironmentScope(
       ? EMPTY_SESSION_STATE_ATOM
       : environmentSession.sessionStateAtom(environmentId),
   );
+  return sessionHasScope(result, scope);
+}
+
+function sessionHasScope(
+  result: AsyncResult.AsyncResult<AuthSessionState, unknown>,
+  scope: AuthEnvironmentScope,
+): boolean {
   const session = Option.getOrNull(AsyncResult.value(result));
-  return (
-    result._tag !== "Failure" &&
-    session?.authenticated === true &&
-    session.scopes?.includes(scope) === true
-  );
+  return result._tag !== "Failure" && session !== null && sessionGrantsScope(session, scope);
 }
 
 /** Subscribe to the grants of every selected environment. */
@@ -41,12 +49,7 @@ export function useEnvironmentsWithScope(
         const ids = new Set<EnvironmentId>();
         for (const { environmentId } of environments) {
           const result = get(environmentSession.sessionStateAtom(environmentId));
-          const session = Option.getOrNull(AsyncResult.value(result));
-          if (
-            result._tag !== "Failure" &&
-            session?.authenticated === true &&
-            session.scopes?.includes(scope)
-          ) {
+          if (sessionHasScope(result, scope)) {
             ids.add(environmentId);
           }
         }
@@ -61,12 +64,9 @@ export function readEnvironmentScope(
   environmentId: EnvironmentId,
   scope: AuthEnvironmentScope,
 ): boolean {
-  const result = appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId));
-  const session = Option.getOrNull(AsyncResult.value(result));
-  return (
-    result._tag !== "Failure" &&
-    session?.authenticated === true &&
-    session.scopes?.includes(scope) === true
+  return sessionHasScope(
+    appAtomRegistry.get(environmentSession.sessionStateAtom(environmentId)),
+    scope,
   );
 }
 

@@ -1316,6 +1316,22 @@ const getHttpServerUrl = (pathname = "") =>
     return `http://127.0.0.1:${address.port}${pathname}`;
   });
 
+// Frozen response vocabulary from clients before granular permissions.
+const legacyScopeResponse = Schema.Struct({
+  scopes: Schema.Array(
+    Schema.Literals([
+      "orchestration:read",
+      "orchestration:operate",
+      "terminal:operate",
+      "review:write",
+      "access:read",
+      "access:write",
+      "relay:read",
+      "relay:write",
+    ]),
+  ),
+});
+
 const bootstrapBrowserSession = (
   credential = defaultDesktopBootstrapToken,
   options?: {
@@ -1339,6 +1355,7 @@ const bootstrapBrowserSession = (
       readonly sessionMethod: string;
       readonly expiresAt: string;
     }>(response);
+    if (response.status === 200) yield* Schema.decodeUnknownEffect(legacyScopeResponse)(body);
     return {
       response,
       body,
@@ -2356,6 +2373,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               responseJsonEffect<{
                 readonly authenticated: boolean;
                 readonly scopes?: ReadonlyArray<string>;
+                readonly permissions?: ReadonlyArray<string>;
               }>,
             ),
           );
@@ -2481,12 +2499,14 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         readonly authenticated: boolean;
         readonly sessionMethod?: string;
         readonly scopes?: ReadonlyArray<string>;
+        readonly permissions?: ReadonlyArray<string>;
       }>(sessionResponse);
 
       assert.equal(sessionResponse.status, 200);
       assert.equal(sessionBody.authenticated, true);
       assert.equal(sessionBody.sessionMethod, "bearer-access-token");
-      assert.deepEqual(sessionBody.scopes, AuthAdministrativeScopes);
+      assert.deepEqual(sessionBody.permissions, AuthAdministrativeScopes);
+      yield* Schema.decodeUnknownEffect(legacyScopeResponse)(sessionBody);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
@@ -4380,7 +4400,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   if (!Schema.is(EnvironmentAuthorizationError)(error)) {
                     assert.fail(`Expected a diagnostics authorization error, got ${String(error)}`);
                   }
-                  assert.equal(error.requiredScope, "diagnostics:read");
+                  assert.equal(error.requiredPermission ?? error.requiredScope, "diagnostics:read");
                 }
               }
               if (scope === "orchestration:read") {
@@ -4440,7 +4460,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   assert.fail(`Expected an authorization error, got ${String(error)}`);
                 }
                 assert.equal(
-                  error.requiredScope,
+                  error.requiredPermission ?? error.requiredScope,
                   scope === "environment:maintain" ? "diagnostics:read" : "environment:maintain",
                 );
                 assert.equal(retries, 0);
@@ -4759,13 +4779,15 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           readonly id: string;
           readonly label?: string;
           readonly scopes: ReadonlyArray<string>;
+          readonly permissions?: ReadonlyArray<string>;
         }>
       >(response);
       const listed = links.find((link) => link.id === created.id);
       assert.isDefined(listed);
+      yield* Schema.decodeUnknownEffect(legacyScopeResponse)(listed);
       assert.deepInclude(listed, {
         label: "Synthetic phone",
-        scopes: [...AuthStandardClientScopes],
+        permissions: [...AuthStandardClientScopes],
       });
 
       const unauthorizedCreate = yield* HttpClient.post("/api/auth/pairing-token", {
@@ -4825,14 +4847,37 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   ? Deferred.succeed(snapshotReceived, undefined)
                   : Effect.void,
               ),
-              Stream.takeUntil((event) => event.type === "pairingLinkUpserted"),
+              Stream.takeUntil(
+                (event) =>
+                  event.type === "clientUpserted" &&
+                  event.payload.client.label === "Compatibility client",
+              ),
               Stream.runCollect,
               Effect.forkChild,
             );
             yield* Deferred.await(snapshotReceived);
             yield* Deferred.await(changesSubscribed);
             const liveLink = yield* createLink;
+            const paired = yield* exchangeAccessToken(liveLink.credential, {
+              scope: AuthStandardClientScopes.join(" "),
+              clientMetadata: { label: "Compatibility client" },
+            });
+            assert.equal(paired.response.status, 200);
             const events = yield* Fiber.join(eventsFiber);
+            for (const event of events) {
+              const records =
+                event.type === "snapshot"
+                  ? [...event.payload.pairingLinks, ...event.payload.clientSessions]
+                  : event.type === "pairingLinkUpserted" || event.type === "clientUpserted"
+                    ? [event.payload]
+                    : [];
+              for (const record of records)
+                yield* Schema.decodeUnknownEffect(legacyScopeResponse)(record);
+            }
+            const pairedEvent = events
+              .filter((event) => event.type === "clientUpserted")
+              .find((event) => event.payload.client.label === "Compatibility client");
+            assert.deepEqual(pairedEvent?.payload.permissions, AuthStandardClientScopes);
             const snapshot = events.find((event) => event.type === "snapshot");
             const update = events.find((event) => event.type === "pairingLinkUpserted");
             assert.isDefined(snapshot);
@@ -4845,10 +4890,6 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             assert.notInclude(frames.join(""), '"credential"');
             assert.notInclude(frames.join(""), initialLink.credential);
             assert.notInclude(frames.join(""), liveLink.credential);
-            const paired = yield* exchangeAccessToken(liveLink.credential, {
-              scope: AuthStandardClientScopes.join(" "),
-            });
-            assert.equal(paired.response.status, 200);
           }),
         (frame) => frames.push(frame),
       );
@@ -6199,7 +6240,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                 for (const error of errors) {
                   assert.equal(error._tag, "EnvironmentAuthorizationError");
                   if (error._tag === "EnvironmentAuthorizationError") {
-                    assert.equal(error.requiredScope, AuthPreviewOperateScope);
+                    assert.equal(
+                      error.requiredPermission ?? error.requiredScope,
+                      AuthPreviewOperateScope,
+                    );
                   }
                 }
                 assert.equal(refreshes, 0);
@@ -6407,7 +6451,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                   for (const error of errors) {
                     assert.equal(error._tag, "EnvironmentAuthorizationError");
                     if (error._tag === "EnvironmentAuthorizationError") {
-                      assert.equal(error.requiredScope, AuthSourceControlWriteScope);
+                      assert.equal(
+                        error.requiredPermission ?? error.requiredScope,
+                        AuthSourceControlWriteScope,
+                      );
                     }
                   }
                   assert.deepEqual(calls, []);
@@ -6508,7 +6555,10 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               const error = yield* prepare.pipe(Effect.flip);
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError") {
-                assert.equal(error.requiredScope, testCase.requiredScope);
+                assert.equal(
+                  error.requiredPermission ?? error.requiredScope,
+                  testCase.requiredScope,
+                );
               }
               assert.equal(preparations, 0);
             }
@@ -6612,7 +6662,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             for (const error of errors) {
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError")
-                assert.equal(error.requiredScope, "terminal:operate");
+                assert.equal(error.requiredPermission ?? error.requiredScope, "terminal:operate");
             }
           }),
         ),
@@ -6688,7 +6738,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
             for (const error of errors) {
               assert.equal(error._tag, "EnvironmentAuthorizationError");
               if (error._tag === "EnvironmentAuthorizationError") {
-                assert.equal(error.requiredScope, "providers:manage");
+                assert.equal(error.requiredPermission ?? error.requiredScope, "providers:manage");
               }
             }
           }),
@@ -6822,7 +6872,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
                     const error = yield* request.pipe(Effect.flip);
                     expect(error).toMatchObject({
                       _tag: "EnvironmentAuthorizationError",
-                      requiredScope: missing,
+                      requiredPermission: missing,
                     });
                   }
                 });
@@ -7858,7 +7908,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
               }).pipe(Effect.flip);
               assert.equal(denied._tag, "EnvironmentAuthorizationError");
               if (denied._tag === "EnvironmentAuthorizationError")
-                assert.equal(denied.requiredScope, "filesystem:read");
+                assert.equal(denied.requiredPermission ?? denied.requiredScope, "filesystem:read");
             }
             const attachment = yield* client[WS_METHODS.assetsCreateUrl]({
               resource: {
@@ -7893,14 +7943,62 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
-  it.effect("does not issue the retired review scope", () =>
+  it.effect("pairs old clients with the granted subset and survives denied optional RPCs", () =>
     Effect.gen(function* () {
       yield* buildAppUnderTest();
-      const retired = yield* exchangeAccessToken(defaultDesktopBootstrapToken, {
-        scope: "review:write",
+      const ownerCookie = yield* getAuthenticatedSessionCookieHeader();
+      const createdResponse = yield* HttpClient.post("/api/auth/pairing-token", {
+        headers: { cookie: ownerCookie },
+        body: yield* HttpBody.json({ scopes: ["orchestration:read"] }),
       });
-      assert.equal(retired.response.status, 400);
-      assert.equal(retired.body.reason, "invalid_scope");
+      const created = (yield* createdResponse.json) as { credential: string };
+      const empty = yield* exchangeAccessToken(created.credential, {
+        scope: "review:write future:unknown access:write",
+      });
+      assert.notEqual(empty.response.status, 200);
+      // Failure above must leave the one-time link usable.
+      const paired = yield* exchangeAccessToken(created.credential, {
+        scope:
+          "orchestration:read orchestration:operate terminal:operate review:write relay:read future:unknown",
+      });
+      assert.equal(paired.response.status, 200);
+      assert.equal(paired.body.scope, "orchestration:read");
+      const headers = { authorization: `Bearer ${paired.body.access_token}` };
+      const session = yield* HttpClient.get("/api/auth/session", { headers });
+      const body = yield* session.json;
+      assert.deepEqual((yield* Schema.decodeUnknownEffect(legacyScopeResponse)(body)).scopes, [
+        "orchestration:read",
+      ]);
+      assert.deepInclude(body, { authenticated: true, permissions: ["orchestration:read"] });
+      const ticketResponse = yield* HttpClient.post("/api/auth/websocket-ticket", { headers });
+      const ticket = (yield* ticketResponse.json) as { ticket: string };
+      const wsUrl = new URL(yield* getHttpServerUrl("/ws"));
+      wsUrl.protocol = "ws:";
+      wsUrl.searchParams.set("wsTicket", ticket.ticket);
+      yield* Effect.scoped(
+        withWsRpcClient(wsUrl.toString(), (client) =>
+          Effect.gen(function* () {
+            yield* client[WS_METHODS.serverGetConfig]({});
+            const denied = yield* client[WS_METHODS.subscribeTerminalEvents]({}).pipe(
+              Stream.runHead,
+              Effect.flip,
+            );
+            assert.equal(denied._tag, "EnvironmentAuthorizationError");
+            if (denied._tag === "EnvironmentAuthorizationError") {
+              yield* Schema.decodeUnknownEffect(legacyScopeResponse)({
+                scopes: [denied.requiredScope],
+              });
+              assert.equal(denied.requiredPermission, "terminal:read");
+            }
+            // A denied subscription must not tear down the shared connection.
+            yield* client[WS_METHODS.serverGetConfig]({});
+          }),
+        ),
+      );
+      const reused = yield* exchangeAccessToken(created.credential, {
+        scope: "orchestration:read",
+      });
+      assert.equal(reused.response.status, 401);
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 

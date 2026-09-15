@@ -13,6 +13,7 @@ import {
   type AuthPairingCredentialResult,
   type AuthSessionId,
   type AuthSessionState,
+  authScopeResponse,
   type ServerAuthDescriptor,
   type ServerAuthSessionMethod,
   type AuthWebSocketTicketResult,
@@ -696,7 +697,7 @@ export const make = Effect.gen(function* () {
           ({
             authenticated: true,
             auth: descriptor,
-            scopes: session.scopes,
+            ...authScopeResponse(session.scopes),
             sessionMethod: session.method,
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
@@ -723,7 +724,7 @@ export const make = Effect.gen(function* () {
                 ({
                   response: {
                     authenticated: true,
-                    scopes: session.scopes,
+                    ...authScopeResponse(session.scopes),
                     sessionMethod: session.method,
                     expiresAt: DateTime.toUtc(DateTime.add(now, { days: 30 })),
                   } satisfies AuthBrowserSessionResult,
@@ -764,7 +765,7 @@ export const make = Effect.gen(function* () {
     return {
       response: {
         authenticated: true,
-        scopes: session.scopes,
+        ...authScopeResponse(session.scopes),
         sessionMethod: session.method,
         expiresAt: DateTime.toUtc(session.expiresAt),
       } satisfies AuthBrowserSessionResult,
@@ -813,15 +814,17 @@ export const make = Effect.gen(function* () {
   };
 
   const exchangeBootstrapCredentialForAccessToken: EnvironmentAuth["Service"]["exchangeBootstrapCredentialForAccessToken"] =
-    (credential, requestedScopesInput, requestMetadata, input) => {
-      const requestedScopes = requestedScopesInput?.length ? requestedScopesInput : undefined;
+    (credential, requestedScopes, requestMetadata, input) => {
       return resolveBootstrapGrant(credential, {
         ...input,
         ...(requestedScopes !== undefined ? { requestedScopes } : {}),
       }).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
-            const grantedScopes = requestedScopes ?? grant.scopes;
+            const grantedScopes =
+              requestedScopes === undefined
+                ? grant.scopes
+                : [...new Set(requestedScopes)].filter((scope) => grant.scopes.includes(scope));
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
@@ -928,6 +931,7 @@ export const make = Effect.gen(function* () {
         ];
         return pairingLinks
           .filter((pairingLink) => !excludedSubjects.includes(pairingLink.subject))
+          .map((link) => ({ ...link, ...authScopeResponse(link.scopes) }))
           .toSorted(
             (left, right) => right.createdAt.epochMilliseconds - left.createdAt.epochMilliseconds,
           );
@@ -1033,6 +1037,7 @@ export const make = Effect.gen(function* () {
       Effect.map((clientSessions) =>
         clientSessions.map((clientSession): AuthClientSession => ({
           ...clientSession,
+          ...authScopeResponse(clientSession.scopes),
           current: clientSession.sessionId === currentSessionId,
         })),
       ),
