@@ -2,41 +2,20 @@ import { assert, describe, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import { HttpClient } from "effect/unstable/http";
-import { ChildProcessSpawner } from "effect/unstable/process";
 
-import {
-  parseTailscaleMagicDnsName,
-  resolveTailscaleAdvertisedEndpoints,
-} from "./tailscaleEndpointProvider.ts";
+import { resolveTailscaleAdvertisedEndpoints } from "./tailscaleEndpointProvider.ts";
 
-const unusedTailscaleExternalServicesLayer = Layer.mergeAll(
-  Layer.succeed(
-    HttpClient.HttpClient,
-    HttpClient.make(() => Effect.die("unexpected Tailscale HTTPS probe")),
-  ),
-  Layer.succeed(
-    ChildProcessSpawner.ChildProcessSpawner,
-    ChildProcessSpawner.make(() => Effect.die("unexpected tailscale status process")),
-  ),
+const httpClientLayer = Layer.succeed(
+  HttpClient.HttpClient,
+  HttpClient.make(() => Effect.die("unexpected Tailscale HTTPS probe")),
 );
 
 describe("tailscale endpoint provider", () => {
-  it.effect("parses MagicDNS names from tailscale status", () =>
-    Effect.gen(function* () {
-      const dnsName = yield* parseTailscaleMagicDnsName(
-        `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
-      );
-      assert.equal(dnsName, "desktop.tail.ts.net");
-      assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
-      const malformed = yield* Effect.result(parseTailscaleMagicDnsName("not-json"));
-      assert.isTrue(malformed._tag === "Failure");
-    }),
-  );
-
   it.effect("resolves Tailscale endpoints as add-on advertised endpoints", () =>
     Effect.gen(function* () {
       const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
         port: 3773,
+        identity: { dnsNames: ["desktop.tail.ts.net", "desktop.second-tail.ts.net"] },
         networkInterfaces: {
           tailscale0: [
             {
@@ -49,7 +28,6 @@ describe("tailscale endpoint provider", () => {
             },
           ],
         },
-        statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
       });
       assert.deepEqual(endpoints, [
         {
@@ -92,27 +70,28 @@ describe("tailscale endpoint provider", () => {
           status: "unavailable",
           description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
         },
+        {
+          id: "tailscale-magicdns:https://desktop.second-tail.ts.net/",
+          label: "Tailscale HTTPS",
+          provider: {
+            id: "tailscale",
+            label: "Tailscale",
+            kind: "private-network",
+            isAddon: true,
+          },
+          httpBaseUrl: "https://desktop.second-tail.ts.net/",
+          wsBaseUrl: "wss://desktop.second-tail.ts.net/",
+          reachability: "private-network",
+          compatibility: {
+            hostedHttpsApp: "requires-configuration",
+            desktopApp: "compatible",
+          },
+          source: "desktop-addon",
+          status: "unavailable",
+          description: "MagicDNS hostname. Configure Tailscale Serve for HTTPS access.",
+        },
       ]);
-    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
-  );
-
-  it.effect("uses an injected magic DNS name reader instead of spawning tailscale", () =>
-    Effect.gen(function* () {
-      let readerCalls = 0;
-      const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
-        port: 3773,
-        networkInterfaces: {},
-        readMagicDnsName: Effect.sync(() => {
-          readerCalls += 1;
-          return "desktop.tail.ts.net";
-        }),
-      });
-      assert.equal(readerCalls, 1);
-      assert.deepEqual(
-        endpoints.map((endpoint) => endpoint.httpBaseUrl),
-        ["https://desktop.tail.ts.net/"],
-      );
-    }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+    }).pipe(Effect.provide(httpClientLayer)),
   );
 
   it.effect(
@@ -122,7 +101,7 @@ describe("tailscale endpoint provider", () => {
         const endpoints = yield* resolveTailscaleAdvertisedEndpoints({
           port: 3773,
           networkInterfaces: {},
-          statusJson: `{"Self":{"DNSName":"desktop.tail.ts.net."}}`,
+          identity: { dnsNames: ["desktop.tail.ts.net"] },
           serveEnabled: true,
           probe: () => Effect.succeed(true),
         });
@@ -148,6 +127,6 @@ describe("tailscale endpoint provider", () => {
             description: "HTTPS endpoint served by Tailscale Serve.",
           },
         ]);
-      }).pipe(Effect.provide(unusedTailscaleExternalServicesLayer)),
+      }).pipe(Effect.provide(httpClientLayer)),
   );
 });
