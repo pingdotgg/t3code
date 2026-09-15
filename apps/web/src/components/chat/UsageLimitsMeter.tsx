@@ -56,7 +56,7 @@ export function UsageLimitsMeter(props: {
             type="button"
             aria-label={label}
             className="shrink-0 gap-1.5 whitespace-nowrap"
-            disabled={onOpen === undefined}
+            aria-disabled={onOpen === undefined || undefined}
             // Footer controls never take the caret from the editor.
             onPointerDown={(event) => event.preventDefault()}
             onClick={onOpen}
