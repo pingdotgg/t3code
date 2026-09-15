@@ -120,6 +120,10 @@ interface KiroSessionContext {
   activeTurnId: TurnId | undefined;
   /** Turns already interrupted; late prompt RPCs must not resurrect them. */
   interruptedTurnIds: Set<TurnId>;
+  /** Prompt fibers still expected to settle for an interrupted turn. The
+   * turn id is dropped from interruptedTurnIds once this reaches zero, so a
+   * long-lived session does not accumulate interrupted turn ids forever. */
+  interruptedTurnPendingSettlements: Map<TurnId, number>;
   /** Number of sendTurn prompts currently in flight or being prepared.
    * >0 means a turn is actively running, so a new sendTurn is a steer that
    * cancels the in-flight prompt and continues the same turn. Only the last
@@ -480,6 +484,34 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
       ctx.promptResponsesReady = Math.max(0, ctx.promptResponsesReady - 1);
     };
 
+    // Snapshots the outstanding prompt fibers for `turnId` so their later,
+    // individually-arriving settlements can be counted down to zero before
+    // the id is forgotten. Idempotent: a turn already marked keeps its
+    // original snapshot rather than restarting the count.
+    const markTurnInterrupted = (ctx: KiroSessionContext, turnId: TurnId) => {
+      if (ctx.interruptedTurnIds.has(turnId)) {
+        return;
+      }
+      ctx.interruptedTurnIds.add(turnId);
+      ctx.interruptedTurnPendingSettlements.set(turnId, Math.max(ctx.promptsInFlight, 1));
+    };
+
+    // Call once per prompt fiber that finds its turn already interrupted and
+    // returns without progressing it further. Once every such fiber has
+    // reported in, the turn id is safe to drop.
+    const settleInterruptedTurnPrompt = (ctx: KiroSessionContext, turnId: TurnId) => {
+      const remaining = ctx.interruptedTurnPendingSettlements.get(turnId);
+      if (remaining === undefined) {
+        return;
+      }
+      if (remaining <= 1) {
+        ctx.interruptedTurnPendingSettlements.delete(turnId);
+        ctx.interruptedTurnIds.delete(turnId);
+      } else {
+        ctx.interruptedTurnPendingSettlements.set(turnId, remaining - 1);
+      }
+    };
+
     const settlePromptInFlight = (
       threadId: ThreadId,
       turnId: TurnId,
@@ -508,10 +540,11 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
           // interruptTurn already consumed every prompt slot for this turn. A
           // late prompt result must neither emit a second terminal event nor
           // consume a slot belonging to a newer turn on the same ACP session.
-          if (
-            liveCtx.acpSessionId !== expectedAcpSessionId ||
-            liveCtx.interruptedTurnIds.has(turnId)
-          ) {
+          if (liveCtx.acpSessionId !== expectedAcpSessionId) {
+            return;
+          }
+          if (liveCtx.interruptedTurnIds.has(turnId)) {
+            settleInterruptedTurnPrompt(liveCtx, turnId);
             return;
           }
           if (options?.emitTurnCompletion !== false) {
@@ -660,7 +693,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
 
           // Mark before cancel/drain so notifications already in flight finish
           // before the terminal event, while late notifications are dropped.
-          ctx.interruptedTurnIds.add(turnId);
+          markTurnInterrupted(ctx, turnId);
           yield* Effect.ignore(
             ctx.acp.cancel.pipe(
               Effect.mapError((error) =>
@@ -1042,6 +1075,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
             lastPlanFingerprint: undefined,
             activeTurnId: undefined,
             interruptedTurnIds: new Set(),
+            interruptedTurnPendingSettlements: new Map(),
             promptsInFlight: 0,
             promptEpoch: 0,
             discardBeforeEpoch: 0,
@@ -1511,6 +1545,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               yield* prepared.acp.drainEvents;
               consumePromptResponseReady(ctx);
               if (ctx.interruptedTurnIds.has(prepared.turnId)) {
+                settleInterruptedTurnPrompt(ctx, prepared.turnId);
                 yield* Ref.set(promptSettled, true);
                 return {
                   threadId: input.threadId,
@@ -1552,6 +1587,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                 ctx.session.activeTurnId === prepared.turnId
               ) {
                 if (ctx.interruptedTurnIds.has(prepared.turnId)) {
+                  settleInterruptedTurnPrompt(ctx, prepared.turnId);
                   yield* Ref.set(promptSettled, true);
                   return {
                     threadId: input.threadId,
@@ -1623,6 +1659,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                       return;
                     }
                     if (ctx.interruptedTurnIds.has(prepared.turnId)) {
+                      settleInterruptedTurnPrompt(ctx, prepared.turnId);
                       return;
                     }
                     consumePromptResponseReady(ctx);
@@ -1681,7 +1718,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
           }
           const interruptedTurnId = turnId ?? activeTurnId;
           if (interruptedTurnId !== undefined) {
-            ctx.interruptedTurnIds.add(interruptedTurnId);
+            markTurnInterrupted(ctx, interruptedTurnId);
           }
           return {
             _tag: "Proceed" as const,
@@ -1722,7 +1759,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
               ),
             );
             if (interruptedTurnId) {
-              ctx.interruptedTurnIds.add(interruptedTurnId);
+              markTurnInterrupted(ctx, interruptedTurnId);
               yield* settlePromptInFlight(threadId, interruptedTurnId, ctx.acpSessionId, {
                 completedStopReason: "cancelled",
                 settleAllPrompts: true,
