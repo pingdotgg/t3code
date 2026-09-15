@@ -3655,6 +3655,84 @@ describe("ProviderRuntimeIngestion", () => {
     expect(ready.session?.lastErrorClass ?? null).toBeNull();
   });
 
+  it("drops the usage-limit class when a session error replaces the classified one", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-limit-before-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replace"),
+      payload: {
+        message: "Claude usage limit reached.",
+        class: "usage_limit",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastErrorClass === "usage_limit",
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-error-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: { state: "error", reason: "Socket closed" },
+    });
+
+    const replaced = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError === "Socket closed",
+    );
+    expect(replaced.session?.status).toBe("error");
+    expect(replaced.session?.lastErrorClass ?? null).toBeNull();
+  });
+
+  it("drops the usage-limit class when a failed turn replaces the error", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-limit-before-turn-fail"),
+      provider: ProviderDriverKind.make("claude"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replace"),
+      payload: {
+        message: "Claude usage limit reached.",
+        class: "usage_limit",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastErrorClass === "usage_limit",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-fail-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-replace"),
+      payload: { state: "failed", errorMessage: "Transport closed" },
+    });
+
+    const replaced = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError === "Transport closed",
+    );
+    expect(replaced.session?.lastErrorClass ?? null).toBeNull();
+  });
+
   it("records runtime.error activities from the typed payload message", async () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
