@@ -78,7 +78,14 @@ that choice stable. Choose **Auto balance** again to check current resources, or
 a specific machine to override it. Choosing a branch or worktree also keeps the draft
 on that machine. Existing threads stay where they started. If resource checks are
 unavailable or all eligible machines are full, choose a machine manually to continue.
-Mobile keeps its manual environment selection.
+For platform-specific work, choose **Any platform**, **macOS**, **Linux**, or **Windows**
+in the Auto balance composer. Only matching environments participate; their CPU, memory,
+provider availability, and preference still determine the choice. The platform requirement
+belongs to that draft and survives reloads. If no eligible environment matches, sending is
+blocked until you change the requirement or choose a machine manually. Remove attachments
+and unlock the workspace before changing the platform. Choosing a machine manually overrides
+the requirement; returning to Auto balance reapplies it. A platform match does not verify
+installed tools such as Xcode. Mobile keeps its manual environment selection.
 
 ### Tailscale HTTPS
 

@@ -1760,6 +1760,130 @@ describe("composerDraftStore project draft thread mapping", () => {
     });
   });
 
+  it("changes the platform and invalidates the automatic winner atomically", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: TEST_ENVIRONMENT_ID,
+    });
+    store.setPrompt(draftId, "build this");
+    expect(store.setDraftRequiredPlatformOs(draftId, "darwin")).toBe(true);
+    expect(store.getDraftThread(draftId)).toMatchObject({
+      requiredPlatformOs: "darwin",
+      loadBalancedEnvironmentId: null,
+      environmentSelection: "auto",
+    });
+    store.setDraftThreadContext(draftId, {
+      projectRef: remoteProjectRef,
+      loadBalancedEnvironmentId: OTHER_TEST_ENVIRONMENT_ID,
+    });
+    expect(store.getDraftThread(draftId)?.requiredPlatformOs).toBe("darwin");
+    expect(store.setDraftRequiredPlatformOs(draftId, "linux")).toBe(true);
+    expect(store.getDraftThread(draftId)?.loadBalancedEnvironmentId).toBeNull();
+    expect(store.setDraftRequiredPlatformOs(draftId, null)).toBe(true);
+    expect(store.getDraftThread(draftId)?.requiredPlatformOs).toBeNull();
+    expect(store.getComposerDraft(draftId)?.prompt).toBe("build this");
+  });
+
+  it("keeps inferred branches routable while rejecting late or stale automatic winners", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, {
+      threadId,
+      environmentSelection: "auto",
+      branch: "main",
+    });
+    expect(store.setDraftRequiredPlatformOs(draftId, "darwin")).toBe(true);
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, remoteProjectRef, null)).toBe(false);
+    expect(store.getDraftThread(draftId)?.environmentId).toBe(TEST_ENVIRONMENT_ID);
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, remoteProjectRef, "darwin")).toBe(true);
+    expect(store.getDraftThread(draftId)?.requiredPlatformOs).toBe("darwin");
+    // A late result must not replace a winner, even if its requirement still matches.
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, projectRef, "darwin")).toBe(false);
+    store.setDraftRequiredPlatformOs(draftId, "linux");
+    store.addFiles(draftId, [
+      {
+        ...makeFile("late"),
+        uploadedAttachmentId: "uploaded",
+        uploadEnvironmentId: OTHER_TEST_ENVIRONMENT_ID,
+      },
+    ]);
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, projectRef, "linux")).toBe(false);
+    expect(store.getDraftThread(draftId)?.environmentId).toBe(OTHER_TEST_ENVIRONMENT_ID);
+    expect(store.getComposerDraft(draftId)?.files[0]?.uploadEnvironmentId).toBe(
+      OTHER_TEST_ENVIRONMENT_ID,
+    );
+  });
+
+  it("keeps a manual override when an automatic result arrives and reapplies the saved platform on return to Auto", () => {
+    const store = useComposerDraftStore.getState();
+    store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+    store.setDraftRequiredPlatformOs(draftId, "darwin");
+    store.setDraftThreadContext(draftId, { environmentSelection: "manual" });
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, remoteProjectRef, "darwin")).toBe(
+      false,
+    );
+    expect(store.getDraftThread(draftId)?.environmentId).toBe(TEST_ENVIRONMENT_ID);
+    store.setDraftThreadContext(draftId, {
+      environmentSelection: "auto",
+      loadBalancedEnvironmentId: null,
+    });
+    expect(store.getDraftThread(draftId)?.requiredPlatformOs).toBe("darwin");
+    expect(store.applyDraftLoadBalancedEnvironment(draftId, remoteProjectRef, "darwin")).toBe(true);
+  });
+
+  it("persists the platform through reload and defaults new drafts to Any", async () => {
+    vi.useFakeTimers();
+    try {
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(projectRef, draftId, { threadId });
+      expect(store.getDraftThread(draftId)?.requiredPlatformOs ?? null).toBeNull();
+      store.setDraftRequiredPlatformOs(draftId, "darwin");
+      await vi.advanceTimersByTimeAsync(300);
+      resetComposerDraftStore();
+      await useComposerDraftStore.persist.rehydrate();
+      expect(useComposerDraftStore.getState().getDraftThread(draftId)).toMatchObject({
+        requiredPlatformOs: "darwin",
+        environmentSelection: "auto",
+        loadBalancedEnvironmentId: null,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(["branch", "worktree", "attachment", "manual", "promoting"])(
+    "does not change a platform or winner on a %s-pinned draft",
+    (pin) => {
+      const store = useComposerDraftStore.getState();
+      store.setProjectDraftThreadId(projectRef, draftId, {
+        threadId,
+        environmentSelection: "auto",
+      });
+      store.setDraftRequiredPlatformOs(draftId, "darwin");
+      store.setDraftThreadContext(draftId, { loadBalancedEnvironmentId: TEST_ENVIRONMENT_ID });
+      if (pin === "branch") store.setDraftThreadContext(draftId, { branch: "feature/pinned" });
+      if (pin === "worktree") store.setDraftThreadContext(draftId, { worktreePath: "/tmp/pinned" });
+      if (pin === "manual")
+        store.setDraftThreadContext(draftId, { environmentSelection: "manual" });
+      if (pin === "attachment")
+        store.addFiles(draftId, [
+          {
+            ...makeFile("pinned"),
+            uploadedAttachmentId: "uploaded",
+            uploadEnvironmentId: TEST_ENVIRONMENT_ID,
+          },
+        ]);
+      if (pin === "promoting")
+        store.markDraftThreadPromoting(draftId, scopeThreadRef(TEST_ENVIRONMENT_ID, threadId));
+      const before = store.getDraftThread(draftId);
+      const contents = store.getComposerDraft(draftId);
+      expect(store.setDraftRequiredPlatformOs(draftId, "linux")).toBe(false);
+      expect(store.getDraftThread(draftId)).toEqual(before);
+      expect(store.getComposerDraft(draftId)).toEqual(contents);
+    },
+  );
+
   it("does not opt a legacy branch choice into balancing when runtime mode changes", () => {
     const store = useComposerDraftStore.getState();
     store.setProjectDraftThreadId(projectRef, draftId, { threadId, branch: "feature/pinned" });

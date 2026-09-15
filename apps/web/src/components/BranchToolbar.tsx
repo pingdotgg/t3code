@@ -1,3 +1,8 @@
+import {
+  AUTO_BALANCE_PLATFORMS,
+  type RequiredPlatformOs,
+} from "@t3tools/client-runtime/load-balancing";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "./ui/select";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import {
@@ -65,6 +70,13 @@ export interface BranchToolbarHandle {
 }
 
 interface BranchToolbarProps {
+  platformRequirement?:
+    | {
+        value: RequiredPlatformOs;
+        onChange: (platform: RequiredPlatformOs) => void;
+        disabled: boolean;
+      }
+    | undefined;
   ref?: Ref<BranchToolbarHandle>;
   environmentId: EnvironmentId;
   threadId: ThreadId;
@@ -472,6 +484,7 @@ export const BranchToolbar = memo(function BranchToolbar({
   onActiveThreadBranchOverrideChange,
   startFromOrigin,
   onStartFromOriginChange,
+  platformRequirement,
   autoEnvironmentLabel,
   onAutoEnvironment,
   envLocked,
@@ -563,7 +576,9 @@ export const BranchToolbar = memo(function BranchToolbar({
   );
 
   const showEnvironmentPicker = Boolean(
-    availableEnvironments && availableEnvironments.length > 1 && onEnvironmentChange,
+    availableEnvironments &&
+    (availableEnvironments.length > 1 || onAutoEnvironment) &&
+    onEnvironmentChange,
   );
   const activeEnvironmentOption =
     availableEnvironments?.find((env) => env.environmentId === environmentId) ?? null;
@@ -588,6 +603,40 @@ export const BranchToolbar = memo(function BranchToolbar({
         !contextStripVisible && "pointer-events-none invisible absolute inset-x-0 top-full",
       )}
     >
+      {platformRequirement ? (
+        <Select
+          value={platformRequirement.value ?? "any"}
+          items={AUTO_BALANCE_PLATFORMS}
+          disabled={platformRequirement.disabled}
+          onValueChange={(value) => {
+            if (value === "any" || value === "darwin" || value === "linux" || value === "windows")
+              platformRequirement.onChange(value === "any" ? null : value);
+          }}
+        >
+          <SelectTrigger
+            variant="ghost"
+            size="xs"
+            aria-label="Auto balance platform"
+            title={
+              platformRequirement.disabled
+                ? "Remove attachments and unlock the workspace before changing the Auto balance platform"
+                : "Required platform for Auto balance only"
+            }
+            className="min-w-0 text-xs"
+            data-composer-context-control
+          >
+            <SelectValue />
+          </SelectTrigger>
+          <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
+            <div className="px-2 py-1.5 text-xs text-muted-foreground">Auto balance platform</div>
+            {AUTO_BALANCE_PLATFORMS.map(({ value, label }) => (
+              <SelectItem key={value} value={value}>
+                {label}
+              </SelectItem>
+            ))}
+          </SelectPopup>
+        </Select>
+      ) : null}
       {showGitControls ? (
         <div className="contents @3xl/composer-surface:hidden">
           <MobileRunContextSelector

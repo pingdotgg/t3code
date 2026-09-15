@@ -1,3 +1,9 @@
+import {
+  isLoadBalancingCandidate,
+  isAutomaticPlatformRoutingBlocked,
+  platformRoutingUnavailableReason,
+  type RequiredPlatformOs,
+} from "@t3tools/client-runtime/load-balancing";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -2429,7 +2435,8 @@ export default function ChatView(props: ChatViewProps) {
     ) ?? null;
   const showComposerEnvironmentIndicator = shouldShowEnvironmentIndicator({
     activeEnvironment: activeEnvironmentOption,
-    canPickEnvironment: hasMultipleEnvironments,
+    canPickEnvironment:
+      hasMultipleEnvironments || Boolean(draftId && draftThread?.requiredPlatformOs),
   });
 
   const openPullRequestDialog = useCallback(
@@ -2577,12 +2584,21 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const loadBalancingSettings = useClientSettings();
+  const requiredPlatformOs = draftThread?.requiredPlatformOs ?? null;
+  // A saved requirement survives settings changes and a project group shrinking to one host.
+  const hasSavedPlatformRequirement = Boolean(draftId && !envLocked && requiredPlatformOs !== null);
+  const hasAutomaticPlatformRequirement = Boolean(
+    draftId &&
+    !envLocked &&
+    draftThread?.environmentSelection !== "manual" &&
+    requiredPlatformOs !== null,
+  );
   const automaticEnvironment = Boolean(
     clientSettingsHydrated &&
     draftId &&
     !envLocked &&
-    hasMultipleEnvironments &&
-    loadBalancingSettings.loadBalancingEnabled &&
+    ((hasMultipleEnvironments && loadBalancingSettings.loadBalancingEnabled) ||
+      hasAutomaticPlatformRequirement) &&
     draftThread?.environmentSelection !== "manual" &&
     (!composerHasAttachments || Boolean(draftThread?.loadBalancedEnvironmentId)) &&
     (!draftThread?.branch || draftThread.environmentSelection === "auto") &&
@@ -3748,58 +3764,92 @@ export default function ChatView(props: ChatViewProps) {
   }, [activeThreadRef, diffOpen, isServerThread, onDiffPanelOpen]);
 
   const needsLoadBalancing = automaticEnvironment && !draftThread?.loadBalancedEnvironmentId;
-  const loadBalancingCandidates = useMemo(
+  const eligibleLoadBalancingEnvironments = useMemo(
     () =>
-      needsLoadBalancing
-        ? logicalProjectEnvironments
-            .filter((candidate) => {
-              const environment = environmentById.get(candidate.environmentId);
-              return (
-                environment?.connection.phase === "connected" &&
-                (loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50) > 0 &&
-                environment.serverConfig?.providers.some(
-                  (provider) =>
-                    (activeProviderInstanceId === null ||
-                      provider.instanceId === activeProviderInstanceId) &&
-                    provider.driver === selectedProvider &&
-                    provider.enabled &&
-                    provider.installed &&
-                    provider.status !== "error" &&
-                    provider.auth.status !== "unauthenticated" &&
-                    provider.availability !== "unavailable",
-                )
-              );
-            })
-            .map((candidate) => candidate.environmentId)
-        : [],
+      logicalProjectEnvironments.filter((candidate) =>
+        isLoadBalancingCandidate(
+          environmentById.get(candidate.environmentId),
+          loadBalancingSettings.loadBalancingWeights[candidate.environmentId] ?? 50,
+          selectedProvider,
+          activeProviderInstanceId,
+          requiredPlatformOs,
+        ),
+      ),
     [
-      needsLoadBalancing,
       logicalProjectEnvironments,
       environmentById,
       loadBalancingSettings.loadBalancingWeights,
-      activeProviderInstanceId,
       selectedProvider,
+      activeProviderInstanceId,
+      requiredPlatformOs,
     ],
   );
+  const loadBalancingCandidates = useMemo(
+    () =>
+      needsLoadBalancing
+        ? eligibleLoadBalancingEnvironments.map((candidate) => candidate.environmentId)
+        : [],
+    [needsLoadBalancing, eligibleLoadBalancingEnvironments],
+  );
+  const platformRoutingBlocked =
+    hasAutomaticPlatformRequirement &&
+    isAutomaticPlatformRoutingBlocked({
+      requiredPlatformOs,
+      environmentSelection: draftThread?.environmentSelection,
+      selectedEnvironmentId: draftThread?.loadBalancedEnvironmentId,
+      currentEnvironmentId: environmentId,
+      eligibleEnvironmentIds: eligibleLoadBalancingEnvironments.map(
+        (candidate) => candidate.environmentId,
+      ),
+    });
   const loadBalancing = useLoadBalancedEnvironment(
     loadBalancingCandidates,
     loadBalancingSettings.loadBalancingWeights,
+  );
+  const platformRoutingError =
+    requiredPlatformOs !== null &&
+    hasAutomaticPlatformRequirement &&
+    !loadBalancing.pending &&
+    (platformRoutingBlocked || needsLoadBalancing)
+      ? draftThread?.loadBalancedEnvironmentId && platformRoutingBlocked
+        ? "The selected Auto balance environment is no longer eligible. Retry Auto balance or choose a machine manually."
+        : platformRoutingUnavailableReason(
+            requiredPlatformOs,
+            eligibleLoadBalancingEnvironments.length > 0,
+          )
+      : null;
+  const onRequiredPlatformChange = useCallback(
+    (platform: RequiredPlatformOs) => {
+      if (!draftId || envLocked || sendInFlightRef.current) return;
+      useComposerDraftStore.getState().setDraftRequiredPlatformOs(draftId, platform);
+    },
+    [draftId, envLocked],
   );
   useEffect(() => {
     if (!needsLoadBalancing || loadBalancing.pending || !draftId || sendInFlightRef.current) return;
     const target = logicalProjectEnvironments.find(
       (environment) => environment.environmentId === loadBalancing.environmentId,
     );
-    if (!target) return;
-    setDraftThreadContext(draftId, {
-      projectRef: scopeProjectRef(target.environmentId, target.projectId),
-      environmentSelection: "auto",
-      loadBalancedEnvironmentId: target.environmentId,
-    });
+    if (
+      !target ||
+      !eligibleLoadBalancingEnvironments.some(
+        (candidate) => candidate.environmentId === target.environmentId,
+      )
+    )
+      return;
+    useComposerDraftStore
+      .getState()
+      .applyDraftLoadBalancedEnvironment(
+        draftId,
+        scopeProjectRef(target.environmentId, target.projectId),
+        requiredPlatformOs,
+      );
   }, [
     needsLoadBalancing,
     loadBalancing.pending,
     loadBalancing.environmentId,
+    requiredPlatformOs,
+    eligibleLoadBalancingEnvironments,
     draftId,
     logicalProjectEnvironments,
     setDraftThreadContext,
@@ -7127,15 +7177,17 @@ export default function ChatView(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
-    if (needsLoadBalancing) {
+    if (needsLoadBalancing || platformRoutingBlocked) {
       toastManager.add({
         type: "warning",
         title: loadBalancing.pending
           ? "Checking machine resources"
           : "Choose a machine to continue",
-        description: loadBalancing.pending
-          ? "Resource checks are still running. You can choose a machine in the composer."
-          : "No eligible machine has available resources. Choose a machine in the composer to override.",
+        description:
+          platformRoutingError ??
+          (loadBalancing.pending
+            ? "Resource checks are still running. You can choose a machine in the composer."
+            : "No eligible machine has available resources. Choose a machine in the composer to override."),
       });
       return;
     }
@@ -8673,6 +8725,7 @@ export default function ChatView(props: ChatViewProps) {
     !threadDetailLoading &&
     clientSettingsHydrated &&
     !needsLoadBalancing &&
+    !platformRoutingBlocked &&
     !activeEnvironmentUnavailable &&
     !activePendingProgress &&
     !feedbackUploading;
@@ -9313,7 +9366,9 @@ export default function ChatView(props: ChatViewProps) {
                                   ? "Sending feedback"
                                   : threadDetailLoading
                                     ? "Messages loading"
-                                    : projectCloneSendBlockReason
+                                    : hasAutomaticPlatformRequirement && loadBalancing.pending
+                                      ? "Checking machine resources"
+                                      : (platformRoutingError ?? projectCloneSendBlockReason)
                             }
                             isPreparingWorktree={isPreparingWorktree}
                             bannerItems={composerBannerItems}
@@ -9417,6 +9472,14 @@ export default function ChatView(props: ChatViewProps) {
                         >
                           {mountComposerContextStrip && (
                             <div className="pointer-events-auto">
+                              {!loadBalancing.pending && platformRoutingError ? (
+                                <p
+                                  role="status"
+                                  className="px-3 py-1 text-xs text-muted-foreground"
+                                >
+                                  {platformRoutingError}
+                                </p>
+                              ) : null}
                               <BranchToolbar
                                 ref={branchToolbarRef}
                                 environmentId={activeThread.environmentId}
@@ -9441,13 +9504,33 @@ export default function ChatView(props: ChatViewProps) {
                                 {...(canCheckoutPullRequestIntoThread
                                   ? { onCheckoutPullRequestRequest: openPullRequestDialog }
                                   : {})}
-                                {...(hasMultipleEnvironments ? { onEnvironmentChange } : {})}
+                                {...(hasMultipleEnvironments || hasSavedPlatformRequirement
+                                  ? { onEnvironmentChange }
+                                  : {})}
+                                platformRequirement={
+                                  automaticEnvironment || hasAutomaticPlatformRequirement
+                                    ? {
+                                        value: requiredPlatformOs,
+                                        onChange: onRequiredPlatformChange,
+                                        disabled:
+                                          envLocked ||
+                                          composerHasAttachments ||
+                                          Boolean(
+                                            (draftThread?.branch &&
+                                              draftThread.environmentSelection !== "auto") ||
+                                            draftThread?.worktreePath,
+                                          ) ||
+                                          isSendBusy,
+                                      }
+                                    : undefined
+                                }
                                 autoEnvironmentLabel={autoEnvironmentLabel}
                                 onAutoEnvironment={
                                   draftId &&
                                   !envLocked &&
-                                  hasMultipleEnvironments &&
-                                  loadBalancingSettings.loadBalancingEnabled
+                                  ((hasMultipleEnvironments &&
+                                    loadBalancingSettings.loadBalancingEnabled) ||
+                                    hasSavedPlatformRequirement)
                                     ? onAutoEnvironment
                                     : undefined
                                 }
