@@ -1,17 +1,27 @@
 import * as NodeCrypto from "node:crypto";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - Effect's symlink has no type argument, and Windows needs a junction to link without elevation.
 import * as NodeFSP from "node:fs/promises";
+// @effect-diagnostics-next-line nodeBuiltinImport:off - The browser helper hands off URLs through a scoped Node loopback listener.
+import * as NodeHttp from "node:http";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - resolveAntigravityProfileDirectory is a pure sync helper, so it cannot use the Path service.
 import * as NodePath from "node:path";
 
+import * as NodeHttpServer from "@effect/platform-node/NodeHttpServer";
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessExecutablePath, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import type * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import {
+  HttpIncomingMessage,
+  HttpServer,
+  HttpServerRequest,
+  HttpServerResponse,
+} from "effect/unstable/http";
 import * as ChildProcess from "effect/unstable/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import * as AcpErrors from "effect-acp/errors";
@@ -55,9 +65,12 @@ const isAcpTransportError = Schema.is(AcpErrors.AcpTransportError);
 // Keep this source free of both colons and semicolons. EPIPE must still exit 0
 // so Python does not fall back to an OS browser after cancellation.
 const browserHelperSource =
-  `process.stderr.on("error",()=>process.exit(0)).write(` +
+  `(report=>(process.env.T3_ANTIGRAVITY_AUTH_SINK&&fetch(process.env.T3_ANTIGRAVITY_AUTH_SINK,` +
+  `Object.fromEntries([["method","POST"],["body",process.argv[1]],` +
+  `["signal",AbortSignal.timeout(5000)]])).then(response=>response.ok&&process.exit(0)||report(),report))||report())` +
+  `(()=>process.stderr.on("error",()=>process.exit(0)).write(` +
   `"${ANTIGRAVITY_AUTH_BROWSER_MARKER}"+JSON.stringify(process.argv[1])+"\\n",` +
-  `()=>process.exit(0))`;
+  `()=>process.exit(0)))`;
 const browserPreflightUrl = "https://example.invalid/t3-antigravity-browser-preflight";
 
 const removedEnvironmentKeys = new Set([
@@ -78,6 +91,7 @@ const removedEnvironmentKeys = new Set([
   "BROWSER",
   "PYTHONUNBUFFERED",
   "ELECTRON_RUN_AS_NODE",
+  "T3_ANTIGRAVITY_AUTH_SINK",
 ]);
 
 export interface AntigravityProfile {
@@ -400,6 +414,7 @@ export function buildAntigravityAcpSpawnInput(input: {
   readonly cwd: string;
   readonly baseEnv?: NodeJS.ProcessEnv;
   readonly auth?: AntigravityAuthConfig;
+  readonly authorizationUrlSink?: string;
 }): AcpSpawnInput {
   return {
     command: input.installation.executablePath,
@@ -412,10 +427,51 @@ export function buildAntigravityAcpSpawnInput(input: {
         input.auth ?? ANTIGRAVITY_PERSONAL_AUTH,
       ),
       ANTIGRAVITY_HARNESS_PATH: input.installation.harnessPath,
+      ...(input.authorizationUrlSink
+        ? { T3_ANTIGRAVITY_AUTH_SINK: input.authorizationUrlSink }
+        : {}),
     },
     extendEnv: false,
   };
 }
+
+/** Python's Windows browser subprocess can lose stderr; receive the URL independently of stdio. */
+export const serveAntigravityAuthorizationUrlSink = Effect.fn(
+  "serveAntigravityAuthorizationUrlSink",
+)(function* (onAuthorizationUrl: (url: string) => Effect.Effect<void, AcpErrors.AcpError>) {
+  const token = NodeCrypto.randomBytes(32).toString("hex");
+  const context = yield* Layer.build(
+    NodeHttpServer.layer(NodeHttp.createServer, {
+      host: "127.0.0.1",
+      port: 0,
+      disablePreemptiveShutdown: true,
+    }),
+  ).pipe(
+    Effect.mapError(() =>
+      authSupportError("The Antigravity sign-in URL listener could not start."),
+    ),
+  );
+  const server = yield* Effect.service(HttpServer.HttpServer).pipe(Effect.provide(context));
+  yield* server.serve(
+    Effect.gen(function* () {
+      const request = yield* HttpServerRequest.HttpServerRequest;
+      if (request.method !== "POST" || request.url !== `/${token}`) {
+        return HttpServerResponse.empty({ status: 404 });
+      }
+      const url = yield* request.text;
+      const parsed = yield* parseAntigravityAuthorizationUrl(url);
+      yield* onAuthorizationUrl(parsed.authorizationUrl);
+      return HttpServerResponse.empty({ status: 204 });
+    }).pipe(
+      Effect.provideService(
+        HttpIncomingMessage.MaxBodySize,
+        FileSystem.Size(maxAuthorizationUrlLength),
+      ),
+      Effect.catch(() => Effect.succeed(HttpServerResponse.empty({ status: 400 }))),
+    ),
+  );
+  return `${HttpServer.formatAddress(server.address)}/${token}`;
+});
 
 /** Reads only the public authorization request, never an OAuth token file. */
 export const parseAntigravityAuthorizationUrl = Effect.fn("parseAntigravityAuthorizationUrl")(
