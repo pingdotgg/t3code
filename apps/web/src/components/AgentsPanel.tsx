@@ -11,6 +11,7 @@
  * - Static status dots, DOM-write elapsed timers, plain token counters.
  */
 import { useAtomValue } from "@effect/atom-react";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import type {
   AgentPanelModel,
   AgentPanelWorkflowGroup,
@@ -138,15 +139,14 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 
 /** Flat, non-interactive agent status line. No unfold. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const title = formatSubagentDisplayTitle(agent.title);
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
   const activity = agentActivityText(agent);
   const modelLabel = formatSubagentModelLabel(agent.model, agent.effort);
   const role =
-    agent.role?.trim().toLocaleLowerCase() === agent.title.trim().toLocaleLowerCase()
-      ? null
-      : agent.role;
+    agent.role?.trim().toLocaleLowerCase() === title.trim().toLocaleLowerCase() ? null : agent.role;
   const metadata = [
     modelLabel,
     agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
@@ -160,7 +160,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
         <StatusDot status={agent.status} />
       </span>
       <span className="col-start-2 row-start-1 flex min-w-0 items-baseline gap-2">
-        <span className="min-w-0 truncate text-sm font-medium">{agent.title}</span>
+        <span className="min-w-0 truncate text-sm font-medium">{title}</span>
         {role ? (
           <span className="max-w-28 shrink-0 truncate rounded-sm border border-border/60 px-1 font-mono text-[.65rem] text-muted-foreground">
             {role}

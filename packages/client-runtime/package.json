@@ -223,6 +223,10 @@
       "types": "./src/state/threads.ts",
       "default": "./src/state/threads.ts"
     },
+    "./state/subagent-display": {
+      "types": "./src/state/subagentDisplay.ts",
+      "default": "./src/state/subagentDisplay.ts"
+    },
     "./state/subagentRuntime": {
       "types": "./src/state/subagentRuntime.ts",
       "default": "./src/state/subagentRuntime.ts"
