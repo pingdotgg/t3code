@@ -10836,17 +10836,30 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           ),
         );
 
-        assert.equal(response.sequence, 5);
+        assert.equal(response.sequence, 6);
         assert.deepEqual(
           dispatchedCommands.map((command) => command.type),
           [
             "thread.create",
+            "thread.session.set",
             "thread.meta.update",
             "thread.activity.append",
             "thread.activity.append",
             "thread.turn.start",
           ],
         );
+        // The checkout can take minutes, so the thread reads as working from
+        // the moment setup starts rather than only once the turn is dispatched.
+        const preparingCommand = dispatchedCommands[1];
+        assertTrue(preparingCommand?.type === "thread.session.set");
+        if (preparingCommand?.type === "thread.session.set") {
+          assert.equal(preparingCommand.session.status, "starting");
+          assert.equal(preparingCommand.session.activeTurnId, null);
+          assert.equal(
+            preparingCommand.session.providerInstanceId,
+            defaultModelSelection.instanceId,
+          );
+        }
         assert.deepEqual(createWorktree.mock.calls[0]?.[0], {
           cwd: "/tmp/project",
           refName: fetchedOriginCommit,
@@ -10902,7 +10915,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
           setupActivities.map((command) => command.activity.kind),
           ["setup-script.requested", "setup-script.started"],
         );
-        const finalCommand = dispatchedCommands[4];
+        const finalCommand = dispatchedCommands[5];
         assertTrue(finalCommand?.type === "thread.turn.start");
         if (finalCommand?.type === "thread.turn.start") {
           assert.equal(finalCommand.bootstrap, undefined);
@@ -11284,10 +11297,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 4);
+      assert.equal(response.sequence, 5);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.session.set",
+          "thread.meta.update",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupFailureActivity = dispatchedCommands.find(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -11411,10 +11430,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
         ),
       );
 
-      assert.equal(response.sequence, 4);
+      assert.equal(response.sequence, 5);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.meta.update", "thread.activity.append", "thread.turn.start"],
+        [
+          "thread.create",
+          "thread.session.set",
+          "thread.meta.update",
+          "thread.activity.append",
+          "thread.turn.start",
+        ],
       );
       const setupActivities = dispatchedCommands.filter(
         (command): command is Extract<OrchestrationCommand, { type: "thread.activity.append" }> =>
@@ -11676,7 +11701,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.strictEqual(result.failure.bootstrapThreadDisposition, "deleted");
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
+        ["thread.create", "thread.session.set", "thread.delete"],
       );
       assert.isDefined(pendingAttachmentId);
       assert.isTrue(
@@ -11874,7 +11899,7 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.strictEqual(result.failure.bootstrapThreadDisposition, undefined);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.delete"],
+        ["thread.create", "thread.session.set", "thread.delete"],
       );
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );

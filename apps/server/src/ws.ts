@@ -1340,6 +1340,31 @@ const makeWsRpcLayer = (
             }
 
             if (prepareWorktree && shouldPrepareWorktree && worktreeBaseRef) {
+              if (bootstrap?.createThread && createdThread) {
+                // The checkout and setup script can run for minutes before the
+                // turn starts, and the created thread carries no message or
+                // turn until then. Project a starting session now so every
+                // client lists the thread as working and a reopened thread
+                // knows to follow the setup stream. A failed or cancelled setup
+                // deletes the thread, so nothing lingers.
+                const preparingAt = yield* nowIso;
+                yield* dispatchFromClient({
+                  type: "thread.session.set",
+                  commandId: yield* serverCommandId("bootstrap-thread-preparing"),
+                  threadId,
+                  session: {
+                    threadId,
+                    status: "starting",
+                    providerName: null,
+                    providerInstanceId: bootstrap.createThread.modelSelection.instanceId,
+                    runtimeMode: command.runtimeMode,
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: preparingAt,
+                  },
+                  createdAt: preparingAt,
+                });
+              }
               yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
               let checkoutTotal: number | null = null;
               const worktree = yield* gitWorkflow.createWorktree(
