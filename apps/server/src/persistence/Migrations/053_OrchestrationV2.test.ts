@@ -8,23 +8,23 @@ import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 
 const layer = it.layer(Layer.mergeAll(NodeSqliteClient.layerMemory()));
 
-layer("052_OrchestrationV2", (it) => {
+layer("053_OrchestrationV2", (it) => {
   it.effect("keeps released migrations contiguous", () =>
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 52 }, (_, index) => index + 1),
+        Array.from({ length: 53 }, (_, index) => index + 1),
       );
     }),
   );
 
-  it.effect("upgrades released schema 51 with one complete V2 migration", () =>
+  it.effect("upgrades released schema 52 with one complete V2 migration", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
-      yield* runMigrations({ toMigrationInclusive: 51 });
+      yield* runMigrations({ toMigrationInclusive: 52 });
 
       const executed = yield* runMigrations();
-      assert.deepStrictEqual(executed, [[52, "OrchestrationV2"]]);
+      assert.deepStrictEqual(executed, [[53, "OrchestrationV2"]]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
       const migrations = yield* sql<{
@@ -41,7 +41,8 @@ layer("052_OrchestrationV2", (it) => {
         { migration_id: 49, name: "ProjectionThreadsActiveOrderKey" },
         { migration_id: 50, name: "ProjectionThreadPullRequests" },
         { migration_id: 51, name: "ProjectionThreadMessageContext" },
-        { migration_id: 52, name: "OrchestrationV2" },
+        { migration_id: 52, name: "ProjectionThreadTitleState" },
+        { migration_id: 53, name: "OrchestrationV2" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
