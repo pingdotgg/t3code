@@ -309,6 +309,27 @@ describe("findEsmImportsOfExternalPackages", () => {
     ]);
   });
 
+  it("ignores imports inside generated extension source and comments", () => {
+    const source = [
+      'const extension = `import { Type } from "typebox";\nimport type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`;',
+      '// import "comment-only";',
+      "const example = 'import(\"string-only\")';",
+      'const interpolated = `source ${import("real-package")}`;',
+    ].join("\n");
+    assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), ["real-package"]);
+  });
+
+  it("allows optional dynamic Bun built-ins but rejects static imports", () => {
+    assert.deepStrictEqual(
+      findEsmImportsOfExternalPackages('const load = () => import("bun:sqlite");'),
+      [],
+    );
+    assert.deepStrictEqual(
+      findEsmImportsOfExternalPackages('import { Database } from "bun:sqlite";'),
+      ["bun:sqlite"],
+    );
+  });
+
   it("does not mistake createRequire calls for imports", () => {
     const source = 'const { FileFinder } = createRequire(import.meta.url)("@ff-labs/fff-node");';
     assert.deepStrictEqual(findEsmImportsOfExternalPackages(source), []);
