@@ -459,47 +459,30 @@ const ProjectLucideIconName = TrimmedNonEmptyString.check(
 
 const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 
-// Hermes (the Android/iOS JS runtime) has no Intl.Segmenter, and this module
-// loads at app startup, so `new Intl.Segmenter()` crashes mobile on launch.
-// Count grapheme clusters with a small approximation instead: a code point
-// continues the current cluster when it is a combining mark, joiner,
-// variation selector, or emoji modifier, or follows a ZWJ. This must stay
-// runtime-independent (not `typeof Intl.Segmenter` feature detection) so the
-// shared contract validates identically on server, web, and mobile.
-const GRAPHEME_CONTINUATION = /[\p{M}\u200c\u200d\ufe0f\u{1F3FB}-\u{1F3FF}]/u;
-
-const countGraphemes = (text: string): number => {
-  let clusters = 0;
-  let prevJoiner = false;
-  for (const char of text) {
-    if (clusters > 0 && (prevJoiner || GRAPHEME_CONTINUATION.test(char))) {
-      prevJoiner = char === "\u200d";
-      continue;
-    }
-    clusters += 1;
-    prevJoiner = char === "\u200d";
-  }
-  return clusters;
-};
-
+// Grapheme-count validation belongs to the server command boundary, not snapshot decoding.
 export const ProjectMonogramText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-  Schema.makeFilter((text) => countGraphemes(text) <= 2),
 );
 
+const ProjectLucideIcon = Schema.Struct({
+  kind: Schema.Literal("lucide"),
+  name: ProjectLucideIconName,
+  color: ProjectIconColor,
+});
+const ProjectEmojiIcon = Schema.Struct({
+  kind: Schema.Literal("emoji"),
+  emoji: ProjectEmoji,
+});
+const ProjectMonogramIcon = Schema.Struct({
+  kind: Schema.Literal("monogram"),
+  text: ProjectMonogramText,
+  color: ProjectIconColor,
+});
 export const ProjectIconOverride = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("lucide"),
-    name: ProjectLucideIconName,
-    color: ProjectIconColor,
-    // Older clients ignore this field and render the named Lucide icon instead.
-    monogram: Schema.optional(ProjectMonogramText),
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("emoji"),
-    emoji: ProjectEmoji,
-  }),
+  ProjectLucideIcon,
+  ProjectEmojiIcon,
+  ProjectMonogramIcon,
 ]);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
 
