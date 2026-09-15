@@ -95,6 +95,8 @@ const MAX_IMPORT_BYTES = 4 * 1024 * 1024 * 1024;
 const MAX_IMPORT_TRANSCRIPTS = 100;
 const MAX_IMPORT_RECORDS = 100_000;
 const MAX_CODEX_SESSION_INDEX_BYTES = 16 * 1024 * 1024;
+const MAX_CODEX_SESSION_INDEX_ENTRIES = MAX_TRANSCRIPTS_PER_SOURCE;
+const MAX_IMPORTED_THREAD_TITLE_CHARS = 100;
 
 const TranscriptContentBlock = Schema.Struct({
   type: Schema.optional(Schema.String),
@@ -234,16 +236,29 @@ interface TranscriptCandidate {
   readonly canonicalTitle: string | null;
 }
 
+/** Parse the valid named entries from Codex's best-effort session index. */
 export function parseCodexSessionIndex(contents: string): ReadonlyMap<string, string> {
   const titles = new Map<string, string>();
-  for (const line of contents.split("\n")) {
+  let lineEnd = contents.length;
+  while (lineEnd > 0 && /[\r\n]/.test(contents[lineEnd - 1] ?? "")) lineEnd -= 1;
+  let entriesRead = 0;
+  while (lineEnd > 0 && entriesRead < MAX_CODEX_SESSION_INDEX_ENTRIES) {
+    const lineStart = contents.lastIndexOf("\n", lineEnd - 1) + 1;
+    const line = contents.slice(lineStart, lineEnd);
+    lineEnd = lineStart === 0 ? 0 : lineStart - 1;
+    entriesRead += 1;
     const decoded = decodeCodexSessionIndexEntry(line);
     if (Option.isNone(decoded)) continue;
     const id = decoded.value.id.trim();
-    const title = decoded.value.thread_name.trim();
-    if (id.length > 0 && title.length > 0) titles.set(id, title);
+    const normalizedTitle = decoded.value.thread_name.trim();
+    const titleLineEnd = normalizedTitle.indexOf("\n");
+    const title = normalizedTitle
+      .slice(0, titleLineEnd === -1 ? normalizedTitle.length : titleLineEnd)
+      .slice(0, MAX_IMPORTED_THREAD_TITLE_CHARS)
+      .trim();
+    if (id.length > 0 && title.length > 0 && !titles.has(id)) titles.set(id, title);
   }
-  return titles;
+  return new Map(Array.from(titles).toReversed());
 }
 
 interface MetadataReadBudget {
@@ -311,26 +326,64 @@ function codexTurnId(metadata: unknown): string | null {
   return decoded.value.turn_id;
 }
 
-function deriveImportedThreadTitle(text: string): string | null {
-  const injectedContextPatterns = [
-    /^<recommended_plugins>[\s\S]*?<\/recommended_plugins>\s*/,
-    /^<environment_context>[\s\S]*?<\/environment_context>\s*/,
-    /^<user_instructions>[\s\S]*?<\/user_instructions>\s*/,
-    /^# AGENTS\.md instructions[^\n]*(?:\n+<INSTRUCTIONS>[\s\S]*?<\/INSTRUCTIONS>)?\s*/,
-  ];
-  let visibleText = text.trimStart();
-  let removedContext = true;
-  while (removedContext) {
-    removedContext = false;
-    for (const pattern of injectedContextPatterns) {
-      const withoutContext = visibleText.replace(pattern, "");
-      if (withoutContext === visibleText) continue;
-      visibleText = withoutContext.trimStart();
+/** Find the first code-unit offset after context envelopes injected into a Codex message. */
+function skipLeadingCodexContext(text: string): number {
+  const contextTags = ["recommended_plugins", "environment_context", "user_instructions"];
+  let offset = 0;
+  const skipWhitespace = () => {
+    while (offset < text.length && /\s/.test(text[offset] ?? "")) offset += 1;
+  };
+
+  skipWhitespace();
+  while (offset < text.length) {
+    let removedContext = false;
+    for (const tag of contextTags) {
+      const openingTag = `<${tag}>`;
+      if (!text.startsWith(openingTag, offset)) continue;
+      const closingTag = `</${tag}>`;
+      const closingOffset = text.indexOf(closingTag, offset + openingTag.length);
+      if (closingOffset === -1) return text.length;
+      offset = closingOffset + closingTag.length;
+      skipWhitespace();
       removedContext = true;
       break;
     }
+    if (removedContext) continue;
+
+    const agentsHeading = "# AGENTS.md instructions";
+    const agentsHeadingEnd = offset + agentsHeading.length;
+    if (
+      text.startsWith(agentsHeading, offset) &&
+      (agentsHeadingEnd === text.length || /\s/.test(text[agentsHeadingEnd] ?? ""))
+    ) {
+      const headingEnd = text.indexOf("\n", offset);
+      if (headingEnd === -1) return text.length;
+      offset = headingEnd + 1;
+      skipWhitespace();
+      const openingTag = "<INSTRUCTIONS>";
+      if (text.startsWith(openingTag, offset)) {
+        const closingTag = "</INSTRUCTIONS>";
+        const closingOffset = text.indexOf(closingTag, offset + openingTag.length);
+        if (closingOffset === -1) return text.length;
+        offset = closingOffset + closingTag.length;
+        skipWhitespace();
+      }
+      continue;
+    }
+    break;
   }
-  const firstLine = visibleText.split("\n")[0]?.slice(0, 100).trim();
+  return offset;
+}
+
+/** Derive a visible title without mistaking Codex-injected context for the user request. */
+export function deriveImportedThreadTitle(text: string, source: AgentSessionSource): string | null {
+  const visibleText =
+    source === "codex" ? text.slice(skipLeadingCodexContext(text)) : text.trimStart();
+  const lineEnd = visibleText.indexOf("\n");
+  const firstLine = visibleText
+    .slice(0, lineEnd === -1 ? visibleText.length : lineEnd)
+    .slice(0, MAX_IMPORTED_THREAD_TITLE_CHARS)
+    .trim();
   return firstLine && firstLine.length > 0 ? firstLine : null;
 }
 
@@ -425,7 +478,7 @@ function parseAgentSessionRecords(
       firstUserMessage = message;
     }
     if (firstDerivedTitle === null && message.role === "user") {
-      firstDerivedTitle = deriveImportedThreadTitle(message.text);
+      firstDerivedTitle = deriveImportedThreadTitle(message.text, input.source);
     }
     messages.push(message);
     if (messages.length > MAX_IMPORTED_MESSAGES) messages.shift();
@@ -716,6 +769,40 @@ export const make = Effect.gen(function* () {
 
   const statOption = (target: string) =>
     fileSystem.stat(target).pipe(Effect.asSome, Effect.orElseSucceed(Option.none));
+
+  /** Read with a maxBytes payload cap and a one-byte probe for concurrent growth. */
+  const readFileStringBounded = Effect.fn("AgentSessionScanner.readFileStringBounded")(function* (
+    target: string,
+    maxBytes: number,
+  ) {
+    return yield* Effect.scoped(
+      fileSystem.open(target, { flag: "r" }).pipe(
+        Effect.flatMap((file) =>
+          Effect.gen(function* () {
+            const info = yield* file.stat;
+            if (info.type !== "File" || info.size > BigInt(maxBytes)) return null;
+
+            const decoder = new TextDecoder();
+            const chunks: Array<string> = [];
+            let bytesRead = 0;
+            while (bytesRead <= maxBytes) {
+              const next = yield* file.readAlloc(
+                Math.min(TRANSCRIPT_PREFIX_BYTES, maxBytes + 1 - bytesRead),
+              );
+              if (Option.isNone(next) || next.value.byteLength === 0) {
+                chunks.push(decoder.decode());
+                return chunks.join("");
+              }
+              bytesRead += next.value.byteLength;
+              if (bytesRead > maxBytes) return null;
+              chunks.push(decoder.decode(next.value, { stream: true }));
+            }
+            return null;
+          }),
+        ),
+      ),
+    );
+  });
 
   /** Match directory aliases without assuming the host volume is case-insensitive. */
   const directoryIdentity = Effect.fn("AgentSessionScanner.directoryIdentity")(function* (
@@ -1031,16 +1118,12 @@ export const make = Effect.gen(function* () {
     function* (homePath: string, providerInstanceId: ProviderInstanceId, operationBudget: number) {
       const sessionsDir = path.join(homePath, "sessions");
       const indexPath = path.join(homePath, "session_index.jsonl");
-      const indexStats = yield* statOption(indexPath);
+      const indexContents = yield* readFileStringBounded(
+        indexPath,
+        MAX_CODEX_SESSION_INDEX_BYTES,
+      ).pipe(Effect.orElseSucceed(() => null));
       const indexedTitles =
-        Option.isSome(indexStats) &&
-        indexStats.value.type === "File" &&
-        Number(indexStats.value.size) <= MAX_CODEX_SESSION_INDEX_BYTES
-          ? yield* fileSystem.readFileString(indexPath).pipe(
-              Effect.map(parseCodexSessionIndex),
-              Effect.orElseSucceed(() => new Map<string, string>()),
-            )
-          : new Map<string, string>();
+        indexContents === null ? new Map<string, string>() : parseCodexSessionIndex(indexContents);
 
       const transcripts: Array<TranscriptCandidate> = [];
       let operationsRemaining = operationBudget;
