@@ -20,6 +20,17 @@ describe("buildRuntimeInstructions", () => {
     ).toContain("through the Codex harness, as custom model with high reasoning effort.");
   });
 
+  it("describes computer use only when the cua-driver server is attached", () => {
+    const withCua = buildRuntimeInstructions({ harness: "Claude Code", computerUse: true });
+    expect(withCua).toContain("<computer_use>");
+    expect(withCua).toContain('defaults to delivery_mode "background"');
+    expect(withCua).toContain("leave the desktop as you found it");
+    expect(buildRuntimeInstructions({ harness: "Claude Code" })).not.toContain("<computer_use>");
+    expect(buildRuntimeInstructions({ harness: "Claude Code", computerUse: false })).not.toContain(
+      "cua-driver",
+    );
+  });
+
   it.each([undefined, "", "auto", "default"])("omits unresolved model %s", (model) => {
     const instructions = buildRuntimeInstructions({ harness: "Cursor", model });
     expect(instructions).toContain("through the Cursor harness.");

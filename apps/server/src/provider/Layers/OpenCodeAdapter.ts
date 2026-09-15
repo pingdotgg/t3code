@@ -3257,6 +3257,9 @@ export function makeOpenCodeAdapter(
                 system: buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                  computerUse:
+                    McpProviderSession.readMcpProviderSession(input.threadId)?.cuaDriver !==
+                    undefined,
                 }),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },

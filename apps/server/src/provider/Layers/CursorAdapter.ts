@@ -1066,7 +1066,13 @@ export function makeCursorAdapter(
                 ...promptParts,
                 {
                   type: "text",
-                  text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                  text: buildRuntimeInstructions({
+                    harness: "Cursor",
+                    model: resolvedModel,
+                    computerUse:
+                      McpProviderSession.readMcpProviderSession(input.threadId)?.cuaDriver !==
+                      undefined,
+                  }),
                 },
               ],
             })
