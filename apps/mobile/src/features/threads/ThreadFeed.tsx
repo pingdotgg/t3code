@@ -260,6 +260,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -2420,6 +2421,18 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       props.listRef.current?.reportContentInset({ bottom });
     }
   }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
+
+  // Report edge transitions, including content/inset changes without a scroll,
+  // without rerendering the screen for each scroll event.
+  useLayoutEffect(() => {
+    const listState = props.listRef.current?.getState();
+    const onIsAtEndChange = props.onIsAtEndChange;
+    if (!listState || !onIsAtEndChange) {
+      return;
+    }
+    onIsAtEndChange(listState.isAtEnd);
+    return listState.listen("isAtEnd", onIsAtEndChange);
+  }, [listMountKey, props.listRef, props.onIsAtEndChange]);
 
   const anchoredEndSpace = useMemo(
     () =>
