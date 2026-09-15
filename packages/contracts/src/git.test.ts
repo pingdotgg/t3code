@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 
 import {
   GitCommandError,
+  VcsCreateWorktreeInput,
   GitPreparePullRequestThreadResult,
   GitRunStackedActionInput,
 } from "./git.ts";
@@ -74,5 +75,12 @@ describe("GitRunStackedActionInput", () => {
     });
 
     expect(parsed.filePaths).toEqual([" leading.txt", "trailing.txt "]);
+  });
+});
+
+describe("custom worktree names", () => {
+  const decode = Schema.decodeUnknownSync(VcsCreateWorktreeInput);
+  it.each([".", "..", "parent/child", "parent\\child"])("rejects invalid worktree name %s", (worktreeName) => {
+    expect(() => decode({ cwd: "/repo", refName: "main", worktreeName, path: null })).toThrow();
   });
 });

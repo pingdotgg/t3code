@@ -1348,6 +1348,9 @@ export function useComposerSend(input: ComposerSendInput) {
                     prepareWorktree: {
                       projectCwd: activeProject.workspaceRoot,
                       baseBranch: baseBranchForWorktree,
+                      ...(draftThread?.worktreeName
+                        ? { worktreeName: draftThread.worktreeName }
+                        : {}),
                       ...(draftThread?.worktreeBranch
                         ? { branch: draftThread.worktreeBranch }
                         : {}),

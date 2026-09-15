@@ -54,6 +54,11 @@ const GitPullRequestReference = TrimmedNonEmptyStringSchema;
 const GitPullRequestState = Schema.Literals(["open", "closed", "merged"]);
 const GitPreparePullRequestThreadMode = Schema.Literals(["local", "worktree"]);
 const GitCommitSha = TrimmedNonEmptyStringSchema.check(Schema.isPattern(/^[0-9a-f]{40,64}$/));
+export const WorktreeName = TrimmedNonEmptyStringSchema.check(
+  Schema.isMaxLength(255),
+  Schema.isPattern(/^(?!\.{1,2}$)[^/\\\p{Cc}]+$/u),
+);
+export type WorktreeName = typeof WorktreeName.Type;
 export const GitRunStackedActionToastRunAction = Schema.Struct({
   kind: GitStackedAction,
 });
@@ -168,6 +173,7 @@ export const VcsCreateWorktreeInput = Schema.Struct({
   refName: TrimmedNonEmptyStringSchema,
   newRefName: Schema.optional(TrimmedNonEmptyStringSchema),
   baseRefName: Schema.optional(TrimmedNonEmptyStringSchema),
+  worktreeName: Schema.optional(WorktreeName),
   path: Schema.NullOr(TrimmedNonEmptyStringSchema),
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;

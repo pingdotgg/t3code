@@ -32,7 +32,10 @@ import {
   type ReviewDiffPreviewSource,
   type VcsRef,
 } from "@t3tools/contracts";
-import { dedupeRemoteBranchesWithLocalMatches, isTemporaryWorktreeBranch } from "@t3tools/shared/git";
+import {
+  dedupeRemoteBranchesWithLocalMatches,
+  isTemporaryWorktreeBranch,
+} from "@t3tools/shared/git";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import { compactTraceAttributes } from "@t3tools/shared/observability";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
@@ -4412,9 +4415,10 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           detail: `The worktree location "${options?.worktreesDirectory}" must be an absolute folder on this machine, not a drive root. Change it in Settings → Worktrees.`,
         });
       }
-      let directoryName = input.newRefName && !isTemporaryWorktreeBranch(targetBranch)
-        ? path.basename(targetBranch)
-        : targetBranch.replace(/\//g, "-");
+      let directoryName =
+        input.newRefName && !isTemporaryWorktreeBranch(targetBranch)
+          ? path.basename(targetBranch)
+          : targetBranch.replace(/\//g, "-");
       // Leave room for files beneath the worktree on Windows, regardless of branch length.
       if (directoryName.length > 40) {
         const hash = yield* digest.digest(Digest.sha256, new TextEncoder().encode(targetBranch));
@@ -4422,7 +4426,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const prefix = directoryName.slice(0, 23).replace(/[\uD800-\uDBFF]$/, "");
         directoryName = `${prefix}-${Hex.encode(hash).slice(0, 16)}`;
       }
-      worktreePath = path.join(parentDir, repoName, directoryName);
+      worktreePath = path.join(parentDir, repoName, input.worktreeName ?? directoryName);
     }
     const newRefName = input.newRefName;
     if (newRefName) {

@@ -11,14 +11,17 @@ import {
 import {
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  WorktreeName,
   type ContextMenuItem,
   type EnvironmentId,
   type VcsRef,
   type ThreadId,
 } from "@t3tools/contracts";
 import { GitBranchIcon } from "lucide-react";
+import * as Schema from "effect/Schema";
 import {
   useEffect,
+  useId,
   useImperativeHandle,
   useOptimistic,
   useState,
@@ -67,6 +70,7 @@ import { Button } from "./ui/button";
 import { ComposerControl } from "./chat/ComposerControl";
 import { MiddleTruncate } from "./ui/middle-truncate";
 import { BranchPicker, BranchPickerRefItem } from "./BranchPicker";
+import { DraftInput } from "./ui/draft-input";
 import { stackedThreadToast, toastManager } from "./ui/toast";
 
 export interface BranchToolbarBranchSelectorHandle {
@@ -95,6 +99,8 @@ function toBranchActionErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : "An error occurred.";
 }
 
+const isWorktreeName = Schema.is(WorktreeName);
+
 export function BranchToolbarBranchSelector({
   forceNewWorktree = false,
   ref,
@@ -115,6 +121,7 @@ export function BranchToolbarBranchSelector({
   const composerFloatingLayerProps = useComposerMenuProps();
   const canWriteSourceControl = useEnvironmentScope(environmentId, AuthSourceControlWriteScope);
   const canOperateThread = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
+  const worktreeNameInputId = useId();
   const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, "thread session stop");
   const updateThreadMetadata = useAtomCommand(
     threadEnvironment.updateMetadata,
@@ -246,6 +253,7 @@ export function BranchToolbarBranchSelector({
   const isSelectingWorktreeBase =
     effectiveEnvMode === "worktree" && !envLocked && !activeWorktreePath;
   const worktreeBranch = draftThread?.worktreeBranch ?? null;
+  const worktreeName = draftThread?.worktreeName ?? null;
   const checkoutPullRequestItemValue =
     canChangeThreadBranch && prReference && onCheckoutPullRequestRequest
       ? `__checkout_pull_request__:${prReference}`
@@ -457,13 +465,14 @@ export function BranchToolbarBranchSelector({
     const name = sanitizeNewRefName(rawName);
     if (!branchCwd || !name || isBranchActionPending) return;
 
-    setIsBranchMenuOpen(false);
-    onComposerFocusRequest?.();
-
     if (isSelectingWorktreeBase && draftThread) {
       setDraftThreadContext(draftId ?? threadRef, { worktreeBranch: name });
+      setBranchQuery("");
       return;
     }
+
+    setIsBranchMenuOpen(false);
+    onComposerFocusRequest?.();
 
     runBranchAction(async () => {
       const previousBranch = resolvedActiveBranch;
@@ -688,19 +697,45 @@ export function BranchToolbarBranchSelector({
             : "branch"
       }
       extraControls={
-        isSelectingWorktreeBase && worktreeBranch ? (
+        isSelectingWorktreeBase ? (
           <div className="border-t border-border/60 px-3 py-2">
-            <Button
-              variant="ghost"
-              size="xs"
-              onClick={() => {
-                setDraftThreadContext(draftId ?? threadRef, { worktreeBranch: null });
-                setIsBranchMenuOpen(false);
-                onComposerFocusRequest?.();
+            <label htmlFor={worktreeNameInputId} className="text-xs text-muted-foreground">
+              Worktree name
+            </label>
+            <DraftInput
+              id={worktreeNameInputId}
+              size="compact"
+              value={worktreeName ?? ""}
+              placeholder={worktreeBranch?.split("/").at(-1) ?? "Derived from branch"}
+              aria-label="Worktree name"
+              disabled={!canChangeThreadBranch}
+              onKeyDown={(event) => event.stopPropagation()}
+              onCommit={(value) => {
+                const name = value.trim();
+                if (name && !isWorktreeName(name)) {
+                  toastManager.add({
+                    type: "error",
+                    title: "Invalid worktree name",
+                    description: "Use one directory name without slashes or control characters.",
+                  });
+                  return;
+                }
+                setDraftThreadContext(draftId ?? threadRef, { worktreeName: name || null });
               }}
-            >
-              Use generated branch name
-            </Button>
+            />
+            {worktreeBranch ? (
+              <Button
+                variant="ghost"
+                size="xs"
+                onClick={() => {
+                  setDraftThreadContext(draftId ?? threadRef, { worktreeBranch: null });
+                  setIsBranchMenuOpen(false);
+                  onComposerFocusRequest?.();
+                }}
+              >
+                Use generated branch name
+              </Button>
+            ) : null}
           </div>
         ) : null
       }

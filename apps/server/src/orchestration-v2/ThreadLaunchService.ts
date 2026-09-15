@@ -65,6 +65,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly type: "worktree";
       readonly baseRef: string;
       readonly branch?: string | undefined;
+      readonly worktreeName?: string | undefined;
       readonly startFromOrigin?: boolean | undefined;
     };
 
@@ -442,6 +443,9 @@ const make = Effect.gen(function* () {
               refName: startRef,
               newRefName: branch!,
               baseRefName,
+              ...(input.workspaceStrategy.worktreeName === undefined
+                ? {}
+                : { worktreeName: input.workspaceStrategy.worktreeName }),
               path: null,
             },
             {
