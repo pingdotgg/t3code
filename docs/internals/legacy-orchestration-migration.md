@@ -1,6 +1,8 @@
 # Legacy orchestration migration
 
-Orchestration v2 imports v1 threads in place. It creates v2 thread shell events first and imports
+Orchestration v2 snapshots `state.sqlite` into `statev2.sqlite` before opening writable persistence
+on its first launch. Only the copy receives v2 migrations; the original remains available to v1.
+Subsequent launches reuse the copy without refreshing it from v1. It creates v2 thread shell events first and imports
 the complete user and assistant transcript lazily when a client reads or continues the thread. The
 v1 projection tables remain the import source and provide a read-only recovery source if an import
 needs investigation.
