@@ -465,11 +465,11 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it.each([
-    { delivery: "buffered", enableLegacyTokenStreaming: false },
-    { delivery: "streamed", enableLegacyTokenStreaming: true },
+    { delivery: "buffered", responseStreamingMode: "paragraph" as const },
+    { delivery: "streamed", responseStreamingMode: "token" as const },
   ])("settles OpenCode aborted turns and saves $delivery assistant text", async (settings) => {
     const harness = await createHarness({
-      serverSettings: { enableLegacyTokenStreaming: settings.enableLegacyTokenStreaming },
+      serverSettings: { responseStreamingMode: settings.responseStreamingMode },
     });
     const threadId = asThreadId("thread-1");
     const turnId = asTurnId("opencode-aborted-turn");
@@ -521,7 +521,7 @@ describe("ProviderRuntimeIngestion", () => {
     "finalizes old buffered text on late %s without stopping the newer turn",
     async (terminalType) => {
       const harness = await createHarness({
-        serverSettings: { enableLegacyTokenStreaming: false },
+        serverSettings: { responseStreamingMode: "paragraph" },
       });
       const threadId = asThreadId("thread-1");
       const oldTurnId = asTurnId("old-buffered-turn");
@@ -605,7 +605,7 @@ describe("ProviderRuntimeIngestion", () => {
     { source: "an unspecified turn", turnId: undefined },
   ])("ignores late OpenCode aborts for $source across newer turns", async (lateAbort) => {
     const harness = await createHarness({
-      serverSettings: { enableLegacyTokenStreaming: true },
+      serverSettings: { responseStreamingMode: "token" },
     });
     const threadId = asThreadId("thread-1");
     const stoppedTurnId = asTurnId("opencode-stopped-turn");
@@ -2712,7 +2712,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("keeps streaming while an async question is pending", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const base = {
       provider: ProviderDriverKind.make("codex"),
       createdAt: "2026-01-01T00:00:00.000Z",
@@ -2954,7 +2954,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("starts a new streaming assistant message segment after approval", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const startedAt = "2026-03-28T07:00:00.000Z";
     const pausedAt = "2026-03-28T07:00:01.000Z";
     const resumedAt = "2026-03-28T07:00:02.000Z";
@@ -3061,7 +3061,7 @@ describe("ProviderRuntimeIngestion", () => {
   });
 
   it("streams assistant deltas when thread.turn.start requests streaming mode", async () => {
-    const harness = await createHarness({ serverSettings: { enableLegacyTokenStreaming: true } });
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "token" } });
     const now = "2026-01-01T00:00:00.000Z";
 
     await Effect.runPromise(
@@ -3233,6 +3233,62 @@ describe("ProviderRuntimeIngestion", () => {
     ).toBe(
       "First paragraph.\n\nSecond paragraph.\n\n```ts\nconst a = 1;\n\nconst b = 2;\n```\n\nTail without newline",
     );
+  });
+
+  it("holds every paragraph until completion in turn mode", async () => {
+    const harness = await createHarness({ serverSettings: { responseStreamingMode: "turn" } });
+    const now = "2026-01-01T00:00:00.000Z";
+    const codex = ProviderDriverKind.make("codex");
+    const threadId = asThreadId("thread-1");
+    const turnId = asTurnId("turn-wait-mode");
+    const itemId = asItemId("item-wait-mode");
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-wait-started"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+      },
+    ]);
+    harness.advanceClock(1_000);
+    await harness.emitAndDrain([
+      {
+        type: "content.delta",
+        eventId: asEventId("evt-wait-delta"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: {
+          streamKind: "assistant_text",
+          delta: "First paragraph.\n\nSecond paragraph.\n\n",
+        },
+      },
+    ]);
+    const messageText = async () =>
+      (await harness.readModel()).threads
+        .find((t) => t.id === threadId)
+        ?.messages.find((m: ProviderRuntimeTestMessage) => m.id === `assistant:${itemId}`)?.text;
+    // Paragraph mode would have delivered both paragraphs by now.
+    expect(await messageText()).toBeUndefined();
+
+    await harness.emitAndDrain([
+      {
+        type: "item.completed",
+        eventId: asEventId("evt-wait-completed"),
+        provider: codex,
+        createdAt: now,
+        threadId,
+        turnId,
+        itemId,
+        payload: { itemType: "assistant_message", status: "completed" },
+      },
+    ]);
+    expect(await messageText()).toBe("First paragraph.\n\nSecond paragraph.\n\n");
   });
 
   it("holds paragraphs that finish inside the pacing window and lands them together", async () => {
@@ -4593,6 +4649,30 @@ describe("splitBufferedAssistantText", () => {
     expect(splitBufferedAssistantText("~~~\n```\n\nx\n")).toEqual({
       ready: "",
       rest: "~~~\n```\n\nx\n",
+    });
+  });
+
+  it("delivers tight list items one at a time", () => {
+    expect(splitBufferedAssistantText("## Steps\n\n- one\n- two\n- thr")).toEqual({
+      ready: "## Steps\n\n- one\n- two\n",
+      rest: "- thr",
+    });
+    expect(splitBufferedAssistantText("1. one\n2. two\n   more\n3. t")).toEqual({
+      ready: "1. one\n2. two\n   more\n",
+      rest: "3. t",
+    });
+  });
+
+  it("keeps a partial list marker and list-like code buffered", () => {
+    expect(splitBufferedAssistantText("intro\n-")).toEqual({ ready: "", rest: "intro\n-" });
+    expect(splitBufferedAssistantText("intro\n1.")).toEqual({ ready: "", rest: "intro\n1." });
+    // `intro\n- \n` would parse as a setext heading, so a bare marker with only
+    // trailing whitespace is not a boundary on the partial line either.
+    expect(splitBufferedAssistantText("intro\n- ")).toEqual({ ready: "", rest: "intro\n- " });
+    expect(splitBufferedAssistantText("- one\n")).toEqual({ ready: "", rest: "- one\n" });
+    expect(splitBufferedAssistantText("```\n- one\n- two\n")).toEqual({
+      ready: "",
+      rest: "```\n- one\n- two\n",
     });
   });
 });

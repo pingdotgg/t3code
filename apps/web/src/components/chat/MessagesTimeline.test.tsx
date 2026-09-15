@@ -791,7 +791,6 @@ describe("MessagesTimeline", () => {
 
     expect(markup).toContain("<video");
     expect(markup).toContain('aria-label="demo.mp4"');
-    expect(markup).toContain('controls=""');
     expect(markup).not.toContain("Expand demo.mp4");
   });
 

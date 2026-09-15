@@ -45,25 +45,23 @@ overrides:
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-x64-musl': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-win32-x64': '-'
-  '@clerk/backend': 3.14.0
-  '@clerk/clerk-js': 6.30.1
+  '@clerk/backend': 3.17.2
+  '@clerk/clerk-js': 6.31.1
   '@clerk/clerk-js>@base-org/account': '-'
   '@clerk/clerk-js>@coinbase/wallet-sdk': '-'
   '@clerk/clerk-js>@solana/wallet-adapter-base': '-'
   '@clerk/clerk-js>@solana/wallet-adapter-react': '-'
   '@clerk/clerk-js>@solana/wallet-standard': '-'
   '@clerk/clerk-js>@wallet-standard/core': '-'
-  '@clerk/electron': 0.0.37
+  '@clerk/electron': 0.0.42
   '@clerk/electron-passkeys': 0.0.3
-  '@clerk/expo': 4.2.0
-  '@clerk/react': 6.14.7
-  '@clerk/shared': 4.30.1
+  '@clerk/expo': 4.6.6
+  '@clerk/react': 6.15.2
+  '@clerk/shared': 4.31.1
   '@effect/atom-react': 4.0.0-rc.112
-  '@effect/platform-bun': 4.0.0-rc.112
   '@effect/platform-node': 4.0.0-rc.112
   '@effect/platform-node-shared': 4.0.0-rc.112
   '@effect/sql-pg': 4.0.0-rc.112
-  '@effect/sql-sqlite-bun': 4.0.0-rc.112
   '@effect/vitest': 4.0.0-rc.112
   '@effect/vitest>vitest': '-'
   '@expo/dom-webview': 57.0.1
@@ -87,10 +85,10 @@ overrides:
 packageExtensionsChecksum: sha256-k/dT9NFDl5hihRPaoFKeY11hzyutMFs5psfZLFiKJic=
 
 patchedDependencies:
-  '@clerk/expo@4.2.0': 72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1
+  '@clerk/expo@4.6.6': a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb
   '@effect/vitest@4.0.0-rc.112': a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b
   '@expo/metro-config@57.0.12': 96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2
-  '@ff-labs/fff-node@0.9.4': ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368
+  '@ff-labs/fff-node@0.9.4': c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8
   '@legendapp/list@3.3.5': 680cc6a5c5b4a4032e467e7b3fde22f89a84c0ee2e6eac6fda737d6277cc0806
   '@pierre/diffs@1.3.0-beta.10': 0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
@@ -131,8 +129,8 @@ importers:
   apps/desktop:
     dependencies:
       '@clerk/electron':
-        specifier: 0.0.37
-        version: 0.0.37(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.42
+        version: 0.0.42(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron-passkeys':
         specifier: 0.0.3
         version: 0.0.3
@@ -232,8 +230,8 @@ importers:
   apps/mobile:
     dependencies:
       '@clerk/expo':
-        specifier: 4.2.0
-        version: 4.2.0(patch_hash=72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1)(dbc31631339ce74330e188d5d7a88158)
+        specifier: 4.6.6
+        version: 4.6.6(patch_hash=a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb)(dbc31631339ce74330e188d5d7a88158)
       '@effect/atom-react':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(react@19.2.3)(scheduler@0.27.0)
@@ -499,21 +497,15 @@ importers:
       '@anthropic-ai/claude-agent-sdk':
         specifier: ^0.3.260
         version: 0.3.260(@anthropic-ai/sdk@0.93.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.29.0(zod@4.4.3))(zod@4.4.3)
-      '@effect/platform-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
       '@effect/platform-node':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(redis@6.2.1)(utf-8-validate@6.0.6)
       '@effect/platform-node-shared':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)
-      '@effect/sql-sqlite-bun':
-        specifier: 4.0.0-rc.112
-        version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@ff-labs/fff-node':
         specifier: 0.9.4
-        version: 0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)
+        version: 0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)
       '@opencode-ai/sdk':
         specifier: ^1.3.15
         version: 1.15.13
@@ -557,9 +549,6 @@ importers:
       '@t3tools/web':
         specifier: workspace:*
         version: link:../web
-      '@types/bun':
-        specifier: 1.3.14
-        version: 1.3.14
       '@types/node':
         specifier: 24.12.4
         version: 24.12.4
@@ -580,13 +569,16 @@ importers:
     dependencies:
       '@base-ui/react':
         specifier: ^1.4.1
-        version: 1.5.0(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        version: 1.5.0(@date-fns/tz@1.5.0)(@types/react@19.2.16)(date-fns@4.4.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/electron':
-        specifier: 0.0.37
-        version: 0.0.37(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 0.0.42
+        version: 0.0.42(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@clerk/react':
-        specifier: 6.14.7
-        version: 6.14.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 6.15.2
+        version: 6.15.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@daypicker/react':
+        specifier: ^10.0.1
+        version: 10.0.1(@types/react@19.2.16)(react@19.2.6)
       '@dnd-kit/core':
         specifier: ^6.3.1
         version: 6.3.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -763,8 +755,8 @@ importers:
   infra/relay:
     dependencies:
       '@clerk/backend':
-        specifier: 3.14.0
-        version: 3.14.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+        specifier: 3.17.2
+        version: 3.17.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@effect/sql-pg':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
@@ -1069,7 +1061,7 @@ packages:
     resolution: {integrity: sha512-rH5BFh0Xq7aExpSpITyQbC+Jqfc9XgwJXidHVHTi1tNRC6/KAWg4tOzBfwiFIxljFLLYcApzlYFvLa/fTYcEjw==}
     peerDependencies:
       '@distilled.cloud/cloudflare': 1.0.0-rc.8
-      '@effect/platform-bun': 4.0.0-rc.112
+      '@effect/platform-bun': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/platform-node': 4.0.0-rc.112
       effect: 4.0.0-rc.112
       rolldown: 1.2.5
@@ -1809,12 +1801,12 @@ packages:
     resolution: {integrity: sha512-y7/yvZ2TPAnR9+jnc00klvNNLkJiXFFrQA/hlLCcxA9a2A4zQIOimyFQ9XfwYKiGD1fb5GY8vbKIIgO8d5Tb2A==}
     engines: {node: '>= 20.12.0'}
 
-  '@clerk/backend@3.14.0':
-    resolution: {integrity: sha512-WsphTvDFHDuQilKI7dyVE5qmt7USu8qSrujAq6SqpEHbVFfNBfINDNuzxlF9M2skOTfHFfgiTE8Jjb1egIBGLg==}
+  '@clerk/backend@3.17.2':
+    resolution: {integrity: sha512-pQz/+ClFBcL4OijAX3gDcXQYNqr1JbabAqY8szuU8/Dcvuuk3WgUmQDGyIU0tIqmitdd17RLppDmhN088pADew==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/clerk-js@6.30.1':
-    resolution: {integrity: sha512-ipsUhTf1uPJ5az4eiLOCM1Qz8z0I4kl54N6RtnL3VbxezwptPEUHx1PlHnHKUjTCV/PHNVq/3vht9w+8VLOoHw==}
+  '@clerk/clerk-js@6.31.1':
+    resolution: {integrity: sha512-qSk35+vm0J7ZEf7dcbywBC4VjNtWgZDU4PMipgHS/PIEy9Txyddt0OFJ6U1Gzgvz69zUcUJGttP0I0KpbiSvhQ==}
     engines: {node: '>=20.9.0'}
 
   '@clerk/electron-passkeys-darwin-arm64@0.0.3':
@@ -1841,8 +1833,8 @@ packages:
     resolution: {integrity: sha512-OHhIe88qDL+FxyBalXdXNHAS5eEramr6Rerp+6iNkfkjqT8rx4hHNmfpmjg5/T1/am8QfknbOBZkqoXZlCrjPg==}
     engines: {node: '>=20.9.0'}
 
-  '@clerk/electron@0.0.37':
-    resolution: {integrity: sha512-NsATM6rMISdL1K3mlKVPqZpDUA4h+uWmbGv8h9PK3zYfnwMgSpDKRX2y341Lt0fhz+eWkZpMU5SQmlZPNqwiww==}
+  '@clerk/electron@0.0.42':
+    resolution: {integrity: sha512-8/1EPsSsnYFb3aEbmFPGThKrtBP/uRal1rO6aafnsn9lSHpeje2E/f61GRuvfan3ErG65BQf6g8grVUb507Nvg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/electron-passkeys': 0.0.3
@@ -1858,8 +1850,8 @@ packages:
       react-dom:
         optional: true
 
-  '@clerk/expo@4.2.0':
-    resolution: {integrity: sha512-S2TYZn1Tltm/gXfe9J1NCuLRCmQX/3gfD0c+i/B1RWGbIJpSZX7KGRzvW70ABaqrK9IUcribLVmMN6unmpuCtQ==}
+  '@clerk/expo@4.6.6':
+    resolution: {integrity: sha512-q+cRM0q1lY1SbxTrdxvDPzr/abmjb1OKHEf+m4Y2/cJeG5aQ7mf/mXNEc64V+QnwvxSgrd32arP6SIEUQI3ZAQ==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       '@clerk/expo-google-signin': '>=0.1.0'
@@ -1897,15 +1889,15 @@ packages:
       react-dom:
         optional: true
 
-  '@clerk/react@6.14.7':
-    resolution: {integrity: sha512-+d+VqD4nZR3vBn5UU++H96zloHFDe+Ll0sGwMmLXnHtoIs9oMx91GaGXzXo9rU83kl660EfAmgeWcsLMfWnOYg==}
+  '@clerk/react@6.15.2':
+    resolution: {integrity: sha512-7oI6Mcfzrlsnrz8JXNyXLgjK1uhO9mTEg2ut0bUfcgXwUSAqY6QG+/UGXUV/hHeeLKOrxrnOe6gQ8/TT4RQvwg==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
       react-dom: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
 
-  '@clerk/shared@4.30.1':
-    resolution: {integrity: sha512-Mawatm7CTKZXBqIW8t/z9LfoAKgOHtRRxROpnJ4VIkTdgzj/mmAZhPOPjzUttPXXtulR1uLWisvQXEMNeF/jTQ==}
+  '@clerk/shared@4.31.1':
+    resolution: {integrity: sha512-j3cDEZ/j7r5tAv4mmo2JhpFRtL1z0JghjCgvBJjZSR6Q4ZVIlwd2Bv0loM+opKReeN17H30u1/WHEBl7pZuxrw==}
     engines: {node: '>=20.9.0'}
     peerDependencies:
       react: ^18.0.0 || ~19.0.3 || ~19.1.4 || ~19.2.3 || ~19.3.0-0
@@ -2002,6 +1994,19 @@ packages:
   '@crowecawcaw/xa11y@0.13.0':
     resolution: {integrity: sha512-WTYHwlBhImGmmMt81crxaRvNdZXlBNemFyrP5GGHj2WeDTJMBrHgHTaladTypXHXrviFFBBGROl5moijRQ4ODA==}
     engines: {node: '>=18'}
+
+  '@date-fns/tz@1.5.0':
+    resolution: {integrity: sha512-lwYN/vDPeNRULcepoE/LO2Pgx+7/RV+S9ARfbc9lr2DtGkOD7pAiruHvbR1RX3Qyf6ja47EWJDMsNK5vK08DJg==}
+
+  '@daypicker/react@10.0.1':
+    resolution: {integrity: sha512-lH4YQz4iMBWP8hsI1bD9Eg0T7t503IkSUR/WDGGkV5mKZvwVv+ukCkJz7yN+uVFBv7vHTK+ww7a5EvlkeFwPYQ==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   '@distilled.cloud/aws@1.0.0-rc.8':
     resolution: {integrity: sha512-eL4tRACU4TSykk/6+ItwUTZs93r3tRlrBn36ohqaUxqYYOfmssYlt/SLCzos4nlLgCxb+1T6BAstgYC848v1EQ==}
@@ -5247,8 +5252,8 @@ packages:
     resolution: {integrity: sha512-qhCRSFei0hokQr3xYcQXqxsRD/LKlgHCxHXtKHrQoImp4x2Zu6tUOpUGVH4y2qexIrzSu3aibQBNNfC3Eay6Mg==}
     engines: {node: '>=18'}
 
-  '@tanstack/query-core@5.100.14':
-    resolution: {integrity: sha512-5X41dGpxgeaHISCRW2oYwcSycZeULZzAunaudXT9ov1KOTj9xwt0CH6hbwqP1/z74ZWF7rYFnDpyYH07XFcZew==}
+  '@tanstack/query-core@5.102.8':
+    resolution: {integrity: sha512-ZNjkJ33CqvPNec/6lZBnHqLc3EVGPZ9ySLhYahU9TcuRFdmwXewuj0c4hwSWcGHqEUwcSrKeZ+oGcvPBqXcQcg==}
 
   '@tanstack/react-pacer@0.19.4':
     resolution: {integrity: sha512-coj8ULAuR0qFpjAKD44gTgRuZyjxU6Xu+IX5MwwYvr4e61OtZcJshaExoOBKpCGde0Edb12jDnzzj2Im13Qm9Q==}
@@ -5352,9 +5357,6 @@ packages:
 
   '@types/body-parser@1.19.6':
     resolution: {integrity: sha512-HLFeCYgz89uk22N5Qg3dvGvsv46B8GLvKKo1zKG4NybA8U2DiEO3w9lqGg29t/tfLRJpJ6iQxnVw4OnB7MoM9g==}
-
-  '@types/bun@1.3.14':
-    resolution: {integrity: sha512-h1hFqFVcvAvD9j9K7ZW7vd82aSA+rTdznZa+5bwvCwqSB1jmmfLcbIWhOLx1/+boy/xmjgCs/OMUL8hRJSmnPw==}
 
   '@types/cacheable-request@6.0.3':
     resolution: {integrity: sha512-IQ3EbTzGxIigb1I3qPZc1rWJnH0BmSKv5QYTalEwweFvyBDLSAe24zP0le/hyi7ecGfZVlIVAg4BZqb8WBwKqw==}
@@ -6093,7 +6095,7 @@ packages:
     peerDependencies:
       '@alchemy.run/frontend-frameworks': 2.0.0-beta.76
       '@aws/durable-execution-sdk-js': ^2.1.0
-      '@effect/platform-bun': 4.0.0-rc.112
+      '@effect/platform-bun': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/platform-node': 4.0.0-rc.112
       '@effect/sql-mysql2': '>=4.0.0-rc.112 || >=4.0.0'
       '@effect/sql-pg': 4.0.0-rc.112
@@ -6806,6 +6808,9 @@ packages:
     resolution: {integrity: sha512-1+BhOB8ahCn4O0cep0Sh2l9KCOfOdY+BXJnKMHFFzDEouSr/el18QwXEMRlOj9UY5nCeA8UN3a/82rUWRBeyBw==}
     engines: {node: ^12.20.0 || ^14.13.1 || >=16.0.0}
 
+  date-fns@4.4.0:
+    resolution: {integrity: sha512-+1UMbeh68lH1SegH83CGWwpb6OHHbpSgr3+s5Eww5M4CAgswBpoWS0AjTOfEJ33HiYKz1hdj/KTFprzXHmq/6w==}
+
   dbus-next@0.10.2:
     resolution: {integrity: sha512-kLNQoadPstLgKKGIXKrnRsMgtAK/o+ix3ZmcfTfvBHzghiO9yHXpoKImGnB50EXwnfSFaSAullW/7UrSkAISSQ==}
 
@@ -6973,7 +6978,7 @@ packages:
       '@effect/sql-mysql2': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-pg': 4.0.0-rc.112
       '@effect/sql-pglite': '>=4.0.0-beta.105 || >=4.0.0'
-      '@effect/sql-sqlite-bun': 4.0.0-rc.112
+      '@effect/sql-sqlite-bun': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-do': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-node': '>=4.0.0-beta.105 || >=4.0.0'
       '@effect/sql-sqlite-wasm': '>=4.0.0-beta.105 || >=4.0.0'
@@ -8293,9 +8298,8 @@ packages:
   js-base64@3.7.8:
     resolution: {integrity: sha512-hNngCeKxIUQiEUN3GPJOkz4wF/YvdUdbNL9hsBcMQTkKzboD7T/q3OYOuuPZLUE6dBxSGpwhk5mwuDud7JVAow==}
 
-  js-cookie@3.0.7:
-    resolution: {integrity: sha512-z/wZZgDrkNV1eA0ULjM/F9/50Ya8fbzgKneSpoPsXSGd0KnpdtHfOZWK+GcwLk+EZbS4F9RBhU+K2RgzuDaItw==}
-    engines: {node: '>=20'}
+  js-cookie@3.0.8:
+    resolution: {integrity: sha512-yeJd4aNAdYZQjaon2bpD/Gb0B/omw7HQOsynXXcOiWVCacbBcPlgn8S/d1X6blFSaHao7ozqtW7NZW19xpCtIw==}
 
   js-tokens@4.0.0:
     resolution: {integrity: sha512-RdJUflcE3cUzKiMqQgsCu06FPu9UdIJO0beYbPhHN4k6apgJtifcoCtT9bcxOpYBtpD2kCM6Sbzg4CausW/PKQ==}
@@ -9654,6 +9658,16 @@ packages:
   raw-body@3.0.2:
     resolution: {integrity: sha512-K5zQjDllxWkf7Z5xJdV0/B0WTNqx6vxG70zJE4N0kBs4LovmEYWJzQGxC9bS9RAKu3bgM40lrd5zoLJ12MQ5BA==}
     engines: {node: '>= 0.10'}
+
+  react-day-picker@10.0.1:
+    resolution: {integrity: sha512-eNh6BlwcYInWaJtRv18mXQ06Ys/H6rdTZAnTaSdOYJuTpwP1JMCHNd1FDRadA+gbeinq+psdULN5Xnowy9mV8w==}
+    engines: {node: '>=18'}
+    peerDependencies:
+      '@types/react': '>=16.8.0'
+      react: '>=16.8.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
 
   react-devtools-core@6.1.5:
     resolution: {integrity: sha512-ePrwPfxAnB+7hgnEr8vpKxL9cmnp7F322t8oqcPshbIQQhDKgFDW4tjhF2wjVbdXF9O/nyuy3sQWd9JGpiLPvA==}
@@ -12278,7 +12292,7 @@ snapshots:
       '@babel/helper-string-parser': 7.29.7
       '@babel/helper-validator-identifier': 7.29.7
 
-  '@base-ui/react@1.5.0(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@base-ui/react@1.5.0(@date-fns/tz@1.5.0)(@types/react@19.2.16)(date-fns@4.4.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
       '@babel/runtime': 7.29.7
       '@base-ui/utils': 0.2.9(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
@@ -12288,7 +12302,9 @@ snapshots:
       react-dom: 19.2.6(react@19.2.6)
       use-sync-external-store: 1.6.0(react@19.2.6)
     optionalDependencies:
+      '@date-fns/tz': 1.5.0
       '@types/react': 19.2.16
+      date-fns: 4.4.0
 
   '@base-ui/utils@0.2.9(@types/react@19.2.16)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
@@ -12377,21 +12393,21 @@ snapshots:
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
-  '@clerk/backend@3.14.0(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/backend@3.17.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       standardwebhooks: 1.0.0
       tslib: 2.8.1
     transitivePeerDependencies:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/clerk-js@6.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
-      '@tanstack/query-core': 5.100.14
+      '@tanstack/query-core': 5.102.8
       '@zxcvbn-ts/core': 3.0.4
       '@zxcvbn-ts/language-common': 3.0.4
       alien-signals: 2.0.6
@@ -12403,12 +12419,12 @@ snapshots:
       - react
       - react-dom
 
-  '@clerk/clerk-js@6.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/clerk-js@6.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       '@stripe/stripe-js': 5.6.0
       '@swc/helpers': 0.5.21
-      '@tanstack/query-core': 5.100.14
+      '@tanstack/query-core': 5.102.8
       '@zxcvbn-ts/core': 3.0.4
       '@zxcvbn-ts/language-common': 3.0.4
       alien-signals: 2.0.6
@@ -12439,11 +12455,11 @@ snapshots:
       '@clerk/electron-passkeys-win32-arm64-msvc': 0.0.3
       '@clerk/electron-passkeys-win32-x64-msvc': 0.0.3
 
-  '@clerk/electron@0.0.37(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/electron@0.0.42(@clerk/electron-passkeys@0.0.3)(electron-store@8.2.0)(electron@44.1.0)(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/clerk-js': 6.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@clerk/react': 6.14.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
-      '@clerk/shared': 4.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/clerk-js': 6.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/react': 6.15.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       electron: 44.1.0
       react: 19.2.6
       tslib: 2.8.1
@@ -12452,11 +12468,11 @@ snapshots:
       electron-store: 8.2.0
       react-dom: 19.2.6(react@19.2.6)
 
-  '@clerk/expo@4.2.0(patch_hash=72e426f44fc1cde16fc2cbba3d1e96cdca7c6d957faa73d0fe6b43948608a6c1)(dbc31631339ce74330e188d5d7a88158)':
+  '@clerk/expo@4.6.6(patch_hash=a82bb41039ee88a290a87d4ab58be7be4c49fa338603b17ea646e1ec140a1cfb)(dbc31631339ce74330e188d5d7a88158)':
     dependencies:
-      '@clerk/clerk-js': 6.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/react': 6.14.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
-      '@clerk/shared': 4.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/clerk-js': 6.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/react': 6.15.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       '@expo/config-plugins': 57.0.9(typescript@7.0.2)
       base-64: 1.0.0
       expo: 57.0.18(fc5a731e35a0144aab60c7305f29cbed)
@@ -12475,36 +12491,36 @@ snapshots:
       - supports-color
       - typescript
 
-  '@clerk/react@6.14.7(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/react@6.15.2(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@clerk/shared': 4.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
+      '@clerk/shared': 4.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
       tslib: 2.8.1
 
-  '@clerk/react@6.14.7(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/react@6.15.2(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@clerk/shared': 4.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
+      '@clerk/shared': 4.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
       tslib: 2.8.1
 
-  '@clerk/shared@4.30.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
+  '@clerk/shared@4.31.1(react-dom@19.2.3(react@19.2.3))(react@19.2.3)':
     dependencies:
-      '@tanstack/query-core': 5.100.14
+      '@tanstack/query-core': 5.102.8
       dequal: 2.0.3
       glob-to-regexp: 0.4.1
-      js-cookie: 3.0.7
+      js-cookie: 3.0.8
     optionalDependencies:
       react: 19.2.3
       react-dom: 19.2.3(react@19.2.3)
 
-  '@clerk/shared@4.30.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
+  '@clerk/shared@4.31.1(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
-      '@tanstack/query-core': 5.100.14
+      '@tanstack/query-core': 5.102.8
       dequal: 2.0.3
       glob-to-regexp: 0.4.1
-      js-cookie: 3.0.7
+      js-cookie: 3.0.8
     optionalDependencies:
       react: 19.2.6
       react-dom: 19.2.6(react@19.2.6)
@@ -12560,6 +12576,15 @@ snapshots:
       '@crowecawcaw/xa11y-linux-x64-gnu': 0.13.0
       '@crowecawcaw/xa11y-win32-arm64-msvc': 0.13.0
       '@crowecawcaw/xa11y-win32-x64-msvc': 0.13.0
+
+  '@date-fns/tz@1.5.0': {}
+
+  '@daypicker/react@10.0.1(@types/react@19.2.16)(react@19.2.6)':
+    dependencies:
+      react: 19.2.6
+      react-day-picker: 10.0.1(@types/react@19.2.16)(react@19.2.6)
+    optionalDependencies:
+      '@types/react': 19.2.16
 
   '@distilled.cloud/aws@1.0.0-rc.8(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
@@ -12675,6 +12700,7 @@ snapshots:
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
+    optional: true
 
   '@effect/platform-node-shared@4.0.0-rc.112(bufferutil@4.1.0)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))(utf-8-validate@6.0.6)':
     dependencies:
@@ -12715,6 +12741,7 @@ snapshots:
   '@effect/sql-sqlite-bun@4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
       effect: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
+    optional: true
 
   '@effect/sql-sqlite-do@4.0.0-rc.112(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
@@ -13664,7 +13691,7 @@ snapshots:
   '@ff-labs/fff-bin-win32-x64@0.9.4':
     optional: true
 
-  '@ff-labs/fff-node@0.9.4(patch_hash=ab9ff544009e1891cfe3930105862d3699007f38922a79f3c98d90018deca368)':
+  '@ff-labs/fff-node@0.9.4(patch_hash=c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8)':
     dependencies:
       ffi-rs: 1.3.2
     optionalDependencies:
@@ -15705,7 +15732,7 @@ snapshots:
       '@tanstack/devtools-event-client': 0.4.3
       '@tanstack/store': 0.8.1
 
-  '@tanstack/query-core@5.100.14': {}
+  '@tanstack/query-core@5.102.8': {}
 
   '@tanstack/react-pacer@0.19.4(react-dom@19.2.6(react@19.2.6))(react@19.2.6)':
     dependencies:
@@ -15847,10 +15874,6 @@ snapshots:
     dependencies:
       '@types/connect': 3.4.38
       '@types/node': 24.12.4
-
-  '@types/bun@1.3.14':
-    dependencies:
-      bun-types: 1.3.14
 
   '@types/cacheable-request@6.0.3':
     dependencies:
@@ -17009,6 +17032,7 @@ snapshots:
   bun-types@1.3.14:
     dependencies:
       '@types/node': 24.12.4
+    optional: true
 
   bytes@3.1.2: {}
 
@@ -17352,6 +17376,8 @@ snapshots:
   csstype@3.2.3: {}
 
   culori@4.0.2: {}
+
+  date-fns@4.4.0: {}
 
   dbus-next@0.10.2(patch_hash=cfff57561b0ee59b5addb3b2e6c6f20906e967507a530ab67e8db8108e520ba4):
     dependencies:
@@ -19083,7 +19109,7 @@ snapshots:
 
   js-base64@3.7.8: {}
 
-  js-cookie@3.0.7: {}
+  js-cookie@3.0.8: {}
 
   js-tokens@4.0.0: {}
 
@@ -20883,6 +20909,14 @@ snapshots:
       http-errors: 2.0.1
       iconv-lite: 0.7.2
       unpipe: 1.0.0
+
+  react-day-picker@10.0.1(@types/react@19.2.16)(react@19.2.6):
+    dependencies:
+      '@date-fns/tz': 1.5.0
+      date-fns: 4.4.0
+      react: 19.2.6
+    optionalDependencies:
+      '@types/react': 19.2.16
 
   react-devtools-core@6.1.5(bufferutil@4.1.0)(utf-8-validate@6.0.6):
     dependencies:

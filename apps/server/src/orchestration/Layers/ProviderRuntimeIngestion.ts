@@ -1,6 +1,5 @@
 import {
   ApprovalRequestId,
-  type AssistantDeliveryMode,
   CommandId,
   MessageId,
   type OrchestrationEvent,
@@ -14,7 +13,9 @@ import {
   TurnId,
   type OrchestrationCheckpointSummary,
   type OrchestrationThreadActivity,
+  type ProjectId,
   type ProviderRuntimeEvent,
+  type ResponseStreamingMode,
   RuntimeRequestId,
 } from "@t3tools/contracts";
 import * as Cache from "effect/Cache";
@@ -193,13 +194,20 @@ const MARKDOWN_FENCE_PATTERN = /^( *)(`{3,}|~{3,})/;
 // CommonMark blank lines hold only spaces and tabs. Other whitespace, such as
 // a no-break space, is paragraph content.
 const BLANK_LINE_PATTERN = /^[ \t]*$/;
+// A bullet or ordered marker followed by whitespace, at any indentation so
+// nested items count. The trailing space is required, so a partial `-` or
+// `1.` never matches before the model finishes the marker.
+const LIST_ITEM_START_PATTERN = /^[ \t]*(?:[-*+]|\d{1,9}[.)])[ \t]/;
 
 /**
- * Splits buffered assistant text at the last blank line or closing code fence
- * that is not inside an open fenced code block. `ready` is safe to deliver now
- * because the markdown before it will not change shape as more text arrives.
- * `rest` stays buffered until the next boundary or completion. Only fully
- * terminated lines count, so a trailing partial line never leaks.
+ * Splits buffered assistant text at the last blank line, closing code fence,
+ * or list item start that is not inside an open fenced code block. `ready` is
+ * safe to deliver now because the markdown before it will not change shape as
+ * more text arrives. `rest` stays buffered until the next boundary or
+ * completion. Only fully terminated lines count, so a trailing partial line
+ * never leaks; a list item start is the one lookahead that may sit on the
+ * partial line, since tight lists have no blank lines between items and would
+ * otherwise land all at once.
  */
 export function splitBufferedAssistantText(text: string): { ready: string; rest: string } {
   let openFence: { marker: string; indent: number } | null = null;
@@ -207,10 +215,15 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   let lineStart = 0;
   for (;;) {
     const newline = text.indexOf("\n", lineStart);
+    const line = text
+      .slice(lineStart, newline === -1 ? text.length : newline)
+      .replace(/[ \t\r]+$/, "");
+    if (openFence === null && lineStart > 0 && LIST_ITEM_START_PATTERN.test(line)) {
+      boundary = lineStart;
+    }
     if (newline === -1) {
       break;
     }
-    const line = text.slice(lineStart, newline).replace(/[ \t\r]+$/, "");
     const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
     if (fenceMatch) {
       const indent = fenceMatch[1]!.length;
@@ -1167,7 +1180,19 @@ const make = Effect.gen(function* () {
       });
     });
 
-  const appendBufferedAssistantText = (messageId: MessageId, delta: string, atMillis: number) =>
+  const resolveResponseStreamingMode = (projectId: ProjectId) =>
+    Effect.map(
+      serverSettingsService.getSettings,
+      (settings) => resolveProjectSettings(settings, projectId).settings.responseStreamingMode,
+    );
+
+  // `mode` is "turn" or "paragraph"; token mode never buffers.
+  const appendBufferedAssistantText = (
+    messageId: MessageId,
+    delta: string,
+    mode: Exclude<ResponseStreamingMode, "token">,
+    atMillis: number,
+  ) =>
     Cache.getOption(bufferedAssistantTextByMessageId, messageId).pipe(
       Effect.flatMap((existingText) =>
         Effect.gen(function* () {
@@ -1176,9 +1201,13 @@ const make = Effect.gen(function* () {
             onSome: (text) => `${text}${delta}`,
           });
 
-          // Deliver finished paragraphs and closed code blocks early so the
-          // user sees progress without token-by-token repaints.
-          const { ready, rest } = splitBufferedAssistantText(nextText);
+          // Paragraph mode delivers finished paragraphs and closed code blocks
+          // early so the user sees progress without token-by-token repaints.
+          // Turn mode holds everything until the turn finishes or pauses.
+          const { ready, rest } =
+            mode === "paragraph"
+              ? splitBufferedAssistantText(nextText)
+              : { ready: "", rest: nextText };
           const lastDeliveredAt = Option.getOrUndefined(
             yield* Cache.getOption(lastAssistantDeliveryAtByMessageId, messageId),
           );
@@ -1757,19 +1786,14 @@ const make = Effect.gen(function* () {
           yield* rememberAssistantMessageId(thread.id, turnId, assistantMessageId);
         }
 
-        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
-          serverSettingsService.getSettings,
-          (settings) =>
-            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
-              ? "streaming"
-              : "buffered",
-        );
-        if (assistantDeliveryMode === "buffered") {
+        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
+        if (streamingMode !== "token") {
           // Pace on the server clock. OpenCode stamps every delta of a part
           // with the part's start time, so the event time cannot measure gaps.
           const spillChunk = yield* appendBufferedAssistantText(
             assistantMessageId,
             assistantDelta,
+            streamingMode,
             yield* Clock.currentTimeMillis,
           );
           if (spillChunk.length > 0) {
@@ -1807,15 +1831,9 @@ const make = Effect.gen(function* () {
           turnId: pauseForUserTurnId,
           streamingOnly: true,
         });
-        const assistantDeliveryMode: AssistantDeliveryMode = yield* Effect.map(
-          serverSettingsService.getSettings,
-          (settings) =>
-            resolveProjectSettings(settings, thread.projectId).settings.enableLegacyTokenStreaming
-              ? "streaming"
-              : "buffered",
-        );
+        const streamingMode = yield* resolveResponseStreamingMode(thread.projectId);
         const flushedMessageIds =
-          assistantDeliveryMode === "buffered"
+          streamingMode !== "token"
             ? yield* flushBufferedAssistantMessagesForTurn({
                 event,
                 threadId: thread.id,

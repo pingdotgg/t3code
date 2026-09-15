@@ -1,39 +1,15 @@
-import type { ProjectIconColor } from "@t3tools/contracts";
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import {
-  BotIcon,
-  BookOpenIcon,
-  BracesIcon,
-  CircuitBoardIcon,
-  CloudCogIcon,
-  Code2Icon,
-  DatabaseIcon,
-  FlaskConicalIcon,
-  FolderCodeIcon,
-  Gamepad2Icon,
-  Globe2Icon,
-  ImageIcon,
-  Layers3Icon,
-  MonitorIcon,
-  MusicIcon,
-  PackageIcon,
-  ServerIcon,
-  ShieldCheckIcon,
-  ShoppingBagIcon,
-  SmartphoneIcon,
-  TerminalIcon,
-  VideoIcon,
-} from "lucide-react";
+import { FolderCodeIcon } from "lucide-react";
 import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
 import { lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom } from "../state/assets";
-import { selectProjectIcon, type ProjectIconName } from "../projectIconModel";
+import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
@@ -45,56 +21,6 @@ function DynamicProjectIconFallback() {
   return <FolderCodeIcon className="size-full text-[inherit]" />;
 }
 
-const PROJECT_ICONS: Record<ProjectIconName, ComponentType<{ className?: string }>> = {
-  ai: BotIcon,
-  book: BookOpenIcon,
-  braces: BracesIcon,
-  circuit: CircuitBoardIcon,
-  cloud: CloudCogIcon,
-  code: Code2Icon,
-  database: DatabaseIcon,
-  desktop: MonitorIcon,
-  "folder-code": FolderCodeIcon,
-  game: Gamepad2Icon,
-  image: ImageIcon,
-  layers: Layers3Icon,
-  mobile: SmartphoneIcon,
-  music: MusicIcon,
-  package: PackageIcon,
-  security: ShieldCheckIcon,
-  server: ServerIcon,
-  shopping: ShoppingBagIcon,
-  terminal: TerminalIcon,
-  test: FlaskConicalIcon,
-  video: VideoIcon,
-  web: Globe2Icon,
-};
-
-const PROJECT_ICON_COLOR_BY_NAME: Record<ProjectIconName, ProjectIconColor> = {
-  ai: "violet",
-  book: "amber",
-  braces: "purple",
-  circuit: "teal",
-  cloud: "sky",
-  code: "blue",
-  database: "cyan",
-  desktop: "indigo",
-  "folder-code": "orange",
-  game: "emerald",
-  image: "pink",
-  layers: "fuchsia",
-  mobile: "lime",
-  music: "fuchsia",
-  package: "orange",
-  security: "teal",
-  server: "blue",
-  shopping: "rose",
-  terminal: "green",
-  test: "yellow",
-  video: "red",
-  web: "sky",
-};
-
 // The slice of a project that decides its icon. Every surface must pass the
 // project record itself (or a snapshot spread from it) so the saved title, favicon
 // and icon override always travel together. Passing a display label as the title
@@ -103,7 +29,6 @@ export type ProjectFaviconProject = Pick<
   EnvironmentProject,
   "environmentId" | "workspaceRoot" | "title" | "faviconPath" | "projectIcon"
 >;
-
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
   className?: string | undefined;
@@ -118,7 +43,13 @@ export function ProjectFavicon(input: {
     }),
   );
   if (project.projectIcon?.kind === "emoji") {
-    return <ProjectFaviconFallback className={input.className} emoji={project.projectIcon.emoji} />;
+    return (
+      <ProjectFaviconFallback
+        className={input.className}
+        icon={FolderCodeIcon}
+        emoji={project.projectIcon.emoji}
+      />
+    );
   }
   if (project.projectIcon?.kind === "lucide") {
     const colorClassName = projectIconColorClassName(project.projectIcon.color);
@@ -139,25 +70,14 @@ export function ProjectFavicon(input: {
       </span>
     );
   }
-  const automaticIconName = input.fallbackIcon
-    ? null
-    : selectProjectIcon(project.title, project.workspaceRoot);
-  const FallbackIcon =
-    input.fallbackIcon ??
-    (automaticIconName?.kind === "lucide" ? PROJECT_ICONS[automaticIconName.icon] : undefined);
-  const fallbackEmoji = automaticIconName?.kind === "emoji" ? automaticIconName.emoji : undefined;
-  const fallbackColorClassName =
-    automaticIconName?.kind === "lucide"
-      ? projectIconColorClassName(PROJECT_ICON_COLOR_BY_NAME[automaticIconName.icon])
-      : undefined;
+  const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
     return (
       <ProjectFaviconFallback
         className={input.className}
-        colorClassName={fallbackColorClassName}
         icon={FallbackIcon}
-        emoji={fallbackEmoji}
+        projectName={project.title}
       />
     );
   }
@@ -174,23 +94,70 @@ export function ProjectFavicon(input: {
       src={src}
       className={input.className}
       fallbackIcon={FallbackIcon}
-      fallbackEmoji={fallbackEmoji}
-      fallbackColorClassName={fallbackColorClassName}
+      fallbackProjectName={project.title}
     />
   );
 }
 
 function ProjectFaviconFallback({
   className,
-  colorClassName,
   icon: Icon,
   emoji,
+  projectName,
 }: {
   readonly className?: string | undefined;
-  readonly colorClassName?: string | undefined;
-  readonly icon?: ComponentType<{ className?: string }> | undefined;
+  readonly icon: ComponentType<{ className?: string }>;
   readonly emoji?: string | undefined;
+  readonly projectName?: string | undefined;
 }) {
+  if (projectName && projectName.trim().length > 0) {
+    const identity = deriveProjectIdentity(projectName);
+    // Wrapped like the emoji and Lucide branches so the monogram sits where an
+    // <img> favicon would. Menu items, buttons and the like pull every bare svg
+    // in with [&_svg]:-mx-0.5 to trim the padding stroke icons carry, and this
+    // tile has no such padding.
+    return (
+      <span
+        aria-hidden="true"
+        className={cn("inline-flex size-4 shrink-0 items-center justify-center", className)}
+      >
+        <svg
+          viewBox="0 0 16 16"
+          className="size-full overflow-hidden rounded-[25%] font-mono select-none"
+          style={{
+            backgroundColor: identity.background,
+            backgroundImage: `linear-gradient(145deg, ${identity.highlight}, ${identity.background} 72%)`,
+          }}
+        >
+          <text
+            x="8"
+            y="10.8"
+            textAnchor="middle"
+            fill="white"
+            className="font-mono"
+            fontSize="8.25"
+            fontWeight="700"
+            textLength="12"
+            lengthAdjust="spacingAndGlyphs"
+            textRendering="geometricPrecision"
+          >
+            {identity.monogram}
+          </text>
+          <rect
+            x="0.25"
+            y="0.25"
+            width="15.5"
+            height="15.5"
+            rx="3.75"
+            fill="none"
+            strokeWidth="0.5"
+            className="stroke-black/10 dark:stroke-white/10"
+          />
+        </svg>
+      </span>
+    );
+  }
+
   if (emoji) {
     return (
       <span
@@ -205,22 +172,19 @@ function ProjectFaviconFallback({
     );
   }
 
-  if (!Icon) return null;
-  return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", colorClassName, className)} />;
+  return <Icon className={cn("size-3.5 shrink-0 text-icon-muted", className)} />;
 }
 
 function ProjectFaviconImage({
   src,
   className,
   fallbackIcon: FallbackIcon,
-  fallbackEmoji,
-  fallbackColorClassName,
+  fallbackProjectName,
 }: {
   readonly src: string;
   readonly className?: string | undefined;
-  readonly fallbackIcon?: ComponentType<{ className?: string }> | undefined;
-  readonly fallbackEmoji?: string | undefined;
-  readonly fallbackColorClassName?: string | undefined;
+  readonly fallbackIcon: ComponentType<{ className?: string }>;
+  readonly fallbackProjectName?: string | undefined;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
     src.startsWith("data:image/") ? src : null,
@@ -235,9 +199,8 @@ function ProjectFaviconImage({
       {displayedSrc === null ? (
         <ProjectFaviconFallback
           className={className}
-          colorClassName={fallbackColorClassName}
           icon={FallbackIcon}
-          emoji={fallbackEmoji}
+          projectName={fallbackProjectName}
         />
       ) : null}
       {displayedSrc ? (

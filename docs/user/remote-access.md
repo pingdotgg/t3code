@@ -21,8 +21,9 @@ server with `npx t3 serve`. Saving your sign-in alone does not make the machine
 reachable.
 
 On your other device, sign in to the same T3 Connect account and choose the
-environment. Over SSH, the CLI prints a browser link and accepts the returned
-authorization code, so you do not need to forward an OAuth callback port.
+environment. Over SSH, the CLI prints a browser link and a short code. Open the
+link on any device, confirm the code matches, and approve. The CLI continues on
+its own, so you do not need to forward an OAuth callback port.
 
 T3 Connect renews access credentials when needed without disconnecting a healthy
 connection. Pull request diffs and provider settings keep working after the
@@ -187,3 +188,14 @@ Include the diagnostic message and trace ID when reporting a persistent failure.
 
 For a connection that still fails after linking, check the date and time on both
 devices. For server version warnings, follow [Updating T3 Code](./updating.md).
+
+## Using the Desktop App as a Remote Only
+
+If a computer should only drive work running elsewhere, turn off its local environment. In the
+desktop app, open **Settings → Connections** and switch off **Local
+environment**. T3 Code restarts without a local server: no local agents or terminals run, WSL
+backends stay off, and other devices can no longer connect to this computer. Your projects,
+history, and saved connections are kept, and you keep working through pairing, T3 Connect, or SSH.
+
+Switch **Local environment** back on in the same place to restart with your previous local
+settings.
