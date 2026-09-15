@@ -170,13 +170,16 @@ extension is installed, the adapter observes its documented `details.results`
 shape and projects task cards with no child thread id. Unknown result shapes
 remain ordinary dynamic tool output.
 
-### Initial Provider Support
+### Provider Support
 
-The V2 provider adapters are Codex, Claude Agent SDK, Cursor Agent SDK, Grok
-plus generic registry agents over ACP, OpenCode, OpenCode 2, and Pi.
-Capability discovery still reports other registered provider instances, but marks them
-unavailable for orchestration when no V2 adapter exists. This keeps provider
-selection model-visible without allowing a request that cannot run.
+A provider instance can run child tasks when its live `ProviderInstance`
+exposes a V2 `orchestrationAdapter` — the same registration the orchestrator
+resolves when a `delegated_task.request` executes. That covers Codex, Claude
+Agent SDK, Cursor Agent SDK, Grok, generic registry agents over ACP, OpenCode,
+OpenCode 2, Pi, Antigravity, and any future driver that builds an adapter.
+Capability discovery still reports other registered provider instances, but
+marks them unavailable for orchestration when no adapter resolves. This keeps
+provider selection model-visible without allowing a request that cannot run.
 
 ## Tool Surface
 
