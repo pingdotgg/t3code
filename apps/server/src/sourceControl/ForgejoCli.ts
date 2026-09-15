@@ -119,6 +119,7 @@ export interface ForgejoRepository {
 
 export interface ForgejoApiInput extends ForgejoRepositoryInput {
   readonly path: string;
+  readonly maxOutputBytes?: number;
   readonly method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   readonly body?: unknown;
 }
@@ -340,6 +341,7 @@ export const make = Effect.gen(function* () {
       readonly cwd: string;
       readonly baseUrl: string;
       readonly token: string;
+      readonly maxOutputBytes?: number;
       readonly path: string;
       readonly method?: ForgejoApiInput["method"];
       readonly body?: string;
@@ -390,7 +392,7 @@ export const make = Effect.gen(function* () {
           ? { text: "", truncated: false, invalidUtf8: false }
           : yield* collectUint8StreamText({
               stream: response.stream,
-              maxBytes: 8 * 1024 * 1024,
+              maxBytes: input.maxOutputBytes ?? 8 * 1024 * 1024,
             });
       if (body.truncated || body.invalidUtf8)
         return yield* new ForgejoCliError({
@@ -668,6 +670,7 @@ export const make = Effect.gen(function* () {
         baseUrl: repository.baseUrl,
         token,
         path,
+        ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
         ...(input.method === undefined ? {} : { method: input.method }),
         ...(stdin === undefined ? {} : { body: stdin }),
       });
@@ -685,6 +688,7 @@ export const make = Effect.gen(function* () {
         ...(input.body === undefined ? [] : ["--data", "@-"]),
         `${repository.baseUrl}/api/v1/${path}`,
       ],
+      ...(input.maxOutputBytes === undefined ? {} : { maxOutputBytes: input.maxOutputBytes }),
       ...(stdin === undefined ? {} : { stdin }),
     });
     // tea reports HTTP failures with exit code zero; use its response status.

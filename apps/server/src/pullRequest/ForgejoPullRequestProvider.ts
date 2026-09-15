@@ -1,6 +1,9 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
+import { VcsProcess } from "../vcs/VcsProcess.ts";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
@@ -31,6 +34,8 @@ import {
   forgejoChecks,
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
+
+const quotePath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
 
 const CAPABILITIES: PullRequestCapabilities = {
   diff: true,
@@ -63,6 +68,9 @@ const reviewCommentId = (review: typeof ForgejoReview.Type) =>
 
 export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const process = yield* VcsProcess;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
       provider: "forgejo",
@@ -109,10 +117,11 @@ export const make = Effect.gen(function* () {
     input: ForgejoApiInput,
     schema: Schema.Codec<A, unknown, never, never>,
     index: number,
+    limit = 50,
   ) {
     const result = yield* request({
       ...input,
-      path: `${input.path}${input.path.includes("?") ? "&" : "?"}limit=50&page=${index}`,
+      path: `${input.path}${input.path.includes("?") ? "&" : "?"}limit=${limit}&page=${index}`,
     });
     if (result.stdoutTruncated)
       return yield* failure(input.path, "Forgejo response exceeded the output limit.");
@@ -196,6 +205,54 @@ export const make = Effect.gen(function* () {
   });
   const unsupported = (operation: string) =>
     Effect.fail(failure(operation, `Forgejo does not expose ${operation} through its API.`));
+  const resolveDiffRefs = Effect.fn("ForgejoPullRequestProvider.resolveDiffRefs")(function* (
+    input: Parameters<PullRequestProviderApi["getDiff"]>[0],
+  ) {
+    const pr = yield* getPull(input);
+    const commit = input.commit
+      ? yield* read(
+          {
+            ...input,
+            path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}`,
+          },
+          ForgejoCommit,
+        )
+      : null;
+    return {
+      oldRef: commit ? commit.parents[0]?.sha : pr.merge_base || pr.base.sha,
+      newRef: input.commit ?? pr.head.sha,
+      headRepository: pr.head.repo?.full_name ?? input.repository,
+    };
+  });
+  const getDiffFileContents = Effect.fn("ForgejoPullRequestProvider.getDiffFileContents")(
+    function* (
+      input: Parameters<NonNullable<PullRequestProviderApi["getDiffFileContents"]>>[0],
+      revisions?: { oldRef: string | undefined; newRef: string; headRepository: string },
+    ) {
+      const { oldRef, newRef, headRepository } = revisions ?? (yield* resolveDiffRefs(input));
+      const content = (repository: string, ref: string, path: string) =>
+        read(
+          {
+            ...input,
+            repository,
+            path: `${repoPath({ ...input, repository })}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`,
+          },
+          Schema.Struct({ content: Schema.String, encoding: Schema.Literal("base64") }),
+        ).pipe(Effect.map((file) => Buffer.from(file.content, "base64").toString("utf8")));
+      const [oldContents, newContents] = yield* Effect.all(
+        [
+          input.changeType === "new" || !oldRef
+            ? Effect.succeed("")
+            : content(input.repository, oldRef, input.oldPath),
+          input.changeType === "deleted"
+            ? Effect.succeed("")
+            : content(headRepository, newRef, input.newPath),
+        ],
+        { concurrency: 2 },
+      );
+      return { oldContents, newContents };
+    },
+  );
   const provider: PullRequestProviderApi = {
     kind: "forgejo",
     capabilities: CAPABILITIES,
@@ -347,56 +404,154 @@ export const make = Effect.gen(function* () {
         };
       },
     ),
-    getDiff: (input) =>
-      request({
-        ...input,
-        path: input.commit
-          ? `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}.diff`
-          : `${pullPath(input)}.diff`,
-      }).pipe(
-        Effect.map((result) => ({
-          patch: result.stdout,
-          truncated: result.stdoutTruncated,
-          nextCursor: null,
-        })),
-      ),
-    getDiffFileContents: Effect.fn("ForgejoPullRequestProvider.getDiffFileContents")(
-      function* (input) {
-        const pr = yield* getPull(input);
-        const commit = input.commit
-          ? yield* read(
-              {
-                ...input,
-                path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}`,
-              },
-              ForgejoCommit,
-            )
-          : null;
-        const oldRef = commit ? commit.parents[0]?.sha : pr.merge_base || pr.base.sha;
-        const newRef = input.commit ?? pr.head.sha;
-        const content = (repository: string, ref: string, path: string) =>
-          read(
+    getDiff: Effect.fn("ForgejoPullRequestProvider.getDiff")(function* (input) {
+      const page = input.cursor === undefined ? 1 : Number(input.cursor);
+      if (!Number.isSafeInteger(page) || page < 1)
+        return yield* failure("getDiff", "Invalid diff cursor.");
+      if (input.cursor === undefined) {
+        const direct = yield* request({
+          ...input,
+          maxOutputBytes: 120_000,
+          path: input.commit
+            ? `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}.diff`
+            : `${pullPath(input)}.diff`,
+        }).pipe(
+          Effect.catchIf(
+            (error) => error.detail.includes("oversized"),
+            () => Effect.succeed(null),
+          ),
+        );
+        if (direct !== null && !direct.stdoutTruncated)
+          return { patch: direct.stdout, truncated: false, nextCursor: null };
+      }
+      // Forgejo lists changed files but does not expose their patches individually.
+      // Rebuild bounded file previews from the two revisions only when the raw diff is too large.
+      const File = Schema.Struct({
+        filename: Schema.NonEmptyString,
+        previous_filename: Schema.optional(Schema.String),
+        status: Schema.String,
+        additions: Schema.Number,
+        deletions: Schema.Number,
+      });
+      const pageSize = 4;
+      const allFiles = input.commit
+        ? yield* read(
             {
               ...input,
-              repository,
-              path: `${repoPath({ ...input, repository })}/contents/${path.split("/").map(encodeURIComponent).join("/")}?ref=${encodeURIComponent(ref)}`,
+              path: `${repoPath(input)}/git/commits/${encodeURIComponent(input.commit)}`,
             },
-            Schema.Struct({ content: Schema.String, encoding: Schema.Literal("base64") }),
-          ).pipe(Effect.map((file) => Buffer.from(file.content, "base64").toString("utf8")));
-        const [oldContents, newContents] = yield* Effect.all(
-          [
-            input.changeType === "new" || !oldRef
-              ? Effect.succeed("")
-              : content(input.repository, oldRef, input.oldPath),
-            input.changeType === "deleted"
-              ? Effect.succeed("")
-              : content(pr.head.repo?.full_name ?? input.repository, newRef, input.newPath),
-          ],
-          { concurrency: 2 },
-        );
-        return { oldContents, newContents };
-      },
-    ),
+            Schema.Struct({ files: Schema.Array(File) }),
+          )
+        : null;
+      const filePage = allFiles
+        ? {
+            rows: allFiles.files.slice((page - 1) * pageSize, page * pageSize),
+            more: page * pageSize < allFiles.files.length,
+          }
+        : yield* readPage({ ...input, path: `${pullPath(input)}/files` }, File, page, pageSize);
+      const files = filePage.rows;
+      const revisions = files.length > 0 ? yield* resolveDiffRefs(input) : undefined;
+      const patches = yield* Effect.forEach(
+        files,
+        (file) =>
+          Effect.gen(function* () {
+            const oldPath = file.previous_filename || file.filename;
+            const newPath = file.filename;
+            const changeType =
+              file.status === "added"
+                ? "new"
+                : file.status === "removed" || file.status === "deleted"
+                  ? "deleted"
+                  : oldPath !== newPath
+                    ? "rename-changed"
+                    : "change";
+            const [oldLabel, newLabel, oldName, newName] = yield* Effect.all([
+              quotePath(`a/${oldPath}`),
+              quotePath(`b/${newPath}`),
+              quotePath(oldPath),
+              quotePath(newPath),
+            ]);
+            const header = `diff --git ${oldLabel} ${newLabel}\n`;
+            const contents = yield* getDiffFileContents(
+              {
+                ...input,
+                oldPath,
+                newPath,
+                changeType,
+              },
+              revisions,
+            ).pipe(
+              Effect.catchIf(
+                (error) => error.detail.includes("oversized"),
+                () => Effect.succeed(null),
+              ),
+            );
+            if (
+              contents === null ||
+              contents.oldContents.includes("\0") ||
+              contents.newContents.includes("\0")
+            )
+              return { patch: `${header}Binary files differ\n`, truncated: true };
+            const directory = yield* fs.makeTempDirectoryScoped({ prefix: "t3-pr-diff-" });
+            yield* Effect.all(
+              [
+                fs.writeFileString(path.join(directory, "old"), contents.oldContents),
+                fs.writeFileString(path.join(directory, "new"), contents.newContents),
+              ],
+              { concurrency: 2 },
+            );
+            const result = yield* process.run({
+              operation: "ForgejoPullRequestProvider.getDiff",
+              command: "git",
+              cwd: directory,
+              args: [
+                "diff",
+                "--no-index",
+                "--no-color",
+                "--no-ext-diff",
+                "--no-textconv",
+                "--",
+                "old",
+                "new",
+              ],
+              allowNonZeroExit: true,
+              maxOutputBytes: 1024 * 1024,
+              appendTruncationMarker: false,
+            });
+            if (result.exitCode > 1) return yield* failure("getDiff", result.stderr);
+            const hunks = result.stdout.indexOf("@@ ");
+            const mode =
+              changeType === "new"
+                ? "new file mode 100644\n"
+                : changeType === "deleted"
+                  ? "deleted file mode 100644\n"
+                  : oldPath !== newPath
+                    ? `rename from ${oldName}\nrename to ${newName}\n`
+                    : "";
+            return {
+              patch: `${header}${mode}--- ${changeType === "new" ? "/dev/null" : oldLabel}\n+++ ${changeType === "deleted" ? "/dev/null" : newLabel}\n${hunks < 0 ? "" : result.stdout.slice(hunks).replace(/\n?$/, "\n")}`,
+              truncated: result.stdoutTruncated,
+            };
+          }).pipe(
+            Effect.scoped,
+            Effect.mapError((cause) =>
+              failure("getDiff", "Could not construct the file preview.", cause),
+            ),
+          ),
+        { concurrency: 4 },
+      );
+      return {
+        patch: patches.map((patch) => patch.patch).join(""),
+        truncated: patches.some((patch) => patch.truncated),
+        nextCursor: filePage.more ? String(page + 1) : null,
+        omittedFileStats: files.map((file) => ({
+          path: file.filename,
+          additions: file.additions,
+          deletions: file.deletions,
+        })),
+      };
+    }),
+    getDiffFileContents,
     runAction: (input) => {
       switch (input.action) {
         case "merge":
