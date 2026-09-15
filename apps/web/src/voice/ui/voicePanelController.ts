@@ -22,6 +22,7 @@ import {
   type VoiceLiveMediaStreamTrack,
   type VoiceLiveSessionState,
 } from "../live-client";
+import type { VoiceHistoryRecorder } from "../history";
 import {
   createVoiceNavigator,
   type VoiceNavigationDestination,
@@ -88,6 +89,8 @@ export interface VoicePanelControllerDeps {
   readonly createClient?: (options: VoiceLiveClientOptions) => VoiceLiveClient;
   /** Navigation outcomes are recorded for display; failures surface here. */
   readonly now?: () => number;
+  /** Durable history recorder; absent disables history recording (tests). */
+  readonly history?: VoiceHistoryRecorder;
 }
 
 export interface VoicePanelController {
@@ -174,6 +177,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     result: VoiceNavigationResult,
     destination: VoiceNavigationDestination,
   ) => {
+    deps.history?.recordNavigation(result, destination);
     if (result.status === "acknowledged") {
       state.navigationStatus = `Opened thread ${destination.threadId}.`;
       state.navigationFailed = false;
@@ -196,6 +200,9 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
   });
 
   const handleEvent = (event: VoiceLiveClientEvent) => {
+    // History records the same event stream the panel displays, before the
+    // disposed guard: close-time events still belong in the record.
+    deps.history?.record(event);
     if (disposed) {
       // Late events after disposal apply no state.
       return;
@@ -294,6 +301,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     state.navigationFailed = false;
     state.utterances = [];
     state.inFlightTool = null;
+    deps.history?.beginSession();
     emitChange();
     try {
       myMic = mic = await deps.captureMic();
@@ -312,19 +320,27 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         // released by the invalidating end()/dispose().
         return;
       }
+      const navigatingExecutor = createNavigatingVoiceToolExecutor({
+        tools: deps.createToolsExecutor(),
+        navigator: {
+          navigateToThread: async (destination) => {
+            const result = await navigator.navigateToThread(destination);
+            recordNavigation(result, destination);
+            return result;
+          },
+        },
+      });
       const options: VoiceLiveClientOptions = {
         broker: brokerPort,
         createPeerConnection: defaultPeerConnectionFactory,
-        executor: createNavigatingVoiceToolExecutor({
-          tools: deps.createToolsExecutor(),
-          navigator: {
-            navigateToThread: async (destination) => {
-              const result = await navigator.navigateToThread(destination);
-              recordNavigation(result, destination);
-              return result;
-            },
-          },
-        }),
+        executor: deps.history
+          ? {
+              execute: (name, input) =>
+                deps.history!.recordToolExecution(name, input, () =>
+                  navigatingExecutor.execute(name, input),
+                ),
+            }
+          : navigatingExecutor,
         ...(myMic !== undefined ? { audioTrack: myMic.track } : {}),
         ...(deps.now !== undefined ? { now: deps.now } : {}),
       };
@@ -382,6 +398,9 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     // ended. This makes End the cancel button for a pending connection,
     // including the initial idle-starting state before a client exists.
     attemptEpoch += 1;
+    // The session record ends here even when no client exists to emit the
+    // closed state (cancel of a pending connection).
+    deps.history?.endSession();
     if (disposed) {
       return;
     }
@@ -425,6 +444,9 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     // Invalidate any in-flight connect attempt; after a revival it must stay
     // stale even though `disposed` flips back to false.
     attemptEpoch += 1;
+    // The close lifecycle below is observed through a detached subscription,
+    // so the history record ends explicitly here.
+    deps.history?.endSession();
     navigator.dispose();
     unsubscribeClient?.();
     unsubscribeClient = undefined;

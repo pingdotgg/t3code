@@ -9,6 +9,7 @@ import type {
 } from "../live-client";
 import type { VoiceNavigationDestination, VoiceRouteDriver } from "../navigation";
 import type { VoiceToolExecutor } from "../tools";
+import { createVoiceHistoryRecorder } from "../history";
 import {
   createVoicePanelController,
   describeVoiceToolError,
@@ -650,5 +651,160 @@ describe("end during a pending connection", () => {
     const settled = harness.controller.getState();
     expect(settled.phase).toBe("closed");
     expect(settled.starting).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// History recording: the durable session record follows the same event
+// stream, navigation outcomes, and tool executions the panel displays.
+// ---------------------------------------------------------------------------
+
+describe("voice panel history recording", () => {
+  const makeRecorderHarness = () => {
+    const base = makeHarness();
+    const recorder = createVoiceHistoryRecorder({ now: () => 1000 });
+    base.deps = { ...base.deps, history: recorder };
+    base.controller = createVoicePanelController(base.deps);
+    return { base, recorder };
+  };
+
+  it("records transcript, tool outcome, navigation target, and errors in one session", async () => {
+    const { base, recorder } = makeRecorderHarness();
+    await base.controller.connect();
+
+    base.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "open the macroscope thread",
+      utterance: "in-1",
+    });
+    await base.wiredExecutor?.execute("voice.openThread", {
+      environmentId: DESTINATION.environmentId,
+      threadId: DESTINATION.threadId,
+    });
+    base.fakeClient.emit({
+      type: "error",
+      error: { code: "model_unavailable", message: "backend slow" },
+    });
+    await base.controller.end();
+
+    const sessions = recorder.listSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]!.endedAt).toBeDefined();
+    const entries = recorder.readSession(sessions[0]!.id)!.entries;
+    expect(entries).toContainEqual({
+      kind: "utterance",
+      id: "input:in-1",
+      channel: "input",
+      text: "open the macroscope thread",
+      startedAt: 1000,
+      updatedAt: 1000,
+    });
+    expect(entries).toContainEqual({
+      kind: "tool",
+      name: "openThread",
+      status: "ok",
+      input: { environmentId: "env-1", threadId: "thread-1" },
+      result: {
+        acknowledged: true,
+        destination: { environmentId: "env-1", threadId: "thread-1" },
+        environmentStatus: "ok",
+      },
+      startedAt: 1000,
+      endedAt: 1000,
+    });
+    expect(entries).toContainEqual({
+      kind: "navigation",
+      status: "acknowledged",
+      environmentId: "env-1",
+      threadId: "thread-1",
+      at: 1000,
+    });
+    expect(entries).toContainEqual({
+      kind: "error",
+      code: "model_unavailable",
+      message: "backend slow",
+      at: 1000,
+    });
+  });
+
+  it("keeps a reconnect as a separate saved session", async () => {
+    const { base, recorder } = makeRecorderHarness();
+
+    await base.controller.connect();
+    base.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "first session",
+      utterance: "in-1",
+    });
+    await base.controller.end();
+
+    await base.controller.connect();
+    base.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      delta: "second session",
+      utterance: "in-1",
+    });
+    await base.controller.end();
+
+    const sessions = recorder.listSessions();
+    expect(sessions).toHaveLength(2);
+    const texts = sessions.map((session) =>
+      recorder.readSession(session.id)!.entries.find((entry) => entry.kind === "utterance"),
+    );
+    expect(texts).toEqual([
+      {
+        kind: "utterance",
+        id: "input:in-1",
+        channel: "input",
+        text: "first session",
+        startedAt: 1000,
+        updatedAt: 1000,
+      },
+      {
+        kind: "utterance",
+        id: "input:in-1",
+        channel: "input",
+        text: "second session",
+        startedAt: 1000,
+        updatedAt: 1000,
+      },
+    ]);
+  });
+
+  it("records a failed tool execution and preserves the failure", async () => {
+    const { base, recorder } = makeRecorderHarness();
+    base.deps = {
+      ...base.deps,
+      createToolsExecutor: () =>
+        ({
+          openThread: async () => {
+            throw new Error("environment disconnected");
+          },
+        }) as unknown as VoiceToolExecutor,
+    };
+    base.controller = createVoicePanelController(base.deps);
+    await base.controller.connect();
+
+    await expect(
+      base.wiredExecutor?.execute("voice.openThread", {
+        environmentId: DESTINATION.environmentId,
+        threadId: DESTINATION.threadId,
+      }),
+    ).rejects.toThrow("environment disconnected");
+
+    const sessions = recorder.listSessions();
+    const entries = recorder.readSession(sessions[0]!.id)!.entries;
+    expect(entries).toContainEqual({
+      kind: "tool",
+      name: "openThread",
+      status: "failed",
+      input: { environmentId: "env-1", threadId: "thread-1" },
+      startedAt: 1000,
+      endedAt: 1000,
+      error: "environment disconnected",
+    });
   });
 });
