@@ -1,14 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  RuntimeRequestId,
   EnvironmentId,
-  ORCHESTRATION_WS_METHODS,
+  ORCHESTRATION_V2_WS_METHODS,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
-  type ClientOrchestrationCommand,
-  type OrchestrationShellSnapshot,
+  type OrchestrationV2Command,
+  type OrchestrationV2ShellSnapshot,
 } from "@t3tools/contracts";
+import * as DateTime from "effect/DateTime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -25,10 +27,22 @@ import { createThreadEnvironmentAtoms } from "./threadCommands.ts";
 
 const ENVIRONMENT_ID = EnvironmentId.make("remote");
 const THREAD_ID = ThreadId.make("thread");
-const NOW = "2026-09-12T10:00:00.000Z";
-const SNAPSHOT: OrchestrationShellSnapshot = {
+const NOW = DateTime.makeUnsafe("2026-09-12T10:00:00.000Z");
+const FUTURE = DateTime.makeUnsafe("2099-01-01T00:00:00.000Z");
+const APPROVAL = {
+  id: RuntimeRequestId.make("approval"),
+  kind: "command" as const,
+  createdAt: NOW,
+};
+const USER_INPUT = {
+  id: RuntimeRequestId.make("input"),
+  kind: "user_input" as const,
+  createdAt: NOW,
+};
+const SNAPSHOT: OrchestrationV2ShellSnapshot = {
   snapshotSequence: 1,
-  updatedAt: NOW,
+  schemaVersion: 2,
+  archivedThreads: [],
   projects: [],
   threads: [
     {
@@ -40,17 +54,27 @@ const SNAPSHOT: OrchestrationShellSnapshot = {
       interactionMode: "default",
       branch: null,
       worktreePath: null,
-      latestTurn: null,
+      createdBy: "user",
+      creationSource: "web",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      lineage: { rootThreadId: THREAD_ID, parentThreadId: null, relationshipToParent: null },
+      forkedFrom: null,
+      activeProviderThreadId: null,
+      latestRunId: null,
+      activeRunId: null,
+      status: "idle",
+      pendingRuntimeRequest: null,
+      latestVisibleMessage: null,
+      itemCount: 0,
+      visibleItemCount: 0,
+      deletedAt: null,
       createdAt: NOW,
       updatedAt: NOW,
       archivedAt: null,
       settledOverride: null,
       settledAt: null,
       pullRequests: [],
-      session: null,
       latestUserMessageAt: null,
-      hasPendingApprovals: false,
-      hasPendingUserInput: false,
       hasActionableProposedPlan: false,
     },
   ],
@@ -58,7 +82,7 @@ const SNAPSHOT: OrchestrationShellSnapshot = {
 
 const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
   const requests = yield* Queue.unbounded<{
-    command: ClientOrchestrationCommand;
+    command: OrchestrationV2Command;
     reply: Deferred.Deferred<{ sequence: number }, Error>;
   }>();
   const supervisor = EnvironmentSupervisor.of({
@@ -66,7 +90,7 @@ const makeHarness = Effect.fn("TestThreadCommands.makeHarness")(function* () {
     session: yield* SubscriptionRef.make(
       Option.some({
         client: {
-          [ORCHESTRATION_WS_METHODS.dispatchCommand]: (command: ClientOrchestrationCommand) =>
+          [ORCHESTRATION_V2_WS_METHODS.dispatchCommand]: (command: OrchestrationV2Command) =>
             Effect.gen(function* () {
               const reply = yield* Deferred.make<{ sequence: number }, Error>();
               yield* Queue.offer(requests, { command, reply });
@@ -104,13 +128,9 @@ describe("remote thread lifecycle commands", () => {
   const actions = [
     ["settle", {}, { settledOverride: "settled", pinnedAt: null, snoozedUntil: null }],
     ["unsettle", { reason: "user" }, { settledOverride: "active", settledAt: null }],
-    [
-      "snooze",
-      { snoozedUntil: "2099-01-01T00:00:00.000Z" },
-      { snoozedUntil: "2099-01-01T00:00:00.000Z" },
-    ],
+    ["snooze", { snoozedUntil: "2099-01-01T00:00:00.000Z" }, { snoozedUntil: FUTURE }],
     ["unsnooze", { reason: "user" }, { snoozedUntil: null, snoozedAt: null }],
-    ["pin", { orderKey: "a" }, { pinnedAt: expect.any(String), pinOrderKey: "a" }],
+    ["pin", { orderKey: "a" }, { pinnedAt: expect.any(Object), pinOrderKey: "a" }],
     ["unpin", {}, { pinnedAt: null, pinOrderKey: null }],
     ["reorderPin", { orderKey: "b" }, { pinOrderKey: "b" }],
     ["reorderActive", { orderKey: "b" }, { activeOrderKey: "b" }],
@@ -130,7 +150,7 @@ describe("remote thread lifecycle commands", () => {
                 ? { settledOverride: "settled" as const, settledAt: NOW }
                 : {}),
               ...(action === "unsnooze" || action === "settle" || action === "pin"
-                ? { snoozedUntil: "2099-01-01T00:00:00.000Z", snoozedAt: NOW }
+                ? { snoozedUntil: FUTURE, snoozedAt: NOW }
                 : {}),
               ...(action === "unpin" || action === "settle"
                 ? { pinnedAt: NOW, pinOrderKey: "a" }
@@ -187,7 +207,7 @@ describe("remote thread lifecycle commands", () => {
           {
             ...changed.threads[0]!,
             settledOverride: "settled" as const,
-            settledAt: "2026-09-12T12:00:00.000Z",
+            settledAt: DateTime.makeUnsafe("2026-09-12T12:00:00.000Z"),
           },
         ],
       };
@@ -254,7 +274,7 @@ describe("remote thread lifecycle commands", () => {
       const h = yield* makeHarness();
       const blocked = {
         ...SNAPSHOT,
-        threads: [{ ...SNAPSHOT.threads[0]!, hasPendingApprovals: true }],
+        threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: APPROVAL }],
       };
       h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), blocked);
       const result = h.commands.settle.run(h.registry, {
@@ -273,9 +293,7 @@ describe("remote thread lifecycle commands", () => {
       Effect.gen(function* () {
         const h = yield* makeHarness();
         const parked =
-          action === "settle"
-            ? { settledOverride: "settled" as const }
-            : { snoozedUntil: "2099-01-01T00:00:00.000Z" };
+          action === "settle" ? { settledOverride: "settled" as const } : { snoozedUntil: FUTURE };
         const awake = action === "settle" ? { settledOverride: "active" } : { snoozedUntil: null };
         const result = h.commands[action].run(h.registry, {
           environmentId: ENVIRONMENT_ID,
@@ -318,7 +336,7 @@ describe("remote thread lifecycle commands", () => {
         const newer = {
           ...SNAPSHOT,
           snapshotSequence: 3,
-          threads: [{ ...SNAPSHOT.threads[0]!, hasPendingApprovals: true }],
+          threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: APPROVAL }],
         };
         h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), newer);
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toBe(newer.threads[0]);
@@ -333,7 +351,7 @@ describe("remote thread lifecycle commands", () => {
         const h = yield* makeHarness();
         const stale = {
           ...SNAPSHOT,
-          threads: [{ ...SNAPSHOT.threads[0]!, hasPendingUserInput: true }],
+          threads: [{ ...SNAPSHOT.threads[0]!, pendingRuntimeRequest: USER_INPUT }],
         };
         h.registry.set(h.snapshotAtom(ENVIRONMENT_ID), stale);
         const result = h.commands[action].run(h.registry, {
@@ -345,11 +363,9 @@ describe("remote thread lifecycle commands", () => {
         yield* Deferred.succeed(request.reply, { sequence: 2 });
         expect((yield* Effect.promise(() => result))._tag).toBe("Success");
         expect(h.registry.get(h.visibleAtom)?.threads[0]).toMatchObject(
-          action === "settle"
-            ? { settledOverride: "settled" }
-            : { snoozedUntil: "2099-01-01T00:00:00.000Z" },
+          action === "settle" ? { settledOverride: "settled" } : { snoozedUntil: FUTURE },
         );
-        expect(h.registry.get(h.visibleAtom)?.threads[0]?.hasPendingUserInput).toBe(false);
+        expect(h.registry.get(h.visibleAtom)?.threads[0]?.pendingRuntimeRequest).toBeNull();
         expect(h.registry.get(h.snapshotAtom(ENVIRONMENT_ID))).toBe(stale);
       }),
     );
