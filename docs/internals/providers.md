@@ -42,6 +42,12 @@ Opening a provider session can start MCP servers, run hooks, or launch a login b
 session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
 explicit setup or model refresh; background checks use initialization only.
 
+Kiro owns its login entirely: `kiro-cli acp` advertises no ACP auth methods and answers
+`authenticate` with "Method not found", so the [shared ACP runtime](../../apps/server/src/provider/acp/AcpSessionRuntime.ts)
+skips that call when an adapter passes no `authMethodId`. The
+[Kiro probe](../../apps/server/src/provider/Layers/KiroProvider.ts) reads login state and the model
+catalog from `whoami` and `chat --list-models`, never from an agent session.
+
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's
 loopback listener may be on another machine. Forward only the callback for the owned pending flow;

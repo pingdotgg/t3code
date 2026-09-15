@@ -24,8 +24,9 @@ Providers enforce permissions differently. Some read-only actions can proceed in
 **Auto** uses automatic review on Codex, Claude, and Cursor; providers without an equivalent,
 including OpenCode and Antigravity, fall back to asking.
 
-For Grok, **Always allow this session** remembers the matching command or tool input. Other
-actions still require approval.
+For Grok and Kiro, **Always allow this session** remembers the matching command or tool input.
+Other actions still require approval. Kiro has no automatic review, so **Auto-accept edits** and
+**Auto** behave like **Supervised** apart from the tools Kiro's own agent config already trusts.
 
 Antigravity can still send native approval requests in **Full access**. It only offers remembered
 approvals for actions that support them.
