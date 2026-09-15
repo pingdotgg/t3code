@@ -6,6 +6,7 @@
 // Add --initial to evaluate only the opening request.
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
+import { FetchHttpClient } from "effect/unstable/http";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -21,6 +22,16 @@ import {
   type ThreadTitleMessage,
 } from "../src/textGeneration/ThreadTitleContext.ts";
 import { resolveThreadTitleLinks } from "../src/textGeneration/ThreadTitleLinks.ts";
+import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
+import * as GitHubCli from "../src/sourceControl/GitHubCli.ts";
+import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
+import * as ForgejoCli from "../src/sourceControl/ForgejoCli.ts";
+import * as AzureDevOpsCli from "../src/sourceControl/AzureDevOpsCli.ts";
+import * as BitbucketApi from "../src/sourceControl/BitbucketApi.ts";
+import * as VcsProcess from "../src/vcs/VcsProcess.ts";
+import * as VcsDriverRegistry from "../src/vcs/VcsDriverRegistry.ts";
+import * as VcsProjectConfig from "../src/vcs/VcsProjectConfig.ts";
+import * as GitVcsDriver from "../src/vcs/GitVcsDriver.ts";
 import * as ProcessRunner from "../src/processRunner.ts";
 import * as ServerConfig from "../src/config.ts";
 
@@ -135,8 +146,27 @@ await Effect.runPromise(
     Effect.provide(
       Layer.mergeAll(
         ProcessRunner.layer,
-        ServerConfig.layerTest(process.cwd(), { prefix: "t3-title-evaluation-state-" }),
-      ).pipe(Layer.provideMerge(NodeServices.layer)),
+        SourceControlProviderRegistry.layer.pipe(
+          Layer.provide(
+            Layer.mergeAll(
+              GitHubCli.layer,
+              GitLabCli.layer,
+              ForgejoCli.layer,
+              AzureDevOpsCli.layer,
+              BitbucketApi.layer,
+            ),
+          ),
+          Layer.provide(VcsDriverRegistry.layer.pipe(Layer.provide(VcsProjectConfig.layer))),
+          Layer.provide(GitVcsDriver.layer),
+          Layer.provide(VcsProcess.layer),
+          Layer.provide(FetchHttpClient.layer),
+        ),
+      ).pipe(
+        Layer.provideMerge(
+          ServerConfig.layerTest(process.cwd(), { prefix: "t3-title-evaluation-state-" }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
     ),
     Effect.scoped,
   ),

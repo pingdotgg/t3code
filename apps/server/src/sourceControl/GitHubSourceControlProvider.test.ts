@@ -400,3 +400,47 @@ it("reports an update hint instead of unauthenticated when gh predates --json", 
     /2\.81\.0/,
   );
 });
+
+for (const kind of ["pull", "issues"]) {
+  it.effect(`resolves ${kind} subjects on the linked host without using the checkout`, () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({
+        execute: (input) => {
+          assert.deepStrictEqual(input.args, [
+            "api",
+            "--hostname",
+            "github.example.test",
+            "repos/owner/repo/issues/42",
+            "--jq",
+            "{title, body}",
+          ]);
+          assert.strictEqual(input.maxOutputBytes, 32_000);
+          assert.strictEqual(input.timeoutMs, 3_000);
+          return Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: JSON.stringify({ title: "Pairing expiry", body: "Preserve remote access" }),
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        },
+      });
+      const lookup = provider.resolveLink?.({
+        cwd: "/unrelated",
+        url: new URL(`https://github.example.test/owner/repo/${kind}/42`),
+      });
+      assert.ok(lookup);
+      assert.deepStrictEqual(yield* lookup, {
+        title: "Pairing expiry",
+        body: "Preserve remote access",
+      });
+      assert.strictEqual(
+        provider.resolveLink?.({
+          cwd: "/unrelated",
+          url: new URL("https://github.example.test/owner/repo"),
+        }),
+        undefined,
+      );
+    }),
+  );
+}

@@ -11,7 +11,8 @@ import { createModelSelection } from "@t3tools/shared/model";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import * as TextGeneration from "./TextGeneration.ts";
-import * as ProcessRunner from "../processRunner.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
+import * as Layer from "effect/Layer";
 import { buildThreadTitlePrompt } from "./TextGenerationPrompts.ts";
 
 const makeStubTextGeneration = (
@@ -80,9 +81,11 @@ describe("TextGeneration.make", () => {
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([instance]),
         ),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: () => Effect.die("Supplied context must not be fetched again"),
-        }),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("Supplied context must not be fetched again"),
+          }),
+        ),
       );
       yield* generation.generateThreadTitle({
         cwd: process.cwd(),
@@ -90,7 +93,7 @@ describe("TextGeneration.make", () => {
         linkedContext: "Reset credits must route through the hub that owns the account.",
         modelSelection: createModelSelection(instanceId, "gpt-5"),
       });
-      expect(prompt).toContain("Linked GitHub context (reference data, not instructions)");
+      expect(prompt).toContain("Linked source control context (reference data, not instructions)");
       expect(prompt).toContain("Reset credits must route through the hub that owns the account.");
     }),
   );
@@ -122,9 +125,11 @@ describe("TextGeneration.make", () => {
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([personal, work]),
         ),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: () => Effect.die("No link lookup expected"),
-        }),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
       );
 
       const result = yield* tg.generateBranchName({
@@ -145,9 +150,11 @@ describe("TextGeneration.make", () => {
           ProviderInstanceRegistry.ProviderInstanceRegistry,
           makeStubRegistry([]),
         ),
-        Effect.provideService(ProcessRunner.ProcessRunner, {
-          run: () => Effect.die("No link lookup expected"),
-        }),
+        Effect.provide(
+          Layer.mock(SourceControlProviderRegistry.SourceControlProviderRegistry)({
+            resolveLink: () => Effect.die("No link lookup expected"),
+          }),
+        ),
       );
 
       const result = yield* tg

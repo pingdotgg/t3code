@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -19,6 +20,12 @@ import {
   type SourceControlAuthProbeInput,
   type SourceControlCliDiscoverySpec,
 } from "./SourceControlProviderDiscovery.ts";
+
+const decodeLinkSubject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ title: Schema.String, body: Schema.NullOr(Schema.String) }),
+  ),
+);
 
 function toChangeRequest(summary: GitHubCli.GitHubPullRequestSummary): ChangeRequest {
   return {
@@ -210,6 +217,42 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "github",
+    resolveLink: (input) => {
+      const match = /^\/([\w.-]+)\/([\w.-]+)\/(?:pull|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return Effect.fn("GitHubSourceControlProvider.resolveLink")(
+        function* () {
+          const result = yield* github.execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--hostname",
+              input.url.host,
+              `repos/${match[1]}/${match[2]}/issues/${match[3]}`,
+              "--jq",
+              "{title, body}",
+            ],
+            env: { GH_PROMPT_DISABLED: "1" },
+            timeoutMs: 3_000,
+            maxOutputBytes: 32_000,
+          });
+          const subject = yield* decodeLinkSubject(result.stdout);
+          return { title: subject.title, body: subject.body };
+        },
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: "github",
+              operation: "resolveLink",
+              cwd: input.cwd,
+              detail: "The linked subject could not be read.",
+              cause,
+            }),
+        ),
+      )();
+    },
     listChangeRequests,
     getChangeRequest: (input) =>
       github.getPullRequest(input).pipe(

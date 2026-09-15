@@ -6,7 +6,7 @@ import { TextGenerationError } from "@t3tools/contracts";
 
 import * as ProviderInstanceRegistry from "../provider/Services/ProviderInstanceRegistry.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
-import * as ProcessRunner from "../processRunner.ts";
+import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import { resolveThreadTitleLinks } from "./ThreadTitleLinks.ts";
 import type { TextGenerationPolicy } from "./TextGenerationPolicy.ts";
 
@@ -138,7 +138,7 @@ const resolveInstance = (
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
   const registry = yield* ProviderInstanceRegistry.ProviderInstanceRegistry;
-  const processRunner = yield* ProcessRunner.ProcessRunner;
+  const sourceControl = yield* SourceControlProviderRegistry.SourceControlProviderRegistry;
   return TextGeneration.of({
     generateCommitMessage: (input) =>
       resolveInstance(registry, "generateCommitMessage", input.modelSelection.instanceId).pipe(
@@ -159,7 +159,10 @@ export const make = Effect.gen(function* () {
             const linkedContext =
               input.linkedContext ??
               (yield* resolveThreadTitleLinks(input).pipe(
-                Effect.provideService(ProcessRunner.ProcessRunner, processRunner),
+                Effect.provideService(
+                  SourceControlProviderRegistry.SourceControlProviderRegistry,
+                  sourceControl,
+                ),
               ));
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),

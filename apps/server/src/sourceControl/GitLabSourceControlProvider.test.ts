@@ -226,3 +226,48 @@ selfhosted
     ],
   );
 });
+
+for (const kind of ["merge_requests", "issues"]) {
+  it.effect(`resolves ${kind} subjects on the linked host without using the checkout`, () =>
+    Effect.gen(function* () {
+      const provider = yield* makeProvider({
+        execute: (input) => {
+          assert.deepStrictEqual(input.args, [
+            "api",
+            "--hostname",
+            "gitlab.example.test",
+            `projects/group%2Fsubgroup%2Fproject/${kind}/42`,
+          ]);
+          assert.strictEqual(input.maxOutputBytes, 32_000);
+          assert.strictEqual(input.timeoutMs, 3_000);
+          return Effect.succeed({
+            exitCode: ChildProcessSpawner.ExitCode(0),
+            stdout: JSON.stringify({
+              title: "Pairing expiry",
+              description: "Preserve remote access",
+            }),
+            stderr: "",
+            stdoutTruncated: false,
+            stderrTruncated: false,
+          });
+        },
+      });
+      const lookup = provider.resolveLink?.({
+        cwd: "/unrelated",
+        url: new URL(`https://gitlab.example.test/group/subgroup/project/-/${kind}/42`),
+      });
+      assert.ok(lookup);
+      assert.deepStrictEqual(yield* lookup, {
+        title: "Pairing expiry",
+        body: "Preserve remote access",
+      });
+      assert.strictEqual(
+        provider.resolveLink?.({
+          cwd: "/unrelated",
+          url: new URL("https://gitlab.example.test/owner/repo"),
+        }),
+        undefined,
+      );
+    }),
+  );
+}

@@ -1,3 +1,4 @@
+import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { SourceControlProviderError, type ChangeRequest } from "@t3tools/contracts";
@@ -15,6 +16,12 @@ import {
   type SourceControlUnknownRemoteRefinementInput,
 } from "./SourceControlProviderDiscovery.ts";
 import { findAuthenticatedGitLabHost, parseGitLabAuthStatusHosts } from "./gitLabAuthStatus.ts";
+
+const decodeLinkSubject = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ title: Schema.String, description: Schema.NullOr(Schema.String) }),
+  ),
+);
 
 function toChangeRequest(summary: GitLabCli.GitLabMergeRequestSummary): ChangeRequest {
   return {
@@ -107,6 +114,39 @@ export const make = Effect.gen(function* () {
 
   return SourceControlProvider.SourceControlProvider.of({
     kind: "gitlab",
+    resolveLink: (input) => {
+      const match = /^\/(.+)\/-\/(merge_requests|issues)\/([1-9]\d*)(?:\/.*)?$/.exec(
+        input.url.pathname,
+      );
+      if (!match) return undefined;
+      return Effect.fn("GitLabSourceControlProvider.resolveLink")(
+        function* () {
+          const result = yield* gitlab.execute({
+            cwd: input.cwd,
+            args: [
+              "api",
+              "--hostname",
+              input.url.host,
+              `projects/${encodeURIComponent(match[1]!)}/${match[2]}/${match[3]}`,
+            ],
+            timeoutMs: 3_000,
+            maxOutputBytes: 32_000,
+          });
+          const subject = yield* decodeLinkSubject(result.stdout);
+          return { title: subject.title, body: subject.description };
+        },
+        Effect.mapError(
+          (cause) =>
+            new SourceControlProviderError({
+              provider: "gitlab",
+              operation: "resolveLink",
+              cwd: input.cwd,
+              detail: "The linked subject could not be read.",
+              cause,
+            }),
+        ),
+      )();
+    },
     listChangeRequests: (input) => {
       const source = SourceControlProvider.sourceControlRefFromInput(input);
       return gitlab
