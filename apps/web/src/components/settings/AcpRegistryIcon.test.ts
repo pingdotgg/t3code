@@ -11,6 +11,7 @@ vi.mock("react", async (importOriginal) => {
     ...actual,
     useEffect: (effect: () => void | (() => void)) => effect(),
     useState: reactHookHarness.useState,
+    useId: () => "acp-icon-test-filter",
   };
 });
 
