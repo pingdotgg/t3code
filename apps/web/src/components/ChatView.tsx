@@ -3510,8 +3510,13 @@ export default function ChatView(props: ChatViewProps) {
       : null;
   useEffect(() => {
     if (!resumedWorktreeSetupRef) return;
-    setWorktreeSetupRef(
-      (current) => current ?? { ...resumedWorktreeSetupRef, ownerKey: worktreeSetupOwnerKey },
+    // Only a ref owned by this route survives adoption. This component is
+    // reused across routes, so a ref left by another thread's send is stale
+    // here and would leave the resumed setup with no target after handoff.
+    setWorktreeSetupRef((current) =>
+      current?.ownerKey === worktreeSetupOwnerKey
+        ? current
+        : { ...resumedWorktreeSetupRef, ownerKey: worktreeSetupOwnerKey },
     );
   }, [resumedWorktreeSetupRef, worktreeSetupOwnerKey]);
   // The setup runs on the environment that received the dispatch, so both
@@ -3568,11 +3573,19 @@ export default function ChatView(props: ChatViewProps) {
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
   // follow-up must not be held behind a slow install. A resumed setup has no
-  // snapshot until its first stream event, so that gap blocks as well.
+  // snapshot until its first stream event, so that gap blocks as well. The
+  // gap is judged by the shell, not by the resumed ref, since adopting the
+  // ref clears it before the query has delivered anything.
+  const worktreeSetupAwaitingFirstSnapshot =
+    worktreeSetup === null &&
+    worktreeSetupTarget !== null &&
+    isServerThread &&
+    activeThreadShell?.session?.status === "starting" &&
+    activeThreadShell.latestTurn === null;
   const worktreeSetupBlocksSend =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : resumedWorktreeSetupRef !== null && !worktreeSetupQuery.isSuccess;
+      : worktreeSetupAwaitingFirstSnapshot;
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
