@@ -294,24 +294,181 @@ class AgentNotificationsTest {
   }
 
   @Test
-  fun longRowsKeepStatusAndBothTitlesWithinTheNotificationWidth() {
+  fun severalThreadsListEveryRowWithItsStatusAndActionsFollowThePriorityThread() {
     lifecycle.currentState = Lifecycle.State.RESUMED
-    val raw = "Approval\t${"Long thread name ".repeat(10)}\t${"Project name ".repeat(10)}"
+    val title = "A long thread title that should wrap rather than disappear"
+    val data = update("attention", true) + mapOf(
+      "activity_line_0" to "Approval	$title	Project",
+      "activity_line_1" to "Working	Another thread	Other project",
+      "activity_phase" to "waiting_for_approval",
+      "activity_active_count" to "8",
+      "activity_attention_count" to "1",
+    )
+    AgentNotifications.receive(context, data)
+    val card = manager.activeNotifications.single().notification
+    assertEquals("1 needs you", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+    assertEquals("8 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals(
+      "Approval $title · Project\nWorking Another thread · Other project",
+      card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+    )
+    assertEquals(
+      "Approval $title · Project",
+      card.extras.getCharSequence(Notification.EXTRA_TEXT).toString()
+    )
+    assertEquals(listOf("Approve", "Dismiss"), card.actions.map { it.title.toString() })
+    assertEquals(
+      "t3code-dev://threads/environment/thread",
+      shadowOf(card.actions[0].actionIntent).savedIntent.dataString
+    )
+    assertEquals("Approve", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+
     AgentNotifications.receive(
       context,
-      update("long-work", true) + (0..4).associate { "activity_line_$it" to raw }
+      data + mapOf(
+        "activity_phase" to "waiting_for_input",
+        "activity_attention_count" to "2",
+        "activity_path" to "/threads/another-environment/another-thread",
+      )
     )
-    val lines = manager.activeNotifications.single().notification.extras.getString(
-      Notification.EXTRA_BIG_TEXT
-    )!!.split('\n')
-    assertEquals(5, lines.size)
-    for (line in lines) {
-      assertTrue(line.startsWith("Approval: "))
-      assertTrue(line.contains(" · "))
-      assertTrue(line.length < raw.length)
-      assertFalse(line.contains('\t'))
-      assertTrue(line.substringAfter(" · ").isNotBlank())
+    val next = manager.activeNotifications.single().notification
+    assertEquals("2 need you", next.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+    assertEquals("Answer", next.actions[0].title.toString())
+    assertEquals(
+      "t3code-dev://threads/another-environment/another-thread",
+      shadowOf(next.actions[0].actionIntent).savedIntent.dataString
+    )
+    assertEquals("Answer", next.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+  }
+
+  @Test
+  fun waitingCardsIgnoreMutableThreadTimestampsEvenAfterRename() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    val now = System.currentTimeMillis()
+    for (phase in listOf("waiting_for_approval", "waiting_for_input")) {
+      val status = if (phase == "waiting_for_approval") "Approval" else "Input"
+      for ((title, updatedAt) in listOf("Original" to now - 1200000L, "Renamed" to now)) {
+        AgentNotifications.receive(
+          context,
+          update("waiting", true) + mapOf(
+            "activity_line_0" to "$status\t$title\tProject",
+            "activity_phase" to phase,
+            "activity_since" to updatedAt.toString()
+          )
+        )
+        val card = manager.activeNotifications.single().notification
+        assertEquals(title, card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertFalse(card.extras.getBoolean(Notification.EXTRA_SHOW_WHEN))
+        assertFalse(card.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+      }
     }
+  }
+
+  @Test
+  fun aSingleThreadUsesItsTitleAndNeverShowsAProgressBar() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    val data = update("work", true) + mapOf(
+      "activity_line_0" to "Working	Update dashboard	Project",
+      "activity_phase" to "running",
+    )
+    AgentNotifications.receive(context, data)
+    val working = manager.activeNotifications.single().notification
+    assertEquals(
+      "Update dashboard",
+      working.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
+    assertEquals(
+      "Working Project",
+      working.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+    )
+    assertEquals(null, working.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals("Working", working.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+    assertFalse(working.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+    for (phase in listOf(
+      "waiting_for_approval",
+      "waiting_for_input",
+      "stale",
+      "failed",
+      "completed"
+    )) {
+      val active = phase != "failed" && phase != "completed"
+      AgentNotifications.receive(
+        context,
+        data + mapOf(
+          "activity_phase" to phase,
+          "active" to active.toString(),
+          "activity_expires_at" to (System.currentTimeMillis() + 900000).toString(),
+        )
+      )
+      val card = manager.activeNotifications.single().notification
+      assertEquals(
+        "android.app.Notification\$BigTextStyle",
+        card.extras.getString(Notification.EXTRA_TEMPLATE)
+      )
+      assertEquals(active, NotificationCompat.isRequestPromotedOngoing(card))
+      if (!active) {
+        assertEquals(null, card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+        assertEquals(0, card.actions?.size ?: 0)
+      }
+    }
+  }
+
+  @Test
+  fun olderRelayRowsStillSelectTheNativeStateAndAction() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(
+      context,
+      update("input", true) + mapOf(
+        "activity_line_0" to "Input	Choose an icon	Project",
+      )
+    )
+    val card = manager.activeNotifications.single().notification
+    assertEquals("Choose an icon", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+    assertEquals("Answer", card.actions.first().title.toString())
+    assertEquals(2, card.actions.size)
+    assertFalse(card.extras.getBoolean(Notification.EXTRA_SHOW_CHRONOMETER))
+  }
+
+  @Test
+  fun multipleAgentsUseTheChipCountAndFinishedThreadsRemainInTheSummary() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    val data = update("multiple", true) + mapOf(
+      "activity_line_0" to "Working	Build feature	Project",
+      "activity_line_1" to "Done	Write tests	Project",
+      "activity_phase" to "running",
+      "activity_active_count" to "2",
+    )
+    AgentNotifications.receive(context, data)
+    val card = manager.activeNotifications.single().notification
+    assertEquals("2 live", card.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+    assertEquals("2 working", card.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+    assertEquals("Project · 2 active", card.extras.getString(Notification.EXTRA_SUB_TEXT))
+    assertEquals(
+      "Working Build feature\nDone Write tests",
+      card.extras.getCharSequence(Notification.EXTRA_BIG_TEXT).toString()
+    )
+    AgentNotifications.receive(context, data + ("activity_active_count" to "15"))
+    assertEquals(
+      "9+ live",
+      manager.activeNotifications.single().notification.extras
+        .getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    AgentNotifications.receive(
+      context,
+      data + mapOf(
+        "activity_line_0" to "Failed	Build feature	Project",
+        "activity_phase" to "failed",
+        "activity_active_count" to "0",
+        "active" to "false",
+        "activity_expires_at" to (System.currentTimeMillis() + 900000).toString(),
+      )
+    )
+    val finished = manager.activeNotifications.single().notification
+    assertEquals(
+      "Finished, 1 failed",
+      finished.extras.getCharSequence(Notification.EXTRA_TITLE).toString()
+    )
+    assertEquals("Project · 2 threads", finished.extras.getString(Notification.EXTRA_SUB_TEXT))
   }
 
   private fun assertTimeout(card: Notification, expected: LongRange) {
@@ -397,6 +554,46 @@ class AgentNotificationsTest {
     assertFalse(card.extras.getBoolean(NotificationCompat.EXTRA_COLORIZED))
     assertTrue(card.flags and Notification.FLAG_ONGOING_EVENT != 0)
     assertEquals(Notification.VISIBILITY_PRIVATE, card.visibility)
+  }
+
+  @Test
+  fun liveUpdateChipChangesWithActivityAndClearsOnCompletion() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(context, update("work", true))
+    assertEquals(
+      "Active",
+      manager.activeNotifications.single().notification.extras
+        .getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    AgentNotifications.receive(context, update("input", true) + ("activity_chip" to "Review"))
+    val activeCard = manager.activeNotifications.single().notification
+    assertEquals(
+      "Review",
+      activeCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT)
+    )
+    assertTrue(NotificationCompat.isRequestPromotedOngoing(activeCard))
+
+    AgentNotifications.receive(
+      context,
+      update("done", false) + mapOf(
+        "activity_chip" to "Review",
+        "activity_expires_at" to (System.currentTimeMillis() + 900000).toString()
+      )
+    )
+    val finishedCard = manager.activeNotifications.single().notification
+    assertEquals(null, finishedCard.extras.getString(NotificationCompat.EXTRA_SHORT_CRITICAL_TEXT))
+    assertFalse(NotificationCompat.isRequestPromotedOngoing(finishedCard))
+    assertFalse(finishedCard.flags and Notification.FLAG_ONGOING_EVENT != 0)
+  }
+
+  @Test
+  fun blankTitleCannotMakeAnActivityIneligibleForPromotion() {
+    lifecycle.currentState = Lifecycle.State.RESUMED
+    AgentNotifications.receive(context, update("work", true) + ("activity_title" to "  "))
+    assertEquals(
+      "Agent activity",
+      manager.activeNotifications.single().notification.extras.getString(Notification.EXTRA_TITLE)
+    )
   }
 
   @Test

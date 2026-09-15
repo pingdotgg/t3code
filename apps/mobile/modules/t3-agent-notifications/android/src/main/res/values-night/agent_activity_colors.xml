@@ -1,0 +1,9 @@
+<!-- Dark shade uses the 300 stops, matching the iOS banner on its dark material. -->
+<resources>
+    <color name="agent_activity_working">#7DD3FC</color>
+    <color name="agent_activity_attention">#FCD34D</color>
+    <color name="agent_activity_input">#A5B4FC</color>
+    <color name="agent_activity_waiting">#94A3B8</color>
+    <color name="agent_activity_done">#6EE7B7</color>
+    <color name="agent_activity_failed">#FCA5A5</color>
+</resources>
