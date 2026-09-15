@@ -782,9 +782,20 @@ function ThreadRouteContent(
       }),
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
+  // A worktree bootstrap persists the user message before its turn, so a
+  // thread opened from another device (or after a restart) shows the same
+  // preparing state the sending client does.
+  const awaitingBootstrapTurn = useMemo(
+    () =>
+      selectedThreadDetail !== null &&
+      selectedThreadDetail.latestTurn === null &&
+      selectedThreadDetail.session === null &&
+      selectedThreadDetail.messages.some((message) => message.role === "user"),
+    [selectedThreadDetail],
+  );
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
-      return null;
+      return awaitingBootstrapTurn ? { kind: "preparing", preparingWorktree: true } : null;
     }
     if (selectedThreadCreation.outcome?.kind === "failed") {
       return {

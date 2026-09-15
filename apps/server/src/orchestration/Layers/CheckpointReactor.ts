@@ -630,8 +630,12 @@ const make = Effect.gen(function* () {
     >,
   ) {
     if (event.type === "thread.message-sent") {
+      // A bootstrap message lands before the worktree exists; its baseline
+      // would snapshot the project checkout. The turn-start event that
+      // follows captures it against the right cwd.
       if (
         event.metadata.historyImport === true ||
+        event.metadata.deferredTurn === true ||
         event.payload.role !== "user" ||
         event.payload.streaming ||
         event.payload.turnId !== null

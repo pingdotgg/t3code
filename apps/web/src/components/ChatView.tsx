@@ -435,6 +435,8 @@ import {
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   resolveDraftHeroState,
+  findRecordedWorktreeSetup,
+  resolveVisibleWorktreeSetup,
   restorePlanFollowUpComposer,
   isPaintOnlyThreadTimeline,
   peekHeldThreadTimeline,
@@ -1430,16 +1432,6 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
-/**
- * Worktree setups whose async setup script may still be running after the
- * draft route hands off to the created thread. Keyed by scoped thread key;
- * entries are removed once the setup settles.
- */
-const pendingWorktreeSetupByThreadKey = new Map<
-  string,
-  { environmentId: EnvironmentId; threadId: ThreadId }
->();
-
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -1662,19 +1654,9 @@ export default function ChatView(props: ChatViewProps) {
     return () => revokeBlobPreviewUrl(src);
   }, [expandedImage]);
   const [optimisticUserMessages, setOptimisticUserMessages] = useState<ChatMessage[]>([]);
-  // The bootstrap worktree setup this composer last dispatched. Set when a
-  // worktree send starts and cleared once the turn starts or the next send
-  // begins, so a failed or cancelled card stays until the user acts.
-  const [worktreeSetupRef, setWorktreeSetupRef] = useState<{
-    environmentId: EnvironmentId;
-    threadId: ThreadId;
-    ownerKey: string;
-  } | null>(() => {
-    // The draft route unmounts when it promotes to the created thread, while an
-    // async setup script may still be running. Adopt the ref the draft left.
-    const handed = pendingWorktreeSetupByThreadKey.get(routeThreadKey);
-    return handed ? { ...handed, ownerKey: routeThreadKey } : null;
-  });
+  // Last live snapshot from the setup stream. The server drops a finished
+  // snapshot after a grace period and emits null; holding it here bridges the
+  // gap until the settled activity arrives on the thread projection.
   const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
@@ -3157,7 +3139,7 @@ export default function ChatView(props: ChatViewProps) {
     resetLocalDispatch,
     localDispatchStartedAt,
     latestUserMessageAt,
-    isPreparingWorktree,
+    isPreparingWorktree: isLocallyPreparingWorktree,
     isSendBusy,
     backgroundSubmissionPending,
   } = useLocalDispatchState({
@@ -3193,8 +3175,23 @@ export default function ChatView(props: ChatViewProps) {
     (isSendBusy || phase === "connecting" || phase === "running") &&
     compactRequestIsActive &&
     !compactionSettled;
+  // A thread whose first user message is persisted but whose turn has not
+  // started is mid-bootstrap on the server. That is how a reload or another
+  // client sees a worktree still being prepared, so it counts as working
+  // just like the local dispatch that started it.
+  const awaitingBootstrapTurn =
+    activeServerThread !== null &&
+    activeServerThread.latestTurn === null &&
+    activeServerThread.session === null &&
+    activeServerThread.messages.some((message) => message.role === "user");
   const isWorking =
-    phase === "running" || isSendBusy || isConnecting || isRevertingCheckpoint || isCompacting;
+    phase === "running" ||
+    isSendBusy ||
+    isConnecting ||
+    isRevertingCheckpoint ||
+    isCompacting ||
+    awaitingBootstrapTurn;
+  const isPreparingWorktree = isLocallyPreparingWorktree || awaitingBootstrapTurn;
   const activeWorkStartedAt = deriveActiveWorkStartedAt(
     activeLatestTurn,
     activeThread?.session ?? null,
@@ -3487,115 +3484,68 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadKey,
   );
   const displayedThreadRef = parseScopedThreadKey(displayedTimelineKey);
-  // Live stages of a bootstrap worktree setup. The subscription follows the
-  // thread that was set up, not the route: a deleted bootstrap thread rotates
-  // the draft's thread id, and the failed card must survive that.
-  const worktreeSetupOwnerKey = draftId ?? routeThreadKey;
-  const worktreeSetupActive =
-    worktreeSetupRef !== null && worktreeSetupRef.ownerKey === worktreeSetupOwnerKey;
-  // A thread reopened mid-setup has no dispatch ref: this view remounted.
-  // The server projects a starting session before any message or turn exists
-  // for exactly that window, so follow the setup stream from the thread's own
-  // state. The ref is adopted below so the card then follows the same
-  // lifecycle as the original send, including an async setup script that
-  // keeps running after the agent's turn lands.
-  const resumedWorktreeSetupRef =
-    !worktreeSetupActive &&
-    isServerThread &&
-    activeThreadRef !== null &&
-    activeThreadShell?.session?.status === "starting" &&
-    activeThreadShell.latestTurn === null &&
-    activeThreadShell.latestUserMessageAt === null
-      ? activeThreadRef
-      : null;
-  useEffect(() => {
-    if (!resumedWorktreeSetupRef) return;
-    // Only a ref owned by this route survives adoption. This component is
-    // reused across routes, so a ref left by another thread's send is stale
-    // here and would leave the resumed setup with no target after handoff.
-    setWorktreeSetupRef((current) =>
-      current?.ownerKey === worktreeSetupOwnerKey
-        ? current
-        : { ...resumedWorktreeSetupRef, ownerKey: worktreeSetupOwnerKey },
-    );
-  }, [resumedWorktreeSetupRef, worktreeSetupOwnerKey]);
-  // The setup runs on the environment that received the dispatch, so both
-  // the subscription and cancel target that one even if the draft's machine
-  // picker changes underneath.
-  const worktreeSetupTarget = useMemo(
-    () =>
-      worktreeSetupActive
-        ? { environmentId: worktreeSetupRef.environmentId, threadId: worktreeSetupRef.threadId }
-        : resumedWorktreeSetupRef,
-    [resumedWorktreeSetupRef, worktreeSetupActive, worktreeSetupRef],
+  // Live stages of a bootstrap worktree setup. A worktree send creates the
+  // server thread under the route's thread id before anything else, so the
+  // stream is keyed by that id alone: no owner bookkeeping, and a remount,
+  // reload, or second client picks it up the same way. The subscription is
+  // held only while a snapshot can still change.
+  const recordedWorktreeSetup = useMemo(
+    () => findRecordedWorktreeSetup(activeThread?.activities ?? [], routeThreadRef.threadId),
+    [activeThread?.activities, routeThreadRef.threadId],
   );
+  // The server also projects a starting session for the whole setup window,
+  // which is what the sidebar and the shell read; it opens the stream a beat
+  // before the recorded activity arrives on the detail.
+  const routeThreadPreparesWorktree =
+    (isPreparingWorktree && activeThread?.id === routeThreadRef.threadId) ||
+    recordedWorktreeSetup?.phase === "running" ||
+    heldWorktreeSetup?.phase === "running" ||
+    (isServerThread &&
+      activeThreadShell?.session?.status === "starting" &&
+      activeThreadShell.latestTurn === null);
   const worktreeSetupQuery = useEnvironmentQuery(
-    worktreeSetupTarget
+    routeThreadPreparesWorktree
       ? vcsEnvironment.worktreeSetup({
-          environmentId: worktreeSetupTarget.environmentId,
-          input: { threadId: worktreeSetupTarget.threadId },
+          environmentId: routeThreadRef.environmentId,
+          input: { threadId: routeThreadRef.threadId },
         })
       : null,
   );
   const latestWorktreeSetup = worktreeSetupQuery.data;
   useEffect(() => {
-    // The server drops finished snapshots after a grace period and emits null.
-    // Hold the last real snapshot so a settled card does not vanish.
     if (latestWorktreeSetup) setHeldWorktreeSetup(latestWorktreeSetup);
   }, [latestWorktreeSetup]);
-  const worktreeSetup =
-    worktreeSetupTarget !== null && heldWorktreeSetup?.threadId === worktreeSetupTarget.threadId
-      ? heldWorktreeSetup
-      : null;
-  // A finished card is dropped once the agent's turn shows in the timeline:
-  // the card belongs to the send, and the agent takes over from there. An
-  // async setup script keeps the snapshot running past the handoff and its
-  // row leaves the moment the script exits cleanly; a failed script stays
-  // for the rest of the turn so the exit code and terminal remain reachable.
-  const worktreeSetupDoneAndTurnVisible =
-    worktreeSetup?.phase === "done" &&
-    activeThread?.latestTurn?.startedAt != null &&
-    (!isWorking || !worktreeSetup.stages.some((stage) => stage.status === "failed"));
   useEffect(() => {
-    if (!worktreeSetupDoneAndTurnVisible) return;
-    setWorktreeSetupRef(null);
     setHeldWorktreeSetup(null);
-  }, [worktreeSetupDoneAndTurnVisible]);
-  // The handoff entry only matters while the setup is still running: once it
-  // settles in any phase, a later mount of the thread must not adopt it.
-  const worktreeSetupSettledKey =
-    worktreeSetup && worktreeSetup.phase !== "running" && worktreeSetupRef
-      ? scopedThreadKey(scopeThreadRef(worktreeSetupRef.environmentId, worktreeSetupRef.threadId))
-      : null;
-  useEffect(() => {
-    if (worktreeSetupSettledKey) pendingWorktreeSetupByThreadKey.delete(worktreeSetupSettledKey);
-  }, [worktreeSetupSettledKey]);
+  }, [routeThreadKey]);
+  const liveWorktreeSetup =
+    heldWorktreeSetup?.threadId === routeThreadRef.threadId ? heldWorktreeSetup : null;
+  const worktreeSetup = resolveVisibleWorktreeSetup({
+    live: liveWorktreeSetup,
+    recorded: recordedWorktreeSetup,
+    turnStarted: activeThread?.latestTurn?.startedAt != null,
+    isWorking,
+  });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
-  // follow-up must not be held behind a slow install. A resumed setup has no
-  // snapshot until its first stream event, so that gap blocks as well. The
-  // gap is judged by the shell, not by the resumed ref, since adopting the
-  // ref clears it before the query has delivered anything.
-  const worktreeSetupAwaitingFirstSnapshot =
-    worktreeSetup === null &&
-    worktreeSetupTarget !== null &&
-    isServerThread &&
-    activeThreadShell?.session?.status === "starting" &&
-    activeThreadShell.latestTurn === null;
+  // follow-up must not be held behind a slow install. Before the first
+  // snapshot arrives the starting session stands in for it.
   const worktreeSetupBlocksSend =
     worktreeSetup !== null
       ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
-      : worktreeSetupAwaitingFirstSnapshot;
+      : isServerThread &&
+        activeThreadShell?.session?.status === "starting" &&
+        activeThreadShell.latestTurn === null;
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
   const onCancelWorktreeSetup = useCallback(() => {
-    if (!worktreeSetup || !worktreeSetupTarget || worktreeSetup.phase !== "running") return;
+    if (!worktreeSetup || worktreeSetup.phase !== "running") return;
     void cancelWorktreeSetup({
-      environmentId: worktreeSetupTarget.environmentId,
+      environmentId: routeThreadRef.environmentId,
       input: { threadId: worktreeSetup.threadId },
     });
-  }, [cancelWorktreeSetup, worktreeSetup, worktreeSetupTarget]);
+  }, [cancelWorktreeSetup, routeThreadRef.environmentId, worktreeSetup]);
   // The setup terminal belongs to the thread that was set up. A failed
   // bootstrap deletes that thread and closes its terminals, so only offer the
   // terminal while the setup thread is still the active one.
@@ -7588,17 +7538,6 @@ export default function ChatView(props: ChatViewProps) {
       preparingWorktree: Boolean(baseBranchForWorktree),
       submissionIntent: resolvedSubmissionIntent,
     });
-    setWorktreeSetupRef(
-      baseBranchForWorktree
-        ? { environmentId, threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey }
-        : null,
-    );
-    if (baseBranchForWorktree) {
-      pendingWorktreeSetupByThreadKey.set(
-        scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend)),
-        { environmentId, threadId: threadIdForSend },
-      );
-    }
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
@@ -8692,11 +8631,11 @@ export default function ChatView(props: ChatViewProps) {
   // setup (the bootstrap created it), so this keys off the route, not
   // `isLocalDraftThread`.
   const onWorktreeSetupWorkLocally = useCallback(() => {
-    if (!worktreeSetup || !worktreeSetupRef || worktreeSetup.phase !== "running" || !draftId) {
+    if (!worktreeSetup || worktreeSetup.phase !== "running" || !draftId) {
       return;
     }
     const target = {
-      environmentId: worktreeSetupRef.environmentId,
+      environmentId: routeThreadRef.environmentId,
       input: { threadId: worktreeSetup.threadId },
     };
     void (async () => {
@@ -8704,7 +8643,7 @@ export default function ChatView(props: ChatViewProps) {
       if (result._tag !== "Success" || !result.value.cancelled) return;
       setWorkLocallyResendDraftId(draftId);
     })();
-  }, [cancelWorktreeSetup, draftId, worktreeSetup, worktreeSetupRef]);
+  }, [cancelWorktreeSetup, draftId, routeThreadRef.environmentId, worktreeSetup]);
   const onSendRef = useRef(onSend);
   onSendRef.current = onSend;
   // Resend once the cancelled dispatch has settled and the composer is free.
