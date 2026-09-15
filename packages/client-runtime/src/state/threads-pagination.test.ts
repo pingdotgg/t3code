@@ -398,6 +398,65 @@ describe("thread pagination state", () => {
     }),
   );
 
+  it.effect("keeps a new page loading when a snapshot replaced a parked older page", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
+      yield* harness.awaitState((value) => Option.isSome(value.page));
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 30,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 30, threadSequence: 30 },
+        }),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("Waiting for old watermark", 11));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Waiting for old watermark"),
+      );
+      expect(
+        Option.getOrThrow((yield* SubscriptionRef.get(harness.threadState)).page).loadingOlder,
+      ).toBe(true);
+
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshot: {
+          snapshotSequence: 20,
+          thread: { ...BASE_THREAD, title: "Replacement snapshot" },
+          page: { beforeCursor: "cursor-2", hasMore: true, snapshotSequence: 20 },
+        },
+      });
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "Replacement snapshot"),
+      );
+      requestOlderThreadTurns(TARGET.environmentId, THREAD_ID);
+      yield* harness.awaitState((value) =>
+        Option.exists(value.page, (page) => page.loadingOlder && page.beforeCursor === "cursor-2"),
+      );
+      yield* Queue.offer(harness.inputs, titleEvent("New request still loading", 21));
+      yield* harness.awaitState((value) =>
+        Option.exists(value.data, (thread) => thread.title === "New request still loading"),
+      );
+      const loading = yield* SubscriptionRef.get(harness.threadState);
+      expect(Option.getOrThrow(loading.page).loadingOlder).toBe(true);
+      expect(hasMessage(loading, "message-old")).toBe(false);
+      expect((yield* Ref.get(harness.loaderWindows)).map((window) => window?.beforeCursor)).toEqual(
+        [undefined, "cursor-1", "cursor-2"],
+      );
+
+      yield* harness.resolveNextPage(
+        Option.some({
+          ...OLDER_PAGE,
+          snapshotSequence: 21,
+          page: { beforeCursor: null, hasMore: false, snapshotSequence: 21, threadSequence: 21 },
+        }),
+      );
+      const completed = yield* harness.awaitState((value) => hasMessage(value, "message-old"));
+      expect(Option.getOrThrow(completed.page).loadingOlder).toBe(false);
+      expect(Option.getOrThrow(completed.page).beforeCursor).toBeNull();
+    }),
+  );
+
   it.effect("discards an older page read from a projection behind the loaded state", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ initialResponse: Option.some(WINDOWED_SNAPSHOT) });
