@@ -53,6 +53,9 @@ are still spoken. New empty drafts use the same chime and do not start a worker.
 Fast commands are enabled by default. Turn off **Try fast commands** before connecting to use
 managed delegation instead.
 
+Sessions are also saved on your device, so a finished or interrupted conversation can be
+reviewed, exported, or deleted later; see [Voice history](voice-history.md).
+
 ## Starting work safely
 
 - Name the environment, project, and model explicitly when it matters. Only models the target
