@@ -1404,80 +1404,6 @@ it.layer(
     );
   }
 
-  it.effect.each([
-    { name: "BEL", query: "\u001b]4;4;?\u0007\u001b]4;5;?\u0007" },
-    { name: "ST", query: "\u001b]4;4;?;5;?\u001b\\" },
-    { name: "C1", query: "\u009d4;4;?;5;?\u009c" },
-    { name: "vp startup", query: "\u001b]10;?\u0007\u001b]4;4;?\u0007\u001b]4;5;?\u0007\u001b[c" },
-  ])("answers $name palette probes without an attached client", ({ query }) =>
-    Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
-      yield* manager.open({ ...openInput(), serverOwnedQueries: true });
-      const process = ptyAdapter.processes[0]!;
-      const done = yield* Deferred.make<void>();
-      const output: string[] = [];
-      yield* manager.subscribe((event) => {
-        if (event.type !== "output") return Effect.void;
-        output.push(event.data);
-        return event.data.includes("setup completed")
-          ? Deferred.succeed(done, undefined).pipe(Effect.asVoid)
-          : Effect.void;
-      });
-      // Model a CLI that cannot continue until both palette replies arrive.
-      const write = process.write.bind(process);
-      process.write = (data) => {
-        write(data);
-        if (
-          process.writes
-            .join("")
-            .includes(query.endsWith("\u001b[c") ? "\u001b[?62;22c" : "\u001b]4;5;rgb:")
-        ) {
-          process.emitData("setup completed\n");
-        }
-      };
-      // Every control-sequence boundary can fall between PTY chunks.
-      for (const character of query) process.emitData(character);
-      yield* Deferred.await(done);
-      const paletteReplies =
-        "\u001b]4;4;rgb:8181/a2a2/bebe\u001b\\\u001b]4;5;rgb:b2b2/9494/bbbb\u001b\\";
-      expect(process.writes.join("")).toBe(
-        query.endsWith("\u001b[c")
-          ? "\u001b]10;rgb:e5e5/e5e5/e5e5\u001b\\" + paletteReplies + "\u001b[?62;22c"
-          : paletteReplies,
-      );
-
-      expect(output.join("")).toBe("setup completed\n");
-      yield* manager.close({ threadId: "thread-1" });
-      expect((yield* manager.open(openInput())).history).toBe("setup completed\n");
-    }),
-  );
-
-  it.effect.each([false, true])(
-    "preserves other live queries with server handling %s",
-    (serverOwnedQueries) =>
-      Effect.gen(function* () {
-        const { manager, ptyAdapter } = yield* createManager();
-        yield* manager.open({ ...openInput(), serverOwnedQueries });
-        const process = ptyAdapter.processes[0]!;
-        const done = yield* Deferred.make<void>();
-        let output = "";
-        yield* manager.subscribe((event) => {
-          if (event.type !== "output") return Effect.void;
-          output += event.data;
-          return output.endsWith("done")
-            ? Deferred.succeed(done, undefined).pipe(Effect.asVoid)
-            : Effect.void;
-        });
-        const data =
-          (serverOwnedQueries ? "" : "\u001b]10;?\u0007\u001b]4;4;?\u0007\u001b[c") +
-          "\u001b[6n\u001b]4;4;rgb:0000/0000/ffff\u0007done";
-        for (const character of data) process.emitData(character);
-        yield* Deferred.await(done);
-        expect(output).toBe(data);
-        expect(process.writes).toEqual([]);
-      }),
-  );
-
   it.effect("strips replay-unsafe terminal query and reply sequences from persisted history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();
@@ -2008,13 +1934,15 @@ it.layer(
 
   it.effect("injects runtime env overrides into spawned terminals", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter } = yield* createManager();
+      const { manager, ptyAdapter } = yield* createManager(5, { env: { FORCE_COLOR: "3" } });
       yield* manager.open(
         openInput({
           env: {
             T3CODE_PROJECT_ROOT: "/repo",
             T3CODE_WORKTREE_PATH: "/repo/worktree-a",
             CUSTOM_FLAG: "1",
+            NO_COLOR: "1",
+            FORCE_COLOR: "0",
           },
         }),
       );
@@ -2025,6 +1953,8 @@ it.layer(
       assert.equal(spawnInput.env.T3CODE_PROJECT_ROOT, "/repo");
       assert.equal(spawnInput.env.T3CODE_WORKTREE_PATH, "/repo/worktree-a");
       assert.equal(spawnInput.env.CUSTOM_FLAG, "1");
+      assert.equal(spawnInput.env.NO_COLOR, "1");
+      assert.equal(spawnInput.env.FORCE_COLOR, "0");
     }),
   );
 

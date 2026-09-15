@@ -357,12 +357,12 @@ export const make = Effect.gen(function* () {
 
     yield* terminalManager
       .open({
-        serverOwnedQueries: true,
         threadId: input.threadId,
         terminalId,
         cwd,
         worktreePath: input.worktreePath,
-        env,
+        // Setup may run before a terminal client attaches to answer color probes.
+        env: { ...env, NO_COLOR: "1", FORCE_COLOR: "0" },
       })
       .pipe(
         Effect.mapError(
