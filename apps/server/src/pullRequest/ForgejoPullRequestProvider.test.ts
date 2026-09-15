@@ -223,3 +223,24 @@ it.effect("preserves executable, symlink, and submodule changes in rebuilt previ
     expect(result.omittedFileStats).toHaveLength(3);
   }).pipe(Effect.provide(runtime)),
 );
+
+it.effect("preserves authentication and rate-limit errors while rebuilding file previews", () =>
+  Effect.gen(function* () {
+    const provider = yield* Provider.make;
+    for (const reason of ["authentication", "rate-limit"] as const) {
+      api.mockImplementation((request) => {
+        if (request.path.endsWith("/pulls/1")) return json(pull);
+        if (request.path.includes("/files?"))
+          return json([{ filename: "added", status: "added", additions: 1, deletions: 0 }]);
+        if (request.path.includes("/git/trees/"))
+          return json({ truncated: false, tree: [{ path: "added", mode: "100644", sha: "blob" }] });
+        return Effect.fail(
+          new ForgejoCliError({ command: "fj", cwd: input.cwd, reason, detail: reason }),
+        );
+      });
+      const error = yield* Effect.flip(provider.getDiff({ ...input, cursor: "1" }));
+      expect(error.reason).toBe(reason === "authentication" ? "unauthenticated" : "rate-limited");
+      expect(error.detail).toBe(reason);
+    }
+  }).pipe(Effect.provide(runtime)),
+);
