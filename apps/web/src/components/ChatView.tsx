@@ -125,6 +125,7 @@ import {
   deriveTimelineEntriesWithState,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveAgentCreatedThreads,
   findLatestProposedPlan,
   deriveWorkLogEntries,
   hasActionableProposedPlan,
@@ -132,6 +133,7 @@ import {
   selectHandoffImageResources,
   type TimelineEntriesProjection,
 } from "../session-logic";
+import { notifyAgentCreatedThreads } from "../agentCreatedThreadToast";
 import { type LegendListRef } from "@legendapp/list/react";
 import {
   CHAT_TIMELINE_ANCHOR_OFFSET,
@@ -2863,6 +2865,25 @@ export default function ChatView(props: ChatViewProps) {
     [threadActivities],
   );
   const workLogEntries = useMemo(() => deriveWorkLogEntries(threadActivities), [threadActivities]);
+  const agentCreatedThreads = useMemo(
+    () => deriveAgentCreatedThreads(workLogEntries),
+    [workLogEntries],
+  );
+  useEffect(() => {
+    if (agentCreatedThreads.length === 0) {
+      return;
+    }
+    notifyAgentCreatedThreads({
+      environmentId,
+      threads: agentCreatedThreads,
+      navigate: (threadRef) => {
+        void navigate({
+          to: "/$environmentId/$threadId",
+          params: buildThreadRouteParams(threadRef),
+        });
+      },
+    });
+  }, [agentCreatedThreads, environmentId, navigate]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).

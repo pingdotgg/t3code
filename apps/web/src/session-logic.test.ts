@@ -13,6 +13,7 @@ import {
   createMessageAttachmentPreviewProjector,
   deriveActiveWorkStartedAt,
   deriveActivePlanState,
+  deriveAgentCreatedThreads,
   deriveTimelineEntries,
   deriveTimelineEntriesWithState,
   deriveWorkLogEntries,
@@ -1070,6 +1071,176 @@ describe("deriveWorkLogEntries", () => {
     ];
 
     expect(deriveWorkLogEntries(activities)).toHaveLength(2);
+  });
+
+  it("parses a threads_list structured result into the item-list card data", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-list-done",
+        kind: "tool.completed",
+        summary: "t3-code · threads_list",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_list",
+            structuredResult: {
+              threads: [
+                {
+                  threadId: "thread-1",
+                  projectId: "project-1",
+                  title: "Fix the bug",
+                  settled: true,
+                  updatedAt: "2026-02-23T00:00:00.000Z",
+                },
+                {
+                  threadId: "thread-2",
+                  projectId: "project-1",
+                  title: "Active work",
+                  settled: false,
+                  updatedAt: "2026-02-23T00:01:00.000Z",
+                },
+              ],
+            },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.threadsList).toEqual({
+      threads: [
+        {
+          threadId: "thread-1",
+          projectId: "project-1",
+          title: "Fix the bug",
+          settled: true,
+          updatedAt: "2026-02-23T00:00:00.000Z",
+        },
+        {
+          threadId: "thread-2",
+          projectId: "project-1",
+          title: "Active work",
+          settled: false,
+          updatedAt: "2026-02-23T00:01:00.000Z",
+        },
+      ],
+    });
+    expect(entry?.threadsCreated).toBeUndefined();
+  });
+
+  it("detects the threads_list tool name on Codex-shaped item payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-list-codex",
+        kind: "tool.completed",
+        summary: "t3-code · threads_list",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            item: {
+              type: "mcpToolCall",
+              tool: "threads_list",
+              result: { content: [{ type: "text", text: "{}" }] },
+            },
+            structuredResult: { threads: [] },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.threadsList).toEqual({ threads: [] });
+  });
+
+  it("leaves threadsList undefined when the structured result shape is wrong", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-list-bad",
+        kind: "tool.completed",
+        summary: "t3-code · threads_list",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_list",
+            structuredResult: { threads: [{ threadId: "thread-1" }] },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.threadsList).toBeUndefined();
+  });
+
+  it("captures the threads_create structured result for the new-thread toast", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-create-done",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-new", title: "Fresh thread" },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(entries[0]?.threadsCreated).toEqual({ threadId: "thread-new", title: "Fresh thread" });
+    expect(deriveAgentCreatedThreads(entries)).toEqual([
+      { threadId: "thread-new", title: "Fresh thread" },
+    ]);
+  });
+
+  it("derives one agent-created thread per id and skips failed calls", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-create-progress",
+        kind: "tool.updated",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          status: "inProgress",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-new", title: "Fresh thread" },
+          },
+        },
+      }),
+      makeActivity({
+        id: "threads-create-done",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-new", title: "Fresh thread" },
+          },
+        },
+      }),
+      makeActivity({
+        id: "threads-create-failed",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          status: "failed",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-gone", title: "Doomed thread" },
+          },
+        },
+      }),
+    ];
+
+    const entries = deriveWorkLogEntries(activities);
+    expect(deriveAgentCreatedThreads(entries)).toEqual([
+      { threadId: "thread-new", title: "Fresh thread" },
+    ]);
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {

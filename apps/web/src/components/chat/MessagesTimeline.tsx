@@ -18,11 +18,12 @@ import {
   type MessageId,
   type ScopedThreadRef,
   type ServerProviderSkill,
+  type ThreadsListResult,
   type ToolActivityIcon,
   type TurnId,
   type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
-import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
+import { parseScopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { replaceComposerContextReferences } from "@t3tools/shared/composerContextReferences";
 import type { CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import {
@@ -112,6 +113,7 @@ import {
   CircleAlertIcon,
   DownloadIcon,
   EyeIcon,
+  MinusIcon,
   GitPullRequestIcon,
   GlobeIcon,
   HammerIcon,
@@ -237,7 +239,13 @@ import { useMediaQuery } from "~/hooks/useMediaQuery";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
-import { formatChatTimestampTooltip, formatDayAwareTimestamp } from "../../timestampFormat";
+import {
+  formatChatTimestampTooltip,
+  formatDayAwareTimestamp,
+  formatRelativeTimeLabel,
+} from "../../timestampFormat";
+import { buildThreadRouteParams } from "../../threadRoutes";
+import { useNavigate } from "@tanstack/react-router";
 
 import { SkillInlineText } from "./SkillInlineText";
 import { deriveAgentSpawnSummary } from "./agentSpawnSummary";
@@ -4140,6 +4148,9 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       />
     );
   }
+  if (workEntry.threadsList) {
+    return <ThreadsListCard threadsList={workEntry.threadsList} />;
+  }
   return (
     <PlainWorkEntryRow
       workEntry={workEntry}
@@ -4148,6 +4159,56 @@ const SimpleWorkEntryRow = memo(function SimpleWorkEntryRow(props: {
       displayLabel={displayLabel}
       onToggleEntry={props.onToggleEntry}
     />
+  );
+});
+
+/**
+ * Inline item list for an agent's `threads_list` call. The parsed result
+ * replaces the generic tool row entirely; rows navigate to the listed threads
+ * in the thread's own environment.
+ */
+const ThreadsListCard = memo(function ThreadsListCard(props: { threadsList: ThreadsListResult }) {
+  const { activeThreadEnvironmentId } = use(TimelineRowCtx);
+  const navigate = useNavigate();
+  const threads = props.threadsList.threads;
+
+  return (
+    <div className="flex flex-col rounded-md px-0.5 py-0.5">
+      <p className="px-1 pb-0.5 text-[11px] text-secondary-label">
+        {threads.length} thread{threads.length === 1 ? "" : "s"}
+      </p>
+      <div className="flex flex-col">
+        {threads.map((thread) => (
+          <button
+            key={thread.threadId}
+            type="button"
+            className="flex w-full items-center gap-1.5 rounded-md px-1 py-0.5 text-left hover:bg-accent/20"
+            onClick={() => {
+              navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(
+                  scopeThreadRef(activeThreadEnvironmentId, thread.threadId),
+                ),
+              });
+            }}
+          >
+            <span className="min-w-0 flex-1 truncate text-[12px] text-foreground">
+              {thread.title}
+            </span>
+            <span className="shrink-0 text-[11px] text-secondary-label">
+              {formatRelativeTimeLabel(thread.updatedAt)}
+            </span>
+            <span className="flex size-4 shrink-0 items-center justify-center text-icon-muted">
+              {thread.settled ? (
+                <CheckIcon className="block size-3 shrink-0 stroke-current" aria-hidden />
+              ) : (
+                <MinusIcon className="block size-3 shrink-0 opacity-70" aria-hidden />
+              )}
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
   );
 });
 
