@@ -22,7 +22,7 @@
     "@t3tools/shared": "workspace:*",
     "@t3tools/ssh": "workspace:*",
     "@t3tools/tailscale": "workspace:*",
-    "@trycua/cua-driver": "0.24.0",
+    "@trycua/cua-driver": "0.28.1",
     "dbus-next": "0.10.2",
     "effect": "catalog:",
     "electron": "44.1.0",

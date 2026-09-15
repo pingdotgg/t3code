@@ -318,7 +318,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             const releaseArch = arch === "x64" ? "x86_64" : arch;
             const executable =
               platform === "mac" && arch !== "universal"
-                ? `cua-driver-rs-0.24.0-darwin-${releaseArch}/cua-driver`
+                ? `cua-driver-rs-0.28.1-darwin-${releaseArch}/cua-driver`
                 : platform === "win"
                   ? "cua-driver.exe"
                   : "cua-driver";
@@ -346,7 +346,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
             const asset = resolveCuaDriverAsset(platform, arch);
             assert.equal(asset.executablePath, executable);
             assert.match(asset.sha256, /^[0-9a-f]{64}$/);
-            assert.include(asset.url, "/cua-driver-rs-v0.24.0/");
+            assert.include(asset.url, "/cua-driver-rs-v0.28.1/");
             yield* stageCuaDriverBundle({ platform, arch, extractDir, stageResourcesDir });
             const destination = path.join(stageResourcesDir, "cua-driver");
             if (platform === "mac") {
@@ -528,7 +528,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           "@napi-rs/keyring": "^1.3.0",
           "@t3tools/contracts": "workspace:*",
           "@t3tools/shared": "workspace:*",
-          "@trycua/cua-driver": "0.24.0",
+          "@trycua/cua-driver": "0.28.1",
           "dbus-next": "0.10.2",
           effect: "catalog:",
           electron: "41.5.0",
@@ -547,7 +547,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         "@clerk/electron-passkeys": "0.0.3",
         "@crowecawcaw/xa11y": "0.13.0",
         "@napi-rs/keyring": "^1.3.0",
-        "@trycua/cua-driver": "0.24.0",
+        "@trycua/cua-driver": "0.28.1",
         "ffi-rs": "1.3.2",
         "playwright-core": "1.60.0",
       },

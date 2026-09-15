@@ -60,7 +60,7 @@ const APPLE_TEAM_ID_PATTERN = /^[A-Z0-9]{10}$/u;
 const BuildPlatform = Schema.Literals(["mac", "linux", "win"]);
 const BuildArch = Schema.Literals(["arm64", "x64", "universal"]);
 
-const CUA_DRIVER_RELEASE_VERSION = "0.24.0";
+const CUA_DRIVER_RELEASE_VERSION = "0.28.1";
 const CUA_DRIVER_RELEASE_BASE_URL = `https://github.com/trycua/cua/releases/download/cua-driver-rs-v${CUA_DRIVER_RELEASE_VERSION}`;
 
 interface CuaDriverMacAsset {
@@ -73,28 +73,28 @@ const CUA_DRIVER_MAC_ASSETS: Record<typeof BuildArch.Type, CuaDriverMacAsset> = 
   arm64: {
     archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-arm64.tar.gz`,
     executablePath: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-arm64/cua-driver`,
-    sha256: "fd0cf565db831ad34d44a3c2321439575e02a6ce3ca97d04f267db1da7883685",
+    sha256: "b3cb3781feb9855dfcdd616bc5c9c8e627453e3e16a073c1446326691a549b24",
   },
   x64: {
     archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-x86_64.tar.gz`,
     executablePath: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-x86_64/cua-driver`,
-    sha256: "66db9b244c12e0f416212ca3421afb7cda6b1b927fb6536943919bb7eff5e10b",
+    sha256: "bc9e607f03609a92f3291cf18dae17d16896ae0dde39d72fc2a5db7d71e207a1",
   },
   universal: {
     archiveName: `cua-driver-rs-${CUA_DRIVER_RELEASE_VERSION}-darwin-universal-binary.tar.gz`,
     executablePath: "cua-driver",
-    sha256: "31790cb49baa206f6455fbc259f8f83ae27e86be908f5c8cac5ec2f8521f8382",
+    sha256: "6a0dde9732a68c139760ccc573899668757995a6e9190d80ccaad6db26bd6fe8",
   },
 };
 
 const CUA_DRIVER_PLATFORM_SHA256 = {
   linux: {
-    arm64: "2c526bf14fb81a46db19d242ddd2e0be766bc1ce1082ed8a708ad235de74a28e",
-    x64: "b3b8ff52595feb111219aa0ac90e3b36618cc686aa8205aed4f3e7e1a67c7b64",
+    arm64: "02693499d34d6fe30bef99ef2f3051974ee7989469e3e7a9edc404896bdc6bbd",
+    x64: "71aa92533de90a68a0a2af930243f1770d23e45b896b57d67a1763da4bfaeaf7",
   },
   win: {
-    arm64: "d973df1cfa421ca7801015a2987bbe1526eef1ac167cd3f281b417bb282037e9",
-    x64: "cc22d7a44ad526f779f2df7e6da053dd898ef8e5014b1ecfc01728645f691be0",
+    arm64: "d260e6110e029680d543d317f3c3c09569475f8d65855fcedda202e2ee989bf0",
+    x64: "ab90418a54f84102f549cde4537daef3a0e20ba8254b7e24524a50fc5f4174d3",
   },
 } as const;
 
