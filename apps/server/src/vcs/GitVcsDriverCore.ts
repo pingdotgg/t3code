@@ -2313,27 +2313,44 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     cwd: string,
     ignoreWhitespace: boolean | undefined,
   ) {
-    const result = yield* executeGit(
-      "GitVcsDriver.readTrackedReviewDiff",
-      cwd,
-      [
-        "diff",
-        "--patch",
-        "--no-color",
-        "--no-ext-diff",
-        "--no-textconv",
-        "--minimal",
-        ...PATCH_RENDER_PREFIX_ARGS,
-        "--find-renames",
-        ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
-        "HEAD",
-        "--",
-      ],
-      {
-        maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
-        appendTruncationMarker: true,
-      },
-    );
+    const readDiff = (revision: string, allowNonZeroExit = false) =>
+      executeGitWithStableDiagnostics(
+        "GitVcsDriver.readTrackedReviewDiff",
+        cwd,
+        [
+          "diff",
+          "--patch",
+          "--no-color",
+          "--no-ext-diff",
+          "--no-textconv",
+          "--minimal",
+          ...PATCH_RENDER_PREFIX_ARGS,
+          "--find-renames",
+          ...(ignoreWhitespace ? ["--ignore-all-space"] : []),
+          revision,
+          "--",
+        ],
+        {
+          allowNonZeroExit,
+          maxOutputBytes: REVIEW_DIFF_PATCH_MAX_OUTPUT_BYTES,
+          appendTruncationMarker: true,
+        },
+      );
+    let result = yield* readDiff("HEAD", true);
+    if (result.exitCode !== 0) {
+      if (!isUnbornHeadStderr(result.stderr)) {
+        return { diff: "", truncated: false };
+      }
+      // Derive the empty tree for this repository's object format when HEAD
+      // does not exist, so staged files are compared with their current contents.
+      const emptyTree = yield* runGitStdoutWithOptions(
+        "GitVcsDriver.readTrackedReviewDiff.emptyTree",
+        cwd,
+        ["hash-object", "-t", "tree", "--stdin"],
+        { stdin: "" },
+      );
+      result = yield* readDiff(emptyTree.trim());
+    }
     return { diff: result.stdout, truncated: result.stdoutTruncated };
   });
 
