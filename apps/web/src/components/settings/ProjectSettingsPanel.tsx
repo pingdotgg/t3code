@@ -7,7 +7,32 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { AsyncResult } from "effect/unstable/reactivity";
-import { type EnvironmentId, type ProjectIconOverride } from "@t3tools/contracts";
+import {
+  deriveProjectGroupingOverrideKey,
+  selectProjectGroupingSettings,
+} from "../../logicalProject";
+import {
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectIconOverride,
+  type ProjectId,
+  type ProjectScript,
+  type ResolvedKeybindingsConfig,
+  type ServerSettings,
+  type ProviderDriverKind,
+  type PullRequestMergeMethod,
+  type SidebarProjectGroupingMode,
+  type T3ProjectFileScript,
+  type ThreadEnvMode,
+} from "@t3tools/contracts";
+import { resolveEnvModeLabel } from "../BranchToolbar.logic";
+import { createModelSelection } from "@t3tools/shared/model";
+import { resolveProjectAutoPull } from "@t3tools/shared/serverSettings";
+import {
+  projectScriptsInheritDefaults,
+  resolveProjectScripts,
+} from "@t3tools/shared/projectScripts";
+import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { useLocation, useNavigate } from "@tanstack/react-router";
 import * as Cause from "effect/Cause";
 import { Trash2Icon } from "lucide-react";
