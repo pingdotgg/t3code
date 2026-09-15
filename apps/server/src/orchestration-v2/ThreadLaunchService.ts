@@ -289,7 +289,11 @@ const make = Effect.gen(function* () {
         yield* setupTracker.stageStatus(threadId, "fetch", startFromOrigin ? "running" : "skipped");
         if (startFromOrigin) {
           yield* git
-            .fetchRemote({ cwd: project.workspaceRoot, remoteName: "origin" })
+            .fetchRemote({
+              cwd: project.workspaceRoot,
+              remoteName: "origin",
+              refName: input.workspaceStrategy.baseRef,
+            })
             .pipe(Effect.mapError(mapError(input, "provision-worktree", threadId)));
           const remoteBaseExists = yield* git
             .remoteBranchExists({
