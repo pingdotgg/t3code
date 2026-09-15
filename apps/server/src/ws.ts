@@ -1203,7 +1203,11 @@ const makeWsRpcLayer = (
               // The setup script is best effort, like the untracked path: a
               // failed install must not throw away the worktree the user just
               // waited for. The card keeps the failed stage and its terminal.
-              const awaitCompletion = setupResult.completion.pipe(
+              // Forked right away so the terminal listener behind `completion`
+              // is always consumed, even when the turn dispatch fails before
+              // anyone would otherwise wait on it. The tracker update is a
+              // no-op once the snapshot has been dropped.
+              const completionFiber = yield* setupResult.completion.pipe(
                 Effect.flatMap((completion) => {
                   if (completion.exitCode === 0) {
                     return worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
@@ -1219,12 +1223,13 @@ const makeWsRpcLayer = (
                     detail,
                   );
                 }),
+                Effect.forkDetach,
               );
               if (!setupResult.async) {
-                yield* awaitCompletion;
+                yield* Fiber.join(completionFiber);
                 return null;
               }
-              return awaitCompletion;
+              return completionFiber;
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -1443,7 +1448,7 @@ const makeWsRpcLayer = (
             // the wait cannot fail the dispatch.
             const settle = track(worktreeSetupTracker.finish(threadId, "done"));
             if (pendingSetupScript) {
-              yield* pendingSetupScript.pipe(
+              yield* Fiber.join(pendingSetupScript).pipe(
                 Effect.ignoreCause({ log: true }),
                 Effect.andThen(settle),
                 Effect.forkDetach,

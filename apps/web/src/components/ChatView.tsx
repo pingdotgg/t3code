@@ -3525,14 +3525,18 @@ export default function ChatView(props: ChatViewProps) {
     (!isWorking || !worktreeSetup.stages.some((stage) => stage.status === "failed"));
   useEffect(() => {
     if (!worktreeSetupDoneAndTurnVisible) return;
-    if (worktreeSetupRef) {
-      pendingWorktreeSetupByThreadKey.delete(
-        scopedThreadKey(scopeThreadRef(worktreeSetupRef.environmentId, worktreeSetupRef.threadId)),
-      );
-    }
     setWorktreeSetupRef(null);
     setHeldWorktreeSetup(null);
-  }, [worktreeSetupDoneAndTurnVisible, worktreeSetupRef]);
+  }, [worktreeSetupDoneAndTurnVisible]);
+  // The handoff entry only matters while the setup is still running: once it
+  // settles in any phase, a later mount of the thread must not adopt it.
+  const worktreeSetupSettledKey =
+    worktreeSetup && worktreeSetup.phase !== "running" && worktreeSetupRef
+      ? scopedThreadKey(scopeThreadRef(worktreeSetupRef.environmentId, worktreeSetupRef.threadId))
+      : null;
+  useEffect(() => {
+    if (worktreeSetupSettledKey) pendingWorktreeSetupByThreadKey.delete(worktreeSetupSettledKey);
+  }, [worktreeSetupSettledKey]);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
