@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
+import { countGraphemes } from "unicode-segmenter/grapheme";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -459,11 +460,11 @@ const ProjectLucideIconName = TrimmedNonEmptyString.check(
 
 const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 
-const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
 export const ProjectMonogramText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-  Schema.makeFilter((text) => Array.from(monogramSegmenter.segment(text)).length <= 2),
+  // These contracts also load in Hermes, which does not provide Intl.Segmenter.
+  Schema.makeFilter((text) => countGraphemes(text) <= 2),
 );
 
 export const ProjectIconOverride = Schema.Union([
