@@ -67,7 +67,12 @@ export interface OrchestrationEventStoreShape {
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
   }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, OrchestrationEventStoreError>;
 
-  /** Read only V2 thread events from the application log. */
+  /**
+   * Read only V2 thread events from the application log.
+   *
+   * Reads in fixed-size sequence pages until the filtered range is exhausted;
+   * `limit` caps the total emitted events across pages.
+   */
   readonly readAgentEvents: (input?: {
     readonly afterSequence?: number;
     readonly throughSequence?: number;
