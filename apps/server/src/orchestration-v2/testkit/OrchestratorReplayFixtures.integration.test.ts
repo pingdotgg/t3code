@@ -2,6 +2,8 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import type { OrchestrationV2DomainEvent, ProviderReplayTranscript } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import { ClaudeOrchestratorReplayHarness } from "../Adapters/ClaudeAdapterV2.testkit.ts";
 import { CodexOrchestratorReplayHarness } from "../Adapters/CodexAdapterV2.testkit.ts";
@@ -112,6 +114,19 @@ const runFixtureProvider = Effect.fn("runOrchestratorReplayFixture")(function* <
     enableLegacyTokenStreaming: input.enableLegacyTokenStreaming ?? false,
   }).pipe(provideDeterministicTestRuntime);
   input.driver.assertOutput(result, transcript);
+  const expectedAbsentWorkspacePaths = input.driver.expectedAbsentWorkspacePaths;
+  if (expectedAbsentWorkspacePaths !== undefined) {
+    yield* Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      for (const relativePath of expectedAbsentWorkspacePaths) {
+        assert.isFalse(
+          yield* fs.exists(path.join(workspace, relativePath)),
+          `${input.fixtureName}/${input.driver.driver} must not create ${relativePath} in the replay workspace`,
+        );
+      }
+    }).pipe(Effect.provide(NodeServices.layer));
+  }
   if (input.enableLegacyTokenStreaming !== true) {
     assert.isFalse(
       result.domainEvents.some(isStreamingAssistantEvent),
