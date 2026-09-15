@@ -92,7 +92,12 @@ Both client and managed delegation refuse `startThread` when the associated
 utterance does not explicitly request creation. This conservative English
 command gate can ask for clearer wording; it never substitutes creation for
 an uncertain existing-thread request. Model instructions distinguish reading
-status from sending a follow-up to the worker.
+status from sending a follow-up to the worker. A second pinned policy
+separates the discussed thread from the destination of new work: a
+`startThread` projectId is chosen from the task's subject via
+`discoverProjects` metadata, the discussed or open thread's project is never
+the default, an explicitly named destination is used as given, and an
+ambiguous destination asks instead of defaulting.
 The model fallback is bounded to eight tool rounds and the session to 200 client
 delegations. Closing the session invalidates pending results; new requests
 supersede pending older actions.
