@@ -1148,17 +1148,18 @@ describe("deriveMessagesTimelineRows", () => {
         id: WORKTREE_SETUP_ROW_ID,
         createdAt: "2026-01-01T00:00:00Z",
         snapshot,
+        embedded: false,
       },
     ]);
 
-    // Once the agent has replied the finished card stays under the send.
+    // A failed setup never handed off, so the card stays under the send.
     const withMessages = deriveMessagesTimelineRows({
       timelineEntries: [userEntry, assistantEntry],
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
       supportsConversationRollback: false,
-      worktreeSetup: { ...snapshot, phase: "done" },
+      worktreeSetup: { ...snapshot, phase: "failed" },
     });
     expect(withMessages.map((row) => row.kind)).toEqual([
       "message",
@@ -1166,6 +1167,34 @@ describe("deriveMessagesTimelineRows", () => {
       "working",
       "message",
     ]);
+
+    // Once the agent stage is done the setup script may still be running in
+    // the background: the turn owns the header and the script row follows it.
+    const agentStage = {
+      id: "agent",
+      status: "done",
+      startedAt: "2026-01-01T00:00:10Z",
+      endedAt: "2026-01-01T00:00:11Z",
+      percent: null,
+      detail: null,
+      tail: [],
+    } as const;
+    const asyncSnapshot: WorktreeSetupSnapshot = { ...snapshot, stages: [agentStage] };
+    const asyncRows = deriveMessagesTimelineRows({
+      timelineEntries: [userEntry],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: asyncSnapshot,
+    });
+    expect(asyncRows.map((row) => row.kind)).toEqual([
+      "message",
+      "working",
+      "worktree-setup",
+      "thinking",
+    ]);
+    expect(asyncRows[2]).toMatchObject({ kind: "worktree-setup", embedded: true });
   });
 
   it("keeps context compaction visible outside folded work", () => {

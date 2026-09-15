@@ -1430,6 +1430,16 @@ function releaseChatTimelineAnchor<T extends { readonly messageId: MessageId | n
   return current.messageId === null ? current : { ...current, messageId: null };
 }
 
+/**
+ * Worktree setups whose async setup script may still be running after the
+ * draft route hands off to the created thread. Keyed by scoped thread key;
+ * entries are removed once the setup settles.
+ */
+const pendingWorktreeSetupByThreadKey = new Map<
+  string,
+  { environmentId: EnvironmentId; threadId: ThreadId }
+>();
+
 export default function ChatView(props: ChatViewProps) {
   const {
     environmentId,
@@ -1659,7 +1669,12 @@ export default function ChatView(props: ChatViewProps) {
     environmentId: EnvironmentId;
     threadId: ThreadId;
     ownerKey: string;
-  } | null>(null);
+  } | null>(() => {
+    // The draft route unmounts when it promotes to the created thread, while an
+    // async setup script may still be running. Adopt the ref the draft left.
+    const handed = pendingWorktreeSetupByThreadKey.get(routeThreadKey);
+    return handed ? { ...handed, ownerKey: routeThreadKey } : null;
+  });
   const [heldWorktreeSetup, setHeldWorktreeSetup] = useState<WorktreeSetupSnapshot | null>(null);
   // Set by "Work locally": the draft whose restored message should be resent
   // once the cancelled dispatch has settled and the draft is in local mode.
@@ -3500,14 +3515,24 @@ export default function ChatView(props: ChatViewProps) {
       ? heldWorktreeSetup
       : null;
   // A finished card is dropped once the agent's turn shows in the timeline:
-  // the card belongs to the send, and the agent takes over from there.
+  // the card belongs to the send, and the agent takes over from there. An
+  // async setup script keeps the snapshot running past the handoff and its
+  // row leaves the moment the script exits cleanly; a failed script stays
+  // for the rest of the turn so the exit code and terminal remain reachable.
   const worktreeSetupDoneAndTurnVisible =
-    worktreeSetup?.phase === "done" && activeThread?.latestTurn?.startedAt != null;
+    worktreeSetup?.phase === "done" &&
+    activeThread?.latestTurn?.startedAt != null &&
+    (!isWorking || !worktreeSetup.stages.some((stage) => stage.status === "failed"));
   useEffect(() => {
     if (!worktreeSetupDoneAndTurnVisible) return;
+    if (worktreeSetupRef) {
+      pendingWorktreeSetupByThreadKey.delete(
+        scopedThreadKey(scopeThreadRef(worktreeSetupRef.environmentId, worktreeSetupRef.threadId)),
+      );
+    }
     setWorktreeSetupRef(null);
     setHeldWorktreeSetup(null);
-  }, [worktreeSetupDoneAndTurnVisible]);
+  }, [worktreeSetupDoneAndTurnVisible, worktreeSetupRef]);
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -7515,6 +7540,12 @@ export default function ChatView(props: ChatViewProps) {
         ? { environmentId, threadId: threadIdForSend, ownerKey: worktreeSetupOwnerKey }
         : null,
     );
+    if (baseBranchForWorktree) {
+      pendingWorktreeSetupByThreadKey.set(
+        scopedThreadKey(scopeThreadRef(environmentId, threadIdForSend)),
+        { environmentId, threadId: threadIdForSend },
+      );
+    }
 
     const messageIdForSend = newMessageId();
     const messageCreatedAt = new Date().toISOString();
