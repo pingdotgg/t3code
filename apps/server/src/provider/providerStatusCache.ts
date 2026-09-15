@@ -91,6 +91,14 @@ export const hydrateCachedProvider = (input: {
     checkedAt: input.cachedProvider.checkedAt,
     slashCommands: input.cachedProvider.slashCommands,
     skills: input.cachedProvider.skills,
+    // OpenCode-only inventory: prefer the cached lists (fresh refreshes
+    // overwrite them via checkOpenCodeProviderStatus); fall back to whatever
+    // the fallback snapshot carries when the cache predates this feature.
+    ...(input.cachedProvider.mcps !== undefined ? { mcps: input.cachedProvider.mcps } : {}),
+    ...(input.cachedProvider.lsps !== undefined ? { lsps: input.cachedProvider.lsps } : {}),
+    ...(input.cachedProvider.plugins !== undefined
+      ? { plugins: input.cachedProvider.plugins }
+      : {}),
   };
 
   return input.cachedProvider.message

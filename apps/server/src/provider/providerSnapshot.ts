@@ -4,6 +4,9 @@ import type {
   ModelCapabilities,
   ServerProvider,
   ServerProviderAuth,
+  ServerProviderLsp,
+  ServerProviderMcp,
+  ServerProviderPlugin,
   ServerProviderSkill,
   ServerProviderSlashCommand,
   ServerProviderModel,
@@ -205,6 +208,9 @@ export function buildServerProvider(input: {
   models: ReadonlyArray<ServerProviderModel>;
   slashCommands?: ReadonlyArray<ServerProviderSlashCommand>;
   skills?: ReadonlyArray<ServerProviderSkill>;
+  mcps?: ReadonlyArray<ServerProviderMcp>;
+  lsps?: ReadonlyArray<ServerProviderLsp>;
+  plugins?: ReadonlyArray<ServerProviderPlugin>;
   probe: ProviderProbeResult;
 }): ServerProviderDraft {
   const versionAdvisory = input.driver
@@ -239,6 +245,9 @@ export function buildServerProvider(input: {
     models: input.models,
     slashCommands: [...(input.slashCommands ?? [])],
     skills: [...(input.skills ?? [])],
+    mcps: [...(input.mcps ?? [])],
+    lsps: [...(input.lsps ?? [])],
+    plugins: [...(input.plugins ?? [])],
     ...(input.probe.usageLimits ? { usageLimits: input.probe.usageLimits } : {}),
     ...(versionAdvisory ? { versionAdvisory } : {}),
   };
