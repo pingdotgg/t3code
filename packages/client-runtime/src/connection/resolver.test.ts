@@ -205,6 +205,26 @@ describe("ConnectionResolver", () => {
     }),
   );
 
+  it.effect("blocks an incompatible host during discovery before opening orchestration RPC", () =>
+    Effect.gen(function* () {
+      const brokerLayer = yield* makeDependencies({
+        descriptorProtocolVersion: ORCHESTRATION_PROTOCOL_VERSION + 1,
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(brokerLayer));
+      const target = new PrimaryConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Primary",
+        httpBaseUrl: "http://127.0.0.1:3777",
+        wsBaseUrl: "ws://127.0.0.1:3777",
+      });
+
+      const error = yield* Effect.flip(broker.prepare(catalogEntry(target)));
+
+      expect(error).toMatchObject({ reason: "unsupported" });
+      expect(error.message).toContain("This client is not supported");
+    }),
+  );
+
   it.effect("prepares a primary environment without remote capabilities", () =>
     Effect.gen(function* () {
       const brokerLayer = yield* makeDependencies();

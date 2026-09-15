@@ -28,6 +28,7 @@ interface ComposerPrimaryActionsProps {
   compact: boolean;
   pendingAction: PendingActionState | null;
   isRunning: boolean;
+  followUpBehavior?: "queue" | "steer";
   showPlanFollowUpPrompt: boolean;
   promptHasText: boolean;
   isSendBusy: boolean;
@@ -70,6 +71,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   compact,
   pendingAction,
   isRunning,
+  followUpBehavior = "steer",
   showPlanFollowUpPrompt,
   promptHasText,
   isSendBusy,
@@ -93,7 +95,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isQueuing =
     isRunning &&
     !isEditingQueuedMessage &&
-    (shortcutModifiers.metaKey || shortcutModifiers.ctrlKey);
+    (followUpBehavior === "queue" || shortcutModifiers.metaKey || shortcutModifiers.ctrlKey);
   const isSendDisabled = sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -260,7 +262,9 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
             : null));
   const submitTooltip =
     submitStatus ??
-    (isRunning && !isEditingQueuedMessage ? "Enter to steer, Mod+Enter to queue" : submitLabel);
+    (isRunning && !isEditingQueuedMessage
+      ? `Enter to ${followUpBehavior}, Mod+Enter to queue`
+      : submitLabel);
 
   const sendButton = (
     <button
