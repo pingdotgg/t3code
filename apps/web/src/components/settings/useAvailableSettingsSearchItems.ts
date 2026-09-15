@@ -5,7 +5,7 @@ import { hasCloudPublicConfig } from "~/cloud/publicConfig";
 import { isElectron } from "~/env";
 import { isLocalEnvironmentDisabled } from "~/localEnvironment";
 import { desktopWslStateAtom } from "~/state/desktopWslState";
-import { useEnvironments } from "~/state/environments";
+import { useEnvironments, usePrimaryEnvironmentId } from "~/state/environments";
 import { useEnvironmentQuery } from "~/state/query";
 import { usePrimarySessionState } from "~/environments/primary";
 import { isWslSettingsRowVisible } from "./ConnectionsSettings.logic";
@@ -17,6 +17,7 @@ import {
 
 export function useAvailableSettingsSearchItems() {
   const { environments } = useEnvironments();
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const primarySessionState = usePrimarySessionState();
   const localEnvironmentDisabled = isLocalEnvironmentDisabled();
   const desktopWsl = useEnvironmentQuery(
@@ -35,6 +36,7 @@ export function useAvailableSettingsSearchItems() {
         localEnvironmentDisabled,
         hasCloudPublicConfig: hasCloudPublicConfig(),
         hasEnvironment: environments.some((environment) => environment.serverConfig !== null),
+        hasPrimaryEnvironment: primaryEnvironmentId !== null,
         hasProviderSettingsEnvironment: environments.some((environment) =>
           isProviderSettingsEnvironmentAvailable({
             connectionPhase: environment.connection.phase,
@@ -55,6 +57,7 @@ export function useAvailableSettingsSearchItems() {
       desktopWsl.error,
       environments,
       localEnvironmentDisabled,
+      primaryEnvironmentId,
     ],
   );
 }

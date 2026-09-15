@@ -149,6 +149,7 @@ describe("searchSettings", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: false,
+      hasPrimaryEnvironment: false,
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -161,6 +162,7 @@ describe("searchSettings", () => {
       "network-access",
       "publish-agent-activity",
       "provider-health-check-interval",
+      "pull-request-review-instructions",
       "source-control-writer-model",
       "source-control-writing-style",
       "t3-connect",
@@ -177,6 +179,7 @@ describe("searchSettings", () => {
     const availability = {
       hasCloudPublicConfig: true,
       hasEnvironment: true,
+      hasPrimaryEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -199,6 +202,7 @@ describe("searchSettings", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: false,
+      hasPrimaryEnvironment: false,
       hasProviderSettingsEnvironment: false,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -299,6 +303,7 @@ describe("searchSettings", () => {
     const available = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: true,
+      hasPrimaryEnvironment: false,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
@@ -393,6 +398,7 @@ describe("auto-settlement search availability", () => {
     const items = filterAvailableSettingsSearchItems({
       hasCloudPublicConfig: false,
       hasEnvironment: true,
+      hasPrimaryEnvironment: true,
       hasProviderSettingsEnvironment: true,
       canManageLocalBackend: false,
       isWslSettingsRowVisible: false,
