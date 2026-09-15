@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 
 import {
+  currentMissingThreadRedirectSeq,
+  hasMissingThreadRedirectSince,
   recordMissingThreadRedirect,
   subscribeMissingThreadRedirect,
 } from "./missingThreadRedirects.ts";
@@ -9,6 +11,10 @@ import {
 const redirect = {
   environmentId: EnvironmentId.make("env-1"),
   threadId: ThreadId.make("thread-1"),
+};
+const otherThread = {
+  environmentId: EnvironmentId.make("env-1"),
+  threadId: ThreadId.make("thread-2"),
 };
 
 describe("missing-thread redirect provenance", () => {
@@ -33,5 +39,18 @@ describe("missing-thread redirect provenance", () => {
     recordMissingThreadRedirect(redirect);
 
     expect(listener).not.toHaveBeenCalled();
+  });
+
+  it("retains recent redirects for consumers that arm after the record", () => {
+    // The voice navigator arms its live subscription at acknowledgment; a
+    // guard event recorded while a navigation was still pending must still
+    // be queryable afterwards, by exact identity and only after the mark.
+    const before = currentMissingThreadRedirectSeq();
+    recordMissingThreadRedirect(redirect);
+
+    expect(currentMissingThreadRedirectSeq()).toBeGreaterThan(before);
+    expect(hasMissingThreadRedirectSince(redirect, before)).toBe(true);
+    expect(hasMissingThreadRedirectSince(otherThread, before)).toBe(false);
+    expect(hasMissingThreadRedirectSince(redirect, currentMissingThreadRedirectSeq())).toBe(false);
   });
 });
