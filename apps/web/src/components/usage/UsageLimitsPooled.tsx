@@ -75,9 +75,9 @@ function AccountAvatar({
     return (
       <ProviderInstanceIcon
         driverKind={account.driver}
-        displayName={accountLabel(account)}
+        displayName={account.displayName ?? account.email ?? accountLabel(account)}
         accentColor={account.accentColor}
-        showBadge={Boolean(account.displayName)}
+        showBadge={Boolean(account.displayName ?? account.email)}
         indicatorBackground="var(--popover)"
         className={cn("size-5", className)}
         iconClassName="size-4 text-foreground/80"
@@ -268,7 +268,7 @@ function PoolSegment({
           aria-hidden
           className="absolute inset-0 flex items-center justify-center @2xl/pool:hidden"
         >
-          <AccountAvatar account={account} />
+          {account.redeem || account.email ? <AccountAvatar account={account} /> : index}
         </span>
         <div className="relative hidden h-full min-w-0 items-center gap-1.5 px-2 text-xs @2xl/pool:flex">
           <AccountAvatar account={account} />
