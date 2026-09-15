@@ -327,6 +327,78 @@ describe("projectActivityPayload", () => {
     ).not.toHaveProperty("toolIcon");
   });
 
+  it("keeps threads-surface results verbatim as structuredResult (Codex shape)", () => {
+    const result = {
+      threads: [
+        {
+          threadId: "thrd_1",
+          projectId: "prj_1",
+          title: "Fix login redirect",
+          settled: true,
+          updatedAt: "2026-09-01T10:00:00.000Z",
+        },
+      ],
+    };
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            id: "item-2",
+            tool: "threads_list",
+            server: "t3-code",
+            status: "completed",
+            arguments: { filter: "settled" },
+            result: { content: [{ type: "text", text: JSON.stringify(result) }] },
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toEqual(result);
+  });
+
+  it("keeps threads-surface results verbatim as structuredResult (Claude shape)", () => {
+    const result = { threadId: "thrd_2", title: "Explore canvas" };
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          toolName: "threads_create",
+          input: { title: "Explore canvas" },
+          result: {
+            type: "tool_result",
+            tool_use_id: "toolu_2",
+            content: [{ type: "text", text: JSON.stringify(result) }],
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toEqual(result);
+  });
+
+  it("does not fabricate structuredResult when a threads-surface result is unparseable", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          toolName: "threads_list",
+          input: {},
+          result: {
+            type: "tool_result",
+            tool_use_id: "toolu_3",
+            content: [{ type: "text", text: "not json" }],
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toBeUndefined();
+    expect(data.result).toEqual({ content: "not json" });
+  });
+
   it("passes task lifecycle payloads (no data field) through untouched", () => {
     const source = activity({
       taskId: "task-9",
