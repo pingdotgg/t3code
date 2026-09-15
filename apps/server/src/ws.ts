@@ -138,8 +138,9 @@ import {
   THREAD_RESUME_MAX_REPLAY_EVENTS,
 } from "./orchestration-v2/ThreadStream.ts";
 import {
-  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+  buildBoundedThreadProjection,
   THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
 } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
@@ -1813,17 +1814,30 @@ const makeWsRpcLayer = (
         [ORCHESTRATION_V2_WS_METHODS.getThreadProjection]: (input) =>
           observeRpcEffect(
             ORCHESTRATION_V2_WS_METHODS.getThreadProjection,
-            threadManagement.getThreadProjection(input.threadId).pipe(
-              Effect.map(projectThreadProjectionForWire),
-              Effect.mapError(
-                (cause) =>
-                  new OrchestrationV2GetThreadProjectionError({
-                    threadId: input.threadId,
-                    message: `Failed to load orchestration V2 thread ${input.threadId}`,
-                    cause,
-                  }),
+            // Pre-pagination clients still call this compatibility endpoint.
+            // Keep stale clients from materializing an unbounded transcript.
+            threadManagement
+              .getThreadSnapshotWindow(input.threadId, {
+                rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+              })
+              .pipe(
+                Effect.map((snapshot) =>
+                  projectThreadProjectionForWire(
+                    buildBoundedThreadProjection({
+                      projection: snapshot.projection,
+                      snapshotSequence: snapshot.snapshotSequence,
+                    }).projection,
+                  ),
+                ),
+                Effect.mapError(
+                  (cause) =>
+                    new OrchestrationV2GetThreadProjectionError({
+                      threadId: input.threadId,
+                      message: `Failed to load orchestration V2 thread ${input.threadId}`,
+                      cause,
+                    }),
+                ),
               ),
-            ),
             {
               "rpc.aggregate": "orchestrationV2",
               "orchestration_v2.thread_id": input.threadId,
