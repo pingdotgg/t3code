@@ -15,6 +15,7 @@ import {
 import {
   getAdvertisedEndpoints,
   getServerExposureState,
+  setPreferredLanInterfaceName,
   setServerExposureMode,
   setTailscaleServeEnabled,
 } from "./methods/serverExposure.ts";
@@ -117,6 +118,7 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(getServerExposureState);
   yield* ipc.handle(setServerExposureMode);
+  yield* ipc.handle(setPreferredLanInterfaceName);
   yield* ipc.handle(setTailscaleServeEnabled);
   yield* ipc.handle(getAdvertisedEndpoints);
 
