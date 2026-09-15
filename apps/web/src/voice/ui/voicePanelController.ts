@@ -65,6 +65,10 @@ export interface VoicePanelState {
   readonly inFlightTool: string | null;
   readonly navigationStatus: string | null;
   readonly navigationFailed: boolean;
+  /** Epoch ms of the last session activity (state change, transcript delta,
+      tool mark, command result). Drives the panel's auto-collapse timer;
+      0 means no activity yet. */
+  readonly lastActivityAt: number;
 }
 
 /** The captured microphone boundary. Muting toggles the track's enabled
@@ -153,6 +157,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     inFlightTool: null,
     navigationStatus: null,
     navigationFailed: false,
+    lastActivityAt: 0,
   };
 
   /** Immutable snapshot for useSyncExternalStore: identity changes on every
@@ -171,6 +176,11 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
       state.phase = phase;
       emitChange();
     }
+  };
+
+  const now = deps.now ?? Date.now;
+  const markActivity = () => {
+    state.lastActivityAt = now();
   };
 
   const recordNavigation = (
@@ -209,15 +219,18 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     }
     switch (event.type) {
       case "command_result":
+        markActivity();
         state.navigationStatus = event.text;
         state.navigationFailed = false;
         emitChange();
         break;
       case "state": {
+        markActivity();
         setPhase(clientPhaseToPanelPhase(event.state));
         break;
       }
       case "transcript": {
+        markActivity();
         // Late or interleaved deltas fold by the client-assigned utterance
         // key: the matching entry appends in place (keeping its position so
         // the reading order stays stable), a new key opens a new entry in
@@ -247,6 +260,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
         break;
       }
       case "timing": {
+        markActivity();
         if (event.record.mark === "function_call_received") {
           state.inFlightTool = event.record.detail ?? null;
           emitChange();
@@ -301,6 +315,7 @@ export function createVoicePanelController(deps: VoicePanelControllerDeps): Voic
     state.navigationFailed = false;
     state.utterances = [];
     state.inFlightTool = null;
+    state.lastActivityAt = 0;
     deps.history?.beginSession();
     emitChange();
     try {
