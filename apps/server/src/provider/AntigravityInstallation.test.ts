@@ -761,6 +761,34 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
       }),
   );
 
+  it.effect.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "names the Antigravity CLI when only the CLI is on PATH",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "t3-agy-cli-test-" });
+        const cliDirectory = path.join(baseDir, "cli");
+        const emptyDirectory = path.join(baseDir, "empty");
+        yield* fs.makeDirectory(cliDirectory);
+        yield* fs.makeDirectory(emptyDirectory);
+        yield* fs.writeFileString(path.join(cliDirectory, "agy"), "cli", { mode: 0o755 });
+        const { installation } = yield* makeHarness({ baseDir });
+        expect(
+          yield* installation.resolve(undefined, { PATH: emptyDirectory }).pipe(Effect.flip),
+        ).toMatchObject({
+          detail:
+            "Antigravity is not installed. Install it in this environment or set a custom executable path.",
+        });
+        expect(
+          yield* installation.resolve(undefined, { PATH: cliDirectory }).pipe(Effect.flip),
+        ).toMatchObject({
+          detail:
+            "The Antigravity CLI is installed, but T3 Code runs the separate Antigravity ACP agent. Install it in this environment or set a custom executable path.",
+        });
+      }),
+  );
+
   it.effect("keeps leased releases available while new sessions resolve the new release", () =>
     Effect.gen(function* () {
       const { installation, fs, stagingReleased } = yield* makeHarness({ previous: true });

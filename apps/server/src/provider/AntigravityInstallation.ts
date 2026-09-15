@@ -6,6 +6,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
+import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -400,6 +401,13 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       .map((directory) => path.resolve(directory, binary));
   };
 
+  const cliOnPath = (processEnvironment = environment) =>
+    isCommandAvailable("agy", { env: processEnvironment }).pipe(
+      Effect.provideService(HostProcessPlatform, platform),
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+    );
+
   const resolve: AntigravityInstallationService["resolve"] = Effect.fn(
     "AntigravityInstallation.resolve",
   )(
@@ -426,6 +434,12 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
       for (const candidate of pathCandidates(names.executable, processEnvironment)) {
         const selected = yield* fromExternal(candidate, "path");
         if (selected) return selected;
+      }
+      if (releaseAsset && (yield* cliOnPath(processEnvironment))) {
+        return yield* installationError(
+          "resolve",
+          "The Antigravity CLI is installed, but T3 Code runs the separate Antigravity ACP agent. Install it in this environment or set a custom executable path.",
+        );
       }
       return yield* installationError(
         "resolve",
