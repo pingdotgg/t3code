@@ -249,6 +249,46 @@ describe("LiveActivities", () => {
     );
   });
 
+  it.effect("lists armed cards that showed no live work for the display window", () => {
+    const conditions: Array<SQL> = [];
+    const fakeDb = {
+      select: () => ({
+        from: () => ({
+          where: (condition: SQL) => {
+            conditions.push(condition);
+            return Effect.succeed([{ user_id: "user-2", device_id: "device-1" }]);
+          },
+        }),
+      }),
+    } as unknown as RelayDb.RelayDb["Service"];
+
+    return Effect.gen(function* () {
+      const liveActivities = yield* LiveActivities.LiveActivities;
+      const targets = yield* liveActivities.listIdleArmedTargets({
+        deliveredBefore: "2026-05-25T00:15:00.000Z",
+      });
+
+      expect(targets).toEqual([{ user_id: "user-2", device_id: "device-1" }]);
+      // Only cards with a live token count, and only when the last delivered
+      // content had no active agents (or never arrived) and nothing has been
+      // delivered since the cutoff.
+      expect(conditions.map((condition) => new PgDialect().sqlToQuery(condition))).toEqual([
+        {
+          sql:
+            '((("relay_live_activities"."activity_push_token" is not null)) and ' +
+            "(coalesce(\"relay_live_activities\".\"last_aggregate_json\" ->> 'activeCount', '0') = '0') and " +
+            '(coalesce("relay_live_activities"."last_live_activity_delivery_at", ' +
+            '"relay_live_activities"."remote_started_at", "relay_live_activities"."updated_at") < $1))',
+          params: ["2026-05-25T00:15:00.000Z"],
+        },
+      ]);
+    }).pipe(
+      Effect.provide(
+        LiveActivities.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
+      ),
+    );
+  });
+
   it.effect("preserves correlation context and causes for persistence failures", () => {
     const cause = new Error("database unavailable");
     const registration: RelayLiveActivityRegistrationRequest = {

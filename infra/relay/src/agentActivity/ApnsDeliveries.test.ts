@@ -230,6 +230,7 @@ function makeLayer(input: {
         Layer.succeed(LiveActivities.LiveActivities, {
           register: () => Effect.void,
           listTargets: () => Effect.succeed(input.currentTargets ?? [target]),
+          listIdleArmedTargets: () => Effect.succeed([]),
           markStartQueued: (queued) =>
             Effect.sync(() => {
               input.queuedStarts?.push(queued);
@@ -914,6 +915,51 @@ describe("ApnsDeliveries", () => {
       });
       expect(error.cause).toMatchObject({ _tag: "SchemaError" });
     }).pipe(Effect.provide(makeLayer({ attempts })));
+  });
+
+  it.effect("skips a queued contentless end when the user has live work again", () => {
+    const attempts: Array<DeliveryAttempts.DeliveryAttemptInput> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+    const payload = makeApnsDeliveryJobPayload({
+      kind: "live_activity_end",
+      userId: target.user_id,
+      deviceId: target.device_id,
+      token: "activity-token",
+      aggregate: null,
+      createdAt: "1970-01-01T00:00:00.000Z",
+      expiresAt: "1970-01-01T00:10:00.000Z",
+      jobId: "job-end-1",
+    });
+    const signed = signApnsDeliveryJob({
+      secret: config.apnsDeliveryJobSigningSecret,
+      payload,
+    });
+    const execute = (request: HttpClientRequest.HttpClientRequest) =>
+      Effect.sync(() => {
+        requests.push(request);
+        return HttpClientResponse.fromWeb(request, new Response("", { status: 200 }));
+      });
+
+    return Effect.gen(function* () {
+      const deliveries = yield* ApnsDeliveries.ApnsDeliveries;
+      const result = yield* deliveries.processSignedJob(signed);
+
+      // The end was decided while nothing was running; work that started
+      // since owns the card now, and its own update has repainted it.
+      expect(result).toMatchObject({
+        kind: "live_activity_end",
+        ok: true,
+        apnsStatus: null,
+      });
+      expect(requests).toEqual([]);
+      expect(attempts).toMatchObject([
+        {
+          kind: "live_activity_end",
+          sourceJobId: "job-end-1",
+          apnsReason: "Stale APNs end job skipped.",
+        },
+      ]);
+    }).pipe(Effect.provide(makeLayer({ attempts, activityStates: [state], execute })));
   });
 
   it.effect("skips a queued start when the user no longer has live work", () => {
