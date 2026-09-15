@@ -9333,7 +9333,9 @@ export default function ChatView(props: ChatViewProps) {
                                   ? "Sending feedback"
                                   : threadDetailLoading
                                     ? "Messages loading"
-                                    : worktreeSetup?.phase === "running"
+                                    : worktreeSetup?.phase === "running" ||
+                                        (resumedWorktreeSetupRef !== null &&
+                                          !worktreeSetupQuery.isSuccess)
                                       ? "Preparing worktree"
                                       : projectCloneSendBlockReason
                             }

@@ -1017,6 +1017,30 @@ const makeWsRpcLayer = (
           // one so terminals the user opened meanwhile survive.
           let setupTerminalId: string | null = null;
 
+          // Set once the checkout starts; see the session.set below.
+          let preparingSessionSet = false;
+          const markPreparingSessionFailed = (detail: string) =>
+            Effect.gen(function* () {
+              const failedAt = yield* nowIso;
+              yield* dispatchFromClient({
+                type: "thread.session.set",
+                commandId: yield* serverCommandId("bootstrap-thread-preparing-failed"),
+                threadId,
+                session: {
+                  threadId,
+                  status: "error",
+                  providerName: null,
+                  providerInstanceId:
+                    bootstrap?.createThread?.modelSelection.instanceId ??
+                    command.modelSelection?.instanceId,
+                  runtimeMode: command.runtimeMode,
+                  activeTurnId: null,
+                  lastError: detail.trim().length > 0 ? detail : "Worktree setup failed.",
+                  updatedAt: failedAt,
+                },
+                createdAt: failedAt,
+              });
+            });
           const cleanupCreatedThread = () =>
             createdThread
               ? serverCommandId("bootstrap-thread-delete").pipe(
@@ -1364,6 +1388,7 @@ const makeWsRpcLayer = (
                   },
                   createdAt: preparingAt,
                 });
+                preparingSessionSet = true;
               }
               yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
               let checkoutTotal: number | null = null;
@@ -1508,7 +1533,19 @@ const makeWsRpcLayer = (
                   Effect.logWarning("bootstrap thread cleanup failed", {
                     threadId,
                     detail: Cause.pretty(cleanupCause),
-                  }).pipe(Effect.flatMap(() => Effect.fail(dispatchError))),
+                  }).pipe(
+                    // The thread outlived its setup. Its preparing session
+                    // must not read as working forever, so record the failure
+                    // on it instead.
+                    Effect.andThen(
+                      preparingSessionSet
+                        ? markPreparingSessionFailed(dispatchError.message).pipe(
+                            Effect.ignoreCause({ log: true }),
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.flatMap(() => Effect.fail(dispatchError)),
+                  ),
                 onSuccess: (threadDeleted) =>
                   Effect.fail(
                     threadDeleted

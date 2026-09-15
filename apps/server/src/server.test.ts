@@ -11899,8 +11899,16 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
       assert.strictEqual(result.failure.bootstrapThreadDisposition, undefined);
       assert.deepEqual(
         dispatchedCommands.map((command) => command.type),
-        ["thread.create", "thread.session.set", "thread.delete"],
+        ["thread.create", "thread.session.set", "thread.delete", "thread.session.set"],
       );
+      // The surviving thread must not keep its preparing session, or it would
+      // read as working forever.
+      const failedSession = dispatchedCommands[3];
+      assertTrue(failedSession?.type === "thread.session.set");
+      if (failedSession?.type === "thread.session.set") {
+        assert.equal(failedSession.session.status, "error");
+        assert.include(failedSession.session.lastError ?? "", "worktree exploded");
+      }
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
