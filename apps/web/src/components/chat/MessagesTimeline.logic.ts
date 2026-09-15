@@ -343,7 +343,6 @@ export type MessagesTimelineRow =
       summaryKind: ToolGroupSummaryKind;
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
-      summaryToolIcon?: "browser" | "device" | "t3-code" | "pull-request";
       hasFailure: boolean;
     }
   | {
@@ -1148,10 +1147,7 @@ export function deriveMessagesTimelineRows(input: {
               expandedWorkGroupRow(groupId, timelineEntry.createdAt, visibleGroupedEntries),
             );
           }
-        } else if (
-          visibleGroupedEntries.length === 1 &&
-          workLogEntryIsToolLike(visibleGroupedEntries[0]!)
-        ) {
+        } else if (visibleGroupedEntries.length === 1) {
           const singleEntry = visibleGroupedEntries[0]!;
           nextRows.push({
             kind: "work",
@@ -1159,8 +1155,9 @@ export function deriveMessagesTimelineRows(input: {
             createdAt: timelineEntry.createdAt,
             groupedEntries: visibleGroupedEntries,
             isExpandedToolGroup: false,
-            displayLabel:
-              toolGroupAction(singleEntry) === "edit"
+            displayLabel: !workLogEntryIsToolLike(singleEntry)
+              ? singleEntry.label
+              : toolGroupAction(singleEntry) === "edit"
                 ? summarizeToolGroup(visibleGroupedEntries)
                 : singleToolCallLabel(singleEntry),
           });
@@ -1185,15 +1182,6 @@ export function deriveMessagesTimelineRows(input: {
             primarySourceIcon ??
             visibleGroupedEntries.findLast((entry) => entry.toolIcon !== undefined)?.toolIcon;
           const latestToolEntry = visibleGroupedEntries.findLast(workLogEntryIsToolLike);
-          const singleEntry =
-            visibleGroupedEntries.length === 1 ? (visibleGroupedEntries[0] ?? null) : null;
-          const usesSingleToolCallLabel =
-            singleEntry !== null &&
-            workLogEntryIsToolLike(singleEntry) &&
-            toolGroupAction(singleEntry) !== "edit";
-          const summaryToolIcon = usesSingleToolCallLabel
-            ? resolveWorkEntryToolPresentation(singleEntry, "completed")?.icon
-            : undefined;
           nextRows.push({
             kind: "work-toggle",
             id: `work-toggle:${timelineEntry.id}`,
@@ -1202,15 +1190,10 @@ export function deriveMessagesTimelineRows(input: {
             groupId,
             hiddenCount: visibleGroupedEntries.length,
             expanded,
-            summary: usesSingleToolCallLabel
-              ? singleToolCallLabel(singleEntry)
-              : singleEntry !== null && !workLogEntryIsToolLike(singleEntry)
-                ? singleEntry.label
-                : summarizeToolGroup(visibleGroupedEntries),
+            summary: summarizeToolGroup(visibleGroupedEntries),
             summaryKind,
             ...(groupToolSurface ? { toolSurface: groupToolSurface } : {}),
             ...(groupToolIcon ? { toolIcon: groupToolIcon } : {}),
-            ...(summaryToolIcon ? { summaryToolIcon } : {}),
             hasFailure:
               latestToolEntry !== undefined &&
               workEntryDisplayIndicatesToolFailure(latestToolEntry),

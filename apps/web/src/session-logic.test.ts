@@ -1894,8 +1894,8 @@ describe("deriveTimelineEntries", () => {
       streamingMessage.id,
       appendedMessage.id,
       plan.id,
-      firstWork.id,
-      appendedWork.id,
+      `work:${firstWork.id}`,
+      `work:${appendedWork.id}`,
     ]);
     expect(appended.entries[0]).toBe(first.entries[0]);
 
