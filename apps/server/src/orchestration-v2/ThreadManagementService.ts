@@ -609,7 +609,10 @@ const make = Effect.gen(function* () {
           runId: selectedRun.id,
         });
       }
-      return { threadId: input.threadId, run, timedOut: true };
+      // The run may have reached a terminal status while the timeout was
+      // winning the race; the final projection read decides what actually
+      // happened, so only a still-active run counts as timed out.
+      return { threadId: input.threadId, run, timedOut: !isTerminalRunStatus(run.status) };
     });
 
   const interruptThread: ThreadManagementServiceShape["interruptThread"] = (input) =>
