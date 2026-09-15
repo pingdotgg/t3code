@@ -68,7 +68,6 @@ import {
   bytesOfJson,
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
-  projectedRowEncodedBytes,
   stringifyJsonDeep,
   threadHistoryCursorItemTag,
   threadHistoryCursorThreadTag,
@@ -6560,15 +6559,18 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                 index >= start && capped.length < maxWindowRows;
                 index -= 1
               ) {
-                // Bill the emitted size, like SQL bills LENGTH(bounded_json):
-                // compaction preserves identity members whole, so an over-cap
-                // row can legitimately ship more than the per-row cap and
-                // billing it at the cap would let many such rows overflow the
-                // byte budget. The over-cap path must measure the bound row —
-                // direct compaction of the decoded item hands deep subtrees to
-                // the recursive JSON.stringify and overflows the stack.
+                // Bill the emitted item payload, like SQL bills
+                // LENGTH(bounded_json): compaction preserves identity members
+                // whole, so an over-cap row can legitimately ship more than the
+                // per-row cap and billing it at the cap would let many such
+                // rows overflow the byte budget. Charging the projected row
+                // wrapper instead of the item would diverge from the SQL
+                // window on identical history. The over-cap path must measure
+                // the bound row — direct compaction of the decoded item hands
+                // deep subtrees to the recursive JSON.stringify and overflows
+                // the stack.
                 const row = candidates[index]!;
-                const rawRowBytes = projectedRowEncodedBytes(row);
+                const rawRowBytes = bytesOfJson(row.item);
                 if (rawRowBytes > maxRowPayloadBytes) {
                   const boundItem = yield* boundRow(
                     row.item,
@@ -6576,7 +6578,7 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                     decodeTurnItemPayload,
                   );
                   boundItems.set(row, boundItem);
-                  billedBytes += projectedRowEncodedBytes({ ...row, item: boundItem });
+                  billedBytes += bytesOfJson(boundItem);
                 } else {
                   billedBytes += rawRowBytes;
                 }
