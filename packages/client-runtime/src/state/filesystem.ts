@@ -1,19 +1,35 @@
 import { type FilesystemBrowseEntry, WS_METHODS } from "@t3tools/contracts";
+import { scoreDirectoryMatch } from "@t3tools/shared/searchRanking";
 import { Atom } from "effect/unstable/reactivity";
 
 import type { EnvironmentConnectionPhase } from "../connection/presentation.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import {
   canNavigateUp,
+  ensureBrowseDirectoryPath,
   getBrowseDirectoryPath,
   getBrowseLeafPathSegment,
   getBrowseParentPath,
   hasTrailingPathSeparator,
   isFilesystemBrowseQuery,
+  isUnsupportedWindowsProjectPath,
 } from "./projects.ts";
 import { createEnvironmentRpcQueryAtomFamily } from "./runtime.ts";
 
-export function getFilesystemBrowsePath(query: string, platform = "", enabled = true) {
+export function getFilesystemBrowsePath(
+  query: string,
+  platform = "",
+  enabled = true,
+  baseDirectory = "",
+) {
+  if (
+    baseDirectory &&
+    query &&
+    !isFilesystemBrowseQuery(query, platform) &&
+    !isUnsupportedWindowsProjectPath(query, platform)
+  ) {
+    query = `${ensureBrowseDirectoryPath(baseDirectory)}${query}`;
+  }
   const isBrowsing = enabled && isFilesystemBrowseQuery(query, platform);
   const directoryPath = isBrowsing ? getBrowseDirectoryPath(query) : "";
   const filterQuery =
@@ -33,15 +49,22 @@ export function filterFilesystemBrowseEntries(
   entries: ReadonlyArray<FilesystemBrowseEntry>,
   query: string,
 ) {
-  const lowerQuery = query.toLowerCase();
   const showHidden = query.startsWith(".");
-  const visibleEntries = entries.filter(
-    (entry) =>
-      entry.name.toLowerCase().startsWith(lowerQuery) &&
-      (showHidden || !entry.name.startsWith(".")),
-  );
+  const visibleEntries = entries
+    .flatMap((entry) => {
+      if (!showHidden && entry.name.startsWith(".")) return [];
+      const score =
+        entry.searchMatch?.query === query
+          ? entry.searchMatch.score
+          : scoreDirectoryMatch(entry.name, query);
+      return score === null ? [] : [{ entry, score }];
+    })
+    .sort((left, right) => left.score - right.score)
+    .map(({ entry }) => entry);
   const exactEntry =
-    query.length > 0 ? (visibleEntries.find((entry) => entry.name === query) ?? null) : null;
+    query.length > 0
+      ? (visibleEntries.find((entry) => !entry.searchMatch && entry.name === query) ?? null)
+      : null;
 
   return { visibleEntries, exactEntry };
 }
