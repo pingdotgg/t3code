@@ -74,6 +74,8 @@ export interface TranscriptParseResult {
 
 /** 64 bytes of JSONL tail is ample to distinguish a replaced file. */
 export const GUARD_LENGTH = 64;
+// Bound records before decoding, well below V8's maximum string length.
+const DEFAULT_MAX_LINE_BYTES = 64 * 1024 * 1024;
 const NEWLINE = 0x0a;
 const CARRIAGE_RETURN = 0x0d;
 
@@ -194,7 +196,9 @@ export async function readTranscriptRecords(
   filePath: string,
   provider: UsageProviderKind,
   resumeFrom?: TranscriptParsePosition,
+  options?: { readonly maxLineBytes?: number },
 ): Promise<TranscriptParseResult | null> {
+  const maxLineBytes = options?.maxLineBytes ?? DEFAULT_MAX_LINE_BYTES;
   let handle: NodeFSP.FileHandle;
   try {
     handle = await NodeFSP.open(filePath, "r");
@@ -250,31 +254,48 @@ export async function readTranscriptRecords(
     const records: UsageRecord[] = [];
     // Buffer-level line splitting rather than `readline`, because resuming
     // needs byte-exact offsets and decoded strings cannot provide them.
-    // Newline-free chunks are collected rather than concatenated as they
-    // arrive, so a single huge line costs one copy instead of one per chunk.
+    // Oversized lines are drained without decoding or retaining their bytes.
+    // The scan offset advances through them, but only a newline commits it.
     let resumeOffset = start;
+    let scanOffset = start;
     let pendingChunks: Buffer[] = [];
+    let pendingBytes = 0;
+    let discardingLine = false;
     const stream = handle.createReadStream({
       start,
       autoClose: false,
     }) as AsyncIterable<Buffer>;
     for await (const chunk of stream) {
-      if (!chunk.includes(NEWLINE)) {
-        pendingChunks.push(chunk);
-        continue;
-      }
-      const buffer: Buffer =
-        pendingChunks.length === 0 ? chunk : Buffer.concat([...pendingChunks, chunk]);
-      pendingChunks = [];
       let lineStart = 0;
-      for (;;) {
-        const newlineIndex = buffer.indexOf(NEWLINE, lineStart);
+      while (lineStart < chunk.length) {
+        const newlineIndex = chunk.indexOf(NEWLINE, lineStart);
+        const lineEnd = newlineIndex === -1 ? chunk.length : newlineIndex;
+        const segment = chunk.subarray(lineStart, lineEnd);
+        if (!discardingLine) {
+          if (pendingBytes + segment.length > maxLineBytes) {
+            pendingChunks = [];
+            pendingBytes = 0;
+            discardingLine = true;
+          } else if (segment.length > 0) {
+            pendingChunks.push(segment);
+            pendingBytes += segment.length;
+          }
+        }
         if (newlineIndex === -1) break;
-        parseLine(toLineString(buffer.subarray(lineStart, newlineIndex)), codexState, records);
+        if (!discardingLine && pendingBytes > 0) {
+          const line =
+            pendingChunks.length === 1
+              ? pendingChunks[0]!
+              : Buffer.concat(pendingChunks, pendingBytes);
+          parseLine(toLineString(line), codexState, records);
+        }
         lineStart = newlineIndex + 1;
+        resumeOffset = scanOffset + lineStart;
+        pendingChunks = [];
+        pendingBytes = 0;
+        discardingLine = false;
       }
-      resumeOffset += lineStart;
-      if (lineStart < buffer.length) pendingChunks.push(buffer.subarray(lineStart));
+      scanOffset += chunk.length;
     }
 
     // A trailing segment without its newline is parsed for this result but not
