@@ -660,9 +660,31 @@ export const layerWithOptions = (
       // must wait for an in-flight attach to become durable instead of riding
       // its provisional attachment — an attach that later fails unwinds the
       // bookkeeping and credential claim the second caller was relying on.
+      // The key carries the runtime's identity, not just session+thread: a
+      // same-id reopen always installs a new runtime, and an abandoned in-band
+      // call (e.g. an OpenCode turn call still running past its drain bound)
+      // must not serialize the replacement's attaches behind a lock the dead
+      // runtime may never release.
       const threadAttach = yield* makeKeyedSerialExecutor<string>();
-      const threadAttachKey = (providerSessionId: ProviderSessionId, threadId: ThreadId) =>
-        `${providerSessionId}\0${threadId}`;
+      const threadAttachRuntimeSeq = new WeakMap<ProviderAdapterV2SessionRuntime, number>();
+      let nextThreadAttachRuntimeSeq = 0;
+      const threadAttachKey = (
+        providerSessionId: ProviderSessionId,
+        runtime: ProviderAdapterV2SessionRuntime | undefined,
+        threadId: ThreadId,
+      ) => {
+        let seq = -1;
+        if (runtime !== undefined) {
+          const existing = threadAttachRuntimeSeq.get(runtime);
+          if (existing === undefined) {
+            seq = nextThreadAttachRuntimeSeq++;
+            threadAttachRuntimeSeq.set(runtime, seq);
+          } else {
+            seq = existing;
+          }
+        }
+        return `${providerSessionId}\0${seq}\0${threadId}`;
+      };
       const idleTimeoutMs = Math.max(1, options.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS);
       const maxIdlePinMs = Math.max(0, options.maxIdlePinMs ?? DEFAULT_MAX_IDLE_PIN_MS);
       interface PreparedMcpCredential {
@@ -1773,7 +1795,7 @@ export const layerWithOptions = (
         readonly expectedRuntime: ProviderAdapterV2SessionRuntime;
       }) =>
         threadAttach.withLock(
-          threadAttachKey(input.providerSessionId, input.threadId),
+          threadAttachKey(input.providerSessionId, input.expectedRuntime, input.threadId),
           Effect.suspend(() => {
             // Set synchronously when prepare reserves a credential, so a prepare
             // that never returns (failed or interrupted mid-resolve/issue) can
@@ -2330,7 +2352,7 @@ export const layerWithOptions = (
                 // Cursor's late runner.open result) is never installed after
                 // the finalizer that would have closed it already ran.
                 threadAttach.withLock(
-                  threadAttachKey(providerSessionId, input.threadId),
+                  threadAttachKey(providerSessionId, runtime, input.threadId),
                   runResourceCreatingAdapterOp({
                     providerSessionId,
                     expectedRuntime: runtime,
@@ -2396,7 +2418,7 @@ export const layerWithOptions = (
                 loaded
                   ? Effect.succeed(input.providerThread)
                   : threadAttach.withLock(
-                      threadAttachKey(providerSessionId, threadId),
+                      threadAttachKey(providerSessionId, runtime, threadId),
                       runResourceCreatingAdapterOp({
                         providerSessionId,
                         expectedRuntime: runtime,
@@ -2438,7 +2460,7 @@ export const layerWithOptions = (
               // under the same admission record.
               Effect.andThen(
                 threadAttach.withLock(
-                  threadAttachKey(providerSessionId, input.targetThreadId),
+                  threadAttachKey(providerSessionId, runtime, input.targetThreadId),
                   runResourceCreatingAdapterOp({
                     providerSessionId,
                     expectedRuntime: runtime,
@@ -2494,7 +2516,7 @@ export const layerWithOptions = (
                 // resource the scope close already finished checking for.
                 Effect.andThen(
                   threadAttach.withLock(
-                    threadAttachKey(providerSessionId, input.threadId),
+                    threadAttachKey(providerSessionId, runtime, input.threadId),
                     runResourceCreatingAdapterOp({
                       providerSessionId,
                       expectedRuntime: runtime,
@@ -2599,7 +2621,7 @@ export const layerWithOptions = (
                       // and the same driver-keyed drain policy.
                       Effect.andThen(
                         threadAttach.withLock(
-                          threadAttachKey(providerSessionId, input.threadId),
+                          threadAttachKey(providerSessionId, runtime, input.threadId),
                           runResourceCreatingAdapterOp({
                             providerSessionId,
                             expectedRuntime: runtime,
@@ -3719,7 +3741,11 @@ export const layerWithOptions = (
                   // could have claimed is touched.
                   const locked = yield* threadAttach
                     .withLock(
-                      threadAttachKey(input.providerSessionId, input.threadId),
+                      threadAttachKey(
+                        input.providerSessionId,
+                        currentEntry?.runtime,
+                        input.threadId,
+                      ),
                       // Masked so the attachment mutation and the release handoff
                       // stay atomic with respect to interruption: once the last
                       // exclusive attachment is removed, the release must exist
