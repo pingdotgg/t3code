@@ -140,6 +140,8 @@ describe("tailscale", () => {
       const dnsName = yield* parseTailscaleMagicDnsName(tailscaleStatusJson);
       assert.equal(dnsName, "desktop.tail.ts.net");
       assert.equal(yield* parseTailscaleMagicDnsName("{}"), null);
+      const malformed = yield* Effect.result(parseTailscaleMagicDnsName("not-json"));
+      assert.isTrue(malformed._tag === "Failure");
     }),
   );
 
