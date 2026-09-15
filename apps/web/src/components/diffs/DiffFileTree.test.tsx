@@ -178,6 +178,23 @@ describe("diff tree file activation", () => {
     expect(targets).toEqual([]);
   });
 
+  it("reorders refreshed files without reopening a collapsed folder", async () => {
+    const files: DiffFileTreeEntry[] = [
+      { path: "src/state/shell.ts", status: "modified" },
+      { path: "src/features/route.ts", status: "added" },
+    ];
+    await mount({ files });
+    const initialFolder = model().getItem("src/features/")!;
+    if (!("collapse" in initialFolder)) throw new Error("Expected the directory handle");
+    await act(async () => initialFolder.collapse());
+    await act(async () => {
+      renderer!.update(<Panel files={[files[1]!, files[0]!]} />);
+    });
+    const folder = model().getItem("src/features/")!;
+    if (!("isExpanded" in folder)) throw new Error("Expected the directory handle");
+    expect(folder.isExpanded()).toBe(false);
+  });
+
   it("does not echo controlled selection, but lets the reader activate it", async () => {
     await mount({ selectedPath: "02-short.ts" });
     expect(model().getSelectedPaths()).toEqual(["02-short.ts"]);
