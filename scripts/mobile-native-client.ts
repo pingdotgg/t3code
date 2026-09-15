@@ -5,6 +5,7 @@ import {
   HostProcessExecutablePath,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
+import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
 import * as Console from "effect/Console";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -48,7 +49,7 @@ export function clientStatus(
   return record.fingerprint === fingerprint ? "compatible" : "stale";
 }
 
-/** Record only a successful installation built from unchanged native inputs. */
+/** Keep native sources stable during ensure, as with a normal build; endpoint checks reject detected edits. */
 export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(operations: {
   fingerprint: Effect.Effect<string, E, R>;
   installedBinary: Effect.Effect<string | null, E, R>;
@@ -62,19 +63,25 @@ export const ensureClient = Effect.fn("ensureClient")(function* <E, R, E2, R2>(o
     yield* operations.installedBinary,
     yield* operations.readRecord,
   );
-  if (status === "compatible") return { status, rebuilt: false, fingerprint };
-  yield* operations.build;
-  if ((yield* operations.fingerprint) !== fingerprint) {
-    return yield* new NativeClientError({
-      message:
-        "Native inputs changed during the build. Run ensure again; this build was not recorded.",
-    });
+  const verifyInputs = Effect.gen(function* () {
+    if ((yield* operations.fingerprint) !== fingerprint) {
+      return yield* new NativeClientError({
+        message:
+          "Native inputs changed during verification. Run ensure again; this build was not recorded.",
+      });
+    }
+  });
+  if (status === "compatible") {
+    yield* verifyInputs;
+    return { status, rebuilt: false, fingerprint };
   }
+  yield* operations.build;
   const binary = yield* operations.installedBinary;
   if (binary === null)
     return yield* new NativeClientError({
       message: "Build finished but the development client is not installed.",
     });
+  yield* verifyInputs;
   yield* operations.saveRecord({ fingerprint, binary });
   return { status: "compatible" as const, rebuilt: true, fingerprint };
 });
@@ -146,6 +153,22 @@ const collect = <E>(stream: Stream.Stream<Uint8Array, E>) =>
       (a, b) => a + b,
     ),
   );
+export const resolveAdb = Effect.gen(function* () {
+  if (yield* isCommandAvailable("adb")) return "adb";
+  const environment = yield* HostProcessEnvironment;
+  const path = yield* Path.Path;
+  const executable = (yield* HostProcessPlatform) === "win32" ? "adb.exe" : "adb";
+  for (const sdk of [environment.ANDROID_SDK_ROOT, environment.ANDROID_HOME]) {
+    if (!sdk) continue;
+    const candidate = path.join(sdk, "platform-tools", executable);
+    if (yield* isCommandAvailable(candidate)) return candidate;
+  }
+  return yield* new NativeClientError({
+    message:
+      "adb was not found on PATH or in ANDROID_SDK_ROOT/ANDROID_HOME. Install Android SDK platform-tools.",
+  });
+});
+
 const command = Effect.fn("nativeClient.command")(function* (
   program: string,
   args: string[],
@@ -154,8 +177,10 @@ const command = Effect.fn("nativeClient.command")(function* (
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const environment = yield* HostProcessEnvironment;
+  const spawn = yield* resolveSpawnCommand(program === "adb" ? yield* resolveAdb : program, args);
   const child = yield* spawner.spawn(
-    ChildProcess.make(program, args, {
+    ChildProcess.make(spawn.command, spawn.args, {
+      shell: spawn.shell,
       cwd: cwd ?? (yield* roots).mobile,
       env: {
         ...environment,

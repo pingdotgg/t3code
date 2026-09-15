@@ -1,9 +1,11 @@
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import {
+  resolveAdb,
   NativeClientError,
   clientStatus,
   ensureClient,
@@ -133,4 +135,40 @@ it.effect(
         null,
       );
     }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("rejects native edits while reading a previously compatible binary", () =>
+  Effect.gen(function* () {
+    let fingerprint = "native-a";
+    const error = yield* ensureClient({
+      fingerprint: Effect.sync(() => fingerprint),
+      installedBinary: Effect.sync(() => {
+        fingerprint = "native-b";
+        return "binary-a";
+      }),
+      readRecord: Effect.succeed({ fingerprint: "native-a", binary: "binary-a" }),
+      build: Effect.die("A changed checkout must be rechecked before building"),
+      saveRecord: () => Effect.die("Must not record changed inputs"),
+    }).pipe(Effect.flip);
+    assert.match(error.message, /inputs changed/);
+  }),
+);
+
+it.effect("finds adb in the Android SDK when PATH does not include platform-tools", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const sdk = yield* fs.makeTempDirectoryScoped({ prefix: "native-client-sdk-" });
+    yield* fs.makeDirectory(path.join(sdk, "platform-tools"));
+    const executable = (yield* HostProcessPlatform) === "win32" ? "adb.exe" : "adb";
+    const adb = path.join(sdk, "platform-tools", executable);
+    yield* fs.writeFileString(adb, "#!/bin/sh\nexit 0\n");
+    yield* fs.chmod(adb, 0o755);
+    assert.equal(
+      yield* resolveAdb.pipe(
+        Effect.provideService(HostProcessEnvironment, { PATH: "", ANDROID_HOME: sdk }),
+      ),
+      adb,
+    );
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
