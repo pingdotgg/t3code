@@ -331,4 +331,56 @@ describe("dom adapter: activation", () => {
     });
     expect(clicks).toEqual(["clicked"]);
   });
+
+  it("keeps context exact across numeric title changes", async () => {
+    // "Task 123" -> "Task 124" is a different target even though the name
+    // and the element are unchanged; the click must refuse, never retarget.
+    document.body.innerHTML = `
+      <li><span>Task 123</span><button aria-label="Settle thread" id="row"></button></li>
+    `;
+    const host = controls();
+    const listedId = (await host.listControls({})).controls[0]!.controlId;
+    expect((await host.listControls({})).controls[0]!.context).toBe("Task 123");
+
+    const clicks: string[] = [];
+    document.getElementById("row")!.addEventListener("click", () => clicks.push("clicked"));
+
+    document.querySelector("span")!.textContent = "Task 124";
+
+    expect(await host.clickControl({ controlId: listedId })).toMatchObject({
+      state: "not_found",
+    });
+    expect(clicks).toEqual([]);
+  });
+
+  it("ignores structurally identified time and visually hidden text in context", async () => {
+    // Relative timestamps and ticking durations are volatility, not
+    // identity: they are excluded because they are structurally marked
+    // (`<time>`/`[datetime]`/`aria-hidden`), so a click right after a
+    // listing is never refused just because a clock advanced. Any other
+    // context change still refuses.
+    document.body.innerHTML = `
+      <li>
+        <span>Fix login bug</span>
+        <time datetime="2026-09-15T00:00:00Z" id="tick">2m</time>
+        <span aria-hidden="true" id="duration">00:42</span>
+        <button aria-label="Settle thread" id="row"></button>
+      </li>
+    `;
+    const host = controls();
+    const listed = await host.listControls({});
+    expect(listed.controls[0]!.context).toBe("Fix login bug");
+    const listedId = listed.controls[0]!.controlId;
+
+    const clicks: string[] = [];
+    document.getElementById("row")!.addEventListener("click", () => clicks.push("clicked"));
+
+    document.getElementById("tick")!.textContent = "3m";
+    document.getElementById("duration")!.textContent = "00:43";
+
+    expect(await host.clickControl({ controlId: listedId })).toMatchObject({
+      state: "activated",
+    });
+    expect(clicks).toEqual(["clicked"]);
+  });
 });

@@ -216,13 +216,12 @@ export type VoiceControlResolution =
 
 const notFound = (message: string): VoiceControlResolution => ({ state: "not_found", message });
 
-/** Context comparison tolerant of the volatile substrings visible container
-    text picks up between listing and clicking (ticking durations, relative
-    timestamps, countdowns): digits and time separators are dropped, leaving
-    the identifying words. A recycled row's new title survives this
-    normalization differently and refuses the click. */
-const sameContext = (left: string, right: string): boolean =>
-  left.replace(/[\d:]/g, "") === right.replace(/[\d:]/g, "");
+/** Context comparison is exact: digits are significant (a recycled row
+    retitled "Phase 3.1" -> "Phase 3.2" is a different target), and any other
+    change is a safe stale refusal with a relist instruction. Volatility is
+    handled at derivation time, by excluding structurally identified
+    non-content subtrees, never by normalizing text. */
+const sameContext = (left: string, right: string): boolean => left === right;
 
 /** Re-resolves a listed id against the CURRENT candidates by element identity
     and activates it. An id whose element is collected or no longer matches a
@@ -438,16 +437,35 @@ const CANDIDATE_SELECTOR = [
 
 /** Bounds for the visible-context walk: enough levels to leave a list item,
     table row or card container, but bounded so a deep tree cannot turn one
-    scan into a document-wide textContent sweep. */
+    scan into a document-wide text sweep. */
 const CONTEXT_MAX_ANCESTORS = 8;
 const CONTEXT_MAX_LENGTH = 160;
+
+/** Subtrees excluded from context text because they are structurally
+    identified as non-content: machine-readable timestamps (`time`,
+    `[datetime]`) and visually hidden text (`aria-hidden`), which covers the
+    ticking duration spans in the app. Everything else counts, digits
+    included, so context equality is exact identity evidence. */
+const CONTEXT_EXCLUDED_SELECTOR = "time, [datetime], [aria-hidden='true']";
+
+function containerText(node: Node): string {
+  let text = "";
+  for (const child of node.childNodes) {
+    if (child.nodeType === child.TEXT_NODE) {
+      text += child.nodeValue ?? "";
+    } else if (child instanceof Element && !child.matches(CONTEXT_EXCLUDED_SELECTOR)) {
+      text += containerText(child);
+    }
+  }
+  return text;
+}
 
 /** Visible text of the nearest enclosing container that carries identifying
     context beyond the control's own name (for a repeated row action, the
     row's title). The control's own name is stripped so sibling instances of
     the same control never leak into each other's context, and a container
     whose remaining text is empty does not qualify. Returns "" when no
-    bounded ancestor adds context. `textContentCache` memoizes ancestor text
+    bounded ancestor adds context. `textContentCache` memoizes container text
     within one scan so repeated controls in a shared container do not resweep
     the same subtree. */
 function visibleContext(
@@ -459,7 +477,7 @@ function visibleContext(
   for (let depth = 0; node !== null && depth < CONTEXT_MAX_ANCESTORS; depth += 1) {
     let text = textContentCache.get(node);
     if (text === undefined) {
-      text = collapseWhitespace(node.textContent ?? "");
+      text = collapseWhitespace(containerText(node));
       textContentCache.set(node, text);
     }
     const context = collapseWhitespace(name.length === 0 ? text : text.split(name).join(" "));
