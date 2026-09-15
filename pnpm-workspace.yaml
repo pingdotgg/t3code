@@ -169,6 +169,7 @@ patchedDependencies:
   dbus-next@0.10.2: patches/dbus-next@0.10.2.patch
   effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
+  expo-modules-core@57.0.14: patches/expo-modules-core@57.0.14.patch
   expo-notifications@57.0.15: patches/expo-notifications@57.0.15.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
   expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
