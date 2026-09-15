@@ -6635,31 +6635,24 @@ export default function ChatView(props: ChatViewProps) {
   // and the informational parked-thread banner last — it must never cover another.
   // Background work (subagent fleets, workflow runs, watch loops) can outlive
   // the turn; once it settles, the composer stop button is gone, so this
-  // banner is the only visible stop affordance. Stop routes through the
-  // turn interrupt, which stops the thread's background tasks too.
+  // banner is the only visible stop affordance. The interrupt path also
+  // accepts a completed run while its provider still has background work.
   const activeBackgroundTasks = !isWorking && activeThread ? pendingBackgroundTasks : [];
-  const [isStoppingBackgroundWork, setIsStoppingBackgroundWork] = useState(false);
-  useEffect(() => {
-    // "Stopping..." holds until the tasks clear; the interrupt command
-    // returning only means the request was accepted.
-    if (activeBackgroundTasks.length === 0) {
-      setIsStoppingBackgroundWork(false);
-    }
-  }, [activeBackgroundTasks.length]);
-  useEffect(() => {
-    // Per-thread state: switching threads while A's stop is pending must not
-    // disable B's Stop button.
-    setIsStoppingBackgroundWork(false);
-  }, [activeThreadId]);
+  const [stoppingBackgroundWorkKey, setStoppingBackgroundWorkKey] = useState<string | null>(null);
+  const isStoppingBackgroundWork =
+    stoppingBackgroundWorkKey === `${environmentId}:${activeThreadId}`;
   const handleStopBackgroundWork = useCallback(async () => {
     if (!activeThread) return;
-    setIsStoppingBackgroundWork(true);
+    const requestKey = `${environmentId}:${activeThread.id}`;
+    setStoppingBackgroundWorkKey(requestKey);
     const result = await interruptThreadTurn({
       environmentId,
       input: { threadId: activeThread.id },
     });
+    // Acceptance does not confirm termination. Allow retry while the provider
+    // finishes stopping the tasks or reports a failure.
+    setStoppingBackgroundWorkKey((current) => (current === requestKey ? null : current));
     if (result._tag === "Failure") {
-      setIsStoppingBackgroundWork(false);
       if (!isAtomCommandInterrupted(result)) {
         const error = squashAtomCommandFailure(result);
         setThreadError(
