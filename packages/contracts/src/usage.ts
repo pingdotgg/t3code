@@ -1,11 +1,12 @@
 /**
  * Usage reporting contract.
  *
- * Each environment scans the provider CLIs' own on-disk session transcripts
+ * Each environment scans the provider CLIs' own on-disk session history
  * (`~/.claude/projects/**\/*.jsonl`, `~/.codex/sessions/**\/*.jsonl`,
- * `~/.grok/sessions/**\/updates.jsonl`) rather than relying on T3 Code's own
- * orchestration projections, so usage stays complete even for turns that were
- * never driven through T3 Code. This mirrors the approach `ccusage` takes.
+ * `~/.grok/sessions/**\/updates.jsonl`, Antigravity's per-conversation SQLite
+ * databases) rather than relying on T3 Code's own orchestration projections, so
+ * usage stays complete even for turns that were never driven through T3 Code.
+ * This mirrors the approach `ccusage` takes.
  *
  * Environments return pre-aggregated `(day, hourStart?, provider, model)`
  * buckets. Raw transcript records never cross the wire.
@@ -21,18 +22,19 @@ import { NonNegativeInt, TrimmedNonEmptyString } from "./baseSchemas.ts";
  * client renders partial coverage when an environment reports an older version
  * rather than failing the whole page.
  */
-export const USAGE_CONTRACT_VERSION = 5 as const;
+export const USAGE_CONTRACT_VERSION = 6 as const;
 
 /**
  * Oldest {@link UsageSummary} version a current client will still merge.
  *
- * v5 only adds `grok` to {@link UsageProviderKind}; v4 Claude/Codex buckets
+ * v5 added `grok`; v6 added `antigravity` to {@link UsageProviderKind} and the
+ * optional `source` index on {@link UsageBucket}. v4 Claude/Codex buckets
  * remain valid, so mixed-version environments keep those totals instead of
  * treating every older server as stale.
  */
 export const USAGE_MERGE_COMPATIBLE_SINCE = 4 as const;
 
-export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok"]);
+export const UsageProviderKind = Schema.Literals(["claude", "codex", "grok", "antigravity"]);
 export type UsageProviderKind = typeof UsageProviderKind.Type;
 
 /**
@@ -107,6 +109,13 @@ export const UsageBucket = Schema.Struct({
   unpricedRecords: NonNegativeInt,
   /** Distinct transcript sessions that contributed to this cell. */
   sessions: NonNegativeInt,
+  /**
+   * Index into {@link UsageSummary.sources} of the directory these records were
+   * read from. Lets the client drop exactly the directory another environment
+   * already owns when one provider has several. Absent from servers that
+   * aggregated per provider (before v6), which the client treats as one source.
+   */
+  source: Schema.optional(NonNegativeInt),
 });
 export type UsageBucket = typeof UsageBucket.Type;
 
