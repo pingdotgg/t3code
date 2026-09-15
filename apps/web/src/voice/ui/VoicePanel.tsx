@@ -20,10 +20,12 @@ import { createWebVoiceToolHost } from "../tools";
 import { createCommandSession, type CommandActions } from "../command-session";
 
 import type { VoiceLiveMediaStreamTrack } from "../live-client";
+import { createVoiceHistoryRecorder, exportVoiceHistory } from "../history";
 import { createVoiceModule } from "../index";
 import { useVoiceFastCommands } from "./preferences";
 import { VoiceControls } from "./VoiceControls";
 import { createActionChime } from "./actionChime";
+import { VoiceHistory } from "./VoiceHistory";
 import { VoiceTranscript } from "./VoiceTranscript";
 import {
   captureWebMic,
@@ -111,8 +113,19 @@ export function VoicePanel() {
   // the research bridge; its createClient re-points the bridge's steering and
   // marks at each new session and re-arms research recovery on reconnect.
   const [voice] = useState(() => createVoiceModule());
+  // Durable session history: records the same client event stream the panel
+  // displays, plus navigation and tool outcomes, into guarded localStorage.
+  const [history] = useState(() =>
+    createVoiceHistoryRecorder({
+      sessionIdentity: () => {
+        const sessionId = voice.boundClient()?.getSessionId();
+        return sessionId === undefined ? undefined : `${sessionId}`;
+      },
+    }),
+  );
   const [controller] = useState(() =>
     createVoicePanelController({
+      history,
       resolveBrokerPort: resolveWebVoiceBrokerPort,
       captureMic: async () => {
         await chime.unlock().catch(() => undefined);
@@ -145,6 +158,20 @@ export function VoicePanel() {
     }),
   );
   const panelState = useSyncExternalStore(controller.subscribe, controller.getState);
+
+  // Saved-history review state: the recorder is an external store whose
+  // snapshot refreshes on every boundary write, clear, and delete, so the
+  // listing stays current across end, reconnect, and reload with no effects.
+  const historySessions = useSyncExternalStore(history.subscribe, history.getSessionsSnapshot);
+  const [historyOpen, setHistoryOpen] = useState(false);
+
+  // A reload or tab close must not lose buffered transcript deltas: the
+  // recorder persists at boundaries, and pagehide is the last boundary.
+  useEffect(() => {
+    const onHide = () => history.flush();
+    window.addEventListener("pagehide", onHide);
+    return () => window.removeEventListener("pagehide", onHide);
+  }, [history]);
 
   // Broker environment lost mid-session (disconnect, capability flag or
   // operate scope gone): end through the same close lifecycle (mic stop,
@@ -214,6 +241,32 @@ export function VoicePanel() {
         error={panelState.error}
         navigationStatus={panelState.navigationStatus}
         navigationFailed={panelState.navigationFailed}
+      />
+      <VoiceHistory
+        sessions={historySessions}
+        open={historyOpen}
+        onToggle={() => setHistoryOpen(!historyOpen)}
+        frozen={
+          panelState.phase === "live" ||
+          panelState.phase === "connecting" ||
+          panelState.phase === "closing"
+        }
+        onExport={() => {
+          const json = exportVoiceHistory(history);
+          const blob = new Blob([json], { type: "application/json" });
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement("a");
+          anchor.href = url;
+          anchor.download = `voice-history-${new Date().toISOString()}.json`;
+          anchor.click();
+          URL.revokeObjectURL(url);
+        }}
+        onClear={() => {
+          history.clear();
+        }}
+        onDelete={(id) => {
+          history.deleteSession(id);
+        }}
       />
       <audio ref={setAudioElement} autoPlay className="hidden" />
       <label>
