@@ -34,6 +34,52 @@ export const GitHubAccountPatch = Schema.Struct({
 });
 export type GitHubAccountPatch = typeof GitHubAccountPatch.Type;
 
+const GitHubOAuthFlowId = TrimmedNonEmptyString.check(Schema.isMaxLength(128));
+
+export const GitHubOAuthStartInput = Schema.Struct({
+  accountId: GitHubAccountId,
+  label: TrimmedNonEmptyString,
+  host: TrimmedNonEmptyString.pipe(Schema.withDecodingDefault(Effect.succeed("github.com"))),
+});
+export type GitHubOAuthStartInput = typeof GitHubOAuthStartInput.Type;
+
+export const GitHubOAuthCancelInput = Schema.Struct({
+  accountId: GitHubAccountId,
+  flowId: GitHubOAuthFlowId,
+});
+export type GitHubOAuthCancelInput = typeof GitHubOAuthCancelInput.Type;
+
+export const GitHubOAuthState = Schema.Struct({
+  accountId: GitHubAccountId,
+  phase: Schema.Literals([
+    "idle",
+    "starting",
+    "waiting",
+    "verifying",
+    "succeeded",
+    "failed",
+    "cancelled",
+  ]),
+  flowId: Schema.NullOr(GitHubOAuthFlowId),
+  verificationUrl: Schema.NullOr(Schema.String),
+  userCode: Schema.NullOr(TrimmedNonEmptyString),
+  account: Schema.NullOr(GitHubAccount),
+  message: Schema.NullOr(Schema.String),
+});
+export type GitHubOAuthState = typeof GitHubOAuthState.Type;
+
+/** Safe GitHub sign-in failure; OAuth codes and credentials never enter this error. */
+export class GitHubOAuthError extends Schema.TaggedError<GitHubOAuthError>()("GitHubOAuthError", {
+  accountId: GitHubAccountId,
+  operation: Schema.String,
+  detail: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {
+  override get message(): string {
+    return this.detail;
+  }
+}
+
 export const SourceControlProviderKind = Schema.Literals([
   "github",
   "gitlab",

@@ -181,6 +181,7 @@ import * as SourceControlRepositoryService from "./sourceControl/SourceControlRe
 import * as AzureDevOpsCli from "./sourceControl/AzureDevOpsCli.ts";
 import * as BitbucketApi from "./sourceControl/BitbucketApi.ts";
 import * as GitHubCli from "./sourceControl/GitHubCli.ts";
+import * as GitHubOAuth from "./sourceControl/GitHubOAuth.ts";
 import * as GitLabCli from "./sourceControl/GitLabCli.ts";
 import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as SourceControlProviderRegistry from "./sourceControl/SourceControlProviderRegistry.ts";
@@ -675,6 +676,7 @@ const makeWsRpcLayer = (
       );
       const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
       const sourceControlDiscovery = yield* SourceControlDiscovery.SourceControlDiscovery;
+      const githubOAuth = yield* GitHubOAuth.GitHubOAuth;
       const automaticGitFetchInterval = serverSettings.getSettings.pipe(
         Effect.map(
           (settings) => resolveServerBackgroundActivitySettings(settings).automaticGitFetchInterval,
@@ -3171,6 +3173,22 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "server",
             },
           ),
+        [WS_METHODS.sourceControlGitHubOAuthStart]: (input) =>
+          observeRpcEffect(WS_METHODS.sourceControlGitHubOAuthStart, githubOAuth.start(input), {
+            "rpc.aggregate": "source-control",
+          }),
+        [WS_METHODS.sourceControlGitHubOAuthCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.sourceControlGitHubOAuthCancel,
+            githubOAuth.cancel(input.accountId, input.flowId),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.sourceControlGitHubOAuthSubscribe]: (input) =>
+          observeRpcStream(
+            WS_METHODS.sourceControlGitHubOAuthSubscribe,
+            githubOAuth.subscribe(input.accountId),
+            { "rpc.aggregate": "source-control" },
+          ),
         [WS_METHODS.serverGetTraceDiagnostics]: (_input) =>
           observeRpcEffect(
             WS_METHODS.serverGetTraceDiagnostics,
@@ -4555,6 +4573,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
         ),
     });
     const pullRequests = yield* PullRequestService.PullRequestService;
+    const githubOAuth = yield* GitHubOAuth.GitHubOAuth;
     const sql = yield* SqlClient.SqlClient;
     return HttpRouter.add(
       "GET",
@@ -4599,6 +4618,7 @@ export const websocketRpcRouteLayer = Layer.unwrap(
               Layer.provide(Layer.succeed(SqlClient.SqlClient, sql)),
               Layer.provide(AgentSessionScanner.layer),
               Layer.provide(ProviderMaintenanceRunner.layer),
+              Layer.provide(Layer.succeed(GitHubOAuth.GitHubOAuth, githubOAuth)),
               Layer.provide(Layer.succeed(ServerSelfUpdate.ServerSelfUpdate, serverSelfUpdate)),
               // One server-lifetime service means clients share the same PR caches, and a WS
               // mutation invalidates the HTTP diff cache that every client reads from.

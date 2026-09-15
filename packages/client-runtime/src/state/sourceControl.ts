@@ -5,6 +5,7 @@ import {
   createAtomCommandScheduler,
   createEnvironmentRpcCommand,
   createEnvironmentRpcQueryAtomFamily,
+  createEnvironmentRpcSubscriptionAtomFamily,
 } from "./runtime.ts";
 import type { EnvironmentRegistry } from "../connection/registry.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
@@ -19,6 +20,22 @@ export function createSourceControlEnvironmentAtoms<R, E>(
     discovery: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:server:source-control-discovery",
       tag: WS_METHODS.serverDiscoverSourceControl,
+    }),
+    githubOAuthState: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:source-control:github-oauth-state",
+      tag: WS_METHODS.sourceControlGitHubOAuthSubscribe,
+    }),
+    startGitHubOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-oauth-start",
+      tag: WS_METHODS.sourceControlGitHubOAuthStart,
+      scheduler: commandScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
+    }),
+    cancelGitHubOAuth: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:source-control:github-oauth-cancel",
+      tag: WS_METHODS.sourceControlGitHubOAuthCancel,
+      scheduler: commandScheduler,
+      concurrency: { mode: "serial", key: ({ environmentId }) => environmentId },
     }),
     repository: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:source-control:repository",
