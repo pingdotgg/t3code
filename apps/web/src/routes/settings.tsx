@@ -30,7 +30,12 @@ import {
   getSettingsSearchTargetScope,
   getThreadAutoSettlementSearchAvailability,
   isSettingsSearchScopeAvailable,
+  SETTINGS_SECTION_LABELS,
+  type SettingsPath,
 } from "../components/settings/settingsSearch";
+
+// The router's split modules share this object; assigning a bare variable loses the update.
+const settingsNavigation = { lastPath: "/settings/general" as SettingsPath };
 
 function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
   const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
@@ -123,6 +128,14 @@ function SettingsContentLayout() {
   const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
+  const normalizedPathname = location.pathname.replace(/\/+$/, "") || "/";
+
+  useEffect(() => {
+    if (normalizedPathname in SETTINGS_SECTION_LABELS) {
+      settingsNavigation.lastPath = normalizedPathname as SettingsPath;
+    }
+  }, [normalizedPathname]);
+
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -226,8 +239,9 @@ export const Route = createFileRoute("/settings")({
       throw redirect({ to: "/pair", replace: true });
     }
 
-    if (location.pathname === "/settings") {
-      throw redirect({ to: "/settings/general", replace: true });
+    const normalizedPathname = location.pathname.replace(/\/+$/, "") || "/";
+    if (normalizedPathname === "/settings") {
+      throw redirect({ to: settingsNavigation.lastPath, replace: true });
     }
   },
   component: SettingsRouteLayout,
