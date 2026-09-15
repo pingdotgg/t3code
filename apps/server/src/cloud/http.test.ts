@@ -822,6 +822,32 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  it.effect(
+    "starts the stored connector without a marker when confirmation is not required",
+    () => {
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "existing-token",
+        tunnelId: "existing-tunnel",
+      };
+      const { store } = makeMemorySecretStore([
+        [CLOUD_ENDPOINT_RUNTIME_CONFIG, JSON.stringify(config)],
+      ]);
+      const applyConfigCalls: Array<unknown> = [];
+      const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+      return Effect.gen(function* () {
+        expect(
+          yield* startManagedCloudTunnelIfOriginConfirmed("http://127.0.0.1:3773", {
+            requireConfirmedOrigin: false,
+          }),
+        ).toBe(true);
+        expect(applyConfigCalls).toEqual([config]);
+        expect(requests).toEqual([]);
+      }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+    },
+  );
+
   it.effect.each(["replaced", "removed"] as const)(
     "does not activate a tunnel when its runtime config is %s during registration",
     (mutation) => {

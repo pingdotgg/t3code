@@ -10,10 +10,12 @@ import {
 } from "@t3tools/contracts";
 import type { RelayManagedEndpointRuntimeConfig } from "@t3tools/contracts/relay";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Duration from "effect/Duration";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Random from "effect/Random";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -135,6 +137,8 @@ import { serverRelayBrokerTracingLayer } from "./cloud/relayTracing.ts";
 import { shouldRetryCloudLink } from "./cloud/relayResponse.ts";
 import * as CloudManagedEndpointRuntime from "./cloud/ManagedEndpointRuntime.ts";
 import {
+  MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER,
+  MANAGED_TUNNEL_RECOVERY_COOLDOWN,
   managedTunnelStartupAction,
   retryManagedTunnelRegistration,
 } from "./cloud/managedTunnelStartup.ts";
@@ -751,11 +755,20 @@ const makeServerLayer = Layer.unwrap(
             const localOrigin = `http://127.0.0.1:${address.port}`;
             const endpointRuntime = yield* CloudManagedEndpointRuntime.CloudManagedEndpointRuntime;
             const recoveryLock = yield* Semaphore.make(1);
+            let lastRecoveryAtMillis = 0;
             const recoverManagedTunnel = (config: RelayManagedEndpointRuntimeConfig) =>
               recoveryLock.withPermits(1)(
-                recoverManagedCloudTunnel(localOrigin, config, {
-                  retryRuntimeFailures: true,
+                Effect.gen(function* () {
+                  const elapsed = (yield* Clock.currentTimeMillis) - lastRecoveryAtMillis;
+                  const wait = Duration.toMillis(MANAGED_TUNNEL_RECOVERY_COOLDOWN) - elapsed;
+                  if (wait > 0) yield* Effect.sleep(Duration.millis(wait));
+                  lastRecoveryAtMillis = yield* Clock.currentTimeMillis;
                 }).pipe(
+                  Effect.andThen(
+                    recoverManagedCloudTunnel(localOrigin, config, {
+                      retryRuntimeFailures: true,
+                    }),
+                  ),
                   Effect.retry({
                     while: (error) =>
                       shouldRetryCloudLink(error) &&
@@ -822,15 +835,48 @@ const makeServerLayer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+            const startedConfirmed = yield* startManagedCloudTunnelIfOriginConfirmed(
+              localOrigin,
+            ).pipe(
               Effect.catch((cause) =>
-                Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", { cause }),
+                Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                  cause,
+                }).pipe(Effect.as(false)),
               ),
             );
+            // A host without a confirmed marker is on its first boot after the
+            // upgrade. Spread those registrations so an auto-update wave does
+            // not hit the relay all at once.
+            if (!startedConfirmed && desiredCliLinkMode !== "publish_only") {
+              const jitter = yield* Random.nextIntBetween(
+                0,
+                Duration.toMillis(MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER),
+              );
+              yield* Effect.sleep(Duration.millis(jitter));
+            }
             const registration =
               desiredCliLinkMode === "publish_only"
                 ? { status: "not_linked" as const }
                 : yield* registerManagedTunnel;
+            // Registration gave up after its retry window. Start the stored
+            // config anyway so a relay outage does not keep the host offline;
+            // the next successful registration reconciles the origin.
+            if (registration.status === "unavailable" && !startedConfirmed) {
+              yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin, {
+                requireConfirmedOrigin: false,
+              }).pipe(
+                Effect.tap((started) =>
+                  started
+                    ? Effect.logWarning(
+                        "T3 Connect started the stored tunnel without relay confirmation",
+                      )
+                    : Effect.void,
+                ),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Failed to start the stored T3 Connect tunnel", { cause }),
+                ),
+              );
+            }
             const startupAction = managedTunnelStartupAction({ wantsCliLink, registration });
             if (startupAction.action === "request_recovery") {
               yield* endpointRuntime.requestRecovery(startupAction.config);

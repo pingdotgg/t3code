@@ -568,8 +568,9 @@ const activateManagedTunnelWithRetry = (
 
 export const startManagedCloudTunnelIfOriginConfirmed = Effect.fn(
   "environment.cloud.startManagedCloudTunnelIfOriginConfirmed",
-)(function* (localOrigin: string) {
+)(function* (localOrigin: string, options?: { readonly requireConfirmedOrigin?: boolean }) {
   const dependencies = yield* cloudHttpDependencies;
+  const requireConfirmedOrigin = options?.requireConfirmedOrigin ?? true;
   const parsedOrigin = yield* Effect.try({
     try: () => parseManagedEndpointLocalOrigin(localOrigin),
     catch: () =>
@@ -583,17 +584,24 @@ export const startManagedCloudTunnelIfOriginConfirmed = Effect.fn(
         dependencies.secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG),
         dependencies.secrets.get(CLOUD_ENDPOINT_CONFIRMED_ORIGIN),
       ]);
-      if (Option.isNone(runtimeBytes) || Option.isNone(markerBytes)) return false;
+      if (Option.isNone(runtimeBytes)) return false;
       const config = Option.getOrNull(decodeRuntimeConfig(bytesToString(runtimeBytes.value)));
-      const marker = Option.getOrNull(decodeConfirmedOrigin(bytesToString(markerBytes.value)));
-      if (
-        config === null ||
-        marker === null ||
-        !managedEndpointRuntimeConfigsMatch(marker.config, config) ||
-        marker.origin.localHttpHost !== parsedOrigin.origin.localHttpHost ||
-        marker.origin.localHttpPort !== parsedOrigin.origin.localHttpPort
-      ) {
-        return false;
+      if (config === null || config.providerKind !== "cloudflare_tunnel") return false;
+      // With the marker required, only a config the relay already confirmed on
+      // this port may start. Without it, startup is falling back after the
+      // relay stayed unreachable: an unconfirmed origin may send traffic to a
+      // stale port, but that beats no remote access at all.
+      if (requireConfirmedOrigin) {
+        if (Option.isNone(markerBytes)) return false;
+        const marker = Option.getOrNull(decodeConfirmedOrigin(bytesToString(markerBytes.value)));
+        if (
+          marker === null ||
+          !managedEndpointRuntimeConfigsMatch(marker.config, config) ||
+          marker.origin.localHttpHost !== parsedOrigin.origin.localHttpHost ||
+          marker.origin.localHttpPort !== parsedOrigin.origin.localHttpPort
+        ) {
+          return false;
+        }
       }
       const status = yield* dependencies.endpointRuntime.applyConfig(config);
       if (status.status !== "running") {

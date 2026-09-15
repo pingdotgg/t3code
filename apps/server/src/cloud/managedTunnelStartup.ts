@@ -34,6 +34,10 @@ export function managedTunnelStartupAction(input: {
   return { action: "none" };
 }
 
+// Registration retries stop here. After that the host falls back to its
+// stored connector config rather than staying offline while the relay is down.
+export const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
+
 export const retryManagedTunnelRegistration = <A, E, R>(
   registration: Effect.Effect<A, E, R>,
   isRetryable: (error: E) => boolean,
@@ -46,6 +50,17 @@ export const retryManagedTunnelRegistration = <A, E, R>(
           Effect.succeed(Duration.min(duration, Duration.seconds(30))),
         ),
         Schedule.jittered,
+        Schedule.upTo({ duration: MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW }),
       ),
     }),
   );
+
+// A host asks the relay for a replacement tunnel at most this often. Every
+// managed host shares one relay, so a host stuck in a bad loop must not turn
+// into a fleet-wide request storm.
+export const MANAGED_TUNNEL_RECOVERY_COOLDOWN = Duration.minutes(2);
+
+// Existing hosts register on their first boot after an upgrade, and desktop
+// auto-update delivers that boot to many hosts at once. Spread the first
+// registration so the relay and Cloudflare see a ramp instead of a spike.
+export const MANAGED_TUNNEL_FIRST_REGISTRATION_JITTER = Duration.seconds(30);

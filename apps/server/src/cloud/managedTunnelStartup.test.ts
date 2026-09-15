@@ -48,6 +48,25 @@ describe("managedTunnelStartupAction", () => {
 });
 
 describe("retryManagedTunnelRegistration", () => {
+  it.effect("stops retrying after the retry window so startup can fall back", () =>
+    Effect.gen(function* () {
+      let attempts = 0;
+      const registration = Effect.suspend(() => {
+        attempts += 1;
+        return Effect.fail("relay unavailable" as const);
+      });
+      const fiber = yield* Effect.forkChild(
+        Effect.flip(retryManagedTunnelRegistration(registration, () => true)),
+        { startImmediately: true },
+      );
+      yield* TestClock.adjust("15 minutes");
+      expect(yield* Fiber.join(fiber)).toBe("relay unavailable");
+      // Capped at 30 seconds between attempts, ten minutes allows a bounded run.
+      expect(attempts).toBeGreaterThan(5);
+      expect(attempts).toBeLessThan(60);
+    }),
+  );
+
   it.effect("waits for successful registration before it activates the connector", () =>
     Effect.gen(function* () {
       const firstAttempt = yield* Deferred.make<void>();
