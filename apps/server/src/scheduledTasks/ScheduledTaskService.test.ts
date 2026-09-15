@@ -1905,7 +1905,11 @@ it.effect(
       // resume the schedule: the claim transaction sees the committed archive
       // postdate the task's enablement and pauses instead of dispatching.
       yield* insertThreadEvent(archiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
-      yield* insertThreadEvent(archiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+      yield* insertThreadEvent(
+        archiveBoundThreadId,
+        "thread.unarchived",
+        "2026-01-01T00:00:02.000Z",
+      );
 
       const attempted = yield* tasks.runNow({ id: seeded.id }).pipe(Effect.exit);
       assert.isTrue(Exit.isFailure(attempted));
@@ -1966,7 +1970,11 @@ it.effect("rebinding an enabled task is not undone by the destination's earlier 
     // ever bound to it. The rebind refreshes enabled_seq past that archive,
     // so a delayed pause pass must not disable the healthy task.
     yield* insertThreadEvent(rearchiveBoundThreadId, "thread.archived", "2026-01-01T00:00:01.000Z");
-    yield* insertThreadEvent(rearchiveBoundThreadId, "thread.unarchived", "2026-01-01T00:00:02.000Z");
+    yield* insertThreadEvent(
+      rearchiveBoundThreadId,
+      "thread.unarchived",
+      "2026-01-01T00:00:02.000Z",
+    );
     const rebound = yield* tasks.update({
       id: seeded.id,
       projectId: archivedBindingProjectId,
@@ -2289,7 +2297,11 @@ it.effect("update cannot enable or bind an archived-thread task, but unbinding s
     assert.isTrue(Exit.isFailure(enableRejected));
 
     const bindRejected = yield* tasks
-      .update({ id: unbound.id, projectId: archivedBindingProjectId, threadId: archiveBoundThreadId })
+      .update({
+        id: unbound.id,
+        projectId: archivedBindingProjectId,
+        threadId: archiveBoundThreadId,
+      })
       .pipe(Effect.exit);
     assert.isTrue(Exit.isFailure(bindRejected));
     const unboundTask = yield* findTaskById(unbound.id);
