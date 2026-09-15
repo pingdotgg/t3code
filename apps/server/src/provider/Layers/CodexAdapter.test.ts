@@ -1129,10 +1129,13 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("emits one task start per child and preserves the activity-only fallback", () =>
+  it.effect("emits one task start per child per parent turn", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
-      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 4)).pipe(
+      const eventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.type.startsWith("task.")),
+        Stream.take(6),
+        Stream.runCollect,
         Effect.forkChild,
       );
       const childEvent = (id: string, method: string, agentThreadId: string) => ({
@@ -1150,6 +1153,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         },
       });
 
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-1"));
       yield* runtime.emit(childEvent("evt-child-started", "collabAgent/started", "child-1"));
       yield* runtime.emit(childEvent("evt-child-duplicate", "collabAgent/activity", "child-1"));
       yield* runtime.emit(
@@ -1158,6 +1162,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
       yield* runtime.emit(
         childEvent("evt-fallback-duplicate", "collabAgent/activity", "activity-only"),
       );
+      yield* runtime.emit(codexTurnEvent("turn/started", "turn-2"));
+      yield* runtime.emit(childEvent("evt-child-restarted", "collabAgent/started", "child-1"));
+      yield* runtime.emit(childEvent("evt-child-redelivered", "collabAgent/activity", "child-1"));
 
       const events = Array.from(yield* Fiber.join(eventsFiber));
       NodeAssert.deepStrictEqual(
@@ -1167,6 +1174,8 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           { type: "task.updated", taskId: "child-1" },
           { type: "task.started", taskId: "activity-only" },
           { type: "task.updated", taskId: "activity-only" },
+          { type: "task.started", taskId: "child-1" },
+          { type: "task.updated", taskId: "child-1" },
         ],
       );
     }),

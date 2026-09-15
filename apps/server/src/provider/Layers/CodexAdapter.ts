@@ -2328,6 +2328,7 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
             yield* writeNativeEvent(event);
             if (event.method === "turn/started" && event.turnId) {
               if (turnTokenUsage.activeTurnId !== event.turnId) {
+                startedCollabTaskIds.clear();
                 turnTokenUsage.byTurnId.clear();
                 turnTokenUsage.activeTurnId = event.turnId;
                 getCodexTurnAccumulator(turnTokenUsage, event.turnId);
