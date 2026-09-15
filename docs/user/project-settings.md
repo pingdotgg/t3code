@@ -66,6 +66,12 @@ and pick it from the list. The chip tells the agent which app to drive and how t
 it with the computer use tools. Apps appear in that list only while Cua computer use is
 on for the selected environment.
 
+Agents act on windows in the background without raising them, so you can keep working
+while they do. To watch, open the thread on the web or desktop: a floating card shows the
+window the agent is driving and refreshes while the turn runs, then keeps the agent's last
+screenshot. Close the card to stop the live capture; it comes back on the next screenshot.
+The card follows the **Auto-show floating preview** setting under **Settings > Integrations**.
+
 ## Project icons
 
 Select the project and open Project to choose an icon, emoji, or image. The choice applies to
