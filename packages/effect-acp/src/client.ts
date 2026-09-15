@@ -22,6 +22,8 @@ import {
 } from "./_internal/shared.ts";
 import { makeChildStdio, makeTerminationError } from "./_internal/stdio.ts";
 
+const decodeElicitationRequest = Schema.decodeUnknownEffect(AcpSchema.ElicitationRequest);
+
 export interface AcpClientOptions {
   readonly logIncoming?: boolean;
   readonly logOutgoing?: boolean;
@@ -151,7 +153,7 @@ export class AcpClient extends Context.Service<
       ) => Effect.Effect<AcpSchema.RequestPermissionResponse, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation`.
+     * Registers a handler for `session/elicitation` and `elicitation/create`.
      * @see https://agentclientprotocol.com/protocol/schema#session/elicitation
      */
     readonly handleElicitation: (
@@ -232,7 +234,7 @@ export class AcpClient extends Context.Service<
       ) => Effect.Effect<void, AcpError.AcpError>,
     ) => Effect.Effect<void>;
     /**
-     * Registers a handler for `session/elicitation/complete`.
+     * Registers a handler for `session/elicitation/complete` and `elicitation/complete`.
      * @see https://agentclientprotocol.com/protocol/schema#session/elicitation/complete
      */
     readonly handleElicitationComplete: (
@@ -431,6 +433,22 @@ export const make = Effect.fn("effect-acp/AcpClient.make")(function* (
         ),
       [CLIENT_METHODS.session_elicitation]: (payload) =>
         runHandler(coreHandlers.elicitation, payload, CLIENT_METHODS.session_elicitation),
+      "elicitation/create": (payload) =>
+        decodeElicitationRequest(payload).pipe(
+          Effect.mapError((cause) =>
+            AcpError.AcpRequestError.invalidExtensionPayload(
+              "elicitation/create",
+              cause,
+            ).toProtocolError(),
+          ),
+          Effect.flatMap((request) =>
+            runHandler(coreHandlers.elicitation, request, "elicitation/create"),
+          ),
+          Effect.map(({ action, _meta }) => ({
+            ...action,
+            ...(_meta !== undefined ? { _meta } : {}),
+          })),
+        ),
       [CLIENT_METHODS.fs_read_text_file]: (payload) =>
         runHandler(coreHandlers.readTextFile, payload, CLIENT_METHODS.fs_read_text_file),
       [CLIENT_METHODS.fs_write_text_file]: (payload) =>
