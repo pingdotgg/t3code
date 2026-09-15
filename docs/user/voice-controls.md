@@ -16,13 +16,16 @@ button, confirming a dialog, or toggling a setting.
 - **Hidden controls** (inside a closed menu or an invisible section) are excluded unless you ask
   for them ("include hidden controls"). Clicking a hidden control reports that it is not visible;
   open its menu or dialog first, then click the item.
-- **Duplicate names** are listed with a number, for example two buttons named "Settle thread".
-  The number is context so you can say which one; the click itself always presses the exact
-  element that was listed.
+- **Duplicate names** are listed with a number and the visible text of the container they sit in
+  (for a row action, the row's title), for example two buttons named "Settle thread" under
+  different thread titles. That context is so you can say which one; the click itself always
+  presses the exact element that was listed.
 - **Stale targets are rejected, never retargeted.** If a control disappears between listing and
   clicking, voice reports it as gone and lists again. A surviving control with the same name is
   never pressed by the old one's id, so removing one of two identical buttons can never make a
-  repeat click hit the wrong one.
+  repeat click hit the wrong one. The same applies when a listed control's label or surrounding
+  content changes before the click: voice refuses and lists again instead of pressing something
+  you did not choose.
 
 Controls without a supported role (plain text or images that only look clickable) are not
 reachable. If a button you want is missing from the list, it is either not visible yet or does not

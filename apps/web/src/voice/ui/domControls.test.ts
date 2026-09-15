@@ -13,12 +13,14 @@ function candidate(
   name: string,
   state: VoiceUiControlState = "enabled",
   activations: string[] = [],
+  context?: string,
 ): VoiceControlCandidate<{ tag: string }> {
   const element = { tag: `${role}:${name}` };
   return {
     element,
     role,
     name,
+    ...(context !== undefined ? { context } : {}),
     state,
     activate: () => {
       activations.push(element.tag);
@@ -91,6 +93,26 @@ describe("listControlCandidates", () => {
         ambiguous: true,
       },
     ]);
+  });
+
+  it("reports the visible container context that distinguishes repeated controls", () => {
+    // Occurrence order alone cannot tell the model which thread a repeated
+    // "Settle thread" button belongs to; the containing row's title can.
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const loginRow = candidate("button", "Settle thread", "enabled", [], "Fix login bug");
+    const signupRow = candidate("button", "Settle thread", "enabled", [], "Fix signup bug");
+    const output = listControlCandidates([loginRow, signupRow], {}, registry);
+    expect(output.controls.map((control) => control.context)).toEqual([
+      "Fix login bug",
+      "Fix signup bug",
+    ]);
+    expect(output.controls.map((control) => control.ambiguous)).toEqual([true, true]);
+  });
+
+  it("omits the context field when no container adds context", () => {
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const output = listControlCandidates([candidate("button", "Save")], {}, registry);
+    expect(output.controls[0]).not.toHaveProperty("context");
   });
 
   it("keeps a surviving element's id stable across relistings", () => {
@@ -229,5 +251,126 @@ describe("resolveAndActivateControl", () => {
       resolveAndActivateControl([disabled, hidden], registry, { controlId: hiddenId }),
     ).toMatchObject({ state: "hidden" });
     expect(activations).toEqual([]);
+  });
+
+  it("refuses a listed control whose accessible name changed since listing", () => {
+    // Element identity survives virtual-list reuse: the same DOM element may
+    // now be a different button. The listed name no longer describes what a
+    // click would do, so the id must be refused, never activated.
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const activations: string[] = [];
+    const element = candidate("button", "Settle thread", "enabled", activations).element;
+    const id = listControlCandidates(
+      [{ element, role: "button", name: "Settle thread", state: "enabled", activate: () => {} }],
+      {},
+      registry,
+    ).controls[0]!.controlId;
+
+    const resolution = resolveAndActivateControl(
+      [{ element, role: "button", name: "Archive thread", state: "enabled", activate: () => {} }],
+      registry,
+      { controlId: id },
+    );
+
+    expect(resolution).toMatchObject({ state: "not_found" });
+    if (resolution.state !== "activated") {
+      expect(resolution.message).toContain("now reads");
+    }
+    expect(activations).toEqual([]);
+  });
+
+  it("refuses a listed control whose visible context changed since listing", () => {
+    // A recycled row keeps the same "Settle thread" element but now titles a
+    // different thread; clicking the old id must not settle the wrong thread.
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const activations: string[] = [];
+    const element = candidate(
+      "button",
+      "Settle thread",
+      "enabled",
+      activations,
+      "Fix login bug",
+    ).element;
+    const id = listControlCandidates(
+      [
+        {
+          element,
+          role: "button",
+          name: "Settle thread",
+          context: "Fix login bug",
+          state: "enabled",
+          activate: () => {},
+        },
+      ],
+      {},
+      registry,
+    ).controls[0]!.controlId;
+
+    const resolution = resolveAndActivateControl(
+      [
+        {
+          element,
+          role: "button",
+          name: "Settle thread",
+          context: "Fix signup bug",
+          state: "enabled",
+          activate: () => {},
+        },
+      ],
+      registry,
+      { controlId: id },
+    );
+
+    expect(resolution).toMatchObject({ state: "not_found" });
+    expect(activations).toEqual([]);
+  });
+
+  it("activates despite volatile context deltas like ticking durations", () => {
+    // Visible container text picks up ticking durations and relative
+    // timestamps between listing and clicking; digits and time separators
+    // are ignored so an honest click is never refused as stale.
+    const registry = createControlIdRegistry<{ tag: string }>();
+    const activations: string[] = [];
+    const element = candidate(
+      "button",
+      "Settle thread",
+      "enabled",
+      activations,
+      "Fix login bug 04:12",
+    ).element;
+    const id = listControlCandidates(
+      [
+        {
+          element,
+          role: "button",
+          name: "Settle thread",
+          context: "Fix login bug 04:12",
+          state: "enabled",
+          activate: () => {},
+        },
+      ],
+      {},
+      registry,
+    ).controls[0]!.controlId;
+
+    const resolution = resolveAndActivateControl(
+      [
+        {
+          element,
+          role: "button",
+          name: "Settle thread",
+          context: "Fix login bug 04:13",
+          state: "enabled",
+          activate: () => {
+            activations.push("button:Settle thread");
+          },
+        },
+      ],
+      registry,
+      { controlId: id },
+    );
+
+    expect(resolution.state).toBe("activated");
+    expect(activations).toEqual(["button:Settle thread"]);
   });
 });

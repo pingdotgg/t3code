@@ -465,6 +465,11 @@ export const VoiceUiControl = Schema.Struct({
   /** True when another currently attached control shares the role and
       accessible name; use occurrence to say which one. */
   ambiguous: Schema.optional(Schema.Boolean),
+  /** Visible text of the nearest enclosing container that carries more
+      identifying context than the control's own name (for example the
+      containing thread row's title), when one exists. Disambiguation
+      context only; never a click address. */
+  context: Schema.optional(TrimmedString),
 });
 export type VoiceUiControl = typeof VoiceUiControl.Type;
 
