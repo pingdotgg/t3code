@@ -1403,6 +1403,9 @@ export function NewTaskDraftScreen(props: {
         skills={composerMenu.skills}
         selection={composerMenu.selection}
         onChangeText={flow.setPrompt}
+        onSubmit={() => {
+          if (canStart) void handleStart();
+        }}
         onSelectionChange={composerMenu.onSelectionChange}
         onFocus={() => setIsComposerFocused(true)}
         onBlur={() => setIsComposerFocused(false)}
