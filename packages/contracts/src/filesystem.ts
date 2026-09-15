@@ -6,12 +6,18 @@ const FILESYSTEM_PATH_MAX_LENGTH = 512;
 export const FilesystemBrowseInput = Schema.Struct({
   partialPath: TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH)),
   cwd: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(FILESYSTEM_PATH_MAX_LENGTH))),
+  /** Resolve abbreviated or mistyped directory names when the exact path has no matches. */
+  fuzzy: Schema.optional(Schema.Boolean),
 });
 export type FilesystemBrowseInput = typeof FilesystemBrowseInput.Type;
 
 export const FilesystemBrowseEntry = Schema.Struct({
   name: TrimmedNonEmptyString,
   fullPath: TrimmedNonEmptyString,
+  /** A server-ranked match spanning multiple directory names. */
+  searchMatch: Schema.optional(
+    Schema.Struct({ query: TrimmedNonEmptyString, score: Schema.Finite }),
+  ),
 });
 export type FilesystemBrowseEntry = typeof FilesystemBrowseEntry.Type;
 

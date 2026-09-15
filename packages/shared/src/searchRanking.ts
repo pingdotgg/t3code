@@ -51,6 +51,42 @@ export function scoreSubsequenceMatch(value: string, query: string): number | nu
   return null;
 }
 
+/** Matches directory abbreviations, with one typo allowed in queries of at least four characters. */
+export function scoreDirectoryMatch(name: string, query: string): number | null {
+  const value = name.toLowerCase();
+  const normalizedQuery = query.toLowerCase();
+  if (!normalizedQuery) return 0;
+
+  const score = scoreQueryMatch({
+    value,
+    query: normalizedQuery,
+    exactBase: 0,
+    prefixBase: 100,
+    boundaryBase: 200,
+    includesBase: 300,
+    fuzzyBase: 1_000,
+    boundaryMarkers: [" ", "-", "_", "."],
+  });
+  if (score !== null) return score;
+  if (normalizedQuery.length < 4) return null;
+
+  // After the first mismatch, a single insertion, deletion, substitution or
+  // adjacent transposition must make the rest of the query match a prefix.
+  let index = 0;
+  while (index < normalizedQuery.length && value[index] === normalizedQuery[index]) index += 1;
+  const queryRest = normalizedQuery.slice(index + 1);
+  const valueRest = value.slice(index + 1);
+  const hasTypoMatch =
+    value.slice(index).startsWith(queryRest) ||
+    valueRest.startsWith(normalizedQuery.slice(index)) ||
+    valueRest.startsWith(queryRest) ||
+    (value[index] === normalizedQuery[index + 1] &&
+      value[index + 1] === normalizedQuery[index] &&
+      value.slice(index + 2).startsWith(normalizedQuery.slice(index + 2)));
+
+  return hasTypoMatch ? 10_000 + Math.abs(value.length - normalizedQuery.length) : null;
+}
+
 function lengthPenalty(value: string, query: string): number {
   return Math.min(64, Math.max(0, value.length - query.length));
 }
