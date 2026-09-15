@@ -1253,7 +1253,11 @@ function ThreadNavigationSidebarPane(
   return (
     <View
       testID="thread-navigation-sidebar"
-      className="flex-1 border-r border-border bg-drawer"
+      className={
+        materialYouStyleLayoutActive
+          ? "flex-1 bg-header"
+          : "flex-1 border-r border-border bg-drawer"
+      }
       style={{ width: props.width }}
     >
       <View
@@ -1307,7 +1311,11 @@ function ThreadNavigationSidebarPane(
       </View>
 
       <View
-        className="absolute inset-x-0 top-0 z-[4] bg-drawer"
+        className={
+          materialYouStyleLayoutActive
+            ? "absolute inset-x-0 top-0 z-[4] bg-header pb-3"
+            : "absolute inset-x-0 top-0 z-[4] bg-drawer"
+        }
         collapsable={false}
         onLayout={handleStickyHeaderLayout}
         pointerEvents="auto"

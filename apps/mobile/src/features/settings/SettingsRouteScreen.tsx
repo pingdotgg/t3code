@@ -18,7 +18,6 @@ import {
   settlePromise,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
 import {
@@ -58,6 +57,7 @@ import { useSavedRemoteConnections } from "../../state/use-remote-environment-re
 import { SettingsRow } from "./components/SettingsRow";
 import { SettingsSection } from "./components/SettingsSection";
 import { SettingsSwitchRow } from "./components/SettingsSwitchRow";
+import { SettingsScreen } from "./components/SettingsScreen";
 import { resolveAgentAwarenessPlatformPresentation } from "./SettingsRouteScreen.logic";
 import { planAutoSettleSettingsSync, type AutoSettleSettings } from "./autoSettleSettingsSync";
 
@@ -79,17 +79,16 @@ function useDeviceRegistered(): boolean {
 
 export function SettingsRouteScreen() {
   const navigation = useNavigation();
+  const content = hasCloudPublicConfig() ? (
+    <ConfiguredSettingsRouteScreen />
+  ) : (
+    <LocalSettingsRouteScreen />
+  );
 
   return (
     <>
       <WorkspaceSidebarToolbar />
-      {Platform.OS === "android" ? (
-        <>
-          {/* Android renders its own in-screen header instead of the native bar. */}
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader title="Settings" onBack={() => navigation.goBack()} />
-        </>
-      ) : (
+      {Platform.OS !== "android" ? (
         <NativeStackScreenOptions
           options={{
             unstable_headerRightItems:
@@ -107,8 +106,12 @@ export function SettingsRouteScreen() {
                 : undefined,
           }}
         />
+      ) : null}
+      {Platform.OS === "android" ? (
+        <SettingsScreen title="Settings">{content}</SettingsScreen>
+      ) : (
+        content
       )}
-      {hasCloudPublicConfig() ? <ConfiguredSettingsRouteScreen /> : <LocalSettingsRouteScreen />}
     </>
   );
 }

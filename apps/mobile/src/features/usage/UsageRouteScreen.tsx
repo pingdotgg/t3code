@@ -23,10 +23,9 @@ import Animated, { FadeIn, ReduceMotion } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 import { SegmentedControl } from "../../components/SegmentedControl";
-import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text } from "../../components/AppText";
 import { cn } from "../../lib/cn";
-import { NativeStackScreenOptions } from "../../native/StackHeader";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { useUsage, type EnvironmentUsageStatus } from "../../state/usage";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import { UsageDailyChart } from "./UsageDailyChart";
@@ -235,17 +234,7 @@ export function UsageRouteScreen() {
   }, [navigation, environmentFilter]);
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
-      {Platform.OS === "android" ? (
-        <>
-          <NativeStackScreenOptions options={{ headerShown: false }} />
-          <AndroidScreenHeader
-            title="Usage"
-            onBack={() => navigation.goBack()}
-            trailing={environmentFilter}
-          />
-        </>
-      ) : null}
+    <SettingsScreen title="Usage" trailing={environmentFilter}>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         showsVerticalScrollIndicator={false}
@@ -329,7 +318,7 @@ export function UsageRouteScreen() {
           )}
         </Animated.View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 

@@ -490,9 +490,19 @@ function AdaptiveWorkspaceLayoutContent(
   const contentSettledWidth = layout.usesSplitView
     ? Math.max(0, panes.contentPaneWidth - inspectorColumnTargetWidth)
     : null;
+  const contentLeadingInset = materialYouStyleLayoutActive && panes.primarySidebarVisible ? 8 : 0;
+  const contentTrailingInset =
+    materialYouStyleLayoutActive && inspectorColumnTargetWidth > 0 ? 8 : 0;
   const renderedInspectorWidth = useSharedValue(inspectorColumnTargetWidth);
   const renderedContentWidth = useDerivedValue(() =>
-    Math.max(0, width - renderedSidebarWidth.value - renderedInspectorWidth.value),
+    Math.max(
+      0,
+      width -
+        renderedSidebarWidth.value -
+        renderedInspectorWidth.value -
+        contentLeadingInset -
+        contentTrailingInset,
+    ),
   );
 
   const handleSelectThread = useCallback(
@@ -611,7 +621,17 @@ function AdaptiveWorkspaceLayoutContent(
             <View
               collapsable={false}
               style={
-                contentSettledWidth !== null ? { flex: 1, width: contentSettledWidth } : { flex: 1 }
+                contentSettledWidth !== null
+                  ? {
+                      flex: 1,
+                      marginLeft: contentLeadingInset,
+                      marginRight: contentTrailingInset,
+                      width: Math.max(
+                        0,
+                        contentSettledWidth - contentLeadingInset - contentTrailingInset,
+                      ),
+                    }
+                  : { flex: 1 }
               }
             >
               <WorkspaceContentWidthContext

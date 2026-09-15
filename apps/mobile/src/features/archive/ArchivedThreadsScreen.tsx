@@ -40,6 +40,8 @@ import {
   NATIVE_MAIL_SEARCH_TOOLBAR_SUPPORTED,
 } from "../layout/native-mail-search-toolbar";
 import type { ArchivedThreadGroup, ArchivedThreadSortOrder } from "./archivedThreadList";
+import { SettingsScreenContent } from "../settings/components/SettingsScreen";
+import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 
 export interface ArchivedThreadsHeaderEnvironment {
   readonly environmentId: EnvironmentId;
@@ -74,6 +76,7 @@ function ArchivedThreadsHeader(props: {
   readonly onSortOrderChange: (sortOrder: ArchivedThreadSortOrder) => void;
 }) {
   const { width } = useWindowDimensions();
+  const { materialYouStyleLayoutActive } = useAppearancePreferences();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const hasCustomFilter = props.selectedEnvironmentId !== null || props.sortOrder !== "newest";
@@ -146,6 +149,7 @@ function ArchivedThreadsHeader(props: {
           className="border-b border-header-border bg-header px-3 pb-2.5"
           style={{
             paddingTop: Math.max(insets.top, 12),
+            borderBottomWidth: materialYouStyleLayoutActive ? 0 : undefined,
           }}
         >
           <View className="min-h-12 flex-row items-center gap-2">
@@ -646,37 +650,39 @@ export function ArchivedThreadsScreen(props: {
         sortOrder={props.sortOrder}
       />
 
-      <GestureDetector gesture={archiveScrollGesture}>
-        <LegendList
-          className="flex-1"
-          contentContainerStyle={{
-            paddingBottom: 32,
-            paddingHorizontal: 16,
-            paddingTop: 4,
-          }}
-          contentInsetAdjustmentBehavior="automatic"
-          data={listItems}
-          estimatedItemSize={62}
-          getItemType={(item) => item.kind}
-          keyboardDismissMode="on-drag"
-          keyboardShouldPersistTaps="handled"
-          keyExtractor={(item) => item.key}
-          ListEmptyComponent={listEmptyComponent}
-          ListHeaderComponent={
-            props.error ? <ArchiveError message={props.error} onRetry={props.onRefresh} /> : null
-          }
-          onScrollBeginDrag={() => openSwipeableRef.current?.close()}
-          refreshControl={
-            <RefreshControl
-              onRefresh={props.onRefresh}
-              refreshing={props.isLoading && !isInitialLoad}
-              tintColorClassName={String("accent-icon")}
-            />
-          }
-          renderItem={renderListItem}
-          showsVerticalScrollIndicator={false}
-        />
-      </GestureDetector>
+      <SettingsScreenContent>
+        <GestureDetector gesture={archiveScrollGesture}>
+          <LegendList
+            className="flex-1"
+            contentContainerStyle={{
+              paddingBottom: 32,
+              paddingHorizontal: 16,
+              paddingTop: 4,
+            }}
+            contentInsetAdjustmentBehavior="automatic"
+            data={listItems}
+            estimatedItemSize={62}
+            getItemType={(item) => item.kind}
+            keyboardDismissMode="on-drag"
+            keyboardShouldPersistTaps="handled"
+            keyExtractor={(item) => item.key}
+            ListEmptyComponent={listEmptyComponent}
+            ListHeaderComponent={
+              props.error ? <ArchiveError message={props.error} onRetry={props.onRefresh} /> : null
+            }
+            onScrollBeginDrag={() => openSwipeableRef.current?.close()}
+            refreshControl={
+              <RefreshControl
+                onRefresh={props.onRefresh}
+                refreshing={props.isLoading && !isInitialLoad}
+                tintColorClassName={String("accent-icon")}
+              />
+            }
+            renderItem={renderListItem}
+            showsVerticalScrollIndicator={false}
+          />
+        </GestureDetector>
+      </SettingsScreenContent>
     </View>
   );
 }

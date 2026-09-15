@@ -16,6 +16,7 @@ import {
 import { useServerConfigs } from "../../state/entities";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { SettingsSection } from "./components/SettingsSection";
+import { SettingsScreen } from "./components/SettingsScreen";
 
 export function SettingsClientStorageRouteScreen() {
   const insets = useSafeAreaInsets();
@@ -71,7 +72,7 @@ export function SettingsClientStorageRouteScreen() {
   };
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Client Storage" nativeAndroidHeader>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -169,7 +170,7 @@ export function SettingsClientStorageRouteScreen() {
           ) : null}
         </View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 

@@ -7,6 +7,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { tryCopyTextWithHaptic } from "../../lib/copyTextWithHaptic";
+import { SettingsScreen } from "../settings/components/SettingsScreen";
 import { SettingsSection } from "../settings/components/SettingsSection";
 import {
   formatStartupCrashReport,
@@ -71,7 +72,7 @@ export function SettingsDiagnosticsRouteScreen() {
   };
 
   return (
-    <View collapsable={false} className="flex-1 bg-sheet">
+    <SettingsScreen title="Diagnostics" nativeAndroidHeader>
       <ScrollView
         contentInsetAdjustmentBehavior="automatic"
         contentInset={{ bottom: Math.max(insets.bottom, 18) }}
@@ -131,7 +132,7 @@ export function SettingsDiagnosticsRouteScreen() {
           </Text>
         </View>
       </ScrollView>
-    </View>
+    </SettingsScreen>
   );
 }
 

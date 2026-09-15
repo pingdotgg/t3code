@@ -120,7 +120,11 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
   }, []);
   const themeVariablesByAppearance = useMemo(() => {
     const resolve = (appearance: MobileThemeAppearance) => {
-      const base = getMobileThemeRuntimeVariables(themeIds[appearance], appearance);
+      const base = getMobileThemeRuntimeVariables(
+        themeIds[appearance],
+        appearance,
+        materialYouStyleLayoutActive,
+      );
       return themeIds[appearance] === "material-you" && systemColorPalettes
         ? materialYouPaletteToMobileThemeVariables(
             systemColorPalettes[appearance],
@@ -130,7 +134,7 @@ export function AppearancePreferencesProvider(props: { readonly children: ReactN
         : base;
     };
     return { light: resolve("light"), dark: resolve("dark") };
-  }, [themeIds, systemColorPalettes]);
+  }, [themeIds, systemColorPalettes, materialYouStyleLayoutActive]);
   const themeVariables = themeVariablesByAppearance[themeAppearance];
   const activeThemeName = getMobileUniwindThemeName(themeId, themeAppearance);
   const { baseFontSize, codeFontSize, codeWordBreak, terminalFontSize } = preferences;

@@ -3,6 +3,7 @@ import defaultThemeVariables from "../../generated-uniwind-default-theme-variabl
 import {
   DEFAULT_MOBILE_THEME_ID,
   getMobileThemeVariables,
+  themeColorWithAlpha,
   type MobileThemeAppearance,
   type MobileThemeId,
   type MobileThemeVariables,
@@ -20,8 +21,22 @@ const defaults = defaultThemeVariables as Readonly<
 export function getMobileThemeRuntimeVariables(
   themeId: MobileThemeId,
   appearance: MobileThemeAppearance,
+  materialYouStyleLayoutActive = false,
 ): MobileThemeVariables {
-  return themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you"
+  const usesDefaultPalette = themeId === DEFAULT_MOBILE_THEME_ID || themeId === "material-you";
+  const variables = usesDefaultPalette
     ? defaults[appearance]
     : getMobileThemeVariables(themeId, appearance);
+  if (!materialYouStyleLayoutActive) return variables;
+
+  // Rounded panes share one opaque frame. The default dark drawer matches the
+  // settings body, so use its card tone to keep the rounded edge visible.
+  // System colors replace this with their own surfaceContainerHigh afterwards.
+  return {
+    ...variables,
+    "--color-header": themeColorWithAlpha(
+      variables[usesDefaultPalette ? "--color-card" : "--color-drawer"],
+      1,
+    ),
+  };
 }

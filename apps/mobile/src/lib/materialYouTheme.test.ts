@@ -31,6 +31,20 @@ const palette: MaterialYouPalette = {
 };
 
 describe("Material You system colors", () => {
+  it.each(["light", "dark"] as const)(
+    "keeps the system frame in %s with either layout",
+    (appearance) => {
+      const resolve = (rounded: boolean) =>
+        materialYouPaletteToMobileThemeVariables(
+          palette,
+          appearance,
+          getMobileThemeRuntimeVariables("material-you", appearance, rounded),
+        );
+      expect(resolve(true)).toEqual(resolve(false));
+      expect(resolve(true)["--color-header"]).toBe(palette.surfaceContainerHigh);
+    },
+  );
+
   it("overrides the selected theme without mutating its base variables", () => {
     const base = getMobileThemeRuntimeVariables("t3-code", "dark");
     const snapshot = { ...base };
