@@ -33,8 +33,10 @@ import * as Layer from "effect/Layer";
 import * as Random from "effect/Random";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
+import { ChildProcessSpawner } from "effect/unstable/process";
 
 import { attachmentRelativePath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
@@ -172,6 +174,7 @@ function makeHarness(config?: {
   readonly environment?: ClaudeAdapterLiveOptions["environment"];
   readonly getSessionMessages?: ClaudeAdapterLiveOptions["getSessionMessages"];
   readonly forkSession?: ClaudeAdapterLiveOptions["forkSession"];
+  readonly childProcessSpawner?: ChildProcessSpawner.ChildProcessSpawner["Service"];
 }) {
   const query = new FakeClaudeQuery();
   const queries = [query];
@@ -221,7 +224,14 @@ function makeHarness(config?: {
         ),
       ),
       Layer.provideMerge(ServerSettingsService.layerTest()),
-      Layer.provideMerge(NodeServices.layer),
+      Layer.provideMerge(
+        config?.childProcessSpawner
+          ? Layer.merge(
+              NodeServices.layer,
+              Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, config.childProcessSpawner),
+            )
+          : NodeServices.layer,
+      ),
     ),
     query,
     queries,
@@ -6478,6 +6488,141 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(resetOptions?.resumeSessionAt, undefined);
       assert.equal(resetOptions?.forkSession, undefined);
       assert.ok(resetOptions?.sessionId);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("kills the isolated-home history worker when rollback is cancelled", () => {
+    const isolatedConfigDir = "/isolated-claude-home-rollback-interrupt";
+    const spawned = Deferred.makeUnsafe<void>();
+    const killCount = Ref.makeUnsafe(0);
+    const harness = makeHarness({
+      environment: { ...process.env, CLAUDE_CONFIG_DIR: isolatedConfigDir },
+      childProcessSpawner: ChildProcessSpawner.make((_command) =>
+        Effect.acquireRelease(
+          Effect.gen(function* () {
+            yield* Deferred.succeed(spawned, undefined).pipe(Effect.ignore);
+            return ChildProcessSpawner.makeHandle({
+              pid: ChildProcessSpawner.ProcessId(1),
+              exitCode: Effect.never,
+              isRunning: Effect.succeed(true),
+              kill: () => Ref.update(killCount, (count) => count + 1),
+              unref: Effect.succeed(Effect.void),
+              stdin: Sink.drain,
+              stdout: Stream.never,
+              stderr: Stream.never,
+              all: Stream.never,
+              getInputFd: () => Sink.drain,
+              getOutputFd: () => Stream.empty,
+            });
+          }),
+          () => Ref.update(killCount, (count) => count + 1),
+        ),
+      ),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const completeTurn = (input: string, uuid: string) =>
+        Effect.gen(function* () {
+          yield* adapter.sendTurn({
+            threadId: session.threadId,
+            input,
+            attachments: [],
+          });
+          const completedFiber = yield* Stream.filter(
+            adapter.streamEvents,
+            (event) => event.type === "turn.completed",
+          ).pipe(Stream.runHead, Effect.forkChild);
+          harness.query.emit({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            errors: [],
+            session_id: "550e8400-e29b-41d4-a716-446655440010",
+            uuid,
+          } as unknown as SDKMessage);
+          yield* Fiber.join(completedFiber);
+        });
+      yield* completeTurn("first", "result-first");
+      yield* completeTurn("second", "result-second");
+      const rollbackFiber = yield* adapter
+        .rollbackThread(session.threadId, 1)
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(spawned);
+      yield* Fiber.interrupt(rollbackFiber);
+      assert.equal(yield* Ref.get(killCount), 1);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("classifies isolated-home history worker failures once", () => {
+    let workerStderr = "Session 550e8400-e29b-41d4-a716-446655440010 not found";
+    const harness = makeHarness({
+      environment: { ...process.env, CLAUDE_CONFIG_DIR: "/isolated-claude-home-rollback-failure" },
+      childProcessSpawner: ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.encodeText(Stream.make(workerStderr)),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      ),
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      const completeTurn = (input: string, uuid: string) =>
+        Effect.gen(function* () {
+          yield* adapter.sendTurn({
+            threadId: session.threadId,
+            input,
+            attachments: [],
+          });
+          const completedFiber = yield* Stream.filter(
+            adapter.streamEvents,
+            (event) => event.type === "turn.completed",
+          ).pipe(Stream.runHead, Effect.forkChild);
+          harness.query.emit({
+            type: "result",
+            subtype: "success",
+            is_error: false,
+            errors: [],
+            session_id: "550e8400-e29b-41d4-a716-446655440010",
+            uuid,
+          } as unknown as SDKMessage);
+          yield* Fiber.join(completedFiber);
+        });
+      yield* completeTurn("first", "result-first");
+      yield* completeTurn("second", "result-second");
+      const notFound = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
+      assert.equal(notFound._tag, "ProviderAdapterSessionNotFoundError");
+      workerStderr = "history worker crashed";
+      const failed = yield* adapter.rollbackThread(session.threadId, 1).pipe(Effect.flip);
+      assert.equal(failed._tag, "ProviderAdapterRequestError");
+      assert.ok(failed.cause instanceof Error);
+      assert.equal(failed.cause.message, "history worker crashed");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

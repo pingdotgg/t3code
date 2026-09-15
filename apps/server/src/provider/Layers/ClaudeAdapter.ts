@@ -5147,47 +5147,65 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
               )
               .pipe(Effect.mapError((cause) => toRequestError(threadId, "thread/rollback", cause))),
           ];
-      const runScopedHistoryCommand = async (
+      const runScopedHistoryCommand = Effect.fn("runScopedHistoryCommand")(function* (
         method: "getSessionMessages" | "forkSession",
         args: object,
         historySessionId = sessionId,
-      ) => {
-        // SDK history helpers read process.env. Isolate the provider's home instead
-        // of changing the server's environment while other providers are running.
-        const result = await Effect.runPromise(
-          spawnAndCollect(
+      ) {
+        // SDK history helpers read process.env. Pass the provider home to the
+        // worker instead of assigning process.env while other providers run.
+        const result = yield* spawnAndCollect(
+          process.execPath,
+          ChildProcess.make(
             process.execPath,
-            ChildProcess.make(
-              process.execPath,
-              [...historyWorkerArguments, method, historySessionId, encodeHistoryArgs(args)],
-              { env: { ...claudeEnvironment, ELECTRON_RUN_AS_NODE: "1" } },
-            ),
-          ).pipe(
-            Effect.timeout("30 seconds"),
-            Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+            [...historyWorkerArguments, method, historySessionId, encodeHistoryArgs(args)],
+            { env: { ...claudeEnvironment, ELECTRON_RUN_AS_NODE: "1" } },
+          ),
+        ).pipe(
+          Effect.timeout("30 seconds"),
+          Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError((cause) => toRequestError(threadId, "thread/rollback", cause)),
+        );
+        if (result.code !== 0) {
+          return yield* toRequestError(
+            threadId,
+            "thread/rollback",
+            new Error(result.stderr || "Claude history command failed."),
+          );
+        }
+        return result.stdout;
+      });
+      const historyReadOptions = {
+        ...(context.session.cwd ? { dir: context.session.cwd } : {}),
+        includeSystemMessages: true,
+      };
+      const readHistory = (historySessionId: string) => {
+        const injectedGetSessionMessages = options?.getSessionMessages;
+        if (injectedGetSessionMessages) {
+          return Effect.tryPromise({
+            try: () => injectedGetSessionMessages(historySessionId, historyReadOptions),
+            catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+          });
+        }
+        if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+          return Effect.tryPromise({
+            try: () => getSessionMessages(historySessionId, historyReadOptions),
+            catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+          });
+        }
+        return runScopedHistoryCommand(
+          "getSessionMessages",
+          historyReadOptions,
+          historySessionId,
+        ).pipe(
+          Effect.flatMap((stdout) =>
+            Effect.try({
+              try: () => decodeSessionMessages(stdout),
+              catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+            }),
           ),
         );
-        if (result.code !== 0) throw new Error(result.stderr || "Claude history command failed.");
-        return result.stdout;
       };
-      const readHistory = (historySessionId: string) =>
-        Effect.tryPromise({
-          try: async () => {
-            const readOptions = {
-              ...(context.session.cwd ? { dir: context.session.cwd } : {}),
-              includeSystemMessages: true,
-            };
-            if (options?.getSessionMessages)
-              return options.getSessionMessages(historySessionId, readOptions);
-            if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
-              return getSessionMessages(historySessionId, readOptions);
-            }
-            return decodeSessionMessages(
-              await runScopedHistoryCommand("getSessionMessages", readOptions, historySessionId),
-            );
-          },
-          catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
-        });
       const messages = yield* readHistory(sessionId);
       // Tool results are user-role messages too. Only human prompts begin a turn.
       const turnStarts = messages.flatMap((message, index) => {
@@ -5244,22 +5262,34 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       }
       const rollbackAt = retainedCount > 0 ? messages[firstRemoved - 1]?.uuid : undefined;
       const retainedTurns = context.turns.slice(0, Math.max(0, context.turns.length - numTurns));
-      const fork = rollbackAt
-        ? yield* Effect.tryPromise({
-            try: async () => {
-              const forkOptions = {
-                ...(context.session.cwd ? { dir: context.session.cwd } : {}),
-                upToMessageId: rollbackAt,
-              };
-              if (options?.forkSession) return options.forkSession(sessionId, forkOptions);
-              if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
-                return forkSession(sessionId, forkOptions);
-              }
-              return decodeHistoryFork(await runScopedHistoryCommand("forkSession", forkOptions));
-            },
+      const forkHistory = (upToMessageId: string) => {
+        const forkOptions = {
+          ...(context.session.cwd ? { dir: context.session.cwd } : {}),
+          upToMessageId,
+        };
+        const injectedForkSession = options?.forkSession;
+        if (injectedForkSession) {
+          return Effect.tryPromise({
+            try: () => injectedForkSession(sessionId, forkOptions),
             catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
-          })
-        : undefined;
+          });
+        }
+        if (claudeEnvironment.CLAUDE_CONFIG_DIR === process.env.CLAUDE_CONFIG_DIR) {
+          return Effect.tryPromise({
+            try: () => forkSession(sessionId, forkOptions),
+            catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+          });
+        }
+        return runScopedHistoryCommand("forkSession", forkOptions).pipe(
+          Effect.flatMap((stdout) =>
+            Effect.try({
+              try: () => decodeHistoryFork(stdout),
+              catch: (cause) => toRequestError(threadId, "thread/rollback", cause),
+            }),
+          ),
+        );
+      };
+      const fork = rollbackAt ? yield* forkHistory(rollbackAt) : undefined;
       const retainedBoundaries = boundaries.slice(0, retainedCount);
       if (fork) {
         const forkMessages = yield* readHistory(fork.sessionId);
