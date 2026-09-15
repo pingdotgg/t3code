@@ -444,3 +444,38 @@ for (const kind of ["pull", "issues"]) {
     }),
   );
 }
+
+for (const stage of ["read", "decode"] as const) {
+  it.effect(`retains the ${stage} failure without exposing its raw contents`, () =>
+    Effect.gen(function* () {
+      const cause = new GitHubCli.GitHubCliCommandError({
+        command: "gh",
+        cwd: "/repo",
+        cause: new Error("private response text"),
+      });
+      const provider = yield* makeProvider({
+        execute: () =>
+          stage === "read"
+            ? Effect.fail(cause)
+            : Effect.succeed({
+                exitCode: ChildProcessSpawner.ExitCode(0),
+                stdout: "private response text",
+                stderr: "",
+                stdoutTruncated: false,
+                stderrTruncated: false,
+              }),
+      });
+      const lookup = provider.resolveLink?.({
+        cwd: "/repo",
+        url: new URL("https://github.com/owner/repo/issues/42"),
+      });
+      assert.ok(lookup);
+      const error = yield* Effect.flip(lookup);
+      assert.strictEqual(error.operation, stage === "read" ? "resolveLink" : "resolveLink.decode");
+      assert.strictEqual(error.detail, "The linked subject could not be read.");
+      assert.notInclude(error.message, "private response text");
+      if (stage === "read") assert.strictEqual(error.cause, cause);
+      else assert.propertyVal(error.cause, "_tag", "SchemaError");
+    }),
+  );
+}
