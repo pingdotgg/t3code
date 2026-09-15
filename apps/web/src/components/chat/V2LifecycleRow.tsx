@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
   ProviderDriverKind,
   type OrchestrationV2Run,
@@ -239,7 +240,7 @@ export function V2LifecycleRow(props: {
     return (
       <SubagentTimelineLink
         status={item.status}
-        title={subagentDisplayTitle(item.title ?? "Subagent")}
+        title={formatSubagentDisplayTitle(item.title ?? "Subagent")}
         detail={detail}
         threadId={item.childThreadId}
         onOpenThread={props.onOpenThread}
@@ -315,10 +316,6 @@ function SubagentTimelineLink(props: {
       </Tooltip>
     </div>
   );
-}
-
-function subagentDisplayTitle(title: string): string {
-  return title.replace(/^Subagent:\s*/i, "");
 }
 
 /**

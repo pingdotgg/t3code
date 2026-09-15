@@ -15,6 +15,8 @@ import type {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 
+import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
+
 export interface EnvironmentProject extends OrchestrationProjectShell {
   readonly environmentId: EnvironmentId;
 }
@@ -207,7 +209,10 @@ export function presentThreadShell(
     environmentId,
     id: thread.id,
     projectId: thread.projectId,
-    title: thread.title,
+    title:
+      thread.lineage.relationshipToParent === "subagent"
+        ? formatSubagentDisplayTitle(thread.title)
+        : thread.title,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
     runtimeMode: thread.runtimeMode,
