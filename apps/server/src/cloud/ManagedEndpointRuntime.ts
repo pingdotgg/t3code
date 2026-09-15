@@ -80,10 +80,16 @@ export function classifyRelayClientOutput(line: string): "connected" | "warning"
   return /\b(?:ERR|WRN|FTL|PNC)\b/u.test(line) ? "warning" : "debug";
 }
 
+/**
+ * Cloudflare's edge rejects a connector whose tunnel was deleted or whose
+ * token no longer matches. Current edge output is
+ * `error="Failed to get tunnel"` with no prefix; older edges prefixed the
+ * same messages with `Unauthorized:`. Match both so recovery fires on either.
+ */
 export function isRejectedRelayClientTunnelOutput(line: string): boolean {
   return (
     /\bRegister tunnel error from server side\b/iu.test(line) &&
-    /\bUnauthorized:\s*(?:Failed to get tunnel|Record for tunnel not found|Invalid tunnel secret)\b/iu.test(
+    /error="(?:Unauthorized:\s*)?(?:Failed to get tunnel|Record for tunnel not found|Invalid tunnel secret)"/iu.test(
       line,
     )
   );
@@ -384,11 +390,21 @@ export const make = Effect.gen(function* () {
   const applyConfig = Effect.fn("CloudManagedEndpointRuntime.applyConfig")(
     (config: RelayManagedEndpointRuntimeConfig | null) =>
       reconcileSemaphore.withPermits(1)(
-        // An explicit config change starts over with a fresh backoff.
-        Ref.set(restartDelayRef, 0).pipe(
-          Effect.andThen(Ref.set(desiredConfigRef, config)),
-          Effect.andThen(reconcileConfig(config)),
-        ),
+        Effect.gen(function* () {
+          // A real config change starts over with a fresh backoff. Recovery
+          // that hands back the same tunnel and token must keep the delay, or
+          // a crash-looping connector respawns on every recovery round trip.
+          const desired = yield* Ref.get(desiredConfigRef);
+          const unchanged =
+            desired !== null &&
+            config !== null &&
+            runtimeConfigKey(desired) === runtimeConfigKey(config);
+          if (!unchanged) {
+            yield* Ref.set(restartDelayRef, 0);
+          }
+          yield* Ref.set(desiredConfigRef, config);
+          return yield* reconcileConfig(config);
+        }),
       ),
   );
 

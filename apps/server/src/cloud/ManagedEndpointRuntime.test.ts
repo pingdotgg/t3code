@@ -172,7 +172,7 @@ describe("CloudManagedEndpointRuntime", () => {
   it("recognizes tunnel authorization failures without matching ordinary transport errors", () => {
     expect(
       ManagedEndpointRuntime.isRejectedRelayClientTunnelOutput(
-        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Failed to get tunnel" connIndex=0',
+        '2026-09-15T06:30:43Z ERR Register tunnel error from server side error="Failed to get tunnel" connIndex=0 event=0 ip=198.41.200.23',
       ),
     ).toBe(true);
     expect(
@@ -247,7 +247,7 @@ describe("CloudManagedEndpointRuntime", () => {
         tunnelId: "deleted-tunnel",
       };
       const rejectedLine =
-        '2026-06-17T02:00:00Z ERR Register tunnel error from server side error="Unauthorized: Failed to get tunnel" connIndex=0\n';
+        '2026-09-15T06:30:43Z ERR Register tunnel error from server side error="Failed to get tunnel" connIndex=0 event=0 ip=198.41.200.23\n';
 
       yield* runtime.recoveryRequests.pipe(
         Stream.runForEach((requested) => {
@@ -554,6 +554,37 @@ describe("CloudManagedEndpointRuntime", () => {
       yield* TestClock.adjust(Duration.millis(1));
       yield* Deferred.await(spawnSignals[4]!);
       expect(spawned).toEqual([700, 701, 702, 703, 704]);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("a recovery that returns the same config keeps the crash backoff", () =>
+    Effect.gen(function* () {
+      const { spawner, spawned, exits, spawnSignals } = yield* makeCrashLoopSpawner(900, 4);
+      const runtime = yield* buildCloudManagedEndpointRuntime(spawner);
+      const config = {
+        providerKind: "cloudflare_tunnel" as const,
+        connectorToken: "same-token",
+        tunnelId: "same-tunnel",
+      };
+      // The startup consumer re-applies whatever the relay hands back. When the
+      // relay confirms the current tunnel, that must not look like a config change.
+      yield* runtime.recoveryRequests.pipe(
+        Stream.runForEach((requested) => runtime.applyConfig(requested).pipe(Effect.asVoid)),
+        Effect.forkChild,
+      );
+
+      yield* runtime.applyConfig(config);
+      yield* Deferred.succeed(exits[0]!, ChildProcessSpawner.ExitCode(1));
+      yield* Deferred.await(spawnSignals[1]!);
+      expect(spawned).toEqual([900, 901]);
+
+      // Second rapid crash still waits out the base delay.
+      yield* Deferred.succeed(exits[1]!, ChildProcessSpawner.ExitCode(1));
+      yield* TestClock.adjust(Duration.millis(999));
+      expect(spawned).toEqual([900, 901]);
+      yield* TestClock.adjust(Duration.millis(1));
+      yield* Deferred.await(spawnSignals[2]!);
+      expect(spawned).toEqual([900, 901, 902]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 
