@@ -202,12 +202,10 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
     JNIEnv* env, jclass, jint cols, jint rows, jint cell_width, jint cell_height,
     jint foreground, jint background, jint cursor, jintArray palette) {
   auto* session = new Session();
-  GhosttyTerminalOptions options = {
-      .cols = static_cast<uint16_t>(std::clamp(cols, 1, 65535)),
-      .rows = static_cast<uint16_t>(std::clamp(rows, 1, 65535)),
-      .max_scrollback = kMaxScrollbackRows,
-  };
-  if (ghostty_terminal_new(nullptr, &session->terminal, options) != GHOSTTY_SUCCESS ||
+  const auto initial_cols = static_cast<uint16_t>(std::clamp(cols, 1, 65535));
+  const auto initial_rows = static_cast<uint16_t>(std::clamp(rows, 1, 65535));
+  if (ghostty_terminal_new(nullptr, &session->terminal, initial_cols, initial_rows) !=
+          GHOSTTY_SUCCESS ||
       ghostty_render_state_new(nullptr, &session->render_state) != GHOSTTY_SUCCESS ||
       ghostty_render_state_row_iterator_new(nullptr, &session->row_iterator) != GHOSTTY_SUCCESS ||
       ghostty_render_state_row_cells_new(nullptr, &session->row_cells) != GHOSTTY_SUCCESS) {
@@ -215,11 +213,14 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
     return 0;
   }
 
+  const size_t max_scrollback_lines = kMaxScrollbackRows;
+  ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_SCROLLBACK_MAX_LINES,
+                       &max_scrollback_lines);
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_USERDATA, session);
   ghostty_terminal_set(session->terminal, GHOSTTY_TERMINAL_OPT_WRITE_PTY,
                        reinterpret_cast<const void*>(OnWritePty));
   ApplyTheme(session, foreground, background, cursor, env, palette);
-  ghostty_terminal_resize(session->terminal, options.cols, options.rows,
+  ghostty_terminal_resize(session->terminal, initial_cols, initial_rows,
                           static_cast<uint32_t>(std::max(cell_width, 1)),
                           static_cast<uint32_t>(std::max(cell_height, 1)));
   return static_cast<jlong>(reinterpret_cast<intptr_t>(session));
@@ -412,7 +413,8 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeSnapshot(JNIEnv* env, jclass,
 
   GhosttyRenderStateColors colors{};
   colors.size = sizeof(colors);
-  if (ghostty_render_state_colors_get(session->render_state, &colors) != GHOSTTY_SUCCESS) {
+  if (ghostty_render_state_get(session->render_state, GHOSTTY_RENDER_STATE_DATA_COLORS,
+                               &colors) != GHOSTTY_SUCCESS) {
     return env->NewByteArray(0);
   }
   const auto cursor_color = colors.cursor_has_value ? colors.cursor : colors.foreground;

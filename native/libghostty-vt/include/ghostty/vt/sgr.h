@@ -19,8 +19,11 @@
  * The parser processes SGR parameters from CSI sequences (e.g., `ESC[1;31m`)
  * and returns individual text attributes like bold, italic, colors, etc.
  * It supports both semicolon (`;`) and colon (`:`) separators, possibly mixed,
- * and handles various color formats including 8-color, 16-color, 256-color,
- * X11 named colors, and RGB in multiple formats.
+ * and handles SGR color attributes including 8-color, 16-color, 256-color,
+ * direct RGB, underline color, and reset forms. Color values are returned
+ * using the shared @ref color types; applications that need to parse Ghostty
+ * config/theme color strings, generate palettes, inspect X11 color names, or
+ * calculate luminance and contrast should use the @ref color APIs directly.
  *
  * ## Basic Usage
  *
@@ -315,31 +318,6 @@ GHOSTTY_API GhosttySgrAttributeTag ghostty_sgr_attribute_tag(GhosttySgrAttribute
  */
 GHOSTTY_API GhosttySgrAttributeValue* ghostty_sgr_attribute_value(
     GhosttySgrAttribute* attr);
-
-#ifdef __wasm__
-/**
- * Allocate memory for an SGR attribute (WebAssembly only).
- *
- * This is a convenience function for WebAssembly environments to allocate
- * memory for an SGR attribute structure that can be passed to ghostty_sgr_next.
- *
- * @return Pointer to the allocated attribute structure
- *
- * @ingroup wasm
- */
-GHOSTTY_API GhosttySgrAttribute* ghostty_wasm_alloc_sgr_attribute(void);
-
-/**
- * Free memory for an SGR attribute (WebAssembly only).
- *
- * Frees memory allocated by ghostty_wasm_alloc_sgr_attribute.
- *
- * @param attr Pointer to the attribute structure to free
- *
- * @ingroup wasm
- */
-GHOSTTY_API void ghostty_wasm_free_sgr_attribute(GhosttySgrAttribute* attr);
-#endif
 
 #ifdef __cplusplus
 }
