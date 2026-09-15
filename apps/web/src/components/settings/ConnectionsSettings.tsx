@@ -1456,6 +1456,8 @@ function savedBackendStatus(environment: EnvironmentPresentation): {
         text: connection.error ? `Reconnecting: ${connection.error}` : "Reconnecting",
         tone: "error",
       };
+    case "unsupported":
+      return { text: "Client not supported", tone: "error" };
     case "error":
       return {
         text: connection.error ? `Connection failed: ${connection.error}` : "Connection failed",

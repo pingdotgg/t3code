@@ -36,9 +36,11 @@ export function presentSavedCloudEnvironmentConnection(
         statusText: connectionStatusText(connection),
         tone: "connecting",
       };
+    case "unsupported":
     case "error":
       return {
-        buttonLabel: "Connection failed",
+        buttonLabel:
+          connection.phase === "unsupported" ? "Client not supported" : "Connection failed",
         statusText: connectionStatusText(connection),
         tone: "error",
       };

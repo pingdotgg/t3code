@@ -65,6 +65,9 @@ function overallConnectionState(
   if (environments.some((environment) => environment.connectionState === "connecting")) {
     return "connecting";
   }
+  if (environments.some((environment) => environment.connectionState === "unsupported")) {
+    return "unsupported";
+  }
   if (environments.some((environment) => environment.connectionState === "error")) {
     return "error";
   }
