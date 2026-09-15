@@ -1,6 +1,7 @@
 import { expect, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
+  DeviceAgentAccessDisabledError,
   DeviceHostUnavailableError,
   EnvironmentId,
   ProviderInstanceId,
@@ -133,6 +134,32 @@ it.effect("registers the device tools and returns the screenshot as image conten
         .callTool({ name: "device_list", arguments: {} })
         .pipe(callWith(["preview"]), Effect.provideService(McpSchema.McpServerClient, client));
       expect(denied.isError).toBe(true);
+      expect(denied.content).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining(
+              "Settings → Integrations → Devices → Agent device access",
+            ),
+          }),
+          expect.objectContaining({
+            type: "text",
+            text: expect.stringContaining("start a fresh provider session"),
+          }),
+        ]),
+      );
+      expect(
+        new DeviceAgentAccessDisabledError({
+          setting: "enableAgentDeviceAccess",
+          settingScope: "project-or-environment",
+          requiresFreshProviderSession: true,
+        }),
+      ).toMatchObject({
+        _tag: "DeviceAgentAccessDisabledError",
+        setting: "enableAgentDeviceAccess",
+        settingScope: "project-or-environment",
+        requiresFreshProviderSession: true,
+      });
     }),
   ).pipe(Effect.provide(TestLayer)),
 );

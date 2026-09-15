@@ -1,4 +1,5 @@
 import {
+  DeviceAgentAccessDisabledError,
   type DeviceError,
   type DeviceHostId,
   type DeviceId,
@@ -68,8 +69,10 @@ export function agentDeviceQuickStart(
 const requireDeviceAccess = McpInvocationContext.requireMcpCapability("device").pipe(
   Effect.mapError(
     () =>
-      new DeviceToolUnavailableError({
-        reason: "Agent device access is turned off for this environment.",
+      new DeviceAgentAccessDisabledError({
+        setting: "enableAgentDeviceAccess",
+        settingScope: "project-or-environment",
+        requiresFreshProviderSession: true,
       }),
   ),
 );
@@ -115,7 +118,9 @@ const pickDevice = (
     return candidates.find((device) => device.booted) ?? candidates[0]!;
   });
 
-const toolError = (error: DeviceError | DeviceToolUnavailableError) => error;
+const toolError = (
+  error: DeviceError | DeviceToolUnavailableError | DeviceAgentAccessDisabledError,
+) => error;
 
 const handlers = {
   device_list: (input) =>

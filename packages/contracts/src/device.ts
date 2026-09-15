@@ -534,7 +534,22 @@ export class DeviceToolUnavailableError extends Schema.TaggedError<DeviceToolUna
   }
 }
 
+/** Agent device access was not granted when this provider session started. */
+export class DeviceAgentAccessDisabledError extends Schema.TaggedError<DeviceAgentAccessDisabledError>()(
+  "DeviceAgentAccessDisabledError",
+  {
+    setting: Schema.Literal("enableAgentDeviceAccess"),
+    settingScope: Schema.Literal("project-or-environment"),
+    requiresFreshProviderSession: Schema.Literal(true),
+  },
+) {
+  override get message(): string {
+    return "Agent device access is disabled for this project or environment. The user must enable Settings → Integrations → Devices → Agent device access, then start a fresh provider session. Access remains denied in this session.";
+  }
+}
+
 export const DeviceToolError = Schema.Union([
+  DeviceAgentAccessDisabledError,
   DeviceToolUnavailableError,
   DeviceHostUnavailableError,
   DevicePlatformUnavailableError,
