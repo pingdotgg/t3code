@@ -185,6 +185,44 @@ describe("storage quarantine", () => {
     ).toThrow(/not eligible/i);
   });
 
+  it("rejects a database reference added immediately before the move", () => {
+    const baseDir = makeHome();
+    const worktreePath = makeWorktree(baseDir, "orphan");
+    makeDatabase(baseDir, []);
+    const [candidate] = inspectStorage(baseDir).candidates;
+
+    expect(() =>
+      quarantineStorageCandidate(
+        {
+          baseDir,
+          candidateId: candidate!.id,
+          snapshot: candidate!.snapshot,
+        },
+        { beforeMove: () => makeDatabase(baseDir, [{ path: worktreePath, deletedAt: null }]) },
+      ),
+    ).toThrow(/gained a database reference/i);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+  });
+
+  it("rolls back when a database reference appears during the move", () => {
+    const baseDir = makeHome();
+    const worktreePath = makeWorktree(baseDir, "orphan");
+    makeDatabase(baseDir, []);
+    const [candidate] = inspectStorage(baseDir).candidates;
+
+    expect(() =>
+      quarantineStorageCandidate(
+        {
+          baseDir,
+          candidateId: candidate!.id,
+          snapshot: candidate!.snapshot,
+        },
+        { afterMove: () => makeDatabase(baseDir, [{ path: worktreePath, deletedAt: null }]) },
+      ),
+    ).toThrow(/during quarantine/i);
+    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+  });
+
   it("rejects restore when quarantined contents changed", () => {
     const baseDir = makeHome();
     makeWorktree(baseDir, "orphan");
@@ -268,5 +306,27 @@ describe("storage quarantine", () => {
     expect(() => restoreStorageReceipt({ baseDir, receiptId: receipt.id })).toThrow(
       /quarantined path/i,
     );
+  });
+
+  it("rejects a restore parent replaced by a symlink", () => {
+    const baseDir = makeHome();
+    const worktreePath = makeWorktree(baseDir, "orphan");
+    makeDatabase(baseDir, []);
+    const [candidate] = inspectStorage(baseDir).candidates;
+    const quarantined = quarantineStorageCandidate({
+      baseDir,
+      candidateId: candidate!.id,
+      snapshot: candidate!.snapshot,
+    });
+    const projectPath = NodePath.dirname(worktreePath);
+    NodeFS.rmdirSync(projectPath);
+    const outside = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "t3-storage-restore-"));
+    temporaryDirectories.push(outside);
+    NodeFS.symlinkSync(outside, projectPath);
+
+    expect(() => restoreStorageReceipt({ baseDir, receiptId: quarantined.receipt.id })).toThrow(
+      /symbolic link/i,
+    );
+    expect(NodeFS.readdirSync(outside)).toEqual([]);
   });
 });

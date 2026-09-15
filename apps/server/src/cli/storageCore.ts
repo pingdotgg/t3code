@@ -208,13 +208,17 @@ function readDatabaseWorktreePaths(dbPath: string): {
   }
 }
 
+function readWorktreeReferenceState(baseDir: string): ReturnType<typeof readDatabaseWorktreePaths> {
+  const databasePath = NodePath.join(baseDir, "userdata", "state.sqlite");
+  if (NodeFS.existsSync(databasePath)) assertNoSymlink(baseDir, databasePath);
+  return readDatabaseWorktreePaths(databasePath);
+}
+
 export function inspectStorage(baseDirectory: string): StorageInspection {
   const baseDir = NodePath.resolve(baseDirectory);
   const worktreesRoot = NodePath.join(baseDir, "worktrees");
   const userdataRoot = NodePath.join(baseDir, "userdata");
-  const databasePath = NodePath.join(userdataRoot, "state.sqlite");
-  if (NodeFS.existsSync(databasePath)) assertNoSymlink(baseDir, databasePath);
-  const dbPaths = readDatabaseWorktreePaths(databasePath);
+  const dbPaths = readWorktreeReferenceState(baseDir);
   const candidates = findWorktreeRoots(worktreesRoot).map((candidatePath): WorktreeCandidate => {
     assertNoSymlink(worktreesRoot, candidatePath);
     const measurement = measureTree(candidatePath);
@@ -262,13 +266,19 @@ function writeReceipt(receiptPath: string, receipt: StorageReceipt): void {
   NodeFS.renameSync(temporaryPath, receiptPath);
 }
 
-export function quarantineStorageCandidate(input: {
-  readonly baseDir: string;
-  readonly candidateId: string;
-  readonly snapshot: string;
-  readonly now?: Date;
-  readonly receiptId?: string;
-}): { readonly receipt: StorageReceipt; readonly receiptPath: string } {
+export function quarantineStorageCandidate(
+  input: {
+    readonly baseDir: string;
+    readonly candidateId: string;
+    readonly snapshot: string;
+    readonly now?: Date;
+    readonly receiptId?: string;
+  },
+  hooks: {
+    readonly beforeMove?: () => void;
+    readonly afterMove?: () => void;
+  } = {},
+): { readonly receipt: StorageReceipt; readonly receiptPath: string } {
   const inspection = inspectStorage(input.baseDir);
   const candidate = inspection.candidates.find((entry) => entry.id === input.candidateId);
   if (candidate === undefined)
@@ -319,13 +329,33 @@ export function quarantineStorageCandidate(input: {
   if (NodeFS.existsSync(receiptPath)) {
     throw new Error(`Quarantine receipt already exists: ${receiptPath}`);
   }
+  hooks.beforeMove?.();
+  const latestReferences = readWorktreeReferenceState(inspection.baseDir);
+  if (!latestReferences.available || latestReferences.referenced.has(candidate.path)) {
+    throw new Error(`Storage candidate ${candidate.id} gained a database reference.`);
+  }
   NodeFS.renameSync(candidate.path, quarantinedPath);
   try {
+    hooks.afterMove?.();
+    const afterMoveReferences = readWorktreeReferenceState(inspection.baseDir);
+    if (!afterMoveReferences.available || afterMoveReferences.referenced.has(candidate.path)) {
+      throw new Error(
+        `Storage candidate ${candidate.id} gained a database reference during quarantine.`,
+      );
+    }
     if (measureTree(quarantinedPath).snapshot !== candidate.snapshot) {
       throw new Error(`Storage candidate ${candidate.id} changed during quarantine.`);
     }
     writeReceipt(receiptPath, receipt);
   } catch (cause) {
+    const originalParent = NodePath.dirname(candidate.path);
+    assertNoSymlinkAncestors(worktreesRoot, originalParent);
+    if (NodeFS.existsSync(candidate.path)) {
+      throw new AggregateError(
+        [cause, new Error(`Rollback target already exists: ${candidate.path}`)],
+        `Storage candidate ${candidate.id} could not be rolled back safely.`,
+      );
+    }
     NodeFS.renameSync(quarantinedPath, candidate.path);
     throw cause;
   }
@@ -381,7 +411,10 @@ export function restoreStorageReceipt(input: {
     throw new Error(`Quarantined storage for receipt ${receipt.id} changed.`);
   }
 
-  NodeFS.mkdirSync(NodePath.dirname(originalPath), { recursive: true });
+  const originalParent = NodePath.dirname(originalPath);
+  assertNoSymlinkAncestors(worktreesRoot, originalParent);
+  NodeFS.mkdirSync(originalParent, { recursive: true });
+  assertNoSymlink(worktreesRoot, originalParent);
   NodeFS.renameSync(quarantinedPath, originalPath);
   const restored = { ...receipt, restoredAt: (input.now ?? new Date()).toISOString() };
   try {
