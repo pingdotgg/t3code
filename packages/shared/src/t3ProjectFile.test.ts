@@ -44,6 +44,7 @@ describe("buildT3ProjectFileJsonSchema", () => {
     const script = schema.properties.scripts?.items;
     expect(script?.required).toEqual(["name", "command"]);
     expect(Object.keys(script?.properties ?? {}).sort()).toEqual([
+      "async",
       "autoOpenPreview",
       "command",
       "icon",

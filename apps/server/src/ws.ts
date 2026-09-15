@@ -1112,15 +1112,16 @@ const makeWsRpcLayer = (
           const threadId = command.threadId;
           const track = (effect: Effect.Effect<void>) => (tracked ? effect : Effect.void);
 
-          // Runs the setup script and, for tracked bootstraps, waits for it to
-          // exit so the card can show the exit code and the agent stage never
-          // starts on a half-installed tree. Untracked callers keep the old
-          // fire-and-forget behavior.
+          // Starts the setup script. For tracked bootstraps it returns the
+          // effect that waits for the script to exit and records the outcome
+          // on the card; whether the agent stage waits on it depends on the
+          // script's `async` flag. Returns null when nothing is left to await.
+          // Untracked callers keep the old fire-and-forget behavior.
           const runSetupProgram = () =>
             Effect.gen(function* () {
               if (!bootstrap?.runSetupScript || !targetWorktreePath) {
                 yield* track(worktreeSetupTracker.stageStatus(threadId, "setup-script", "skipped"));
-                return;
+                return null;
               }
               const worktreePath = targetWorktreePath;
               const requestedAt = yield* nowIso;
@@ -1197,21 +1198,38 @@ const makeWsRpcLayer = (
                   }),
                 );
               if (!tracked || !setupResult?.completion) {
-                return;
+                return null;
               }
               // The setup script is best effort, like the untracked path: a
               // failed install must not throw away the worktree the user just
               // waited for. The card keeps the failed stage and its terminal.
-              const completion = yield* setupResult.completion;
-              if (completion.exitCode === 0) {
-                yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
-                return;
+              // Forked right away so the terminal listener behind `completion`
+              // is always consumed, even when the turn dispatch fails before
+              // anyone would otherwise wait on it. The tracker update is a
+              // no-op once the snapshot has been dropped.
+              const completionFiber = yield* setupResult.completion.pipe(
+                Effect.flatMap((completion) => {
+                  if (completion.exitCode === 0) {
+                    return worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
+                  }
+                  const detail =
+                    completion.exitCode === null
+                      ? "terminal closed before the script finished"
+                      : `exit ${completion.exitCode}`;
+                  return worktreeSetupTracker.stageStatus(
+                    threadId,
+                    "setup-script",
+                    "failed",
+                    detail,
+                  );
+                }),
+                Effect.forkDetach,
+              );
+              if (!setupResult.async) {
+                yield* Fiber.join(completionFiber);
+                return null;
               }
-              const detail =
-                completion.exitCode === null
-                  ? "terminal closed before the script finished"
-                  : `exit ${completion.exitCode}`;
-              yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "failed", detail);
+              return completionFiber;
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -1414,7 +1432,7 @@ const makeWsRpcLayer = (
               yield* refreshGitStatus(targetWorktreePath);
             }
 
-            yield* runSetupProgram();
+            const pendingSetupScript = yield* runSetupProgram();
 
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "running"));
             // Past this point a cancel would roll back a thread whose turn has
@@ -1423,11 +1441,21 @@ const makeWsRpcLayer = (
             const started = yield* Effect.uninterruptible(
               dispatchFromClient(finalTurnStartCommand),
             );
-            yield* track(
-              worktreeSetupTracker
-                .stageStatus(threadId, "agent", "done")
-                .pipe(Effect.andThen(worktreeSetupTracker.finish(threadId, "done"))),
-            );
+            yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "done"));
+            // An async setup script outlives the handoff: the snapshot stays
+            // running so the client keeps its row next to the agent's work,
+            // and settles when the script exits. The turn already started, so
+            // the wait cannot fail the dispatch.
+            const settle = track(worktreeSetupTracker.finish(threadId, "done"));
+            if (pendingSetupScript) {
+              yield* Fiber.join(pendingSetupScript).pipe(
+                Effect.ignoreCause({ log: true }),
+                Effect.andThen(settle),
+                Effect.forkDetach,
+              );
+            } else {
+              yield* settle;
+            }
             return started;
           });
 
