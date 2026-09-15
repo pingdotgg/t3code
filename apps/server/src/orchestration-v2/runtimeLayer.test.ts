@@ -1308,8 +1308,7 @@ it.layer(LegacyImportTestLayer)("OrchestrationV2 legacy import", (it) => {
       `;
 
       yield* importer.reconcileShells;
-      const rebuilt = yield* maintenance.rebuild;
-      assert.isTrue(rebuilt.valid);
+      assert.isTrue((yield* maintenance.verify).valid);
 
       yield* threadManagement.dispatch({
         type: "thread.metadata.update",
