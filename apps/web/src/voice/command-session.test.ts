@@ -204,6 +204,7 @@ describe("experimental command session", () => {
       type: "transcript",
       channel: "input",
       delta: "Open the thread called Onboarding plan September",
+      utterance: "in-1",
     });
     expect(h.execute).not.toHaveBeenCalled();
     h.emit({ type: "delegation", id: "delegation-1" });
