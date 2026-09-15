@@ -302,6 +302,8 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
           projectTitle ?? ``,
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
+          // Last so pasted IDs never outrank title matches for shared substrings.
+          thread.id,
         ],
         title: thread.title,
         description,
