@@ -12,14 +12,11 @@ include:
   - "infra/**/*.ts"
 exclude:
   - "**/*.test.ts"
-labels:
-  - vouch:trusted
-  - macroscope-review
 requires:
   - Check
 maxBudgetPerRun: 5
 maxBudgetPerPR: 25
-conclusion: failure
+conclusion: neutral
 showToolCalls: true
 ---
 

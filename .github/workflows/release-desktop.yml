@@ -8,6 +8,33 @@ name: Release desktop build
 
 on:
   workflow_call:
+    secrets:
+      CSC_LINK:
+        required: false
+      CSC_KEY_PASSWORD:
+        required: false
+      APPLE_API_KEY:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      APPLE_API_ISSUER:
+        required: false
+      MACOS_PROVISIONING_PROFILE:
+        required: false
+      AZURE_TENANT_ID:
+        required: false
+      AZURE_CLIENT_ID:
+        required: false
+      AZURE_CLIENT_SECRET:
+        required: false
+      AZURE_TRUSTED_SIGNING_ENDPOINT:
+        required: false
+      AZURE_TRUSTED_SIGNING_ACCOUNT_NAME:
+        required: false
+      AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME:
+        required: false
+      AZURE_TRUSTED_SIGNING_PUBLISHER_NAME:
+        required: false
     inputs:
       label:
         required: true
@@ -46,6 +73,12 @@ on:
       release_channel:
         required: true
         type: string
+      # Whether a `relay-client-tracing-config` artifact from the production
+      # relay state is expected. PR previews carry no tracing config.
+      relay_client_tracing:
+        required: false
+        default: true
+        type: boolean
       clerk_publishable_key:
         required: true
         type: string
@@ -73,17 +106,24 @@ jobs:
       T3CODE_CLERK_CLI_OAUTH_CLIENT_ID: ${{ inputs.clerk_cli_oauth_client_id }}
       T3CODE_RELAY_URL: ${{ inputs.relay_url }}
     steps:
+      # This repository is public, so Git needs no credentials. checkout's
+      # credential cleanup runs submodule foreach even with submodules disabled,
+      # which fails on the orphaned gitlinks in our vendored .repos tree.
       - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          ref: ${{ inputs.ref }}
-          sparse-checkout: |
-            /*
-            !/.repos/
-          sparse-checkout-cone-mode: false
+        shell: bash
+        env:
+          CHECKOUT_REF: ${{ inputs.ref }}
+          GIT_TERMINAL_PROMPT: "0"
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "$CHECKOUT_REF"
+          git sparse-checkout set --no-cone '/*' '!/.repos/'
+          git checkout --detach FETCH_HEAD
 
       - name: Setup Vite+
-        uses: voidzero-dev/setup-vp@v1
+        uses: voidzero-dev/setup-vp@250f29ce396baf5e8f24498e17c0dfdebabc26eb # v1
         with:
           node-version-file: package.json
           cache: ${{ inputs.platform != 'win' }}
@@ -97,7 +137,7 @@ jobs:
 
       - name: Cache Windows packages
         if: inputs.platform == 'win'
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: ${{ steps.package_cache_path.outputs.path }}
           key: windows-release-packages-v1-${{ inputs.arch }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -106,7 +146,7 @@ jobs:
       # artifact leaves the cache empty, so installation runs the checks again.
       - name: Download dependency verification
         continue-on-error: true
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: release-dependency-verification
           path: ${{ runner.temp }}/pnpm-metadata
@@ -118,7 +158,7 @@ jobs:
 
       - name: Cache resource monitor
         id: resource_monitor_cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: native/resource-monitor/target/${{ inputs.rust_target }}/release/t3-resource-monitor${{ inputs.platform == 'win' && '.exe' || '' }}
           key: resource-monitor-${{ inputs.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
@@ -126,7 +166,7 @@ jobs:
       - name: Cache Linux capture helpers
         if: inputs.platform == 'linux'
         id: capture_helper_cache
-        uses: actions/cache@v6
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
         with:
           path: |
             native/kde-snap-shot/target/${{ inputs.rust_target }}/release/t3-kde-snap-shot
@@ -135,17 +175,20 @@ jobs:
 
       - name: Setup Rust
         if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
+          toolchain: stable
           targets: ${{ inputs.rust_target }}
 
       - name: Download relay client tracing config
-        uses: actions/download-artifact@v8
+        if: inputs.relay_client_tracing
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: relay-client-tracing-config
           path: ${{ runner.temp }}/relay-client-tracing
 
       - name: Load relay client tracing config
+        if: inputs.relay_client_tracing
         shell: bash
         run: |
           config_path="$RUNNER_TEMP/relay-client-tracing/relay-client-tracing.env"
@@ -160,7 +203,7 @@ jobs:
       # ancestor of its paths), so extracting into `apps` restores
       # apps/server/dist and apps/desktop/dist-electron at their build paths.
       - name: Download JS bundle
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: js-bundle
           path: apps
@@ -169,7 +212,7 @@ jobs:
       # Windows desktop embeds the same-arch archive the release attaches.
       - name: Download Linux CLI archive for WSL
         if: inputs.platform == 'win'
-        uses: actions/download-artifact@v8
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
         with:
           name: cli-linux-${{ inputs.arch }}
           path: wsl-runtime
@@ -450,7 +493,7 @@ jobs:
 
       - name: Upload CLI archive
         if: inputs.cli_archive
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: cli-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-cli/*
@@ -514,14 +557,14 @@ jobs:
           cp "$source_path" "$target_dir/$binary_name"
 
       - name: Upload build artifacts
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: desktop-${{ inputs.platform }}-${{ inputs.arch }}
           path: release-publish/*
           if-no-files-found: error
 
       - name: Upload resource monitor
-        uses: actions/upload-artifact@v7
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: resource-monitor-${{ inputs.resource_key }}
           path: resource-monitor-publish/${{ inputs.resource_key }}/*

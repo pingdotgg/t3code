@@ -48,6 +48,12 @@ export interface ExecuteGitInput {
   readonly timeoutMs?: number | null;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
+  /**
+   * With `appendTruncationMarker`, keep invoking the line callbacks after the
+   * buffered copy is full. For long-running commands whose output is only
+   * consumed through `progress`.
+   */
+  readonly keepLineCallbacksAfterTruncation?: boolean;
   readonly progress?: ExecuteGitProgress;
 }
 
@@ -231,6 +237,7 @@ export interface GitFetchRemoteTrackingBranchInput {
 export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
+  refName?: string;
 }
 
 export interface GitRemoteExistsInput {

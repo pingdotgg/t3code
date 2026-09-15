@@ -8,6 +8,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
@@ -75,6 +76,9 @@ import {
   type PullRequestRef,
   WS_METHODS,
   WsRpcGroup,
+  WORKTREE_SETUP_ACTIVITY_KIND,
+  worktreeSetupActivityId,
+  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { HttpRouter, HttpServerRequest, HttpServerRespondable } from "effect/unstable/http";
@@ -133,6 +137,8 @@ import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectSetupScriptRunner from "./project/ProjectSetupScriptRunner.ts";
+import * as ProjectCloneTracker from "./project/ProjectCloneTracker.ts";
+import * as RepositoryIdentityResolver from "./project/RepositoryIdentityResolver.ts";
 import * as WorktreeSetupTracker from "./project/WorktreeSetupTracker.ts";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import { importRecentAgentThreads } from "./project/AgentSessionImporter.ts";
@@ -605,6 +611,17 @@ const makeWsRpcLayer = (
       });
       const projectSetupScriptRunner = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
       const worktreeSetupTracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const projectCloneTracker = yield* ProjectCloneTracker.ProjectCloneTracker;
+      const repositoryIdentityResolver =
+        yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
+      // Clone hooks run on the tracker's fiber, outside any RPC, so the
+      // normalizer's services are captured here rather than inherited.
+      const normalizerContext = yield* Effect.context<
+        | FileSystem.FileSystem
+        | Path.Path
+        | ServerConfig.ServerConfig
+        | WorkspacePaths.WorkspacePaths
+      >();
       const agentSessionScanner = yield* AgentSessionScanner.AgentSessionScanner;
       const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
       const backgroundPolicy = yield* BackgroundPolicy.BackgroundPolicy;
@@ -759,6 +776,44 @@ const makeWsRpcLayer = (
               createdAt: input.createdAt,
             }),
           ),
+        );
+
+      // The worktree setup's durable record: one activity per thread, upserted
+      // by a fixed id when the setup starts and again when it settles. Live
+      // progress keeps streaming from the tracker; this is what a reload or
+      // another client reads. Best effort: the thread may already be gone
+      // after a failed bootstrap.
+      const recordWorktreeSetup = (snapshot: WorktreeSetupSnapshot) =>
+        serverCommandId("worktree-setup-activity").pipe(
+          Effect.flatMap((commandId) =>
+            dispatchFromClient({
+              type: "thread.activity.append",
+              commandId,
+              threadId: snapshot.threadId,
+              activity: {
+                id: EventId.make(worktreeSetupActivityId(snapshot.threadId)),
+                tone:
+                  snapshot.phase === "failed" ||
+                  snapshot.stages.some((stage) => stage.status === "failed")
+                    ? "error"
+                    : "info",
+                kind: WORKTREE_SETUP_ACTIVITY_KIND,
+                summary:
+                  snapshot.phase === "running"
+                    ? "Setting up worktree"
+                    : snapshot.phase === "done"
+                      ? "Worktree ready"
+                      : snapshot.phase === "cancelled"
+                        ? "Worktree setup cancelled"
+                        : "Worktree setup failed",
+                payload: snapshot,
+                turnId: null,
+                createdAt: snapshot.startedAt,
+              },
+              createdAt: snapshot.endedAt ?? snapshot.startedAt,
+            }),
+          ),
+          Effect.ignoreCause({ log: true }),
         );
 
       const toBootstrapDispatchCommandCauseError = (cause: Cause.Cause<unknown>) => {
@@ -1003,6 +1058,30 @@ const makeWsRpcLayer = (
           // one so terminals the user opened meanwhile survive.
           let setupTerminalId: string | null = null;
 
+          // Set once the checkout starts; see the session.set below.
+          let preparingSessionSet = false;
+          const markPreparingSessionFailed = (detail: string) =>
+            Effect.gen(function* () {
+              const failedAt = yield* nowIso;
+              yield* dispatchFromClient({
+                type: "thread.session.set",
+                commandId: yield* serverCommandId("bootstrap-thread-preparing-failed"),
+                threadId,
+                session: {
+                  threadId,
+                  status: "error",
+                  providerName: null,
+                  providerInstanceId:
+                    bootstrap?.createThread?.modelSelection.instanceId ??
+                    command.modelSelection?.instanceId,
+                  runtimeMode: command.runtimeMode,
+                  activeTurnId: null,
+                  lastError: detail.trim().length > 0 ? detail : "Worktree setup failed.",
+                  updatedAt: failedAt,
+                },
+                createdAt: failedAt,
+              });
+            });
           const cleanupCreatedThread = () =>
             createdThread
               ? serverCommandId("bootstrap-thread-delete").pipe(
@@ -1098,15 +1177,16 @@ const makeWsRpcLayer = (
           const threadId = command.threadId;
           const track = (effect: Effect.Effect<void>) => (tracked ? effect : Effect.void);
 
-          // Runs the setup script and, for tracked bootstraps, waits for it to
-          // exit so the card can show the exit code and the agent stage never
-          // starts on a half-installed tree. Untracked callers keep the old
-          // fire-and-forget behavior.
+          // Starts the setup script. For tracked bootstraps it returns the
+          // effect that waits for the script to exit and records the outcome
+          // on the card; whether the agent stage waits on it depends on the
+          // script's `async` flag. Returns null when nothing is left to await.
+          // Untracked callers keep the old fire-and-forget behavior.
           const runSetupProgram = () =>
             Effect.gen(function* () {
               if (!bootstrap?.runSetupScript || !targetWorktreePath) {
                 yield* track(worktreeSetupTracker.stageStatus(threadId, "setup-script", "skipped"));
-                return;
+                return null;
               }
               const worktreePath = targetWorktreePath;
               const requestedAt = yield* nowIso;
@@ -1183,21 +1263,38 @@ const makeWsRpcLayer = (
                   }),
                 );
               if (!tracked || !setupResult?.completion) {
-                return;
+                return null;
               }
               // The setup script is best effort, like the untracked path: a
               // failed install must not throw away the worktree the user just
               // waited for. The card keeps the failed stage and its terminal.
-              const completion = yield* setupResult.completion;
-              if (completion.exitCode === 0) {
-                yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
-                return;
+              // Forked right away so the terminal listener behind `completion`
+              // is always consumed, even when the turn dispatch fails before
+              // anyone would otherwise wait on it. The tracker update is a
+              // no-op once the snapshot has been dropped.
+              const completionFiber = yield* setupResult.completion.pipe(
+                Effect.flatMap((completion) => {
+                  if (completion.exitCode === 0) {
+                    return worktreeSetupTracker.stageStatus(threadId, "setup-script", "done");
+                  }
+                  const detail =
+                    completion.exitCode === null
+                      ? "terminal closed before the script finished"
+                      : `exit ${completion.exitCode}`;
+                  return worktreeSetupTracker.stageStatus(
+                    threadId,
+                    "setup-script",
+                    "failed",
+                    detail,
+                  );
+                }),
+                Effect.forkDetach,
+              );
+              if (!setupResult.async) {
+                yield* Fiber.join(completionFiber);
+                return null;
               }
-              const detail =
-                completion.exitCode === null
-                  ? "terminal closed before the script finished"
-                  : `exit ${completion.exitCode}`;
-              yield* worktreeSetupTracker.stageStatus(threadId, "setup-script", "failed", detail);
+              return completionFiber;
             });
 
           const bootstrapProgram = Effect.gen(function* () {
@@ -1221,6 +1318,7 @@ const makeWsRpcLayer = (
                 yield* gitWorkflow.fetchRemote({
                   cwd: prepareWorktree.projectCwd,
                   remoteName: "origin",
+                  refName: prepareWorktree.baseBranch,
                 });
                 const remoteBaseExists = yield* gitWorkflow.remoteBranchExists({
                   cwd: prepareWorktree.projectCwd,
@@ -1305,9 +1403,57 @@ const makeWsRpcLayer = (
               // terminals and provider sessions under the reused thread id.
               yield* threadDeletionReactor.drainThrough(created.sequence);
               createdThread = true;
+              // Persist the send now rather than with the turn: the thread is
+              // real from here on, so any client (or a reload) sees the message
+              // while the worktree is still being prepared. The turn start
+              // later references this id instead of re-sending the text.
+              yield* dispatchFromClient({
+                type: "thread.message.user.append",
+                commandId: yield* serverCommandId("bootstrap-thread-message"),
+                threadId: command.threadId,
+                message: {
+                  messageId: command.message.messageId,
+                  text: command.message.text,
+                  attachments: command.message.attachments,
+                  ...(command.message.context !== undefined
+                    ? { context: command.message.context }
+                    : {}),
+                },
+                createdAt: command.createdAt,
+              });
+              if (tracked) {
+                const running = yield* worktreeSetupTracker.get(threadId);
+                if (running) yield* recordWorktreeSetup(running);
+              }
             }
 
             if (prepareWorktree && shouldPrepareWorktree && worktreeBaseRef) {
+              if (bootstrap?.createThread && createdThread) {
+                // The checkout and setup script can run for minutes before the
+                // turn starts, and the created thread carries no message or
+                // turn until then. Project a starting session now so every
+                // client lists the thread as working and a reopened thread
+                // knows to follow the setup stream. A failed or cancelled setup
+                // deletes the thread, so nothing lingers.
+                const preparingAt = yield* nowIso;
+                yield* dispatchFromClient({
+                  type: "thread.session.set",
+                  commandId: yield* serverCommandId("bootstrap-thread-preparing"),
+                  threadId,
+                  session: {
+                    threadId,
+                    status: "starting",
+                    providerName: null,
+                    providerInstanceId: bootstrap.createThread.modelSelection.instanceId,
+                    runtimeMode: command.runtimeMode,
+                    activeTurnId: null,
+                    lastError: null,
+                    updatedAt: preparingAt,
+                  },
+                  createdAt: preparingAt,
+                });
+                preparingSessionSet = true;
+              }
               yield* worktreeSetupTracker.stageStatus(threadId, "checkout", "running");
               let checkoutTotal: number | null = null;
               const worktree = yield* gitWorkflow.createWorktree(
@@ -1400,7 +1546,7 @@ const makeWsRpcLayer = (
               yield* refreshGitStatus(targetWorktreePath);
             }
 
-            yield* runSetupProgram();
+            const pendingSetupScript = yield* runSetupProgram();
 
             yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "running"));
             // Past this point a cancel would roll back a thread whose turn has
@@ -1409,27 +1555,31 @@ const makeWsRpcLayer = (
             const started = yield* Effect.uninterruptible(
               dispatchFromClient(finalTurnStartCommand),
             );
-            yield* track(
-              worktreeSetupTracker
-                .stageStatus(threadId, "agent", "done")
-                .pipe(Effect.andThen(worktreeSetupTracker.finish(threadId, "done"))),
-            );
+            yield* track(worktreeSetupTracker.stageStatus(threadId, "agent", "done"));
+            // An async setup script outlives the handoff: the snapshot stays
+            // running so the client keeps its row next to the agent's work,
+            // and settles when the script exits. The turn already started, so
+            // the wait cannot fail the dispatch.
+            const settle = tracked
+              ? worktreeSetupTracker
+                  .finish(threadId, "done")
+                  .pipe(
+                    Effect.flatMap((snapshot) =>
+                      snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
+                    ),
+                  )
+              : Effect.void;
+            if (pendingSetupScript) {
+              yield* Fiber.join(pendingSetupScript).pipe(
+                Effect.ignoreCause({ log: true }),
+                Effect.andThen(settle),
+                Effect.forkDetach,
+              );
+            } else {
+              yield* settle;
+            }
             return started;
           });
-
-          const runBootstrap = tracked
-            ? Effect.gen(function* () {
-                const fiber = yield* Effect.forkChild(bootstrapProgram);
-                yield* worktreeSetupTracker.begin({
-                  threadId,
-                  branch: bootstrap?.prepareWorktree?.branch ?? null,
-                  baseRef: bootstrap?.prepareWorktree?.baseBranch ?? null,
-                  stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
-                  fiber,
-                });
-                return yield* Fiber.join(fiber);
-              })
-            : bootstrapProgram;
 
           const cleanupAndFail = (
             cause: Cause.Cause<unknown>,
@@ -1441,7 +1591,19 @@ const makeWsRpcLayer = (
                   Effect.logWarning("bootstrap thread cleanup failed", {
                     threadId,
                     detail: Cause.pretty(cleanupCause),
-                  }).pipe(Effect.flatMap(() => Effect.fail(dispatchError))),
+                  }).pipe(
+                    // The thread outlived its setup. Its preparing session
+                    // must not read as working forever, so record the failure
+                    // on it instead.
+                    Effect.andThen(
+                      preparingSessionSet
+                        ? markPreparingSessionFailed(dispatchError.message).pipe(
+                            Effect.ignoreCause({ log: true }),
+                          )
+                        : Effect.void,
+                    ),
+                    Effect.flatMap(() => Effect.fail(dispatchError)),
+                  ),
                 onSuccess: (threadDeleted) =>
                   Effect.fail(
                     threadDeleted
@@ -1457,7 +1619,7 @@ const makeWsRpcLayer = (
               }),
             );
 
-          return yield* runBootstrap.pipe(
+          const settledBootstrapProgram = bootstrapProgram.pipe(
             Effect.catchCause((cause) => {
               const dispatchError = toBootstrapDispatchCommandCauseError(cause);
               if (Cause.hasInterruptsOnly(cause)) {
@@ -1493,7 +1655,15 @@ const makeWsRpcLayer = (
                         Effect.uninterruptible,
                       )
                     : Effect.void;
-                return track(worktreeSetupTracker.finish(threadId, "cancelled")).pipe(
+                return track(
+                  worktreeSetupTracker
+                    .finish(threadId, "cancelled")
+                    .pipe(
+                      Effect.flatMap((snapshot) =>
+                        snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
+                      ),
+                    ),
+                ).pipe(
                   Effect.andThen(removeCreatedWorktree),
                   Effect.andThen(
                     tracked
@@ -1508,10 +1678,45 @@ const makeWsRpcLayer = (
                 );
               }
               return track(
-                worktreeSetupTracker.finish(threadId, "failed", dispatchError.message),
+                worktreeSetupTracker
+                  .finish(threadId, "failed", dispatchError.message)
+                  .pipe(
+                    Effect.flatMap((snapshot) =>
+                      snapshot ? recordWorktreeSetup(snapshot) : Effect.void,
+                    ),
+                  ),
               ).pipe(Effect.andThen(cleanupAndFail(cause, dispatchError)));
             }),
           );
+
+          // The bootstrap outlives the connection that asked for it: a reload
+          // or a dropped socket must not abandon a half-made worktree, and
+          // the thread it created is already visible to every client. The
+          // RPC only waits on the detached fiber; a user cancel interrupts it
+          // through the tracker.
+          const runBootstrap = tracked
+            ? Effect.gen(function* () {
+                // Fork and register as one step: a detached fiber keeps going
+                // if the caller is interrupted, so it must never exist without
+                // the tracker entry that cancel and the stage updates key on.
+                const fiber = yield* Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    const fiber = yield* Effect.forkDetach(settledBootstrapProgram);
+                    yield* worktreeSetupTracker.begin({
+                      threadId,
+                      branch: bootstrap?.prepareWorktree?.branch ?? null,
+                      baseRef: bootstrap?.prepareWorktree?.baseBranch ?? null,
+                      stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
+                      fiber,
+                    });
+                    return fiber;
+                  }),
+                );
+                return yield* Fiber.join(fiber);
+              })
+            : settledBootstrapProgram;
+
+          return yield* runBootstrap;
         });
 
       const dispatchNormalizedCommand = (
@@ -1615,6 +1820,7 @@ const makeWsRpcLayer = (
           observeRpcEffect(
             ORCHESTRATION_WS_METHODS.dispatchCommand,
             Effect.gen(function* () {
+              yield* ProjectCloneTracker.rejectCommandsDuringClone(projectCloneTracker, command);
               const normalizedCommand = yield* normalizeDispatchCommand(command);
               // Archive removes the thread from the client, so this transport
               // closes its session and terminals after the command lands.
@@ -1646,6 +1852,10 @@ const makeWsRpcLayer = (
                 Effect.tapError(() => cleanupFailedUploadedAttachments(command, normalizedCommand)),
               );
               yield* recordClientCommandAnalytics(normalizedCommand);
+              yield* ProjectCloneTracker.discardCloneForDeletedProject(
+                projectCloneTracker,
+                normalizedCommand,
+              );
               if (archiveCommand) {
                 if (shouldStopSessionAfterCommand) {
                   yield* Effect.gen(function* () {
@@ -2657,6 +2867,65 @@ const makeWsRpcLayer = (
               "rpc.aggregate": "source-control",
             },
           ),
+        [WS_METHODS.projectCloneStart]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneStart,
+            projectCloneTracker.start(input, {
+              createProject: (project) =>
+                Effect.gen(function* () {
+                  const normalizedCommand = yield* normalizeDispatchCommand({
+                    type: "project.create",
+                    commandId: yield* serverCommandId("project-clone-create"),
+                    projectId: project.projectId,
+                    title: project.title,
+                    workspaceRoot: project.workspaceRoot,
+                    createWorkspaceRootIfMissing: true,
+                    createdAt: project.createdAt,
+                  });
+                  yield* dispatchNormalizedCommand(normalizedCommand);
+                  yield* recordClientCommandAnalytics(normalizedCommand);
+                }).pipe(Effect.provideContext(normalizerContext)),
+              onCloned: (project) =>
+                // The project was created against an empty directory, so its
+                // cached identity is "not a repository" until this refresh.
+                // Re-emitting the project shell carries the new identity to
+                // every client without a round trip.
+                repositoryIdentityResolver.resolve(project.workspaceRoot, { refresh: true }).pipe(
+                  Effect.andThen(
+                    Effect.gen(function* () {
+                      const command = yield* normalizeDispatchCommand({
+                        type: "project.meta.update",
+                        commandId: yield* serverCommandId("project-clone-done"),
+                        projectId: project.projectId,
+                      });
+                      yield* dispatchNormalizedCommand(command);
+                    }),
+                  ),
+                  Effect.andThen(refreshGitStatus(project.workspaceRoot)),
+                  Effect.ignoreCause({ log: true }),
+                  Effect.provideContext(normalizerContext),
+                ),
+            }),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.projectCloneCancel]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneCancel,
+            projectCloneTracker
+              .cancel(input.projectId)
+              .pipe(Effect.map((applied) => ({ applied }))),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.projectCloneRetry]: (input) =>
+          observeRpcEffect(
+            WS_METHODS.projectCloneRetry,
+            projectCloneTracker.retry(input.projectId).pipe(Effect.map((applied) => ({ applied }))),
+            { "rpc.aggregate": "source-control" },
+          ),
+        [WS_METHODS.subscribeProjectClones]: () =>
+          observeRpcStream(WS_METHODS.subscribeProjectClones, projectCloneTracker.stream, {
+            "rpc.aggregate": "source-control",
+          }),
         [WS_METHODS.sourceControlPublishRepository]: (input) =>
           observeRpcEffect(
             WS_METHODS.sourceControlPublishRepository,
@@ -3292,10 +3561,6 @@ const makeWsRpcLayer = (
                   payload: { settings },
                 })),
               );
-
-              yield* providerRegistry
-                .refresh()
-                .pipe(Effect.ignoreCause({ log: true }), Effect.forkScoped);
 
               const liveUpdates = Stream.merge(
                 keybindingsUpdates,

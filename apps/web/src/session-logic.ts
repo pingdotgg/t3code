@@ -468,7 +468,12 @@ export function deriveWorkLogEntries(
   }
   const entries: DerivedWorkLogEntry[] = [];
   for (const activity of foldUserInputActivities(ordered)) {
-    if (activity.tone !== "error" && isWorktreeSetupActivity(activity.kind)) continue;
+    if (
+      isWorktreeSetupActivity(activity.kind) &&
+      (activity.tone !== "error" || activity.kind === "worktree-setup")
+    ) {
+      continue;
+    }
     if (activity.kind === "tool.started") continue;
     // Agent task.started rows are CTA seeds: they carry the true spawn turn,
     // which is the batch key (completions of background subagents arrive
