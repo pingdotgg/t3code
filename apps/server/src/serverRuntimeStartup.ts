@@ -760,17 +760,16 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const orchestrationEngine = yield* OrchestrationEngine.OrchestrationEngineService;
   const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-  const { threads } = yield* query.getCommandReadModel();
+  // The command read model carries no activity bodies; read the setup
+  // records directly, live threads only.
+  const recordedSetups = yield* query.listActivitiesByKind(WORKTREE_SETUP_ACTIVITY_KIND);
   const interruptedAt = DateTime.formatIso(yield* DateTime.now);
 
-  for (const thread of threads) {
-    if (thread.deletedAt !== null) continue;
-    const recorded = thread.activities.find(
-      (activity) => activity.id === worktreeSetupActivityId(thread.id),
-    );
-    if (!recorded) continue;
+  for (const recorded of recordedSetups) {
     const snapshot = decodeWorktreeSetupSnapshot(recorded.payload);
     if (Option.isNone(snapshot) || snapshot.value.phase !== "running") continue;
+    if (recorded.id !== worktreeSetupActivityId(snapshot.value.threadId)) continue;
+    const threadId = snapshot.value.threadId;
 
     const interrupted: WorktreeSetupSnapshot = {
       ...snapshot.value,
@@ -788,9 +787,9 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
       .dispatch({
         type: "thread.activity.append",
         commandId: CommandId.make(yield* crypto.randomUUIDv4),
-        threadId: thread.id,
+        threadId,
         activity: {
-          id: EventId.make(worktreeSetupActivityId(thread.id)),
+          id: EventId.make(worktreeSetupActivityId(threadId)),
           tone: "error",
           kind: WORKTREE_SETUP_ACTIVITY_KIND,
           summary: "Worktree setup interrupted by a server restart",
@@ -805,7 +804,7 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
           Cause.hasInterrupts(cause)
             ? Effect.failCause(cause)
             : Effect.logWarning("failed to settle interrupted worktree setup", {
-                threadId: thread.id,
+                threadId,
                 cause,
               }),
         ),

@@ -84,6 +84,14 @@ export interface ProjectionSnapshotQueryShape {
   }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
   /**
+   * Read every activity of one kind across live threads, without hydrating
+   * the threads. Used at startup to find state a crashed process left behind.
+   */
+  readonly listActivitiesByKind: (
+    kind: string,
+  ) => Effect.Effect<ReadonlyArray<OrchestrationThreadActivity>, ProjectionRepositoryError>;
+
+  /**
    * Read the lightweight command snapshot used to bootstrap the in-memory
    * orchestration engine without hydrating message/activity/checkpoint bodies.
    */

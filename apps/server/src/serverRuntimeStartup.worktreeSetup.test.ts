@@ -61,38 +61,26 @@ const snapshotFor = (threadId: ThreadId, phase: WorktreeSetupPhase): WorktreeSet
   sequence: 4,
 });
 
-const makeThread = (
-  id: string,
-  phase: WorktreeSetupPhase | null,
-  deletedAt: string | null = null,
-) => {
+const recordedSetup = (id: string, phase: WorktreeSetupPhase) => {
   const threadId = ThreadId.make(id);
   return {
-    id: threadId,
-    deletedAt,
-    activities:
-      phase === null
-        ? []
-        : [
-            {
-              id: EventId.make(worktreeSetupActivityId(threadId)),
-              tone: "info" as const,
-              kind: WORKTREE_SETUP_ACTIVITY_KIND,
-              summary: "Setting up worktree",
-              payload: snapshotFor(threadId, phase),
-              turnId: null,
-              createdAt: startedAt,
-            },
-          ],
+    id: EventId.make(worktreeSetupActivityId(threadId)),
+    tone: "info" as const,
+    kind: WORKTREE_SETUP_ACTIVITY_KIND,
+    summary: "Setting up worktree",
+    payload: snapshotFor(threadId, phase),
+    turnId: null,
+    createdAt: startedAt,
   };
 };
 
-const run = (threads: ReadonlyArray<ReturnType<typeof makeThread>>) =>
+const run = (activities: ReadonlyArray<ReturnType<typeof recordedSetup>>) =>
   Effect.gen(function* () {
     const dispatched: Array<OrchestrationCommand> = [];
     yield* ServerRuntimeStartup.reconcileWorktreeSetups.pipe(
       Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
-        getCommandReadModel: () => Effect.succeed({ threads } as never),
+        listActivitiesByKind: (kind: string) =>
+          Effect.succeed(kind === WORKTREE_SETUP_ACTIVITY_KIND ? activities : []),
       } as unknown as ProjectionSnapshotQuery.ProjectionSnapshotQuery["Service"]),
       Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {
         readEvents: () => Stream.empty,
@@ -115,10 +103,9 @@ const run = (threads: ReadonlyArray<ReturnType<typeof makeThread>>) =>
 it.effect("marks setups still recorded as running failed after a restart", () =>
   Effect.gen(function* () {
     const dispatched = yield* run([
-      makeThread("thread-running", "running"),
-      makeThread("thread-done", "done"),
-      makeThread("thread-none", null),
-      makeThread("thread-deleted", "running", startedAt),
+      recordedSetup("thread-running", "running"),
+      recordedSetup("thread-done", "done"),
+      recordedSetup("thread-failed", "failed"),
     ]);
 
     assert.equal(dispatched.length, 1);

@@ -1450,6 +1450,39 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
       ),
     );
 
+  const listActivityRowsByKind = SqlSchema.findAll({
+    Request: Schema.Struct({ kind: Schema.String }),
+    Result: ProjectionThreadActivityDbRowSchema,
+    execute: ({ kind }) => sql`
+      SELECT
+        a.activity_id AS "activityId",
+        a.thread_id AS "threadId",
+        a.turn_id AS "turnId",
+        a.tone,
+        a.kind,
+        a.summary,
+        a.payload_json AS "payload",
+        a.sequence,
+        a.created_at AS "createdAt"
+      FROM projection_thread_activities a
+      JOIN projection_threads t ON t.thread_id = a.thread_id
+      WHERE a.kind = ${kind}
+        AND t.deleted_at IS NULL
+      ORDER BY a.created_at ASC, a.activity_id ASC
+    `,
+  });
+
+  const listActivitiesByKind: ProjectionSnapshotQueryShape["listActivitiesByKind"] = (kind) =>
+    listActivityRowsByKind({ kind }).pipe(
+      Effect.map((rows) => rows.map(mapThreadActivityRow)),
+      Effect.mapError(
+        toPersistenceSqlOrDecodeError(
+          "ProjectionSnapshotQuery.listActivitiesByKind:query",
+          "ProjectionSnapshotQuery.listActivitiesByKind:decodeRow",
+        ),
+      ),
+    );
+
   const listThreadActivityIdsByThread = SqlSchema.findAll({
     Request: ThreadIdLookupInput,
     Result: ProjectionThreadActivityIdRowSchema,
@@ -3692,6 +3725,7 @@ pending_approval_requests AS (
   return {
     getCommandReadModel,
     getUserInputActivity,
+    listActivitiesByKind,
     getSnapshot,
     getShellSnapshot,
     getArchivedShellSnapshot,
