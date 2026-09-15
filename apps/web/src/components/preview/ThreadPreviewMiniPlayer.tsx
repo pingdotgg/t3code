@@ -64,6 +64,8 @@ interface Props {
   readonly miniPlayer: PreviewMiniPlayerState;
   /** The docked composer overlay; null while the composer floats mid-screen. */
   readonly composerOverlayElement: HTMLElement | null;
+  /** Whether the inline thread-details card is open in the chat column. */
+  readonly detailsPanelOpen: boolean;
 }
 
 interface Layout {
@@ -71,27 +73,47 @@ interface Layout {
   readonly obstacles: PreviewMiniPlayerObstacles;
 }
 
+const sameSpan = <T extends { readonly left: number; readonly right: number }>(
+  a: T | null,
+  b: T | null,
+  extent: keyof T,
+) =>
+  a === b ||
+  (a !== null && b !== null && a.left === b.left && a.right === b.right && a[extent] === b[extent]);
+
 const sameLayout = (a: Layout, b: Layout) =>
   a.container.width === b.container.width &&
   a.container.height === b.container.height &&
-  (a.obstacles.composer === b.obstacles.composer ||
-    (a.obstacles.composer !== null &&
-      b.obstacles.composer !== null &&
-      a.obstacles.composer.left === b.obstacles.composer.left &&
-      a.obstacles.composer.right === b.obstacles.composer.right &&
-      a.obstacles.composer.height === b.obstacles.composer.height));
+  sameSpan(a.obstacles.composer, b.obstacles.composer, "height") &&
+  sameSpan(a.obstacles.detailsCard, b.obstacles.detailsCard, "bottom");
 
 /**
- * Measures the chat column and the composer in the column's coordinates. The
- * composer's columns come from its centered stack, not the full-width overlay,
- * so the margins beside it stay open to the player.
+ * The inline thread-details card lives in the aside beside the chat column,
+ * so it is found from the column's nearest ancestor that reserves room for it.
  */
-function measureLayout(container: HTMLElement, composerOverlay: HTMLElement | null): Layout {
+function findDetailsCard(container: HTMLElement): HTMLElement | null {
+  const card = container
+    .closest('[data-thread-details-inline-reserved="true"]')
+    ?.querySelector('[data-thread-details-panel="inline"] [data-thread-details-card]');
+  return card instanceof HTMLElement ? card : null;
+}
+
+/**
+ * Measures the chat column, the composer, and the details card in the column's
+ * coordinates. The composer's columns come from its centered stack, not the
+ * full-width overlay, so the margins beside it stay open to the player.
+ */
+function measureLayout(
+  container: HTMLElement,
+  composerOverlay: HTMLElement | null,
+  detailsCard: HTMLElement | null,
+): Layout {
   const containerRect = container.getBoundingClientRect();
   const stackRect = composerOverlay
     ?.querySelector('[data-chat-composer-stack="true"]')
     ?.getBoundingClientRect();
   const overlayRect = composerOverlay?.getBoundingClientRect();
+  const cardRect = detailsCard?.getBoundingClientRect();
   return {
     container: { width: container.clientWidth, height: container.clientHeight },
     obstacles: {
@@ -101,6 +123,14 @@ function measureLayout(container: HTMLElement, composerOverlay: HTMLElement | nu
               left: Math.floor(stackRect.left - containerRect.left),
               right: Math.ceil(stackRect.right - containerRect.left),
               height: Math.ceil(overlayRect.height),
+            }
+          : null,
+      detailsCard:
+        cardRect && cardRect.height > 0
+          ? {
+              left: Math.floor(cardRect.left - containerRect.left),
+              right: Math.ceil(cardRect.right - containerRect.left),
+              bottom: Math.ceil(cardRect.bottom - containerRect.top),
             }
           : null,
     },
@@ -125,7 +155,12 @@ const RESIZE_HANDLES: ReadonlyArray<{
 ];
 
 /** Floats the thread's browser tab or device stream over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
+export function ThreadPreviewMiniPlayer({
+  threadRef,
+  miniPlayer,
+  composerOverlayElement,
+  detailsPanelOpen,
+}: Props) {
   const { source } = miniPlayer;
   return source.kind === "browser" ? (
     <BrowserMiniPlayer
@@ -134,6 +169,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlay
       tabId={source.tabId}
       miniPlayer={miniPlayer}
       composerOverlayElement={composerOverlayElement}
+      detailsPanelOpen={detailsPanelOpen}
     />
   ) : (
     <DeviceMiniPlayer
@@ -142,6 +178,7 @@ export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlay
       source={source}
       miniPlayer={miniPlayer}
       composerOverlayElement={composerOverlayElement}
+      detailsPanelOpen={detailsPanelOpen}
     />
   );
 }
@@ -151,6 +188,7 @@ function BrowserMiniPlayer({
   tabId,
   miniPlayer,
   composerOverlayElement,
+  detailsPanelOpen,
 }: Props & { readonly tabId: string }) {
   const previewState = useThreadPreviewState(threadRef);
   const snapshot = previewState.sessions[tabId] ?? null;
@@ -196,6 +234,7 @@ function BrowserMiniPlayer({
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
+      detailsPanelOpen={detailsPanelOpen}
       label="Floating browser preview"
       recording={recording}
       onOpenInPanel={openInPanel}
@@ -254,6 +293,7 @@ function DeviceMiniPlayer({
   source,
   miniPlayer,
   composerOverlayElement,
+  detailsPanelOpen,
 }: Props & { readonly source: Extract<PreviewMiniPlayerSource, { kind: "device" }> }) {
   const { state: deviceState } = useDeviceState(threadRef.environmentId);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
@@ -284,6 +324,7 @@ function DeviceMiniPlayer({
       miniPlayer={miniPlayer}
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
+      detailsPanelOpen={detailsPanelOpen}
       label="Floating device preview"
       onOpenInPanel={openInPanel}
       cornerRadius={cornerRadius}
@@ -320,6 +361,7 @@ function MiniPlayerShell({
   miniPlayer,
   sourceSize,
   composerOverlayElement,
+  detailsPanelOpen,
   label,
   onOpenInPanel,
   pillActions,
@@ -331,6 +373,7 @@ function MiniPlayerShell({
   readonly miniPlayer: PreviewMiniPlayerState;
   readonly sourceSize: PreviewMiniPlayerSize;
   readonly composerOverlayElement: HTMLElement | null;
+  readonly detailsPanelOpen: boolean;
   readonly label: string;
   readonly onOpenInPanel: () => void;
   readonly pillActions?: ReactNode;
@@ -363,12 +406,15 @@ function MiniPlayerShell({
     usePreviewMiniPlayerStore.getState().close(threadRef);
   };
 
-  // The composer grows on its own (drafts, banners), so it is observed alongside the column.
+  // The composer and the details card grow on their own (drafts, banners,
+  // workspace rows), so both are observed alongside the column. The card is
+  // looked up when the panel opens; the flag re-runs this on toggle.
   useLayoutEffect(() => {
     const element = containerRef.current;
     if (!element) return;
+    const detailsCard = detailsPanelOpen ? findDetailsCard(element) : null;
     const measure = () => {
-      const next = measureLayout(element, composerOverlayElement);
+      const next = measureLayout(element, composerOverlayElement, detailsCard);
       setLayout((current) => (current && sameLayout(current, next) ? current : next));
     };
     measure();
@@ -376,8 +422,9 @@ function MiniPlayerShell({
     const observer = new ResizeObserver(measure);
     observer.observe(element);
     if (composerOverlayElement) observer.observe(composerOverlayElement);
+    if (detailsCard) observer.observe(detailsCard);
     return () => observer.disconnect();
-  }, [composerOverlayElement]);
+  }, [composerOverlayElement, detailsPanelOpen]);
 
   const beginGesture = (
     event: ReactPointerEvent<HTMLElement>,
