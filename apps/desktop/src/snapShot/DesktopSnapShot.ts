@@ -998,7 +998,9 @@ export const make = Effect.gen(function* () {
   }).pipe(Effect.withSpan("desktop.snapShot.capture"));
 
   const captureFromShortcut = Effect.gen(function* () {
-    if (shortcutSuppressed) return;
+    // Repeated shortcuts must not tear down a moving capture and start another
+    // renderer. Drop them while the flight runs, just as during pixel acquisition.
+    if (shortcutSuppressed || transition.isAnimating) return;
     shortcutVerified = true;
     const now = yield* Clock.currentTimeNanos;
     if (lastShortcutAt !== undefined && now - lastShortcutAt < SHORTCUT_COOLDOWN_NS) return;
