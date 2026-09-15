@@ -142,6 +142,7 @@ fn clip(rect: Rect, output: Rect, image: (u32, u32)) -> Option<(Rect, Rect)> {
         },
     ))
 }
+/// Interpolates the flight rectangle with cubic ease-out, clamping progress to [0, 1].
 fn interpolate(from: Rect, to: Rect, progress: f64) -> Rect {
     let t = 1.0 - (1.0 - progress.clamp(0., 1.)).powi(3);
     Rect {
@@ -151,6 +152,7 @@ fn interpolate(from: Rect, to: Rect, progress: f64) -> Rect {
         height: from.height + (to.height - from.height) * t,
     }
 }
+/// Validates a normalized destination frame and maps it into logical window bounds.
 fn target(bounds: Rect, frame: Rect) -> Result<Rect> {
     if !bounds.valid()
         || !frame.valid()
@@ -169,6 +171,8 @@ fn target(bounds: Rect, frame: Rect) -> Result<Rect> {
     })
 }
 
+/// Displays `directory/capture.png` in Hyprland feedback overlays, handling JSON
+/// commands from stdin and emitting presentation events to stdout until closed.
 pub fn run(directory: &Path, mut options: Options) -> Result<()> {
     if !options.bounds.valid() {
         return Err("Invalid capture bounds.".into());
@@ -428,6 +432,8 @@ pub fn run(directory: &Path, mut options: Options) -> Result<()> {
 }
 
 impl Feedback {
+    /// Draws the current flash or flight frame across configured output overlays and
+    /// requests frame callbacks and presentation feedback as needed.
     fn draw(&mut self, qh: &QueueHandle<Self>) -> Result<()> {
         let progress = self
             .flight
@@ -464,22 +470,22 @@ impl Feedback {
                 overlay
                     .subsurface
                     .set_position(dest.x.round() as i32, dest.y.round() as i32);
-                // Immutable textures are uploaded only when they change. Flight frames update
-                // the viewport and subsurface position, not megabytes of shared-memory pixels.
+                // Hyprland 0.56.2 retains the old surface size on viewport-only commits.
+                // Reattach the immutable buffer so the destination size is applied too.
                 let texture = if flashing {
                     Texture::Flash
                 } else {
                     Texture::Image
                 };
+                overlay.image.attach(
+                    Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
+                    0,
+                    0,
+                );
                 if overlay.texture != texture {
-                    overlay.image.attach(
-                        Some((if flashing { &self.flash } else { &self.image }).wl_buffer()),
-                        0,
-                        0,
-                    );
                     overlay.image.damage_buffer(0, 0, i32::MAX, i32::MAX);
-                    overlay.texture = texture;
                 }
+                overlay.texture = texture;
             } else {
                 if overlay.texture != Texture::None {
                     overlay.image.attach(None, 0, 0);
