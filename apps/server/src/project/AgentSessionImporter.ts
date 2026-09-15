@@ -174,7 +174,7 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
         const existingBinding = yield* directory.getBinding(threadId);
 
         if (
-          thread.source === "claudeAgent" &&
+          (thread.source === "claudeAgent" || thread.source === "muse") &&
           !CLAUDE_SESSION_ID_PATTERN.test(thread.providerSessionId)
         ) {
           return yield* new AgentSessionUnresumableSessionError({
@@ -233,7 +233,9 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
               resumeCursor:
                 thread.source === "codex"
                   ? { threadId: thread.providerSessionId }
-                  : { threadId, resume: thread.providerSessionId },
+                  : thread.source === "muse"
+                    ? { sessionId: thread.providerSessionId }
+                    : { threadId, resume: thread.providerSessionId },
               runtimePayload: { cwd: workspaceRoot },
             },
             { onConflict: "ignore" },

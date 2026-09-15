@@ -46,6 +46,7 @@ const transientCanonicalEventTypes = new Set([
   "turn.proposed.delta",
 ]);
 const transientNativeMethods = new Set([
+  "item/delta",
   "item/agentMessage/delta",
   "item/commandExecution/outputDelta",
   "item/fileChange/outputDelta",

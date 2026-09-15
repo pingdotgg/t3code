@@ -2,8 +2,18 @@ import {
   ConnectionTransientError,
   PrimaryConnectionTarget,
 } from "@t3tools/client-runtime/connection";
-import { EnvironmentId } from "@t3tools/contracts";
-import { ConnectionCatalogDocument } from "@t3tools/client-runtime/platform";
+import {
+  ConnectionCatalogDocument,
+  ConnectionPersistenceError,
+  EnvironmentCacheStore,
+} from "@t3tools/client-runtime/platform";
+import {
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+  type OrchestrationThreadDetailSnapshot,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Deferred from "effect/Deferred";
@@ -13,6 +23,7 @@ import * as Stream from "effect/Stream";
 import { afterEach, vi } from "vite-plus/test";
 
 import {
+  connectionStorageLayer,
   makeBrowserGitHubRoutingPermissions,
   makeCatalogBackend,
   makeCatalogStore,
@@ -28,6 +39,62 @@ const emptyCatalog = {
 } as const;
 const decodeCatalog = Schema.decodeUnknownSync(Schema.fromJsonString(ConnectionCatalogDocument));
 const encodeCatalog = Schema.encodeSync(Schema.fromJsonString(ConnectionCatalogDocument));
+const environmentId = EnvironmentId.make("environment-1");
+const threadId = ThreadId.make("thread-1");
+const threadSnapshot: OrchestrationThreadDetailSnapshot = {
+  snapshotSequence: 7,
+  thread: {
+    id: threadId,
+    projectId: ProjectId.make("project-1"),
+    title: "Cached thread",
+    modelSelection: { instanceId: ProviderInstanceId.make("muse"), model: "muse-spark-1.3" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    latestTurn: null,
+    createdAt: "2026-09-11T00:00:00.000Z",
+    updatedAt: "2026-09-11T00:00:00.000Z",
+    archivedAt: null,
+    settledOverride: null,
+    settledAt: null,
+    pullRequests: [],
+    deletedAt: null,
+    messages: [],
+    proposedPlans: [],
+    activities: [],
+    checkpoints: [],
+    session: null,
+  },
+};
+
+function stubThreadCacheDatabase(schemaVersion: number) {
+  const rows = new Map<string, unknown>([
+    [
+      `${environmentId}:${threadId}`,
+      JSON.stringify({ schemaVersion, environmentId, threadId, snapshot: threadSnapshot }),
+    ],
+  ]);
+  const onSuccess = (type: string, callback: () => void) => {
+    if (type === "success") queueMicrotask(callback);
+  };
+  const database = {
+    close: vi.fn(),
+    transaction: () => ({
+      addEventListener: (type: string, callback: () => void) => {
+        if (type === "complete") queueMicrotask(callback);
+      },
+      objectStore: () => ({
+        get: (key: string) => ({ result: rows.get(key), addEventListener: onSuccess }),
+        put: (value: unknown, key: string) => rows.set(key, value),
+      }),
+    }),
+  };
+  vi.stubGlobal("window", {});
+  vi.stubGlobal("indexedDB", {
+    open: () => ({ result: database, addEventListener: onSuccess }),
+  });
+}
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -173,5 +240,40 @@ describe("browser GitHub routing permissions", () => {
       );
       expect(yield* second.get(entry)).toBe("off");
     }).pipe(Effect.scoped),
+  );
+});
+
+describe("thread snapshot cache", () => {
+  it.effect("rejects v3 snapshots whose historical activities need to be refetched", () => {
+    stubThreadCacheDatabase(3);
+    return Effect.gen(function* () {
+      const cache = yield* EnvironmentCacheStore;
+      const error = yield* cache.loadThread(environmentId, threadId).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(ConnectionPersistenceError);
+      expect(error.operation).toBe("load-thread");
+    }).pipe(Effect.provide(connectionStorageLayer));
+  });
+
+  it.effect(
+    "accepts v4 snapshots and roundtrips replacement snapshots in the current format",
+    () => {
+      stubThreadCacheDatabase(4);
+      return Effect.gen(function* () {
+        const cache = yield* EnvironmentCacheStore;
+        expect(yield* cache.loadThread(environmentId, threadId)).toEqual(
+          Option.some(threadSnapshot),
+        );
+
+        const refreshed = {
+          ...threadSnapshot,
+          snapshotSequence: 8,
+          thread: { ...threadSnapshot.thread, title: "Refreshed thread" },
+        };
+        yield* cache.saveThread(environmentId, refreshed);
+
+        expect(yield* cache.loadThread(environmentId, threadId)).toEqual(Option.some(refreshed));
+      }).pipe(Effect.provide(connectionStorageLayer));
+    },
   );
 });

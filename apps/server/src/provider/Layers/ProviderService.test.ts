@@ -19,6 +19,7 @@ import {
   EnvironmentId,
   EventId,
   MessageId,
+  MuseSettings,
   OrchestrationThreadShell,
   ProjectId,
   PROVIDER_SEND_TURN_MAX_INPUT_CHARS,
@@ -65,6 +66,7 @@ import * as ProviderAdapterRegistry from "../Services/ProviderAdapterRegistry.ts
 import * as ProviderService from "../Services/ProviderService.ts";
 import * as ProviderSessionDirectory from "../Services/ProviderSessionDirectory.ts";
 import { makeProviderServiceLive } from "./ProviderService.ts";
+import { makeMuseAdapter } from "./MuseAdapter.ts";
 import * as ProviderEventLoggers from "./ProviderEventLoggers.ts";
 import { ProviderSessionDirectoryLive } from "./ProviderSessionDirectory.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -80,6 +82,7 @@ import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMoc
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
+const museSettings = Schema.decodeSync(MuseSettings)({ enabled: true });
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
 const serverConfigTestLayer = ServerConfig.layerTest(process.cwd(), process.cwd()).pipe(
   Layer.provide(NodeServices.layer),
@@ -1180,6 +1183,66 @@ antigravityInstanceRouting.layer("ProviderServiceLive instance-owned conversatio
   );
 });
 
+it.effect("rejects Muse rewind before recovering or changing its persisted conversation", () =>
+  Effect.gen(function* () {
+    const instanceId = ProviderInstanceId.make("muse");
+    const threadId = asThreadId("muse-unsupported-rewind");
+    const createHost = vi.fn(async () => {
+      throw new Error("Rewind must not start a Muse host.");
+    });
+    const adapter = yield* makeMuseAdapter(museSettings, {
+      instanceId,
+      createHost,
+    });
+    const directoryLayer = ProviderSessionDirectoryLive.pipe(
+      Layer.provide(ProviderSessionRuntime.layer.pipe(Layer.provide(SqlitePersistenceMemory))),
+    );
+    const providerLayer = makeProviderServiceLive().pipe(
+      Layer.provide(NodeServices.layer),
+      Layer.provide(
+        Layer.succeed(
+          ProviderAdapterRegistry.ProviderAdapterRegistry,
+          makeStaticInstanceRegistry([[instanceId, adapter]]),
+        ),
+      ),
+      Layer.provideMerge(directoryLayer),
+      Layer.provide(defaultServerSettingsLayer),
+      Layer.provide(serverConfigTestLayer),
+      Layer.provide(AnalyticsService.layerTest),
+      Layer.provide(
+        Layer.succeed(
+          ProviderEventLoggers.ProviderEventLoggers,
+          ProviderEventLoggers.NoOpProviderEventLoggers,
+        ),
+      ),
+    );
+    yield* Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      yield* directory.upsert({
+        threadId,
+        provider: ProviderDriverKind.make("muse"),
+        providerInstanceId: instanceId,
+        status: "stopped",
+        runtimeMode: "approval-required",
+        resumeCursor: { sessionId: "native-muse-conversation" },
+      });
+      const originalBinding = yield* directory.getBinding(threadId);
+      const preflightError = yield* Effect.flip(
+        provider.assertConversationRollbackSupported(threadId),
+      );
+      const rollbackError = yield* Effect.flip(
+        provider.rollbackConversation({ threadId, numTurns: 1 }),
+      );
+      assert.instanceOf(preflightError, ProviderValidationError);
+      assert.instanceOf(rollbackError, ProviderValidationError);
+      assert.include(preflightError.message, "does not support conversation rewind");
+      assert.equal(createHost.mock.calls.length, 0);
+      assert.deepEqual(yield* directory.getBinding(threadId), originalBinding);
+    }).pipe(Effect.provide(providerLayer));
+  }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(serverConfigTestLayer, NodeServices.layer))),
+);
+
 const unsupportedRollback = makeProviderServiceLayer({ supportsConversationRollback: false });
 unsupportedRollback.layer("ProviderServiceLive unsupported rewind", (it) => {
   it.effect("rejects rewind without starting or changing the provider conversation", () =>
@@ -1954,6 +2017,41 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
+  it.effect("settles declined native compaction and permits the next request", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-compact-declined");
+      yield* provider.startSession(threadId, {
+        provider: CODEX_DRIVER,
+        providerInstanceId: codexInstanceId,
+        threadId,
+        runtimeMode: "full-access",
+      });
+      routing.codex.compactThread.mockImplementationOnce(() =>
+        Effect.sync(() =>
+          routing.codex.emit({
+            type: "item.completed",
+            eventId: asEventId("evt-native-compact-declined"),
+            provider: CODEX_DRIVER,
+            createdAt: "2026-01-01T00:00:00.000Z",
+            threadId,
+            payload: {
+              itemType: "context_compaction",
+              status: "declined",
+              detail: "Muse declined compaction because no context can be summarized.",
+            },
+          }),
+        ),
+      );
+      const failure = yield* provider.compactThread(threadId).pipe(Effect.flip);
+      assert.instanceOf(failure, ProviderAdapterRequestError);
+      assert.include(failure.message, "declined");
+      assert.include(failure.message, "no context can be summarized");
+      yield* provider.compactThread(threadId);
+      yield* provider.stopSession({ threadId });
+    }),
+  );
+
   it.effect("serializes native compaction and quarantines timed-out completions", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
@@ -2655,6 +2753,36 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.equal(routing.codex.rollbackThread.mock.calls.length, 1);
       const rollbackCall = routing.codex.rollbackThread.mock.calls[0];
       assert.equal(rollbackCall?.[1], 1);
+    }),
+  );
+
+  it.effect("persists a forked rewind cursor before returning and uses it for recovery", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+      const threadId = asThreadId("thread-rewind-fork");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("rewind-fork"),
+        runtimeMode: "full-access",
+      });
+      const resumeCursor = { sessionId: "rewound-native-session" };
+      routing.codex.rollbackThread.mockImplementationOnce((id) =>
+        Effect.sync(() => {
+          routing.codex.updateSession(id, (session) => ({ ...session, resumeCursor }));
+          return { threadId: id, turns: [] as const };
+        }),
+      );
+      yield* provider.rollbackConversation({ threadId, numTurns: 1 });
+      const persisted = yield* runtimeRepository.getByThreadId({ threadId });
+      assert.isTrue(Option.isSome(persisted));
+      if (Option.isSome(persisted)) assert.deepEqual(persisted.value.resumeCursor, resumeCursor);
+      yield* routing.codex.stopSession(threadId);
+      routing.codex.startSession.mockClear();
+      yield* provider.sendTurn({ threadId, input: "Continue after restart", attachments: [] });
+      assert.deepEqual(routing.codex.startSession.mock.calls[0]?.[0].resumeCursor, resumeCursor);
     }),
   );
 

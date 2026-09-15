@@ -1,5 +1,6 @@
 import {
   type ModelCapabilities,
+  MUSE_REASONING_EFFORT_OPTIONS,
   ProviderDriverKind,
   type ProviderOptionDescriptor,
 } from "@t3tools/contracts";
@@ -88,6 +89,14 @@ export const DESCRIPTOR_PRESETS_BY_KIND: Partial<
   ],
   [ProviderDriverKind.make("grok")]: [
     { id: "reasoningEffort", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },
+  ],
+  [ProviderDriverKind.make("muse")]: [
+    {
+      id: "reasoningEffort",
+      label: "Reasoning",
+      type: "select",
+      choices: MUSE_REASONING_EFFORT_OPTIONS,
+    },
   ],
   [ProviderDriverKind.make("opencode")]: [
     { id: "variant", label: "Reasoning", type: "select", choices: EFFORT_CHOICES },

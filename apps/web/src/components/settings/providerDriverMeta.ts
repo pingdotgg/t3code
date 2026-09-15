@@ -4,6 +4,7 @@ import {
   CodexSettings,
   CursorSettings,
   GrokSettings,
+  MuseSettings,
   OpenCodeSettings,
   ProviderDriverKind,
 } from "@t3tools/contracts";
@@ -13,6 +14,7 @@ import {
   ClaudeAI,
   CursorIcon,
   GrokIcon,
+  MuseIcon,
   type Icon,
   OpenAI,
   OpenCodeIcon,
@@ -75,6 +77,13 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     label: "OpenCode",
     icon: OpenCodeIcon,
     settingsSchema: OpenCodeSettings,
+  },
+  {
+    value: ProviderDriverKind.make("muse"),
+    label: "Muse Code",
+    icon: MuseIcon,
+    badgeLabel: "Beta",
+    settingsSchema: MuseSettings,
   },
   {
     value: ProviderDriverKind.make("antigravity"),

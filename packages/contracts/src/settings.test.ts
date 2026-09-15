@@ -7,6 +7,7 @@ import {
   ClientSettingsPatch,
   ClaudeSettings,
   DEFAULT_SERVER_SETTINGS,
+  MuseSettings,
   resolveProviderInstanceEnabled,
   ServerSettings,
   ServerSettingsPatch,
@@ -46,6 +47,48 @@ describe("ServerSettings default permissions", () => {
         projectSettingsOverrides: { project: { defaultRuntimeMode: "unsupported" } },
       }),
     ).toThrow();
+  });
+});
+
+describe("Muse provider settings", () => {
+  it("hydrates old settings with a disabled Muse instance configuration", () => {
+    const settings = decodeServerSettings({ providers: { codex: { binaryPath: "custom-codex" } } });
+    expect(settings.providers.muse).toEqual({
+      enabled: false,
+      binaryPath: "muse",
+      customModels: [],
+    });
+    expect(settings.providers.codex.binaryPath).toBe("custom-codex");
+    expect(
+      resolveProviderInstanceEnabled({ driver: ProviderDriverKind.make("muse"), config: {} }),
+    ).toBe(false);
+  });
+
+  it("normalizes a cleared binary path and preserves a custom executable", () => {
+    const decode = Schema.decodeUnknownSync(MuseSettings);
+    expect(decode({ binaryPath: "  " }).binaryPath).toBe("muse");
+    expect(decode({ binaryPath: "  /opt/muse/bin/muse  " }).binaryPath).toBe("/opt/muse/bin/muse");
+  });
+
+  it("round-trips Muse configuration, enable and disable patches without injecting absent fields", () => {
+    const muse = {
+      enabled: true,
+      binaryPath: "/opt/muse/bin/muse",
+      customModels: ["muse-spark-1.3-contributor"],
+    };
+    const settings = decodeServerSettings({ providers: { muse } });
+    expect(encodeServerSettings(settings).providers?.muse).toEqual(muse);
+    expect(decodeServerSettingsPatch({ providers: { muse } }).providers?.muse).toEqual(muse);
+    expect(
+      decodeServerSettingsPatch({ providers: { muse: { enabled: false } } }).providers?.muse,
+    ).toEqual({ enabled: false });
+    expect(
+      resolveProviderInstanceEnabled({
+        driver: ProviderDriverKind.make("muse"),
+        enabled: true,
+        config: {},
+      }),
+    ).toBe(true);
   });
 });
 

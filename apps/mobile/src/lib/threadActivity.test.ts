@@ -1,4 +1,8 @@
 import { derivePendingRequests } from "@t3tools/client-runtime/pending-requests";
+import {
+  summarizeToolGroup,
+  workLogEntryIsToolLike,
+} from "@t3tools/client-runtime/work-log/presentation";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
 import {
@@ -291,6 +295,44 @@ function makeThread(
 }
 
 describe("buildThreadFeed", () => {
+  it("renders projected Muse reminder children as updates instead of tool use", () => {
+    const thread = makeThread({
+      id: ThreadId.make("muse-reminders"),
+      projectId: ProjectId.make("project-1"),
+      title: "Muse reminders",
+      activities: ["first", "second"].flatMap((itemId) =>
+        ["started", "completed"].map((phase) =>
+          makeActivity({
+            id: EventId.make(`${itemId}-${phase}`),
+            kind: `tool.${phase}`,
+            tone: "tool",
+            summary: phase === "started" ? "reminderChild started" : "reminderChild",
+            createdAt: "2026-09-11T00:00:00.000Z",
+            payload: {
+              itemType: "dynamic_tool_call",
+              toolCallId: itemId,
+              status: phase === "started" ? "inProgress" : "completed",
+              title: "reminderChild",
+              detail: "Reminder child session",
+              data: { item: { kind: "reminderChild" } },
+            },
+          }),
+        ),
+      ),
+    });
+    const [group] = buildThreadFeed(thread);
+    expect(group?.type).toBe("activity-group");
+    if (group?.type !== "activity-group") return;
+    const entries = group.activities.map((activity) => activity.workEntry);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.detail)).toEqual([
+      "Reminder child session",
+      "Reminder child session",
+    ]);
+    expect(entries.every((entry) => !workLogEntryIsToolLike(entry))).toBe(true);
+    expect(summarizeToolGroup(entries)).toBe("Received 2 updates");
+  });
+
   it("reuses unchanged feed and presentation rows during an assistant text update", () => {
     const completedTurnId = TurnId.make("completed-turn");
     const activeTurnId = TurnId.make("active-turn");

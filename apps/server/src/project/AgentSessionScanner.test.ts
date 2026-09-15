@@ -1,6 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off -- Simulate the SDK host appending its log during a read.
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as NodeOS from "node:os";
-import { describe, expect, it } from "@effect/vitest";
+import * as NodeFSP from "node:fs/promises";
+import { describe, expect, it, vi } from "@effect/vitest";
 import {
   type OrchestrationProjectShell,
   ProjectId,
@@ -22,6 +24,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProjectionSnapshotQuery from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as AgentSessionScanner from "./AgentSessionScanner.ts";
+import type { createMuseSdkHost, MuseSdkHost } from "../provider/museSdk.ts";
 
 const makeProjectShell = (workspaceRoot: string): OrchestrationProjectShell => ({
   id: ProjectId.make("project-1"),
@@ -77,10 +80,14 @@ interface ScannerTestInput {
   /** Base dir for the test ServerConfig; worktreesDir derives from it. */
   readonly configBaseDir?: string;
   readonly providerInstances?: ContractServerSettings["providerInstances"];
+  readonly createMuseHost?: typeof createMuseSdkHost;
 }
 
 const makeScannerTestLayer = (input: ScannerTestInput) =>
-  AgentSessionScanner.layer.pipe(
+  Layer.effect(
+    AgentSessionScanner.AgentSessionScanner,
+    AgentSessionScanner.makeWithMuseHost(input.createMuseHost),
+  ).pipe(
     Layer.provide(
       Layer.mergeAll(
         ServerSettings.layerTest({
@@ -179,6 +186,210 @@ function makeRecordLimitTranscript(cwd: string, overflow: boolean): string {
 }
 
 it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
+  describe("Muse native history", () => {
+    const fixture = Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* makeTempDir("t3-muse-import-");
+      const workspaceRoot = yield* makeTempDir("t3-muse-project-");
+      const sessionId = "123e4567-e89b-42d3-a456-426614174000";
+      const filePath = path.join(home, "sessions", "2026", "09", "11", sessionId, "session.jsonl");
+      const session = {
+        sessionId,
+        path: filePath,
+        workspaceRoot,
+        modelId: "muse-spark-1.3",
+        providerId: "meta",
+        createdAt: "2026-09-11T10:00:00.000Z",
+        updatedAt: "2026-09-11T10:01:00.000Z",
+      };
+      // The SDK, not T3, interprets durable bytes. Intentionally not JSON.
+      yield* writeTranscript({
+        filePath,
+        contents: "opaque native log",
+        mtimeMs: Date.parse(session.updatedAt),
+      });
+      yield* TestClock.setTime(Date.parse("2026-09-11T12:00:00.000Z"));
+      let mutateOnPage = false;
+      const request = vi.fn(async (method: string) => {
+        if (method === "session/list") return { sessions: [session], nextCursor: null };
+        if (method === "session/read")
+          return { session, history: { mode: "none", noneReason: "excluded", snapshot: null } };
+        if (method === "view/page") {
+          if (mutateOnPage) await NodeFSP.appendFile(filePath, " changed while reading");
+          return {
+            nextCursor: null,
+            events: [
+              {
+                method: "session/tokenUsage",
+                params: { sessionId, modelId: "muse-spark-1.3-contributor" },
+              },
+              {
+                method: "item/completed",
+                params: {
+                  sessionId,
+                  item: {
+                    itemId: "u1",
+                    kind: "userMessage",
+                    text: "Fix it",
+                    revision: 1,
+                    status: "completed",
+                    recordedAt: session.createdAt,
+                  },
+                },
+              },
+              {
+                method: "item/completed",
+                params: {
+                  sessionId,
+                  item: {
+                    itemId: "a1",
+                    kind: "agentMessage",
+                    text: "Fixed",
+                    revision: 1,
+                    status: "completed",
+                    recordedAt: session.updatedAt,
+                  },
+                },
+              },
+            ],
+          };
+        }
+        throw new Error(`Unexpected ${method}`);
+      });
+      const close = vi.fn(async () => {});
+      const host: MuseSdkHost = {
+        initializeResult: {
+          experimentalApi: false,
+          grantedCapabilities: [],
+          museHome: home,
+          platformFamily: "unix",
+          platformOs: "linux",
+          schema: { fingerprint: "test", version: 1 },
+          serverInfo: { name: "muse", version: "1.1.1" },
+          userAgent: "test",
+        },
+        connection: {
+          request,
+          command: vi.fn(async () => ({})),
+          mintCommandId: () => "unused",
+          onNotification: () => {},
+          onServerRequest: () => {},
+          onProtocolError: () => {},
+          closed: new Promise(() => {}),
+        },
+        exited: new Promise(() => {}),
+        close,
+      };
+      const createMuseHost = vi.fn(async () => host);
+      const input: ScannerTestInput = {
+        claudeHomePath: home,
+        codexHomePath: home,
+        createMuseHost,
+        providerInstances: {
+          [ProviderInstanceId.make("muse_work")]: {
+            driver: ProviderDriverKind.make("muse"),
+            config: { enabled: true, binaryPath: "/custom/muse" },
+            environment: [{ name: "XDG_DATA_HOME", value: home, sensitive: false }],
+          },
+        },
+      };
+      return {
+        input,
+        session,
+        host,
+        request,
+        createMuseHost,
+        close,
+        fileSystem,
+        mutate: () => {
+          mutateOnPage = true;
+        },
+      };
+    });
+
+    it.effect("imports SDK messages with real source identity and skips an unchanged retry", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture;
+        yield* Effect.gen(function* () {
+          const scanner = yield* AgentSessionScanner.AgentSessionScanner;
+          const scan = yield* scanner.scan;
+          expect(scan.candidates).toMatchObject([
+            { path: test.session.workspaceRoot, sources: ["muse"], threadCount: 1 },
+          ]);
+          const outcomes = yield* scanner
+            .recentThreads(test.session.workspaceRoot)
+            .pipe(Stream.runCollect);
+          const imported = outcomes[0];
+          expect(imported?._tag).toBe("Importable");
+          if (imported?._tag !== "Importable") throw new Error("Missing import");
+          expect(imported.thread.model).toBe("muse-spark-1.3-contributor");
+          expect(imported.thread.messages.map((message) => message.text)).toEqual([
+            "Fix it",
+            "Fixed",
+          ]);
+          expect(imported.source).toMatchObject({
+            provider: "muse",
+            providerInstanceId: "muse_work",
+            providerSessionId: test.session.sessionId,
+            filePath: test.session.path,
+            size: Buffer.byteLength("opaque native log"),
+          });
+          const calls = test.request.mock.calls.length;
+          const repeated = yield* scanner
+            .recentThreads(test.session.workspaceRoot, [imported.source])
+            .pipe(Stream.runCollect);
+          expect(repeated).toMatchObject([{ _tag: "AlreadyImported", source: imported.source }]);
+          expect(test.request.mock.calls).toHaveLength(calls);
+        }).pipe(Effect.provide(makeScannerTestLayer(test.input)));
+        expect(test.createMuseHost).toHaveBeenCalledWith(
+          expect.objectContaining({
+            binaryPath: "/custom/muse",
+            environment: expect.objectContaining({ XDG_DATA_HOME: test.input.claudeHomePath }),
+          }),
+        );
+        expect(test.close).toHaveBeenCalledTimes(2);
+        expect(test.host.connection.command).not.toHaveBeenCalled();
+      }),
+    );
+
+    it.effect("rejects native history when the durable file changes during paging", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture;
+        test.mutate();
+        const outcomes = yield* runRecentThreadOutcomes({
+          ...test.input,
+          workspaceRoot: test.session.workspaceRoot,
+        });
+        expect(outcomes).toEqual([{ _tag: "Skipped" }]);
+        expect(test.close).toHaveBeenCalledTimes(2);
+      }),
+    );
+
+    it.effect("deduplicates a shared Muse home in favor of its default instance", () =>
+      Effect.gen(function* () {
+        const test = yield* fixture;
+        const outcomes = yield* runRecentThreadOutcomes({
+          ...test.input,
+          workspaceRoot: test.session.workspaceRoot,
+          providerInstances: {
+            ...test.input.providerInstances,
+            [ProviderInstanceId.make("muse")]: {
+              driver: ProviderDriverKind.make("muse"),
+              config: { enabled: true },
+            },
+          },
+        });
+        expect(outcomes).toHaveLength(1);
+        expect(outcomes[0]).toMatchObject({
+          _tag: "Importable",
+          source: { providerInstanceId: "muse" },
+        });
+        expect(test.close).toHaveBeenCalledTimes(3);
+      }),
+    );
+  });
+
   describe("scan", () => {
     it.effect("reads Claude project cwds from transcripts, newest first", () =>
       Effect.gen(function* () {

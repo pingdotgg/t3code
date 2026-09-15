@@ -21,6 +21,31 @@ function activity(payload: Record<string, unknown>): OrchestrationThreadActivity
  * assertions are the tripwire.
  */
 describe("projectActivityPayload", () => {
+  it.each(["reminderChild", "toolCall", "futureWorkflow"])(
+    "preserves the %s native kind without forwarding its full item",
+    (kind) => {
+      const projected = projectActivityPayload(
+        activity({
+          itemType: "dynamic_tool_call",
+          detail: "Native activity detail",
+          data: {
+            item: {
+              kind,
+              childSessionId: "child-session",
+              text: "x".repeat(10_000),
+            },
+          },
+        }),
+      );
+      expect(projected.payload).toEqual({
+        itemType: "dynamic_tool_call",
+        detail: "Native activity detail",
+        data: { item: { kind } },
+      });
+      expect(projectActivityPayload(projected)).toEqual(projected);
+    },
+  );
+
   it("preserves tool attribution (agentId/parentToolUseId) through data slimming", () => {
     const projected = projectActivityPayload(
       activity({

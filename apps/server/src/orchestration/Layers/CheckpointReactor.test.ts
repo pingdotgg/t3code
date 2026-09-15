@@ -1600,88 +1600,92 @@ describe("CheckpointReactor", () => {
     ).toBe(true);
   });
 
-  effectIt.effect("rejects unsupported rewind before changing files, checkpoints, or history", () =>
-    Effect.gen(function* () {
-      const harness = yield* Effect.promise(() =>
-        createHarness({ providerName: ProviderDriverKind.make("antigravity") }),
-      );
-      const threadId = ThreadId.make("thread-1");
-      const createdAt = "2026-01-01T00:00:00.000Z";
-      const checked = yield* Deferred.make<void>();
-      harness.provider.assertConversationRollbackSupported.mockImplementation(() =>
-        Deferred.succeed(checked, undefined).pipe(
-          Effect.andThen(
-            Effect.fail(
-              new ProviderValidationError({
-                operation: "ProviderService.assertConversationRollbackSupported",
-                issue: "Provider 'antigravity' does not support conversation rewind.",
-              }),
+  for (const providerName of ["antigravity", "muse"]) {
+    effectIt.effect(
+      `rejects ${providerName} rewind before changing files, checkpoints, or history`,
+      () =>
+        Effect.gen(function* () {
+          const harness = yield* Effect.promise(() =>
+            createHarness({ providerName: ProviderDriverKind.make(providerName) }),
+          );
+          const threadId = ThreadId.make("thread-1");
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          const checked = yield* Deferred.make<void>();
+          harness.provider.assertConversationRollbackSupported.mockImplementation(() =>
+            Deferred.succeed(checked, undefined).pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ProviderValidationError({
+                    operation: "ProviderService.assertConversationRollbackSupported",
+                    issue: `Provider '${providerName}' does not support conversation rewind.`,
+                  }),
+                ),
+              ),
             ),
-          ),
-        ),
-      );
+          );
 
-      for (const turnCount of [1, 2]) {
-        yield* harness.engine.dispatch({
-          type: "thread.turn.start",
-          commandId: CommandId.make(`cmd-unsupported-rewind-message-${turnCount}`),
-          threadId,
-          message: {
-            messageId: MessageId.make(`message-unsupported-rewind-${turnCount}`),
-            role: "user",
-            text: `Keep message ${turnCount}`,
-            attachments: [],
-          },
-          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-          runtimeMode: "approval-required",
-          createdAt,
-        });
-        yield* harness.engine.dispatch({
-          type: "thread.turn.diff.complete",
-          commandId: CommandId.make(`cmd-unsupported-rewind-diff-${turnCount}`),
-          threadId,
-          turnId: asTurnId(`turn-unsupported-rewind-${turnCount}`),
-          completedAt: createdAt,
-          checkpointRef: checkpointRefForThreadTurn(threadId, turnCount),
-          status: "ready",
-          files: [],
-          checkpointTurnCount: turnCount,
-          createdAt,
-        });
-      }
-      const before = (yield* Effect.promise(() => harness.readModel())).threads.find(
-        (thread) => thread.id === threadId,
-      );
+          for (const turnCount of [1, 2]) {
+            yield* harness.engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make(`cmd-unsupported-rewind-message-${turnCount}`),
+              threadId,
+              message: {
+                messageId: MessageId.make(`message-unsupported-rewind-${turnCount}`),
+                role: "user",
+                text: `Keep message ${turnCount}`,
+                attachments: [],
+              },
+              interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+              runtimeMode: "approval-required",
+              createdAt,
+            });
+            yield* harness.engine.dispatch({
+              type: "thread.turn.diff.complete",
+              commandId: CommandId.make(`cmd-unsupported-rewind-diff-${turnCount}`),
+              threadId,
+              turnId: asTurnId(`turn-unsupported-rewind-${turnCount}`),
+              completedAt: createdAt,
+              checkpointRef: checkpointRefForThreadTurn(threadId, turnCount),
+              status: "ready",
+              files: [],
+              checkpointTurnCount: turnCount,
+              createdAt,
+            });
+          }
+          const before = (yield* Effect.promise(() => harness.readModel())).threads.find(
+            (thread) => thread.id === threadId,
+          );
 
-      yield* harness.engine.dispatch({
-        type: "thread.checkpoint.revert",
-        commandId: CommandId.make("cmd-unsupported-rewind"),
-        threadId,
-        turnCount: 1,
-        createdAt,
-      });
-      yield* Deferred.await(checked);
-      yield* Effect.promise(() => harness.drain());
+          yield* harness.engine.dispatch({
+            type: "thread.checkpoint.revert",
+            commandId: CommandId.make("cmd-unsupported-rewind"),
+            threadId,
+            turnCount: 1,
+            createdAt,
+          });
+          yield* Deferred.await(checked);
+          yield* Effect.promise(() => harness.drain());
 
-      const after = (yield* Effect.promise(() => harness.readModel())).threads.find(
-        (thread) => thread.id === threadId,
-      );
-      expect(after?.checkpoints).toEqual(before?.checkpoints);
-      expect(after?.messages).toEqual(before?.messages);
-      expect(after?.latestTurn).toEqual(before?.latestTurn);
-      expect(after?.activities).toContainEqual(
-        expect.objectContaining({
-          kind: "checkpoint.revert.failed",
-          payload: expect.objectContaining({
-            detail: expect.stringContaining("does not support conversation rewind"),
-          }),
+          const after = (yield* Effect.promise(() => harness.readModel())).threads.find(
+            (thread) => thread.id === threadId,
+          );
+          expect(after?.checkpoints).toEqual(before?.checkpoints);
+          expect(after?.messages).toEqual(before?.messages);
+          expect(after?.latestTurn).toEqual(before?.latestTurn);
+          expect(after?.activities).toContainEqual(
+            expect.objectContaining({
+              kind: "checkpoint.revert.failed",
+              payload: expect.objectContaining({
+                detail: expect.stringContaining("does not support conversation rewind"),
+              }),
+            }),
+          );
+          expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
+          expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
+          expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 2))).toBe(true);
         }),
-      );
-      expect(harness.provider.rollbackConversation).not.toHaveBeenCalled();
-      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v3\n");
-      expect(gitRefExists(harness.cwd, checkpointRefForThreadTurn(threadId, 2))).toBe(true);
-    }),
-  );
+    );
+  }
 
   it.each([
     { commandType: "thread.checkpoint.revert", initializeGit: true },

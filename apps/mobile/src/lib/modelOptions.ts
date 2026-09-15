@@ -61,7 +61,7 @@ function normalizeSelectionOptions(
       };
 }
 
-/** Whether a known Antigravity selection needs setup or a different model. */
+/** Whether a saved dynamic catalog selection needs setup or a different model. */
 export function isModelSelectionUnavailable(
   config: T3ServerConfig | null | undefined,
   selection: ModelSelection | null | undefined,
@@ -75,7 +75,7 @@ export function isModelSelectionUnavailable(
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
   return (
-    driver === "antigravity" &&
+    (driver === "antigravity" || driver === "muse") &&
     (!provider ||
       !provider.enabled ||
       !provider.installed ||
@@ -86,7 +86,7 @@ export function isModelSelectionUnavailable(
 }
 
 /**
- * Keep Antigravity selections when setup or catalog changes make them
+ * Keep Antigravity and Muse selections when setup or catalog changes make them
  * unavailable. Other providers fall through to the server default when they
  * are disabled, missing, or signed out. Without config, keep stored selections.
  */
@@ -102,7 +102,7 @@ export function resolveSelectableModelSelection(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
-  if (driver === "antigravity") {
+  if (driver === "antigravity" || driver === "muse") {
     return selection;
   }
   return provider &&
@@ -158,7 +158,8 @@ export function buildModelOptions(
       !provider.enabled ||
       !provider.installed ||
       provider.auth.status === "unauthenticated" ||
-      (provider.driver === "antigravity" && provider.availability === "unavailable")
+      ((provider.driver === "antigravity" || provider.driver === "muse") &&
+        provider.availability === "unavailable")
     ) {
       continue;
     }
