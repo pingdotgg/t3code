@@ -51,6 +51,7 @@ export function getPullRequestDiffStats(input: {
   totals: { additions: number; deletions: number; changedFiles: number } | null;
   complete: boolean;
 }) {
+  const parsedPaths = new Set(input.files.map(resolveFileDiffPath));
   const loaded = input.files.reduce(
     (total, file) => {
       const stat = input.omittedFileStats.get(resolveFileDiffPath(file));
@@ -66,6 +67,12 @@ export function getPullRequestDiffStats(input: {
     },
     { additions: 0, deletions: 0, changedFiles: 0 },
   );
+  for (const [path, stat] of input.omittedFileStats) {
+    if (parsedPaths.has(path)) continue;
+    loaded.changedFiles++;
+    loaded.additions += stat.additions;
+    loaded.deletions += stat.deletions;
+  }
   // Detail can lag a push. Use one snapshot's counts, never a maximum per field.
   return input.complete ||
     input.totals === null ||

@@ -139,4 +139,26 @@ describe("getPullRequestDiffStats", () => {
       }),
     ).toEqual({ additions: 3, deletions: 2, changedFiles: 1 });
   });
+  it("includes omitted-only files without counting parsed paths twice", () => {
+    const omittedFileStats = new Map([
+      ["example.ts", { path: "example.ts", additions: 80, deletions: 40 }],
+      ["omitted.ts", { path: "omitted.ts", additions: 10, deletions: 5 }],
+    ]);
+    for (const totals of [null, { additions: 200, deletions: 100, changedFiles: 3 }]) {
+      expect(
+        getPullRequestDiffStats({ files: [file], omittedFileStats, totals, complete: true }),
+      ).toEqual({
+        additions: 90,
+        deletions: 45,
+        changedFiles: 2,
+      });
+    }
+    expect(
+      getPullRequestDiffStats({ files: [], omittedFileStats, totals: null, complete: true }),
+    ).toEqual({
+      additions: 90,
+      deletions: 45,
+      changedFiles: 2,
+    });
+  });
 });
