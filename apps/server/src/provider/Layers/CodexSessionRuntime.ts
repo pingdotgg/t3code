@@ -186,8 +186,8 @@ export interface CodexSessionRuntimeOptions {
 export interface CodexSessionRuntimeSendTurnInput {
   readonly input?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier | undefined;
@@ -610,8 +610,8 @@ export function buildTurnStartParams(input: {
   readonly runtimeMode: RuntimeMode;
   readonly prompt?: string;
   readonly attachments?: ReadonlyArray<{
-    readonly type: "image";
-    readonly url: string;
+    readonly type: "localImage";
+    readonly path: string;
   }>;
   readonly model?: string;
   readonly serviceTier?: CodexServiceTier;
