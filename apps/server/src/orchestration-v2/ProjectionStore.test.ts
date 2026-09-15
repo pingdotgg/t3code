@@ -45,12 +45,14 @@ import {
 } from "./ProjectionStore.ts";
 import {
   buildBoundedThreadProjection,
+  bytesOfJson,
   decodeThreadHistoryCursor,
   encodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_COMPACTED_FIELD_CHARS,
   THREAD_HISTORY_CURSOR_MAX_LENGTH,
   THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES,
+  THREAD_HISTORY_MAX_WINDOW_BYTES,
   THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 
@@ -1323,6 +1325,96 @@ it.effect("memory snapshot windows bound payloads deeper than the serializer sta
     assert.strictEqual(fullItem?.type, "dynamic_tool");
     if (fullItem?.type === "dynamic_tool") {
       assert.isAbove(chainDepth(fullItem.input), 6_000);
+    }
+  }).pipe(Effect.provide(projectionStoreMemoryLayer)),
+);
+
+it.effect("memory billing measures deep over-cap rows without recursing the serializer", () =>
+  Effect.gen(function* () {
+    const projectionStore = yield* ProjectionStoreV2;
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:memory-deep-billing");
+    yield* projectionStore.apply({
+      id: EventId.make("event:memory-deep-billing:thread"),
+      type: "thread.created",
+      threadId,
+      occurredAt: now,
+      payload: {
+        createdBy: "user",
+        creationSource: "web",
+        id: threadId,
+        projectId: ProjectId.make("project:memory-deep-billing"),
+        title: "Deep billing",
+        providerInstanceId,
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        activeProviderThreadId: null,
+        lineage: {
+          parentThreadId: null,
+          relationshipToParent: null,
+          rootThreadId: threadId,
+        },
+        forkedFrom: null,
+        createdAt: now,
+        updatedAt: now,
+        archivedAt: null,
+        settledOverride: null,
+        settledAt: null,
+        lastVisitedAt: null,
+        deletedAt: null,
+      },
+    });
+    // ~72 KB of nesting crosses the row byte cap, so window billing must
+    // measure the emitted compaction — doing that on the decoded item feeds
+    // 8,000-deep subtrees to JSON.stringify and overflows the stack. The
+    // emitted-size bill has to go through the encode → stringifyJsonDeep →
+    // depth-splice pipeline that boundRow already uses.
+    let deep: Record<string, unknown> = { leaf: "x" };
+    for (let index = 0; index < 8_000; index += 1) deep = { next: deep };
+    yield* projectionStore.apply({
+      id: EventId.make("event:memory-deep-billing:item"),
+      type: "turn-item.updated",
+      threadId,
+      driver,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("item:memory-deep-billing:1"),
+        threadId,
+        runId: null,
+        nodeId: null,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "dynamic_tool",
+        toolName: "deep_tool",
+        input: deep,
+      },
+    });
+
+    const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+      rowLimit: 75,
+    });
+    assert.strictEqual(windowed.projection.visibleTurnItems.length, 1);
+    const item = windowed.projection.visibleTurnItems[0]!.item;
+    assert.strictEqual(item.type, "dynamic_tool");
+    if (item.type === "dynamic_tool") {
+      let depth = 0;
+      let node: unknown = item.input;
+      while (typeof node === "object" && node !== null && "next" in node) {
+        node = (node as { readonly next: unknown }).next;
+        depth += 1;
+      }
+      assert.isAtMost(depth, 600);
     }
   }).pipe(Effect.provide(projectionStoreMemoryLayer)),
 );
@@ -4076,6 +4168,1200 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
     }
     return { projectionStore, sql, sourceThreadId, targetThreadId };
   });
+
+  const seedForkChain = Effect.fn("seedForkChain")(function* (
+    suffix: string,
+    input: {
+      readonly depth: number;
+      readonly itemsPerThread: number;
+    },
+  ) {
+    const projectionStore = yield* ProjectionStoreV2;
+    const sql = yield* SqlClient.SqlClient;
+    const now = yield* DateTime.now;
+    const nowIso = DateTime.formatIso(now);
+    const projectId = ProjectId.make(`project:fork-chain:${suffix}`);
+    const threadIds = Array.from({ length: input.depth }, (_, index) =>
+      ThreadId.make(`thread:fork-chain:${suffix}:${index}`),
+    );
+    const runIds = Array.from({ length: input.depth }, (_, index) =>
+      RunId.make(`run:fork-chain:${suffix}:${index}`),
+    );
+    const basePayload = {
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access" as const,
+      interactionMode: "default" as const,
+      branch: null,
+      worktreePath: null,
+      activeProviderThreadId: null,
+      createdBy: "user" as const,
+      creationSource: "web" as const,
+      createdAt: now,
+      updatedAt: now,
+      archivedAt: null,
+      settledOverride: null,
+      settledAt: null,
+      lastVisitedAt: null,
+      deletedAt: null,
+    };
+    for (const [index, threadId] of threadIds.entries()) {
+      yield* projectionStore.apply({
+        id: EventId.make(`event:fork-chain:${suffix}:thread-${index}`),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          ...basePayload,
+          id: threadId,
+          projectId,
+          title: `Fork chain ${index}`,
+          lineage: {
+            parentThreadId: index === 0 ? null : threadIds[index - 1]!,
+            relationshipToParent: index === 0 ? null : "fork",
+            rootThreadId: threadIds[0]!,
+          },
+          forkedFrom:
+            index === 0
+              ? null
+              : {
+                  type: "run",
+                  threadId: threadIds[index - 1]!,
+                  runId: runIds[index - 1]!,
+                },
+        },
+      });
+      const runId = runIds[index]!;
+      yield* projectionStore.apply({
+        id: EventId.make(`event:fork-chain:${suffix}:run-${index}`),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId: NodeId.make(`node:fork-chain:${suffix}:${index}`),
+        driver,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make(`message:fork-chain:${suffix}:${index}`),
+          rootNodeId: NodeId.make(`node:fork-chain:${suffix}:${index}`),
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(
+        Array.from({ length: input.itemsPerThread }, (_, itemIndex) => {
+          const ordinal = itemIndex + 1;
+          const id = `turn-item:fork-chain:${suffix}:${index}:${ordinal}`;
+          return {
+            turn_item_id: id,
+            thread_id: threadId,
+            run_id: runId,
+            node_id: null,
+            provider_thread_id: null,
+            provider_turn_id: null,
+            parent_item_id: null,
+            ordinal,
+            type: "command_execution",
+            status: "completed",
+            updated_at: nowIso,
+            payload_json: encodeUnknownJsonString({
+              id,
+              threadId,
+              runId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              input: `command ${ordinal}`,
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            }),
+          };
+        }),
+      )}`;
+    }
+    return { projectionStore, sql, threadIds, runIds };
+  });
+
+  it.effect("shares the window budget across fork ancestors instead of resetting it", () =>
+    Effect.gen(function* () {
+      const suffix = "budget";
+      const depth = 6;
+      const itemsPerThread = 8;
+      const maxWindowRows = 12;
+      const { projectionStore, threadIds } = yield* seedForkChain(suffix, {
+        depth,
+        itemsPerThread,
+      });
+      const leafThreadId = threadIds[depth - 1]!;
+      // Fork markers surface as "synthetic" on the leaf edge but "inherited"
+      // on deeper edges — exclude them by id rather than visibility.
+      const keptItemCount = (rows: ReadonlyArray<{ readonly sourceItemId: unknown }>) =>
+        rows.filter((row) => !String(row.sourceItemId).startsWith("turn-item:fork:")).length;
+
+      // Every segment alone fits the row budget, so a per-ancestor reset would
+      // merge depth × itemsPerThread decoded rows before the wire page trims.
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+        maxWindowRows,
+      });
+      const firstWindowItems = keptItemCount(windowed.projection.visibleTurnItems);
+      assert.isAtMost(firstWindowItems, maxWindowRows);
+      // The leaf segment still keeps its own newest rows.
+      assert.isAtLeast(firstWindowItems, itemsPerThread);
+      assert.isTrue(windowed.hasOlderHistory);
+
+      // Rows in ancestors beyond the remaining budget stay reachable: paging
+      // from the merged window must eventually surface every chain item while
+      // each window still honors the shared row budget.
+      const seen = new Set(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      let cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+      // Anchored windows carry one already-delivered boundary row (the cursor
+      // anchor — for a marker cursor, the resolved fork-cutoff row) on top of
+      // the new content; it does not consume the budget.
+      for (let pages = 0; cursor !== null && pages < depth + 2; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          maxWindowRows,
+          ...anchorWindowOptions(cursor),
+        });
+        assert.isAtMost(keptItemCount(next.projection.visibleTurnItems), maxWindowRows + 1);
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        cursor = page.nextCursor;
+      }
+      assert.isNull(cursor);
+      for (const index of threadIds.keys()) {
+        for (let ordinal = 1; ordinal <= itemsPerThread; ordinal += 1) {
+          assert.isTrue(
+            seen.has(`turn-item:fork-chain:${suffix}:${index}:${ordinal}`),
+            `missing chain item ${index}:${ordinal}`,
+          );
+        }
+      }
+    }),
+  );
+
+  it.effect("bills preserved identity payloads at their emitted size instead of the row cap", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:identity-billing");
+      const runId = RunId.make("run:identity-billing");
+      const rootNodeId = NodeId.make("node:identity-billing");
+      const rootThreadId = threadId;
+      yield* projectionStore.apply({
+        id: EventId.make("event:identity-billing:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:identity-billing"),
+          title: "Identity billing",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:identity-billing:run"),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:identity-billing"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      // Identity members are never truncated by write-time previews, so each
+      // preview below keeps its ~1.5 MiB id — legitimately over the row cap.
+      const oversizedIds = [1, 2, 3].map((ordinal) =>
+        TurnItemId.make(`turn-item:identity-billing:${ordinal}:${"x".repeat(1_500_000)}`),
+      );
+      for (const [index, id] of oversizedIds.entries()) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:identity-billing:item-${index}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: index + 1,
+            status: "completed",
+            title: null,
+            input: "echo",
+            output: "ok",
+            exitCode: 0,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "command_execution",
+          },
+        });
+      }
+      const previewSizes = yield* sql<{
+        readonly preview_bytes: number;
+      }>`
+          SELECT LENGTH(CAST(bounded_json AS BLOB)) AS preview_bytes
+          FROM orchestration_v2_projection_turn_items
+          WHERE thread_id = ${threadId}
+          ORDER BY ordinal
+        `;
+      assert.lengthOf(previewSizes, oversizedIds.length);
+      for (const row of previewSizes) {
+        assert.isAbove(row.preview_bytes, THREAD_HISTORY_MAX_ROW_PAYLOAD_BYTES);
+      }
+
+      // 3 × ~1.5 MiB exceeds the 4 MiB window budget: only the newest two
+      // may ship; the third waits for paging instead of inflating the
+      // window past the byte budget as a capped bill would have allowed.
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      assert.deepEqual(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        [String(oversizedIds[1]!), String(oversizedIds[2]!)],
+      );
+      assert.isTrue(windowed.hasOlderHistory);
+      const emittedBytes = windowed.projection.turnItems.reduce(
+        (total, item) => total + Buffer.byteLength(JSON.stringify(item), "utf8"),
+        0,
+      );
+      assert.isAtMost(emittedBytes, THREAD_HISTORY_MAX_WINDOW_BYTES);
+
+      // The dropped row stays reachable: anchored pages surface one
+      // oversized identity at a time under the byte budget.
+      const seen = new Set(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      let cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+      for (let pages = 0; cursor !== null && pages < oversizedIds.length + 2; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: 75,
+          ...anchorWindowOptions(cursor),
+        });
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        cursor = page.nextCursor;
+      }
+      assert.isNull(cursor);
+      assert.deepEqual([...seen].sort(), oversizedIds.map(String).sort());
+    }),
+  );
+
+  it.effect("pages past an oversized anchor row into fork ancestry", () =>
+    Effect.gen(function* () {
+      const suffix = "strand";
+      const { projectionStore, threadIds } = yield* seedForkChain(suffix, {
+        depth: 2,
+        itemsPerThread: 1,
+      });
+      const leafThreadId = threadIds[1]!;
+      const leafRunId = RunId.make(`run:fork-chain:${suffix}:1`);
+      const now = yield* DateTime.now;
+      // A preserved identity member inflates the leaf's only row past the
+      // whole window byte budget. Billing the anchor row as spent budget would
+      // skip every ancestor on the next page and dead-end the cursor on an
+      // empty page — the anchor is delivered boundary, not page content.
+      const giantItemId = TurnItemId.make(`turn-item:fork-chain:${suffix}:1:1`);
+      yield* projectionStore.apply({
+        id: EventId.make("event:fork-strand:leaf-giant"),
+        type: "turn-item.updated",
+        threadId: leafThreadId,
+        runId: leafRunId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: giantItemId,
+          threadId: leafThreadId,
+          runId: leafRunId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: TurnItemId.make(
+            `turn-item:fork-strand:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES + 100)}`,
+          ),
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          input: "echo",
+          output: "ok",
+          exitCode: 0,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+        },
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+      });
+      // The oversized leaf row ships alone: it is the only row that fits the
+      // single-over-cap reachability slot.
+      assert.deepEqual(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        [String(giantItemId)],
+      );
+      assert.isTrue(windowed.hasOlderHistory);
+
+      const seen = new Set(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      let cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+      for (let pages = 0; cursor !== null && pages < 6; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          ...anchorWindowOptions(cursor),
+        });
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        cursor = page.nextCursor;
+      }
+      assert.isNull(cursor);
+      assert.isTrue(seen.has(`turn-item:fork-chain:${suffix}:0:1`), "missing ancestor item");
+      assert.isTrue(seen.has(String(giantItemId)), "missing oversized anchor item");
+    }),
+  );
+
+  it.effect("emits only the single oversized progress row below an anchor", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:below-anchor-budget");
+      const runId = RunId.make("run:below-anchor-budget");
+      const rootNodeId = NodeId.make("node:below-anchor-budget");
+      yield* projectionStore.apply({
+        id: EventId.make("event:below-anchor-budget:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:below-anchor-budget"),
+          title: "Below-anchor budget",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:below-anchor-budget:run"),
+        type: "run.created",
+        threadId,
+        runId,
+        nodeId: rootNodeId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: runId,
+          threadId,
+          ordinal: 1,
+          providerInstanceId,
+          modelSelection,
+          providerThreadId: null,
+          userMessageId: MessageId.make("message:below-anchor-budget"),
+          rootNodeId,
+          activeAttemptId: null,
+          status: "completed",
+          requestedAt: now,
+          startedAt: now,
+          completedAt: now,
+          checkpointId: null,
+          contextHandoffId: null,
+        },
+      });
+      // One oversized row sits below three ordinary rows. Anchored reads keep
+      // the anchor row for boundary location plus the one row below it so the
+      // page can progress — the emitted page must carry only that single
+      // oversized row, never the anchor again.
+      const giantParentId = TurnItemId.make(
+        `turn-item:below-anchor-budget:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES + 100)}`,
+      );
+      for (let ordinal = 1; ordinal <= 4; ordinal += 1) {
+        const id = TurnItemId.make(`turn-item:below-anchor-budget:${ordinal}`);
+        yield* projectionStore.apply({
+          id: EventId.make(`event:below-anchor-budget:item-${ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          runId,
+          nodeId: rootNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id,
+            threadId,
+            runId,
+            nodeId: rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: ordinal === 1 ? giantParentId : null,
+            ordinal,
+            status: "completed",
+            title: null,
+            input: "echo",
+            output: "ok",
+            exitCode: 0,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "command_execution",
+          },
+        });
+      }
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+      });
+      // The oversized first row exceeds the remaining byte budget: only the
+      // newest three rows ship.
+      const expectedSmallIds = [2, 3, 4].map(
+        (ordinal) => `turn-item:below-anchor-budget:${ordinal}`,
+      );
+      assert.deepEqual(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        expectedSmallIds,
+      );
+      assert.isTrue(windowed.hasOlderHistory);
+      const windowBytes = windowed.projection.turnItems.reduce(
+        (total, item) => total + bytesOfJson(item),
+        0,
+      );
+      assert.isAtMost(windowBytes, THREAD_HISTORY_MAX_WINDOW_BYTES);
+
+      // Page back through the anchor: the first page emits the rows below it
+      // and the oversized row surfaces on the following page, still inside the
+      // reachability slot — never stranded, never inflating a kept window.
+      const cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+      const anchored = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 75,
+        ...anchorWindowOptions(cursor!),
+      });
+      const page = selectHistoryPageFromCursor({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+        items: anchored.projection.visibleTurnItems,
+        cursor: cursor!,
+        snapshotSequence: anchored.snapshotSequence,
+        hasOlderHistory: anchored.hasOlderHistory,
+      });
+      assert.deepEqual(
+        page.items.map((row) => String(row.sourceItemId)),
+        [`turn-item:below-anchor-budget:1`],
+      );
+      // The oversized row was the oldest eligible row — history is exhausted.
+      assert.isNull(page.nextCursor);
+    }),
+  );
+
+  it.effect("bills undelivered equal-ordinal siblings against the shared window budget", () =>
+    Effect.gen(function* () {
+      const suffix = "sibbill";
+      const { projectionStore, threadIds } = yield* seedForkChain(suffix, {
+        depth: 2,
+        itemsPerThread: 1,
+      });
+      const ancestorThreadId = threadIds[0]!;
+      const leafThreadId = threadIds[1]!;
+      const ancestorRunId = RunId.make(`run:fork-chain:${suffix}:0`);
+      const leafRunId = RunId.make(`run:fork-chain:${suffix}:1`);
+      const now = yield* DateTime.now;
+      const giantParentId = TurnItemId.make(
+        `turn-item:fork-sib:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES + 100)}`,
+      );
+      const inflate = (input: {
+        readonly eventId: string;
+        readonly itemId: string;
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+      }) =>
+        projectionStore.apply({
+          id: EventId.make(input.eventId),
+          type: "turn-item.updated",
+          threadId: input.threadId,
+          runId: input.runId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(input.itemId),
+            threadId: input.threadId,
+            runId: input.runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: giantParentId,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            input: "echo",
+            output: "ok",
+            exitCode: 0,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "command_execution",
+          },
+        });
+      // Two equal-ordinal leaf rows — the anchor (":1:1" sorts newer) and an
+      // undelivered sibling (":1:0") below it — plus an oversized ancestor
+      // row. Exempting every same-ordinal row from the shared budget lets the
+      // ancestor ride along: three >budget payloads in one window against
+      // the anchor-plus-progress floor.
+      const anchorItemId = `turn-item:fork-chain:${suffix}:1:1`;
+      const siblingItemId = `turn-item:fork-chain:${suffix}:1:0`;
+      const ancestorItemId = `turn-item:fork-chain:${suffix}:0:1`;
+      yield* inflate({
+        eventId: "event:fork-sib:anchor",
+        itemId: anchorItemId,
+        threadId: leafThreadId,
+        runId: leafRunId,
+      });
+      yield* inflate({
+        eventId: "event:fork-sib:sibling",
+        itemId: siblingItemId,
+        threadId: leafThreadId,
+        runId: leafRunId,
+      });
+      yield* inflate({
+        eventId: "event:fork-sib:ancestor",
+        itemId: ancestorItemId,
+        threadId: ancestorThreadId,
+        runId: ancestorRunId,
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+      });
+      // Each row alone exceeds the byte budget, so the newest leaf row ships
+      // by itself and becomes the next page's anchor.
+      assert.deepEqual(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        [anchorItemId],
+      );
+      assert.isTrue(windowed.hasOlderHistory);
+      const cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+
+      const anchored = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+        ...anchorWindowOptions(cursor!),
+      });
+      // The undelivered sibling bills the whole remaining budget; the
+      // oversized ancestor row waits for the next page instead of inflating
+      // this window to three >budget payloads.
+      assert.deepEqual(
+        new Set(anchored.projection.visibleTurnItems.map((row) => String(row.sourceItemId))),
+        new Set([anchorItemId, siblingItemId]),
+      );
+
+      // The skipped ancestor stays reachable: page forward until the cursor
+      // dies and confirm every row arrives.
+      const seen = new Set([anchorItemId]);
+      const anchoredPage = selectHistoryPageFromCursor({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+        items: anchored.projection.visibleTurnItems,
+        cursor: cursor!,
+        snapshotSequence: anchored.snapshotSequence,
+        hasOlderHistory: anchored.hasOlderHistory,
+      });
+      for (const item of anchoredPage.items) {
+        seen.add(String(item.sourceItemId));
+      }
+      let nextCursor = anchoredPage.nextCursor;
+      for (let pages = 0; nextCursor !== null && pages < 6; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          ...anchorWindowOptions(nextCursor),
+        });
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor: nextCursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        nextCursor = page.nextCursor;
+      }
+      assert.isNull(nextCursor);
+      assert.isTrue(seen.has(siblingItemId), "missing equal-ordinal sibling");
+      assert.isTrue(seen.has(ancestorItemId), "missing oversized ancestor item");
+    }),
+  );
+
+  it.effect("bills equal-ordinal siblings in stored UTF-8 order, not UTF-16", () =>
+    Effect.gen(function* () {
+      const suffix = "u8bill";
+      const { projectionStore, sql, threadIds, runIds } = yield* seedForkChain(suffix, {
+        depth: 3,
+        itemsPerThread: 1,
+      });
+      const rootThreadId = threadIds[0]!;
+      const middleThreadId = threadIds[1]!;
+      const leafThreadId = threadIds[2]!;
+      const rootRunId = runIds[0]!;
+      const middleRunId = runIds[1]!;
+      const now = yield* DateTime.now;
+      const giantParentId = TurnItemId.make(
+        `turn-item:fork-u8:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES + 100)}`,
+      );
+      // The equal-ordinal pair lives in the MIDDLE segment: the bug needs the
+      // anchor-owning segment's spent to gate a deeper ancestor's budget. A
+      // leaf-side anchor would strand behind the leaf's own truncation.
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${middleThreadId}`;
+      const inflate = (input: {
+        readonly eventId: string;
+        readonly itemId: string;
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly oversized?: boolean;
+      }) =>
+        projectionStore.apply({
+          id: EventId.make(input.eventId),
+          type: "turn-item.updated",
+          threadId: input.threadId,
+          runId: input.runId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(input.itemId),
+            threadId: input.threadId,
+            runId: input.runId,
+            nodeId: null,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: input.oversized === false ? null : giantParentId,
+            ordinal: 1,
+            status: "completed",
+            title: null,
+            input: "echo",
+            output: "ok",
+            exitCode: 0,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "command_execution",
+          },
+        });
+      // The anchor's id ends in U+10000 — UTF-8 bytes F0 90 80 80, the
+      // largest stored id in its ordinal group — but its UTF-16 lead unit
+      // (D800) sorts BELOW the sibling's U+E000 (E000). Comparing ids as
+      // UTF-16 code units crowns the sibling as the boundary: the small
+      // anchor is billed instead, the oversized sibling is exempted, and
+      // enough budget remains for the root's oversized row to ride along —
+      // three >budget payloads in one window.
+      const anchorItemId = `turn-item:u8:${suffix}:𐀀`;
+      const siblingItemId = `turn-item:u8:${suffix}:`;
+      const ancestorItemId = `turn-item:fork-chain:${suffix}:0:1`;
+      yield* inflate({
+        eventId: "event:fork-u8:anchor",
+        itemId: anchorItemId,
+        threadId: middleThreadId,
+        runId: middleRunId,
+        oversized: false,
+      });
+      yield* inflate({
+        eventId: "event:fork-u8:sibling",
+        itemId: siblingItemId,
+        threadId: middleThreadId,
+        runId: middleRunId,
+      });
+      yield* inflate({
+        eventId: "event:fork-u8:ancestor",
+        itemId: ancestorItemId,
+        threadId: rootThreadId,
+        runId: rootRunId,
+      });
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+      });
+      const cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+
+      const anchored = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+        ...anchorWindowOptions(cursor!),
+      });
+      const anchoredIds = new Set(
+        anchored.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      // The oversized sibling consumes the budget; the root's oversized row
+      // waits for the next page instead of inflating this window past the
+      // anchor-plus-progress floor.
+      assert.isTrue(anchoredIds.has(siblingItemId), "missing progress row below the anchor");
+      assert.isFalse(
+        anchoredIds.has(ancestorItemId),
+        "oversized ancestor row joined the window while the sibling was exempted",
+      );
+
+      // The skipped ancestor stays reachable: page forward until the cursor
+      // dies and confirm every row arrives.
+      const seen = new Set(anchoredIds);
+      const anchoredPage = selectHistoryPageFromCursor({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+        items: anchored.projection.visibleTurnItems,
+        cursor: cursor!,
+        snapshotSequence: anchored.snapshotSequence,
+        hasOlderHistory: anchored.hasOlderHistory,
+      });
+      for (const item of anchoredPage.items) {
+        seen.add(String(item.sourceItemId));
+      }
+      let nextCursor = anchoredPage.nextCursor;
+      for (let pages = 0; nextCursor !== null && pages < 6; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          ...anchorWindowOptions(nextCursor),
+        });
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor: nextCursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        nextCursor = page.nextCursor;
+      }
+      assert.isNull(nextCursor);
+      assert.isTrue(seen.has(ancestorItemId), "missing oversized ancestor item");
+    }),
+  );
+
+  it.effect("bills equal-ordinal rows whose decoded ids collide with the anchor's", () =>
+    Effect.gen(function* () {
+      const suffix = "u8dup";
+      const { projectionStore, sql, threadIds, runIds } = yield* seedForkChain(suffix, {
+        depth: 3,
+        itemsPerThread: 1,
+      });
+      const rootThreadId = threadIds[0]!;
+      const middleThreadId = threadIds[1]!;
+      const leafThreadId = threadIds[2]!;
+      const rootRunId = runIds[0]!;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      // Two stored middle-segment rows decode to the same item id — the shape
+      // produced when a driver's binding folds distinct written bytes to one
+      // decoded string (e.g. Bun-written lone surrogates read under Node).
+      // Both are too large for one wire page, so the first page stops at the
+      // fork marker and the next read treats the middle segment's whole
+      // collision group as content below the boundary. The boundary pick is
+      // the stored-max row ("b"); the stored-min twin ("a") alone fills the
+      // byte budget, so exempting the wrong row — or the whole group — lets
+      // the root's oversized row ride along inside the same window.
+      const giantParentId = `turn-item:fork-u8dup:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES + 100)}`;
+      yield* sql`DELETE FROM orchestration_v2_projection_turn_items WHERE thread_id = ${middleThreadId}`;
+      const twinItemId = `turn-item:u8dup:${suffix}:twin`;
+      for (const storedSuffix of ["a", "b"]) {
+        const itemId = `turn-item:u8dup:${suffix}:twin:${storedSuffix}`;
+        const parentItemId =
+          storedSuffix === "a"
+            ? giantParentId
+            : `turn-item:fork-u8dup:${"p".repeat(THREAD_HISTORY_MAX_WINDOW_BYTES / 2)}`;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert([
+          {
+            turn_item_id: itemId,
+            thread_id: middleThreadId,
+            run_id: runIds[1]!,
+            node_id: null,
+            provider_thread_id: null,
+            provider_turn_id: null,
+            parent_item_id: null,
+            ordinal: 1,
+            type: "command_execution",
+            status: "completed",
+            updated_at: nowIso,
+            payload_json: encodeUnknownJsonString({
+              id: twinItemId,
+              threadId: middleThreadId,
+              runId: runIds[1],
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId,
+              ordinal: 1,
+              status: "completed",
+              title: null,
+              input: "echo",
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            }),
+          },
+        ])}`;
+      }
+      const ancestorItemId = `turn-item:fork-chain:${suffix}:0:1`;
+      yield* projectionStore.apply({
+        id: EventId.make("event:fork-u8dup:ancestor"),
+        type: "turn-item.updated",
+        threadId: rootThreadId,
+        runId: rootRunId,
+        driver,
+        occurredAt: now,
+        payload: {
+          id: TurnItemId.make(ancestorItemId),
+          threadId: rootThreadId,
+          runId: rootRunId,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: TurnItemId.make(giantParentId),
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          input: "echo",
+          output: "ok",
+          exitCode: 0,
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          type: "command_execution",
+        },
+      });
+
+      // Page forward until a window anchors on the twin group: the boundary
+      // segment then owns both colliding rows. If every row matching the
+      // anchor's decoded id were exempted, the whole group would bill zero
+      // and the root's oversized row would ride along on the same page.
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+      });
+      const firstPage = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      });
+      const seen = new Set(
+        firstPage.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      let cursor = firstPage.historyCursor;
+      let twinPageHadAncestor = false;
+      for (let pages = 0; cursor !== null && pages < 8; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          ...anchorWindowOptions(cursor),
+        });
+        const ids = new Set(
+          next.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+        );
+        // Both twins decode to the same item id, so count occurrences: the
+        // anchor alone is exempt, but a second retained twin is billed content
+        // whose bytes leave no room for the ancestor row.
+        const twinRows = next.projection.visibleTurnItems.filter(
+          (row) => String(row.sourceItemId) === twinItemId,
+        ).length;
+        if (twinRows > 1 && ids.has(ancestorItemId)) twinPageHadAncestor = true;
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        cursor = page.nextCursor;
+      }
+      assert.isFalse(
+        twinPageHadAncestor,
+        "oversized ancestor row shared a page with the whole exempted twin group",
+      );
+      assert.isNull(cursor);
+      assert.isTrue(seen.has(twinItemId), "missing colliding twin row");
+      assert.isTrue(seen.has(ancestorItemId), "missing oversized ancestor item");
+    }),
+  );
+
+  it.effect("bills rolled-back ancestor rows that the fork still inherits", () =>
+    Effect.gen(function* () {
+      const suffix = "rolledbudget";
+      const depth = 3;
+      const itemsPerThread = 4;
+      // The middle segment must keep its whole eligible set — a truncated
+      // local window stops traversal before ancestor budgeting runs at all.
+      const rolledItems = 4;
+      const maxWindowRows = 12;
+      const { projectionStore, sql, threadIds } = yield* seedForkChain(suffix, {
+        depth,
+        itemsPerThread,
+      });
+      const leafThreadId = threadIds[2]!;
+      const middleThreadId = threadIds[1]!;
+      const rolledRunId = `run:fork-chain:${suffix}:1`;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      // Roll back the middle thread's fork run after the leaf forked: its rows
+      // are hidden from the middle thread's own timeline but remain in the
+      // leaf's inherited prefix — billing the locally-visible set would exempt
+      // them from the shared budget and let the root ancestor ride.
+      yield* sql`
+        UPDATE orchestration_v2_projection_runs
+        SET status = 'rolled_back',
+          payload_json = json_set(payload_json, '$.status', 'rolled_back')
+        WHERE run_id = ${rolledRunId} AND thread_id = ${middleThreadId}
+      `;
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(
+        Array.from({ length: rolledItems }, (_, itemIndex) => {
+          const ordinal = itemsPerThread + itemIndex + 1;
+          const id = `turn-item:fork-chain:${suffix}:1:r${ordinal}`;
+          return {
+            turn_item_id: id,
+            thread_id: middleThreadId,
+            run_id: rolledRunId,
+            node_id: null,
+            provider_thread_id: null,
+            provider_turn_id: null,
+            parent_item_id: null,
+            ordinal,
+            type: "command_execution",
+            status: "completed",
+            updated_at: nowIso,
+            payload_json: encodeUnknownJsonString({
+              id,
+              threadId: middleThreadId,
+              runId: rolledRunId,
+              nodeId: null,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: null,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              input: `rolled command ${ordinal}`,
+              output: "ok",
+              exitCode: 0,
+              startedAt: nowIso,
+              completedAt: nowIso,
+              updatedAt: nowIso,
+              type: "command_execution",
+            }),
+          };
+        }),
+      )}`;
+
+      const keptItemCount = (rows: ReadonlyArray<{ readonly sourceItemId: unknown }>) =>
+        rows.filter((row) => !String(row.sourceItemId).startsWith("turn-item:fork:")).length;
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+        rowLimit: 75,
+        maxWindowRows,
+      });
+      // Leaf 4 + middle 8 (4 normal + 4 rolled-back, all kept) = 12; the
+      // root's rows must wait for the next page instead of pushing the merged
+      // window past the shared budget.
+      assert.isAtMost(keptItemCount(windowed.projection.visibleTurnItems), maxWindowRows);
+      assert.isTrue(windowed.hasOlderHistory);
+
+      const seen = new Set(
+        windowed.projection.visibleTurnItems.map((row) => String(row.sourceItemId)),
+      );
+      let cursor = buildBoundedThreadProjection({
+        policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined, maxItems: 75 },
+        projection: windowed.projection,
+        snapshotSequence: windowed.snapshotSequence,
+        hasOlderHistory: windowed.hasOlderHistory,
+      }).historyCursor;
+      assert.isNotNull(cursor);
+      for (let pages = 0; cursor !== null && pages < depth + 2; pages += 1) {
+        const next = yield* projectionStore.getThreadSnapshotWindow(leafThreadId, {
+          rowLimit: 75,
+          maxWindowRows,
+          ...anchorWindowOptions(cursor),
+        });
+        assert.isAtMost(keptItemCount(next.projection.visibleTurnItems), maxWindowRows + 1);
+        const page = selectHistoryPageFromCursor({
+          policy: { ...THREAD_HISTORY_PAGE_POLICY, maxUserTurns: undefined },
+          items: next.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: next.snapshotSequence,
+          hasOlderHistory: next.hasOlderHistory,
+        });
+        for (const item of page.items) {
+          seen.add(String(item.sourceItemId));
+        }
+        cursor = page.nextCursor;
+      }
+      assert.isNull(cursor);
+      // Every chain row arrives: leaf items, the middle thread's normal and
+      // rolled-back items, and the root's items.
+      const expected = [
+        ...threadIds.flatMap((_, index) =>
+          Array.from(
+            { length: itemsPerThread },
+            (_, itemIndex) => `turn-item:fork-chain:${suffix}:${index}:${itemIndex + 1}`,
+          ),
+        ),
+        ...Array.from(
+          { length: rolledItems },
+          (_, itemIndex) => `turn-item:fork-chain:${suffix}:1:r${itemsPerThread + itemIndex + 1}`,
+        ),
+      ];
+      for (const id of expected) {
+        assert.isTrue(seen.has(id), `missing chain item ${id}`);
+      }
+    }),
+  );
 
   it.effect("keeps earlier runs' rows reachable when source item ordinals are not monotonic", () =>
     Effect.gen(function* () {
@@ -6899,6 +8185,182 @@ it.layer(TestLayer)("ProjectionStoreV2", (it) => {
           .pipe(Effect.flip);
         assert.instanceOf(missing, ProjectionStoreThreadNotFoundError);
       }),
+  );
+
+  it.effect("keeps out-of-window checkpoints reachable through the legacy and context reads", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread:checkpoint-window");
+      const oldRunId = RunId.make("run:checkpoint-window:old");
+      const newRunId = RunId.make("run:checkpoint-window:new");
+      const oldNodeId = NodeId.make("node:checkpoint-window:old");
+      const newNodeId = NodeId.make("node:checkpoint-window:new");
+      const scopeId = CheckpointScopeId.make("scope:checkpoint-window:old");
+      const checkpointId = CheckpointId.make("checkpoint:checkpoint-window:old");
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-window:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:checkpoint-window"),
+          title: "Checkpoint window reachability",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: {
+            parentThreadId: null,
+            relationshipToParent: null,
+            rootThreadId: threadId,
+          },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      for (const [runId, nodeId, ordinal] of [
+        [oldRunId, oldNodeId, 1],
+        [newRunId, newNodeId, 2],
+      ] as const) {
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-window:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId,
+          nodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: runId,
+            threadId,
+            ordinal,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:checkpoint-window:${ordinal}`),
+            rootNodeId: nodeId,
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      }
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-window:scope"),
+        type: "checkpoint-scope.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: scopeId,
+          threadId,
+          runId: oldRunId,
+          nodeId: oldNodeId,
+          parentScopeId: null,
+          providerThreadId: null,
+          kind: "root_run",
+          ordinalWithinParent: 0,
+          advancesAppRunCount: true,
+          cwd: "/repo/worktree",
+          createdAt: now,
+        },
+      });
+      yield* projectionStore.apply({
+        id: EventId.make("event:checkpoint-window:checkpoint"),
+        type: "checkpoint.captured",
+        threadId,
+        occurredAt: now,
+        payload: {
+          id: checkpointId,
+          threadId,
+          scopeId,
+          runId: oldRunId,
+          nodeId: oldNodeId,
+          parentCheckpointId: null,
+          ordinalWithinScope: 1,
+          appRunOrdinal: 1,
+          ref: CheckpointRef.make("refs/t3/checkpoint-window/1"),
+          status: "ready",
+          files: [],
+          capturedAt: now,
+        },
+      });
+      // One turn item on the old run, then a full window of newer rows on the
+      // new run: the row cap drops the old item, which drops its run from the
+      // hydration cohort and with it the checkpoint scope and checkpoint.
+      for (let ordinal = 1; ordinal <= 6; ordinal += 1) {
+        const isOld = ordinal === 1;
+        yield* projectionStore.apply({
+          id: EventId.make(`event:checkpoint-window:item:${ordinal}`),
+          type: "turn-item.updated",
+          threadId,
+          runId: isOld ? oldRunId : newRunId,
+          nodeId: isOld ? oldNodeId : newNodeId,
+          driver,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make(`item:checkpoint-window:${ordinal}`),
+            threadId,
+            runId: isOld ? oldRunId : newRunId,
+            nodeId: isOld ? oldNodeId : newNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal,
+            status: "completed",
+            title: null,
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            type: "command_execution",
+            input: `command ${ordinal}`,
+            output: "ok",
+            exitCode: 0,
+          },
+        });
+      }
+
+      const windowed = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: 4,
+      });
+      assert.isTrue(windowed.hasOlderHistory);
+      assert.isFalse(
+        windowed.projection.turnItems.some(
+          (item) => String(item.id) === "item:checkpoint-window:1",
+        ),
+      );
+      assert.isFalse(windowed.projection.checkpointScopes.some((scope) => scope.id === scopeId));
+      assert.isFalse(
+        windowed.projection.checkpoints.some((checkpoint) => checkpoint.id === checkpointId),
+      );
+
+      // Clients that never opted into bounded snapshots take the unbounded
+      // projection: every stored row and every rewind target stays visible.
+      const full = yield* projectionStore.getThreadProjection(threadId);
+      assert.isTrue(full.turnItems.some((item) => String(item.id) === "item:checkpoint-window:1"));
+      assert.isTrue(full.checkpoints.some((checkpoint) => checkpoint.id === checkpointId));
+      // Opted-in clients resolve out-of-window rewind targets through the
+      // dedicated context read, which lists every checkpoint metadata row.
+      const context = yield* projectionStore.getCheckpointContext(threadId);
+      assert.isTrue(context.checkpoints.some((checkpoint) => checkpoint.id === checkpointId));
+    }),
   );
 
   it.effect("builds shell snapshots without decoding full turn item payloads", () =>
