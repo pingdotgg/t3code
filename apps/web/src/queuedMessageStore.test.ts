@@ -70,6 +70,43 @@ describe("queuedMessageStore", () => {
     expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([first]);
   });
 
+  it("a removed message cannot be dispatched from a stale queue snapshot", () => {
+    const { enqueue, remove, take } = useQueuedMessageStore.getState();
+    const message = enqueue("thread-a", makeMessage("remove me"));
+    const other = enqueue("thread-b", makeMessage("keep me"));
+
+    remove("thread-a", message.id);
+
+    expect(take("thread-a", message.id, "next-tool")).toBeNull();
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toBeUndefined();
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-b"]).toEqual([other]);
+  });
+
+  it("returns the full message for editing while leaving the next message queued", () => {
+    const { enqueue, remove } = useQueuedMessageStore.getState();
+    const image = {
+      type: "image" as const,
+      id: "image-1",
+      name: "screenshot.png",
+      mimeType: "image/png",
+      sizeBytes: 5,
+      previewUrl: "blob:queued-image",
+      file: new File(["image"], "screenshot.png", { type: "image/png" }),
+    };
+    const message = enqueue("thread-a", {
+      ...makeMessage("edit with attachment"),
+      images: [image],
+    });
+    const next = enqueue("thread-a", makeMessage("send later"));
+
+    const editable = remove("thread-a", message.id);
+
+    expect(editable).toEqual(message);
+    expect(editable?.images[0]?.file).toBe(image.file);
+    expect(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"]).toEqual([next]);
+    expect(remove("thread-a", message.id)).toBeNull();
+  });
+
   it("holdAtFront returns a failed message to the head, held", () => {
     const { enqueue, take, holdAtFront } = useQueuedMessageStore.getState();
     const first = enqueue("thread-a", makeMessage("first"));
