@@ -1019,20 +1019,19 @@ export const BackgroundActivitySettings = Schema.Struct({
 export type BackgroundActivitySettings = typeof BackgroundActivitySettings.Type;
 
 /**
+ * How assistant text reaches clients while a turn runs.
+ * - `turn`: hold the whole message until the turn finishes or pauses.
+ * - `paragraph`: deliver each finished paragraph or closed code block.
+ */
+export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph"]);
+export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
+
+/**
  * Server settings a project may override. Every other server setting is
  * environment-wide: providers, keybindings, observability, device hosts,
  * background activity, theme. UI, search and the write planner derive
  * eligibility from this list, so adding a key here is the whole opt-in.
  */
-/**
- * How assistant text reaches clients while a turn runs.
- * - `turn`: hold the whole message until the turn finishes or pauses.
- * - `paragraph`: deliver each finished paragraph or closed code block.
- * - `token`: forward every provider delta. Legacy, kept for compatibility.
- */
-export const ResponseStreamingMode = Schema.Literals(["turn", "paragraph", "token"]);
-export type ResponseStreamingMode = typeof ResponseStreamingMode.Type;
-
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "defaultModelSelection",
   "defaultRuntimeMode",
@@ -1079,10 +1078,6 @@ export const ProjectSettingsOverrides = Schema.Struct({
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 export const ServerSettings = Schema.Struct({
-  // How assistant text reaches clients during a turn. Deliberately a fresh
-  // key (was `enableLegacyTokenStreaming`, before that
-  // `enableAssistantStreaming`): decoding drops the old key, so everyone,
-  // including prior token-streaming opt-ins, resets to the paragraph default.
   responseStreamingMode: ResponseStreamingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("paragraph" as const)),
   ),
