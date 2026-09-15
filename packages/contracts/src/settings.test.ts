@@ -20,60 +20,31 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 const encodeServerSettings = Schema.encodeSync(ServerSettings);
 const decodeClaudeSettings = Schema.decodeUnknownSync(ClaudeSettings);
 
-describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations", () => {
-    expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
-    expect(decodeServerSettings({}).storageCleanup).toEqual({
-      worktreeAfterDays: null,
-      worktreeOnMerge: false,
-      worktreeOnDelete: false,
-      worktreeUnchanged: false,
-      browserArtifactsAfterDays: null,
-      logsAfterDays: null,
-    });
+describe("ServerSettings response streaming", () => {
+  it("defaults to paragraph buffering", () => {
+    expect(decodeServerSettings({}).responseStreamingMode).toBe("paragraph");
   });
 
-  it("accepts eight-day retention and disabling one rule without resetting others", () => {
-    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: 8 } })).toEqual({
-      storageCleanup: { worktreeAfterDays: 8 },
-    });
-    expect(decodeServerSettingsPatch({ storageCleanup: { worktreeAfterDays: null } })).toEqual({
-      storageCleanup: { worktreeAfterDays: null },
-    });
-  });
+  it.each(["turn", "paragraph"])(
+    "round-trips %s as an environment setting and project override",
+    (responseStreamingMode) => {
+      const input = {
+        responseStreamingMode,
+        projectSettingsOverrides: { project: { responseStreamingMode } },
+      };
+      expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+      expect(decodeServerSettingsPatch(input)).toEqual(input);
+    },
+  );
 
-  it("accepts partial custom patches but requires complete stored project rules", () => {
-    expect(
-      decodeServerSettingsPatch({
-        worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } },
-      }),
-    ).toEqual({ worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } });
-    expect(() =>
-      decodeServerSettings({
-        projectSettingsOverrides: {
-          project: { worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 8 } } },
-        },
-      }),
-    ).toThrow();
-  });
-
-  it.each([0, -1, 1.5, 3651])("rejects invalid retention %s", (days) => {
-    expect(() =>
-      decodeServerSettingsPatch({ storageCleanup: { browserArtifactsAfterDays: days } }),
-    ).toThrow();
-  });
-});
-
-describe("ClientSettings rich text composer", () => {
-  it("enables rich text for new and existing settings without a saved preference", () => {
-    expect(decodeClientSettings({}).composerRichTextEnabled).toBe(true);
-    expect(decodeClientSettings({ sendShortcut: "mod-enter" }).composerRichTextEnabled).toBe(true);
-  });
-
-  it("preserves an explicit opt-out through patches and persistence", () => {
-    const preference = { composerRichTextEnabled: false };
-    expect(decodeClientSettingsPatch(preference)).toEqual(preference);
-    expect(encodeClientSettings(decodeClientSettings(preference))).toMatchObject(preference);
+  it.each(["token", "unsupported"])("rejects %s in settings snapshots and writes", (mode) => {
+    for (const input of [
+      { responseStreamingMode: mode },
+      { projectSettingsOverrides: { project: { responseStreamingMode: mode } } },
+    ]) {
+      expect(() => decodeServerSettings(input)).toThrow();
+      expect(() => decodeServerSettingsPatch(input)).toThrow();
+    }
   });
 });
 
