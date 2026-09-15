@@ -215,21 +215,16 @@ export function splitBufferedAssistantText(text: string): { ready: string; rest:
   let lineStart = 0;
   for (;;) {
     const newline = text.indexOf("\n", lineStart);
-    if (newline === -1) {
-      if (
-        openFence === null &&
-        lineStart > 0 &&
-        LIST_ITEM_START_PATTERN.test(text.slice(lineStart))
-      ) {
-        boundary = lineStart;
-      }
-      break;
-    }
-    const line = text.slice(lineStart, newline).replace(/[ \t\r]+$/, "");
-    const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
+    const line = text
+      .slice(lineStart, newline === -1 ? text.length : newline)
+      .replace(/[ \t\r]+$/, "");
     if (openFence === null && lineStart > 0 && LIST_ITEM_START_PATTERN.test(line)) {
       boundary = lineStart;
     }
+    if (newline === -1) {
+      break;
+    }
+    const fenceMatch = MARKDOWN_FENCE_PATTERN.exec(line);
     if (fenceMatch) {
       const indent = fenceMatch[1]!.length;
       const marker = fenceMatch[2]!;

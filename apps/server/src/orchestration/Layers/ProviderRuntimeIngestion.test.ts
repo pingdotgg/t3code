@@ -4657,15 +4657,18 @@ describe("splitBufferedAssistantText", () => {
       ready: "## Steps\n\n- one\n- two\n",
       rest: "- thr",
     });
-    expect(splitBufferedAssistantText("1. one\n2. two\n   more\n3. ")).toEqual({
+    expect(splitBufferedAssistantText("1. one\n2. two\n   more\n3. t")).toEqual({
       ready: "1. one\n2. two\n   more\n",
-      rest: "3. ",
+      rest: "3. t",
     });
   });
 
   it("keeps a partial list marker and list-like code buffered", () => {
     expect(splitBufferedAssistantText("intro\n-")).toEqual({ ready: "", rest: "intro\n-" });
     expect(splitBufferedAssistantText("intro\n1.")).toEqual({ ready: "", rest: "intro\n1." });
+    // `intro\n- \n` would parse as a setext heading, so a bare marker with only
+    // trailing whitespace is not a boundary on the partial line either.
+    expect(splitBufferedAssistantText("intro\n- ")).toEqual({ ready: "", rest: "intro\n- " });
     expect(splitBufferedAssistantText("- one\n")).toEqual({ ready: "", rest: "- one\n" });
     expect(splitBufferedAssistantText("```\n- one\n- two\n")).toEqual({
       ready: "",
