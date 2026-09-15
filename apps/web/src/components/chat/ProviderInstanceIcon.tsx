@@ -43,8 +43,6 @@ export function resolveProviderInstanceAcpRegistryIconUrl(input: {
   );
 }
 
-export { providerInstanceInitials };
-
 export const ProviderInstanceIcon = memo(function ProviderInstanceIcon(props: {
   driverKind: ProviderDriverKind;
   displayName: string;
