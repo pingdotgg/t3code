@@ -6,7 +6,7 @@
 // Add --initial to evaluate only the opening request.
 import * as NodeUtil from "node:util";
 import * as NodeCrypto from "node:crypto";
-import { FetchHttpClient } from "effect/unstable/http";
+import * as FetchHttpClient from "effect/unstable/http/FetchHttpClient";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { CodexSettings, ProviderInstanceId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -15,13 +15,13 @@ import * as Duration from "effect/Duration";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
-import { makeCodexTextGeneration } from "../src/textGeneration/CodexTextGeneration.ts";
+import * as CodexTextGeneration from "../src/textGeneration/CodexTextGeneration.ts";
 import { threadTitleEvaluationCases } from "./threadTitleEvaluationCases.ts";
 import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
 } from "../src/textGeneration/ThreadTitleContext.ts";
-import { resolveThreadTitleLinks } from "../src/textGeneration/ThreadTitleLinks.ts";
+import * as ThreadTitleLinks from "../src/textGeneration/ThreadTitleLinks.ts";
 import * as SourceControlProviderRegistry from "../src/sourceControl/SourceControlProviderRegistry.ts";
 import * as GitHubCli from "../src/sourceControl/GitHubCli.ts";
 import * as GitLabCli from "../src/sourceControl/GitLabCli.ts";
@@ -66,7 +66,9 @@ await Effect.runPromise(
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-title-evaluation-" });
-    const generation = yield* makeCodexTextGeneration(yield* decodeSettings({}));
+    const generation = yield* CodexTextGeneration.makeCodexTextGeneration(
+      yield* decodeSettings({}),
+    );
     const baseline = values.baseline
       ? yield* fs.readFileString(values.baseline).pipe(Effect.flatMap(decodeResults))
       : [];
@@ -84,7 +86,7 @@ await Effect.runPromise(
       const message = values.initial ? firstMessage.text : context.message;
       const attachments = values.initial ? firstMessage.attachments : context.attachments;
       const [elapsed, { generated, linkedContextDigest }] = yield* Effect.gen(function* () {
-        const linkedContext = yield* resolveThreadTitleLinks({
+        const linkedContext = yield* ThreadTitleLinks.resolveThreadTitleLinks({
           cwd,
           message,
         });

@@ -219,7 +219,7 @@ export const make = Effect.gen(function* () {
     input: { readonly cwd: string; readonly url: URL },
     endpoint: string,
   ) {
-    return yield* github
+    const result = yield* github
       .execute({
         cwd: input.cwd,
         args: ["api", "--hostname", input.url.host, endpoint, "--jq", "{title, body}"],
@@ -228,8 +228,6 @@ export const make = Effect.gen(function* () {
         maxOutputBytes: 32_000,
       })
       .pipe(
-        Effect.flatMap((result) => decodeLinkSubject(result.stdout)),
-        Effect.map((subject) => ({ title: subject.title, body: subject.body })),
         Effect.mapError(
           (cause) =>
             new SourceControlProviderError({
@@ -241,6 +239,19 @@ export const make = Effect.gen(function* () {
             }),
         ),
       );
+    const subject = yield* decodeLinkSubject(result.stdout).pipe(
+      Effect.mapError(
+        (cause) =>
+          new SourceControlProviderError({
+            provider: "github",
+            operation: "resolveLink.decode",
+            cwd: input.cwd,
+            detail: "The linked subject could not be read.",
+            cause,
+          }),
+      ),
+    );
+    return { title: subject.title, body: subject.body };
   });
 
   return SourceControlProvider.SourceControlProvider.of({
