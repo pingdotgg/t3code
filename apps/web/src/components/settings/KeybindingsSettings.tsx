@@ -1290,7 +1290,9 @@ export function KeybindingsSettingsPanel() {
     AuthOrchestrationOperateScope,
   );
   const writableIds = useEnvironmentsWithScope(connectedEnvironments, AuthSettingsWriteScope);
-  const canWriteSettings = connectedEnvironments.length > 0 && connectedEnvironments.every((target) => writableIds.has(target.environmentId));
+  const canWriteSettings =
+    connectedEnvironments.length > 0 &&
+    connectedEnvironments.every((target) => writableIds.has(target.environmentId));
   const serverKeybindings = primaryEnvironment?.serverConfig?.keybindings;
   const keybindings = useMemo(
     () => mergeWithDefaultKeybindings(serverKeybindings ?? []),

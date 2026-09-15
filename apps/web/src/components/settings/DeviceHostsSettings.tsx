@@ -91,7 +91,9 @@ export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null
         <Button
           size="sm"
           variant="outline"
-          disabled={!canConfigure || projectScope || busy || !props.environmentId || editing !== null}
+          disabled={
+            !canConfigure || projectScope || busy || !props.environmentId || editing !== null
+          }
           onClick={() => {
             setOriginalHost(null);
             setEditing({ id: randomUUID(), label: "", target: "" });
