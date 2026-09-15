@@ -18,7 +18,11 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
-import { subscribeMissingThreadRedirect } from "../../missingThreadRedirects";
+import {
+  currentMissingThreadRedirectSeq,
+  hasMissingThreadRedirectSince,
+  subscribeMissingThreadRedirect,
+} from "../../missingThreadRedirects";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { environmentSession, readPreparedConnection } from "../../state/session";
@@ -122,6 +126,9 @@ export function useVoiceRouteDriver(): VoiceRouteDriver {
       },
       readCurrentPath: () => router.state.location.pathname,
       subscribeMissingThreadRedirect: (listener) => subscribeMissingThreadRedirect(listener),
+      currentMissingThreadRedirectSeq: () => currentMissingThreadRedirectSeq(),
+      hasMissingThreadRedirectSince: (destination, sinceSeq) =>
+        hasMissingThreadRedirectSince(destination, sinceSeq),
     }),
     [navigate, router],
   );
