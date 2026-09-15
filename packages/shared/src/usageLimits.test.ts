@@ -1059,6 +1059,31 @@ describe("usageLimitsMeterWindow", () => {
       )?.kind,
     ).toBe("weekly");
   });
+
+  it("breaks a tie on reported duration before window kind", () => {
+    expect(
+      usageLimitsMeterWindow(
+        limits([
+          { ...window, id: "weekly", kind: "weekly", label: "Weekly", windowDurationMins: 10080 },
+          { ...window, id: "hourly", kind: "other", label: "Hourly", windowDurationMins: 60 },
+        ]),
+      )?.id,
+    ).toBe("hourly");
+    expect(
+      usageLimitsMeterWindow(
+        limits([
+          { ...window, id: "other", kind: "other", label: "Other", windowDurationMins: undefined },
+          {
+            ...window,
+            id: "weekly",
+            kind: "weekly",
+            label: "Weekly",
+            windowDurationMins: undefined,
+          },
+        ]),
+      )?.kind,
+    ).toBe("weekly");
+  });
 });
 
 describe("windowExpired", () => {

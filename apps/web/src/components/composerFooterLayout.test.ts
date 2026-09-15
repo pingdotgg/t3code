@@ -210,6 +210,22 @@ describe("resolveRestingComposerControlsLayout", () => {
     });
   });
 
+  it("reserves no trigger width when only menuless trailing blocks hide", () => {
+    // Hiding the one menuless block shows no trigger: 149 + 60 + 4 = 213,
+    // where reserving the trigger would have needed 149 + 60 + 24 + 4 * 2 = 241.
+    expect(
+      resolveRestingComposerControlsLayout({
+        ...base,
+        menulessTrailingCount: 1,
+        hostWidth: 240,
+      }),
+    ).toEqual({ hiddenCount: 1, visible: true });
+    expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 240 })).toEqual({
+      hiddenCount: 2,
+      visible: true,
+    });
+  });
+
   it("shrinks the picker after moving every trailing block into overflow", () => {
     expect(resolveRestingComposerControlsLayout({ ...base, hostWidth: 176 })).toEqual({
       hiddenCount: 2,
