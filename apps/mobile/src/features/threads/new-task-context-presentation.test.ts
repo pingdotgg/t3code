@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   resolveNewTaskBranchWorktreePath,
+  resolveNewTaskBranchAfterModeChange,
   resolveNewTaskBranchLabel,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
@@ -124,5 +125,23 @@ describe("resolveNewTaskBranchLabel", () => {
         workspaceMode: "worktree",
       }),
     ).toBe("Choose branch");
+  });
+});
+
+describe("resolveNewTaskBranchAfterModeChange", () => {
+  it("clears an inherited checkout branch so a new worktree can choose the default", () => {
+    expect(
+      resolveNewTaskBranchAfterModeChange("local", "worktree", "feature/local-only"),
+    ).toBeNull();
+  });
+
+  it("preserves an explicitly selected worktree base when the mode is unchanged", () => {
+    expect(resolveNewTaskBranchAfterModeChange("worktree", "worktree", "release")).toBe("release");
+  });
+
+  it("leaves other transitions and an absent selection alone", () => {
+    expect(resolveNewTaskBranchAfterModeChange("worktree", "local", "main")).toBe("main");
+    expect(resolveNewTaskBranchAfterModeChange("local", "local", "feature")).toBe("feature");
+    expect(resolveNewTaskBranchAfterModeChange("local", "worktree", null)).toBeNull();
   });
 });
