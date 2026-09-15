@@ -2567,9 +2567,36 @@ layer("GitHubPullRequestCli.layer", (it) => {
     }),
   );
 
+  it.effect("reads the viewer login through the GraphQL viewer", () =>
+    Effect.gen(function* () {
+      // REST GET /user refuses GitHub App installation tokens; the GraphQL viewer answers them.
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("app-installation-credential")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":789,"login":"acme-app[bot]"}')));
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const login = yield* cli.getViewerLogin({ cwd: "/w", host: "github.app-viewer.test" });
+
+      assert.strictEqual(login, "acme-app[bot]");
+      expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.app-viewer.test"]);
+      expect(callAt(1).args).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.app-viewer.test",
+        "-f",
+        "query={viewer{id:databaseId,login}}",
+        "--jq",
+        ".data.viewer",
+      ]);
+    }),
+  );
+
   it.effect("fails when the authenticated account has no login", () =>
     Effect.gen(function* () {
-      mockedExecute.mockReturnValueOnce(Effect.succeed(output("  ")));
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("no-login-credential")))
+        .mockReturnValueOnce(Effect.succeed(output('{"id":123,"login":"  "}')));
       const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
 
       const error = yield* Effect.flip(cli.getViewerLogin({ cwd: "/w", host: "github.com" }));
@@ -2589,7 +2616,16 @@ layer("GitHubPullRequestCli.layer", (it) => {
 
       expect(login).toBe("enterprise-user");
       expect(callAt(0).args).toEqual(["auth", "token", "--hostname", "github.acme.com"]);
-      expect(callAt(1).args).toEqual(["api", "user", "--hostname", "github.acme.com"]);
+      expect(callAt(1).args).toEqual([
+        "api",
+        "graphql",
+        "--hostname",
+        "github.acme.com",
+        "-f",
+        "query={viewer{id:databaseId,login}}",
+        "--jq",
+        ".data.viewer",
+      ]);
     }),
   );
 
@@ -2642,6 +2678,29 @@ layer("GitHubPullRequestCli.layer", (it) => {
         accountId: "456",
         viewer: "maria-rcks",
       });
+    }),
+  );
+
+  it.effect("fails the viewer read when the identity lookup is refused", () =>
+    Effect.gen(function* () {
+      mockedExecute
+        .mockReturnValueOnce(Effect.succeed(output("refused-credential")))
+        .mockReturnValueOnce(
+          Effect.fail(
+            new GitHubCli.GitHubCliCommandError({
+              command: "gh",
+              cwd: "/w",
+              cause: new Error("HTTP 403"),
+            }),
+          ),
+        );
+      const cli = yield* GitHubPullRequestCli.GitHubPullRequestCli;
+
+      const error = yield* Effect.flip(
+        cli.getViewerLogin({ cwd: "/w", host: "github.viewer-refused.test" }),
+      );
+
+      assert.strictEqual(error._tag, "GitHubViewerLoginUnavailableError");
     }),
   );
 

@@ -1070,7 +1070,18 @@ export const make = Effect.gen(function* () {
               const response = yield* github
                 .execute({
                   cwd: input.cwd,
-                  args: ["api", "user", "--hostname", host],
+                  // REST GET /user refuses GitHub App installation tokens; the GraphQL viewer
+                  // answers both those and user tokens with the same login.
+                  args: [
+                    "api",
+                    "graphql",
+                    "--hostname",
+                    host,
+                    "-f",
+                    "query={viewer{id:databaseId,login}}",
+                    "--jq",
+                    ".data.viewer",
+                  ],
                   env: {
                     GH_HOST: host,
                     GH_TOKEN: token,
