@@ -821,7 +821,7 @@ describe("ServerSettings Cursor legacy settings", () => {
     });
 
     expect(decoded.providers.cursor.enabled).toBe(true);
-    expect(encodeServerSettings(decoded).providers.cursor).toMatchObject({
+    expect(encodeServerSettings(decoded).providers?.cursor).toMatchObject({
       binaryPath: "cursor-agent",
       apiEndpoint: "http://127.0.0.1:3774",
     });
