@@ -146,13 +146,11 @@ describe("sidebar collision detection", () => {
       const sourceRect = rects[activeIndex]!;
       let boundaryTop = 300;
       const boundaryNode = {
-        querySelector: () => ({
-          getBoundingClientRect: () => ({
-            top: boundaryTop,
-            bottom: boundaryTop + 16,
-            left: 0,
-            right: 260,
-          }),
+        getBoundingClientRect: () => ({
+          top: boundaryTop,
+          bottom: boundaryTop + 16,
+          left: 0,
+          right: 260,
         }),
       } as unknown as HTMLElement;
       const detector = createSidebarCollisionDetection(() => true, {
