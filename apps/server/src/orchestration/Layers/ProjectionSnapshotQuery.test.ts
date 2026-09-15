@@ -3468,7 +3468,7 @@ it.effect("omits foreign-host PRs from legacy snapshots while preserving native 
 });
 
 projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
-  it.effect("lists one kind across live threads only, without hydrating the threads", () =>
+  it.effect("lists one kind across active threads only, without hydrating the threads", () =>
     Effect.gen(function* () {
       const query = yield* ProjectionSnapshotQuery;
       const sql = yield* SqlClient.SqlClient;
@@ -3486,8 +3486,11 @@ projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
           ('thread-live', 'project-kinds', 'Live', '{"instanceId":"codex","model":"gpt-5"}',
             'full-access', 'default', ${timestamp}, ${timestamp}, NULL),
           ('thread-gone', 'project-kinds', 'Gone', '{"instanceId":"codex","model":"gpt-5"}',
-            'full-access', 'default', ${timestamp}, ${timestamp}, ${timestamp})
+            'full-access', 'default', ${timestamp}, ${timestamp}, ${timestamp}),
+          ('thread-shelved', 'project-kinds', 'Shelved', '{"instanceId":"codex","model":"gpt-5"}',
+            'full-access', 'default', ${timestamp}, ${timestamp}, NULL)
       `;
+      yield* sql`UPDATE projection_threads SET archived_at = ${timestamp} WHERE thread_id = 'thread-shelved'`;
       yield* sql`
         INSERT INTO projection_thread_activities (
           activity_id, thread_id, turn_id, tone, kind, summary, payload_json, created_at
@@ -3497,6 +3500,8 @@ projectionSnapshotLayer("ProjectionSnapshotQuery activities by kind", (it) => {
           ('other-live', 'thread-live', NULL, 'info', 'tool.completed', 'Other',
             '{}', ${timestamp}),
           ('setup-gone', 'thread-gone', NULL, 'info', 'worktree-setup', 'Setting up',
+            '{"phase":"running"}', ${timestamp}),
+          ('setup-shelved', 'thread-shelved', NULL, 'info', 'worktree-setup', 'Setting up',
             '{"phase":"running"}', ${timestamp})
       `;
 

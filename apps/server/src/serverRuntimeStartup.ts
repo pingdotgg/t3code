@@ -752,9 +752,10 @@ const decodeWorktreeSetupSnapshot = Schema.decodeUnknownOption(WorktreeSetupSnap
  * A worktree bootstrap records its setup snapshot on the thread while it runs
  * and settles it when it finishes. The bootstrap itself lives only in memory,
  * so a process exit mid-setup leaves a `running` record with nobody to finish
- * it, and a persisted user message with no turn behind it. Mark those setups
- * failed so every client shows the outcome instead of a spinner, and the user
- * can send again.
+ * it. Before the turn started that also strands the persisted user message, so
+ * the setup is marked failed and the user is told to send again. After the
+ * handoff only an async setup script was still running; its stage is marked
+ * failed and the setup settles as done, like any other script failure.
  */
 export const reconcileWorktreeSetups = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
@@ -771,14 +772,24 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
     if (recorded.id !== worktreeSetupActivityId(snapshot.value.threadId)) continue;
     const threadId = snapshot.value.threadId;
 
+    const turnStarted = snapshot.value.stages.some(
+      (stage) => stage.id === "agent" && stage.status === "done",
+    );
     const interrupted: WorktreeSetupSnapshot = {
       ...snapshot.value,
-      phase: "failed",
+      phase: turnStarted ? "done" : "failed",
       endedAt: interruptedAt,
-      error: "The server restarted before the worktree setup finished. Send the message again.",
+      error: turnStarted
+        ? null
+        : "The server restarted before the worktree setup finished. Send the message again.",
       stages: snapshot.value.stages.map((stage) =>
         stage.status === "running" || stage.status === "pending"
-          ? { ...stage, status: "failed", endedAt: interruptedAt }
+          ? {
+              ...stage,
+              status: "failed",
+              endedAt: interruptedAt,
+              detail: "interrupted by a server restart",
+            }
           : stage,
       ),
       sequence: snapshot.value.sequence + 1,
@@ -792,7 +803,9 @@ export const reconcileWorktreeSetups = Effect.gen(function* () {
           id: EventId.make(worktreeSetupActivityId(threadId)),
           tone: "error",
           kind: WORKTREE_SETUP_ACTIVITY_KIND,
-          summary: "Worktree setup interrupted by a server restart",
+          summary: turnStarted
+            ? "Setup script interrupted by a server restart"
+            : "Worktree setup interrupted by a server restart",
           payload: interrupted,
           turnId: null,
           createdAt: snapshot.value.startedAt,

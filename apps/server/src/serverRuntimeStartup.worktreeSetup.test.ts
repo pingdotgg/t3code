@@ -19,7 +19,11 @@ import * as ServerRuntimeStartup from "./serverRuntimeStartup.ts";
 
 const startedAt = "2026-08-20T12:00:00.000Z";
 
-const snapshotFor = (threadId: ThreadId, phase: WorktreeSetupPhase): WorktreeSetupSnapshot => ({
+const snapshotFor = (
+  threadId: ThreadId,
+  phase: WorktreeSetupPhase,
+  agentStatus: "pending" | "done" = phase === "running" ? "pending" : "done",
+): WorktreeSetupSnapshot => ({
   threadId,
   phase,
   startedAt,
@@ -49,7 +53,7 @@ const snapshotFor = (threadId: ThreadId, phase: WorktreeSetupPhase): WorktreeSet
     },
     {
       id: "agent",
-      status: phase === "running" ? "pending" : "done",
+      status: agentStatus,
       startedAt: null,
       endedAt: null,
       percent: null,
@@ -61,14 +65,14 @@ const snapshotFor = (threadId: ThreadId, phase: WorktreeSetupPhase): WorktreeSet
   sequence: 4,
 });
 
-const recordedSetup = (id: string, phase: WorktreeSetupPhase) => {
+const recordedSetup = (id: string, phase: WorktreeSetupPhase, agentStatus?: "pending" | "done") => {
   const threadId = ThreadId.make(id);
   return {
     id: EventId.make(worktreeSetupActivityId(threadId)),
     tone: "info" as const,
     kind: WORKTREE_SETUP_ACTIVITY_KIND,
     summary: "Setting up worktree",
-    payload: snapshotFor(threadId, phase),
+    payload: snapshotFor(threadId, phase, agentStatus),
     turnId: null,
     createdAt: startedAt,
   };
@@ -126,4 +130,27 @@ it.effect("marks setups still recorded as running failed after a restart", () =>
       ["done", "failed", "failed"],
     );
   }),
+);
+
+it.effect(
+  "settles an async setup script whose turn already started without failing the setup",
+  () =>
+    Effect.gen(function* () {
+      const dispatched = yield* run([recordedSetup("thread-async", "running", "done")]);
+
+      assert.equal(dispatched.length, 1);
+      const command = dispatched[0]!;
+      if (command.type !== "thread.activity.append") return assert.fail(command.type);
+      const payload = yield* Schema.decodeUnknownEffect(WorktreeSetupSnapshot)(
+        command.activity.payload,
+      );
+      // The turn is live; only the background script was lost. Nothing asks the
+      // user to resend, and the setup reads as done with a failed script stage.
+      assert.equal(payload.phase, "done");
+      assert.isNull(payload.error);
+      assert.deepEqual(
+        payload.stages.map((stage) => stage.status),
+        ["done", "failed", "done"],
+      );
+    }),
 );

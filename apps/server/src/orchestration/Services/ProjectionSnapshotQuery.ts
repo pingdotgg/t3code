@@ -84,8 +84,9 @@ export interface ProjectionSnapshotQueryShape {
   }) => Effect.Effect<Option.Option<OrchestrationThreadActivity>, ProjectionRepositoryError>;
 
   /**
-   * Read every activity of one kind across live threads, without hydrating
-   * the threads. Used at startup to find state a crashed process left behind.
+   * Read every activity of one kind across active (not deleted, not archived)
+   * threads, without hydrating the threads. Used at startup to find state a
+   * crashed process left behind.
    */
   readonly listActivitiesByKind: (
     kind: string,
