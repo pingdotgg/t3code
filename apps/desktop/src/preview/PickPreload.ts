@@ -18,6 +18,7 @@ import { resolveAnnotationSubmission } from "./AnnotationKeyboard.ts";
 import { previewAnnotationStyles } from "./AnnotationStyles.generated.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
+  ANNOTATION_SEND_ENABLED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
@@ -48,6 +49,7 @@ interface SelectedElement {
 interface AnnotationSession {
   teardown: (notifyMain: boolean) => void;
   applyTheme: (theme: DesktopPreviewAnnotationTheme) => void;
+  setSendEnabled: (enabled: boolean) => void;
 }
 
 let activeSession: AnnotationSession | null = null;
@@ -431,7 +433,7 @@ function strokeBounds(
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-function startAnnotation(): void {
+function startAnnotation(sendEnabled: boolean): void {
   activeSession?.teardown(false);
   let finished = false;
   const host = document.createElement("div");
@@ -508,6 +510,12 @@ function startAnnotation(): void {
   composerRow.appendChild(dragHandle);
 
   const submit = createButton("Attach", "Attach annotation and screenshot (Enter)");
+  const updateSendHint = () => {
+    submit.title = sendEnabled
+      ? "Attach annotation and screenshot (Enter). Send with Cmd/Ctrl+Enter."
+      : "Attach annotation and screenshot (Enter)";
+  };
+  updateSendHint();
   submit.className +=
     " h-8 shrink-0 border-primary bg-primary px-3 text-primary-foreground shadow-sm hover:bg-primary/90";
   composerRow.appendChild(submit);
@@ -1264,6 +1272,7 @@ function startAnnotation(): void {
   };
 
   const submitAnnotation = (submission: PreviewAnnotationSubmission): void => {
+    if (submission === "send" && !sendEnabled) return;
     if (pendingCapture || (selected.size === 0 && regions.length === 0 && strokes.length === 0))
       return;
     pendingCapture = true;
@@ -1315,7 +1324,12 @@ function startAnnotation(): void {
           ...submittedRegions.map((region) => region.rect),
           ...submittedStrokes.map((stroke) => stroke.bounds),
         ]);
-        ipcRenderer.send(ELEMENT_PICKED_CHANNEL, annotation, screenshotRect, submission);
+        ipcRenderer.send(
+          ELEMENT_PICKED_CHANNEL,
+          annotation,
+          screenshotRect,
+          submission === "send" && !sendEnabled ? "attach" : submission,
+        );
       })
       .catch(() => {
         // Last resort. Main is waiting on this message, so hand it an empty
@@ -1326,7 +1340,8 @@ function startAnnotation(): void {
   };
   submit.addEventListener("click", () => submitAnnotation("attach"));
   root.addEventListener("keydown", (event) => {
-    const submission = event.target === comment ? resolveAnnotationSubmission(event) : null;
+    const submission =
+      event.target === comment ? resolveAnnotationSubmission(event, sendEnabled) : null;
     // Keep this in the bubble phase so editor inputs receive the event before
     // it is isolated from listeners installed by the inspected page.
     event.stopImmediatePropagation();
@@ -1352,12 +1367,22 @@ function startAnnotation(): void {
   activeSession = {
     teardown,
     applyTheme: (theme) => applyAnnotationTheme(host, theme),
+    setSendEnabled: (enabled) => {
+      sendEnabled = enabled;
+      updateSendHint();
+    },
   };
 }
 
-ipcRenderer.on(START_PICK_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme | undefined) => {
-  if (theme) annotationTheme = theme;
-  startAnnotation();
+ipcRenderer.on(
+  START_PICK_CHANNEL,
+  (_event, theme: DesktopPreviewAnnotationTheme | undefined, sendEnabled?: boolean) => {
+    if (theme) annotationTheme = theme;
+    startAnnotation(sendEnabled === true);
+  },
+);
+ipcRenderer.on(ANNOTATION_SEND_ENABLED_CHANNEL, (_event, enabled: boolean) => {
+  activeSession?.setSendEnabled(enabled === true);
 });
 ipcRenderer.on(ANNOTATION_THEME_CHANNEL, (_event, theme: DesktopPreviewAnnotationTheme) => {
   annotationTheme = theme;
