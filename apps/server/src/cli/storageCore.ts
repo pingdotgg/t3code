@@ -133,11 +133,27 @@ function measureTree(root: string): TreeMeasurement {
   return { bytes, entries, snapshot: hash(records.join("\n")) };
 }
 
+function measureAreaTree(root: string): Pick<TreeMeasurement, "bytes" | "entries"> {
+  let bytes = 0;
+  let entries = 0;
+  const visit = (current: string): void => {
+    const stat = NodeFS.lstatSync(current);
+    entries += 1;
+    if (stat.isFile()) bytes += stat.size;
+    if (!stat.isDirectory() || stat.isSymbolicLink()) return;
+    for (const entry of NodeFS.readdirSync(current)) {
+      visit(NodePath.join(current, entry));
+    }
+  };
+  visit(root);
+  return { bytes, entries };
+}
+
 function inspectArea(kind: StorageAreaKind, areaPath: string): StorageArea {
   if (!NodeFS.existsSync(areaPath)) {
     return { kind, path: areaPath, bytes: 0, entries: 0, exists: false };
   }
-  const measurement = measureTree(areaPath);
+  const measurement = measureAreaTree(areaPath);
   return {
     kind,
     path: areaPath,
@@ -163,7 +179,11 @@ function findWorktreeRoots(worktreesRoot: string): ReadonlyArray<string> {
     }
     for (const entry of NodeFS.readdirSync(directory).sort()) {
       const child = NodePath.join(directory, entry);
-      if (NodeFS.lstatSync(child).isDirectory()) visit(child);
+      const childStat = NodeFS.lstatSync(child);
+      if (childStat.isSymbolicLink()) {
+        throw new Error(`Refusing symbolic link in worktrees directory: ${child}`);
+      }
+      if (childStat.isDirectory()) visit(child);
     }
   };
   visit(worktreesRoot);
@@ -221,10 +241,25 @@ export function inspectStorage(baseDirectory: string): StorageInspection {
   const dbPaths = readWorktreeReferenceState(baseDir);
   const candidates = findWorktreeRoots(worktreesRoot).map((candidatePath): WorktreeCandidate => {
     assertNoSymlink(worktreesRoot, candidatePath);
-    const measurement = measureTree(candidatePath);
     const resolvedPath = NodeFS.realpathSync.native(candidatePath);
     const referencedByDatabase = dbPaths.referenced.has(resolvedPath);
     const active = dbPaths.active.has(resolvedPath);
+    let measurement: TreeMeasurement;
+    try {
+      measurement = measureTree(candidatePath);
+    } catch (error) {
+      if (!(error instanceof Error) || !error.message.includes("symbolic link")) throw error;
+      return {
+        id: hash(NodePath.relative(worktreesRoot, resolvedPath)).slice(0, 20),
+        path: resolvedPath,
+        bytes: 0,
+        snapshot: hash(`unsafe-tree\0${NodePath.relative(worktreesRoot, resolvedPath)}`),
+        referencedByDatabase,
+        active,
+        eligible: false,
+        reasons: ["unsafe-tree"],
+      };
+    }
     const reasons = [
       ...(!dbPaths.available ? ["database-unavailable"] : []),
       ...(active ? ["active-thread"] : []),

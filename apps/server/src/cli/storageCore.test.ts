@@ -99,6 +99,25 @@ describe("storage inspection", () => {
     expect(() => inspectStorage(baseDir)).toThrow(/symbolic link/i);
   });
 
+  it("isolates an unsafe worktree without hiding eligible siblings", () => {
+    const baseDir = makeHome();
+    const unsafe = makeWorktree(baseDir, "unsafe");
+    const eligible = makeWorktree(baseDir, "eligible");
+    makeDatabase(baseDir, []);
+    NodeFS.symlinkSync("missing-python", NodePath.join(unsafe, ".venv-python"));
+
+    const result = inspectStorage(baseDir);
+
+    expect(result.candidates.find((candidate) => candidate.path === unsafe)).toMatchObject({
+      bytes: 0,
+      eligible: false,
+      reasons: ["unsafe-tree"],
+    });
+    expect(result.candidates.find((candidate) => candidate.path === eligible)).toMatchObject({
+      eligible: true,
+    });
+  });
+
   it("fails closed when the state database cannot prove a worktree is unreferenced", () => {
     const baseDir = makeHome();
     makeWorktree(baseDir, "orphan");
