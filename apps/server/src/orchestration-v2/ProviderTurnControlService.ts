@@ -172,8 +172,17 @@ export const layer: Layer.Layer<
       interrupt: (input) =>
         Effect.gen(function* () {
           const loaded = yield* load({ ...input, operation: "interrupt" });
-          if (Option.isNone(loaded.session)) return;
-          yield* loaded.session.value.interruptTurn({
+          const session = Option.isSome(loaded.session)
+            ? loaded.session
+            : yield* sessions.get(input.providerSessionId);
+          if (Option.isNone(session)) return;
+          if (
+            loaded.providerTurn.status !== "running" &&
+            (session.value.hasPendingBackgroundWorkForThread === undefined ||
+              !(yield* session.value.hasPendingBackgroundWorkForThread(loaded.providerThread)))
+          )
+            return;
+          yield* session.value.interruptTurn({
             providerThread: loaded.providerThread,
             providerTurnId: loaded.providerTurn.id,
             requestRuntimeRestart: true,
