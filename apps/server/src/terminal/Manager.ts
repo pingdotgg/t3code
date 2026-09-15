@@ -140,6 +140,11 @@ class TerminalProcessSignalError extends Schema.TaggedError<TerminalProcessSigna
   }
 }
 
+interface ManagedTerminalOpenInput extends TerminalOpenInput {
+  /** Answer startup probes on the server for scripts that run without a client. */
+  readonly serverOwnedQueries?: boolean;
+}
+
 /**
  * TerminalManager - Service tag for terminal session orchestration.
  */
@@ -153,7 +158,7 @@ export class TerminalManager extends Context.Service<
      * persisted history on first open.
      */
     readonly open: (
-      input: TerminalOpenInput,
+      input: ManagedTerminalOpenInput,
     ) => Effect.Effect<TerminalSessionSnapshot, TerminalError>;
 
     /**
@@ -267,6 +272,7 @@ interface TerminalSessionState {
   pid: number | null;
   history: BoundedTerminalHistory;
   pendingHistoryControlSequence: string;
+  serverOwnedQueries: boolean;
   pendingProcessEvents: Array<PendingProcessEvent>;
   pendingProcessEventIndex: number;
   processEventDrainRunning: boolean;
@@ -302,6 +308,8 @@ type DrainProcessEventAction =
       terminalId: string;
       sequence: number;
       history: BoundedTerminalHistory | null;
+      process: PtyAdapter.PtyProcess;
+      replies: string;
       data: string;
     }
   | {
@@ -1080,16 +1088,73 @@ function findEscapeSequenceEndIndex(input: string, start: number): number | null
   return isEscapeFinalByte(input.charCodeAt(cursor)) ? cursor + 1 : start + 1;
 }
 
-function sanitizeTerminalHistoryChunk(
+// Palette probes must work before any client attaches. Answer with the xterm
+// default palette and consume the probes so clients cannot send duplicate replies.
+// Client themes are local to each display and cannot define a shared PTY's palette.
+function colorQueryReply(content: string): string {
+  if (/^(10|11|12);\?$/.test(content)) {
+    const color = content.startsWith("11;") ? "0000/0000/0000" : "e5e5/e5e5/e5e5";
+    return `\u001b]${content.slice(0, 2)};rgb:${color}\u001b\\`;
+  }
+  if (!/^4;(?:\d+;\?)(?:;\d+;\?)*$/.test(content)) return "";
+  const indices = content
+    .slice(2)
+    .split(";")
+    .filter((_, index) => index % 2 === 0)
+    .map(Number);
+  if (indices.some((index) => index > 255)) return "";
+  const ansi = [
+    "000000",
+    "cd0000",
+    "00cd00",
+    "cdcd00",
+    "0000ee",
+    "cd00cd",
+    "00cdcd",
+    "e5e5e5",
+    "7f7f7f",
+    "ff0000",
+    "00ff00",
+    "ffff00",
+    "5c5cff",
+    "ff00ff",
+    "00ffff",
+    "ffffff",
+  ];
+  return indices
+    .map((index) => {
+      let rgb: number[];
+      if (index < 16) {
+        const hex = ansi[index]!;
+        rgb = [0, 2, 4].map((offset) => Number.parseInt(hex.slice(offset, offset + 2), 16));
+      } else if (index < 232) {
+        const cube = index - 16;
+        rgb = [Math.floor(cube / 36), Math.floor(cube / 6) % 6, cube % 6].map((level) =>
+          level === 0 ? 0 : 55 + level * 40,
+        );
+      } else {
+        rgb = Array<number>(3).fill(8 + (index - 232) * 10);
+      }
+      const color = rgb.map((value) => value.toString(16).padStart(2, "0").repeat(2)).join("/");
+      return `\u001b]4;${index};rgb:${color}\u001b\\`;
+    })
+    .join("");
+}
+
+function sanitizeTerminalOutputChunk(
   pendingControlSequence: string,
   data: string,
-): { visibleText: string; pendingControlSequence: string } {
+  serverOwnedQueries: boolean,
+): { visibleText: string; liveText: string; replies: string; pendingControlSequence: string } {
   const input = `${pendingControlSequence}${data}`;
   let visibleText = "";
+  let liveText = "";
+  let replies = "";
   let index = 0;
 
   const append = (value: string) => {
     visibleText += value;
+    liveText += value;
   };
 
   while (index < input.length) {
@@ -1098,7 +1163,7 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x1b) {
       const nextCodePoint = input.charCodeAt(index + 1);
       if (Number.isNaN(nextCodePoint)) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
       }
 
       if (nextCodePoint === 0x5b) {
@@ -1107,8 +1172,14 @@ function sanitizeTerminalHistoryChunk(
           if (isCsiFinalByte(input.charCodeAt(cursor))) {
             const sequence = input.slice(index, cursor + 1);
             const body = input.slice(index + 2, cursor);
-            if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
+            // A primary DA reply also terminates batched color probes in CLIs
+            // such as vp. Advertise basic VT100 capabilities without a client.
+            if (serverOwnedQueries && input[cursor] === "c" && (body === "" || body === "0")) {
+              replies += "\u001b[?1;2c";
+            } else if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
               append(sequence);
+            } else {
+              liveText += sequence;
             }
             index = cursor + 1;
             break;
@@ -1116,7 +1187,7 @@ function sanitizeTerminalHistoryChunk(
           cursor += 1;
         }
         if (cursor >= input.length) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
         }
         continue;
       }
@@ -1129,15 +1200,20 @@ function sanitizeTerminalHistoryChunk(
       ) {
         const terminatorIndex = findStringTerminatorIndex(input, index + 2);
         if (terminatorIndex === null) {
-          return { visibleText, pendingControlSequence: input.slice(index) };
+          return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
         }
         const sequence = input.slice(index, terminatorIndex);
         const content = stripStringTerminator(input.slice(index + 2, terminatorIndex));
         const strip =
           (nextCodePoint === 0x5d && shouldStripOscSequence(content)) ||
           (nextCodePoint === 0x50 && shouldStripDcsSequence(content));
-        if (!strip) {
+        const reply = serverOwnedQueries && nextCodePoint === 0x5d ? colorQueryReply(content) : "";
+        if (reply) {
+          replies += reply;
+        } else if (!strip) {
           append(sequence);
+        } else {
+          liveText += sequence;
         }
         index = terminatorIndex;
         continue;
@@ -1145,7 +1221,7 @@ function sanitizeTerminalHistoryChunk(
 
       const escapeSequenceEndIndex = findEscapeSequenceEndIndex(input, index + 1);
       if (escapeSequenceEndIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
       }
       append(input.slice(index, escapeSequenceEndIndex));
       index = escapeSequenceEndIndex;
@@ -1158,8 +1234,12 @@ function sanitizeTerminalHistoryChunk(
         if (isCsiFinalByte(input.charCodeAt(cursor))) {
           const sequence = input.slice(index, cursor + 1);
           const body = input.slice(index + 1, cursor);
-          if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
+          if (serverOwnedQueries && input[cursor] === "c" && (body === "" || body === "0")) {
+            replies += "\u001b[?1;2c";
+          } else if (!shouldStripCsiSequence(body, input[cursor] ?? "")) {
             append(sequence);
+          } else {
+            liveText += sequence;
           }
           index = cursor + 1;
           break;
@@ -1167,7 +1247,7 @@ function sanitizeTerminalHistoryChunk(
         cursor += 1;
       }
       if (cursor >= input.length) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
       }
       continue;
     }
@@ -1175,15 +1255,20 @@ function sanitizeTerminalHistoryChunk(
     if (codePoint === 0x9d || codePoint === 0x90 || codePoint === 0x9e || codePoint === 0x9f) {
       const terminatorIndex = findStringTerminatorIndex(input, index + 1);
       if (terminatorIndex === null) {
-        return { visibleText, pendingControlSequence: input.slice(index) };
+        return { visibleText, liveText, replies, pendingControlSequence: input.slice(index) };
       }
       const sequence = input.slice(index, terminatorIndex);
       const content = stripStringTerminator(input.slice(index + 1, terminatorIndex));
       const strip =
         (codePoint === 0x9d && shouldStripOscSequence(content)) ||
         (codePoint === 0x90 && shouldStripDcsSequence(content));
-      if (!strip) {
+      const reply = serverOwnedQueries && codePoint === 0x9d ? colorQueryReply(content) : "";
+      if (reply) {
+        replies += reply;
+      } else if (!strip) {
         append(sequence);
+      } else {
+        liveText += sequence;
       }
       index = terminatorIndex;
       continue;
@@ -1193,7 +1278,7 @@ function sanitizeTerminalHistoryChunk(
     index += 1;
   }
 
-  return { visibleText, pendingControlSequence: "" };
+  return { visibleText, liveText, replies, pendingControlSequence: "" };
 }
 
 function legacySafeThreadId(threadId: string): string {
@@ -2012,9 +2097,10 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         }
 
         if (nextEvent.type === "output") {
-          const sanitized = sanitizeTerminalHistoryChunk(
+          const sanitized = sanitizeTerminalOutputChunk(
             session.pendingHistoryControlSequence,
             nextEvent.data,
+            session.serverOwnedQueries,
           );
           session.pendingHistoryControlSequence = sanitized.pendingControlSequence;
           if (sanitized.visibleText.length > 0) {
@@ -2028,7 +2114,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
             terminalId: session.terminalId,
             sequence: eventStamp.sequence,
             history: sanitized.visibleText.length > 0 ? session.history : null,
-            data: nextEvent.data,
+            process: session.process,
+            replies: sanitized.replies,
+            data: session.serverOwnedQueries ? sanitized.liveText : nextEvent.data,
           } as const;
         }
 
@@ -2067,6 +2155,20 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
       }
 
       if (action.type === "output") {
+        if (action.replies.length > 0) {
+          yield* Effect.try({
+            try: () => action.process.write(action.replies),
+            catch: (cause) =>
+              new TerminalWriteError({
+                threadId: action.threadId,
+                terminalId: action.terminalId,
+                terminalPid: action.process.pid,
+                cause,
+              }),
+          }).pipe(
+            Effect.catch((error) => Effect.logWarning("terminal query reply failed", { error })),
+          );
+        }
         if (action.history !== null) {
           yield* queuePersist(action.threadId, action.terminalId, action.history);
         }
@@ -2516,7 +2618,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }).pipe(Effect.ignoreCause({ log: true })),
   );
 
-  const openLocked = Effect.fn("terminal.openLocked")(function* (input: TerminalOpenInput) {
+  const openLocked = Effect.fn("terminal.openLocked")(function* (input: ManagedTerminalOpenInput) {
     const terminalId = input.terminalId;
     yield* assertValidCwd(input.cwd);
 
@@ -2536,6 +2638,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
         pid: null,
         history,
         pendingHistoryControlSequence: "",
+        serverOwnedQueries: input.serverOwnedQueries ?? false,
         pendingProcessEvents: [],
         pendingProcessEventIndex: 0,
         processEventDrainRunning: false,
@@ -2578,6 +2681,9 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
     }
 
     const liveSession = existing.value;
+    if (input.serverOwnedQueries !== undefined) {
+      liveSession.serverOwnedQueries = input.serverOwnedQueries;
+    }
     const nextRuntimeEnv = normalizedRuntimeEnv(input.env);
     const currentRuntimeEnv = liveSession.runtimeEnv;
     const targetCols = input.cols ?? liveSession.cols;
@@ -2951,6 +3057,7 @@ export const makeWithOptions = Effect.fn("TerminalManager.makeWithOptions")(func
           pid: null,
           history: new BoundedTerminalHistory(historyLineLimit, "", historyByteLimit),
           pendingHistoryControlSequence: "",
+          serverOwnedQueries: false,
           pendingProcessEvents: [],
           pendingProcessEventIndex: 0,
           processEventDrainRunning: false,

@@ -357,6 +357,7 @@ export const make = Effect.gen(function* () {
 
     yield* terminalManager
       .open({
+        serverOwnedQueries: true,
         threadId: input.threadId,
         terminalId,
         cwd,
