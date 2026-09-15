@@ -21,6 +21,11 @@ on macOS and Ctrl on Windows and Linux, including GNOME, KDE Plasma, Niri, and
 Hyprland. If a custom desktop shortcut takes the same keys, choose another binding
 in Settings.
 
+In a focused web or desktop composer, `Cmd+Return` on Apple devices or
+`Ctrl+Return` elsewhere sends a draft immediately while a turn is running,
+instead of queueing it. Change this shortcut in Settings → Keybindings under
+**Composer: Send immediately**.
+
 ## Copy pull request references
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`

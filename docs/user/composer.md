@@ -35,7 +35,10 @@ A message sent during a running turn waits at the end of the conversation as a
 dashed bubble. It goes out on its own when the agent finishes its next tool
 call, or when the turn ends. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
-message to the composer.
+message to the composer. On web and desktop, with the composer focused, press
+`Cmd+Return` on Apple devices or `Ctrl+Return` elsewhere to send a draft
+immediately while the agent is working. Change this shortcut in **Settings →
+Keybindings** under **Composer: Send immediately**.
 
 ## Queue messages offline on mobile
 

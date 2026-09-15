@@ -1064,6 +1064,49 @@ describe("plus key parsing", () => {
 });
 
 describe("composer and pull request shortcuts", () => {
+  for (const platform of ["MacIntel", "Win32", "Linux"]) {
+    it(`resolves the default send-now shortcut on ${platform}`, () => {
+      const input = event({
+        key: "Enter",
+        metaKey: platform === "MacIntel",
+        ctrlKey: platform !== "MacIntel",
+      });
+      assert.strictEqual(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: false },
+        }),
+        "composer.sendNow",
+      );
+      assert.isNull(
+        resolveShortcutCommand(input, DEFAULT_RESOLVED_KEYBINDINGS, {
+          platform,
+          context: { terminalFocus: true },
+        }),
+      );
+    });
+  }
+
+  it("resolves a remapped send-now shortcut on an arbitrary key", () => {
+    const bindings = compileResolvedKeybindingsConfig([
+      { key: "alt+q", command: "composer.sendNow", when: "!terminalFocus" },
+    ]);
+
+    assert.strictEqual(
+      resolveShortcutCommand(event({ key: "q", altKey: true }), bindings, {
+        platform: "Linux",
+        context: { terminalFocus: false },
+      }),
+      "composer.sendNow",
+    );
+    assert.isNull(
+      resolveShortcutCommand(event({ key: "q", altKey: true }), bindings, {
+        platform: "Linux",
+        context: { terminalFocus: true },
+      }),
+    );
+  });
+
   it("fills missing number shortcuts without replacing the saved URL binding", () => {
     const olderServerBindings = DEFAULT_RESOLVED_KEYBINDINGS.filter(
       (binding) =>

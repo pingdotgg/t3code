@@ -116,6 +116,7 @@ import { readLocalApi } from "../localApi";
 import { useDiffPanelStore } from "../diffPanelStore";
 import {
   collapseExpandedComposerCursor,
+  type ComposerSubmissionDelivery,
   type ComposerSubmissionIntent,
   parseStandaloneComposerSlashCommand,
 } from "../composer-logic";
@@ -7168,14 +7169,20 @@ export default function ChatView(props: ChatViewProps) {
   const onSend = async (
     e?: { preventDefault: () => void },
     submissionIntent: ComposerSubmissionIntent = "foreground",
-    directAnnotation?: {
-      annotation: PreviewAnnotationPayload;
-      image: ComposerImageAttachment | null;
+    options?: {
+      delivery?: ComposerSubmissionDelivery;
+      directAnnotation?: {
+        annotation: PreviewAnnotationPayload;
+        image: ComposerImageAttachment | null;
+      };
+      /** A queued message being sent now instead of the live composer draft. */
+      queuedMessage?: QueuedComposerMessage;
     },
-    /** A queued message being sent now instead of the live composer draft. */
-    queuedMessage?: QueuedComposerMessage,
   ) => {
     e?.preventDefault();
+    const delivery = options?.delivery ?? "normal";
+    const directAnnotation = options?.directAnnotation;
+    const queuedMessage = options?.queuedMessage;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
@@ -7497,11 +7504,17 @@ export default function ChatView(props: ChatViewProps) {
       );
       return;
     }
-    // A send during a running turn waits in the queue. It leaves on the next
-    // tool boundary, when the turn ends, or when the user clicks Steer. The
-    // provider treats a mid-turn send as a steer of the active turn, so the
-    // dispatch below is the same either way.
-    if (!queuedMessage && !directAnnotation && phase === "running" && activeThreadKey) {
+    // An ordinary send during a running turn waits in the queue. It leaves on
+    // the next tool boundary, when the turn ends, or when the user clicks
+    // Steer. An explicit immediate delivery skips this gate; the provider
+    // treats that mid-turn dispatch as a steer.
+    if (
+      delivery !== "immediate" &&
+      !queuedMessage &&
+      !directAnnotation &&
+      phase === "running" &&
+      activeThreadKey
+    ) {
       if (composerRef.current?.validateProviderInput(promptForSend) === false) {
         return;
       }
@@ -8164,7 +8177,7 @@ export default function ChatView(props: ChatViewProps) {
   // after it was queued, or the turn ended. Only one leaves per boundary; the
   // take inside onSend re-anchors the rest.
   const sendQueuedMessage = useEffectEvent((message: QueuedComposerMessage) => {
-    void onSend(undefined, message.submissionIntent, undefined, message);
+    void onSend(undefined, message.submissionIntent, { queuedMessage: message });
   });
   const nextQueuedMessage = queuedMessages[0] ?? null;
   const latestToolActivityId = useMemo(
@@ -8211,7 +8224,7 @@ export default function ChatView(props: ChatViewProps) {
     steer: (id) => {
       const message = queuedMessages.find((entry) => entry.id === id);
       if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
-      void onSend(undefined, message.submissionIntent, undefined, message);
+      void onSend(undefined, message.submissionIntent, { queuedMessage: message });
     },
     remove: (id) => {
       if (!activeThreadKey) return;
@@ -9137,7 +9150,7 @@ export default function ChatView(props: ChatViewProps) {
           configuredUrls={configuredPreviewUrls}
           visible={rightPanelOpen}
           onSendAnnotation={(annotation, image) => {
-            void onSend(undefined, "foreground", { annotation, image });
+            void onSend(undefined, "foreground", { directAnnotation: { annotation, image } });
           }}
         />
       </Suspense>

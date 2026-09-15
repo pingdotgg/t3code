@@ -67,6 +67,7 @@ import { createPortal, flushSync } from "react-dom";
 import {
   clampCollapsedComposerCursor,
   type ComposerSubmissionIntent,
+  type ComposerSubmissionDelivery,
   type ComposerTrigger,
   collapseExpandedComposerCursor,
   composerSubmissionIntentForEnter,
@@ -74,6 +75,7 @@ import {
   expandCollapsedComposerCursor,
   formatAssistantCitationForComposer,
   replaceTextRange,
+  resolveComposerImmediateSendDecision,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
 import {
@@ -1167,6 +1169,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
   isConnecting: boolean;
   isEnvironmentUnavailable: boolean;
   hasSendableContent: boolean;
+  sendNowShortcutLabel?: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -1200,6 +1203,7 @@ const ComposerFooterPrimaryActions = memo(function ComposerFooterPrimaryActions(
         isEnvironmentUnavailable={props.isEnvironmentUnavailable}
         isPreparingWorktree={props.isPreparingWorktree}
         hasSendableContent={props.hasSendableContent}
+        sendNowShortcutLabel={props.sendNowShortcutLabel ?? null}
         preserveComposerFocusOnPointerDown={props.preserveComposerFocusOnPointerDown ?? false}
         onPreviousPendingQuestion={props.onPreviousPendingQuestion}
         onInterrupt={props.onInterrupt}
@@ -1395,7 +1399,11 @@ export interface ChatComposerProps {
 
   // Callbacks
   onCompactContext: () => void;
-  onSend: (e?: { preventDefault: () => void }, intent?: ComposerSubmissionIntent) => void;
+  onSend: (
+    e?: { preventDefault: () => void },
+    intent?: ComposerSubmissionIntent,
+    options?: { delivery?: ComposerSubmissionDelivery },
+  ) => void;
   onInterrupt: () => void;
   onImplementPlanInNewThread: () => void;
   onRespondToApproval: (
@@ -2625,6 +2633,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     environmentUnavailable !== null ||
     !composerSendState.hasSendableContent;
   const collapsedComposerPrimaryActionLabel = "Send message";
+  const sendNowShortcutLabel = useMemo(
+    () =>
+      shortcutLabelForCommand(keybindings, "composer.sendNow", {
+        context: {
+          terminalFocus: false,
+          terminalOpen,
+          modelPickerOpen: false,
+        },
+      }),
+    [keybindings, terminalOpen],
+  );
   const showMobilePendingAnswerActions =
     isMobileViewport && !isComposerCollapsedMobile && pendingPrimaryAction !== null;
 
@@ -3717,7 +3736,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ]);
 
   const submitComposer = useCallback(
-    (event?: { preventDefault: () => void }, intent: ComposerSubmissionIntent = "foreground") => {
+    (
+      event?: { preventDefault: () => void },
+      intent: ComposerSubmissionIntent = "foreground",
+      delivery: ComposerSubmissionDelivery = "normal",
+    ) => {
       if (noProviderAvailable || isSendDisabled) {
         event?.preventDefault();
         return;
@@ -3757,7 +3780,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           // ChatView reports its final composed-input preflight through the
           // composer handle before its first asynchronous send step.
           providerInputRejectedRef.current = false;
-          onSend(sendEvent, intent);
+          onSend(sendEvent, intent, { delivery });
           return !providerInputRejectedRef.current;
         },
       });
@@ -3779,6 +3802,69 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       shouldBlurMobileComposerOnSubmit,
     ],
   );
+
+  useEffect(() => {
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.defaultPrevented) return;
+      const target = event.target;
+      if (
+        !(target instanceof HTMLElement) ||
+        !target.isContentEditable ||
+        !composerFormRef.current?.contains(target)
+      ) {
+        return;
+      }
+
+      const command = resolveShortcutCommand(event, keybindings, {
+        context: {
+          terminalFocus: getTerminalFocusOwner() !== null,
+          terminalOpen,
+          modelPickerOpen: isComposerModelPickerOpen,
+        },
+      });
+      if (command !== "composer.sendNow") return;
+      const menuOpen =
+        composerMenuOpenRef.current || resolveActiveComposerTrigger().trigger !== null;
+      const decision = resolveComposerImmediateSendDecision({
+        command,
+        isComposing: event.isComposing,
+        isImeKeydown: event.keyCode === 229,
+        repeat: event.repeat,
+        menuOpen,
+        hasPendingRequest:
+          isComposerApprovalState || activePendingProgress !== null || pendingUserInputs.length > 0,
+      });
+      // Leave Enter to the command menu and Lexical's IME handling. Other
+      // remapped keys still use this capture path while the editor is focused.
+      if (decision === "pass") return;
+      event.preventDefault();
+      event.stopPropagation();
+      if (decision === "block") return;
+
+      const submissionIntent = composerSubmissionIntentForEnter({
+        isMobileViewport,
+        shiftKey: event.shiftKey,
+        modifierKey: event.metaKey || event.ctrlKey,
+        isDraftThread: routeKind === "draft",
+      });
+      submitComposer(event, submissionIntent ?? "foreground", "immediate");
+    };
+
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
+  }, [
+    activePendingProgress,
+    isComposerApprovalState,
+    isComposerModelPickerOpen,
+    isMobileViewport,
+    keybindings,
+    pendingUserInputs.length,
+    resolveActiveComposerTrigger,
+    routeKind,
+    submitComposer,
+    terminalOpen,
+  ]);
+
   const submitCitationAndSend = useCallback(() => {
     const intent = composerSubmissionIntentForEnter({
       isMobileViewport,
@@ -6844,6 +6930,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     isPreparingWorktree={isPreparingWorktree}
                     hasSendableContent={composerSendState.hasSendableContent}
+                    sendNowShortcutLabel={sendNowShortcutLabel}
                     preserveComposerFocusOnPointerDown={isMobileViewport || isComposerResting}
                     onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
                     onInterrupt={handleInterruptPrimaryAction}

@@ -6,6 +6,7 @@ import { StageBackdropButtonArt, useSidebarStageBackdropVariant } from "../Sideb
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
 
 interface PendingActionState {
@@ -28,6 +29,7 @@ interface ComposerPrimaryActionsProps {
   isEnvironmentUnavailable: boolean;
   isPreparingWorktree: boolean;
   hasSendableContent: boolean;
+  sendNowShortcutLabel?: string | null;
   preserveComposerFocusOnPointerDown?: boolean;
   onPreviousPendingQuestion: () => void;
   onInterrupt: () => void;
@@ -68,6 +70,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   isEnvironmentUnavailable,
   isPreparingWorktree,
   hasSendableContent,
+  sendNowShortcutLabel = null,
   preserveComposerFocusOnPointerDown = false,
   onPreviousPendingQuestion,
   onInterrupt,
@@ -273,12 +276,23 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
     return sendButton;
   }
 
+  const sendButtonWithShortcutHint = sendNowShortcutLabel ? (
+    <Tooltip>
+      <TooltipTrigger render={sendButton} />
+      <TooltipPopup side="top">
+        Queue message, or press {sendNowShortcutLabel} to send immediately
+      </TooltipPopup>
+    </Tooltip>
+  ) : (
+    sendButton
+  );
+
   // While a turn runs, a sendable draft queues for the next tool boundary, so
   // the send button stays next to Stop on every viewport.
   return (
     <>
       {renderStopGenerationButton(false)}
-      {hasSendableContent ? sendButton : null}
+      {hasSendableContent ? sendButtonWithShortcutHint : null}
     </>
   );
 });

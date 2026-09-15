@@ -1,4 +1,4 @@
-import type { AssistantCitation } from "@t3tools/contracts";
+import type { AssistantCitation, KeybindingCommand } from "@t3tools/contracts";
 import {
   serializeAssistantCitation,
   withAssistantCitationComment,
@@ -11,6 +11,23 @@ import {
 export type ComposerTriggerKind = "path" | "pull-request" | "slash-command" | "skill";
 export type ComposerSlashCommand = "model" | "plan" | "default";
 export type ComposerSubmissionIntent = "foreground" | "background";
+export type ComposerSubmissionDelivery = "normal" | "immediate";
+export type ComposerImmediateSendDecision = "send" | "block" | "pass";
+
+export function resolveComposerImmediateSendDecision(input: {
+  command: KeybindingCommand | null;
+  isComposing: boolean;
+  isImeKeydown: boolean;
+  repeat: boolean;
+  menuOpen: boolean;
+  hasPendingRequest: boolean;
+}): ComposerImmediateSendDecision {
+  if (input.command !== "composer.sendNow") return "pass";
+  if (input.isComposing || input.isImeKeydown) return "pass";
+  if (input.repeat || input.hasPendingRequest) return "block";
+  if (input.menuOpen) return "pass";
+  return "send";
+}
 
 export interface ComposerTrigger {
   kind: ComposerTriggerKind;

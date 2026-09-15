@@ -26,6 +26,7 @@ describe("KeybindingsSettings.logic", () => {
       "composer.workspace",
       "composer.branch",
       "composer.previousWorktree",
+      "composer.sendNow",
       "modelPicker.previousProvider",
       "modelPicker.nextProvider",
       "thread.copyReference",
@@ -203,6 +204,7 @@ describe("KeybindingsSettings.logic", () => {
   it("formats static and project script command labels", () => {
     expect(commandLabel("commandPalette.toggle")).toBe("Command Palette: Toggle");
     expect(commandLabel("themeEditor.toggle")).toBe("Theme Editor: Toggle");
+    expect(commandLabel("composer.sendNow")).toBe("Composer: Send immediately");
     expect(commandLabel("script.setup-db.run")).toBe("Run Script: Setup Db");
   });
 

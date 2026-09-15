@@ -17,6 +17,7 @@ import {
   isCollapsedCursorAdjacentToInlineToken,
   parseStandaloneComposerSlashCommand,
   replaceTextRange,
+  resolveComposerImmediateSendDecision,
 } from "./composer-logic";
 import { formatTerminalContextReference } from "./lib/terminalContext";
 
@@ -114,6 +115,47 @@ describe("composerSubmissionIntentForEnter", () => {
         isDraftThread: false,
       }),
     ).toBe("foreground");
+  });
+});
+
+describe("resolveComposerImmediateSendDecision", () => {
+  const sendNow = {
+    command: "composer.sendNow" as const,
+    isComposing: false,
+    isImeKeydown: false,
+    repeat: false,
+    menuOpen: false,
+    hasPendingRequest: false,
+  };
+
+  it("sends only for the resolved send-now command", () => {
+    expect(resolveComposerImmediateSendDecision(sendNow)).toBe("send");
+    expect(resolveComposerImmediateSendDecision({ ...sendNow, command: null })).toBe("pass");
+  });
+
+  it.each([
+    ["a repeated keydown", { repeat: true }],
+    ["a pending question", { hasPendingRequest: true }],
+  ])("blocks %s without falling through to normal submission", (_description, input) => {
+    expect(resolveComposerImmediateSendDecision({ ...sendNow, ...input })).toBe("block");
+  });
+
+  it.each([
+    ["IME composition", { isComposing: true }],
+    ["the browser IME keydown", { isImeKeydown: true }],
+    ["an active composer menu", { menuOpen: true }],
+  ])("passes through %s", (_description, input) => {
+    expect(resolveComposerImmediateSendDecision({ ...sendNow, ...input })).toBe("pass");
+  });
+
+  it("blocks a pending question even while its menu is open", () => {
+    expect(
+      resolveComposerImmediateSendDecision({
+        ...sendNow,
+        menuOpen: true,
+        hasPendingRequest: true,
+      }),
+    ).toBe("block");
   });
 });
 
