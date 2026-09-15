@@ -273,10 +273,16 @@ for (const storage of ["sqlite", "memory"] as const) {
       assert.instanceOf(missingThread, ProjectionStoreThreadNotFoundError);
 
       const calls: string[] = [];
+      let hasBackgroundWork = false;
       const sessions = Layer.mock(ProviderSessionManagerV2)({
         get: () =>
           Effect.succeed(
             Option.some({
+              hasPendingBackgroundWorkForThread: (target: { id: ProviderThreadId }) =>
+                Effect.sync(() => {
+                  assert.equal(target.id, providerThreadId);
+                  return hasBackgroundWork;
+                }),
               interruptTurn: () =>
                 Effect.sync(() => {
                   calls.push("interrupt");
@@ -330,6 +336,19 @@ for (const storage of ["sqlite", "memory"] as const) {
           "Failure",
         );
         assert.lengthOf(calls, 3);
+        const turn = context.providerTurn!;
+        yield* store.apply({
+          id: EventId.make("control:turn-completed"),
+          type: "provider-turn.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...turn, status: "completed", completedAt: now },
+        });
+        yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
+        assert.lengthOf(calls, 3);
+        hasBackgroundWork = true;
+        yield* control.interrupt({ threadId, providerThreadId, providerTurnId, providerSessionId });
+        assert.deepEqual(calls, ["interrupt", "Use the smaller fix.", "reply", "interrupt"]);
       }).pipe(Effect.provide(Layer.merge(controlLayer, replyLayer).pipe(Layer.provide(sessions))));
     }).pipe(Effect.provide(Layer.merge(storeLayer, SqlitePersistenceMemory))),
   );

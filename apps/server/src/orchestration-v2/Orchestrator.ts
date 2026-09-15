@@ -37,6 +37,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { modelSelectionsEqual } from "@t3tools/shared/model";
+import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -6488,9 +6489,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         run?.providerThreadId === null
           ? undefined
           : projection.providerThreads.find((candidate) => candidate.id === run?.providerThreadId);
-      const providerTurn = projection.providerTurns.find(
+      const hasBackgroundWork =
+        run?.id === projection.runs.at(-1)?.id &&
+        derivePendingBackgroundWork({
+          latestRun: run,
+          providerThreads: projection.providerThreads,
+          turnItems: projection.turnItems,
+          activeProviderThreadId: projection.thread.activeProviderThreadId,
+          runs: projection.runs,
+        }).length > 0;
+      const providerTurn = projection.providerTurns.findLast(
         (candidate) =>
-          candidate.runAttemptId === run?.activeAttemptId && candidate.status === "running",
+          candidate.runAttemptId === run?.activeAttemptId &&
+          (candidate.status === "running" || hasBackgroundWork),
       );
       if (run === undefined || rootNode === undefined || providerThread === undefined) {
         return yield* new OrchestratorDispatchError({
