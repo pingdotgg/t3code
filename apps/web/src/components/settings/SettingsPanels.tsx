@@ -530,6 +530,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.diffColorScheme !== DEFAULT_UNIFIED_SETTINGS.diffColorScheme
         ? ["Diff colors"]
         : []),
+      ...(settings.projectMonogramColor !== DEFAULT_UNIFIED_SETTINGS.projectMonogramColor
+        ? ["Project monogram color"]
+        : []),
       ...(settings.panelAnimationDurationMs !== DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs
         ? ["Panel animations"]
         : []),
@@ -630,6 +633,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.browserAutoShowFloatingPreview,
       settings.appearanceContrast,
       settings.diffColorScheme,
+      settings.projectMonogramColor,
       settings.enableAgentBrowserAccess,
       settings.confirmQuit,
       settings.confirmThreadArchive,
@@ -738,6 +742,7 @@ export function useSettingsRestore(onRestored?: () => void) {
     updateSettings({
       appearanceContrast: DEFAULT_UNIFIED_SETTINGS.appearanceContrast,
       diffColorScheme: DEFAULT_UNIFIED_SETTINGS.diffColorScheme,
+      projectMonogramColor: DEFAULT_UNIFIED_SETTINGS.projectMonogramColor,
       timestampFormat: DEFAULT_UNIFIED_SETTINGS.timestampFormat,
       notificationMode: DEFAULT_UNIFIED_SETTINGS.notificationMode,
       inAppNotificationsEnabled: DEFAULT_UNIFIED_SETTINGS.inAppNotificationsEnabled,
@@ -1359,6 +1364,47 @@ export function AppearanceSettingsPanel() {
                 <SelectPopup align="end" alignItemWithTrigger={false}>
                   <SelectItem value="red-green">Red & green (default)</SelectItem>
                   <SelectItem value="blue-orange">Blue & orange</SelectItem>
+                </SelectPopup>
+              </Select>
+            </div>
+          }
+        />
+        <SettingsRow
+          {...searchableSetting("project-monogram-color")}
+          description="Use per-project colors or the theme action color for project monograms."
+          resetAction={
+            settings.projectMonogramColor !== DEFAULT_UNIFIED_SETTINGS.projectMonogramColor ? (
+              <SettingResetButton
+                label="project monogram color"
+                onClick={() =>
+                  updateSettings({
+                    projectMonogramColor: DEFAULT_UNIFIED_SETTINGS.projectMonogramColor,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <div className="w-full sm:w-40">
+              <Select
+                value={settings.projectMonogramColor}
+                onValueChange={(value) => {
+                  if (value === "auto" || value === "accent")
+                    updateSettings({ projectMonogramColor: value });
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full min-w-0"
+                  aria-label="Project monogram color"
+                >
+                  <SelectValue>
+                    {settings.projectMonogramColor === "accent" ? "Theme action" : "Automatic"}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="auto">Automatic (default)</SelectItem>
+                  <SelectItem value="accent">Theme action</SelectItem>
                 </SelectPopup>
               </Select>
             </div>

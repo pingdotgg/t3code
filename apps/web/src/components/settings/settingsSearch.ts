@@ -157,6 +157,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["red green blue orange additions deletions changes counts palette colorblind"],
   },
   {
+    id: "project-monogram-color",
+    title: "Project monogram color",
+    to: "/settings/appearance",
+    searchTerms: ["project monogram badge avatar icon automatic theme accent color colors"],
+  },
+  {
     id: "panel-animations",
     title: "Panel animations",
     to: "/settings/appearance",

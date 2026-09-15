@@ -244,6 +244,25 @@ describe("ClientSettings diff colors", () => {
   });
 });
 
+describe("ClientSettings project monogram color", () => {
+  it("keeps automatic hash colors for existing settings without a saved choice", () => {
+    expect(decodeClientSettings({}).projectMonogramColor).toBe("auto");
+  });
+
+  it.each(["auto", "accent"])("round-trips the %s choice", (projectMonogramColor) => {
+    const settings = decodeClientSettings({ projectMonogramColor });
+    expect(encodeClientSettings(settings).projectMonogramColor).toBe(projectMonogramColor);
+    expect(decodeClientSettingsPatch({ projectMonogramColor }).projectMonogramColor).toBe(
+      projectMonogramColor,
+    );
+  });
+
+  it("rejects unsupported choices", () => {
+    expect(() => decodeClientSettings({ projectMonogramColor: "rainbow" })).toThrow();
+    expect(() => decodeClientSettingsPatch({ projectMonogramColor: "rainbow" })).toThrow();
+  });
+});
+
 describe("ClientSettings load balancing", () => {
   it("requires opt-in when settings are new or omit load balancing", () => {
     expect(decodeClientSettings({}).loadBalancingEnabled).toBe(false);

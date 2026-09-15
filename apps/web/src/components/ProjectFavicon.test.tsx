@@ -1,60 +1,19 @@
-import type { ComponentType, Dispatch, ReactElement, SetStateAction } from "react";
-import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
+import { act } from "react";
+import { create, type ReactTestRenderer } from "react-test-renderer";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { PROJECT_FAVICON_FALLBACK_MARKER } from "@t3tools/shared/projectFavicon";
 
 const testState = vi.hoisted(() => ({
   faviconUrl: "https://environment.test/api/assets/token-a/v1-20-favicon.svg",
   lastTarget: null as unknown,
+  projectMonogramColor: "auto",
 }));
 
-const hooks = vi.hoisted(() => {
-  let cursor = 0;
-  let slots: unknown[] = [];
-  const nextIndex = () => cursor++;
-
-  return {
-    beginRender() {
-      cursor = 0;
-    },
-    reset() {
-      cursor = 0;
-      slots = [];
-    },
-    useMemoCache(size: number): unknown[] {
-      const index = nextIndex();
-      if (!slots[index]) {
-        slots[index] = Array.from({ length: size }, () => Symbol.for("react.memo_cache_sentinel"));
-      }
-      return slots[index] as unknown[];
-    },
-    useState<T>(initialValue: T | (() => T)): [T, Dispatch<SetStateAction<T>>] {
-      const index = nextIndex();
-      if (index >= slots.length) {
-        slots[index] =
-          typeof initialValue === "function" ? (initialValue as () => T)() : initialValue;
-      }
-      const setValue: Dispatch<SetStateAction<T>> = (nextValue) => {
-        const previous = slots[index] as T;
-        slots[index] =
-          typeof nextValue === "function" ? (nextValue as (value: T) => T)(previous) : nextValue;
-      };
-      return [slots[index] as T, setValue];
-    },
-  };
-});
-
-vi.mock("react", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("react")>();
-  return {
-    ...actual,
-    useState: hooks.useState,
-  };
-});
-
-vi.mock("react/compiler-runtime", () => ({ c: hooks.useMemoCache }));
 vi.mock("lucide-react/dynamic", () => ({
-  DynamicIcon: "dynamic-icon",
+  DynamicIcon: (props: { name: string; className: string }) => (
+    <span data-testid="dynamic-icon" {...props} />
+  ),
   iconNames: ["alarm-clock", "folder-code"],
 }));
 vi.mock("@effect/atom-react", () => ({
@@ -65,8 +24,16 @@ vi.mock("../state/assets", () => ({
     testState.lastTarget = input;
   },
 }));
+vi.mock("../hooks/useSettings", () => ({
+  useClientSettings: (selector?: (settings: { projectMonogramColor: string }) => unknown) => {
+    const settings = { projectMonogramColor: testState.projectMonogramColor };
+    return selector ? selector(settings) : settings;
+  },
+}));
 
 import { ProjectFavicon, type ProjectFaviconProject } from "./ProjectFavicon";
+
+let renderer: ReactTestRenderer | undefined;
 
 function makeProject(
   overrides: Partial<ProjectFaviconProject> &
@@ -75,145 +42,196 @@ function makeProject(
   return { environmentId: "environment-test" as EnvironmentId, ...overrides };
 }
 
-type ProjectFaviconImageProps = {
-  readonly cacheKey: string;
-  readonly src: string;
-  readonly className?: string | undefined;
-  readonly fallbackIcon: ComponentType<{ className?: string }>;
-};
-
-type ImageElement = ReactElement<{
-  readonly src: string;
-  readonly onLoad?: () => void;
-  readonly onError?: () => void;
-}>;
-
-type ProjectFaviconImageElement = ReactElement<{
-  readonly children: [ReactElement | null, ImageElement | null, ImageElement | null];
-}>;
-
-function resolveImageComponent(): {
-  readonly Component: (props: ProjectFaviconImageProps) => ProjectFaviconImageElement;
-  readonly props: ProjectFaviconImageProps;
-} {
-  hooks.beginRender();
-  const element = ProjectFavicon({
-    project: makeProject({ workspaceRoot: "/workspace-test", title: "workspace-test" }),
-  }) as ReactElement<ProjectFaviconImageProps>;
-  hooks.reset();
-
-  return {
-    Component: element.type as (props: ProjectFaviconImageProps) => ProjectFaviconImageElement,
-    props: element.props,
-  };
+async function renderProject(project: ProjectFaviconProject) {
+  if (renderer) {
+    await act(() => renderer?.unmount());
+  }
+  await act(() => {
+    renderer = create(<ProjectFavicon project={project} />);
+  });
+  const rendered = renderer;
+  if (!rendered) throw new Error("Project favicon renderer was not created");
+  return rendered;
 }
 
-function renderImage(
-  Component: (props: ProjectFaviconImageProps) => ProjectFaviconImageElement,
-  props: ProjectFaviconImageProps,
-): ProjectFaviconImageElement {
-  hooks.beginRender();
-  return Component(props);
+async function renderMissingImageMonogram(title: string) {
+  testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+  const rendered = await renderProject(
+    makeProject({ workspaceRoot: "/workspace/monogram", title }),
+  );
+  const svg = rendered.root.findByType("svg");
+  const text = rendered.root.findByType("text");
+  return {
+    backgroundColor: svg.props.style?.backgroundColor,
+    backgroundImage: svg.props.style?.backgroundImage,
+    fill: text.props.fill,
+    glyph: text.children.join(""),
+  };
 }
 
 describe("ProjectFavicon", () => {
   beforeEach(() => {
-    hooks.reset();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
     testState.faviconUrl = "https://environment.test/api/assets/token-a/v1-20-favicon.svg";
+    testState.projectMonogramColor = "auto";
   });
 
-  it("shows the project monogram when no favicon exists", () => {
-    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
-
-    const element = ProjectFavicon({
-      project: makeProject({ workspaceRoot: "/workspace/analytics-db", title: "analytics-db" }),
-    }) as ReactElement<{
-      readonly projectName?: string;
-    }>;
-
-    expect(element.props.projectName).toBe("analytics-db");
+  afterEach(async () => {
+    if (renderer) {
+      await act(() => renderer?.unmount());
+      renderer = undefined;
+    }
+    vi.unstubAllGlobals();
   });
 
-  it("uses the same monogram fallback for every project category", () => {
-    testState.faviconUrl = `https://environment.test/api/assets/token/${PROJECT_FAVICON_FALLBACK_MARKER}`;
+  it("shows the project monogram when no favicon exists", async () => {
+    const monogram = await renderMissingImageMonogram("analytics-db");
 
-    const element = ProjectFavicon({
-      project: makeProject({ workspaceRoot: "/workspace/agent-runtime", title: "agent-runtime" }),
-    }) as ReactElement<{
-      readonly projectName?: string;
-    }>;
-
-    expect(element.props.projectName).toBe("agent-runtime");
+    expect(monogram.glyph).toMatch(/[A-Z]/);
   });
 
-  it("renders a saved Lucide icon and color ahead of an uploaded favicon", () => {
-    const element = ProjectFavicon({
-      project: makeProject({
+  it("uses the same monogram fallback for every project category", async () => {
+    const monogram = await renderMissingImageMonogram("agent-runtime");
+
+    expect(monogram.glyph).toMatch(/[A-Z]/);
+  });
+
+  it("renders a saved Lucide icon and color ahead of an uploaded favicon", async () => {
+    const rendered = await renderProject(
+      makeProject({
         workspaceRoot: "/workspace/test",
         title: "test",
         faviconPath: "brand/icon.svg",
         projectIcon: { kind: "lucide", name: "alarm-clock", color: "violet" },
       }),
-    }) as ReactElement<{
-      readonly children: ReactElement<{
-        readonly children: ReactElement<{ readonly name: string; readonly className: string }>;
-      }>;
-      readonly className: string;
-    }>;
+    );
 
-    expect(element.props.children.props.children.props.name).toBe("alarm-clock");
-    expect(element.props.className).toContain("text-violet-600");
-    expect(element.props.children.props.children.props.className).toContain("text-violet-600");
+    const icon = rendered.root
+      .findAllByType("span")
+      .find((span) => span.props["data-testid"] === "dynamic-icon");
+    if (!icon) throw new Error("Dynamic project icon was not rendered");
+    expect(icon.props.name).toBe("alarm-clock");
+    expect(rendered.root.findByType("span").props.className).toContain("text-violet-600");
+    expect(icon.props.className).toContain("text-violet-600");
   });
 
-  it("renders a saved emoji ahead of an uploaded favicon", () => {
-    const element = ProjectFavicon({
-      project: makeProject({
+  it("renders a saved emoji ahead of an uploaded favicon", async () => {
+    const rendered = await renderProject(
+      makeProject({
         workspaceRoot: "/workspace/test",
         title: "test",
         faviconPath: "brand/icon.svg",
         projectIcon: { kind: "emoji", emoji: "🦄" },
       }),
-    }) as ReactElement<{ readonly emoji: string }>;
+    );
 
-    expect(element.props.emoji).toBe("🦄");
+    expect(rendered.root.findAllByType("span").some((span) => span.children.includes("🦄"))).toBe(
+      true,
+    );
   });
 
-  it("falls back when the displayed favicon fails without discarding a valid older image early", () => {
-    const { Component, props } = resolveImageComponent();
-    const initialLoadingImage = renderImage(Component, props).props.children[2];
-    initialLoadingImage?.props.onLoad?.();
+  it("falls back when the displayed favicon fails without discarding a valid older image early", async () => {
+    const project = makeProject({
+      workspaceRoot: "/workspace-test",
+      title: "workspace-test",
+      faviconPath: "brand/icon.svg",
+    });
+    const initialSrc = testState.faviconUrl;
+    const refreshedSrc = "https://environment.test/api/assets/token-b/v1-20-favicon.svg";
+    const rendered = await renderProject(project);
 
-    const refreshedProps = {
-      ...props,
-      src: "https://environment.test/api/assets/token-b/v1-20-favicon.svg",
-    };
-    const refreshing = renderImage(Component, refreshedProps).props.children;
-    expect(refreshing[1]?.props.src).toBe(props.src);
-    refreshing[2]?.props.onError?.();
+    const initialLoadingImage = rendered.root.findAllByType("img")[0];
+    if (!initialLoadingImage) throw new Error("Initial favicon image was not rendered");
+    await act(() => initialLoadingImage.props.onLoad());
 
-    const afterRefreshError = renderImage(Component, refreshedProps).props.children;
-    expect(afterRefreshError[1]?.props.src).toBe(props.src);
-    afterRefreshError[1]?.props.onError?.();
+    testState.faviconUrl = refreshedSrc;
+    await act(() => {
+      renderer?.update(<ProjectFavicon project={project} />);
+    });
 
-    const afterDisplayedError = renderImage(Component, refreshedProps).props.children;
-    expect(afterDisplayedError[0]).not.toBeNull();
-    expect(afterDisplayedError[1]).toBeNull();
+    expect(
+      rendered.root.findAllByType("img").filter((image) => image.props.src === initialSrc),
+    ).toHaveLength(1);
+    const refreshingImage = rendered.root
+      .findAllByType("img")
+      .find((image) => image.props.src === refreshedSrc);
+    if (!refreshingImage) throw new Error("Refreshed favicon image was not rendered");
+    await act(() => refreshingImage.props.onError());
+    expect(
+      rendered.root.findAllByType("img").filter((image) => image.props.src === initialSrc),
+    ).toHaveLength(1);
+
+    const displayedImage = rendered.root
+      .findAllByType("img")
+      .find((image) => image.props.src === initialSrc);
+    if (!displayedImage) throw new Error("Displayed favicon image was not rendered");
+    await act(() => displayedImage.props.onError());
+    expect(rendered.root.findByType("svg")).toBeDefined();
+    expect(
+      rendered.root.findAllByType("img").filter((image) => image.props.src === initialSrc),
+    ).toHaveLength(0);
   });
 
-  it("requests a saved favicon path when one is set", () => {
-    ProjectFavicon({
-      project: makeProject({
+  it("requests a saved favicon path when one is set", async () => {
+    await renderProject(
+      makeProject({
         workspaceRoot: "/workspace-test",
         title: "workspace-test",
         faviconPath: "brand/icon.svg",
       }),
-    });
+    );
 
     expect(testState.lastTarget).toMatchObject({
       environmentId: "environment-test",
       cwd: "/workspace-test",
       faviconPath: "brand/icon.svg",
     });
+  });
+
+  it("uses the project color and current color for missing favicons in automatic mode", async () => {
+    testState.projectMonogramColor = "auto";
+    const monogram = await renderMissingImageMonogram("analytics-db");
+
+    expect(monogram.backgroundColor).toContain("color-mix");
+    expect(monogram.fill).toBe("currentColor");
+  });
+
+  it("uses the theme action color for missing favicons in accent mode", async () => {
+    testState.projectMonogramColor = "accent";
+    const monogram = await renderMissingImageMonogram("analytics-db");
+
+    expect(monogram.backgroundColor).toBe("var(--primary)");
+    expect(monogram.fill).toBe("var(--primary-foreground)");
+  });
+
+  it("keeps the same monogram glyph in both color modes", async () => {
+    testState.projectMonogramColor = "auto";
+    const automatic = await renderMissingImageMonogram("analytics-db");
+    testState.projectMonogramColor = "accent";
+    const accent = await renderMissingImageMonogram("analytics-db");
+
+    expect(accent.glyph).toBe(automatic.glyph);
+  });
+
+  it("uses the theme action color for failed favicons in accent mode", async () => {
+    testState.projectMonogramColor = "accent";
+    const rendered = await renderProject(
+      makeProject({
+        workspaceRoot: "/workspace-test",
+        title: "workspace-test",
+        faviconPath: "brand/icon.svg",
+      }),
+    );
+
+    const loadingImage = rendered.root.findAllByType("img")[0];
+    if (!loadingImage) throw new Error("Initial favicon image was not rendered");
+    await act(() => loadingImage.props.onLoad());
+    const displayedImage = rendered.root.findByType("img");
+    await act(() => displayedImage.props.onError());
+
+    const monogram = rendered.root.findByType("svg");
+    const glyph = rendered.root.findByType("text");
+    expect(monogram.props.style?.backgroundColor).toBe("var(--primary)");
+    expect(glyph.props.fill).toBe("var(--primary-foreground)");
   });
 });

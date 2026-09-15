@@ -1,4 +1,5 @@
 import type { ProjectIconColor } from "@t3tools/contracts";
+import type { ProjectMonogramColor } from "@t3tools/contracts/settings";
 import { projectIconColorClassName } from "../projectIconColors";
 import { cn } from "~/lib/utils";
 
@@ -7,12 +8,16 @@ const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme
 export function ProjectMonogram({
   text,
   color,
+  colorMode = "auto",
   className,
 }: {
   readonly text: string;
   readonly color: ProjectIconColor;
+  readonly colorMode?: ProjectMonogramColor;
   readonly className?: string | undefined;
 }) {
+  const isAccent = colorMode === "accent";
+
   // Wrapped like the emoji and Lucide branches so the monogram sits where an
   // <img> favicon would. Menu items, buttons and the like pull every bare svg
   // in with [&_svg]:-mx-0.5 to trim the padding stroke icons carry, and this
@@ -26,17 +31,19 @@ export function ProjectMonogram({
         viewBox="0 0 16 16"
         className={cn(
           "size-full overflow-hidden rounded-[25%] font-mono select-none",
-          projectIconColorClassName(color),
+          isAccent ? "text-primary-foreground" : projectIconColorClassName(color),
         )}
         style={{
-          backgroundColor: "color-mix(in srgb, currentColor 14%, transparent)",
+          backgroundColor: isAccent
+            ? "var(--primary)"
+            : "color-mix(in srgb, currentColor 14%, transparent)",
         }}
       >
         <text
           x="8"
           y="10.8"
           textAnchor="middle"
-          fill="currentColor"
+          fill={isAccent ? "var(--primary-foreground)" : "currentColor"}
           className="font-mono"
           fontSize="8.25"
           fontWeight="700"
