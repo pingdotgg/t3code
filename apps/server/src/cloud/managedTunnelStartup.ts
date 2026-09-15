@@ -36,7 +36,7 @@ export function managedTunnelStartupAction(input: {
 
 // Registration retries stop here. After that the host falls back to its
 // stored connector config rather than staying offline while the relay is down.
-export const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
+const MANAGED_TUNNEL_REGISTRATION_RETRY_WINDOW = Duration.minutes(10);
 
 export const retryManagedTunnelRegistration = <A, E, R>(
   registration: Effect.Effect<A, E, R>,
