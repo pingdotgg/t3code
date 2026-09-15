@@ -129,6 +129,66 @@ it.effect("restores empty checkpoints without changing paths outside the workspa
   }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
 );
 
+it.effect("restores only the paths that changed between two checkpoints", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-scoped-restore-" });
+    yield* runGit(root, ["init"]);
+    yield* runGit(root, ["config", "user.email", "test@test.com"]);
+    yield* runGit(root, ["config", "user.name", "Test"]);
+    const cwd = path.join(root, "ws");
+    const write = (relativePath: string, contents: string) =>
+      Effect.gen(function* () {
+        const absolutePath = path.join(cwd, relativePath);
+        yield* fileSystem.makeDirectory(path.dirname(absolutePath), { recursive: true });
+        yield* fileSystem.writeFileString(absolutePath, contents);
+      });
+    yield* write("app/[slug]/page.tsx", "page1\n");
+    yield* write("bar.ts", "bar1\n");
+    yield* fileSystem.writeFileString(path.join(root, "outside.txt"), "out1\n");
+    yield* runGit(root, ["add", "."]);
+    yield* runGit(root, ["commit", "-m", "initial"]);
+
+    const baseRef = CheckpointRef.make("refs/t3/checkpoints/scoped/0");
+    const latestRef = CheckpointRef.make("refs/t3/checkpoints/scoped/1");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: baseRef });
+    // The thread edits a bracketed path, creates a file, and deletes nothing else.
+    yield* write("app/[slug]/page.tsx", "page2\n");
+    yield* write("generated/new.ts", "new\n");
+    yield* driver.checkpoints.captureCheckpoint({ cwd, checkpointRef: latestRef });
+    // Another thread and the user change the same checkout afterwards.
+    yield* write("bar.ts", "bar2\n");
+    yield* write("notes.md", "keep\n");
+    yield* fileSystem.writeFileString(path.join(root, "outside.txt"), "out2\n");
+
+    assert.isTrue(
+      yield* driver.checkpoints.restoreCheckpoint({
+        cwd,
+        checkpointRef: baseRef,
+        fallbackToHead: false,
+        latestCheckpointRef: latestRef,
+      }),
+    );
+
+    assert.strictEqual(
+      yield* fileSystem.readFileString(path.join(cwd, "app/[slug]/page.tsx")),
+      "page1\n",
+    );
+    assert.isFalse(yield* fileSystem.exists(path.join(cwd, "generated", "new.ts")));
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "bar.ts")), "bar2\n");
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(cwd, "notes.md")), "keep\n");
+    assert.strictEqual(yield* fileSystem.readFileString(path.join(root, "outside.txt")), "out2\n");
+    const staged = yield* driver.execute({
+      operation: "test",
+      cwd: root,
+      args: ["diff", "--cached", "--name-only"],
+    });
+    assert.strictEqual(staged.stdout.trim(), "");
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
+
 it.effect("GitVcsDriver forwards execute env to the VCS process", () => {
   let observedEnv: NodeJS.ProcessEnv | undefined;
   let observedAppendTruncationMarker: boolean | undefined;

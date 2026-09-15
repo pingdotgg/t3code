@@ -380,6 +380,28 @@ export class GitVcsDriver extends Context.Service<
 const WORKSPACE_FILES_MAX_OUTPUT_BYTES = 16 * 1024 * 1024;
 const GIT_CHECK_IGNORE_MAX_STDIN_BYTES = 256 * 1024;
 const CHECKPOINT_DIFF_MAX_OUTPUT_BYTES = 10_000_000;
+// Keeps each git invocation well under the 32,767-character Windows
+// command-line limit, with room for the executable and fixed arguments.
+const CHECKPOINT_PATHSPEC_CHUNK_CHARS = 16_000;
+
+function chunkPathspecs(paths: ReadonlyArray<string>): ReadonlyArray<ReadonlyArray<string>> {
+  const chunks: Array<ReadonlyArray<string>> = [];
+  let chunk: Array<string> = [];
+  let chunkChars = 0;
+  for (const path of paths) {
+    // Count the separator and quoting around each argument.
+    const chars = path.length + 3;
+    if (chunk.length > 0 && chunkChars + chars > CHECKPOINT_PATHSPEC_CHUNK_CHARS) {
+      chunks.push(chunk);
+      chunk = [];
+      chunkChars = 0;
+    }
+    chunk.push(path);
+    chunkChars += chars;
+  }
+  if (chunk.length > 0) chunks.push(chunk);
+  return chunks;
+}
 const WORKSPACE_GIT_HARDENED_CONFIG_ARGS = [
   "-c",
   "core.fsmonitor=false",
@@ -849,17 +871,58 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         return false;
       }
 
-      const tracked = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", "."],
-      });
-      // An empty index and checkpoint have nothing for git restore's pathspec to match.
-      if (tracked.stdout.length > 0) {
+      // Scope the restore to the paths this thread's checkpoints changed so a
+      // shared checkout keeps the work of other threads and the user's own
+      // untracked files. Without a scope the whole workspace is restored.
+      let scopedPaths: ReadonlyArray<string> | null = null;
+      if (input.latestCheckpointRef !== undefined) {
+        const latestOid = yield* resolveCheckpointCommit(input.cwd, input.latestCheckpointRef);
+        if (!latestOid) {
+          return yield* new VcsProcessExitError({
+            operation,
+            command: "git diff",
+            cwd: input.cwd,
+            exitCode: 1,
+            detail: "Latest checkpoint ref is unavailable for a scoped restore.",
+          });
+        }
+        const changed = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["diff", "--name-only", "-z", "--no-renames", "--relative", commitOid, latestOid],
+          maxOutputBytes: CHECKPOINT_DIFF_MAX_OUTPUT_BYTES,
+          outputMode: "error",
+        });
+        scopedPaths = changed.stdout.split("\0").filter((entry) => entry.length > 0);
+        if (scopedPaths.length === 0) {
+          return true;
+        }
+      }
+      const pathspecs = scopedPaths === null ? [["."]] : chunkPathspecs(scopedPaths);
+      // Paths such as `app/[slug]/page.tsx` must not be read as globs.
+      const gitEnv =
+        scopedPaths === null ? {} : { env: { ...process.env, GIT_LITERAL_PATHSPECS: "1" } };
+
+      for (const paths of pathspecs) {
+        const tracked = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["ls-files", "--cached", `--with-tree=${commitOid}`, "-z", "--", ...paths],
+          ...gitEnv,
+        });
+        // An empty index and checkpoint have nothing for git restore's pathspec to match.
+        if (tracked.stdout.length === 0) continue;
+        // A scoped path the user already deleted by hand is unknown to git and
+        // would fail the whole restore, so restore only what git still knows.
+        const restorePaths =
+          scopedPaths === null
+            ? paths
+            : tracked.stdout.split("\0").filter((entry) => entry.length > 0);
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
+          args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", ...restorePaths],
+          ...gitEnv,
         });
       }
       // Restoring away the last tracked file can remove a nested workspace directory.
@@ -875,38 +938,44 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             }),
         ),
       );
-      const cleaned = yield* execute({
-        operation,
-        cwd: input.cwd,
-        args: ["clean", "-fd", "--", "."],
-        allowNonZeroExit: true,
-      });
-      if (cleaned.exitCode !== 0) {
-        // Git can remove every child, then fail trying to remove './' itself.
-        const emptiedWorkspace =
-          cleaned.exitCode === 1 &&
-          /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
-          (yield* fileSystem.readDirectory(input.cwd).pipe(
-            Effect.map((entries) => entries.length === 0),
-            Effect.catch(() => Effect.succeed(false)),
-          ));
-        if (!emptiedWorkspace)
-          return yield* new VcsProcessExitError({
-            operation,
-            command: "git clean",
-            cwd: input.cwd,
-            exitCode: cleaned.exitCode,
-            detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
-          });
+      for (const paths of pathspecs) {
+        const cleaned = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["clean", "-fd", "--", ...paths],
+          allowNonZeroExit: true,
+          ...gitEnv,
+        });
+        if (cleaned.exitCode !== 0) {
+          // Git can remove every child, then fail trying to remove './' itself.
+          const emptiedWorkspace =
+            cleaned.exitCode === 1 &&
+            /^warning: failed to remove \.\/: [^\n]+$/.test(cleaned.stderr.trim()) &&
+            (yield* fileSystem.readDirectory(input.cwd).pipe(
+              Effect.map((entries) => entries.length === 0),
+              Effect.catch(() => Effect.succeed(false)),
+            ));
+          if (!emptiedWorkspace)
+            return yield* new VcsProcessExitError({
+              operation,
+              command: "git clean",
+              cwd: input.cwd,
+              exitCode: cleaned.exitCode,
+              detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
+            });
+        }
       }
 
       const headExists = yield* hasHeadCommit(input.cwd);
       if (headExists) {
-        yield* execute({
-          operation,
-          cwd: input.cwd,
-          args: ["reset", "--quiet", "--", "."],
-        });
+        for (const paths of pathspecs) {
+          yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["reset", "--quiet", "--", ...paths],
+            ...gitEnv,
+          });
+        }
       }
 
       return true;

@@ -31,6 +31,8 @@ export interface RestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /** Limit the restore to paths that changed between `checkpointRef` and this later checkpoint. */
+  readonly latestCheckpointRef?: CheckpointRef;
 }
 
 export interface DiffCheckpointsInput {
@@ -71,7 +73,10 @@ export class CheckpointStore extends Context.Service<
     /**
      * Restore workspace and staging state to a checkpoint.
      *
-     * Optionally falls back to current `HEAD` when the checkpoint ref is missing.
+     * With `latestCheckpointRef`, only paths that changed between the two
+     * checkpoints are restored, so work by other threads in a shared checkout
+     * survives. Optionally falls back to current `HEAD` when the checkpoint ref
+     * is missing.
      */
     readonly restoreCheckpoint: (
       input: RestoreCheckpointInput,

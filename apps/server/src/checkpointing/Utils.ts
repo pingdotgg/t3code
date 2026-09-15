@@ -9,6 +9,11 @@ export function checkpointRefForThreadTurn(threadId: ThreadId, turnCount: number
   );
 }
 
+/** True for refs written by `captureCheckpoint`, false for `provider-diff:` placeholders. */
+export function isCapturedCheckpointRef(checkpointRef: CheckpointRef): boolean {
+  return checkpointRef.startsWith(`${CHECKPOINT_REFS_PREFIX}/`);
+}
+
 export function resolveThreadWorkspaceCwd(input: {
   readonly thread: {
     readonly projectId: ProjectId;

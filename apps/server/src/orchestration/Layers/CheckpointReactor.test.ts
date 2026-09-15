@@ -1810,6 +1810,104 @@ describe("CheckpointReactor", () => {
     },
   );
 
+  effectIt.effect("checkpoint revert leaves files the thread never changed alone", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      for (const turnCount of [1, 2]) {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(`cmd-shared-diff-${turnCount}`),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId(`turn-${turnCount}`),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), turnCount),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: turnCount,
+          createdAt,
+        });
+      }
+
+      // Another thread commits and edits its own file after this thread's last turn.
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "other.ts"), "other v1\n");
+      runGit(harness.cwd, ["add", "other.ts"]);
+      runGit(harness.cwd, ["commit", "-m", "other thread"]);
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "other.ts"), "other v2\n");
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "notes.md"), "user notes\n");
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-shared-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(() =>
+        waitForEvent(harness.engine, (event) => event.type === "thread.reverted"),
+      );
+
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "other.ts"), "utf8")).toBe(
+        "other v2\n",
+      );
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "notes.md"), "utf8")).toBe(
+        "user notes\n",
+      );
+    }),
+  );
+
+  effectIt.effect("checkpoint revert scopes by the newest captured ref, not a placeholder", () =>
+    Effect.gen(function* () {
+      const harness = yield* Effect.promise(() => createHarness());
+      const createdAt = "2026-01-01T00:00:00.000Z";
+      for (const turnCount of [1, 2]) {
+        yield* harness.engine.dispatch({
+          type: "thread.turn.diff.complete",
+          commandId: CommandId.make(`cmd-placeholder-diff-${turnCount}`),
+          threadId: ThreadId.make("thread-1"),
+          turnId: asTurnId(`turn-${turnCount}`),
+          completedAt: createdAt,
+          checkpointRef: checkpointRefForThreadTurn(ThreadId.make("thread-1"), turnCount),
+          status: "ready",
+          files: [],
+          checkpointTurnCount: turnCount,
+          createdAt,
+        });
+      }
+      // A mid-turn diff update records a placeholder before the turn's capture.
+      yield* harness.engine.dispatch({
+        type: "thread.turn.diff.complete",
+        commandId: CommandId.make("cmd-placeholder-diff-3"),
+        threadId: ThreadId.make("thread-1"),
+        turnId: asTurnId("turn-3"),
+        completedAt: createdAt,
+        checkpointRef: CheckpointRef.make("provider-diff:evt-3"),
+        status: "missing",
+        files: [],
+        checkpointTurnCount: 3,
+        createdAt,
+      });
+      NodeFS.writeFileSync(NodePath.join(harness.cwd, "notes.md"), "user notes\n");
+
+      yield* harness.engine.dispatch({
+        type: "thread.checkpoint.revert",
+        commandId: CommandId.make("cmd-placeholder-revert"),
+        threadId: ThreadId.make("thread-1"),
+        turnCount: 1,
+        createdAt,
+      });
+      yield* Effect.promise(() =>
+        waitForEvent(harness.engine, (event) => event.type === "thread.reverted"),
+      );
+
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "README.md"), "utf8")).toBe("v2\n");
+      expect(NodeFS.readFileSync(NodePath.join(harness.cwd, "notes.md"), "utf8")).toBe(
+        "user notes\n",
+      );
+    }),
+  );
+
   it("executes provider revert and emits thread.reverted for claude sessions", async () => {
     const harness = await createHarness({ providerName: ProviderDriverKind.make("claudeAgent") });
     const createdAt = "2026-01-01T00:00:00.000Z";

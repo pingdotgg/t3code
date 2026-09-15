@@ -23,6 +23,11 @@ export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
   readonly fallbackToHead?: boolean;
+  /**
+   * Restore only the paths that differ between `checkpointRef` and this later
+   * checkpoint. Other files in the checkout stay as they are.
+   */
+  readonly latestCheckpointRef?: CheckpointRef;
 }
 
 export interface VcsDiffCheckpointsInput {
