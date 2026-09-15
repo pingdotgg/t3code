@@ -15,6 +15,10 @@ import type * as AcpSchema from "effect-acp/schema";
 const requestLogPath = process.env.T3_ACP_REQUEST_LOG_PATH;
 const exitLogPath = process.env.T3_ACP_EXIT_LOG_PATH;
 const antigravityProfile = process.env.T3_ACP_ANTIGRAVITY === "1";
+// Kiro advertises no auth methods and answers `authenticate` with "Method not found".
+const rejectAuthenticate = process.env.T3_ACP_REJECT_AUTHENTICATE === "1";
+// Kiro-shaped permission input: a bare command plus the model's per-call purpose note.
+const kiroPermissionInput = process.env.T3_ACP_KIRO_PERMISSION_INPUT === "1";
 const emitToolCalls = process.env.T3_ACP_EMIT_TOOL_CALLS === "1";
 const emitInterleavedAssistantToolCalls =
   process.env.T3_ACP_EMIT_INTERLEAVED_ASSISTANT_TOOL_CALLS === "1";
@@ -419,15 +423,17 @@ const program = Effect.gen(function* () {
   // Mirrors the real agent: the API key method reads GEMINI_API_KEY from the
   // process environment and rejects when it is missing.
   yield* agent.handleAuthenticate((request) =>
-    !antigravityProfile || request.methodId === "oauth-personal"
-      ? Effect.succeed({})
-      : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+    rejectAuthenticate
+      ? Effect.fail(AcpError.AcpRequestError.methodNotFound("authenticate"))
+      : !antigravityProfile || request.methodId === "oauth-personal"
         ? Effect.succeed({})
-        : Effect.fail(
-            AcpError.AcpRequestError.invalidParams(
-              `Mock Antigravity rejected auth method ${request.methodId}.`,
+        : request.methodId === "gemini-api-key" && process.env.GEMINI_API_KEY
+          ? Effect.succeed({})
+          : Effect.fail(
+              AcpError.AcpRequestError.invalidParams(
+                `Mock Antigravity rejected auth method ${request.methodId}.`,
+              ),
             ),
-          ),
   );
   if (antigravityProfile) {
     yield* agent.handleLogout(() => Effect.succeed({}));
@@ -1042,11 +1048,16 @@ const program = Effect.gen(function* () {
               title: process.env.T3_ACP_PERMISSION_TITLE ?? `\`${command}\``,
               kind: "execute",
               status: "pending",
-              rawInput: {
-                variant: "Bash",
-                command,
-                description: index === 0 ? "Read package metadata" : "Read it again",
-              },
+              rawInput: kiroPermissionInput
+                ? {
+                    command,
+                    __tool_use_purpose: index === 0 ? "Read package metadata" : "Read it again",
+                  }
+                : {
+                    variant: "Bash",
+                    command,
+                    description: index === 0 ? "Read package metadata" : "Read it again",
+                  },
               content: [
                 {
                   type: "content",
