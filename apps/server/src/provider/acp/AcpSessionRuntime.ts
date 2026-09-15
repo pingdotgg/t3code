@@ -11,6 +11,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
@@ -84,6 +85,17 @@ export interface AcpSessionRuntimeOptions {
   readonly resumeMethod?: "load" | "resume";
   readonly sessionLoadTimeout?: Duration.Input;
   readonly sessionLoadReplayIdleGap?: Duration.Input;
+  /**
+   * Retries `session/load` when `while` accepts the failure — e.g. an agent
+   * reporting the session is still locked by another process but retryable.
+   * Required so a caller cannot accidentally retry auth or invalid-params
+   * failures.
+   */
+  readonly sessionLoadRetry?: {
+    readonly retries: number;
+    readonly delay: Duration.Input;
+    readonly while: (error: EffectAcpErrors.AcpRequestError) => boolean;
+  };
   /** Native cancellation waits for the prompt response and the getEvents consumer to drain. */
   readonly cancelBehavior?: "interrupt" | "wait-for-prompt";
   readonly cancelTimeout?: Duration.Input;
@@ -92,7 +104,13 @@ export interface AcpSessionRuntimeOptions {
     readonly name: string;
     readonly version: string;
   };
-  readonly authMethodId: string;
+  /**
+   * When set, startup sends `authenticate` after `initialize`. When absent, the
+   * runtime skips authentication entirely — for agents like `devin acp` that
+   * already read stored CLI credentials, where sending `authenticate` would
+   * open an interactive login even though the user is signed in.
+   */
+  readonly authMethodId?: string | undefined;
   readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
@@ -699,15 +717,17 @@ export const make = (
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
 
-      const authenticatePayload = {
-        methodId: options.authMethodId,
-      } satisfies EffectAcpSchema.AuthenticateRequest;
+      if (options.authMethodId !== undefined) {
+        const authenticatePayload = {
+          methodId: options.authMethodId,
+        } satisfies EffectAcpSchema.AuthenticateRequest;
 
-      yield* runLoggedRequest(
-        "authenticate",
-        authenticatePayload,
-        acp.agent.authenticate(authenticatePayload),
-      );
+        yield* runLoggedRequest(
+          "authenticate",
+          authenticatePayload,
+          acp.agent.authenticate(authenticatePayload),
+        );
+      }
 
       let sessionId: string;
       let sessionSetupResult:
@@ -763,18 +783,21 @@ export const make = (
           options.sessionLoadReplayIdleGap ?? defaultSessionLoadReplayIdleGap,
         );
 
-        yield* Ref.set(
-          sessionLoadGateRef,
-          Option.some({
-            active: true,
-            lastActivityAtMillis: undefined,
-            idleGap: sessionLoadReplayIdleGap,
-            initializeResult,
-          }),
-        );
-
         sessionId = options.resumeSessionId;
-        sessionSetupResult = yield* Effect.gen(function* () {
+        const loadRetry = options.sessionLoadRetry;
+        const loadSession = Effect.gen(function* () {
+          // Re-armed per attempt so a stale replay timestamp from a failed
+          // load cannot make a retried attempt resolve as `replay_idle`
+          // before the real response arrives.
+          yield* Ref.set(
+            sessionLoadGateRef,
+            Option.some({
+              active: true,
+              lastActivityAtMillis: undefined,
+              idleGap: sessionLoadReplayIdleGap,
+              initializeResult,
+            }),
+          );
           yield* logRequest({
             method: "session/load",
             payload: loadPayload,
@@ -823,7 +846,19 @@ export const make = (
           );
 
           return loaded;
-        }).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
+        });
+        sessionSetupResult = yield* (
+          loadRetry === undefined
+            ? loadSession
+            : loadSession.pipe(
+                Effect.retry({
+                  while: (error) => error._tag === "AcpRequestError" && loadRetry.while(error),
+                  schedule: Schedule.recurs(loadRetry.retries).pipe(
+                    Schedule.addDelay(() => Effect.succeed(loadRetry.delay)),
+                  ),
+                }),
+              )
+        ).pipe(Effect.ensuring(Ref.set(sessionLoadGateRef, Option.none())));
       } else {
         const createPayload = {
           cwd: options.cwd,
