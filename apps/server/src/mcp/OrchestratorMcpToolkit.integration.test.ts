@@ -461,6 +461,7 @@ const unusedScheduledTaskStubLayer = Layer.succeed(
     list: () => Effect.succeed({ tasks: [] }),
     subscribeList: () => Stream.succeed({ tasks: [] }),
     upsert: () => Effect.die("ScheduledTaskService.upsert is unused in this test"),
+    update: () => Effect.die("ScheduledTaskService.update is unused in this test"),
     setEnabled: () => Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
     delete: () => Effect.die("ScheduledTaskService.delete is unused in this test"),
     runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
@@ -611,12 +612,44 @@ describe("orchestrator MCP toolkit", () => {
                   ]);
                   return { task };
                 }),
+              update: (input) =>
+                Ref.modify(scheduledStore, (all) => {
+                  const existing = all.find(
+                    (candidate) =>
+                      candidate.id === input.id && candidate.projectId === input.projectId,
+                  );
+                  if (existing === undefined) return [Option.none(), all];
+                  const task: ScheduledTask = {
+                    ...existing,
+                    ...(input.title === undefined ? {} : { title: input.title }),
+                    ...(input.prompt === undefined ? {} : { prompt: input.prompt }),
+                    ...(input.enabled === undefined ? {} : { enabled: input.enabled }),
+                    ...(input.schedule === undefined ? {} : { schedule: input.schedule }),
+                    ...(input.threadId === undefined ? {} : { threadId: input.threadId }),
+                    ...(input.workspaceStrategy === undefined
+                      ? {}
+                      : { workspaceStrategy: input.workspaceStrategy }),
+                  };
+                  return [
+                    Option.some({ task }),
+                    all.map((candidate) => (candidate.id === task.id ? task : candidate)),
+                  ];
+                }),
               setEnabled: () =>
                 Effect.die("ScheduledTaskService.setEnabled is unused in this test"),
               delete: (input) =>
-                Ref.update(scheduledStore, (all) =>
-                  all.filter((candidate) => candidate.id !== input.id),
-                ).pipe(Effect.as({ id: input.id })),
+                Ref.modify(scheduledStore, (all) => {
+                  const existing = all.find(
+                    (candidate) =>
+                      candidate.id === input.id &&
+                      (input.projectId === undefined || candidate.projectId === input.projectId),
+                  );
+                  if (existing === undefined) return [Option.none(), all];
+                  return [
+                    Option.some({ id: existing.id }),
+                    all.filter((candidate) => candidate.id !== existing.id),
+                  ];
+                }),
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
@@ -1398,7 +1431,13 @@ describe("orchestrator MCP toolkit", () => {
               tasks: [{ scheduledTaskId, boundThreadId: parentThreadId }],
             });
 
-            // update_scheduled_task pauses without deleting.
+            // update_scheduled_task is a partial update: the title survives an
+            // enabled-only edit, and pausing does not delete the task.
+            const scheduledTitleCall = yield* invoke("update_scheduled_task", {
+              scheduledTaskId,
+              title: "Renamed wake-up",
+            });
+            expect(scheduledTitleCall.isError).toBe(false);
             const scheduledUpdateCall = yield* invoke("update_scheduled_task", {
               scheduledTaskId,
               enabled: false,
@@ -1406,6 +1445,7 @@ describe("orchestrator MCP toolkit", () => {
             expect(scheduledUpdateCall.isError).toBe(false);
             expect(scheduledUpdateCall.structuredContent).toMatchObject({
               scheduledTaskId,
+              title: "Renamed wake-up",
               enabled: false,
             });
 
@@ -1415,6 +1455,18 @@ describe("orchestrator MCP toolkit", () => {
             expect(scheduledDeleteCall.structuredContent).toMatchObject({
               scheduledTaskId,
               deleted: true,
+            });
+            expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
+
+            // An edit landing after the delete loses to a typed not-found
+            // rather than resurrecting the row.
+            const staleUpdateCall = yield* invoke("update_scheduled_task", {
+              scheduledTaskId,
+              title: "Should not resurrect",
+            });
+            expect(staleUpdateCall.structuredContent).toMatchObject({
+              _tag: "OrchestratorMcpFailure",
+              code: "task_not_found",
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
