@@ -6,6 +6,7 @@ import {
   expectedThreadRoutePath,
   THREAD_ROUTE_TO,
   type VoiceEnvironmentReachability,
+  type VoiceMissingThreadRedirect,
   type VoiceNavigationDestination,
   type VoiceNavigatorDeps,
   type VoiceRouteDriver,
@@ -33,7 +34,9 @@ interface DriverHarness {
   /** Handlers for pending navigate calls, resolvable by the test. */
   readonly pending: Array<() => void>;
   path: string;
-  readonly pathListeners: Array<(path: string) => void>;
+  /** Subscribed missing-thread redirect listeners; the test fires guard
+      provenance through them. */
+  readonly redirectListeners: Array<(redirect: VoiceMissingThreadRedirect) => void>;
   readonly marks: Array<{ mark: VoiceTimingMark; detail?: string }>;
   readonly lateRedirects: VoiceToolError[];
 }
@@ -43,7 +46,6 @@ const makeHarness = (overrides?: {
   readonly reachability?:
     | VoiceEnvironmentReachability
     | ((id: string) => VoiceEnvironmentReachability);
-  readonly redirectWatchMs?: number;
 }): DriverHarness & { readonly deps: VoiceNavigatorDeps } => {
   const harness: DriverHarness = {
     driver: undefined as never,
@@ -51,7 +53,7 @@ const makeHarness = (overrides?: {
     navigations: [],
     pending: [],
     path: overrides?.path ?? "/",
-    pathListeners: [],
+    redirectListeners: [],
     marks: [],
     lateRedirects: [],
   };
@@ -81,12 +83,12 @@ const makeHarness = (overrides?: {
       harness.order.push(`read:${harness.path}`);
       return harness.path;
     },
-    subscribePathChange: (listener) => {
-      harness.pathListeners.push(listener);
+    subscribeMissingThreadRedirect: (listener) => {
+      harness.redirectListeners.push(listener);
       return () => {
-        const index = harness.pathListeners.indexOf(listener);
+        const index = harness.redirectListeners.indexOf(listener);
         if (index >= 0) {
-          harness.pathListeners.splice(index, 1);
+          harness.redirectListeners.splice(index, 1);
         }
       };
     },
@@ -101,9 +103,6 @@ const makeHarness = (overrides?: {
     onRedirectAfterAcknowledgment: (error) => {
       harness.lateRedirects.push(error);
     },
-    ...(overrides?.redirectWatchMs !== undefined
-      ? { redirectWatchMs: overrides.redirectWatchMs }
-      : {}),
   };
   // Same reference with deps attached, so test mutations of harness.path are
   // visible to the driver closures.
@@ -113,6 +112,11 @@ const makeHarness = (overrides?: {
 };
 
 const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+const provenanceOf = (destination: VoiceNavigationDestination): VoiceMissingThreadRedirect => ({
+  environmentId: destination.environmentId,
+  threadId: destination.threadId,
+});
 
 describe("voice navigator", () => {
   it("navigates to the thread route with the destination params and replace", async () => {
@@ -256,33 +260,71 @@ describe("voice navigator", () => {
     ]);
   });
 
-  it("reports a late redirect after acknowledgment as a failure callback", async () => {
-    const harness = makeHarness({
-      path: expectedThreadRoutePath(DESTINATION),
-      redirectWatchMs: 30_000,
-    });
+  it("reports the guard's provenance-matched redirect after acknowledgment, however late it lands", async () => {
+    const harness = makeHarness({ path: expectedThreadRoutePath(DESTINATION) });
     const navigator = createVoiceNavigator(harness.deps);
 
     const pending = navigator.navigateToThread(DESTINATION);
     harness.pending[0]?.();
     await pending;
 
-    expect(harness.pathListeners).toHaveLength(1);
-    harness.pathListeners[0]?.("/");
-    harness.pathListeners[0]?.("/");
+    expect(harness.redirectListeners).toHaveLength(1);
+    // The provenance event is not bounded by any timer: it fires whenever the
+    // guard's route data proves the acknowledged thread gone.
+    await flush();
+    harness.redirectListeners[0]?.(provenanceOf(DESTINATION));
     await flush();
 
     expect(harness.lateRedirects).toHaveLength(1);
     expect(harness.lateRedirects[0]?.code).toBe("thread_not_found");
+    expect(harness.lateRedirects[0]?.threadId).toBe(DESTINATION.threadId);
     // The watch unsubscribes after firing.
-    expect(harness.pathListeners).toHaveLength(0);
+    expect(harness.redirectListeners).toHaveLength(0);
   });
 
-  it("ignores path changes for a navigation that is no longer current", async () => {
-    const harness = makeHarness({
-      path: expectedThreadRoutePath(DESTINATION),
-      redirectWatchMs: 30_000,
+  it("never reports redirect provenance for a different thread (user navigation to / is not a failure)", async () => {
+    const harness = makeHarness({ path: expectedThreadRoutePath(DESTINATION) });
+    const navigator = createVoiceNavigator(harness.deps);
+
+    const pending = navigator.navigateToThread(DESTINATION);
+    harness.pending[0]?.();
+    await pending;
+
+    // A user Home click emits no provenance at all; a guard redirect for a
+    // different thread is not about the acknowledged destination either.
+    harness.redirectListeners[0]?.({
+      environmentId: OTHER_DESTINATION.environmentId,
+      threadId: OTHER_DESTINATION.threadId,
     });
+    await flush();
+
+    expect(harness.lateRedirects).toHaveLength(0);
+    // The watch stays armed for the acknowledged destination.
+    expect(harness.redirectListeners).toHaveLength(1);
+
+    // The matching verdict still lands afterward.
+    harness.redirectListeners[0]?.(provenanceOf(DESTINATION));
+    await flush();
+    expect(harness.lateRedirects).toHaveLength(1);
+  });
+
+  it("subscribes to guard provenance only after acknowledgment, never while pending", async () => {
+    const harness = makeHarness({ path: expectedThreadRoutePath(DESTINATION) });
+    const navigator = createVoiceNavigator(harness.deps);
+
+    const pending = navigator.navigateToThread(DESTINATION);
+    // Navigation still pending: the navigator has no watch armed yet, so a
+    // guard event could not even reach it.
+    expect(harness.redirectListeners).toHaveLength(0);
+    harness.pending[0]?.();
+    await pending;
+
+    expect(harness.redirectListeners).toHaveLength(1);
+    expect(harness.lateRedirects).toHaveLength(0);
+  });
+
+  it("ignores provenance for a navigation that is no longer current", async () => {
+    const harness = makeHarness({ path: expectedThreadRoutePath(DESTINATION) });
     const navigator = createVoiceNavigator(harness.deps);
 
     const first = navigator.navigateToThread(DESTINATION);
@@ -295,13 +337,18 @@ describe("voice navigator", () => {
     harness.pending[1]?.();
     const secondResult = await second;
     expect(secondResult.status).toBe("acknowledged");
-    expect(harness.pathListeners).toHaveLength(1);
+    expect(harness.redirectListeners).toHaveLength(1);
 
     // Starting the second navigation cleared the first watch, so the single
-    // remaining listener belongs to the current navigation. A redirect must
-    // be attributed to the acknowledged destination (thread-2), never the
+    // remaining listener belongs to the current navigation. Stale provenance
+    // for the superseded thread must not be attributed to the acknowledged
+    // destination (thread-2), and matching provenance must never name the
     // superseded one (thread-1).
-    harness.pathListeners[0]?.("/");
+    harness.redirectListeners[0]?.(provenanceOf(DESTINATION));
+    await flush();
+    expect(harness.lateRedirects).toHaveLength(0);
+
+    harness.redirectListeners[0]?.(provenanceOf(OTHER_DESTINATION));
     await flush();
     expect(harness.lateRedirects).toHaveLength(1);
     expect(harness.lateRedirects[0]?.code).toBe("thread_not_found");
@@ -309,21 +356,18 @@ describe("voice navigator", () => {
   });
 
   it("stops the redirect watch on dispose", async () => {
-    const harness = makeHarness({
-      path: expectedThreadRoutePath(DESTINATION),
-      redirectWatchMs: 30_000,
-    });
+    const harness = makeHarness({ path: expectedThreadRoutePath(DESTINATION) });
     const navigator = createVoiceNavigator(harness.deps);
 
     const pending = navigator.navigateToThread(DESTINATION);
     harness.pending[0]?.();
     await pending;
-    expect(harness.pathListeners).toHaveLength(1);
+    expect(harness.redirectListeners).toHaveLength(1);
 
     navigator.dispose();
-    expect(harness.pathListeners).toHaveLength(0);
+    expect(harness.redirectListeners).toHaveLength(0);
 
-    harness.pathListeners[0]?.("/");
+    harness.redirectListeners[0]?.(provenanceOf(DESTINATION));
     await flush();
     expect(harness.lateRedirects).toHaveLength(0);
   });
