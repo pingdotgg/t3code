@@ -118,6 +118,11 @@ rl.on("line", (line) => {
     return;
   }
   if (method === "turn/start") {
+    if (script.recordTurnStarts)
+      NodeFS.appendFileSync(
+        `${process.env.T3_CODEX_COLLAB_SCRIPT}.requests`,
+        `${JSON.stringify({ method, params: message.params })}\n`,
+      );
     const turnId = script.turnIds?.[turnStartCount];
     const turn = turnId
       ? { ...fixture.responses.turnStart.turn, id: turnId }
@@ -133,7 +138,8 @@ rl.on("line", (line) => {
         params: { threadId: rootThreadId, turn },
       });
     }
-    for (const notification of script.notifications) {
+    for (const notification of script.notificationsByTurn?.[turnStartCount - 1] ??
+      script.notifications) {
       write({ jsonrpc: "2.0", method: notification.method, params: notification.params });
     }
     for (const request of script.serverRequests ?? []) {
@@ -149,6 +155,16 @@ rl.on("line", (line) => {
         },
       });
     }
+    return;
+  }
+  if (
+    method === "config/mcpServer/reload" &&
+    script.reloadNotifications &&
+    turnStartCount === script.reloadAfterTurns
+  ) {
+    for (const notification of script.reloadNotifications)
+      write({ jsonrpc: "2.0", ...notification });
+    setTimeout(() => write({ id, result: {} }), 20);
     return;
   }
   if (method === "turn/interrupt") {

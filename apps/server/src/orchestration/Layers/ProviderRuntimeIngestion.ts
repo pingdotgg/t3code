@@ -1753,6 +1753,9 @@ const make = Effect.gen(function* () {
             threadId: thread.id,
             session: {
               threadId: thread.id,
+              ...(thread.session?.providerSessionId
+                ? { providerSessionId: thread.session.providerSessionId }
+                : {}),
               status,
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
@@ -2050,6 +2053,9 @@ const make = Effect.gen(function* () {
             session: {
               threadId: thread.id,
               status: "error",
+              ...(thread.session?.providerSessionId
+                ? { providerSessionId: thread.session.providerSessionId }
+                : {}),
               providerName: event.provider,
               ...(event.providerInstanceId !== undefined
                 ? { providerInstanceId: event.providerInstanceId }

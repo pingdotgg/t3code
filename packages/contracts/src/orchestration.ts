@@ -575,6 +575,7 @@ export type OrchestrationSessionStatus = typeof OrchestrationSessionStatus.Type;
 
 export const OrchestrationSession = Schema.Struct({
   threadId: ThreadId,
+  providerSessionId: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   status: OrchestrationSessionStatus,
   providerName: Schema.NullOr(TrimmedNonEmptyString),
   providerInstanceId: Schema.optional(ProviderInstanceId),
@@ -1257,10 +1258,30 @@ const ThreadTurnStartBootstrap = Schema.Struct({
 
 export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 
+/** Optional compare-and-dispatch condition for callers targeting a particular live session. */
+export const ProviderSessionFence = Schema.Struct({
+  providerInstanceId: ProviderInstanceId,
+  providerSessionId: TrimmedNonEmptyString,
+  activeTurnId: Schema.NullOr(TurnId),
+  readiness: Schema.Literals(["ready", "running"]),
+});
+export type ProviderSessionFence = typeof ProviderSessionFence.Type;
+
+export const ProviderCommandExecutionResult = Schema.Struct({
+  commandId: CommandId,
+  operation: Schema.Literals(["send-turn", "interrupt-turn"]),
+  expectedSession: ProviderSessionFence,
+  status: Schema.Literals(["dispatching", "dispatched", "rejected", "uncertain"]),
+  detail: Schema.String,
+  turnId: Schema.NullOr(TurnId),
+});
+export type ProviderCommandExecutionResult = typeof ProviderCommandExecutionResult.Type;
+
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
+  expectedSession: Schema.optional(ProviderSessionFence),
   message: Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
@@ -1283,6 +1304,7 @@ const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
   threadId: ThreadId,
+  expectedSession: Schema.optional(ProviderSessionFence),
   message: Schema.Struct({
     messageId: MessageId,
     role: Schema.Literal("user"),
@@ -1303,6 +1325,7 @@ const ThreadTurnInterruptCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.interrupt"),
   commandId: CommandId,
   threadId: ThreadId,
+  expectedSession: Schema.optional(ProviderSessionFence),
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });
@@ -1834,6 +1857,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
+  expectedSession: Schema.optional(ProviderSessionFence),
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -1847,6 +1871,7 @@ export const ThreadTurnStartRequestedPayload = Schema.Struct({
 
 export const ThreadTurnInterruptRequestedPayload = Schema.Struct({
   threadId: ThreadId,
+  expectedSession: Schema.optional(ProviderSessionFence),
   turnId: Schema.optional(TurnId),
   createdAt: IsoDateTime,
 });

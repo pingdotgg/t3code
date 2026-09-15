@@ -14,7 +14,12 @@ import * as NodePath from "node:path";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
-import { type ProviderApprovalDecision, type ProviderEvent, ThreadId } from "@t3tools/contracts";
+import {
+  type ProviderApprovalDecision,
+  type ProviderEvent,
+  ThreadId,
+  TurnId,
+} from "@t3tools/contracts";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -579,6 +584,18 @@ describe("CodexSessionRuntime collab integration", () => {
       );
       assert.isTrue(childBStarted._tag === "Some", "child B turnStarted never arrived");
 
+      // A selected-turn interrupt must leave the fleet alone.
+      const selectedTurn = (yield* runtime.getSession).activeTurnId!;
+      yield* runtime.interruptTurn(selectedTurn, true);
+      assert.deepEqual(
+        NodeFS.readFileSync(interruptsPath, "utf8")
+          .trim()
+          .split("\n")
+          .map((line) => JSON.parse(line)),
+        [{ threadId: ROOT, turnId: selectedTurn }],
+      );
+      NodeFS.rmSync(interruptsPath);
+
       // Stop everything. A's interrupt hangs forever — the bounded child
       // deadline must expire and the parent interrupt must still be sent.
       yield* runtime.interruptTurn();
@@ -653,6 +670,87 @@ describe("CodexSessionRuntime collab integration", () => {
       yield* runtime.close;
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
+
+  for (const queued of [false, true]) {
+    it.live(
+      `rejects conditional admission after ${queued ? "an accepted queued turn" : "background work during MCP preparation"}`,
+      () =>
+        Effect.gen(function* () {
+          const first = TurnId.make("first-turn");
+          const second = TurnId.make("second-turn");
+          const completed = {
+            method: "turn/completed",
+            params: {
+              threadId: ROOT,
+              turn: { ...wireFixture.responses.turnStart.turn, id: first, status: "completed" },
+            },
+          };
+          const started = {
+            method: "turn/started",
+            params: {
+              threadId: ROOT,
+              turn: { ...wireFixture.responses.turnStart.turn, id: second },
+            },
+          };
+          const script = {
+            rootThreadId: ROOT,
+            holdTurnOpen: true,
+            onlyFirstTurnStarts: true,
+            recordTurnStarts: true,
+            turnIds: [first, second],
+            notifications: [],
+            ...(queued
+              ? { notificationsByTurn: [[], [completed]] }
+              : { reloadAfterTurns: 0, reloadNotifications: [started] }),
+          };
+          // @effect-diagnostics-next-line preferSchemaOverJson:off
+          NodeFS.writeFileSync(scriptPath, JSON.stringify(script), "utf8");
+          NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+          yield* Effect.addFinalizer(() =>
+            Effect.sync(() => {
+              NodeFS.rmSync(scriptPath, { force: true });
+              NodeFS.rmSync(`${scriptPath}.requests`, { force: true });
+            }),
+          );
+          const runtime = yield* makeCodexSessionRuntime({
+            threadId: ThreadId.make("conditional-codex-admission"),
+            binaryPath: peerPath,
+            cwd: NodeOS.tmpdir(),
+            runtimeMode: "full-access",
+            appServerArgs: ["-c", 'mcp_servers.test.url="http://127.0.0.1:1"'],
+            environment: { ...process.env, T3_CODEX_COLLAB_SCRIPT: scriptPath },
+          });
+          const completion = yield* Deferred.make<void>();
+          yield* runtime.events.pipe(
+            Stream.runForEach((event) =>
+              event.method === "turn/completed"
+                ? Deferred.succeed(completion, undefined).pipe(Effect.asVoid)
+                : Effect.void,
+            ),
+            Effect.forkScoped,
+          );
+          yield* runtime.start();
+          if (queued) {
+            yield* runtime.sendTurn({ input: "first" });
+            yield* runtime.sendTurn({ input: "queued" });
+            yield* Deferred.await(completion);
+            assert.equal((yield* runtime.getSession).status, "ready");
+          }
+          const error = yield* runtime
+            .sendTurn({ input: "conditional", requireIdle: true })
+            .pipe(Effect.flip);
+          assert.equal(error._tag, "ProviderSessionFenceError");
+          const requests = NodeFS.existsSync(`${scriptPath}.requests`)
+            ? readRecordedRequests()
+            : [];
+          assert.equal(
+            requests.filter((request) => request.method === "turn/start").length,
+            queued ? 2 : 0,
+          );
+          yield* runtime.close;
+        }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    );
+  }
 
   const elicitationCases = [
     {

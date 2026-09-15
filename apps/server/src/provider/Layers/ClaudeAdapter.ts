@@ -111,6 +111,7 @@ import {
   ProviderAdapterSessionClosedError,
   ProviderAdapterSessionNotFoundError,
   ProviderAdapterValidationError,
+  ProviderSessionFenceError,
   type ProviderAdapterError,
 } from "../Errors.ts";
 import { type ClaudeAdapterShape } from "../Services/ClaudeAdapter.ts";
@@ -363,6 +364,7 @@ interface ClaudeSessionContext {
 }
 
 interface ClaudeQueryRuntime extends AsyncIterable<SDKMessage> {
+  readonly interrupt: () => Promise<void>;
   readonly setModel: (model?: string) => Promise<void>;
   readonly setPermissionMode: (mode: PermissionMode) => Promise<void>;
   readonly setMaxThinkingTokens: (maxThinkingTokens: number | null) => Promise<void>;
@@ -4949,17 +4951,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       context.startInput = { ...context.startInput, modelSelection };
     }
 
-    // A sendTurn while a real turn is running is a steer: the message is
-    // queued into the live SDK agent loop and the work continues as the same
-    // turn — no synthetic turn boundary. Stale synthetic turns (from
-    // background agent responses between user prompts) are auto-closed
-    // instead, so they don't block the user's next turn.
-    const steeringTurnState =
-      context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
-    if (context.turnState && steeringTurnState === null) {
-      yield* completeTurn(context, "completed");
-    }
-
     if (modelSelection?.model) {
       const apiModelId = resolveClaudeCatalogApiModelId(modelCatalog, modelSelection);
       if (context.currentApiModelId !== apiModelId) {
@@ -4999,46 +4990,6 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       });
     }
 
-    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
-    if (steeringTurnState === null) {
-      const turnState: ClaudeTurnState = {
-        turnId,
-        startedAt: yield* nowIso,
-        items: [],
-        assistantTextBlocks: new Map(),
-        assistantTextBlockOrder: [],
-        capturedProposedPlanKeys: new Set(),
-        latestAssistantUsage: undefined,
-        compactedSinceLatestAssistantUsage: false,
-        hasSubagents: false,
-        nextSyntheticAssistantBlockIndex: -1,
-        authenticationFailureMessage: undefined,
-        rejectedRateLimitTypes: new Set(),
-        latestAssistantRateLimited: false,
-      };
-
-      const updatedAt = yield* nowIso;
-      context.turnState = turnState;
-      context.session = {
-        ...context.session,
-        status: "running",
-        activeTurnId: turnId,
-        updatedAt,
-      };
-
-      const turnStartedStamp = yield* makeEventStamp();
-      yield* offerRuntimeEvent({
-        type: "turn.started",
-        eventId: turnStartedStamp.eventId,
-        provider: PROVIDER,
-        createdAt: turnStartedStamp.createdAt,
-        threadId: context.session.threadId,
-        turnId,
-        payload: modelSelection?.model ? { model: modelSelection.model } : {},
-        providerRefs: {},
-      });
-    }
-
     // Re-scan on every send: skills are added and switched off mid-session,
     // and the scan is a few directory reads. A skill switched off via
     // skillOverrides, or reserved for the agent with `user-invocable: false`,
@@ -5064,15 +5015,86 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       ),
     });
 
-    if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
+    // A sendTurn while a real turn is running is a steer: the message is
+    // queued into the live SDK agent loop and the work continues as the same
+    // turn — no synthetic turn boundary. Stale synthetic turns (from
+    // background agent responses between user prompts) are auto-closed
+    // instead, so they don't block the user's next turn.
+    const steeringTurnState =
+      context.turnState && context.turnState.synthetic !== true ? context.turnState : null;
+    if (!input.expectedSession && context.turnState && steeringTurnState === null) {
+      yield* completeTurn(context, "completed");
+    }
+
+    const turnId = steeringTurnState?.turnId ?? TurnId.make(yield* randomUUIDv4);
+    const startedAt = yield* nowIso;
+    const turnStartedStamp = yield* makeEventStamp();
+    yield* Effect.suspend(() => {
+      if (
+        input.expectedSession &&
+        (context.stopped ||
+          context.session.status !== "ready" ||
+          context.turnState !== undefined ||
+          context.session.activeTurnId !== undefined)
+      ) {
+        return new ProviderSessionFenceError({
+          threadId: input.threadId,
+          detail: "The selected session is no longer idle at prompt admission.",
+        });
+      }
+      if (steeringTurnState === null) {
+        const turnState: ClaudeTurnState = {
+          turnId,
+          startedAt,
+          items: [],
+          assistantTextBlocks: new Map(),
+          assistantTextBlockOrder: [],
+          capturedProposedPlanKeys: new Set(),
+          latestAssistantUsage: undefined,
+          compactedSinceLatestAssistantUsage: false,
+          hasSubagents: false,
+          nextSyntheticAssistantBlockIndex: -1,
+          authenticationFailureMessage: undefined,
+          rejectedRateLimitTypes: new Set(),
+          latestAssistantRateLimited: false,
+        };
+
+        const updatedAt = startedAt;
+        context.turnState = turnState;
+        context.session = {
+          ...context.session,
+          status: "running",
+          activeTurnId: turnId,
+          updatedAt,
+        };
+      }
+      if (steeringTurnState === null) context.turnStartMessageIds.push(turnId);
+      // Reserve and enqueue without yielding to the SDK notification reader.
+      if (
+        !Queue.offerUnsafe(context.promptQueue, {
+          type: "message",
+          message:
+            steeringTurnState === null
+              ? { ...message, uuid: turnId as NonNullable<SDKUserMessage["uuid"]> }
+              : message,
+        })
+      )
+        return Effect.fail(toRequestError(input.threadId, "turn/start", "Prompt queue is closed."));
+      return Effect.void;
+    });
+    if (steeringTurnState === null) {
+      yield* offerRuntimeEvent({
+        type: "turn.started",
+        eventId: turnStartedStamp.eventId,
+        provider: PROVIDER,
+        createdAt: turnStartedStamp.createdAt,
+        threadId: context.session.threadId,
+        turnId,
+        payload: modelSelection?.model ? { model: modelSelection.model } : {},
+        providerRefs: {},
+      });
+    }
     yield* updateResumeCursor(context);
-    yield* Queue.offer(context.promptQueue, {
-      type: "message",
-      message:
-        steeringTurnState === null
-          ? { ...message, uuid: turnId as NonNullable<SDKUserMessage["uuid"]> }
-          : message,
-    }).pipe(Effect.mapError((cause) => toRequestError(input.threadId, "turn/start", cause)));
 
     return {
       threadId: context.session.threadId,
@@ -5084,8 +5106,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
   });
 
   const interruptTurn: ClaudeAdapterShape["interruptTurn"] = Effect.fn("interruptTurn")(
-    function* (threadId, _turnId) {
+    function* (threadId, _turnId, options) {
       const context = yield* requireSession(threadId);
+      if (options?.preserveSession) {
+        return yield* new ProviderSessionFenceError({
+          threadId,
+          detail: "Claude does not support interruption targeted to an exact turn.",
+        });
+      }
       // interrupt() can acknowledge while resumed background tasks keep the
       // CLI alive. Stop is a hard session boundary for Claude, so close the
       // query and let the SDK escalate to SIGKILL when graceful exit fails.

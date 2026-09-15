@@ -67,6 +67,7 @@ const decodeThreadTurnStartRequestedPayload = Schema.decodeUnknownEffect(
 const decodeOrchestrationLatestTurn = Schema.decodeUnknownEffect(OrchestrationLatestTurn);
 const decodeOrchestrationProposedPlan = Schema.decodeUnknownEffect(OrchestrationProposedPlan);
 const decodeOrchestrationSession = Schema.decodeUnknownEffect(OrchestrationSession);
+const encodeOrchestrationSession = Schema.encodeEffect(OrchestrationSession);
 const decodeOrchestrationThread = Schema.decodeUnknownEffect(OrchestrationThread);
 const decodeOrchestrationThreadShell = Schema.decodeUnknownEffect(OrchestrationThreadShell);
 const encodeThreadCreatedPayload = Schema.encodeEffect(ThreadCreatedPayload);
@@ -1330,6 +1331,36 @@ it.effect("decodes orchestration session runtime mode defaults", () =>
       updatedAt: "2026-01-01T00:00:00.000Z",
     });
     assert.strictEqual(parsed.runtimeMode, DEFAULT_RUNTIME_MODE);
+  }),
+);
+
+it.effect("round-trips missing, null, and exact provider session identities", () =>
+  Effect.gen(function* () {
+    const session = {
+      threadId: "thread-1",
+      status: "idle",
+      providerName: null,
+      activeTurnId: null,
+      lastError: null,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    for (const identity of [
+      {},
+      { providerSessionId: null },
+      { providerSessionId: "generation-1" },
+    ]) {
+      const parsed = yield* decodeOrchestrationSession({ ...session, ...identity });
+      const encoded = yield* encodeOrchestrationSession(parsed);
+      assert.strictEqual(parsed.providerSessionId, identity.providerSessionId);
+      assert.strictEqual(encoded.providerSessionId, identity.providerSessionId);
+      assert.deepStrictEqual(yield* decodeOrchestrationSession(encoded), parsed);
+    }
+    for (const providerSessionId of ["", "   ", 123]) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationSession({ ...session, providerSessionId }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
   }),
 );
 

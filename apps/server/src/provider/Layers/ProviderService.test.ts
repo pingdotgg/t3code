@@ -100,6 +100,7 @@ const asEventId = (value: string): EventId => EventId.make(value);
 const asThreadId = (value: string): ThreadId => ThreadId.make(value);
 const asTurnId = (value: string): TurnId => TurnId.make(value);
 const codexInstanceId = ProviderInstanceId.make("codex");
+const cursorInstanceId = ProviderInstanceId.make("cursor");
 const claudeAgentInstanceId = ProviderInstanceId.make("claudeAgent");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
@@ -651,8 +652,8 @@ it.effect("ProviderServiceLive catches stopAll failures during shutdown", () =>
 it.effect("ProviderServiceLive flushes deferred completions during shutdown", () =>
   Effect.gen(function* () {
     const recordedAnalytics = makeRecordingAnalytics();
-    const codex = makeFakeCodexAdapter();
-    const registry = makeStaticInstanceRegistry([[codexInstanceId, codex.adapter]]);
+    const cursor = makeFakeCodexAdapter(CURSOR_DRIVER);
+    const registry = makeStaticInstanceRegistry([[cursorInstanceId, cursor.adapter]]);
     const providerAdapterLayer = Layer.succeed(
       ProviderAdapterRegistry.ProviderAdapterRegistry,
       registry,
@@ -689,12 +690,12 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
     const sendRelease = yield* Deferred.make<void>();
     const turnId = asTurnId("turn-analytics-stop-all-deferred");
     yield* provider.startSession(threadId, {
-      provider: CODEX_DRIVER,
-      providerInstanceId: codexInstanceId,
+      provider: CURSOR_DRIVER,
+      providerInstanceId: cursorInstanceId,
       threadId,
       runtimeMode: "full-access",
     });
-    codex.sendTurn
+    cursor.sendTurn
       .mockImplementationOnce(() =>
         Effect.gen(function* () {
           yield* Deferred.succeed(firstStarted, undefined);
@@ -724,19 +725,19 @@ it.effect("ProviderServiceLive flushes deferred completions during shutdown", ()
       Effect.forkChild,
     );
     yield* Effect.yieldNow;
-    codex.emit({
+    cursor.emit({
       type: "turn.started",
       eventId: asEventId("evt-turn-analytics-stop-all-deferred-start"),
-      provider: CODEX_DRIVER,
+      provider: CURSOR_DRIVER,
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId,
       turnId,
       payload: { model: "native-stop-all" },
     });
-    codex.emit({
+    cursor.emit({
       type: "turn.completed",
       eventId: asEventId("evt-turn-analytics-stop-all-deferred-complete"),
-      provider: CODEX_DRIVER,
+      provider: CURSOR_DRIVER,
       createdAt: "2026-01-01T00:00:00.000Z",
       threadId,
       turnId,
@@ -1216,6 +1217,498 @@ unsupportedRollback.layer("ProviderServiceLive unsupported rewind", (it) => {
         assert.equal(unsupportedRollback.codex.rollbackThread.mock.calls.length, 0);
         assert.deepEqual(yield* directory.getBinding(threadId), originalBinding);
       }
+    }),
+  );
+});
+
+const fenced = makeProviderServiceLayer();
+fenced.layer("ProviderService session fences", (it) => {
+  for (const operation of ["send", "compaction"] as const) {
+    it.effect(`Stop cancels a stalled ${operation} acknowledgment and releases replacement`, () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+        const threadId = asThreadId(`stop-stalled-${operation}`);
+        const start = {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access" as const,
+        };
+        const session = yield* service.startSession(threadId, start);
+        const entered = yield* Deferred.make<void>();
+        const stalled = Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never));
+        if (operation === "send") fenced.codex.sendTurn.mockImplementationOnce(() => stalled);
+        else fenced.codex.compactThread.mockImplementationOnce(() => stalled);
+        const admission = yield* (
+          operation === "send"
+            ? service
+                .sendTurn({
+                  threadId,
+                  input: "Work",
+                  expectedSession: {
+                    providerInstanceId: codexInstanceId,
+                    providerSessionId: session.providerSessionId!,
+                    activeTurnId: null,
+                    readiness: "ready",
+                  },
+                })
+                .pipe(Effect.asVoid)
+            : service.compactThread(threadId)
+        ).pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(entered);
+        yield* service.stopSession({ threadId });
+        assert.equal((yield* Fiber.join(admission))._tag, "Failure");
+        const binding = Option.getOrThrow(yield* directory.getBinding(threadId));
+        assert.equal(binding.status, "stopped");
+        const replacement = yield* service.startSession(threadId, start);
+        assert.notEqual(replacement.providerSessionId, session.providerSessionId);
+        yield* service.stopSession({ threadId });
+      }),
+    );
+  }
+
+  it.effect("rejects a conditional stop for an exited session without changing its binding", () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const threadId = asThreadId("conditional-stop-exited");
+      const session = yield* service.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      yield* fenced.codex.stopSession(threadId);
+      const before = yield* directory.getBinding(threadId);
+      const result = yield* service
+        .stopSession({
+          threadId,
+          expectedSession: {
+            providerInstanceId: codexInstanceId,
+            providerSessionId: session.providerSessionId!,
+            activeTurnId: null,
+            readiness: "ready",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(result._tag, "ProviderSessionFenceError");
+      assert.deepEqual(yield* directory.getBinding(threadId), before);
+    }),
+  );
+  for (const operation of ["compaction", "feedback"] as const) {
+    it.effect(`${operation} recovery waits for an admitted conditional send`, () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const threadId = asThreadId(`fence-recovery-${operation}`);
+        const session = yield* service.startSession(threadId, {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access",
+        });
+        const expectedSession = {
+          providerInstanceId: codexInstanceId,
+          providerSessionId: session.providerSessionId!,
+          activeTurnId: null,
+          readiness: "ready" as const,
+        };
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        fenced.codex.sendTurn.mockImplementationOnce(() =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({ threadId, turnId: asTurnId("admitted-turn") }),
+          ),
+        );
+        const send = yield* service
+          .sendTurn({ threadId, input: "Selected session", expectedSession })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        // Simulate a runtime disappearing while its acknowledgment is in flight.
+        yield* fenced.codex.stopSession(threadId);
+        const starts = fenced.codex.startSession.mock.calls.length;
+        const recover = yield* (
+          operation === "compaction"
+            ? service.compactThread(threadId)
+            : service.uploadFeedback({ threadId }).pipe(Effect.asVoid)
+        ).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.equal(fenced.codex.startSession.mock.calls.length, starts);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(send);
+        yield* Fiber.join(recover);
+        assert.equal(fenced.codex.startSession.mock.calls.length, starts + 1);
+        const stale = yield* service
+          .sendTurn({ threadId, input: "Old session", expectedSession })
+          .pipe(Effect.flip);
+        assert.equal(stale._tag, "ProviderSessionFenceError");
+        yield* service.stopSession({ threadId });
+      }),
+    );
+  }
+
+  for (const [name, instanceId, fake] of [
+    ["Codex", codexInstanceId, fenced.codex],
+    ["Claude", claudeAgentInstanceId, fenced.claude],
+  ] as const) {
+    it.effect(`${name} rejects fenced sends during compaction and allows Stop`, () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const threadId = asThreadId(`fence-compaction-${name}`);
+        const session = yield* service.startSession(threadId, {
+          threadId,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access",
+        });
+        const entered = yield* Deferred.make<void>();
+        if (name === "Codex") {
+          fake.compactThread.mockImplementationOnce(() =>
+            Deferred.succeed(entered, undefined).pipe(Effect.asVoid),
+          );
+        } else {
+          fake.sendTurn.mockImplementationOnce(() =>
+            Deferred.succeed(entered, undefined).pipe(
+              Effect.as({ threadId, turnId: asTurnId("compaction-turn") }),
+            ),
+          );
+        }
+        const compaction = yield* service
+          .compactThread(threadId)
+          .pipe(Effect.result, Effect.forkChild);
+        yield* Deferred.await(entered);
+        const sends = fake.sendTurn.mock.calls.length;
+        const result = yield* service
+          .sendTurn({
+            threadId,
+            input: "Only send to an idle session",
+            expectedSession: {
+              providerInstanceId: instanceId,
+              providerSessionId: session.providerSessionId!,
+              activeTurnId: null,
+              readiness: "ready",
+            },
+          })
+          .pipe(Effect.flip);
+        assert.equal(result._tag, "ProviderSessionFenceError");
+        assert.equal(fake.sendTurn.mock.calls.length, sends);
+        yield* service.stopSession({ threadId });
+        assert.equal((yield* Fiber.join(compaction))._tag, "Failure");
+      }),
+    );
+  }
+
+  for (const [name, instanceId, fake] of [
+    ["Codex", codexInstanceId, fenced.codex],
+    ["Claude", claudeAgentInstanceId, fenced.claude],
+  ] as const) {
+    it.effect(`${name} rejects a replaced session without recovery or a second send`, () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const threadId = asThreadId(`fence-${name}`);
+        const input = {
+          threadId,
+          providerInstanceId: instanceId,
+          runtimeMode: "full-access" as const,
+        };
+        const session = yield* service.startSession(threadId, input);
+        assert.isDefined(session.providerSessionId);
+        const expectedSession = {
+          providerInstanceId: instanceId,
+          providerSessionId: session.providerSessionId!,
+          activeTurnId: null,
+          readiness: "ready" as const,
+        };
+        const before = fake.sendTurn.mock.calls.length;
+        yield* service.sendTurn({ threadId, input: "Review the patch", expectedSession });
+        assert.strictEqual(fake.sendTurn.mock.calls.length, before + 1);
+        const replacement = yield* service.startSession(threadId, input);
+        assert.notStrictEqual(replacement.providerSessionId, session.providerSessionId);
+        const failed = yield* service
+          .sendTurn({ threadId, input: "Stale review", expectedSession })
+          .pipe(Effect.flip);
+        assert.strictEqual(failed._tag, "ProviderSessionFenceError");
+        assert.strictEqual(fake.sendTurn.mock.calls.length, before + 1);
+        yield* service.stopSession({ threadId });
+        const starts = fake.startSession.mock.calls.length;
+        yield* service
+          .sendTurn({ threadId, input: "Do not recover", expectedSession })
+          .pipe(Effect.flip);
+        assert.strictEqual(fake.startSession.mock.calls.length, starts);
+      }),
+    );
+  }
+
+  it.effect(
+    "rejects conditional Cursor sends and interrupts without calling its blocking adapter",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("fence-cursor-unsupported");
+        const providerInstanceId = ProviderInstanceId.make("cursor");
+        const session = yield* service.startSession(threadId, {
+          threadId,
+          providerInstanceId,
+          runtimeMode: "full-access",
+        });
+        const expectedSession = {
+          providerInstanceId,
+          providerSessionId: session.providerSessionId!,
+          activeTurnId: null,
+          readiness: "ready" as const,
+        };
+        const sends = fenced.cursor.sendTurn.mock.calls.length;
+        const interrupts = fenced.cursor.interruptTurn.mock.calls.length;
+        assert.equal(
+          (yield* service
+            .sendTurn({ threadId, input: "Review", expectedSession })
+            .pipe(Effect.flip))._tag,
+          "ProviderSessionFenceError",
+        );
+        assert.equal(
+          (yield* service.interruptTurn({ threadId, expectedSession }).pipe(Effect.flip))._tag,
+          "ProviderSessionFenceError",
+        );
+        assert.equal(fenced.cursor.sendTurn.mock.calls.length, sends);
+        assert.equal(fenced.cursor.interruptTurn.mock.calls.length, interrupts);
+      }),
+  );
+
+  it.effect(
+    "serializes ordinary starts with a conditional send already at the provider boundary",
+    () =>
+      Effect.gen(function* () {
+        const service = yield* ProviderService.ProviderService;
+        const threadId = asThreadId("fence-race");
+        const input = {
+          threadId,
+          providerInstanceId: codexInstanceId,
+          runtimeMode: "full-access" as const,
+        };
+        const session = yield* service.startSession(threadId, input);
+        const entered = yield* Deferred.make<void>();
+        const release = yield* Deferred.make<void>();
+        fenced.codex.sendTurn.mockImplementationOnce(() =>
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(release)),
+            Effect.as({ threadId, turnId: asTurnId("race-turn") }),
+          ),
+        );
+        const send = yield* service
+          .sendTurn({
+            threadId,
+            input: "Selected skill",
+            expectedSession: {
+              providerInstanceId: codexInstanceId,
+              providerSessionId: session.providerSessionId!,
+              activeTurnId: null,
+              readiness: "ready",
+            },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(entered);
+        const starts = fenced.codex.startSession.mock.calls.length;
+        const restart = yield* service.startSession(threadId, input).pipe(Effect.forkChild);
+        yield* Effect.yieldNow;
+        assert.strictEqual(fenced.codex.startSession.mock.calls.length, starts);
+        yield* Deferred.succeed(release, undefined);
+        yield* Fiber.join(send);
+        const restarted = yield* Fiber.join(restart);
+        assert.notStrictEqual(restarted.providerSessionId, session.providerSessionId);
+      }),
+  );
+
+  it.effect("rejects an ordinary send whose locked route changed to a blocking provider", () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fence-driver-swap");
+      yield* service.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const replacementEntered = yield* Deferred.make<void>();
+      const releaseReplacement = yield* Deferred.make<void>();
+      const initialRouteRead = yield* Deferred.make<void>();
+      const startCursor = fenced.cursor.startSession.getMockImplementation()!;
+      fenced.cursor.startSession.mockImplementationOnce((input) =>
+        Deferred.succeed(replacementEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(releaseReplacement)),
+          Effect.andThen(startCursor(input)),
+        ),
+      );
+      const replacement = yield* service
+        .startSession(threadId, {
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("cursor"),
+          runtimeMode: "full-access",
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(replacementEntered);
+      fenced.codex.hasSession.mockImplementationOnce(() =>
+        Deferred.succeed(initialRouteRead, undefined).pipe(Effect.as(true)),
+      );
+      const sends = fenced.cursor.sendTurn.mock.calls.length;
+      const send = yield* service
+        .sendTurn({ threadId, input: "Raced ordinary request" })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(initialRouteRead);
+      yield* Deferred.succeed(releaseReplacement, undefined);
+      yield* Fiber.join(replacement);
+      assert.equal((yield* Fiber.join(send))._tag, "ProviderSessionFenceError");
+      assert.equal(fenced.cursor.sendTurn.mock.calls.length, sends);
+      yield* service.sendTurn({ threadId, input: "Fresh request to Cursor" });
+      assert.equal(fenced.cursor.sendTurn.mock.calls.length, sends + 1);
+    }),
+  );
+
+  it.effect("a replacement waits for Stop already attached to an in-flight admission", () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fence-stop-replacement-race");
+      const input = {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access" as const,
+      };
+      const session = yield* service.startSession(threadId, input);
+      const sendEntered = yield* Deferred.make<void>();
+      const stopEntered = yield* Deferred.make<void>();
+      const releaseStop = yield* Deferred.make<void>();
+      fenced.codex.sendTurn.mockImplementationOnce(() =>
+        Deferred.succeed(sendEntered, undefined).pipe(
+          Effect.andThen(Deferred.await(stopEntered)),
+          Effect.as({ threadId, turnId: asTurnId("before-stop") }),
+        ),
+      );
+      fenced.codex.interruptTurn.mockImplementationOnce(() =>
+        Deferred.succeed(stopEntered, undefined).pipe(Effect.andThen(Deferred.await(releaseStop))),
+      );
+      const send = yield* service
+        .sendTurn({
+          threadId,
+          input: "Selected skill",
+          expectedSession: {
+            providerInstanceId: codexInstanceId,
+            providerSessionId: session.providerSessionId!,
+            readiness: "ready",
+            activeTurnId: null,
+          },
+        })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(sendEntered);
+      const stop = yield* service.interruptTurn({ threadId }).pipe(Effect.forkChild);
+      yield* Deferred.await(stopEntered);
+      const starts = fenced.codex.startSession.mock.calls.length;
+      const replacement = yield* service.startSession(threadId, input).pipe(Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.equal(fenced.codex.startSession.mock.calls.length, starts);
+      yield* Deferred.succeed(releaseStop, undefined);
+      yield* Fiber.join(stop);
+      yield* Fiber.join(send);
+      assert.notEqual(
+        (yield* Fiber.join(replacement)).providerSessionId,
+        session.providerSessionId,
+      );
+    }),
+  );
+
+  it.effect("an ordinary send reserves readiness before a competing conditional send", () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fence-ordinary-race");
+      const session = yield* service.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      const entered = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const turnId = asTurnId("ordinary-winner");
+      const before = fenced.codex.sendTurn.mock.calls.length;
+      fenced.codex.sendTurn.mockImplementationOnce(() =>
+        Effect.gen(function* () {
+          yield* Deferred.succeed(entered, undefined);
+          yield* Deferred.await(release);
+          fenced.codex.updateSession(threadId, (current) => ({
+            ...current,
+            status: "running",
+            activeTurnId: turnId,
+          }));
+          return { threadId, turnId };
+        }),
+      );
+      const ordinary = yield* service
+        .sendTurn({ threadId, input: "Ordinary request" })
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(entered);
+      const conditional = yield* service
+        .sendTurn({
+          threadId,
+          input: "Selected skill",
+          expectedSession: {
+            providerInstanceId: codexInstanceId,
+            providerSessionId: session.providerSessionId!,
+            readiness: "ready",
+            activeTurnId: null,
+          },
+        })
+        .pipe(Effect.flip, Effect.forkChild);
+      yield* Effect.yieldNow;
+      assert.equal(fenced.codex.sendTurn.mock.calls.length, before + 1);
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(ordinary);
+      assert.equal((yield* Fiber.join(conditional))._tag, "ProviderSessionFenceError");
+      assert.equal(fenced.codex.sendTurn.mock.calls.length, before + 1);
+    }),
+  );
+
+  it.effect("rejects interrupts and fallback stops for a different turn", () =>
+    Effect.gen(function* () {
+      const service = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("fence-interrupt");
+      const session = yield* service.startSession(threadId, {
+        threadId,
+        providerInstanceId: codexInstanceId,
+        runtimeMode: "full-access",
+      });
+      fenced.codex.updateSession(threadId, (current) => ({
+        ...current,
+        status: "running",
+        activeTurnId: asTurnId("new-turn"),
+      }));
+      const expectedSession = {
+        providerInstanceId: codexInstanceId,
+        providerSessionId: session.providerSessionId!,
+        activeTurnId: asTurnId("old-turn"),
+        readiness: "running" as const,
+      };
+      const interrupts = fenced.codex.interruptTurn.mock.calls.length;
+      const stops = fenced.codex.stopSession.mock.calls.length;
+      assert.strictEqual(
+        (yield* service.interruptTurn({ threadId, expectedSession }).pipe(Effect.flip))._tag,
+        "ProviderSessionFenceError",
+      );
+      assert.strictEqual(
+        (yield* service.stopSession({ threadId, expectedSession }).pipe(Effect.flip))._tag,
+        "ProviderSessionFenceError",
+      );
+      assert.strictEqual(fenced.codex.interruptTurn.mock.calls.length, interrupts);
+      assert.strictEqual(fenced.codex.stopSession.mock.calls.length, stops);
+      assert.strictEqual(
+        (yield* service
+          .interruptTurn({
+            threadId,
+            expectedSession: { ...expectedSession, activeTurnId: asTurnId("new-turn") },
+            turnId: asTurnId("other-turn"),
+          })
+          .pipe(Effect.flip))._tag,
+        "ProviderSessionFenceError",
+      );
+      assert.strictEqual(fenced.codex.interruptTurn.mock.calls.length, interrupts);
+      yield* service.interruptTurn({
+        threadId,
+        expectedSession: { ...expectedSession, activeTurnId: asTurnId("new-turn") },
+        turnId: asTurnId("new-turn"),
+      });
+      assert.strictEqual(fenced.codex.interruptTurn.mock.calls.length, interrupts + 1);
     }),
   );
 });
@@ -1958,7 +2451,7 @@ routing.layer("ProviderServiceLive routing", (it) => {
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-compact-timeout");
-      yield* provider.startSession(threadId, {
+      const session = yield* provider.startSession(threadId, {
         provider: CODEX_DRIVER,
         providerInstanceId: codexInstanceId,
         threadId,
@@ -1996,6 +2489,21 @@ routing.layer("ProviderServiceLive routing", (it) => {
       const blockedRetry = yield* provider.compactThread(threadId).pipe(Effect.result);
       assert.equal(blockedRetry._tag, "Failure");
       assert.equal(routing.codex.compactThread.mock.calls.length, 1);
+      const sends = routing.codex.sendTurn.mock.calls.length;
+      const conditional = yield* provider
+        .sendTurn({
+          threadId,
+          input: "Do not send while compaction may still be running",
+          expectedSession: {
+            providerInstanceId: codexInstanceId,
+            providerSessionId: session.providerSessionId!,
+            activeTurnId: null,
+            readiness: "ready",
+          },
+        })
+        .pipe(Effect.flip);
+      assert.equal(conditional._tag, "ProviderSessionFenceError");
+      assert.equal(routing.codex.sendTurn.mock.calls.length, sends);
 
       routing.codex.emit({
         type: "thread.state.changed",
@@ -2973,66 +3481,80 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("does not persist running after a concurrent send is interrupted", () =>
-    Effect.gen(function* () {
-      const provider = yield* ProviderService.ProviderService;
-      const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
-      const sendStarted = yield* Deferred.make<void>();
-      const interrupted = yield* Deferred.make<void>();
-      routing.codex.sendTurn.mockImplementationOnce(() =>
+  for (const conditional of [false, true]) {
+    it.effect(
+      `does not persist running after a concurrent ${conditional ? "conditional" : "ordinary"} send is interrupted`,
+      () =>
         Effect.gen(function* () {
-          yield* Deferred.succeed(sendStarted, undefined);
-          yield* Deferred.await(interrupted);
-          return yield* Effect.interrupt;
+          const provider = yield* ProviderService.ProviderService;
+          const runtimeRepository = yield* ProviderSessionRuntime.ProviderSessionRuntimeRepository;
+          const sendStarted = yield* Deferred.make<void>();
+          const interrupted = yield* Deferred.make<void>();
+          routing.codex.sendTurn.mockImplementationOnce(() =>
+            Effect.gen(function* () {
+              yield* Deferred.succeed(sendStarted, undefined);
+              yield* Deferred.await(interrupted);
+              return yield* Effect.interrupt;
+            }),
+          );
+          routing.codex.interruptTurn.mockImplementationOnce(() =>
+            Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
+          );
+
+          const threadId = asThreadId("thread-interrupted-send-directory");
+          const session = yield* provider.startSession(threadId, {
+            provider: ProviderDriverKind.make("codex"),
+            providerInstanceId: codexInstanceId,
+            threadId,
+            runtimeMode: "full-access",
+          });
+          const sendExitFiber = yield* provider
+            .sendTurn({
+              threadId: session.threadId,
+              input: "hold this prompt",
+              attachments: [],
+              ...(conditional
+                ? {
+                    expectedSession: {
+                      providerInstanceId: codexInstanceId,
+                      providerSessionId: session.providerSessionId!,
+                      readiness: "ready" as const,
+                      activeTurnId: null,
+                    },
+                  }
+                : {}),
+            })
+            .pipe(Effect.exit, Effect.forkChild);
+          yield* Deferred.await(sendStarted);
+          yield* provider.interruptTurn({ threadId: session.threadId });
+          const sendExit = yield* Fiber.join(sendExitFiber);
+
+          assert.equal(Exit.isFailure(sendExit), true);
+          if (Exit.isFailure(sendExit)) {
+            assert.equal(Cause.hasInterruptsOnly(sendExit.cause), true);
+          }
+          const persisted = yield* runtimeRepository.getByThreadId({
+            threadId: session.threadId,
+          });
+          assert.equal(Option.isSome(persisted), true);
+          if (Option.isSome(persisted)) {
+            // The directory folds both adapter "ready" and "running" into its
+            // runtime "running" state. The payload proves sendTurn did not upsert.
+            assert.equal(persisted.value.status, "running");
+            const payload = persisted.value.runtimePayload;
+            assert.equal(payload !== null && typeof payload === "object", true);
+            if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
+              const runtimePayload = payload as {
+                activeTurnId?: string | null;
+                lastRuntimeEvent?: string | null;
+              };
+              assert.equal(runtimePayload.activeTurnId ?? null, null);
+              assert.notEqual(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
+            }
+          }
         }),
-      );
-      routing.codex.interruptTurn.mockImplementationOnce(() =>
-        Deferred.succeed(interrupted, undefined).pipe(Effect.asVoid),
-      );
-
-      const threadId = asThreadId("thread-interrupted-send-directory");
-      const session = yield* provider.startSession(threadId, {
-        provider: ProviderDriverKind.make("codex"),
-        providerInstanceId: codexInstanceId,
-        threadId,
-        runtimeMode: "full-access",
-      });
-      const sendExitFiber = yield* provider
-        .sendTurn({
-          threadId: session.threadId,
-          input: "hold this prompt",
-          attachments: [],
-        })
-        .pipe(Effect.exit, Effect.forkChild);
-      yield* Deferred.await(sendStarted);
-      yield* provider.interruptTurn({ threadId: session.threadId });
-      const sendExit = yield* Fiber.join(sendExitFiber);
-
-      assert.equal(Exit.isFailure(sendExit), true);
-      if (Exit.isFailure(sendExit)) {
-        assert.equal(Cause.hasInterruptsOnly(sendExit.cause), true);
-      }
-      const persisted = yield* runtimeRepository.getByThreadId({
-        threadId: session.threadId,
-      });
-      assert.equal(Option.isSome(persisted), true);
-      if (Option.isSome(persisted)) {
-        // The directory folds both adapter "ready" and "running" into its
-        // runtime "running" state. The payload proves sendTurn did not upsert.
-        assert.equal(persisted.value.status, "running");
-        const payload = persisted.value.runtimePayload;
-        assert.equal(payload !== null && typeof payload === "object", true);
-        if (payload !== null && typeof payload === "object" && !Array.isArray(payload)) {
-          const runtimePayload = payload as {
-            activeTurnId?: string | null;
-            lastRuntimeEvent?: string | null;
-          };
-          assert.equal(runtimePayload.activeTurnId ?? null, null);
-          assert.notEqual(runtimePayload.lastRuntimeEvent, "provider.sendTurn");
-        }
-      }
-    }),
-  );
+    );
+  }
 
   it.effect("reuses persisted resume cursor when startSession is called after a restart", () =>
     Effect.gen(function* () {
@@ -3653,11 +4175,14 @@ const recordedTurnAnalytics = makeRecordingAnalytics();
 const secondaryCodexInstanceId = ProviderInstanceId.make("codex_work");
 const primaryAnalyticsCodex = makeFakeCodexAdapter();
 const secondaryAnalyticsCodex = makeFakeCodexAdapter();
+// Non-fenced adapters still allow overlapping acknowledgments; retain analytics coverage there.
+const parallelAnalyticsCursor = makeFakeCodexAdapter(CURSOR_DRIVER);
 const turnAnalytics = makeProviderServiceLayer({
   analyticsLayer: recordedTurnAnalytics.layer,
   registry: makeStaticInstanceRegistry([
     [codexInstanceId, primaryAnalyticsCodex.adapter],
     [secondaryCodexInstanceId, secondaryAnalyticsCodex.adapter],
+    [cursorInstanceId, parallelAnalyticsCursor.adapter],
   ]),
 });
 
@@ -3831,8 +4356,8 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const provider = yield* ProviderService.ProviderService;
       const threadId = asThreadId("thread-turn-analytics-overlap");
       yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
+        provider: CURSOR_DRIVER,
+        providerInstanceId: cursorInstanceId,
         threadId,
         runtimeMode: "full-access",
       });
@@ -3845,7 +4370,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       let initialStartCount = 0;
       const firstTurnId = asTurnId("turn-analytics-overlap-first");
       const secondTurnId = asTurnId("turn-analytics-overlap-second");
-      primaryAnalyticsCodex.sendTurn
+      parallelAnalyticsCursor.sendTurn
         .mockImplementationOnce((input) =>
           Effect.gen(function* () {
             yield* Deferred.succeed(firstStarted, undefined);
@@ -3878,7 +4403,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           input: "first",
           attachments: [],
           interactionMode: "default",
-          modelSelection: createModelSelection(codexInstanceId, "requested-first"),
+          modelSelection: createModelSelection(cursorInstanceId, "requested-first"),
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstStarted);
@@ -3888,7 +4413,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           input: "second",
           attachments: [],
           interactionMode: "plan",
-          modelSelection: createModelSelection(codexInstanceId, "requested-second"),
+          modelSelection: createModelSelection(cursorInstanceId, "requested-second"),
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(secondStarted);
@@ -3897,10 +4422,10 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         [firstTurnId, "first"],
         [secondTurnId, "second"],
       ] as const) {
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.started",
           eventId: asEventId(`evt-turn-analytics-overlap-start-${suffix}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
@@ -3910,10 +4435,10 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* Deferred.await(initialStartsObserved);
       yield* Deferred.succeed(secondRelease, undefined);
       yield* Fiber.join(secondSend);
-      primaryAnalyticsCodex.emit({
+      parallelAnalyticsCursor.emit({
         type: "turn.started",
         eventId: asEventId("evt-turn-analytics-overlap-start-second-duplicate"),
-        provider: CODEX_DRIVER,
+        provider: CURSOR_DRIVER,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId,
         turnId: secondTurnId,
@@ -3925,10 +4450,10 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         [secondTurnId, "second"],
         [firstTurnId, "first"],
       ] as const) {
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.completed",
           eventId: asEventId(`evt-turn-analytics-overlap-complete-${suffix}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
@@ -4120,12 +4645,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const firstTurnId = asTurnId("turn-analytics-overlap-fast-first");
       const secondTurnId = asTurnId("turn-analytics-overlap-fast-second");
       yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
+        provider: CURSOR_DRIVER,
+        providerInstanceId: cursorInstanceId,
         threadId,
         runtimeMode: "full-access",
       });
-      primaryAnalyticsCodex.sendTurn
+      parallelAnalyticsCursor.sendTurn
         .mockImplementationOnce(() =>
           Effect.gen(function* () {
             yield* Deferred.succeed(firstStarted, undefined);
@@ -4151,7 +4676,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           input: "first fast completion",
           attachments: [],
           interactionMode: "default",
-          modelSelection: createModelSelection(codexInstanceId, "requested-first"),
+          modelSelection: createModelSelection(cursorInstanceId, "requested-first"),
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(firstStarted);
@@ -4162,7 +4687,7 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
           input: "second fast completion",
           attachments: [],
           interactionMode: "plan",
-          modelSelection: createModelSelection(codexInstanceId, "requested-second"),
+          modelSelection: createModelSelection(cursorInstanceId, "requested-second"),
         })
         .pipe(Effect.forkChild);
       yield* Deferred.await(secondStarted);
@@ -4172,19 +4697,19 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         [firstTurnId, "first"],
         [secondTurnId, "second"],
       ] as const) {
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.started",
           eventId: asEventId(`evt-turn-analytics-overlap-fast-start-${suffix}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
           payload: { model: `native-${suffix}`, effort: `native-effort-${suffix}` },
         });
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.completed",
           eventId: asEventId(`evt-turn-analytics-overlap-fast-complete-${suffix}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
@@ -4324,13 +4849,13 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       );
       let startedCount = 0;
       yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
+        provider: CURSOR_DRIVER,
+        providerInstanceId: cursorInstanceId,
         threadId,
         runtimeMode: "full-access",
       });
       for (const turnId of turnIds) {
-        primaryAnalyticsCodex.sendTurn.mockImplementationOnce((input) =>
+        parallelAnalyticsCursor.sendTurn.mockImplementationOnce((input) =>
           Effect.gen(function* () {
             startedCount += 1;
             if (startedCount === turnIds.length) {
@@ -4363,19 +4888,19 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       yield* Deferred.await(allStarted);
 
       for (const [index, turnId] of turnIds.entries()) {
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.started",
           eventId: asEventId(`evt-turn-analytics-bounded-deferred-start-${index + 1}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
           payload: { model: `native-bounded-${index + 1}` },
         });
-        primaryAnalyticsCodex.emit({
+        parallelAnalyticsCursor.emit({
           type: "turn.completed",
           eventId: asEventId(`evt-turn-analytics-bounded-deferred-complete-${index + 1}`),
-          provider: CODEX_DRIVER,
+          provider: CURSOR_DRIVER,
           createdAt: "2026-01-01T00:00:00.000Z",
           threadId,
           turnId,
@@ -4402,12 +4927,12 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
       const sendRelease = yield* Deferred.make<void>();
       const turnId = asTurnId("turn-analytics-stop-deferred");
       yield* provider.startSession(threadId, {
-        provider: CODEX_DRIVER,
-        providerInstanceId: codexInstanceId,
+        provider: CURSOR_DRIVER,
+        providerInstanceId: cursorInstanceId,
         threadId,
         runtimeMode: "full-access",
       });
-      primaryAnalyticsCodex.sendTurn
+      parallelAnalyticsCursor.sendTurn
         .mockImplementationOnce(() =>
           Effect.gen(function* () {
             yield* Deferred.succeed(firstStarted, undefined);
@@ -4437,19 +4962,19 @@ turnAnalytics.layer("ProviderServiceLive turn analytics", (it) => {
         Effect.forkChild,
       );
       yield* Effect.yieldNow;
-      primaryAnalyticsCodex.emit({
+      parallelAnalyticsCursor.emit({
         type: "turn.started",
         eventId: asEventId("evt-turn-analytics-stop-deferred-start"),
-        provider: CODEX_DRIVER,
+        provider: CURSOR_DRIVER,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId,
         turnId,
         payload: { model: "native-stop" },
       });
-      primaryAnalyticsCodex.emit({
+      parallelAnalyticsCursor.emit({
         type: "turn.completed",
         eventId: asEventId("evt-turn-analytics-stop-deferred-complete"),
-        provider: CODEX_DRIVER,
+        provider: CURSOR_DRIVER,
         createdAt: "2026-01-01T00:00:00.000Z",
         threadId,
         turnId,

@@ -3564,6 +3564,22 @@ describe("ProviderRuntimeIngestion", () => {
     const harness = await createHarness();
     const now = "2026-01-01T00:00:00.000Z";
 
+    await harness.dispatch({
+      type: "thread.session.set",
+      commandId: CommandId.make("selected-error-session"),
+      threadId: asThreadId("thread-1"),
+      session: {
+        threadId: asThreadId("thread-1"),
+        providerName: "codex",
+        providerSessionId: "selected-generation",
+        status: "ready",
+        runtimeMode: "approval-required",
+        activeTurnId: null,
+        lastError: null,
+        updatedAt: now,
+      },
+      createdAt: now,
+    });
     harness.emit({
       type: "runtime.error",
       eventId: asEventId("evt-runtime-error"),
@@ -3583,6 +3599,7 @@ describe("ProviderRuntimeIngestion", () => {
         entry.session?.activeTurnId === "turn-3" &&
         entry.session?.lastError === "runtime exploded",
     );
+    expect(thread.session).toMatchObject({ providerSessionId: "selected-generation" });
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
   });

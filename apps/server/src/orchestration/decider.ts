@@ -13,6 +13,7 @@ import {
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
   type OrchestrationThreadActivity,
+  type ProviderSessionFence,
 } from "@t3tools/contracts";
 import {
   legacyLinkedPullRequestOf,
@@ -52,6 +53,44 @@ const isScriptRunCommand = Schema.is(SCRIPT_RUN_COMMAND_PATTERN);
 const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
 const decodeUserInputRequestedPayload = Schema.decodeUnknownOption(UserInputRequestedPayload);
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+
+function requireSessionFence(
+  thread: OrchestrationThread,
+  command: OrchestrationCommand & { expectedSession?: ProviderSessionFence | undefined },
+) {
+  const expected = command.expectedSession;
+  if (!expected) return Effect.void;
+  const session = thread.session;
+  const matches =
+    session?.providerInstanceId === expected.providerInstanceId &&
+    session.providerSessionId === expected.providerSessionId &&
+    session.activeTurnId === expected.activeTurnId &&
+    session.status === expected.readiness;
+  const idleSend =
+    command.type !== "thread.turn.start" ||
+    (expected.readiness === "ready" &&
+      expected.activeTurnId === null &&
+      !Array.from(openRequests(thread).values()).some(
+        (activity) =>
+          activity.kind !== "user-input.requested" ||
+          !Predicate.isObject(activity.payload) ||
+          activity.payload.responseMode !== "message",
+      ) &&
+      !hasQueuedTurnStartForThread(thread, command.createdAt));
+  const targetedInterrupt =
+    command.type !== "thread.turn.interrupt" ||
+    (expected.readiness === "running" &&
+      expected.activeTurnId !== null &&
+      (command.turnId === undefined || command.turnId === expected.activeTurnId));
+  return matches && idleSend && targetedInterrupt
+    ? Effect.void
+    : Effect.fail(
+        new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "The selected provider session or turn is no longer ready for this command.",
+        }),
+      );
+}
 
 /**
  * Blocked-on-you work derived from the thread's retained activities: an
@@ -1367,6 +1406,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         threadId: command.threadId,
       });
       const sourceProposedPlan = command.sourceProposedPlan;
+      yield* requireSessionFence(targetThread, command);
       const sourceThread = sourceProposedPlan
         ? yield* requireThread({
             readModel,
@@ -1434,6 +1474,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.turn-start-requested",
         payload: {
           threadId: command.threadId,
+          ...(command.expectedSession ? { expectedSession: command.expectedSession } : {}),
           messageId: command.message.messageId,
           ...(command.modelSelection !== undefined
             ? { modelSelection: command.modelSelection }
@@ -1533,11 +1574,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const targetThread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      yield* requireSessionFence(targetThread, command);
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1548,6 +1590,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         type: "thread.turn-interrupt-requested",
         payload: {
           threadId: command.threadId,
+          ...(command.expectedSession ? { expectedSession: command.expectedSession } : {}),
           ...(command.turnId !== undefined ? { turnId: command.turnId } : {}),
           createdAt: command.createdAt,
         },
