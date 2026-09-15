@@ -430,6 +430,8 @@ const TASK_COMPLETED_STATUS: ReadonlyMap<string, RuntimeSubagentStatus> = new Ma
   ["completed", "completed"],
   ["failed", "failed"],
   ["stopped", "interrupted"],
+  ["cancelled", "cancelled"],
+  ["interrupted", "interrupted"],
 ]);
 
 const KNOWN_STATUSES: ReadonlySet<string> = new Set([
