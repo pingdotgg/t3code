@@ -1240,6 +1240,32 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
           input.threadId,
           Effect.gen(function* () {
             const ctx = yield* requireSession(input.threadId);
+            // interruptTurn/settleStalledTurn mark their target before they
+            // acquire this lock, so a queued sendTurn can arrive here first
+            // and still see the doomed turn as "active". Steering it would
+            // hand this prompt the dying turn's id and let its own
+            // settlement race the real interrupt for the same bookkeeping
+            // slot. Settle the old turn ourselves so this prompt always
+            // starts a clean, uncontested turn instead.
+            if (
+              ctx.promptsInFlight > 0 &&
+              ctx.activeTurnId !== undefined &&
+              ctx.interruptedTurnIds.has(ctx.activeTurnId)
+            ) {
+              const staleTurnId = ctx.activeTurnId;
+              yield* settlePendingApprovalsAsCancelled(ctx.pendingApprovals);
+              yield* Effect.ignore(
+                ctx.acp.cancel.pipe(
+                  Effect.mapError((error) =>
+                    mapAcpToAdapterError(PROVIDER, input.threadId, "session/cancel", error),
+                  ),
+                ),
+              );
+              yield* settlePromptInFlight(input.threadId, staleTurnId, ctx.acpSessionId, {
+                completedStopReason: "cancelled",
+                settleAllPrompts: true,
+              });
+            }
             // A sendTurn while a prompt is in flight is a steer: reuse the
             // active turn and cancel the in-flight ACP prompt so Kiro takes
             // the new instruction immediately, matching Claude/Codex, instead
