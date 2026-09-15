@@ -281,6 +281,11 @@ import {
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
+  GitHubOAuthCancelInput,
+  GitHubOAuthError,
+  GitHubOAuthStartInput,
+  GitHubOAuthState,
+  GitHubAccountId,
   SourceControlMergeProjectPullRequestInput,
   SourceControlMergeProjectPullRequestResult,
   SourceControlPublishRepositoryInput,
@@ -412,6 +417,9 @@ export const WS_METHODS = {
   serverGetSettings: "server.getSettings",
   serverUpdateSettings: "server.updateSettings",
   serverDiscoverSourceControl: "server.discoverSourceControl",
+  sourceControlGitHubOAuthStart: "sourceControl.github.oauth.start",
+  sourceControlGitHubOAuthCancel: "sourceControl.github.oauth.cancel",
+  sourceControlGitHubOAuthSubscribe: "sourceControl.github.oauth.subscribe",
   serverGetTraceDiagnostics: "server.getTraceDiagnostics",
   serverGetProcessDiagnostics: "server.getProcessDiagnostics",
   serverGetHostResources: "server.getHostResources",
@@ -746,6 +754,30 @@ const WsServerDiscoverSourceControlRpc = Rpc.make(WS_METHODS.serverDiscoverSourc
   success: SourceControlDiscoveryResult,
   error: EnvironmentAuthorizationError,
 });
+
+const GitHubOAuthRpcError = Schema.Union([GitHubOAuthError, EnvironmentAuthorizationError]);
+
+const WsSourceControlGitHubOAuthStartRpc = Rpc.make(WS_METHODS.sourceControlGitHubOAuthStart, {
+  payload: GitHubOAuthStartInput,
+  success: GitHubOAuthState,
+  error: GitHubOAuthRpcError,
+});
+
+const WsSourceControlGitHubOAuthCancelRpc = Rpc.make(WS_METHODS.sourceControlGitHubOAuthCancel, {
+  payload: GitHubOAuthCancelInput,
+  success: GitHubOAuthState,
+  error: GitHubOAuthRpcError,
+});
+
+const WsSourceControlGitHubOAuthSubscribeRpc = Rpc.make(
+  WS_METHODS.sourceControlGitHubOAuthSubscribe,
+  {
+    payload: Schema.Struct({ accountId: GitHubAccountId }),
+    success: GitHubOAuthState,
+    error: GitHubOAuthRpcError,
+    stream: true,
+  },
+);
 
 const WsServerGetTraceDiagnosticsRpc = Rpc.make(WS_METHODS.serverGetTraceDiagnostics, {
   payload: Schema.Struct({}),
@@ -1568,6 +1600,9 @@ export const WsRpcGroup = RpcGroup.make(
   WsServerGetSettingsRpc,
   WsServerUpdateSettingsRpc,
   WsServerDiscoverSourceControlRpc,
+  WsSourceControlGitHubOAuthStartRpc,
+  WsSourceControlGitHubOAuthCancelRpc,
+  WsSourceControlGitHubOAuthSubscribeRpc,
   WsServerGetTraceDiagnosticsRpc,
   WsServerGetProcessDiagnosticsRpc,
   WsServerGetHostResourcesRpc,
