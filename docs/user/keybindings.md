@@ -23,7 +23,8 @@ in Settings.
 
 In a focused web or desktop composer, `Cmd+Return` on Apple devices or
 `Ctrl+Return` elsewhere sends a draft immediately while a turn is running,
-instead of queueing it. Change this shortcut in Settings → Keybindings under
+instead of queueing it. When the composer is empty, it sends the newest queued
+message immediately. Change this shortcut in Settings → Keybindings under
 **Composer: Send immediately**.
 
 ## Copy pull request references

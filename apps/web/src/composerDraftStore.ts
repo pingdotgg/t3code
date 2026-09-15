@@ -414,7 +414,19 @@ export interface ComposerThreadDraftState {
  * reset to defaults).
  */
 export function composerDraftHasUserContent(
-  draft: ComposerThreadDraftState | null | undefined,
+  draft:
+    | Pick<
+        ComposerThreadDraftState,
+        | "prompt"
+        | "images"
+        | "files"
+        | "persistedAttachments"
+        | "terminalContexts"
+        | "previewAnnotations"
+        | "reviewComments"
+      >
+    | null
+    | undefined,
 ): boolean {
   if (!draft) {
     return false;

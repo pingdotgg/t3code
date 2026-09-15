@@ -199,3 +199,18 @@ export function isQueuedMessageDue(input: {
 export function useQueuedMessages(threadKey: string): QueuedComposerMessage[] {
   return useQueuedMessageStore((state) => state.queuesByThreadKey[threadKey] ?? EMPTY_QUEUE);
 }
+
+/** Select the most recently created message even when a failed replay is held at the front. */
+export function newestQueuedMessage(
+  messages: ReadonlyArray<QueuedComposerMessage>,
+): QueuedComposerMessage | null {
+  let newest: QueuedComposerMessage | null = null;
+  for (const message of messages) {
+    // Queue order is the only stable tie-breaker: ids are random, while a
+    // later entry is the one most recently enqueued when timestamps collide.
+    if (newest === null || message.createdAt >= newest.createdAt) {
+      newest = message;
+    }
+  }
+  return newest;
+}

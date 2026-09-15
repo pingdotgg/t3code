@@ -56,6 +56,7 @@ import {
   type ReactNode,
   useCallback,
   useEffect,
+  useEffectEvent,
   useImperativeHandle,
   useLayoutEffect,
   useMemo,
@@ -3803,67 +3804,56 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     ],
   );
 
+  const handleSendNowShortcut = useEffectEvent((event: globalThis.KeyboardEvent) => {
+    if (event.defaultPrevented) return;
+    const target = event.target;
+    if (
+      !(target instanceof HTMLElement) ||
+      !target.isContentEditable ||
+      !composerFormRef.current?.contains(target)
+    ) {
+      return;
+    }
+
+    const command = resolveShortcutCommand(event, keybindings, {
+      context: {
+        terminalFocus: getTerminalFocusOwner() !== null,
+        terminalOpen,
+        modelPickerOpen: isComposerModelPickerOpen,
+      },
+    });
+    if (command !== "composer.sendNow") return;
+    const menuOpen = composerMenuOpenRef.current || resolveActiveComposerTrigger().trigger !== null;
+    const decision = resolveComposerImmediateSendDecision({
+      command,
+      isComposing: event.isComposing,
+      isImeKeydown: event.keyCode === 229,
+      repeat: event.repeat,
+      menuOpen,
+      hasPendingRequest:
+        isComposerApprovalState || activePendingProgress !== null || pendingUserInputs.length > 0,
+    });
+    // Leave Enter to the command menu and Lexical's IME handling. Other
+    // remapped keys still use this capture path while the editor is focused.
+    if (decision === "pass") return;
+    event.preventDefault();
+    event.stopPropagation();
+    if (decision === "block") return;
+
+    const submissionIntent = composerSubmissionIntentForEnter({
+      isMobileViewport,
+      shiftKey: event.shiftKey,
+      modifierKey: event.metaKey || event.ctrlKey,
+      isDraftThread: routeKind === "draft",
+    });
+    submitComposer(event, submissionIntent ?? "foreground", "immediate");
+  });
+
   useEffect(() => {
-    const handler = (event: globalThis.KeyboardEvent) => {
-      if (event.defaultPrevented) return;
-      const target = event.target;
-      if (
-        !(target instanceof HTMLElement) ||
-        !target.isContentEditable ||
-        !composerFormRef.current?.contains(target)
-      ) {
-        return;
-      }
-
-      const command = resolveShortcutCommand(event, keybindings, {
-        context: {
-          terminalFocus: getTerminalFocusOwner() !== null,
-          terminalOpen,
-          modelPickerOpen: isComposerModelPickerOpen,
-        },
-      });
-      if (command !== "composer.sendNow") return;
-      const menuOpen =
-        composerMenuOpenRef.current || resolveActiveComposerTrigger().trigger !== null;
-      const decision = resolveComposerImmediateSendDecision({
-        command,
-        isComposing: event.isComposing,
-        isImeKeydown: event.keyCode === 229,
-        repeat: event.repeat,
-        menuOpen,
-        hasPendingRequest:
-          isComposerApprovalState || activePendingProgress !== null || pendingUserInputs.length > 0,
-      });
-      // Leave Enter to the command menu and Lexical's IME handling. Other
-      // remapped keys still use this capture path while the editor is focused.
-      if (decision === "pass") return;
-      event.preventDefault();
-      event.stopPropagation();
-      if (decision === "block") return;
-
-      const submissionIntent = composerSubmissionIntentForEnter({
-        isMobileViewport,
-        shiftKey: event.shiftKey,
-        modifierKey: event.metaKey || event.ctrlKey,
-        isDraftThread: routeKind === "draft",
-      });
-      submitComposer(event, submissionIntent ?? "foreground", "immediate");
-    };
-
+    const handler = (event: globalThis.KeyboardEvent) => handleSendNowShortcut(event);
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
-  }, [
-    activePendingProgress,
-    isComposerApprovalState,
-    isComposerModelPickerOpen,
-    isMobileViewport,
-    keybindings,
-    pendingUserInputs.length,
-    resolveActiveComposerTrigger,
-    routeKind,
-    submitComposer,
-    terminalOpen,
-  ]);
+  }, []);
 
   const submitCitationAndSend = useCallback(() => {
     const intent = composerSubmissionIntentForEnter({

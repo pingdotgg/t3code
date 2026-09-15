@@ -314,6 +314,7 @@ import {
 import {
   isQueuedMessageDue,
   latestCompletedToolActivityId,
+  newestQueuedMessage,
   type QueuedComposerMessage,
   useQueuedMessages,
   useQueuedMessageStore,
@@ -7182,14 +7183,14 @@ export default function ChatView(props: ChatViewProps) {
     e?.preventDefault();
     const delivery = options?.delivery ?? "normal";
     const directAnnotation = options?.directAnnotation;
-    const queuedMessage = options?.queuedMessage;
+    const requestedQueuedMessage = options?.queuedMessage;
     // Typed out in full rather than picked from the menu. Attachments or contexts
     // mean the user is sending a prompt, so those go through as usual.
     if (
       usageLimitsOffered &&
       usageLimitsKey !== null &&
       !directAnnotation &&
-      !queuedMessage &&
+      !requestedQueuedMessage &&
       !composerHasNonPromptContent &&
       isUsageLimitsCommand(promptRef.current)
     ) {
@@ -7253,7 +7254,7 @@ export default function ChatView(props: ChatViewProps) {
     if (activePendingProgress) {
       // A queued message waits until the question is answered; it must not
       // be submitted as the answer.
-      if (directAnnotation || queuedMessage) {
+      if (directAnnotation || requestedQueuedMessage) {
         notifyDirectAnnotationAttached();
         return;
       }
@@ -7265,6 +7266,29 @@ export default function ChatView(props: ChatViewProps) {
       notifyDirectAnnotationAttached();
       return;
     }
+    const immediateQueueThreadKey =
+      delivery === "immediate" && !directAnnotation ? activeThreadKey : null;
+    const hasComposerContentForImmediateSend =
+      immediateQueueThreadKey === null
+        ? true
+        : composerDraftHasUserContent({
+            prompt: promptRef.current,
+            images: sendCtx.images,
+            files: sendCtx.files,
+            persistedAttachments:
+              useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+                ?.persistedAttachments ?? [],
+            terminalContexts: sendCtx.terminalContexts,
+            previewAnnotations: sendCtx.previewAnnotations,
+            reviewComments: sendCtx.reviewComments,
+          });
+    const queuedMessage =
+      requestedQueuedMessage ??
+      (immediateQueueThreadKey !== null && !hasComposerContentForImmediateSend
+        ? newestQueuedMessage(
+            useQueuedMessageStore.getState().queuesByThreadKey[immediateQueueThreadKey] ?? [],
+          )
+        : undefined);
     const {
       images: sendContextImages,
       files: composerFiles,

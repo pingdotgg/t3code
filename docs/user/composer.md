@@ -37,7 +37,8 @@ call, or when the turn ends. Use the arrow under the bubble to send it right
 away, or the X to move it back into the composer. Stop returns every queued
 message to the composer. On web and desktop, with the composer focused, press
 `Cmd+Return` on Apple devices or `Ctrl+Return` elsewhere to send a draft
-immediately while the agent is working. Change this shortcut in **Settings →
+immediately while the agent is working. When the composer is empty, the shortcut
+sends the newest queued message immediately. Change this shortcut in **Settings →
 Keybindings** under **Composer: Send immediately**.
 
 ## Queue messages offline on mobile

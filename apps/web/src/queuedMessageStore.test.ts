@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vite-plus/test";
 import {
   isQueuedMessageDue,
   latestCompletedToolActivityId,
+  newestQueuedMessage,
   useQueuedMessageStore,
   type QueuedComposerMessage,
 } from "./queuedMessageStore";
@@ -84,6 +85,41 @@ describe("queuedMessageStore", () => {
     expect(
       isQueuedMessageDue({ message: queue[0]!, phase: "ready", latestToolActivityId: null }),
     ).toBe(false);
+  });
+
+  it("selects the latest enqueue when timestamps match, or nothing for an empty queue", () => {
+    const { enqueue } = useQueuedMessageStore.getState();
+    expect(newestQueuedMessage([])).toBeNull();
+
+    enqueue("thread-a", makeMessage("first"));
+    const newest = enqueue("thread-a", makeMessage("newest"));
+
+    expect(
+      newestQueuedMessage(useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? []),
+    ).toBe(newest);
+  });
+
+  it("selects and takes the newest created message after a failed replay moves it to the front", () => {
+    const { enqueue, take, holdAtFront } = useQueuedMessageStore.getState();
+    const first = enqueue("thread-a", {
+      ...makeMessage("first"),
+      createdAt: "2026-09-11T00:00:01.000Z",
+    });
+    const newest = enqueue("thread-a", {
+      ...makeMessage("newest"),
+      createdAt: "2026-09-11T00:00:02.000Z",
+    });
+    holdAtFront("thread-a", take("thread-a", newest.id, null)!);
+
+    const queued = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
+    const selected = newestQueuedMessage(queued);
+    expect(selected?.id).toBe(newest.id);
+
+    expect(take("thread-a", selected!.id, "tool-3")?.prompt).toBe("newest");
+    const [remaining] = useQueuedMessageStore.getState().queuesByThreadKey["thread-a"] ?? [];
+    expect(remaining?.id).toBe(first.id);
+    expect(remaining?.prompt).toBe("first");
+    expect(remaining?.queuedAfterToolActivityId).toBe("tool-3");
   });
 
   it("drain empties one thread's queue in order", () => {
