@@ -68,11 +68,19 @@ const ProjectLucideIconName = TrimmedNonEmptyString.check(
 
 const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 
+const monogramSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+export const ProjectMonogramText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(32),
+  Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
+  Schema.makeFilter((text) => Array.from(monogramSegmenter.segment(text)).length <= 2),
+);
+
 export const ProjectIconOverride = Schema.Union([
   Schema.Struct({
     kind: Schema.Literal("lucide"),
     name: ProjectLucideIconName,
     color: ProjectIconColor,
+    monogram: Schema.optional(ProjectMonogramText),
   }),
   Schema.Struct({
     kind: Schema.Literal("emoji"),
