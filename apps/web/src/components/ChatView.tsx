@@ -3175,16 +3175,22 @@ export default function ChatView(props: ChatViewProps) {
     (isSendBusy || phase === "connecting" || phase === "running") &&
     compactRequestIsActive &&
     !compactionSettled;
-  // A thread whose first user message is persisted but whose turn has not
-  // started is mid-bootstrap on the server (the session is absent, or the
-  // placeholder "starting" one the bootstrap projects). That is how a reload
-  // or another client sees a worktree still being prepared, so it counts as
-  // working just like the local dispatch that started it.
+  // The server records a running worktree setup on the thread and projects a
+  // placeholder "starting" session for the same window. Either one, with no
+  // turn yet, means the bootstrap is still going: that is how a reload or
+  // another client sees it, so it counts as working like the local dispatch
+  // that started it. Both signals are cleared on every failure path and on
+  // restart, so this cannot outlive the setup.
+  const recordedWorktreeSetup = useMemo(
+    () => findRecordedWorktreeSetup(activeThread?.activities ?? [], routeThreadRef.threadId),
+    [activeThread?.activities, routeThreadRef.threadId],
+  );
   const awaitingBootstrapTurn =
     activeServerThread !== null &&
+    activeServerThread.id === routeThreadRef.threadId &&
     activeServerThread.latestTurn === null &&
-    (activeServerThread.session === null || activeServerThread.session.status === "starting") &&
-    activeServerThread.messages.some((message) => message.role === "user");
+    (activeServerThread.session?.status === "starting" ||
+      recordedWorktreeSetup?.phase === "running");
   const isWorking =
     phase === "running" ||
     isSendBusy ||
@@ -3490,20 +3496,9 @@ export default function ChatView(props: ChatViewProps) {
   // stream is keyed by that id alone: no owner bookkeeping, and a remount,
   // reload, or second client picks it up the same way. The subscription is
   // held only while a snapshot can still change.
-  const recordedWorktreeSetup = useMemo(
-    () => findRecordedWorktreeSetup(activeThread?.activities ?? [], routeThreadRef.threadId),
-    [activeThread?.activities, routeThreadRef.threadId],
-  );
-  // The server also projects a starting session for the whole setup window,
-  // which is what the sidebar and the shell read; it opens the stream a beat
-  // before the recorded activity arrives on the detail.
   const routeThreadPreparesWorktree =
     (isPreparingWorktree && activeThread?.id === routeThreadRef.threadId) ||
-    recordedWorktreeSetup?.phase === "running" ||
-    heldWorktreeSetup?.phase === "running" ||
-    (isServerThread &&
-      activeThreadShell?.session?.status === "starting" &&
-      activeThreadShell.latestTurn === null);
+    heldWorktreeSetup?.phase === "running";
   const worktreeSetupQuery = useEnvironmentQuery(
     routeThreadPreparesWorktree
       ? vcsEnvironment.worktreeSetup({

@@ -782,16 +782,22 @@ function ThreadRouteContent(
       }),
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
-  // A worktree bootstrap persists the user message before its turn, so a
-  // thread opened from another device (or after a restart) shows the same
-  // preparing state the sending client does.
+  // A worktree bootstrap projects a starting session and records a running
+  // setup on the thread before its turn, so a thread opened from another
+  // device (or after a restart) shows the same preparing state the sending
+  // client does. Both signals settle on every failure path.
   const awaitingBootstrapTurn = useMemo(
     () =>
       selectedThreadDetail !== null &&
       selectedThreadDetail.latestTurn === null &&
-      (selectedThreadDetail.session === null ||
-        selectedThreadDetail.session.status === "starting") &&
-      selectedThreadDetail.messages.some((message) => message.role === "user"),
+      (selectedThreadDetail.session?.status === "starting" ||
+        selectedThreadDetail.activities.some(
+          (activity) =>
+            activity.kind === "worktree-setup" &&
+            typeof activity.payload === "object" &&
+            activity.payload !== null &&
+            (activity.payload as { phase?: unknown }).phase === "running",
+        )),
     [selectedThreadDetail],
   );
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
