@@ -83,8 +83,23 @@ it("maps Always allow to allow_once when Kiro omits allow_always", () => {
     ],
   };
   assert.equal(selectKiroPermissionOptionId(request, "acceptForSession"), "allow_once");
+  assert.equal(selectKiroPermissionOptionId(request, "acceptAlways"), "allow_once");
   assert.equal(selectKiroPermissionOptionId(request, "accept"), "allow_once");
   assert.equal(selectKiroPermissionOptionId(request, "decline"), "reject_once");
+});
+
+it("maps acceptAlways to allow_always like acceptForSession when Kiro offers it", () => {
+  const request = {
+    sessionId: "mock-session-1",
+    toolCall: { toolCallId: "tool-call-1", title: "Running: echo hi" },
+    options: [
+      { optionId: "allow_once", name: "Yes", kind: "allow_once" as const },
+      { optionId: "allow_always", name: "Always", kind: "allow_always" as const },
+      { optionId: "reject_once", name: "No", kind: "reject_once" as const },
+    ],
+  };
+  assert.equal(selectKiroPermissionOptionId(request, "acceptAlways"), "allow_always");
+  assert.equal(selectKiroPermissionOptionId(request, "acceptForSession"), "allow_always");
 });
 
 it.layer(kiroAdapterTestLayer)("KiroAdapterLive", (it) => {

@@ -200,7 +200,7 @@ export function selectKiroPermissionOptionId(
   decision: Exclude<ProviderApprovalDecision, "cancel">,
 ): string | undefined {
   const preferredKind =
-    decision === "acceptForSession"
+    decision === "acceptForSession" || decision === "acceptAlways"
       ? "allow_always"
       : decision === "accept"
         ? "allow_once"
@@ -211,7 +211,7 @@ export function selectKiroPermissionOptionId(
     return preferredId;
   }
   // Some Kiro tools omit allow_always. T3 still offers "Always allow this session".
-  if (decision === "acceptForSession") {
+  if (decision === "acceptForSession" || decision === "acceptAlways") {
     const once = request.options.find((entry) => entry.kind === "allow_once");
     const onceId = once?.optionId.trim();
     if (onceId) {
@@ -1008,7 +1008,7 @@ export function makeKiroAdapter(kiroSettings: KiroSettings, options?: KiroAdapte
                       ? undefined
                       : selectKiroPermissionOptionId(params, resolved);
                   if (
-                    resolved === "acceptForSession" &&
+                    (resolved === "acceptForSession" || resolved === "acceptAlways") &&
                     selectedOptionId &&
                     approvalKey !== undefined
                   ) {

@@ -113,7 +113,7 @@ function leadingJsonLine(output: string): string | undefined {
 
 const KiroWhoamiJson = Schema.Struct({
   accountType: Schema.optional(Schema.String),
-  email: Schema.optional(Schema.String),
+  email: Schema.optional(Schema.NullOr(Schema.String)),
 });
 const decodeKiroWhoamiJsonExit = Schema.decodeUnknownExit(Schema.fromJsonString(KiroWhoamiJson));
 const decodeKiroWhoami = (output: string) => {

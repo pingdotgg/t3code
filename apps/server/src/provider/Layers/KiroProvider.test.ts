@@ -26,6 +26,14 @@ const LOGGED_IN_WHOAMI_OUTPUT = [
 
 const LOGGED_OUT_WHOAMI_OUTPUT = "Not logged in. Run `kiro-cli login` to sign in.\n";
 
+const LOGGED_IN_WHOAMI_NULL_EMAIL_OUTPUT = [
+  '{"accountType":"IamIdentityCenter","email":null,"region":"us-east-1"}',
+  "",
+  "Profile:",
+  "TestProfile",
+  "",
+].join("\n");
+
 const LIST_MODELS_OUTPUT = JSON.stringify({
   models: [
     {
@@ -60,6 +68,13 @@ describe("parseKiroWhoamiOutput", () => {
 
   it("recognizes a signed-out CLI", () => {
     expect(parseKiroWhoamiOutput(LOGGED_OUT_WHOAMI_OUTPUT).authenticated).toBe(false);
+  });
+
+  it("stays authenticated when Kiro CLI 1.28.2 reports a null email", () => {
+    expect(parseKiroWhoamiOutput(LOGGED_IN_WHOAMI_NULL_EMAIL_OUTPUT)).toEqual({
+      authenticated: true,
+      accountType: "IamIdentityCenter",
+    });
   });
 
   it("returns unknown auth for unrecognized output", () => {
