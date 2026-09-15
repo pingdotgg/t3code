@@ -113,7 +113,7 @@ interface Harness {
   brokerError: VoiceToolError | undefined;
 }
 
-const makeHarness = (): Harness => {
+const makeHarness = (options: { now?: () => number } = {}): Harness => {
   const fakeClient = makeFakeClient();
   const mic = new FakeMic();
   const driverCalls: Array<{ to: string; params: VoiceNavigationDestination }> = [];
@@ -168,6 +168,7 @@ const makeHarness = (): Harness => {
       harness.wiredExecutor = options.executor as Harness["wiredExecutor"];
       return fakeClient.client;
     },
+    ...(options.now !== undefined ? { now: options.now } : {}),
   };
   const controller = createVoicePanelController(harness.deps);
   harness.controller = controller;
@@ -184,6 +185,28 @@ describe("voice panel controller", () => {
     expect(harness.controller.getState().phase).toBe("live");
     expect(harness.controller.getState().starting).toBe(false);
     expect(harness.controller.getState().error).toBeNull();
+  });
+
+  it("marks session activity (for the panel's auto-collapse timer) on state and transcript events", async () => {
+    let now = 10_000;
+    const harness = makeHarness({ now: () => now });
+    await harness.controller.connect();
+    expect(harness.controller.getState().lastActivityAt).toBe(10_000);
+
+    now = 12_500;
+    harness.fakeClient.emit({
+      type: "transcript",
+      channel: "input",
+      utterance: "u1",
+      delta: "hello",
+    });
+    expect(harness.controller.getState().lastActivityAt).toBe(12_500);
+
+    // Activity resets with each new connection attempt.
+    now = 20_000;
+    await harness.controller.end();
+    await harness.controller.connect();
+    expect(harness.controller.getState().lastActivityAt).toBe(20_000);
   });
 
   it("notifies subscribers with a fresh immutable snapshot on each change", async () => {

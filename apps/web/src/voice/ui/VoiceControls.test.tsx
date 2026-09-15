@@ -8,19 +8,24 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
 import { VoiceControls } from "./VoiceControls";
+import type { VoiceActivationMode } from "./overlayPreferences";
 
 type Phase = "idle" | "connecting" | "live" | "closing" | "closed" | "error";
 
-const renderControls = (phase: Phase, starting = false): string =>
+const renderControls = (phase: Phase, starting = false, activation?: VoiceActivationMode): string =>
   renderToStaticMarkup(
     <VoiceControls
       phase={phase}
       starting={starting}
       micMuted={false}
+      activation={activation}
       onConnect={() => {}}
       onToggleMute={() => {}}
       onEnd={() => {}}
       onClear={() => {}}
+      onTalkPress={() => {}}
+      onTalkRelease={() => {}}
+      onTalkToggle={() => {}}
     />,
   );
 
@@ -99,6 +104,56 @@ describe("voice controls disabled-state matrix", () => {
   it("error and starting: End enabled as cancel", () => {
     const states = buttonStates(renderControls("error", true));
     expect(states.Connect).toBe(true);
+    expect(states.End).toBe(false);
+  });
+});
+
+describe("voice controls activation modes", () => {
+  it("manual keeps the plain Connect button", () => {
+    const states = buttonStates(renderControls("idle", false, "manual"));
+    expect(states).toEqual({
+      Connect: false,
+      Mute: true,
+      End: true,
+      Clear: false,
+    });
+  });
+
+  it("always listening has no Connect button (the panel connects on its own)", () => {
+    const states = buttonStates(renderControls("idle", false, "always"));
+    expect(states).toEqual({
+      Mute: true,
+      End: true,
+      Clear: false,
+    });
+  });
+
+  it("hold mode offers the hold-to-talk button instead of Connect", () => {
+    const states = buttonStates(renderControls("idle", false, "hold"));
+    expect(states).toEqual({
+      "Hold to talk": false,
+      Mute: true,
+      End: true,
+      Clear: false,
+    });
+  });
+
+  it("double-press mode offers the Talk button instead of Connect", () => {
+    const markup = renderControls("idle", false, "double-press");
+    const states = buttonStates(markup);
+    expect(states).toEqual({
+      Talk: false,
+      Mute: true,
+      End: true,
+      Clear: false,
+    });
+    expect(markup).toContain("Double-click Talk to listen");
+  });
+
+  it("hold mode keeps the row during a live session (release ends it)", () => {
+    const states = buttonStates(renderControls("live", false, "hold"));
+    expect(states["Hold to talk"]).toBe(false);
+    expect(states.Mute).toBe(false);
     expect(states.End).toBe(false);
   });
 });
