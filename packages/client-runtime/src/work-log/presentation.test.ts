@@ -187,6 +187,28 @@ describe("summarizeToolGroup", () => {
     ).toBe("Used Chrome integration and ran 1 command");
   });
 
+  it("mentions a shared fallback name once without changing source identities", () => {
+    expect(
+      summarizeToolGroup([
+        {
+          label: "Inspect app A",
+          tone: "tool",
+          toolSource: { key: "native-app:a", name: "Computer Use", kind: "computer" },
+        },
+        {
+          label: "Inspect app B",
+          tone: "tool",
+          toolSource: { key: "native-app:b", name: "Computer Use", kind: "computer" },
+        },
+        {
+          label: "Inspect Finder",
+          tone: "tool",
+          toolSource: { key: "native-app:finder", name: "Finder", kind: "computer" },
+        },
+      ]),
+    ).toBe("Used Computer Use and Finder");
+  });
+
   it("omits the integration suffix for special browser and computer sources", () => {
     expect(
       summarizeToolGroup([

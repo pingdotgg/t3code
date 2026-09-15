@@ -1,4 +1,5 @@
 import * as MacPermissions from "../permissions/MacPermissions.ts";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { assert, it } from "@effect/vitest";
 import {
   DEFAULT_CLIENT_SETTINGS,
@@ -26,12 +27,14 @@ beforeEach(() => {
   nextPortalState.value = undefined;
   vi.stubEnv("NIRI_SOCKET", "");
   vi.stubEnv("XDG_CURRENT_DESKTOP", "test-desktop");
+  nativeIconResolveMock.mockReset().mockReturnValue(Effect.succeed(null));
   transitionCapturePageMock.mockReset().mockResolvedValue(undefined);
   transitionSnapshotMock.mockReset().mockResolvedValue(undefined);
   prepareCaptureRevealMock.mockReset();
 });
 
 const {
+  nativeIconResolveMock,
   activeWindowMock,
   animationSettingsMock,
   accessibilityProcessWarmMock,
@@ -70,6 +73,7 @@ const {
   transitionShowMock,
   transitionSnapshotMock,
 } = vi.hoisted(() => ({
+  nativeIconResolveMock: vi.fn(),
   activeWindowMock: vi.fn(),
   animationSettingsMock: vi.fn(() => ({
     prefersReducedMotion: true,
@@ -470,6 +474,10 @@ vi.mock("./GnomeCaptureSetup.ts", async (importOriginal) => ({
   },
 }));
 
+vi.mock("@t3tools/shared/nativeAppIcon", () => ({
+  makeNativeAppIconResolver: () => Effect.succeed({ resolve: nativeIconResolveMock }),
+}));
+
 const decodePendingMetadata = Schema.decodeUnknownEffect(
   Schema.fromJsonString(DesktopPendingSnapShot),
 );
@@ -492,6 +500,12 @@ const testLayer = (
   MacPermissions.layer.pipe(
     Layer.provideMerge(
       Layer.mergeAll(
+        Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make(() =>
+            Effect.die("Unexpected native process in desktop fixture"),
+          ),
+        ),
         Layer.succeed(
           DesktopEnvironment.DesktopEnvironment,
           DesktopEnvironment.DesktopEnvironment.of({
@@ -821,51 +835,66 @@ it.effect("reads and acknowledges queued captures through Effect services", () =
   ).pipe(Effect.provide(layer));
 });
 
-it.effect("captures the active Windows window without enumerating desktop sources", () => {
-  const png = Buffer.from([1, 2, 3]);
-  const active = {
-    platform: "windows",
-    id: 42,
-    title: "Untitled - Paint",
-    owner: { name: "Paint.exe", processId: 123, path: "C:\\Windows\\System32\\mspaint.exe" },
-    bounds: { x: 10, y: 20, width: 800, height: 600 },
-  } as const;
-  activeWindowMock.mockReset().mockResolvedValue(active);
-  accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [] });
-  regionCaptureMock.mockReset().mockResolvedValue({ width: 800, height: 600, png });
-  getSourcesMock.mockReset();
-  getFileIconMock.mockReset().mockResolvedValue(fakeIcon("file"));
-  const writtenFiles: Array<[string, Uint8Array]> = [];
-  let metadata = "";
-  const layer = testLayer("win32", {
-    makeDirectory: () => Effect.void,
-    rename: () => Effect.void,
-    writeFile: (path, bytes) =>
-      Effect.sync(() => {
-        writtenFiles.push([path, bytes]);
-      }),
-    writeFileString: (_, text) =>
-      Effect.sync(() => {
-        metadata = text;
-      }),
-  });
+it.effect.each([true, false])(
+  "captures the Windows window with a shared native icon available: %s",
+  (nativeAvailable) => {
+    const png = Buffer.from([1, 2, 3]);
+    nativeIconResolveMock.mockReturnValue(
+      Effect.succeed(nativeAvailable ? "/cache/app.png" : null),
+    );
+    const active = {
+      platform: "windows",
+      id: 42,
+      title: "Untitled - Paint",
+      owner: { name: "Paint.exe", processId: 123, path: "C:\\Windows\\System32\\mspaint.exe" },
+      bounds: { x: 10, y: 20, width: 800, height: 600 },
+    } as const;
+    activeWindowMock.mockReset().mockResolvedValue(active);
+    accessibilityByPidMock.mockReset().mockResolvedValue({ children: async () => [] });
+    regionCaptureMock.mockReset().mockResolvedValue({ width: 800, height: 600, png });
+    getSourcesMock.mockReset();
+    getFileIconMock.mockReset().mockResolvedValue(fakeIcon("file"));
+    const writtenFiles: Array<[string, Uint8Array]> = [];
+    let metadata = "";
+    const layer = testLayer("win32", {
+      readFile: () => Effect.succeed(new Uint8Array([4, 5, 6])),
+      makeDirectory: () => Effect.void,
+      rename: () => Effect.void,
+      writeFile: (path, bytes) =>
+        Effect.sync(() => {
+          writtenFiles.push([path, bytes]);
+        }),
+      writeFileString: (_, text) =>
+        Effect.sync(() => {
+          metadata = text;
+        }),
+    });
 
-  return Effect.scoped(
-    Effect.gen(function* () {
-      const service = yield* DesktopSnapShot.make;
-      yield* service.configure(enabledSettings());
-      yield* service.capture;
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const service = yield* DesktopSnapShot.make;
+        yield* service.configure(enabledSettings());
+        yield* service.capture;
 
-      assert.deepEqual(regionCaptureMock.mock.calls, [[active.bounds]]);
-      assert.lengthOf(getSourcesMock.mock.calls, 0);
-      assert.deepEqual(getFileIconMock.mock.calls, [[active.owner.path, { size: "normal" }]]);
-      assert.deepEqual(writtenFiles[0]?.[1], png);
-      const saved = yield* decodePendingMetadata(metadata);
-      assert.equal(saved.source.appName, "Paint");
-      assert.match(saved.source.appIconDataUrl ?? "", /base64,file:/);
-    }),
-  ).pipe(Effect.provide(layer));
-});
+        assert.deepEqual(regionCaptureMock.mock.calls, [[active.bounds]]);
+        assert.lengthOf(getSourcesMock.mock.calls, 0);
+        assert.deepEqual(nativeIconResolveMock.mock.calls, [
+          [{ _tag: "path", path: active.owner.path }],
+        ]);
+        assert.deepEqual(
+          getFileIconMock.mock.calls,
+          nativeAvailable ? [] : [[active.owner.path, { size: "normal" }]],
+        );
+        assert.deepEqual(writtenFiles[0]?.[1], png);
+        const saved = yield* decodePendingMetadata(metadata);
+        assert.equal(saved.source.appName, "Paint");
+        if (nativeAvailable)
+          assert.equal(saved.source.appIconDataUrl, "data:image/png;base64,BAUG");
+        else assert.match(saved.source.appIconDataUrl ?? "", /base64,file:/);
+      }),
+    ).pipe(Effect.provide(layer));
+  },
+);
 
 it.effect.each([
   { length: 1_000, suffix: "", expectedLength: 1_000 },

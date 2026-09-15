@@ -20,10 +20,11 @@ import {
 } from "@t3tools/contracts";
 import { createModelSelection } from "@t3tools/shared/model";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { it, vi } from "@effect/vitest";
+import { expect, it, vi } from "@effect/vitest";
 
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -46,6 +47,8 @@ import {
   type CodexSessionRuntimeShape,
   type CodexThreadSnapshot,
 } from "./CodexSessionRuntime.ts";
+import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { makeCodexAdapter } from "./CodexAdapter.ts";
 const decodeCodexSettings = Schema.decodeSync(CodexSettings);
 
@@ -582,6 +585,8 @@ const lifecycleLayer = it.layer(
     Layer.provideMerge(ServerSettingsService.layerTest()),
     Layer.provideMerge(providerSessionDirectoryTestLayer),
     Layer.provideMerge(NodeServices.layer),
+    // Tests with unnamed native apps must stub the process spawner to avoid real macOS lookups.
+    Layer.provideMerge(Layer.succeed(HostProcessPlatform, "darwin")),
   ),
 );
 
@@ -1291,6 +1296,311 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "resolves arbitrary native app names and keeps icons when only an argument names the app",
+    () =>
+      Effect.gen(function* () {
+        const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+        const lookup = vi
+          .spyOn(spawner, "string")
+          .mockReturnValue(
+            Effect.succeed(
+              '{"path":"/Applications/Review.app","displayName":"Review","version":"1"}',
+            ),
+          );
+        try {
+          const { adapter, runtime } = yield* startLifecycleRuntime();
+          const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+            Effect.forkChild,
+          );
+          for (const [index, surface] of [
+            { kind: "computerUse", app: { kind: "appId", appId: "dev.review.app" } },
+            { kind: "computerUse" },
+          ].entries()) {
+            yield* runtime.emit({
+              id: asEventId(`evt-native-name-${index}`),
+              kind: "notification",
+              provider: ProviderDriverKind.make("codex"),
+              createdAt: "2026-01-01T00:00:02.000Z",
+              method: "item/completed",
+              threadId: asThreadId("thread-1"),
+              turnId: asTurnId("turn-1"),
+              itemId: asItemId(`native-name-${index}`),
+              payload: {
+                completedAtMs: 1_778_000_002_000,
+                threadId: "thread-1",
+                turnId: "turn-1",
+                item: {
+                  type: "mcpToolCall",
+                  id: `native-name-${index}`,
+                  server: "node_repl",
+                  tool: "js",
+                  arguments: index === 0 ? { title: "Inspect Review" } : { app: "Review" },
+                  durationMs: 12,
+                  error: null,
+                  result: { _meta: { "codex/toolSurface": surface }, content: [] },
+                  status: "completed",
+                },
+              },
+            });
+          }
+          const events = Array.from(yield* Fiber.join(eventsFiber));
+          expect(events.map((event) => event.payload)).toMatchObject([
+            {
+              toolSource: { name: "Review", key: "native-app:dev.review.app" },
+              toolIcon: { _tag: "native-app", app: { _tag: "app-id", appId: "dev.review.app" } },
+            },
+            {
+              toolSource: { name: "Review" },
+              toolIcon: {
+                _tag: "native-app",
+                app: { _tag: "display-name", displayName: "Review" },
+              },
+            },
+          ]);
+        } finally {
+          lookup.mockRestore();
+        }
+      }),
+  );
+
+  it.effect("emits native activity with fallback names when name lookup exceeds its budget", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const entered = yield* Deferred.make<void>();
+      // Slow lookups outlive the event they were started for, and the adapter is
+      // shared across this suite, so release them instead of leaving them pending.
+      const gate = yield* Deferred.make<void>();
+      const lookup = vi
+        .spyOn(spawner, "string")
+        .mockReturnValue(
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.as("null"),
+          ),
+        );
+      try {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        for (const [index, surface] of [
+          { kind: "computerUse", app: { kind: "appId", appId: "dev.slow.app" } },
+          { kind: "computerUse" },
+        ].entries()) {
+          yield* runtime.emit({
+            id: asEventId(`evt-native-name-${index}`),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:02.000Z",
+            method: "item/completed",
+            threadId: asThreadId("thread-1"),
+            turnId: asTurnId("turn-1"),
+            itemId: asItemId(`native-name-${index}`),
+            payload: {
+              completedAtMs: 1_778_000_002_000,
+              threadId: "thread-1",
+              turnId: "turn-1",
+              item: {
+                type: "mcpToolCall",
+                id: `native-name-${index}`,
+                server: "node_repl",
+                tool: "js",
+                arguments: index === 0 ? { title: "Inspect Review" } : { app: "Review" },
+                durationMs: 12,
+                error: null,
+                result: { _meta: { "codex/toolSurface": surface }, content: [] },
+                status: "completed",
+              },
+            },
+          });
+        }
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("250 millis");
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        expect(events.map((event) => event.payload)).toMatchObject([
+          {
+            toolSource: { name: "Computer Use", key: "native-app:dev.slow.app" },
+            toolIcon: { _tag: "native-app", app: { _tag: "app-id", appId: "dev.slow.app" } },
+          },
+          {
+            toolSource: { name: "Review" },
+            toolIcon: {
+              _tag: "native-app",
+              app: { _tag: "display-name", displayName: "Review" },
+            },
+          },
+        ]);
+      } finally {
+        yield* Deferred.succeed(gate, undefined);
+        lookup.mockRestore();
+      }
+    }),
+  );
+
+  it.effect("keeps a slow name lookup running so it enriches later events", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const entered = yield* Deferred.make<void>();
+      const gate = yield* Deferred.make<void>();
+      const lookup = vi
+        .spyOn(spawner, "string")
+        .mockReturnValue(
+          Deferred.succeed(entered, undefined).pipe(
+            Effect.andThen(Deferred.await(gate)),
+            Effect.as('{"path":"/Applications/Warm.app","displayName":"Warm","version":"1"}'),
+          ),
+        );
+      try {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 2)).pipe(
+          Effect.forkChild,
+        );
+        const emit = (index: number) =>
+          runtime.emit({
+            id: asEventId(`evt-native-warm-${index}`),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:02.000Z",
+            method: "item/completed",
+            threadId: asThreadId("thread-1"),
+            turnId: asTurnId("turn-1"),
+            itemId: asItemId(`native-warm-${index}`),
+            payload: {
+              completedAtMs: 1_778_000_002_000,
+              threadId: "thread-1",
+              turnId: "turn-1",
+              item: {
+                type: "mcpToolCall",
+                id: `native-warm-${index}`,
+                server: "node_repl",
+                tool: "js",
+                arguments: {},
+                durationMs: 12,
+                error: null,
+                result: {
+                  _meta: {
+                    "codex/toolSurface": {
+                      kind: "computerUse",
+                      app: { kind: "appId", appId: "dev.slow-warm.app" },
+                    },
+                  },
+                  content: [],
+                },
+                status: "completed",
+              },
+            },
+          });
+        yield* emit(0);
+        yield* Deferred.await(entered);
+        yield* TestClock.adjust("250 millis");
+        yield* Deferred.succeed(gate, undefined);
+        yield* emit(1);
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        expect(events.map((event) => event.payload)).toMatchObject([
+          { toolSource: { name: "Computer Use", key: "native-app:dev.slow-warm.app" } },
+          { toolSource: { name: "Warm", key: "native-app:dev.slow-warm.app" } },
+        ]);
+        expect(lookup).toHaveBeenCalledTimes(1);
+      } finally {
+        lookup.mockRestore();
+      }
+    }),
+  );
+
+  it.effect("caps in-flight native name lookups per session", () =>
+    Effect.gen(function* () {
+      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const total = 6;
+      const appId = (index: number) => `dev.burst-${index}.app`;
+      // Each lookup blocks until its gate opens and records when it started.
+      const gates = new Map<string, Deferred.Deferred<void>>();
+      const started = new Map<string, Deferred.Deferred<void>>();
+      for (let index = 0; index <= total; index += 1) {
+        gates.set(appId(index), yield* Deferred.make<void>());
+        started.set(appId(index), yield* Deferred.make<void>());
+      }
+      const lookup = vi.spyOn(spawner, "string").mockImplementation((child) =>
+        Effect.gen(function* () {
+          const reference = child._tag === "StandardCommand" ? (child.args.at(-1) ?? "") : "";
+          const id = [...started.keys()].find((candidate) => reference.includes(candidate)) ?? "";
+          yield* Deferred.succeed(started.get(id)!, undefined);
+          yield* Deferred.await(gates.get(id)!);
+          return "null";
+        }),
+      );
+      try {
+        const { adapter, runtime } = yield* startLifecycleRuntime();
+        const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, total)).pipe(
+          Effect.forkChild,
+        );
+        const emit = (index: number) =>
+          runtime.emit({
+            id: asEventId(`evt-native-burst-${index}`),
+            kind: "notification",
+            provider: ProviderDriverKind.make("codex"),
+            createdAt: "2026-01-01T00:00:02.000Z",
+            method: "item/completed",
+            threadId: asThreadId("thread-1"),
+            turnId: asTurnId("turn-1"),
+            itemId: asItemId(`native-burst-${index}`),
+            payload: {
+              completedAtMs: 1_778_000_002_000,
+              threadId: "thread-1",
+              turnId: "turn-1",
+              item: {
+                type: "mcpToolCall",
+                id: `native-burst-${index}`,
+                server: "node_repl",
+                tool: "js",
+                arguments: {},
+                durationMs: 12,
+                error: null,
+                result: {
+                  _meta: {
+                    "codex/toolSurface": {
+                      kind: "computerUse",
+                      app: { kind: "appId", appId: appId(index) },
+                    },
+                  },
+                  content: [],
+                },
+                status: "completed",
+              },
+            },
+          });
+        for (let index = 0; index < total; index += 1) {
+          yield* emit(index);
+          yield* TestClock.adjust("250 millis");
+        }
+        const events = Array.from(yield* Fiber.join(eventsFiber));
+        expect(events.map((event) => event.payload)).toMatchObject(
+          Array.from({ length: total }, () => ({ toolSource: { name: "Computer Use" } })),
+        );
+        // Two lookups hold the semaphore permits and the other two forked lookups
+        // start once those finish. Then probe with a fresh app: its lookup queues
+        // behind any over-cap fibers in the FIFO semaphore, so once it has
+        // started, apps past the cap that are still unstarted were never forked.
+        for (let index = 0; index < total; index += 1) {
+          yield* Deferred.succeed(gates.get(appId(index))!, undefined);
+        }
+        const probeFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 1)).pipe(
+          Effect.forkChild,
+        );
+        yield* emit(total);
+        yield* Deferred.await(started.get(appId(total))!);
+        expect(yield* Deferred.isDone(started.get(appId(4))!)).toBe(false);
+        expect(yield* Deferred.isDone(started.get(appId(5))!)).toBe(false);
+        yield* Deferred.succeed(gates.get(appId(total))!, undefined);
+        yield* TestClock.adjust("250 millis");
+        yield* Fiber.join(probeFiber);
+      } finally {
+        for (const gate of gates.values()) yield* Deferred.succeed(gate, undefined);
+        lookup.mockRestore();
+      }
+    }),
+  );
+
   it.effect("presents browser and computer-use calls with Codex-style titles and sources", () =>
     Effect.gen(function* () {
       const { adapter, runtime } = yield* startLifecycleRuntime();
@@ -1405,7 +1715,7 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
               _meta: {
                 "codex/toolSurface": {
                   kind: "computerUse",
-                  app: { kind: "displayName", displayName: "TextEdit" },
+                  app: { kind: "displayName", displayName: "Fallback app name" },
                 },
               },
               content: [],
@@ -1469,15 +1779,15 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
             toolSurface: "computer",
             toolIcon: {
               _tag: "native-app",
-              app: { _tag: "display-name", displayName: "TextEdit" },
+              app: { _tag: "display-name", displayName: "Fallback app name" },
             },
             toolSource: {
-              key: "native-app-name:textedit",
+              key: "native-app-name:fallback app name",
               name: "TextEdit",
               kind: "computer",
               icon: {
                 _tag: "native-app",
-                app: { _tag: "display-name", displayName: "TextEdit" },
+                app: { _tag: "display-name", displayName: "Fallback app name" },
               },
             },
           },
