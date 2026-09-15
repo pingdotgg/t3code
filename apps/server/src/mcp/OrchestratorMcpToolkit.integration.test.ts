@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
+  CodeModeExecutionResult,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -73,6 +74,9 @@ import {
 import { makeProviderRegistryLayer } from "../provider/testUtils/providerRegistryMock.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import * as McpHttpServer from "./McpHttpServer.ts";
+import * as ServerConfig from "../config.ts";
+import * as McpSessionRegistryTestkit from "./McpSessionRegistry.testkit.ts";
+import { ProjectionSnapshotQuery } from "../orchestration/Services/ProjectionSnapshotQuery.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import { delegatedTaskRun, hasPendingChildRuns } from "./OrchestratorMcpService.ts";
 
@@ -91,6 +95,8 @@ const queuedFollowupPrompt = "Complete the queued follow-up and return the final
 const queuedFollowupResult = "Queued delegated follow-up completed.";
 
 const decodeCreateThreadsResult = Schema.decodeUnknownEffect(OrchestratorMcpCreateThreadsResult);
+const decodeCodeExecutionResult = Schema.decodeUnknownEffect(CodeModeExecutionResult);
+const encodeCodeArgument = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeCreatedThread = Schema.decodeUnknownEffect(OrchestratorMcpCreatedThread);
 const decodeDelegateTaskResult = Schema.decodeUnknownEffect(OrchestratorMcpDelegateTaskResult);
 const decodeTaskCancelResult = Schema.decodeUnknownEffect(OrchestratorMcpTaskCancelResult);
@@ -620,14 +626,20 @@ describe("orchestrator MCP toolkit", () => {
               runNow: () => Effect.die("ScheduledTaskService.runNow is unused in this test"),
             }),
           );
-          const testLayer = Layer.merge(
+          const testLayer = Layer.mergeAll(
             McpHttpServer.OrchestratorToolkitRegistrationLive,
             McpHttpServer.ThreadToolkitRegistrationLive,
+            McpHttpServer.CodeModeToolkitRegistrationLive,
           ).pipe(
             Layer.provideMerge(McpServer.McpServer.layer),
             Layer.provideMerge(orchestrationLayer),
             Layer.provide(providerRegistryLayer),
             Layer.provide(scheduledTaskStubLayer),
+            Layer.provide(McpSessionRegistryTestkit.layer),
+            Layer.provide(Layer.mock(ProjectionSnapshotQuery)({})),
+            Layer.provide(
+              ServerConfig.layerTest(process.cwd(), { prefix: "t3-code-mode-integration-" }),
+            ),
             Layer.provide(NodeServices.layer),
           );
 
@@ -693,8 +705,19 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
-            const pinned = yield* invoke("t3_thread_organize", { action: "pin" });
-            expect(pinned.structuredContent).toHaveProperty("sequence");
+            const pinned = yield* invoke("t3_code_mode_exec", {
+              code: `
+                const [threads, queue] = await Promise.all([
+                  t3.t3_thread_list({}), t3.t3_queue_list({}),
+                ]);
+                const receipt = await t3.t3_thread_organize({action: 'pin'});
+                return {total: threads.total, queued: queue.items.length, sequence: receipt.sequence};
+              `,
+            });
+            const codeResult = yield* decodeCodeExecutionResult(pinned.structuredContent);
+            expect(codeResult.status).toBe("completed");
+            expect(codeResult.result).toMatchObject({ total: 1, queued: 0 });
+            expect(codeResult.result).toHaveProperty("sequence");
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).not.toBeNull();
             yield* invoke("t3_thread_organize", { action: "unpin" });
             expect((yield* orchestrator.getThreadShell(parentThreadId))?.pinnedAt).toBeNull();
@@ -1372,18 +1395,27 @@ describe("orchestrator MCP toolkit", () => {
             });
             expect(yield* Ref.get(scheduledStore)).toHaveLength(0);
 
-            const delegatedCall = yield* invoke("delegate_task", {
-              task: delegatedPrompt,
-              target: {
-                providerInstanceId: claudeInstanceId,
-                model: claudeModel,
-              },
-              mode: "wait",
-              timeoutMs: 10_000,
-              clientRequestId: "delegate-claude-1",
+            const delegatedCall = yield* invoke("t3_code_mode_exec", {
+              code: `return await t3.delegate_task(${encodeCodeArgument({
+                task: delegatedPrompt,
+                target: {
+                  providerInstanceId: claudeInstanceId,
+                  model: claudeModel,
+                },
+                mode: "wait",
+                timeoutMs: 10_000,
+                clientRequestId: "delegate-claude-1",
+              })});`,
+              clientRequestId: "code-delegate-claude-1",
+              yieldAfterMs: 30_000,
+              timeoutMs: 20_000,
             });
             expect(delegatedCall.isError).toBe(false);
-            const delegated = yield* decodeDelegateTaskResult(delegatedCall.structuredContent).pipe(
+            const delegatedExecution = yield* decodeCodeExecutionResult(
+              delegatedCall.structuredContent,
+            );
+            expect(delegatedExecution.status).toBe("completed");
+            const delegated = yield* decodeDelegateTaskResult(delegatedExecution.result).pipe(
               Effect.orDie,
             );
             expect(delegated.status).toBe("completed");

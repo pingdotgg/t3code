@@ -163,6 +163,13 @@ jobs:
           path: native/resource-monitor/target/${{ inputs.rust_target }}/release/t3-resource-monitor${{ inputs.platform == 'win' && '.exe' || '' }}
           key: resource-monitor-${{ inputs.rust_target }}-${{ hashFiles('native/resource-monitor/Cargo.lock', 'native/resource-monitor/Cargo.toml', 'native/resource-monitor/src/**') }}
 
+      - name: Cache native code mode host
+        id: code_mode_host_cache
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6
+        with:
+          path: native/code-mode-host/target/${{ inputs.rust_target }}/release/t3-code-mode-host${{ inputs.platform == 'win' && '.exe' || '' }}
+          key: code-mode-host-${{ inputs.rust_target }}-${{ hashFiles('native/code-mode-host/Cargo.lock', 'native/code-mode-host/Cargo.toml', 'native/code-mode-host/src/**') }}
+
       - name: Cache Linux capture helpers
         if: inputs.platform == 'linux'
         id: capture_helper_cache
@@ -174,7 +181,7 @@ jobs:
           key: linux-capture-helpers-${{ inputs.rust_target }}-${{ hashFiles('native/kde-snap-shot/Cargo.lock', 'native/kde-snap-shot/Cargo.toml', 'native/kde-snap-shot/src/**', 'native/hyprland-snap-shot/Cargo.lock', 'native/hyprland-snap-shot/Cargo.toml', 'native/hyprland-snap-shot/src/**', 'native/hyprland-snap-shot/protocols/**') }}
 
       - name: Setup Rust
-        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
+        if: steps.resource_monitor_cache.outputs.cache-hit != 'true' || steps.code_mode_host_cache.outputs.cache-hit != 'true' || (inputs.platform == 'linux' && steps.capture_helper_cache.outputs.cache-hit != 'true')
         uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
         with:
           toolchain: stable
@@ -319,6 +326,7 @@ jobs:
         shell: bash
         env:
           pnpm_config_cache_dir: ${{ runner.temp }}/pnpm-metadata
+          T3CODE_DESKTOP_REUSE_CODE_MODE_HOST: ${{ steps.code_mode_host_cache.outputs.cache-hit == 'true' }}
           T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: ${{ steps.resource_monitor_cache.outputs.cache-hit == 'true' }}
           T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS: ${{ steps.capture_helper_cache.outputs.cache-hit == 'true' }}
           CSC_LINK: ${{ secrets.CSC_LINK }}
@@ -412,6 +420,7 @@ jobs:
           # The exact version, not a major: vp downloads it from nodejs.org/dist on
           # the runner, and only exact versions have a dist directory. Keep in
           # step with SEA_NODE_VERSION in apps/server/vite.config.ts.
+          T3CODE_DESKTOP_REUSE_CODE_MODE_HOST: ${{ steps.code_mode_host_cache.outputs.cache-hit == 'true' }}
           VP_NODE_VERSION: "26.8.2"
         run: node apps/server/scripts/cli.ts build-exe --verbose
 
@@ -459,6 +468,17 @@ jobs:
           mkdir -p "$target_dir"
           cp "native/resource-monitor/target/${{ inputs.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
 
+      - name: Stage native code mode host for the CLI archive
+        if: inputs.cli_archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          binary_name="t3-code-mode-host"
+          if [[ "${{ inputs.platform }}" == "win" ]]; then binary_name="${binary_name}.exe"; fi
+          target_dir="$RUNNER_TEMP/cli-code-mode-host/${{ inputs.resource_key }}"
+          mkdir -p "$target_dir"
+          cp "native/code-mode-host/target/${{ inputs.rust_target }}/release/${binary_name}" "$target_dir/$binary_name"
+
       - name: Build CLI archive
         if: inputs.cli_archive
         shell: bash
@@ -484,6 +504,7 @@ jobs:
             --arch "${{ inputs.arch }}" \
             --version "${{ inputs.version }}" \
             --resource-monitor-dir "$RUNNER_TEMP/cli-resource-monitor" \
+            --code-mode-host-dir "$RUNNER_TEMP/cli-code-mode-host" \
             --output-dir release-cli
 
       - name: Smoke-test CLI archive

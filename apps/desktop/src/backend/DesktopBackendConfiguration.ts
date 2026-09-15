@@ -490,10 +490,29 @@ const buildObservabilityFragment = (observabilitySettings: BackendObservabilityS
   }),
 });
 
+const resolveCodeModeHostPath = Effect.fn("desktop.backendConfiguration.resolveCodeModeHostPath")(
+  function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const fs = yield* FileSystem.FileSystem;
+    const name = environment.platform === "win32" ? "t3-code-mode-host.exe" : "t3-code-mode-host";
+    const candidates = environment.isDevelopment
+      ? [environment.path.join(environment.rootDir, "native/code-mode-host/target/release", name)]
+      : environment.isPackaged
+        ? [environment.path.join(environment.resourcesPath, "code-mode-host", name)]
+        : environment.resolveResourcePathCandidates(environment.path.join("code-mode-host", name));
+    for (const candidate of candidates) {
+      if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+        return Option.some(candidate);
+    }
+    return Option.none<string>();
+  },
+);
+
 const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolvePrimary")(
   function* (
     input: SharedBootstrapInput & {
       readonly resourceMonitorPath: Option.Option<string>;
+      readonly codeModeHostPath: Option.Option<string>;
     },
   ): Effect.fn.Return<
     DesktopBackendManager.DesktopBackendStartConfig,
@@ -530,6 +549,10 @@ const resolvePrimaryStartConfig = Effect.fn("desktop.backendConfiguration.resolv
       env: {
         ...backendChildEnvPatch(),
         ELECTRON_RUN_AS_NODE: "1",
+        ...Option.match(input.codeModeHostPath, {
+          onNone: () => ({}),
+          onSome: (path) => ({ T3CODE_CODE_MODE_HOST_PATH: path }),
+        }),
       },
       // Primary wants process.env (PATH, dev-runner's T3CODE_HOME, etc.).
       extendEnv: true,
@@ -840,7 +863,15 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
     );
-    return yield* resolvePrimaryStartConfig({ ...shared, resourceMonitorPath }).pipe(
+    const codeModeHostPath = yield* resolveCodeModeHostPath().pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
+    );
+    return yield* resolvePrimaryStartConfig({
+      ...shared,
+      resourceMonitorPath,
+      codeModeHostPath,
+    }).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
       Effect.provideService(DesktopServerExposure.DesktopServerExposure, serverExposure),
     );

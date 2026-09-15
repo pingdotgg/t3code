@@ -37,6 +37,7 @@ export * from "./orchestrationProject.ts";
 export * from "./orchestrationV2.ts";
 export * from "./applicationEvent.ts";
 export * from "./orchestratorMcp.ts";
+export * from "./codeModeMcp.ts";
 export * from "./threadMetadataMcp.ts";
 export * from "./orchestration.ts";
 export * from "./t3ProjectFile.ts";

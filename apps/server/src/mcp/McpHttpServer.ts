@@ -19,6 +19,12 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
+import * as CodeModeService from "./CodeModeService.ts";
+import {
+  CodeModeToolkit,
+  CodeModeHandlersLive,
+  CodeModeDispatchLive,
+} from "./toolkits/codeMode.ts";
 import { PreviewControlsToolkit } from "./toolkits/previewControls/tools.ts";
 import { PreviewControlsHandlersLive } from "./toolkits/previewControls/handlers.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
@@ -627,6 +633,16 @@ export const OrchestratorToolkitRegistrationLive = McpServer.toolkit(Orchestrato
   Layer.provide(ThreadMetadataMcpService.layer),
 );
 
+export const CodeModeToolkitRegistrationLive = McpServer.toolkit(CodeModeToolkit).pipe(
+  Layer.provide(CodeModeHandlersLive),
+  Layer.provide(CodeModeDispatchLive),
+  Layer.provide(CodeModeService.layer),
+  Layer.provide(OrchestratorToolkitHandlersLive),
+  Layer.provide(ThreadToolkitHandlersLive),
+  Layer.provide(OrchestratorMcpService.layer),
+  Layer.provide(ThreadMetadataMcpService.layer),
+);
+
 export const ThreadToolkitRegistrationLive = McpServer.toolkit(ThreadToolkit).pipe(
   Layer.provide(ThreadToolkitHandlersLive),
 );
@@ -679,6 +695,7 @@ const McpTransportLive = McpServer.layerHttp({
 export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   OrchestratorToolkitRegistrationLive,
+  CodeModeToolkitRegistrationLive,
   ThreadToolkitRegistrationLive,
   AttachmentRegistrationLive,
   ProjectRegistrationLive,

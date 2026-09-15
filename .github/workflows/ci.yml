@@ -150,6 +150,13 @@ jobs:
           cache: true
           run-install: true
 
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native/code-mode-host
+      - name: Build native code mode host
+        run: cargo build --locked --release --manifest-path native/code-mode-host/Cargo.toml
+
       # No Electron setup here: `t3` (apps/server) has no Electron dependency
       # and none of its tests touch the runtime. Only the non-server `test`
       # job, which covers @t3tools/desktop, needs the download.
@@ -213,13 +220,13 @@ jobs:
 
       - name: Check Rust formatting
         run: |
-          for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
+          for crate in resource-monitor code-mode-host kde-snap-shot hyprland-snap-shot; do
             cargo fmt --manifest-path "native/$crate/Cargo.toml" -- --check
           done
 
       - name: Test Rust crates
         run: |
-          for crate in resource-monitor kde-snap-shot hyprland-snap-shot; do
+          for crate in resource-monitor code-mode-host kde-snap-shot hyprland-snap-shot; do
             cargo test --locked --manifest-path "native/$crate/Cargo.toml"
           done
 

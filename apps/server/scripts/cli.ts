@@ -9,6 +9,7 @@ import * as Path from "effect/Path";
 import { Command, Flag } from "effect/unstable/cli";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
+import { buildCodeModeHost } from "../../../scripts/lib/code-mode-host-build.ts";
 import { DEVELOPMENT_ICON_OVERRIDES } from "../../../scripts/lib/brand-assets.ts";
 import { findEsmImportsOfExternalPackages } from "../../../scripts/lib/cli-external-packages.ts";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
@@ -89,6 +90,8 @@ const buildCmd = Command.make(
         }),
       );
 
+      yield* buildCodeModeHost({ repoRoot, verbose: config.verbose });
+
       const webDist = path.join(repoRoot, "apps/web/dist");
       const clientTarget = path.join(serverDir, "dist/client");
 
@@ -143,6 +146,15 @@ const buildExeCmd = Command.make(
         }),
       );
 
+      yield* buildCodeModeHost({
+        repoRoot,
+        verbose: config.verbose,
+        ...Option.match(config.target, {
+          onNone: () => ({}),
+          onSome: (targetKey) => ({ targetKey }),
+        }),
+      });
+
       // The executable can only `import` built-ins. A file-backed import
       // passes the bundler and `node dist/bin.mjs`, then throws inside the
       // binary, so read the emitted module graph rather than trusting config.
@@ -152,7 +164,7 @@ const buildExeCmd = Command.make(
         return yield* new ServerCliExecutableImportError({ bundlePath, specifiers });
       }
       yield* Effect.log(
-        "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
+        "[cli] Built dist-exe/t3 (expects client/, resource-monitor/, code-mode-host/, and the runtime-external node_modules beside it; scripts/build-cli-archive.ts assembles that tree)",
       );
     }),
 ).pipe(
@@ -235,9 +247,15 @@ const publishCmd = Command.make(
 // root command
 // ---------------------------------------------------------------------------
 
+const buildCodeHostCmd = Command.make("build-code-mode-host", {}, () =>
+  Effect.gen(function* () {
+    yield* buildCodeModeHost({ repoRoot: yield* RepoRoot, verbose: true });
+  }),
+);
+
 const cli = Command.make("cli").pipe(
   Command.withDescription("T3 server build & publish CLI."),
-  Command.withSubcommands([buildCmd, buildExeCmd, publishCmd]),
+  Command.withSubcommands([buildCmd, buildExeCmd, buildCodeHostCmd, publishCmd]),
 );
 
 Command.run(cli, { version: "0.0.0" }).pipe(

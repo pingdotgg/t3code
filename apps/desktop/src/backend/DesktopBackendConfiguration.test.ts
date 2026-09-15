@@ -1175,7 +1175,7 @@ describe("DesktopBackendConfiguration", () => {
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("prefers the external packaged resource monitor over the copy inside the asar", () =>
+  it.effect("resolves packaged native helpers outside the asar", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -1196,11 +1196,17 @@ describe("DesktopBackendConfiguration", () => {
       yield* fileSystem.writeFileString(embeddedMonitorPath, "embedded");
       yield* fileSystem.writeFileString(monitorPath, "binary");
       yield* fileSystem.chmod(monitorPath, 0o755);
+      const codeHostPath = path.join(resourcesPath, "code-mode-host/t3-code-mode-host");
+      yield* fileSystem.makeDirectory(path.join(resourcesPath, "code-mode-host"), {
+        recursive: true,
+      });
+      yield* fileSystem.writeFileString(codeHostPath, "native-host");
 
       yield* Effect.gen(function* () {
         const configuration = yield* DesktopBackendConfiguration.DesktopBackendConfiguration;
         const config = yield* configuration.resolvePrimary;
         assert.equal(config.bootstrap.resourceMonitorPath, monitorPath);
+        assert.equal(config.env?.T3CODE_CODE_MODE_HOST_PATH, codeHostPath);
         assert.equal(config.bootstrap.desktopTelemetryFd, 4);
         assert.equal(config.bootstrap.desktopTelemetryControlFd, 5);
       }).pipe(

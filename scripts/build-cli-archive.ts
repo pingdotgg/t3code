@@ -313,7 +313,8 @@ const signMacArchiveContents = Effect.fn("signMacArchiveContents")(function* (in
         entry.endsWith(".node") ||
         entry.endsWith(".dylib") ||
         entry.endsWith("spawn-helper") ||
-        entry.endsWith("t3-resource-monitor"),
+        entry.endsWith("t3-resource-monitor") ||
+        entry.endsWith("t3-code-mode-host"),
     )
     .map((entry) => path.join(input.contentDir, entry));
 
@@ -462,6 +463,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   readonly version: string;
   readonly outputDir: string;
   readonly resourceMonitorDir: Option.Option<string>;
+  readonly codeModeHostDir?: Option.Option<string>;
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -490,6 +492,10 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     path.join(serverDir, "dist/resource-monitor"),
   );
 
+  const codeModeHostDir = Option.getOrElse(input.codeModeHostDir ?? Option.none(), () =>
+    path.join(serverDir, "dist/code-mode-host"),
+  );
+
   yield* requireInput(
     builtExecutable,
     `Run \`node apps/server/scripts/cli.ts build-exe --target ${targetKey}\` first.`,
@@ -498,6 +504,15 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* requireInput(
     resourceMonitorDir,
     "Build the resource monitor or pass --resource-monitor-dir.",
+  );
+
+  yield* requireInput(
+    path.join(
+      codeModeHostDir,
+      cliArchivePlatformKey(input.platform, input.arch),
+      input.platform === "win" ? "t3-code-mode-host.exe" : "t3-code-mode-host",
+    ),
+    "Build the native code mode host or pass --code-mode-host-dir.",
   );
 
   const stem = cliArchiveStem(input.version, input.platform, input.arch);
@@ -509,6 +524,7 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
   yield* fs.copyFile(builtExecutable, path.join(contentDir, executableName));
   yield* stageWebClient(webClient, path.join(contentDir, "client"));
   yield* fs.copy(resourceMonitorDir, path.join(contentDir, "resource-monitor"));
+  yield* fs.copy(codeModeHostDir, path.join(contentDir, "code-mode-host"));
   yield* stageRuntimeExternals({
     repoRoot,
     stageDir: contentDir,
@@ -522,6 +538,14 @@ const buildCliArchive = Effect.fn("buildCliArchive")(function* (input: {
     yield* signMacArchiveContents({ repoRoot, contentDir, executablePath });
   } else if (input.platform === "win") {
     yield* signWindowsExecutable(executablePath);
+    yield* signWindowsExecutable(
+      path.join(
+        contentDir,
+        "code-mode-host",
+        cliArchivePlatformKey(input.platform, input.arch),
+        "t3-code-mode-host.exe",
+      ),
+    );
   }
   if (input.platform !== "win") {
     yield* fs.chmod(executablePath, 0o755);
@@ -573,6 +597,7 @@ const command = Command.make(
       Flag.withDescription("Release version for the archive name."),
     ),
     outputDir: Flag.string("output-dir").pipe(Flag.withDefault("release-cli")),
+    codeModeHostDir: Flag.string("code-mode-host-dir").pipe(Flag.optional),
     resourceMonitorDir: Flag.string("resource-monitor-dir").pipe(
       Flag.withDescription(
         "Directory laid out like dist/resource-monitor (defaults to apps/server/dist/resource-monitor).",

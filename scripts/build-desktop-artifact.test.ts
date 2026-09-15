@@ -64,6 +64,7 @@ import {
   stageLinuxIconSize,
   stageDesktopDmgBackground,
   stageResourceMonitor,
+  stageCodeModeHost,
   stageLinuxCaptureHelper,
   stageWslRuntimeArchive,
   bundlesWslRuntime,
@@ -206,6 +207,11 @@ const makeWindowsPayloadFixture = Effect.fn("test.makeWindowsPayloadFixture")(fu
   yield* fs.writeFileString(
     path.join(resourcesDir, "resource-monitor/t3-resource-monitor.exe"),
     "monitor",
+  );
+  yield* fs.makeDirectory(path.join(resourcesDir, "code-mode-host"));
+  yield* fs.writeFileString(
+    path.join(resourcesDir, "code-mode-host/t3-code-mode-host.exe"),
+    "native-host",
   );
   const appExecutableName = "t3code.exe";
   yield* fs.writeFileString(path.join(packagedAppDir, appExecutableName), "electron");
@@ -636,6 +642,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
         },
+        { from: "apps/desktop/prod-resources/code-mode-host", to: "code-mode-host" },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
         ...WSL_RUNTIME_EXTRA_RESOURCES,
       ]);
@@ -646,6 +653,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           from: "apps/desktop/prod-resources/resource-monitor",
           to: "resource-monitor",
         },
+        { from: "apps/desktop/prod-resources/code-mode-host", to: "code-mode-host" },
         ...WINDOWS_SERVER_EXTRA_RESOURCES,
       ]);
       assert.deepStrictEqual(win.nsis, { differentialPackage: true });
@@ -834,6 +842,62 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("builds and stages native code hosts for platform targets", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const repoRoot = yield* fs.makeTempDirectoryScoped({ prefix: "t3-code-mode-host-stage-" });
+        const commands: Array<{ command: string; args: ReadonlyArray<string> }> = [];
+        const spawner = Layer.succeed(
+          ChildProcessSpawner.ChildProcessSpawner,
+          ChildProcessSpawner.make((command) => {
+            commands.push(command as unknown as (typeof commands)[number]);
+            return Effect.succeed(mockProcess(0));
+          }),
+        );
+        for (const [platform, arch, target, name] of [
+          ["linux", "x64", "x86_64-unknown-linux-gnu", "t3-code-mode-host"],
+          ["mac", "arm64", "aarch64-apple-darwin", "t3-code-mode-host"],
+          ["win", "arm64", "aarch64-pc-windows-msvc", "t3-code-mode-host.exe"],
+        ] as const) {
+          const binary = path.join(
+            repoRoot,
+            "native/code-mode-host/target",
+            target,
+            "release",
+            name,
+          );
+          yield* fs.makeDirectory(path.dirname(binary), { recursive: true });
+          yield* fs.writeFileString(binary, target);
+          const stageResourcesDir = path.join(repoRoot, "stage", platform);
+          yield* stageCodeModeHost({
+            repoRoot,
+            stageResourcesDir,
+            platform,
+            arch,
+            verbose: false,
+          }).pipe(
+            Effect.provide(
+              Layer.mergeAll(spawner, ConfigProvider.layer(ConfigProvider.fromEnv({ env: {} }))),
+            ),
+          );
+          assert.equal(
+            yield* fs.readFileString(path.join(stageResourcesDir, "code-mode-host", name)),
+            target,
+          );
+          assert.isTrue(
+            commands.some(
+              (command) =>
+                command.args.includes(target) &&
+                command.args.includes(path.join(repoRoot, "native/code-mode-host/Cargo.toml")),
+            ),
+          );
+        }
+      }),
+    ),
+  );
+
   it.effect("stages a cached resource monitor without invoking Cargo", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -860,7 +924,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
           Effect.provide(
             ConfigProvider.layer(
               ConfigProvider.fromEnv({
-                env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                env: {
+                  T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                  T3CODE_DESKTOP_REUSE_CODE_MODE_HOST: "true",
+                },
               }),
             ),
           ),
@@ -993,7 +1060,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
-  it.effect("does not require MSVC when reusing a prebuilt Windows resource monitor", () =>
+  it.effect("does not require MSVC when reusing all prebuilt native code helpers", () =>
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -1023,6 +1090,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
                   env: {
                     npm_config_python: pythonPath,
                     T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                    T3CODE_DESKTOP_REUSE_CODE_MODE_HOST: "true",
                   },
                 }),
               ),
@@ -1068,7 +1136,10 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               spawner,
               ConfigProvider.layer(
                 ConfigProvider.fromEnv({
-                  env: { T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true" },
+                  env: {
+                    T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR: "true",
+                    T3CODE_DESKTOP_REUSE_CODE_MODE_HOST: "true",
+                  },
                 }),
               ),
             ),
@@ -1925,6 +1996,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
         from: "apps/desktop/prod-resources/resource-monitor",
         to: "resource-monitor",
       },
+      { from: "apps/desktop/prod-resources/code-mode-host", to: "code-mode-host" },
     ]);
     assert.deepStrictEqual(resolveResourceMonitorRustTargets("mac", "universal"), [
       "aarch64-apple-darwin",

@@ -27,6 +27,10 @@ const T3_MCP_TOOLS: Record<
   string,
   { readonly displayName: string; readonly summaryAction?: T3McpToolSummaryAction }
 > = {
+  t3_code_mode_exec: { displayName: "Run orchestration code" },
+  t3_code_mode_wait: { displayName: "Wait for orchestration code" },
+  t3_code_mode_cancel: { displayName: "Cancel orchestration code" },
+  t3_code_mode_describe: { displayName: "Discover code mode tools" },
   orchestrator_capabilities: {
     displayName: "Get orchestration capabilities",
     summaryAction: "capabilities",

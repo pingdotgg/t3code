@@ -58,6 +58,7 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
     for (const dir of [
       "client",
       "resource-monitor",
+      "code-mode-host",
       "node_modules/node-pty",
       "node_modules/@ff-labs/fff-node",
     ]) {
@@ -72,6 +73,11 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
       '{ "name": "@ff-labs/fff-node", "version": "0.9.4" }\n',
     );
     yield* fs.writeFileString(path.join(contentDir, "client/index.html"), "<html></html>\n");
+    yield* fs.makeDirectory(path.join(contentDir, "code-mode-host", key));
+    yield* fs.writeFileString(
+      path.join(contentDir, "code-mode-host", key, "t3-code-mode-host"),
+      "native-helper",
+    );
     yield* fs.writeFileString(
       path.join(contentDir, "t3"),
       `#!/bin/sh\necho "stub ${key} $*"\nexit 7\n`,
@@ -136,6 +142,7 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "t3.exe",
         "client",
         "resource-monitor",
+        "code-mode-host",
         "node_modules",
       ]);
       assert.equal(linuxManifest.preferUnplugged, true);
@@ -149,6 +156,10 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       assert.deepStrictEqual(linuxManifest.bundleDependencies, ["@ff-labs/fff-node", "node-pty"]);
       // Archive contents sit at the package root, not under the archive stem.
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "client/index.html")));
+      assert.equal(
+        yield* fs.readFileString(path.join(linuxDir, "code-mode-host/linux-x64/t3-code-mode-host")),
+        "native-helper",
+      );
       // A root README, or npm would display a bundled dependency's.
       assert.include(
         yield* fs.readFileString(path.join(linuxDir, "README.md")),

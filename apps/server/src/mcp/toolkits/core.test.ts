@@ -26,6 +26,7 @@ import { ProjectToolkit } from "./project/tools.ts";
 import { AttachmentToolkit } from "./attachment/tools.ts";
 import * as AttachmentHandlers from "./attachment/handlers.ts";
 import { ThreadToolkit } from "./thread/tools.ts";
+import { CodeModeToolkit } from "./codeMode.ts";
 import { WorktreeToolkit } from "./worktree/tools.ts";
 
 const decodeMcpAttachmentInput = Schema.decodeUnknownEffect(McpAttachmentInput);
@@ -34,6 +35,7 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
   const names = new Set<string>();
   for (const toolkit of [
     OrchestratorToolkit,
+    CodeModeToolkit,
     PreviewToolkit,
     WorktreeToolkit,
     ThreadToolkit,

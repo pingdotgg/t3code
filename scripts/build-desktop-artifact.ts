@@ -709,6 +709,7 @@ const WindowsPackagedPayloadValidationReason = Schema.Literals([
   "sidecar-invalid",
   "unpacked-native-missing",
   "resource-monitor-missing",
+  "code-mode-host-missing",
   "wsl-runtime-missing",
   "wsl-runtime-invalid",
   "file-limit-exceeded",
@@ -735,6 +736,8 @@ export class WindowsPackagedPayloadValidationError extends Schema.TaggedError<Wi
     if (this.reason === "resource-monitor-missing") {
       return "Windows packaged payload is missing the resource monitor executable.";
     }
+    if (this.reason === "code-mode-host-missing")
+      return "Windows packaged payload is missing the native code mode host executable.";
     if (this.reason === "wsl-runtime-missing") {
       return "Windows packaged payload is missing the WSL runtime archive or SHA-256 sidecar.";
     }
@@ -1069,6 +1072,7 @@ export const DESKTOP_EXTRA_RESOURCES = [
     from: "apps/desktop/prod-resources/resource-monitor",
     to: "resource-monitor",
   },
+  { from: "apps/desktop/prod-resources/code-mode-host", to: "code-mode-host" },
 ] as const;
 export const LINUX_CAPTURE_EXTRA_RESOURCES = [
   {
@@ -1714,17 +1718,18 @@ const rustTargetIsInstalled = Effect.fn("rustTargetIsInstalled")(function* (targ
   return entries.some((entry) => entry.startsWith("libstd-") && entry.endsWith(".rlib"));
 });
 
+const reuseNativeCodeHelpers = Effect.all([
+  Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(Config.withDefault(false)),
+  Config.boolean("T3CODE_DESKTOP_REUSE_CODE_MODE_HOST").pipe(Config.withDefault(false)),
+]).pipe(Effect.map(([monitor, codeHost]) => monitor && codeHost));
+
 export const preflightLinuxDesktopBuild = Effect.fn("preflightLinuxDesktopBuild")(function* (
   arch: typeof BuildArch.Type = "x64",
 ) {
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
   const reuseCaptureHelpers = yield* Config.boolean(
     "T3CODE_DESKTOP_REUSE_LINUX_CAPTURE_HELPERS",
   ).pipe(Config.withDefault(false));
-  // Rust is only optional when every Linux Rust artifact comes from a cache.
-  const needsRust = !reuseResourceMonitor || !reuseCaptureHelpers;
+  const needsRust = !(yield* reuseNativeCodeHelpers) || !reuseCaptureHelpers;
   const rustTarget = resolveResourceMonitorRustTargets("linux", arch)[0]!;
 
   const checks = yield* Effect.all(
@@ -1759,12 +1764,10 @@ export const preflightMacDesktopBuild = Effect.fn("preflightMacDesktopBuild")(fu
   arch: typeof BuildArch.Type,
 ) {
   const rustTargets = resolveResourceMonitorRustTargets("mac", arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseHelpers = yield* reuseNativeCodeHelpers;
   const checks = yield* Effect.all(
     {
-      rust: reuseResourceMonitor
+      rust: reuseHelpers
         ? Effect.succeed(true)
         : Effect.all([
             desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
@@ -1816,20 +1819,18 @@ function windowsVswherePrerequisiteScript(arch: typeof BuildArch.Type): string {
 export const preflightWindowsDesktopBuild = Effect.fn("preflightWindowsDesktopBuild")(
   function* (input: { readonly arch: typeof BuildArch.Type; readonly bundlesWslRuntime: boolean }) {
     const rustTarget = resolveResourceMonitorRustTargets("win", input.arch)[0]!;
-    const reuseResourceMonitor = yield* Config.boolean(
-      "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR",
-    ).pipe(Config.withDefault(false));
+    const reuseHelpers = yield* reuseNativeCodeHelpers;
     const python = yield* resolvePythonForNodeGyp();
     const checks = yield* Effect.all(
       {
-        rust: reuseResourceMonitor
+        rust: reuseHelpers
           ? Effect.succeed(true)
           : Effect.all([
               desktopBuildProbeSucceeds(ChildProcess.make("cargo", ["--version"]), "cargo"),
               rustTargetIsInstalled(rustTarget),
             ]).pipe(Effect.map(([cargo, target]) => cargo && target)),
         python: Effect.succeed(python !== undefined),
-        msvc: reuseResourceMonitor
+        msvc: reuseHelpers
           ? Effect.succeed(true)
           : desktopBuildProbeSucceeds(
               ChildProcess.make("powershell.exe", [
@@ -2185,21 +2186,24 @@ export const stageLinuxCaptureHelper = Effect.fn("stageLinuxCaptureHelper")(func
   }
 });
 
-export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* (input: {
+const stageNativeCodeHelper = Effect.fn("stageNativeCodeHelper")(function* (input: {
   readonly repoRoot: string;
   readonly stageResourcesDir: string;
   readonly platform: typeof BuildPlatform.Type;
   readonly arch: typeof BuildArch.Type;
   readonly verbose: boolean;
+  readonly helper: "resource-monitor" | "code-mode-host";
 }) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const manifestPath = path.join(input.repoRoot, "native/resource-monitor/Cargo.toml");
-  const executableName = resourceMonitorExecutableName(input.platform);
+  const manifestPath = path.join(input.repoRoot, `native/${input.helper}/Cargo.toml`);
+  const executableName = `t3-${input.helper}${input.platform === "win" ? ".exe" : ""}`;
   const rustTargets = resolveResourceMonitorRustTargets(input.platform, input.arch);
-  const reuseResourceMonitor = yield* Config.boolean("T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR").pipe(
-    Config.withDefault(false),
-  );
+  const reuseResourceMonitor = yield* Config.boolean(
+    input.helper === "resource-monitor"
+      ? "T3CODE_DESKTOP_REUSE_RESOURCE_MONITOR"
+      : "T3CODE_DESKTOP_REUSE_CODE_MODE_HOST",
+  ).pipe(Config.withDefault(false));
   const builtBinaries: string[] = [];
 
   for (const rustTarget of rustTargets) {
@@ -2219,7 +2223,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
           shell: spawnCommand.shell,
         }),
         {
-          label: `cargo build resource monitor (${rustTarget})`,
+          label: `cargo build ${input.helper} (${rustTarget})`,
           verbose: input.verbose,
         },
       );
@@ -2227,7 +2231,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
 
     const binaryPath = path.join(
       input.repoRoot,
-      "native/resource-monitor/target",
+      `native/${input.helper}/target`,
       rustTarget,
       "release",
       executableName,
@@ -2241,12 +2245,12 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
       });
     }
     if (reuseResourceMonitor) {
-      yield* Effect.log(`[desktop-artifact] Reusing cached resource monitor (${rustTarget}).`);
+      yield* Effect.log(`[desktop-artifact] Reusing cached ${input.helper} (${rustTarget}).`);
     }
     builtBinaries.push(binaryPath);
   }
 
-  const destinationDirectory = path.join(input.stageResourcesDir, "resource-monitor");
+  const destinationDirectory = path.join(input.stageResourcesDir, input.helper);
   const destinationPath = path.join(destinationDirectory, executableName);
   yield* fs.remove(destinationDirectory, { recursive: true, force: true }).pipe(Effect.ignore);
   yield* fs.makeDirectory(destinationDirectory, { recursive: true });
@@ -2257,7 +2261,7 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
     yield* runCommand(
       ChildProcess.make("lipo", ["-create", ...builtBinaries, "-output", destinationPath]),
       {
-        label: "lipo resource monitor universal binary",
+        label: "lipo native helper universal binary",
         verbose: input.verbose,
       },
     );
@@ -2267,6 +2271,13 @@ export const stageResourceMonitor = Effect.fn("stageResourceMonitor")(function* 
     yield* fs.chmod(destinationPath, 0o755);
   }
 });
+
+export const stageResourceMonitor = (
+  input: Omit<Parameters<typeof stageNativeCodeHelper>[0], "helper">,
+) => stageNativeCodeHelper({ ...input, helper: "resource-monitor" });
+export const stageCodeModeHost = (
+  input: Omit<Parameters<typeof stageNativeCodeHelper>[0], "helper">,
+) => stageNativeCodeHelper({ ...input, helper: "code-mode-host" });
 
 export const stageBrowserSecret = Effect.fn("stageBrowserSecret")(function* (input: {
   readonly repoRoot: string;
@@ -3202,6 +3213,14 @@ export const validateWindowsPackagedPayload = Effect.fn(
     });
   }
 
+  const codeModeHostPath = path.join(resourcesDir, "code-mode-host/t3-code-mode-host.exe");
+  if (!(yield* isFile(codeModeHostPath)))
+    return yield* new WindowsPackagedPayloadValidationError({
+      reason: "code-mode-host-missing",
+      packagedAppDir,
+      missingFiles: ["code-mode-host/t3-code-mode-host.exe"],
+    });
+
   const wslArchivePath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_NAME);
   const wslArchiveHashPath = path.join(resourcesDir, WSL_RUNTIME_ARCHIVE_HASH_NAME);
   const [hasWslArchive, hasWslArchiveHash] = yield* Effect.all([
@@ -3554,6 +3573,13 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     yield* fs.copy(distDirs.serverDist, path.join(stageAppDir, "apps/server/dist"));
   }
   yield* stageResourceMonitor({
+    repoRoot,
+    stageResourcesDir,
+    platform: options.platform,
+    arch: options.arch,
+    verbose: options.verbose,
+  });
+  yield* stageCodeModeHost({
     repoRoot,
     stageResourcesDir,
     platform: options.platform,

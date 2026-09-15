@@ -31,6 +31,50 @@ const makeRegistry = (now: () => number, httpServer = fakeHttpServer) =>
       Effect.provide(NodeServices.layer),
     );
 
+it.effect(
+  "notifies credential observers on revocation, expiry, and already-revoked subscriptions",
+  () =>
+    Effect.gen(function* () {
+      let timestamp = 1_000;
+      const registry = yield* makeRegistry(() => timestamp);
+      const first = yield* registry.issue({
+        threadId: ThreadId.make("observer-thread"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      let called = 0;
+      const unsubscribe = yield* registry.onRevoke(first.config.providerSessionId, () => {
+        called++;
+      });
+      unsubscribe();
+      yield* registry.revokeThread(first.config.threadId);
+      expect(called).toBe(0);
+      yield* registry.onRevoke(first.config.providerSessionId, () => {
+        called++;
+      });
+      expect(called).toBe(1);
+      const second = yield* registry.issue({
+        threadId: ThreadId.make("observer-thread"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      yield* registry.onRevoke(second.config.providerSessionId, () => {
+        called++;
+      });
+      timestamp += 101;
+      yield* registry.resolve(second.config.authorizationHeader.replace(/^Bearer\s+/, ""));
+      expect(called).toBe(2);
+      const third = yield* registry.issue({
+        threadId: ThreadId.make("observer-thread"),
+        providerInstanceId: ProviderInstanceId.make("codex"),
+      });
+      yield* registry.onRevoke(third.config.providerSessionId, () => {
+        called++;
+      });
+      yield* registry.revokeAll;
+      yield* registry.revokeAll;
+      expect(called).toBe(3);
+    }),
+);
+
 it.effect("stores only a token hash, resolves the bearer token, and revokes by thread", () =>
   Effect.gen(function* () {
     let timestamp = 1_000;

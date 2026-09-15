@@ -38,6 +38,8 @@ export interface McpSessionRegistryShape {
    * credential even when it goes a long time without touching an MCP tool.
    */
   readonly touch: (threadId: ThreadId) => Effect.Effect<void>;
+  /** Abort background work when its credential is revoked, including expiry. */
+  readonly onRevoke: (providerSessionId: string, callback: () => void) => Effect.Effect<() => void>;
   readonly revokeProviderSession: (providerSessionId: string) => Effect.Effect<void>;
   readonly revokeThread: (threadId: ThreadId) => Effect.Effect<void>;
   readonly revokeAll: Effect.Effect<void>;
@@ -103,6 +105,12 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
   const environmentId = yield* environment.getEnvironmentId;
   const httpServer = yield* HttpServer.HttpServer;
   const state = yield* SynchronizedRef.make<RegistryState>({ records: new Map() });
+  const observers = new Map<string, Set<() => void>>();
+  const notifyRevoked = (providerSessionId: string) => {
+    const callbacks = observers.get(providerSessionId);
+    observers.delete(providerSessionId);
+    for (const callback of callbacks ?? []) callback();
+  };
   const currentTimeMillis = options.now ? Effect.sync(options.now) : Clock.currentTimeMillis;
   const livenessWindowMs = options.livenessWindowMs ?? DEFAULT_LIVENESS_WINDOW_MS;
   const endpoint =
@@ -121,6 +129,9 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
         ([, record]) => timestamp - record.lastAliveAt <= livenessWindowMs,
       ),
     );
+    for (const [key, record] of records) {
+      if (!next.has(key)) notifyRevoked(record.scope.providerSessionId);
+    }
     return next.size === records.size ? records : next;
   };
 
@@ -198,13 +209,44 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
 
   const revokeWhere = (predicate: (record: CredentialRecord) => boolean) =>
     SynchronizedRef.update(state, ({ records }) => ({
-      records: new Map(Array.from(records).filter(([, record]) => !predicate(record))),
+      records: new Map(
+        Array.from(records).filter(([, record]) => {
+          if (!predicate(record)) return true;
+          notifyRevoked(record.scope.providerSessionId);
+          return false;
+        }),
+      ),
     }));
 
   return McpSessionRegistry.of({
     issue,
     resolve,
     touch,
+    onRevoke: (providerSessionId, callback) =>
+      Effect.gen(function* () {
+        const timestamp = yield* currentTimeMillis;
+        return yield* SynchronizedRef.modify(state, ({ records }) => {
+          const current = pruneDead(records, timestamp);
+          if (
+            !Array.from(current.values()).some(
+              (record) => record.scope.providerSessionId === providerSessionId,
+            )
+          ) {
+            callback();
+            return [() => {}, { records: current }] as const;
+          }
+          const callbacks = observers.get(providerSessionId) ?? new Set<() => void>();
+          callbacks.add(callback);
+          observers.set(providerSessionId, callbacks);
+          return [
+            () => {
+              callbacks.delete(callback);
+              if (callbacks.size === 0) observers.delete(providerSessionId);
+            },
+            { records: current },
+          ] as const;
+        });
+      }),
     revokeProviderSession: Effect.fn("McpSessionRegistry.revokeProviderSession")(
       function* (providerSessionId) {
         yield* revokeWhere((record) => record.scope.providerSessionId === providerSessionId);
@@ -213,7 +255,7 @@ const makeWithOptions = Effect.fn("McpSessionRegistry.make")(function* (
     revokeThread: Effect.fn("McpSessionRegistry.revokeThread")(function* (threadId) {
       yield* revokeWhere((record) => record.scope.threadId === threadId);
     }),
-    revokeAll: SynchronizedRef.set(state, { records: new Map() }),
+    revokeAll: revokeWhere(() => true),
   });
 });
 
