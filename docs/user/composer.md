@@ -29,6 +29,14 @@ also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Send while the agent is working
+
+A message sent during a running turn waits at the end of the conversation as a
+dashed bubble. It goes out on its own when the agent finishes its next tool
+call, or when the turn ends. Use the arrow under the bubble to send it right
+away, or the X to move it back into the composer. Stop returns every queued
+message to the composer.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue

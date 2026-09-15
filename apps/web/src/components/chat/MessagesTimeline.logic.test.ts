@@ -1092,6 +1092,40 @@ describe("resolveAssistantMessageCopyState", () => {
 });
 
 describe("deriveMessagesTimelineRows", () => {
+  it("appends queued messages after the live rows, marking the oldest as next", () => {
+    const queuedMessage = (id: string, prompt: string) => ({
+      id,
+      prompt,
+      images: [],
+      files: [],
+      terminalContexts: [],
+      previewAnnotations: [],
+      reviewComments: [],
+      submissionIntent: "foreground" as const,
+      queuedAfterToolActivityId: null,
+      createdAt: "2026-01-01T00:00:01Z",
+    });
+    const rows = deriveMessagesTimelineRows({
+      timelineEntries: [],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      queuedMessages: [queuedMessage("q1", "first"), queuedMessage("q2", "second")],
+    });
+
+    expect(rows.map((row) => row.kind)).toEqual([
+      "working",
+      "thinking",
+      "queued-message",
+      "queued-message",
+    ]);
+    expect(rows.slice(2)).toMatchObject([
+      { id: "queued-message:q1", isNext: true, queuedMessage: { prompt: "first" } },
+      { id: "queued-message:q2", isNext: false, queuedMessage: { prompt: "second" } },
+    ]);
+  });
+
   it("shows the worktree setup card instead of the working placeholder", () => {
     const snapshot: WorktreeSetupSnapshot = {
       threadId: ThreadId.make("thread-setup"),
