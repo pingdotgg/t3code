@@ -18,7 +18,10 @@ import { layerConfig } from "./Layers/Sqlite.ts";
 import { runMigrations } from "./Migrations.ts";
 import { initializeV2Database } from "./initializeV2Database.ts";
 import { layer as eventStoreLayer } from "../orchestration-v2/EventStore.ts";
-import { layer as projectionStoreLayer } from "../orchestration-v2/ProjectionStore.ts";
+import {
+  ProjectionStoreV2,
+  layer as projectionStoreLayer,
+} from "../orchestration-v2/ProjectionStore.ts";
 import { layer as eventSinkLayer } from "../orchestration-v2/EventSink.ts";
 import {
   LegacyV1ThreadImporter,
@@ -61,10 +64,22 @@ it.effect(
         const sql = yield* SqlClient.SqlClient;
         const legacy = yield* LegacyV1ThreadImporter;
         yield* legacy.reconcileShells;
+        const projections = yield* ProjectionStoreV2;
+        const shell = yield* projections.getThreadProjection(threadId);
+        assert.equal(shell.thread.id, threadId);
+        assert.deepEqual(
+          shell.messages.map((message) => message.text),
+          ["Text 4", "Text 5"],
+        );
         const pending =
           yield* sql`SELECT transcript_imported_at FROM orchestration_v2_legacy_imports`;
         assert.equal(pending[0]?.transcript_imported_at, null);
         yield* legacy.ensureTranscript(threadId);
+        const transcript = yield* projections.getThreadProjection(threadId);
+        assert.deepEqual(
+          transcript.messages.map((message) => message.text),
+          ["Text 0", "Text 1", "Text 2", "Text 3", "Text 4", "Text 5"],
+        );
         const imported =
           yield* sql`SELECT imported_message_count, transcript_imported_at FROM orchestration_v2_legacy_imports`;
         assert.equal(imported[0]?.imported_message_count, 6);
