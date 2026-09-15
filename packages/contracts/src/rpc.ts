@@ -162,6 +162,7 @@ import {
   ProjectWriteFileResult,
 } from "./project.ts";
 import { AppsListError, AppsListInput, AppsListResult } from "./apps.ts";
+import { CuaWindowPreviewState, CuaWindowPreviewSubscribeInput } from "./cua.ts";
 import {
   TerminalAttachInput,
   TerminalAttachStreamEvent,
@@ -431,6 +432,7 @@ export const WS_METHODS = {
   subscribePreviewEvents: "subscribePreviewEvents",
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
+  subscribeCuaWindowPreview: "subscribeCuaWindowPreview",
   subscribeServerConfig: "subscribeServerConfig",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
@@ -1246,6 +1248,13 @@ const WsSubscribeDeviceStateRpc = Rpc.make(WS_METHODS.subscribeDeviceState, {
   stream: true,
 });
 
+const WsSubscribeCuaWindowPreviewRpc = Rpc.make(WS_METHODS.subscribeCuaWindowPreview, {
+  payload: CuaWindowPreviewSubscribeInput,
+  success: CuaWindowPreviewState,
+  error: EnvironmentAuthorizationError,
+  stream: true,
+});
+
 const WsOrchestrationDispatchCommandRpc = Rpc.make(ORCHESTRATION_WS_METHODS.dispatchCommand, {
   payload: ClientOrchestrationCommand,
   success: OrchestrationRpcSchemas.dispatchCommand.output,
@@ -1494,6 +1503,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceDetailRpc,
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
+  WsSubscribeCuaWindowPreviewRpc,
   WsSubscribeServerConfigRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,

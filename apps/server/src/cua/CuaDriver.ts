@@ -409,7 +409,8 @@ export const makeStandaloneHostFactory = Effect.fn("CuaDriver.standaloneHostFact
               void monitoring.catch(() => undefined);
               return connection;
             })();
-            return (await starting).mcp;
+            const connection = await starting;
+            return { ...connection.mcp, socketPath: connection.socketPath };
           },
           catch: (cause) => new CuaDriverStartError({ binaryPath, cause }),
         }),

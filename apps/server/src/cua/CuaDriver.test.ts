@@ -198,7 +198,7 @@ describe("standalone Cua Driver ownership", () => {
       expect(Exit.isFailure(yield* Effect.exit(host.stop))).toBe(true);
       expect(f.counts()).toEqual({ creates: 1, stops: 1, destroys: 1 });
       const replacement = yield* f.factory;
-      expect(yield* replacement.start).toEqual(mcp);
+      expect(yield* replacement.start).toEqual({ ...mcp, socketPath: "/socket" });
       yield* replacement.stop;
       expect(f.counts()).toEqual({ creates: 2, stops: 2, destroys: 2 });
     }),
@@ -232,7 +232,7 @@ describe("standalone Cua Driver ownership", () => {
       const f = yield* standaloneFixture();
       const host = yield* f.factory;
       f.start.resolve(f.connection);
-      expect(yield* host.start).toEqual(mcp);
+      expect(yield* host.start).toEqual({ ...mcp, socketPath: "/socket" });
       const signal = yield* Effect.promise(() => f.watching.promise);
       const stopping = yield* host.stop.pipe(Effect.forkChild({ startImmediately: true }));
       yield* Effect.promise(() => f.stopped.promise);

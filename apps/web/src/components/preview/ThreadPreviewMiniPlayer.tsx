@@ -35,6 +35,7 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useCuaWindowPreview } from "~/state/cua";
 import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
@@ -177,9 +178,11 @@ export function ThreadPreviewMiniPlayer({
 }
 
 /**
- * The last screenshot the agent took of the host desktop. Captures arrive with
- * each computer-use tool result, so the card refreshes as the agent works and
- * goes stale, not blank, between looks.
+ * What the agent is doing on the host desktop. While a turn is running the
+ * server streams fresh captures of the window the agent targets; between
+ * turns the card falls back to the last screenshot the agent itself took, so
+ * it goes stale rather than blank. Mounting the card is what starts the
+ * server-side capture loop, so a closed card costs the host nothing.
  */
 function ComputerMiniPlayer({
   threadRef,
@@ -188,6 +191,12 @@ function ComputerMiniPlayer({
   preview,
   inProgress,
 }: Props & { readonly preview: ComputerUsePreview; readonly inProgress: boolean }) {
+  const live = useCuaWindowPreview(threadRef);
+  const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
+  const liveSrc = useMemo(
+    () => (liveFrame ? `data:${liveFrame.mimeType};base64,${liveFrame.dataBase64}` : null),
+    [liveFrame],
+  );
   const resource = useMemo(
     () => ({ _tag: "media-file", threadId: threadRef.threadId, path: preview.imagePath }) as const,
     [threadRef.threadId, preview.imagePath],
@@ -196,14 +205,15 @@ function ComputerMiniPlayer({
   const [naturalSize, setNaturalSize] = useState<PreviewMiniPlayerSize | null>(null);
   const sourceSize =
     naturalSize ??
-    (asset._tag === "Success" && asset.imageDimensions
-      ? { width: asset.imageDimensions.width, height: asset.imageDimensions.height }
-      : { width: 1280, height: 800 });
-  const label = preview.appName ?? "Computer";
-  const caption =
-    preview.windowTitle && preview.windowTitle !== label
-      ? `${label} · ${preview.windowTitle}`
-      : label;
+    (liveFrame && liveFrame.width > 0 && liveFrame.height > 0
+      ? { width: liveFrame.width, height: liveFrame.height }
+      : asset._tag === "Success" && asset.imageDimensions
+        ? { width: asset.imageDimensions.width, height: asset.imageDimensions.height }
+        : { width: 1280, height: 800 });
+  const label = liveFrame?.appName ?? preview.appName ?? "Computer";
+  const windowTitle = liveFrame?.windowTitle ?? preview.windowTitle;
+  const caption = windowTitle && windowTitle !== label ? `${label} · ${windowTitle}` : label;
+  const src = liveSrc ?? (asset._tag === "Success" ? asset.url : null);
 
   return (
     <MiniPlayerShell
@@ -212,16 +222,16 @@ function ComputerMiniPlayer({
       sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
       label="Floating computer use preview"
-      recording={inProgress}
+      recording={inProgress || live.status === "live"}
     >
       {() => (
         <div
           className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] bg-muted"
           style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
         >
-          {asset._tag === "Success" ? (
+          {src ? (
             <img
-              src={asset.url}
+              src={src}
               alt={caption}
               decoding="async"
               draggable={false}
@@ -242,6 +252,11 @@ function ComputerMiniPlayer({
               {asset._tag === "Failure" ? "Screenshot unavailable" : "Loading screenshot…"}
             </div>
           )}
+          {live.status === "unavailable" && live.detail ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 truncate bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground">
+              Live preview unavailable: {live.detail}
+            </div>
+          ) : null}
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-background/85 to-background/0 px-2.5 pb-2 pt-5 text-[11px] text-foreground">
             {preview.appIcon?.app._tag === "app-id" ? (
               <NativeAppIcon

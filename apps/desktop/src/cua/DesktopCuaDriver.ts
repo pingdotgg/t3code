@@ -218,7 +218,7 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
         type: "cuaDriverReport",
         requestId: request.requestId,
         status: "ready",
-        mcp: active.connection.mcp,
+        mcp: { ...active.connection.mcp, socketPath: active.connection.socketPath },
       });
       return;
     }
@@ -265,7 +265,10 @@ export const make = Effect.fn("desktop.cuaDriver.make")(function* (
         owned.startPromise = owned.host.start({ signal: owned.abort.signal });
         return owned.startPromise;
       });
-      const mcp = yield* decodeMcpConfiguration(connection.mcp);
+      const mcp = yield* decodeMcpConfiguration({
+        ...connection.mcp,
+        socketPath: connection.socketPath,
+      });
       yield* Effect.try(() => {
         owned.monitorPromise = owned.host.waitForExit(connection.generation, {
           signal: owned.abort.signal,

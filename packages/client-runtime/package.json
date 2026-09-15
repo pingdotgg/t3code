@@ -135,6 +135,10 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/cua": {
+      "types": "./src/state/cua.ts",
+      "default": "./src/state/cua.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"

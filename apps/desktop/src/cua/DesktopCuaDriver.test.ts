@@ -172,7 +172,7 @@ describe("DesktopCuaDriver", () => {
           type: "cuaDriverReport",
           requestId: "start",
           status: "ready",
-          mcp: descriptor,
+          mcp: { ...descriptor, socketPath: "/socket" },
         });
         yield* test.request("same", true);
         assert.equal((yield* test.next).requestId, "same");

@@ -9,6 +9,7 @@ import {
   cuaToolPresentation,
   isCuaServerName,
   parseCuaToolName,
+  readCuaWindowTarget,
   rememberCuaToolResult,
 } from "./cuaToolPresentation.ts";
 
@@ -240,6 +241,36 @@ const CUA_DRIVER_TOOLS = [
   "verify_state",
   "zoom",
 ];
+
+describe("readCuaWindowTarget", () => {
+  it("remembers the last pid and window id a tool call addressed", () => {
+    clearCuaToolContext(threadId);
+    NodeAssert.equal(readCuaWindowTarget(threadId), undefined);
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/get_window_state",
+      args: { pid: 42, window_id: "7" },
+      status: "completed",
+    });
+    NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/click",
+      args: { pid: 42, element_token: "e1" },
+      status: "completed",
+    });
+    NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+    cuaToolPresentation({
+      threadId,
+      rawToolName: "cua-driver/click",
+      args: { pid: 9, window_id: 0, x: 1, y: 1 },
+      status: "completed",
+    });
+    NodeAssert.deepEqual(readCuaWindowTarget(threadId), { pid: 42, windowId: 7n });
+    clearCuaToolContext(threadId);
+    NodeAssert.equal(readCuaWindowTarget(threadId), undefined);
+  });
+});
 
 describe("CUA_TOOL_TITLES", () => {
   it("names every tool the driver exposes", () => {

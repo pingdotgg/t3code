@@ -47,9 +47,16 @@ export function isCuaServerName(server: string | undefined): boolean {
 const MAX_THREADS = 256;
 const MAX_APPS_PER_THREAD = 128;
 
+/** The window the agent addressed most recently, for the live preview. */
+export interface CuaWindowTarget {
+  readonly pid: number;
+  readonly windowId: bigint;
+}
+
 interface ThreadDirectory {
   readonly byPid: Map<number, CuaApp>;
   lastApp: CuaApp | undefined;
+  lastWindow: CuaWindowTarget | undefined;
 }
 
 const directories = new Map<ThreadId, ThreadDirectory>();
@@ -67,13 +74,28 @@ function directoryFor(threadId: ThreadId): ThreadDirectory {
     if (oldest === undefined) break;
     directories.delete(oldest);
   }
-  const created: ThreadDirectory = { byPid: new Map(), lastApp: undefined };
+  const created: ThreadDirectory = { byPid: new Map(), lastApp: undefined, lastWindow: undefined };
   directories.set(threadId, created);
   return created;
 }
 
 export function clearCuaToolContext(threadId: ThreadId): void {
   directories.delete(threadId);
+}
+
+/** Last window the agent targeted in this thread, if any tool call named one. */
+export function readCuaWindowTarget(threadId: ThreadId): CuaWindowTarget | undefined {
+  return directories.get(threadId)?.lastWindow;
+}
+
+function asWindowId(value: unknown): bigint | undefined {
+  if (typeof value === "bigint") return value > 0n ? value : undefined;
+  if (typeof value === "number" && Number.isInteger(value) && value > 0) return BigInt(value);
+  if (typeof value === "string" && /^[0-9]+$/u.test(value)) {
+    const id = BigInt(value);
+    return id > 0n ? id : undefined;
+  }
+  return undefined;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -194,6 +216,10 @@ function resolveApp(
   const bundleId = asBundleId(args?.bundle_id);
   const name = asAppName(args?.app_name) ?? asAppName(args?.app);
   const known = pid !== undefined ? directory?.byPid.get(pid) : undefined;
+  const windowId = asWindowId(args?.window_id);
+  if (pid !== undefined && windowId !== undefined) {
+    directoryFor(threadId).lastWindow = { pid, windowId };
+  }
   const app: CuaApp = {
     ...known,
     ...(bundleId ? { bundleId } : {}),
