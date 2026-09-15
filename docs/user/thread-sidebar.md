@@ -20,6 +20,19 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Delegate work between threads
+
+Ask an agent connected to T3 Code's built-in tools to create a peer thread for a
+separate task, send it work, and check its result. Peers are ordinary persistent
+threads in the same project. You can open their history and manage them from any
+connected client. Agents can exchange messages across providers.
+
+Creating a peer leaves it empty at the project's workspace root. The agent sends
+a follow-up to start work. It can choose another model, wait for completion or
+attention, interrupt a turn, and settle or reactivate a thread. Sending new work
+to a settled thread revives it. These tools do not copy history or create isolated
+worktrees; use a new worktree when concurrent code changes need separate files.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
