@@ -656,3 +656,17 @@ describe("resolveDefaultProviderModelSelection", () => {
     ).toBeNull();
   });
 });
+
+describe("provider icon metadata", () => {
+  it("retains server-published registry icons without local settings", () => {
+    const iconUrl = "https://cdn.agentclientprotocol.com/registry/icons/swe-agent.svg";
+    const [entry] = deriveProviderInstanceEntries([
+      {
+        ...provider({ provider: ProviderDriverKind.make("acpRegistry"), instanceId: "swe-remote" }),
+        iconUrl,
+      },
+    ]);
+    expect(entry?.acpRegistryIconUrl).toBe(iconUrl);
+    expect(entry?.driverKind).toBe("acpRegistry");
+  });
+});
