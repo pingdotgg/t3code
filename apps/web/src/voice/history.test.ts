@@ -416,6 +416,52 @@ describe("voice history recorder", () => {
     });
   });
 
+  it("records the real flat clickControl outcome for activations and refusals", async () => {
+    // The real VoiceClickControlOutput is flat at top level
+    // ({controlId, name?, role?, state?, message?}); a sanitizer that only
+    // reads record.controls/record.control drops the outcome entirely and
+    // the export shows status ok with no result.
+    const recorder = createVoiceHistoryRecorder({ now: () => 1000 });
+    recorder.beginSession();
+    await recorder.recordToolExecution("voice.clickControl", { controlId: "ctl-4" }, async () => ({
+      controlId: "ctl-4",
+      name: "Settings",
+      role: "button",
+      state: "activated",
+    }));
+    await recorder.recordToolExecution("voice.clickControl", { controlId: "ctl-7" }, async () => ({
+      controlId: "ctl-7",
+      state: "not_found",
+      message: '"ctl-7" is stale: its control is no longer attached. Call listControls to refresh.',
+    }));
+    recorder.endSession();
+    const entries = recorder
+      .readSession(recorder.listSessions()[0]!.id)!
+      .entries.filter((candidate) => candidate.kind === "tool");
+    expect(entries[0]).toMatchObject({
+      name: "clickControl",
+      status: "ok",
+      input: { controlId: "ctl-4" },
+      result: {
+        controls: [{ controlId: "ctl-4", name: "Settings", state: "activated" }],
+      },
+    });
+    expect(entries[1]).toMatchObject({
+      name: "clickControl",
+      status: "ok",
+      input: { controlId: "ctl-7" },
+      result: {
+        controls: [
+          {
+            controlId: "ctl-7",
+            state: "not_found",
+            message: expect.stringContaining("stale"),
+          },
+        ],
+      },
+    });
+  });
+
   it("drops unknown response fields from the recorded result", async () => {
     const recorder = createVoiceHistoryRecorder({ now: () => 1000 });
     recorder.beginSession();
