@@ -2611,10 +2611,76 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         ).toEqual(["recent-session"]);
       }),
     );
+
+    it.effect("uses the canonical Codex title from the session index", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const nowMs = Date.parse("2026-08-24T12:00:00.000Z");
+        const sessionId = "01a0a0b4-3958-7382-82b2-b22b8bb830ba";
+        yield* TestClock.setTime(nowMs);
+        const claudeHomePath = yield* makeTempDir("t3code-index-title-claude-");
+        const codexHomePath = yield* makeTempDir("t3code-index-title-codex-");
+        const workspaceRoot = yield* makeTempDir("t3code-index-title-workspace-");
+
+        yield* writeTranscript({
+          filePath: path.join(
+            codexHomePath,
+            "sessions",
+            "2026",
+            "08",
+            "24",
+            `rollout-2026-08-24T12-00-00-${sessionId}.jsonl`,
+          ),
+          contents: [
+            encodeTranscriptRecord({
+              type: "session_meta",
+              payload: { id: sessionId, cwd: workspaceRoot },
+            }),
+            encodeTranscriptRecord({
+              type: "response_item",
+              payload: {
+                type: "message",
+                role: "user",
+                content: [{ type: "input_text", text: "<recommended_plugins>" }],
+              },
+            }),
+          ].join("\n"),
+          mtimeMs: nowMs,
+        });
+        yield* fileSystem.writeFileString(
+          path.join(codexHomePath, "session_index.jsonl"),
+          [
+            "not json",
+            JSON.stringify({ id: sessionId, thread_name: "Prototype MetaApi trade replication" }),
+          ].join("\n"),
+        );
+
+        const threads = yield* runRecentThreads({
+          claudeHomePath,
+          codexHomePath,
+          workspaceRoot,
+        });
+
+        expect(threads[0]?.title).toBe("Prototype MetaApi trade replication");
+      }),
+    );
   });
 });
 
 describe("parseAgentSessionTranscript", () => {
+  it("parses valid, named Codex session index entries", () => {
+    expect(
+      AgentSessionScanner.parseCodexSessionIndex(
+        [
+          "not json",
+          JSON.stringify({ id: "session-1", thread_name: "  Fix imported titles  " }),
+          JSON.stringify({ id: "session-2", thread_name: "" }),
+        ].join("\n"),
+      ),
+    ).toEqual(new Map([["session-1", "Fix imported titles"]]));
+  });
+
   it.each([false, true])(
     "handles the exact record limit and an interior blank overflow=%s",
     (overflow) => {
@@ -3104,10 +3170,46 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Initialize Git and add a README.");
     expect(thread?.messages.map((message) => message.text)).toEqual([
       context,
       "Initialize Git and add a README.",
+    ]);
+  });
+
+  it("skips recommended plugin context when deriving a Codex title", () => {
+    const plugins =
+      "<recommended_plugins>\n- GitHub (github@openai-curated-remote)\n</recommended_plugins>";
+    const thread = AgentSessionScanner.parseAgentSessionTranscript({
+      contents: [
+        encodeTranscriptRecord({ type: "session_meta", payload: { id: "codex-session" } }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: plugins }],
+          },
+        }),
+        encodeTranscriptRecord({
+          type: "response_item",
+          payload: {
+            type: "message",
+            role: "user",
+            content: [{ type: "input_text", text: "Build MetaApi trade replication" }],
+          },
+        }),
+      ].join("\n"),
+      source: "codex",
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      fallbackSessionId: "fallback",
+      lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
+    });
+
+    expect(thread?.title).toBe("Build MetaApi trade replication");
+    expect(thread?.messages.map((message) => message.text)).toEqual([
+      plugins,
+      "Build MetaApi trade replication",
     ]);
   });
 
@@ -3131,7 +3233,7 @@ describe("parseAgentSessionTranscript", () => {
       lastActiveAtMs: Date.parse("2026-08-25T08:00:00.000Z"),
     });
 
-    expect(thread?.title).toBe("<environment_context>");
+    expect(thread?.title).toBe("Create a useful project.");
     expect(thread?.messages.map((message) => message.text)).toEqual([prompt]);
   });
 

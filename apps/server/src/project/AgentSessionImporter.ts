@@ -70,6 +70,14 @@ function hasImportedHistory(thread: OrchestrationThread): boolean {
   return thread.messages.some((message) => isImportedAgentSessionMessageId(message.id));
 }
 
+function hasLegacyCodexContextTitle(title: string): boolean {
+  return (
+    title === "<recommended_plugins>" ||
+    title === "# AGENTS.md instructions" ||
+    title === "<environment_context>"
+  );
+}
+
 function hasImportBlockingActivity(
   thread: OrchestrationThread,
   importedHistoryPresent: boolean,
@@ -137,6 +145,26 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
   let importedCount = 0;
   let skippedCount = 0;
 
+  const repairImportedCodexTitle = Effect.fn("repairImportedCodexTitle")(function* (
+    threadId: ThreadId,
+    canonicalTitle: string,
+  ) {
+    const existingThread = yield* snapshots.getThreadDetailById(threadId);
+    if (
+      Option.isNone(existingThread) ||
+      !hasLegacyCodexContextTitle(existingThread.value.title) ||
+      existingThread.value.title === canonicalTitle
+    ) {
+      return;
+    }
+    yield* engine.dispatch({
+      type: "thread.meta.update",
+      commandId: CommandId.make(yield* crypto.randomUUIDv4),
+      threadId,
+      title: canonicalTitle,
+    });
+  });
+
   yield* Stream.runForEach(threads, (outcome) =>
     Effect.gen(function* () {
       if (outcome._tag === "Skipped") {
@@ -148,6 +176,16 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           `import:${outcome.source.providerInstanceId}:${outcome.source.providerSessionId}`,
         );
         if (outcome._tag === "AlreadyImported") {
+          if (outcome.source.provider === "codex" && outcome.canonicalTitle !== null) {
+            yield* repairImportedCodexTitle(threadId, outcome.canonicalTitle).pipe(
+              Effect.catch((cause) =>
+                Effect.logWarning("Could not repair an imported Codex thread title", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            );
+          }
           importedThreadIds.add(threadId);
           importedCount += 1;
         } else if (importedThreadIds.has(threadId)) {
@@ -200,6 +238,9 @@ export const importRecentAgentThreads = Effect.fn("importRecentAgentThreads")(fu
           importedHistoryPresent &&
           Option.isSome(existingBinding)
         ) {
+          if (thread.source === "codex") {
+            yield* repairImportedCodexTitle(threadId, thread.title);
+          }
           yield* directory.recordImportedTranscript({ threadId, source: outcome.source });
           return true;
         }
