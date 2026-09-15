@@ -129,6 +129,12 @@ import {
   type MarkdownFileIcon,
 } from "./markdownLinks";
 
+export {
+  markdownAlertKind,
+  nativeMarkdownWithExtensions,
+  type GithubAlertKind,
+} from "./nativeMarkdownExtensions";
+
 export interface NativeMarkdownTextRun {
   readonly text: string;
   readonly bold?: boolean;

@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import { View } from "react-native";
 import { parseMarkdownWithOptions } from "react-native-nitro-markdown/headless";
 
+import { nativeMarkdownWithExtensions } from "./nativeMarkdownExtensions";
 import {
   nativeMarkdownChunkSpacing,
   nativeMarkdownDocumentChunks,
@@ -56,9 +57,9 @@ export function SelectableMarkdownText({
       html: true,
       math: false,
     });
-    const document = preserveSoftBreaks
-      ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument)
-      : parsedDocument;
+    const document = nativeMarkdownWithExtensions(
+      preserveSoftBreaks ? nativeMarkdownWithPreservedSoftBreaks(parsedDocument) : parsedDocument,
+    );
     return nativeMarkdownDocumentChunks(document).map((chunk) =>
       chunk.kind === "selectable"
         ? {
