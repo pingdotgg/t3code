@@ -8,6 +8,7 @@ import {
   type ProviderSession,
   RuntimeItemId,
   RuntimeRequestId,
+  RuntimeTaskId,
   ThreadId,
   type ToolLifecycleItemType,
   type TurnTokenUsage,
@@ -347,6 +348,10 @@ interface OpenCodeSessionContext {
   readonly pendingPermissions: Map<string, PermissionRequest>;
   readonly pendingQuestions: Map<string, QuestionRequest>;
   readonly messageRoleById: Map<string, "user" | "assistant">;
+  // Subagent `task` tool calls whose task.started already went out. OpenCode
+  // repeats a part on every streamed update, so without this the roster would
+  // count one subagent many times.
+  readonly startedSubagentTaskIds: Set<string>;
   // OpenCode permits edits to completed parts. Keep text for snapshot comparison
   // until native removal or session teardown, but do not retain other part payloads.
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
@@ -2465,6 +2470,79 @@ export function makeOpenCodeAdapter(
               part.state.status === "running" || part.state.status === "completed"
                 ? (part.state.title ?? part.tool)
                 : part.tool;
+            if (itemType === "collab_agent_tool_call") {
+              // OpenCode delegates to a subagent through its `task` tool, and
+              // the Agents surface is fed by task.* rows, not tool rows. Emit
+              // the lifecycle pair instead of a timeline tool row;
+              // timelineBypass collapses the parent timeline to a single spawn
+              // CTA, matching how Codex reports its child agents.
+              const input = part.state.input;
+              const subagentType = input["subagent_type"];
+              const description = input["description"];
+              const trimmedTitle = title?.trim();
+              const linkage = {
+                taskType: "subagent",
+                toolUseId: part.callID,
+                ...(typeof subagentType === "string" && subagentType.trim().length > 0
+                  ? { role: subagentType.trim() }
+                  : {}),
+                ...(trimmedTitle ? { title: trimmedTitle } : {}),
+                timelineBypass: true,
+              } as const;
+              const taskBase = yield* buildEventBase({
+                threadId: context.session.threadId,
+                turnId,
+                itemId: part.callID,
+                createdAt: toolStateCreatedAt(part),
+                raw: event,
+              });
+              const taskId = RuntimeTaskId.make(part.callID);
+              const trimmedDescription =
+                typeof description === "string" && description.trim().length > 0
+                  ? description.trim()
+                  : undefined;
+              let taskEvent: ProviderRuntimeEvent;
+              if (part.state.status === "completed" || part.state.status === "error") {
+                context.startedSubagentTaskIds.delete(part.callID);
+                // Same text the tool row used to carry as `detail`, so moving
+                // the subagent off the timeline does not drop its result.
+                const summary = detailFromToolPart(part)?.trim();
+                taskEvent = {
+                  ...taskBase,
+                  type: "task.completed",
+                  payload: {
+                    taskId,
+                    status: part.state.status === "error" ? "failed" : "completed",
+                    ...(summary ? { summary } : {}),
+                    ...linkage,
+                  },
+                };
+              } else if (context.startedSubagentTaskIds.has(part.callID)) {
+                taskEvent = {
+                  ...taskBase,
+                  type: "task.updated",
+                  payload: {
+                    taskId,
+                    status: "running",
+                    ...(trimmedDescription ? { description: trimmedDescription } : {}),
+                    ...linkage,
+                  },
+                };
+              } else {
+                context.startedSubagentTaskIds.add(part.callID);
+                taskEvent = {
+                  ...taskBase,
+                  type: "task.started",
+                  payload: {
+                    taskId,
+                    ...(trimmedDescription ? { description: trimmedDescription } : {}),
+                    ...linkage,
+                  },
+                };
+              }
+              yield* emit(taskEvent);
+              break;
+            }
             const detail = detailFromToolPart(part);
             const payload = {
               itemType,
@@ -2994,6 +3072,7 @@ export function makeOpenCodeAdapter(
           pendingQuestions: new Map(),
           textPartsByMessageId: new Map(),
           messageRoleById: new Map(),
+          startedSubagentTaskIds: new Set(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
           activeAgent: undefined,
