@@ -21,6 +21,10 @@ import {
 import { AndroidScreenHeader } from "../../components/AndroidScreenHeader";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
 import { supportsAgentAwarenessPush } from "../agent-awareness/capabilities";
+import {
+  openAndroidLiveUpdateSettings,
+  supportsAndroidLiveUpdateSettings,
+} from "../agent-awareness/androidNotifications";
 import { setLiveActivityUpdatesEnabled } from "../agent-awareness/liveActivityPreferences";
 import { requestAgentNotificationPermission } from "../agent-awareness/notificationPermissions";
 import {
@@ -541,7 +545,13 @@ function ConfiguredSettingsRouteScreen() {
               liveActivityStatus === "linking"
             }
             icon="bolt.circle"
-            label={Platform.OS === "android" ? "Ongoing Agent Activity" : "Live Activity Updates"}
+            label={
+              Platform.OS === "android"
+                ? supportsAndroidLiveUpdateSettings()
+                  ? "Agent Live Updates"
+                  : "Ongoing Agent Activity"
+                : "Live Activity Updates"
+            }
             subtitle={agentAwarenessSubtitle}
             // Same gate: a saved preference is meaningless until the device
             // registration the relay needs to push updates has succeeded.
@@ -552,6 +562,20 @@ function ConfiguredSettingsRouteScreen() {
             }
             onValueChange={handleLiveActivitiesChange}
           />
+          {supportsAndroidLiveUpdateSettings() ? (
+            <SettingsRow
+              icon="bolt.circle"
+              label="Live Update Settings"
+              onPress={() => {
+                void openAndroidLiveUpdateSettings().catch(() => {
+                  Alert.alert(
+                    "Couldn't open Settings",
+                    "Open Android Settings, select T3 Code, then enable Live Updates in Notifications.",
+                  );
+                });
+              }}
+            />
+          ) : null}
         </SettingsSection>
 
         <GeneralSettingsSection />
@@ -574,6 +598,9 @@ function GeneralSettingsSection() {
   return (
     <SettingsSection title="General">
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
+      {Platform.OS === "ios" ? (
+        <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />
+      ) : null}
       <AutoSettleSettingsRows />
       <SettingsRow icon="chart.bar.xaxis" label="Usage" target="SettingsUsage" />
     </SettingsSection>

@@ -618,6 +618,7 @@ export const TraitsPicker = memo(function TraitsPicker({
       <MenuTrigger
         render={
           <ComposerControl
+            data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
             variant={triggerVariant ?? "ghost"}
             size={size}
             className={cn(
