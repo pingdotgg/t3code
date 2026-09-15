@@ -474,19 +474,24 @@ export const make = Effect.gen(function* () {
     "VcsStatusBroadcaster.refreshStatus",
   )(function* (rawCwd) {
     const cwd = yield* withFileSystem(normalizeCwd(rawCwd));
-    // invalidateStatus (not the two partial invalidations) so an explicit
-    // refresh also bypasses GitManager's slow PR-lookup cache.
+    // Publish the local half before the remote fetch and PR lookup, and
+    // before waiting on the remote lock, so a checkout is visible to clients
+    // right away instead of after the network round trip.
+    const local = yield* refreshLocalStatusCore(cwd);
     return yield* withRemoteWriteLock(
       cwd,
       Effect.gen(function* () {
+        // invalidateStatus (not the two partial invalidations) so an explicit
+        // refresh also bypasses GitManager's slow PR-lookup cache.
         yield* workflow.invalidateStatus(cwd);
-        const [local, remote] = yield* Effect.all(
-          [workflow.localStatus({ cwd }), workflow.remoteStatus({ cwd })],
-          { concurrency: "unbounded" },
-        );
+        const remote = yield* workflow.remoteStatus({ cwd });
         const pulled = yield* maybeAutoPull(cwd, remote, [rawCwd]);
         if (pulled !== null) return mergeGitStatusParts(pulled.local, pulled.remote);
-        return yield* updateCachedStatus(cwd, local, remote, { publish: true });
+        // Only write the remote half here. The local half read above may be
+        // older than one published while this waited for the lock.
+        yield* updateCachedRemoteStatus(cwd, remote, { publish: true });
+        const cached = yield* getCachedStatus(cwd);
+        return mergeGitStatusParts(cached?.local?.value ?? local, remote);
       }),
     );
   });
