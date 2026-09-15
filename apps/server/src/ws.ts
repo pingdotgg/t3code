@@ -1695,14 +1695,22 @@ const makeWsRpcLayer = (
           // through the tracker.
           const runBootstrap = tracked
             ? Effect.gen(function* () {
-                const fiber = yield* Effect.forkDetach(settledBootstrapProgram);
-                yield* worktreeSetupTracker.begin({
-                  threadId,
-                  branch: bootstrap?.prepareWorktree?.branch ?? null,
-                  baseRef: bootstrap?.prepareWorktree?.baseBranch ?? null,
-                  stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
-                  fiber,
-                });
+                // Fork and register as one step: a detached fiber keeps going
+                // if the caller is interrupted, so it must never exist without
+                // the tracker entry that cancel and the stage updates key on.
+                const fiber = yield* Effect.uninterruptible(
+                  Effect.gen(function* () {
+                    const fiber = yield* Effect.forkDetach(settledBootstrapProgram);
+                    yield* worktreeSetupTracker.begin({
+                      threadId,
+                      branch: bootstrap?.prepareWorktree?.branch ?? null,
+                      baseRef: bootstrap?.prepareWorktree?.baseBranch ?? null,
+                      stages: ["fetch", "checkout", "submodules", "setup-script", "agent"],
+                      fiber,
+                    });
+                    return fiber;
+                  }),
+                );
                 return yield* Fiber.join(fiber);
               })
             : settledBootstrapProgram;
