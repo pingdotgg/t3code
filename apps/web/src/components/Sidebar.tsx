@@ -130,6 +130,7 @@ import {
   useProjects,
   useThreadShells,
 } from "../state/entities";
+import { exportThreadAsMarkdown } from "../lib/threadExport";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
@@ -4138,6 +4139,9 @@ export default function Sidebar() {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "export-markdown":
+            await exportThreadAsMarkdown(threadRef);
             return;
           case "archive": {
             if (confirmThreadArchive) {

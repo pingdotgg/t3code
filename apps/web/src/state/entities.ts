@@ -183,6 +183,34 @@ export function readThreadShell(ref: ScopedThreadRef): EnvironmentThreadShell | 
   return appAtomRegistry.get(environmentThreadShells.threadShellAtom(ref));
 }
 
+export function readThreadDetail(ref: ScopedThreadRef): EnvironmentThread | null {
+  return appAtomRegistry.get(environmentThreadDetails.detailAtom(ref));
+}
+
+export function waitForThreadDetail(
+  ref: ScopedThreadRef,
+  timeoutMs = 5_000,
+): Promise<EnvironmentThread | null> {
+  const current = readThreadDetail(ref);
+  if (current !== null) return Promise.resolve(current);
+
+  return new Promise((resolve) => {
+    let unsubscribe: (() => void) | null = null;
+    const timeout = setTimeout(() => {
+      unsubscribe?.();
+      resolve(readThreadDetail(ref));
+    }, timeoutMs);
+    const finish = (detail: EnvironmentThread | null) => {
+      if (detail === null) return;
+      clearTimeout(timeout);
+      unsubscribe?.();
+      resolve(detail);
+    };
+    unsubscribe = appAtomRegistry.subscribe(environmentThreadDetails.detailAtom(ref), finish);
+    finish(readThreadDetail(ref));
+  });
+}
+
 /** Whether the environment's server understands thread.settle/unsettle.
     False for pre-settlement servers (capability defaults false on decode),
     so clients under version skew fall back instead of erroring. */
