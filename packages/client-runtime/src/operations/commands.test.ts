@@ -10,12 +10,14 @@ import {
   PlanId,
   ProjectId,
   ProviderInstanceId,
+  ProviderSessionId,
   RunId,
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
   WS_METHODS,
   type OrchestrationV2Command,
+  type OrchestrationV2ProviderSession,
   type OrchestrationV2ThreadCheckpointContext,
   type OrchestrationV2ThreadLaunchInput,
   type OrchestrationV2ThreadProjection,
@@ -52,6 +54,7 @@ import {
   revertThreadCheckpoint,
   settleThread,
   startThreadTurn,
+  stopThreadSession,
   unsettleThread,
   updateProject,
   updateThreadMetadata,
@@ -1049,6 +1052,47 @@ describe("V2 environment commands", () => {
           commandId: "direct-interrupt",
           threadId: v2ThreadId,
           runId: "active-run",
+        },
+      ]);
+    }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),
+  );
+
+  it.effect("detaches every provider session against the unbounded projection", () =>
+    Effect.gen(function* () {
+      const commands: OrchestrationV2Command[] = [];
+      const projectionInputs: Array<Record<string, unknown>> = [];
+      const supervisor = yield* makeSupervisor({
+        commands,
+        projects: [],
+        projectionInputs,
+        projection: {
+          ...v2Projection,
+          providerSessions: [
+            {
+              id: ProviderSessionId.make("provider-session-detach"),
+              providerInstanceId: ProviderInstanceId.make("codex"),
+              status: "ready",
+              cwd: "/repo",
+            } as unknown as OrchestrationV2ProviderSession,
+          ],
+        },
+      });
+
+      yield* stopThreadSession({
+        commandId: CommandId.make("stop-session"),
+        threadId: v2ThreadId,
+      }).pipe(Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor));
+
+      // The bounded window omits ready sessions outside the retained cohort —
+      // the detach sweep has to see the full projection.
+      expect(projectionInputs).toEqual([{ threadId: v2ThreadId }]);
+      expect(commands).toEqual([
+        {
+          type: "provider-session.detach",
+          commandId: "stop-session:detach:provider-session-detach",
+          threadId: v2ThreadId,
+          providerSessionId: "provider-session-detach",
+          reason: "client-requested",
         },
       ]);
     }).pipe(Effect.provide(TEST_CRYPTO_LAYER)),

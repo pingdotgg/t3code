@@ -40,6 +40,7 @@ import {
   ThreadHistoryController,
   threadHistoryControllerLayer,
 } from "./threadHistoryController.ts";
+import { EMPTY_THREAD_HISTORY_META } from "./threadHistoryMerge.ts";
 import {
   EMPTY_ENVIRONMENT_THREAD_STATE,
   makeEnvironmentThreadState,
@@ -894,6 +895,67 @@ describe("EnvironmentThreads", () => {
         });
         expect(Option.getOrThrow(state.data).thread.title).toBe("Refreshed snapshot");
       }),
+  );
+
+  it.effect("marks the thread deleted when the bounded reseed reports not found", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeHarness({
+        historyHttpClient: HttpClient.make((request, url) => {
+          if (url.pathname.endsWith("/history")) {
+            return Effect.succeed(
+              HttpClientResponse.fromWeb(
+                request,
+                Response.json(
+                  {
+                    _tag: "EnvironmentRequestInvalidError",
+                    code: "invalid_request",
+                    reason: "invalid_history_cursor",
+                    traceId: "trace-dead-cursor",
+                  },
+                  { status: 400 },
+                ),
+              ),
+            );
+          }
+          return Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json(
+                {
+                  _tag: "EnvironmentResourceNotFoundError",
+                  code: "not_found",
+                  reason: "thread_not_found",
+                  traceId: "trace-reseed-missing",
+                },
+                { status: 404 },
+              ),
+            ),
+          );
+        }),
+      });
+      yield* Queue.offer(harness.inputs, {
+        kind: "snapshot",
+        snapshotSequence: 14,
+        projection: BASE_PROJECTION,
+        historyCursor: "dead-history-cursor",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 10,
+        payloadBudgetExceeded: false,
+      });
+      yield* awaitThreadState(
+        harness.observed,
+        (value) => value.status === "live" && value.history.historyCursor === "dead-history-cursor",
+      );
+
+      // A dead cursor on a deleted thread must not keep the stale projection
+      // rendered or retry an unrecoverable cursor.
+      expect(yield* harness.loadEarlier()).toEqual({ _tag: "noop" });
+
+      const state = yield* SubscriptionRef.get(harness.threadState);
+      expect(state.status).toBe("deleted");
+      expect(Option.isNone(state.data)).toBe(true);
+      expect(state.history).toEqual(EMPTY_THREAD_HISTORY_META);
+    }),
   );
 
   it.effect("skips a stale bounded reseed when a newer socket event landed in flight", () =>
