@@ -412,8 +412,10 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
  * The session window wins when the provider reports one: it is the number
  * Claude Code and Codex put in their own status lines, and the one that moves
  * while you work. Providers without a session window fall back to whichever
- * window has the least left, ties going to the shortest. The choice never
- * depends on the clock, so deciding whether to mount the meter does not need one.
+ * window has the least left. Ties go to the shorter window by reported
+ * duration, and to the shorter kind when a duration is missing. The choice
+ * never depends on the clock, so deciding whether to mount the meter does not
+ * need one.
  */
 export function usageLimitsMeterWindow(
   limits: ServerProviderUsageLimits | undefined,
@@ -423,11 +425,20 @@ export function usageLimitsMeterWindow(
     limits.windows.find((window) => window.kind === "session") ??
     [...limits.windows].sort(
       (left, right) =>
-        remainingPercent(left) - remainingPercent(right) ||
-        WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind],
+        remainingPercent(left) - remainingPercent(right) || byWindowLength(left, right),
     )[0] ??
     null
   );
+}
+
+/** Shorter window first: by reported duration when both report one, else by kind. */
+function byWindowLength(left: ServerProviderUsageWindow, right: ServerProviderUsageWindow): number {
+  const leftMins = left.windowDurationMins;
+  const rightMins = right.windowDurationMins;
+  if (leftMins !== undefined && rightMins !== undefined && leftMins !== rightMins) {
+    return leftMins - rightMins;
+  }
+  return WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind];
 }
 
 /**
