@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useId, useState } from "react";
 import {
   resolveOfficialAcpRegistryIconUrl,
   officialAcpRegistryIconUrlForAgentId,
@@ -79,6 +79,7 @@ export function AcpRegistryAgentIcon({
   readonly className?: string;
   readonly fallbackClassName?: string;
 }) {
+  const colorFilterId = useId();
   const iconUrl = resolveOfficialAcpRegistryIconUrl(icon);
   const [image, setImage] = useState<{
     readonly iconUrl: string;
@@ -123,6 +124,17 @@ export function AcpRegistryAgentIcon({
         className,
       )}
     >
+      {/* Registry glyphs are monochrome. Recolor their alpha rather than
+          inverting RGB values; external images cannot inherit currentColor.
+          A local SVG filter also works when CDN CORS prevents CSS masks. */}
+      <svg aria-hidden className="pointer-events-none absolute size-0" focusable="false">
+        <defs>
+          <filter id={colorFilterId} colorInterpolationFilters="sRGB">
+            <feFlood floodColor="currentColor" />
+            <feComposite in2="SourceAlpha" operator="in" />
+          </filter>
+        </defs>
+      </svg>
       {status !== "loaded" ? (
         <ACPRegistryIcon
           className={cn("size-4", fallbackClassName)}
@@ -136,6 +148,7 @@ export function AcpRegistryAgentIcon({
             "size-full object-contain",
             status !== "loaded" && "invisible absolute inset-0",
           )}
+          style={{ filter: `url(#${colorFilterId})` }}
           decoding="async"
           referrerPolicy="no-referrer"
           src={source}
