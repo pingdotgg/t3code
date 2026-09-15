@@ -1,3 +1,4 @@
+import type { RequiredPlatformOs } from "@t3tools/client-runtime/load-balancing";
 import { elementContextToPreviewAnnotation } from "./lib/elementContext";
 import {
   ElementContextDetails,
@@ -316,6 +317,9 @@ const PersistedDraftThreadState = Schema.Struct({
   logicalProjectKey: Schema.optionalKey(Schema.String),
   environmentSelection: Schema.optionalKey(Schema.Literals(["auto", "manual"])),
   loadBalancedEnvironmentId: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  requiredPlatformOs: Schema.optionalKey(
+    Schema.NullOr(Schema.Literals(["darwin", "linux", "windows"])),
+  ),
   createdAt: Schema.String,
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
@@ -443,6 +447,7 @@ export interface DraftSessionState {
   logicalProjectKey: string;
   environmentSelection?: "auto" | "manual";
   loadBalancedEnvironmentId?: EnvironmentId | null;
+  requiredPlatformOs?: RequiredPlatformOs;
   createdAt: string;
   runtimeMode: RuntimeMode;
   interactionMode: ProviderInteractionMode;
@@ -541,6 +546,17 @@ interface ComposerDraftStoreState {
       loadBalancedEnvironmentId?: EnvironmentId | null;
     },
   ) => void;
+  /** Commits a resource-check result only while the draft still permits that routing. */
+  applyDraftLoadBalancedEnvironment: (
+    threadRef: ComposerThreadTarget,
+    projectRef: ScopedProjectRef,
+    requiredPlatformOs: RequiredPlatformOs,
+  ) => boolean;
+  /** Changes Auto platform atomically; pinned drafts must be unlocked first. */
+  setDraftRequiredPlatformOs: (
+    threadRef: ComposerThreadTarget,
+    requiredPlatformOs: RequiredPlatformOs,
+  ) => boolean;
   /** Updates mutable draft-session metadata without touching composer content. */
   setDraftThreadContext: (
     threadRef: ComposerThreadTarget,
@@ -1540,6 +1556,7 @@ function createDraftThreadState(
     projectId: projectRef.projectId,
     logicalProjectKey,
     ...(environmentSelection ? { environmentSelection } : {}),
+    requiredPlatformOs: existingThread?.requiredPlatformOs ?? null,
     ...(options?.loadBalancedEnvironmentId !== undefined
       ? { loadBalancedEnvironmentId: options.loadBalancedEnvironmentId }
       : existingThread?.loadBalancedEnvironmentId !== undefined
@@ -1585,6 +1602,7 @@ function draftThreadsEqual(left: DraftThreadState | undefined, right: DraftThrea
     left.logicalProjectKey === right.logicalProjectKey &&
     left.environmentSelection === right.environmentSelection &&
     left.loadBalancedEnvironmentId === right.loadBalancedEnvironmentId &&
+    left.requiredPlatformOs === right.requiredPlatformOs &&
     left.createdAt === right.createdAt &&
     left.runtimeMode === right.runtimeMode &&
     left.interactionMode === right.interactionMode &&
@@ -1750,6 +1768,12 @@ function normalizePersistedDraftThreads(
           : candidateDraftThread.loadBalancedEnvironmentId === null
             ? { loadBalancedEnvironmentId: null }
             : {}),
+        requiredPlatformOs:
+          candidateDraftThread.requiredPlatformOs === "darwin" ||
+          candidateDraftThread.requiredPlatformOs === "linux" ||
+          candidateDraftThread.requiredPlatformOs === "windows"
+            ? candidateDraftThread.requiredPlatformOs
+            : null,
         promotedTo,
       };
     }
@@ -2478,6 +2502,7 @@ function toHydratedDraftThreadState(
           persistedDraftThread.projectId,
         ),
       ),
+    requiredPlatformOs: persistedDraftThread.requiredPlatformOs ?? null,
     createdAt: persistedDraftThread.createdAt,
     runtimeMode: persistedDraftThread.runtimeMode,
     interactionMode: persistedDraftThread.interactionMode,
@@ -2707,6 +2732,61 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             options,
           );
         },
+        applyDraftLoadBalancedEnvironment: (threadRef, projectRef, requiredPlatformOs) => {
+          const state = get();
+          const existing = state.getDraftThread(threadRef);
+          const composer = state.getComposerDraft(threadRef);
+          if (
+            !existing ||
+            existing.promotedTo ||
+            existing.loadBalancedEnvironmentId ||
+            existing.environmentSelection === "manual" ||
+            existing.worktreePath ||
+            (existing.requiredPlatformOs ?? null) !== requiredPlatformOs ||
+            (existing.branch && existing.environmentSelection !== "auto") ||
+            composer?.images.length ||
+            composer?.files.length ||
+            composer?.persistedAttachments.length
+          )
+            return false;
+          state.setDraftThreadContext(threadRef, {
+            projectRef,
+            environmentSelection: "auto",
+            loadBalancedEnvironmentId: projectRef.environmentId,
+          });
+          return true;
+        },
+        setDraftRequiredPlatformOs: (threadRef, requiredPlatformOs) => {
+          const threadKey = resolveComposerDraftKey(get(), threadRef);
+          if (!threadKey) return false;
+          const state = get();
+          const existing = state.draftThreadsByThreadKey[threadKey];
+          const composer = state.draftsByThreadKey[threadKey];
+          if (
+            !existing ||
+            existing.promotedTo ||
+            existing.environmentSelection === "manual" ||
+            (existing.branch && existing.environmentSelection !== "auto") ||
+            existing.worktreePath ||
+            composer?.images.length ||
+            composer?.files.length ||
+            composer?.persistedAttachments.length
+          )
+            return false;
+          if ((existing.requiredPlatformOs ?? null) === requiredPlatformOs) return true;
+          set({
+            draftThreadsByThreadKey: {
+              ...state.draftThreadsByThreadKey,
+              [threadKey]: {
+                ...existing,
+                requiredPlatformOs,
+                environmentSelection: "auto",
+                loadBalancedEnvironmentId: null,
+              },
+            },
+          });
+          return true;
+        },
         setDraftThreadContext: (threadRef, options) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
@@ -2759,6 +2839,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               environmentId: nextProjectRef.environmentId,
               projectId: nextProjectRef.projectId,
               logicalProjectKey: existing.logicalProjectKey,
+              requiredPlatformOs: existing.requiredPlatformOs ?? null,
               ...(environmentSelection ? { environmentSelection } : {}),
               loadBalancedEnvironmentId:
                 options.loadBalancedEnvironmentId === undefined
