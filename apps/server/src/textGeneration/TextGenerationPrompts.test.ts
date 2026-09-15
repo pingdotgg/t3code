@@ -264,6 +264,13 @@ describe("sanitizeThreadTitle", () => {
       ),
     ).toBe("Reconnect failures after restart because the session state does not recover");
   });
+
+  it("caps runaway titles so a paragraph cannot reach the sidebar", () => {
+    const words = Array.from({ length: 40 }, (_, index) => `word${index}`).join(" ");
+    const title = sanitizeThreadTitle(words);
+    expect(title.length).toBeLessThanOrEqual(120);
+    expect(title.endsWith("...")).toBe(true);
+  });
 });
 
 describe("normalizeCliError", () => {

@@ -15,7 +15,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { makeCodexTextGeneration } from "../src/textGeneration/CodexTextGeneration.ts";
-import { threadTitleEvaluationCases } from "../src/textGeneration/ThreadTitleEvaluation.ts";
+import { threadTitleEvaluationCases } from "./threadTitleEvaluationCases.ts";
 import {
   formatThreadTitleContext,
   type ThreadTitleMessage,
