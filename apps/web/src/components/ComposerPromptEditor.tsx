@@ -35,6 +35,7 @@ import {
   KEY_ARROW_UP_COMMAND,
   KEY_DOWN_COMMAND,
   KEY_ENTER_COMMAND,
+  KEY_ESCAPE_COMMAND,
   KEY_TAB_COMMAND,
   COMMAND_PRIORITY_HIGH,
   COPY_COMMAND,
@@ -871,6 +872,8 @@ interface ComposerPromptEditorProps {
   skills: ReadonlyArray<ServerProviderSkill>;
   disabled: boolean;
   placeholder: string;
+  suggestionListId?: string | undefined;
+  activeSuggestionId?: string | undefined;
   containerClassName?: string;
   className?: string;
   placeholderClassName?: string;
@@ -883,7 +886,7 @@ interface ComposerPromptEditorProps {
   ) => void;
   onVisibleSelectionChange?: () => void;
   onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
     event: KeyboardEvent,
   ) => boolean;
   onPageScrollKeyDown?: (key: "PageUp" | "PageDown") => void;
@@ -956,7 +959,7 @@ function caretLineRect(range: Range, edge: "start" | "end"): DOMRect | null {
 
 function ComposerCommandKeyPlugin(props: {
   onCommandKeyDown?: (
-    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+    key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
     event: KeyboardEvent,
   ) => boolean;
 }) {
@@ -964,7 +967,7 @@ function ComposerCommandKeyPlugin(props: {
 
   useEffect(() => {
     const handleCommand = (
-      key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
+      key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab" | "Escape",
       event: KeyboardEvent | null,
     ): boolean => {
       if (!props.onCommandKeyDown || !event) {
@@ -1004,12 +1007,18 @@ function ComposerCommandKeyPlugin(props: {
       (event) => handleCommand("Tab", event),
       COMMAND_PRIORITY_HIGH,
     );
+    const unregisterEscape = editor.registerCommand(
+      KEY_ESCAPE_COMMAND,
+      (event) => handleCommand("Escape", event),
+      COMMAND_PRIORITY_HIGH,
+    );
 
     return () => {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
       unregisterTab();
+      unregisterEscape();
     };
   }, [editor, props]);
 
@@ -1626,6 +1635,8 @@ function ComposerPromptEditorInner({
   skills,
   disabled,
   placeholder,
+  suggestionListId,
+  activeSuggestionId,
   containerClassName,
   className,
   placeholderClassName,
@@ -1984,6 +1995,12 @@ function ComposerPromptEditorInner({
                   className,
                 )}
                 data-testid="composer-editor"
+                ariaLabel="Message"
+                ariaMultiline={true}
+                ariaAutoComplete="list"
+                ariaControls={suggestionListId}
+                ariaActiveDescendant={activeSuggestionId}
+                aria-haspopup="listbox"
                 aria-placeholder={placeholder}
                 placeholder={<span />}
                 onKeyDown={(event) => {
@@ -2071,6 +2088,8 @@ export function ComposerPromptEditor({
   skills,
   disabled,
   placeholder,
+  suggestionListId,
+  activeSuggestionId,
   containerClassName,
   className,
   placeholderClassName,
@@ -2118,6 +2137,8 @@ export function ComposerPromptEditor({
           skills={skills}
           disabled={disabled}
           placeholder={placeholder}
+          suggestionListId={suggestionListId}
+          activeSuggestionId={activeSuggestionId}
           {...(containerClassName ? { containerClassName } : {})}
           onChange={onChange}
           {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}

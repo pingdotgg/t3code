@@ -8,6 +8,7 @@ describe("ComposerCommandMenu", () => {
   it("renders slash commands with their descriptions", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
+        listId="test-suggestions"
         items={[
           {
             id: "slash:model",
@@ -33,6 +34,7 @@ describe("ComposerCommandMenu", () => {
   it("shows the app source for an app skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
+        listId="test-suggestions"
         items={[
           {
             id: "skill:codex:browser",
@@ -67,6 +69,7 @@ describe("ComposerCommandMenu", () => {
   it("shows the repo source for a slash skill", () => {
     const markup = renderToStaticMarkup(
       <ComposerCommandMenu
+        listId="test-suggestions"
         items={[
           {
             id: "skill:codex:ask-matt",
