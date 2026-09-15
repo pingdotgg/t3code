@@ -28,6 +28,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
   const gitState = useSelectedThreadGitState();
+  const vcsTerminology = gitState.vcsTerminology;
   const gitActions = useSelectedThreadGitActions();
 
   const params = props.route.params;
@@ -50,9 +51,10 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
             action: confirmAction,
             branchName,
             includesCommit,
+            vcsTerminology,
           })
         : null,
-    [branchName, confirmAction, includesCommit],
+    [branchName, confirmAction, includesCommit, vcsTerminology],
   );
 
   const continuePendingAction = useCallback(async () => {
@@ -114,7 +116,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
           Confirm
         </Text>
         <Text className="text-center text-3xl font-t3-bold">
-          {copy?.title ?? "Run action on default branch?"}
+          {copy?.title ?? `Run action on default ${vcsTerminology.refNoun}?`}
         </Text>
         <Text className="text-center text-foreground-secondary text-sm font-medium leading-normal">
           {copy?.description ?? "Choose how to continue."}
@@ -129,7 +131,7 @@ export function GitConfirmSheet(props: GitConfirmSheetProps) {
         />
         <SheetActionButton
           icon="arrow.branch"
-          label="Feature branch & continue"
+          label={`Feature ${vcsTerminology.refNoun} & continue`}
           tone="primary"
           onPress={() => void movePendingActionToFeatureBranch()}
         />

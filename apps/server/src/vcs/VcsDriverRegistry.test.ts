@@ -1,7 +1,9 @@
 import { assert, it, describe } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ChildProcessSpawner } from "effect/unstable/process";
 
 import * as VcsProcess from "./VcsProcess.ts";
@@ -40,6 +42,44 @@ describe("VcsDriverRegistry", () => {
       const driver = yield* registry.get("git");
 
       assert.strictEqual(driver.capabilities.kind, "git");
+    }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("auto-detects a colocated workspace as jj, ahead of git, without a subprocess", () => {
+    let processCalls = 0;
+    const layer = Layer.effect(VcsDriverRegistry.VcsDriverRegistry, VcsDriverRegistry.make).pipe(
+      Layer.provideMerge(NodeServices.layer),
+      Layer.provide(
+        Layer.mock(VcsProjectConfig.VcsProjectConfig)({
+          resolveKind: (input) => Effect.succeed(input.requestedKind ?? "auto"),
+        }),
+      ),
+      Layer.provide(
+        Layer.mock(VcsProcess.VcsProcess)({
+          run: () =>
+            Effect.sync(() => {
+              processCalls += 1;
+              return processOutput("");
+            }),
+        }),
+      ),
+    );
+
+    return Effect.gen(function* () {
+      const registry = yield* VcsDriverRegistry.VcsDriverRegistry;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const created = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3-jj-registry-" });
+      const root = yield* fileSystem.realPath(created);
+      yield* fileSystem.makeDirectory(path.join(root, ".jj", "repo"), { recursive: true });
+      yield* fileSystem.makeDirectory(path.join(root, ".git"), { recursive: true });
+
+      assert.strictEqual((yield* registry.get("jj")).capabilities.kind, "jj");
+
+      const detected = yield* registry.detect({ cwd: root });
+      assert.strictEqual(detected?.kind, "jj");
+      assert.strictEqual(detected?.repository.rootPath, root);
+      assert.strictEqual(processCalls, 0);
     }).pipe(Effect.provide(layer));
   });
 

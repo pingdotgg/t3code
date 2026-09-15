@@ -4,6 +4,7 @@ import {
   scopeThreadRef,
   scopedThreadKey,
 } from "@t3tools/client-runtime/environment";
+import { DEFAULT_VCS_TERMINOLOGY, type VcsTerminology } from "@t3tools/shared/vcs";
 import { settlePromise, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import { canSnooze, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import { threadRuntimeCanArchive } from "@t3tools/client-runtime/state/models";
@@ -200,7 +201,11 @@ function useMarkThreadUnread() {
   );
 }
 
-export function useThreadActions() {
+/**
+ * @param terminology Nouns for the thread's VCS. Surfaces with no status in
+ * hand (the sidebar's per-row menus) leave it out and get Git's.
+ */
+export function useThreadActions(terminology: VcsTerminology = DEFAULT_VCS_TERMINOLOGY) {
   const closeTerminal = useAtomCommand(terminalEnvironment.close);
   const archiveThreadMutation = useAtomCommand(threadEnvironment.archive, {
     reportFailure: false,
@@ -389,10 +394,10 @@ export function useThreadActions() {
         const confirmationResult = await settlePromise(() =>
           localApi.dialogs.confirm(
             [
-              "This thread is the only one linked to this worktree:",
+              `This thread is the only one linked to this ${terminology.workspaceNoun}:`,
               displayWorktreePath ?? orphanedWorktreePath,
               "",
-              "Delete the worktree too?",
+              `Delete the ${terminology.workspaceNoun} too?`,
             ].join("\n"),
             { variant: "destructive" },
           ),
@@ -498,8 +503,8 @@ export function useThreadActions() {
           stackedThreadToast({
             type: "error",
             title: removalFailed
-              ? "Failed to delete worktree"
-              : "Worktree deleted, but Git status refresh failed",
+              ? `Failed to delete ${terminology.workspaceNoun}`
+              : `${terminology.workspaceNounTitle} deleted, but ${terminology.systemName} status refresh failed`,
             description: removalFailed
               ? `Could not remove ${displayWorktreePath ?? orphanedWorktreePath}. ${message}`
               : message,

@@ -983,10 +983,12 @@ export function NewTaskDraftScreen(props: {
     branchName: selectedBranchName,
     startFromOrigin: flow.startFromOrigin,
     workspaceMode: flow.workspaceMode,
+    terminology: flow.vcsTerminology,
   });
   const workspaceLabel = resolveNewTaskWorkspaceLabel({
     workspaceMode: flow.workspaceMode,
     worktreePath: flow.selectedWorktreePath,
+    terminology: flow.vcsTerminology,
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
@@ -1515,7 +1517,7 @@ export function NewTaskDraftScreen(props: {
   const workspaceControls = (
     <View className="flex-row items-center gap-1 px-2">
       <ComposerInlineControl
-        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? "a new worktree" : "the current checkout"}`}
+        accessibilityHint={`Switches to ${flow.workspaceMode === "local" ? `a new ${flow.vcsTerminology.workspaceNoun}` : `the current ${flow.vcsTerminology.currentRefFallback}`}`}
         accessibilityLabel={workspaceLabel}
         disabled={isComposerInteractionLocked || voiceInput.isBusy}
         iconNode={
@@ -1531,11 +1533,13 @@ export function NewTaskDraftScreen(props: {
       />
 
       <ComposerInlineControl
-        accessibilityLabel={`${flow.workspaceMode === "worktree" ? "Base branch" : "Branch"}: ${selectedBranchLabel}`}
+        accessibilityLabel={`${flow.workspaceMode === "worktree" ? `Base ${flow.vcsTerminology.refNoun}` : flow.vcsTerminology.refNounTitle}: ${selectedBranchLabel}`}
         chevronDirection="right"
         disabled={isComposerInteractionLocked}
         icon="arrow.triangle.branch"
-        label={showBranchLoading ? "Loading branches…" : selectedBranchLabel}
+        label={
+          showBranchLoading ? `Loading ${flow.vcsTerminology.refNounPlural}…` : selectedBranchLabel
+        }
         maxWidth={190}
         onPress={() => openContextPicker("NewTaskBranch")}
       />

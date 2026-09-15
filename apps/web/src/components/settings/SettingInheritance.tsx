@@ -10,6 +10,7 @@ import { cn } from "../../lib/utils";
 import type { EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { resolveEnvModeLabel } from "../BranchToolbar.logic";
+import { DEFAULT_VCS_TERMINOLOGY } from "@t3tools/shared/vcs";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { Button } from "../ui/button";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
@@ -52,7 +53,8 @@ function formatValue(key: keyof ServerSettings, value: unknown): string {
   }
   if (typeof value === "string") {
     if (key === "defaultThreadEnvMode" && (value === "local" || value === "worktree")) {
-      return resolveEnvModeLabel(value);
+      // The inheritance preview is VCS-agnostic: it has no project in hand.
+      return resolveEnvModeLabel(value, DEFAULT_VCS_TERMINOLOGY);
     }
     if (key === "pullRequestMergeMethod" && value in PULL_REQUEST_MERGE_METHOD_LABELS) {
       return PULL_REQUEST_MERGE_METHOD_LABELS[
