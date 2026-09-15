@@ -223,23 +223,35 @@ describe("storage quarantine", () => {
     expect(NodeFS.existsSync(worktreePath)).toBe(true);
   });
 
-  it("rolls back when a database reference appears during the move", () => {
+  it("holds an exclusive database transaction through the move and receipt", () => {
     const baseDir = makeHome();
     const worktreePath = makeWorktree(baseDir, "orphan");
     makeDatabase(baseDir, []);
     const [candidate] = inspectStorage(baseDir).candidates;
 
-    expect(() =>
-      quarantineStorageCandidate(
-        {
-          baseDir,
-          candidateId: candidate!.id,
-          snapshot: candidate!.snapshot,
+    let writerRejected = false;
+    const result = quarantineStorageCandidate(
+      {
+        baseDir,
+        candidateId: candidate!.id,
+        snapshot: candidate!.snapshot,
+      },
+      {
+        afterMove: () => {
+          try {
+            makeDatabase(baseDir, [{ path: worktreePath, deletedAt: null }]);
+          } catch (error) {
+            expect(error).toBeInstanceOf(Error);
+            expect((error as Error).message).toMatch(/locked/i);
+            writerRejected = true;
+          }
         },
-        { afterMove: () => makeDatabase(baseDir, [{ path: worktreePath, deletedAt: null }]) },
-      ),
-    ).toThrow(/during quarantine/i);
-    expect(NodeFS.existsSync(worktreePath)).toBe(true);
+      },
+    );
+
+    expect(writerRejected).toBe(true);
+    expect(NodeFS.existsSync(worktreePath)).toBe(false);
+    expect(NodeFS.existsSync(result.receiptPath)).toBe(true);
   });
 
   it("rejects restore when quarantined contents changed", () => {

@@ -190,39 +190,45 @@ function findWorktreeRoots(worktreesRoot: string): ReadonlyArray<string> {
   return found;
 }
 
-function readDatabaseWorktreePaths(dbPath: string): {
+type DatabaseWorktreePaths = {
   readonly available: boolean;
   readonly referenced: ReadonlySet<string>;
   readonly active: ReadonlySet<string>;
-} {
+};
+
+function readDatabaseWorktreePathsFrom(database: DatabaseSync): DatabaseWorktreePaths {
+  const tables = database
+    .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
+    .all()
+    .map((row) => String(row.name));
+  if (!tables.includes("projection_threads")) {
+    return { available: false, referenced: new Set(), active: new Set() };
+  }
+  const rows = database
+    .prepare(
+      "SELECT worktree_path, deleted_at FROM projection_threads WHERE worktree_path IS NOT NULL",
+    )
+    .all();
+  const referenced = new Set<string>();
+  const active = new Set<string>();
+  for (const row of rows) {
+    const resolvedPath = NodePath.resolve(String(row.worktree_path));
+    const worktreePath = NodeFS.existsSync(resolvedPath)
+      ? NodeFS.realpathSync.native(resolvedPath)
+      : resolvedPath;
+    referenced.add(worktreePath);
+    if (row.deleted_at === null) active.add(worktreePath);
+  }
+  return { available: true, referenced, active };
+}
+
+function readDatabaseWorktreePaths(dbPath: string): DatabaseWorktreePaths {
   if (!NodeFS.existsSync(dbPath)) {
     return { available: false, referenced: new Set(), active: new Set() };
   }
   const database = new DatabaseSync(dbPath, { readOnly: true });
   try {
-    const tables = database
-      .prepare("SELECT name FROM sqlite_master WHERE type = 'table'")
-      .all()
-      .map((row) => String(row.name));
-    if (!tables.includes("projection_threads")) {
-      return { available: false, referenced: new Set(), active: new Set() };
-    }
-    const rows = database
-      .prepare(
-        "SELECT worktree_path, deleted_at FROM projection_threads WHERE worktree_path IS NOT NULL",
-      )
-      .all();
-    const referenced = new Set<string>();
-    const active = new Set<string>();
-    for (const row of rows) {
-      const resolvedPath = NodePath.resolve(String(row.worktree_path));
-      const worktreePath = NodeFS.existsSync(resolvedPath)
-        ? NodeFS.realpathSync.native(resolvedPath)
-        : resolvedPath;
-      referenced.add(worktreePath);
-      if (row.deleted_at === null) active.add(worktreePath);
-    }
-    return { available: true, referenced, active };
+    return readDatabaseWorktreePathsFrom(database);
   } finally {
     database.close();
   }
@@ -232,6 +238,35 @@ function readWorktreeReferenceState(baseDir: string): ReturnType<typeof readData
   const databasePath = NodePath.join(baseDir, "userdata", "state.sqlite");
   if (NodeFS.existsSync(databasePath)) assertNoSymlink(baseDir, databasePath);
   return readDatabaseWorktreePaths(databasePath);
+}
+
+function withExclusiveWorktreeReferences<A>(
+  baseDir: string,
+  use: (references: () => DatabaseWorktreePaths) => A,
+): A {
+  const databasePath = NodePath.join(baseDir, "userdata", "state.sqlite");
+  if (!NodeFS.existsSync(databasePath)) {
+    throw new Error("T3 state database is unavailable.");
+  }
+  assertNoSymlink(baseDir, databasePath);
+  const database = new DatabaseSync(databasePath);
+  let committed = false;
+  try {
+    database.exec("BEGIN EXCLUSIVE");
+    const result = use(() => readDatabaseWorktreePathsFrom(database));
+    database.exec("COMMIT");
+    committed = true;
+    return result;
+  } finally {
+    if (!committed) {
+      try {
+        database.exec("ROLLBACK");
+      } catch {
+        // The transaction may not have started; preserve the original failure.
+      }
+    }
+    database.close();
+  }
 }
 
 export function inspectStorage(baseDirectory: string): StorageInspection {
@@ -365,35 +400,37 @@ export function quarantineStorageCandidate(
     throw new Error(`Quarantine receipt already exists: ${receiptPath}`);
   }
   hooks.beforeMove?.();
-  const latestReferences = readWorktreeReferenceState(inspection.baseDir);
-  if (!latestReferences.available || latestReferences.referenced.has(candidate.path)) {
-    throw new Error(`Storage candidate ${candidate.id} gained a database reference.`);
-  }
-  NodeFS.renameSync(candidate.path, quarantinedPath);
-  try {
-    hooks.afterMove?.();
-    const afterMoveReferences = readWorktreeReferenceState(inspection.baseDir);
-    if (!afterMoveReferences.available || afterMoveReferences.referenced.has(candidate.path)) {
-      throw new Error(
-        `Storage candidate ${candidate.id} gained a database reference during quarantine.`,
-      );
+  withExclusiveWorktreeReferences(inspection.baseDir, (references) => {
+    const latestReferences = references();
+    if (!latestReferences.available || latestReferences.referenced.has(candidate.path)) {
+      throw new Error(`Storage candidate ${candidate.id} gained a database reference.`);
     }
-    if (measureTree(quarantinedPath).snapshot !== candidate.snapshot) {
-      throw new Error(`Storage candidate ${candidate.id} changed during quarantine.`);
+    NodeFS.renameSync(candidate.path, quarantinedPath);
+    try {
+      hooks.afterMove?.();
+      const afterMoveReferences = references();
+      if (!afterMoveReferences.available || afterMoveReferences.referenced.has(candidate.path)) {
+        throw new Error(
+          `Storage candidate ${candidate.id} gained a database reference during quarantine.`,
+        );
+      }
+      if (measureTree(quarantinedPath).snapshot !== candidate.snapshot) {
+        throw new Error(`Storage candidate ${candidate.id} changed during quarantine.`);
+      }
+      writeReceipt(receiptPath, receipt);
+    } catch (cause) {
+      const originalParent = NodePath.dirname(candidate.path);
+      assertNoSymlinkAncestors(worktreesRoot, originalParent);
+      if (NodeFS.existsSync(candidate.path)) {
+        throw new AggregateError(
+          [cause, new Error(`Rollback target already exists: ${candidate.path}`)],
+          `Storage candidate ${candidate.id} could not be rolled back safely.`,
+        );
+      }
+      NodeFS.renameSync(quarantinedPath, candidate.path);
+      throw cause;
     }
-    writeReceipt(receiptPath, receipt);
-  } catch (cause) {
-    const originalParent = NodePath.dirname(candidate.path);
-    assertNoSymlinkAncestors(worktreesRoot, originalParent);
-    if (NodeFS.existsSync(candidate.path)) {
-      throw new AggregateError(
-        [cause, new Error(`Rollback target already exists: ${candidate.path}`)],
-        `Storage candidate ${candidate.id} could not be rolled back safely.`,
-      );
-    }
-    NodeFS.renameSync(quarantinedPath, candidate.path);
-    throw cause;
-  }
+  });
   return { receipt, receiptPath };
 }
 
