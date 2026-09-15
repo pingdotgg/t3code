@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - t3code/codex-turn-mapping
 
 permissions:
   contents: read
