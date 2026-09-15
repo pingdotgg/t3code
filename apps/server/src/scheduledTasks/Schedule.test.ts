@@ -120,4 +120,17 @@ describe("scheduled task schedule calculation", () => {
       ),
     ).toBe(false);
   });
+
+  it.each([
+    ["9:00", "09:00"],
+    ["09:00", "9:00"],
+    ["0:30", "00:30"],
+  ])("treats %s and %s as the same fixed-time schedule", (before, after) => {
+    expect(
+      isSameSchedule(
+        { type: "fixed_time", timeOfDay: before },
+        { type: "fixed_time", timeOfDay: after },
+      ),
+    ).toBe(true);
+  });
 });
