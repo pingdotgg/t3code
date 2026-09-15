@@ -28,6 +28,15 @@ to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
 Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
 
+## Mark a thread unread
+
+`thread.markUnread` marks the active thread unread with `mod+shift+u` on web and
+desktop. It requires a completed turn and does not run while the terminal has focus.
+The thread stays unread until you reopen it or a new turn completes.
+
+Microsoft Edge uses this shortcut for Read Aloud, and some Linux input methods use
+`Ctrl+Shift+U` for Unicode entry. Rebind it in **Settings → Keybindings** if needed.
+
 ## iPad
 
 With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine

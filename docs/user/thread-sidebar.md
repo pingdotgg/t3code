@@ -109,6 +109,11 @@ The linked pull request participates in automatic settlement.
 
 ## Find and reference work
 
+Choose **Mark unread** from a thread's menu to revisit a completed response later.
+On web and desktop, `mod+shift+u` marks the thread you have open unread; reopening
+the thread marks it read again. See [keybindings](./keybindings.md#mark-a-thread-unread)
+to customize the shortcut.
+
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads
 across connected environments. Message search starts after two characters and
 includes your messages and final agent responses.
