@@ -17,7 +17,11 @@ import {
   type VoiceLiveSessionDescription,
 } from "./live-client";
 import { createCommandSession, type CommandActions } from "./command-session";
-import { createVoiceNavigator, type VoiceRouteDriver } from "./navigation";
+import {
+  createVoiceNavigator,
+  type VoiceMissingThreadRedirect,
+  type VoiceRouteDriver,
+} from "./navigation";
 import { createNavigatingVoiceToolExecutor } from "./ui/toolBridge";
 import type { VoiceToolExecutor } from "./tools";
 
@@ -95,7 +99,7 @@ interface LoopHarness {
   readonly lateRedirects: Array<{ code: string; threadId?: string }>;
   readonly navigations: Array<{ threadId: string; replace: boolean | undefined }>;
   readonly pendingNavigations: Array<() => void>;
-  readonly pathListeners: Array<(path: string) => void>;
+  readonly redirectListeners: Array<(redirect: VoiceMissingThreadRedirect) => void>;
   readonly sent: FakeDataChannel;
   readonly toolCalls: Array<{ tool: string; threadId?: string }>;
   readonly respondCalls: number;
@@ -120,7 +124,7 @@ const makeLoop = (): LoopHarness => {
   const pathState = { current: "/" };
   const pendingNavigations: Array<() => void> = [];
   const navigations: Array<{ threadId: string; replace: boolean | undefined }> = [];
-  const pathListeners: Array<(path: string) => void> = [];
+  const redirectListeners: Array<(redirect: VoiceMissingThreadRedirect) => void> = [];
   const driver: VoiceRouteDriver = {
     navigate: async ({ params, replace }) => {
       navigations.push({ threadId: params.threadId, replace });
@@ -136,11 +140,11 @@ const makeLoop = (): LoopHarness => {
       step(`readPath:${pathState.current}`);
       return pathState.current;
     },
-    subscribePathChange: (listener) => {
-      pathListeners.push(listener);
+    subscribeMissingThreadRedirect: (listener) => {
+      redirectListeners.push(listener);
       return () => {
-        const index = pathListeners.indexOf(listener);
-        if (index >= 0) pathListeners.splice(index, 1);
+        const index = redirectListeners.indexOf(listener);
+        if (index >= 0) redirectListeners.splice(index, 1);
       };
     },
   };
@@ -213,7 +217,6 @@ const makeLoop = (): LoopHarness => {
         ...(error.threadId === undefined ? {} : { threadId: error.threadId }),
       });
     },
-    redirectWatchMs: 30_000,
   });
   const bridge = createNavigatingVoiceToolExecutor({ tools, navigator });
 
@@ -295,7 +298,7 @@ const makeLoop = (): LoopHarness => {
     lateRedirects,
     navigations,
     pendingNavigations,
-    pathListeners,
+    redirectListeners,
     sent: peerConnection.channel,
     toolCalls,
     get respondCalls() {
@@ -472,7 +475,7 @@ describe("openThread deterministic loop", () => {
     expect(h.navigations.map((n) => n.threadId)).toEqual([THREAD_ONE, THREAD_TWO]);
   });
 
-  it("late-redirect watch reads any path change to / as the missing-thread guard, including a user Home click", async () => {
+  it("late-redirect watch: user navigation to / is never a failure; guard provenance for the destination always is", async () => {
     const h = makeLoop();
     await startToLive(h);
 
@@ -484,13 +487,23 @@ describe("openThread deterministic loop", () => {
 
     expect(h.chimes).toBe(1);
     expect(h.lateRedirects).toEqual([]);
+    expect(h.redirectListeners).toHaveLength(1);
 
-    // The user clicks Home (_chat.index resolves to "/") inside the watch
-    // window. The navigator cannot tell this from the missing-thread guard's
-    // automatic redirect and reports the acknowledged open as failed.
-    h.pathListeners[0]?.("/");
+    // The user clicks Home (_chat.index resolves to "/"): no provenance is
+    // recorded, so no event reaches the navigator. The other way a "/" can
+    // happen is the guard redirect for a different thread; its provenance
+    // names that thread, not the acknowledged one, and must stay silent.
+    h.redirectListeners[0]?.({ environmentId: ENV, threadId: THREAD_ONE });
     await flush();
+    expect(h.lateRedirects).toEqual([]);
+    // The watch stays armed for the acknowledged destination.
+    expect(h.redirectListeners).toHaveLength(1);
 
+    // The guard's verdict for the acknowledged thread, however late it lands,
+    // is reported exactly once.
+    h.redirectListeners[0]?.({ environmentId: ENV, threadId: THREAD_TWO });
+    await flush();
     expect(h.lateRedirects).toEqual([{ code: "thread_not_found", threadId: THREAD_TWO }]);
+    expect(h.redirectListeners).toHaveLength(0);
   });
 });

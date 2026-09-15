@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import ChatView from "../components/ChatView";
 import { threadHasStarted } from "../components/ChatView.logic";
 import { finalizePromotedDraftThreadByRef, useComposerDraftStore } from "../composerDraftStore";
+import { recordMissingThreadRedirect } from "../missingThreadRedirects";
 import { resolveThreadRouteRef, resolveThreadRouteRenderState } from "../threadRoutes";
 import { resolveThreadSyncPhase } from "../threadSync";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
@@ -70,6 +71,13 @@ function ChatThreadRouteView() {
       const { clearPendingFileDropsForThread } = useSidebarPendingFileDropStore.getState();
       clearPendingFileDropsForThread(threadRef);
       if (environmentHasAnyThreads) {
+        // Explicit provenance for the voice navigator: this redirect away is
+        // the guard's authoritative missing-thread verdict for this exact
+        // thread, not a user-initiated navigation to "/".
+        recordMissingThreadRedirect({
+          environmentId: threadRef.environmentId,
+          threadId: threadRef.threadId,
+        });
         void navigate({ to: "/", replace: true });
       }
     }

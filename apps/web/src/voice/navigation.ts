@@ -2,12 +2,14 @@
  * Voice-session navigation: approximate discovery opens the correct thread in
  * the attached UI and acknowledges the landing by reading the resulting route.
  *
- * Acknowledgment never trusts the navigation call alone. The TanStack router's
+ * Acknowledgment never trusts the navigation call alone. The thread route's
  * missing-thread guard (`_chat.$environmentId.$threadId.tsx`) redirects to `/`
  * asynchronously once route data proves the thread is gone, so the navigator
- * (1) reads the path back after `navigate` resolves, and (2) keeps a bounded
- * watch on subsequent path changes: a late redirect is reported as a
- * navigation failure instead of silent success.
+ * (1) reads the path back after `navigate` resolves, and (2) stays armed for
+ * the guard's authoritative missing-thread redirect: a redirect carrying the
+ * acknowledged destination's provenance is reported as a navigation failure
+ * instead of silent success, however late it lands. User-initiated navigation
+ * carries no provenance and is never reported.
  *
  * The plan's suppression rule lives here too: one pending navigation at a
  * time; a newer request supersedes the older one, which resolves as
@@ -15,10 +17,15 @@
  */
 import type { EnvironmentId, ThreadId, VoiceTimingMark, VoiceToolError } from "@t3tools/contracts";
 
+import type { MissingThreadRedirect } from "../missingThreadRedirects";
+
 export interface VoiceNavigationDestination {
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
 }
+
+/** A guard redirect is provenance for exactly one destination. */
+export type VoiceMissingThreadRedirect = MissingThreadRedirect;
 
 /** Route id of the thread route (`_chat` is a pathless layout, so the URL is
     `/$environmentId/$threadId`; see `__root.tsx`'s programmatic navigate). */
@@ -39,8 +46,11 @@ export interface VoiceRouteDriver {
   }): Promise<void>;
   /** The current location pathname, read at call time (never assumed). */
   readCurrentPath(): string;
-  /** Location-change subscription used for the bounded late-redirect watch. */
-  subscribePathChange(listener: (path: string) => void): () => void;
+  /** Authoritative missing-thread redirect provenance, fired only by the
+      thread route's guard when route data proves a thread gone. */
+  subscribeMissingThreadRedirect(
+    listener: (redirect: VoiceMissingThreadRedirect) => void,
+  ): () => void;
 }
 
 export type VoiceEnvironmentReachability = "unknown" | "disconnected" | "connected";
@@ -52,13 +62,11 @@ export interface VoiceNavigatorDeps {
   readonly reachabilityOf: (environmentId: EnvironmentId) => VoiceEnvironmentReachability;
   /** Mark bus (the live client's emitMark). */
   readonly emitMark: (mark: VoiceTimingMark, detail?: string) => void;
-  /** Fired when a route acknowledged as the destination later redirects to
-      `/` (thread disappeared between validation and navigation). The
-      `navigation_acknowledged` mark has already been emitted at that point
-      and is never un-emitted; the UI surfaces the failure instead. */
+  /** Fired when a route acknowledged as the destination is later proven
+      missing by the guard's redirect. The `navigation_acknowledged` mark has
+      already been emitted at that point and is never un-emitted; the UI
+      surfaces the failure instead. */
   readonly onRedirectAfterAcknowledgment?: (error: VoiceToolError) => void;
-  /** How long the late-redirect watch stays armed after acknowledgment. */
-  readonly redirectWatchMs?: number;
 }
 
 export type VoiceNavigationResult =
@@ -75,8 +83,6 @@ export interface VoiceNavigator {
   dispose(): void;
 }
 
-const DEFAULT_REDIRECT_WATCH_MS = 2_000;
-
 const threadNotFoundError = (destination: VoiceNavigationDestination): VoiceToolError => ({
   code: "thread_not_found",
   message: `Thread "${destination.threadId}" is not reachable in the attached UI; the route redirected away.`,
@@ -85,40 +91,35 @@ const threadNotFoundError = (destination: VoiceNavigationDestination): VoiceTool
 });
 
 export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
-  const redirectWatchMs = deps.redirectWatchMs ?? DEFAULT_REDIRECT_WATCH_MS;
   let token = 0;
   let awaitingFirstSpeech = false;
   let acknowledgedDestination: VoiceNavigationDestination | undefined;
-  let pathWatchUnsubscribe: (() => void) | undefined;
-  let watchTimer: ReturnType<typeof setTimeout> | undefined;
+  let redirectUnsubscribe: (() => void) | undefined;
 
-  const clearWatch = () => {
-    pathWatchUnsubscribe?.();
-    pathWatchUnsubscribe = undefined;
-    if (watchTimer !== undefined) {
-      clearTimeout(watchTimer);
-      watchTimer = undefined;
-    }
+  const clearRedirectWatch = () => {
+    redirectUnsubscribe?.();
+    redirectUnsubscribe = undefined;
   };
 
-  /** The late redirect always lands on `/` (the route's missing-thread
-      effect), so the failure shape is fixed; the acknowledged destination is
-      carried by the closure for its identity fields. */
-  const armRedirectWatch = (myToken: number) => {
-    clearWatch();
-    pathWatchUnsubscribe = deps.driver.subscribePathChange((path) => {
-      if (myToken !== token) {
-        clearWatch();
+  /** Armed from acknowledgment until it fires, a newer navigation replaces
+      it, or dispose. There is no timer: the guard's provenance-matched
+      redirect is the only trigger, so neither user navigation nor elapsed
+      time can produce a false or missed report. */
+  const armRedirectWatch = () => {
+    clearRedirectWatch();
+    redirectUnsubscribe = deps.driver.subscribeMissingThreadRedirect((redirect) => {
+      if (acknowledgedDestination === undefined) {
         return;
       }
-      if (path === "/" && acknowledgedDestination !== undefined) {
-        clearWatch();
-        deps.onRedirectAfterAcknowledgment?.(threadNotFoundError(acknowledgedDestination));
+      if (
+        redirect.environmentId !== acknowledgedDestination.environmentId ||
+        redirect.threadId !== acknowledgedDestination.threadId
+      ) {
+        return;
       }
+      clearRedirectWatch();
+      deps.onRedirectAfterAcknowledgment?.(threadNotFoundError(acknowledgedDestination));
     });
-    watchTimer = setTimeout(() => {
-      clearWatch();
-    }, redirectWatchMs);
   };
 
   const navigateToThread = async (
@@ -126,7 +127,7 @@ export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
   ): Promise<VoiceNavigationResult> => {
     token += 1;
     const myToken = token;
-    clearWatch();
+    clearRedirectWatch();
     acknowledgedDestination = undefined;
 
     const reachability = deps.reachabilityOf(destination.environmentId);
@@ -181,7 +182,7 @@ export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
       `${destination.environmentId}/${destination.threadId}`,
     );
     awaitingFirstSpeech = true;
-    armRedirectWatch(myToken);
+    armRedirectWatch();
     return { status: "acknowledged", destination };
   };
 
@@ -194,6 +195,6 @@ export function createVoiceNavigator(deps: VoiceNavigatorDeps): VoiceNavigator {
       awaitingFirstSpeech = false;
       deps.emitMark("first_useful_speech");
     },
-    dispose: clearWatch,
+    dispose: clearRedirectWatch,
   };
 }

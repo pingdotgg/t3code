@@ -722,7 +722,7 @@ const makeControllerHarness = (): ControllerHarness => {
     driver: {
       navigate: async () => {},
       readCurrentPath: () => "/",
-      subscribePathChange: () => () => {},
+      subscribeMissingThreadRedirect: () => () => {},
     },
     reachabilityOf: () => "connected",
     attachSpeakerTrack: () => {},
