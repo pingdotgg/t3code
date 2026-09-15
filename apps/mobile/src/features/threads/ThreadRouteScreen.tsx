@@ -778,9 +778,11 @@ function ThreadRouteContent(
       }),
     );
   }, [navigation, routeThreadIdentity, selectedThreadCreation, selectedThreadProject]);
+  const awaitingBootstrapTurn =
+    selectedThreadDetail?.runs.some((run) => run.status === "preparing") ?? false;
   const creationState = ((): ThreadDetailScreenProps["creationState"] => {
     if (selectedThreadCreation === null) {
-      return null;
+      return awaitingBootstrapTurn ? { kind: "preparing", preparingWorktree: true } : null;
     }
     if (selectedThreadCreation.outcome?.kind === "failed") {
       return {
