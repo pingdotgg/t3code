@@ -274,7 +274,11 @@ export function ComposerEditor({
     fileTint: theme["--color-icon-muted"],
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
-  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style);
+  // iOS assigns the text view to the ExpoView bounds, so Yoga padding is not
+  // an inset on contentSize and must not be added to the laid-out height.
+  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style, {
+    includeVerticalPadding: false,
+  });
   return (
     <NativeView
       ref={nativeRef}

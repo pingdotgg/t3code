@@ -9,12 +9,16 @@ import {
 
 const CONTENT_HEIGHT_EPSILON = 0.5;
 
-export function useComposerEditorAutoHeight(style: StyleProp<ViewStyle> | undefined) {
+export function useComposerEditorAutoHeight(
+  style: StyleProp<ViewStyle> | undefined,
+  options?: { readonly includeVerticalPadding?: boolean },
+) {
   const flatStyle = StyleSheet.flatten(style) ?? {};
   const minHeight = numericStyleLength(flatStyle.minHeight);
   const maxHeight = numericStyleLength(flatStyle.maxHeight);
   const height = numericStyleLength(flatStyle.height);
-  const verticalPadding = verticalPaddingFromViewStyle(flatStyle);
+  const verticalPadding =
+    options?.includeVerticalPadding === false ? 0 : verticalPaddingFromViewStyle(flatStyle);
   const [contentHeight, setContentHeight] = useState<number | null>(null);
 
   const onContentHeight = useCallback((nextHeight: number) => {

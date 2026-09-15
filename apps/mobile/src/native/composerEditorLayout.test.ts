@@ -34,6 +34,17 @@ describe("composer editor auto-height", () => {
     ).toBe(108);
   });
 
+  it("does not add Yoga padding when the native view fills the bounds", () => {
+    expect(
+      composerEditorLaidOutHeight({
+        contentHeight: 100,
+        minHeight: 72,
+        maxHeight: 160,
+        verticalPadding: 0,
+      }),
+    ).toBe(100);
+  });
+
   it("stops at maxHeight so a long prompt scrolls inside the editor", () => {
     expect(
       composerEditorLaidOutHeight({
