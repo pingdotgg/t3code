@@ -34,6 +34,12 @@ import { getModelSelectionStringOptionValue } from "@t3tools/shared/model";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { CUA_MCP_SERVER_NAME, cuaOpenCodeMcpConfig } from "../../cua/cuaMcpServer.ts";
+import {
+  cuaToolPresentation,
+  parseCuaToolName,
+  rememberCuaToolResult,
+} from "../../cua/cuaToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { type EventNdjsonLogger, makeEventNdjsonLogger } from "./EventNdjsonLogger.ts";
 import {
@@ -2466,15 +2472,34 @@ export function makeOpenCodeAdapter(
                 ? (part.state.title ?? part.tool)
                 : part.tool;
             const detail = detailFromToolPart(part);
+            const partStatus =
+              part.state.status === "error"
+                ? ("failed" as const)
+                : part.state.status === "completed"
+                  ? ("completed" as const)
+                  : ("inProgress" as const);
+            const cuaTool = parseCuaToolName(part.tool);
+            if (cuaTool && part.state.status === "completed") {
+              rememberCuaToolResult(
+                context.session.threadId,
+                cuaTool,
+                part.state.input,
+                part.state.output,
+              );
+            }
+            const cuaPresentation = cuaToolPresentation({
+              threadId: context.session.threadId,
+              rawToolName: part.tool,
+              args: part.state.input,
+              status: partStatus,
+            });
             const payload = {
               itemType,
-              ...(part.state.status === "error"
-                ? { status: "failed" as const }
-                : part.state.status === "completed"
-                  ? { status: "completed" as const }
-                  : { status: "inProgress" as const }),
+              status: partStatus,
               ...(title ? { title } : {}),
-              ...(detail ? { detail } : {}),
+              // Clients label rows by detail first; Cua rows keep the shared title.
+              ...(detail && !cuaPresentation ? { detail } : {}),
+              ...cuaPresentation,
               data: {
                 tool: part.tool,
                 state: part.state,
@@ -2857,6 +2882,15 @@ export function makeOpenCodeAdapter(
                     },
                   }),
                 );
+                if (mcpSession.cuaDriver) {
+                  const cuaDriver = mcpSession.cuaDriver;
+                  yield* runOpenCodeSdk("mcp.add", () =>
+                    client.mcp.add({
+                      name: CUA_MCP_SERVER_NAME,
+                      config: cuaOpenCodeMcpConfig(cuaDriver),
+                    }),
+                  );
+                }
               }
               // Resume: re-adopt the session named by the durable cursor —
               // OpenCode scopes history by session id. The probe recovers only
@@ -3223,6 +3257,9 @@ export function makeOpenCodeAdapter(
                 system: buildRuntimeInstructions({
                   harness: "OpenCode",
                   model: `${parsedModel.providerID}/${parsedModel.modelID}`,
+                  computerUse:
+                    McpProviderSession.readMcpProviderSession(input.threadId)?.cuaDriver !==
+                    undefined,
                 }),
                 parts: [...(text ? [{ type: "text" as const, text }] : []), ...fileParts],
               },

@@ -87,6 +87,12 @@ import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
+import { CUA_MCP_SERVER_NAME, cuaClaudeMcpServer } from "../../cua/cuaMcpServer.ts";
+import {
+  cuaToolPresentation,
+  parseCuaToolName,
+  rememberCuaToolResult,
+} from "../../cua/cuaToolPresentation.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { resolveClaudeSdkExecutablePath } from "../Drivers/ClaudeExecutable.ts";
 import { claudeSignedOutMessage, makeClaudeEnvironment } from "../Drivers/ClaudeHome.ts";
@@ -255,6 +261,26 @@ interface ToolInFlight {
   /** Owning agent when this tool ran inside a subagent (see attribution note). */
   readonly agentId?: string;
   readonly parentToolUseId?: string;
+}
+
+/**
+ * Cua Driver calls take the shared computer-use title and app icon. Clients
+ * label a row by its detail before its title, so the raw request summary
+ * stays out of the payload for them; the expanded row still shows the call.
+ */
+function cuaAwareDetail(
+  context: ClaudeSessionContext,
+  tool: ToolInFlight,
+  status: "inProgress" | "completed" | "failed",
+) {
+  const presentation = cuaToolPresentation({
+    threadId: context.session.threadId,
+    rawToolName: tool.toolName,
+    args: tool.input,
+    status,
+  });
+  if (presentation) return presentation;
+  return tool.detail ? { detail: tool.detail } : {};
 }
 
 interface ClaudeTaskState {
@@ -2841,7 +2867,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             itemType: nextTool.itemType,
             status: "inProgress",
             title: nextTool.title,
-            ...(nextTool.detail ? { detail: nextTool.detail } : {}),
+            ...cuaAwareDetail(context, nextTool, "inProgress"),
             ...(nextTool.agentId ? { agentId: nextTool.agentId } : {}),
             ...(nextTool.parentToolUseId ? { parentToolUseId: nextTool.parentToolUseId } : {}),
             data: {
@@ -2948,7 +2974,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: "inProgress",
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, "inProgress"),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           data: {
@@ -3009,6 +3035,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const [index, tool] = toolEntry;
       const itemStatus = toolResult.isError ? "failed" : "completed";
       const toolUseResult = readClaudeToolUseResult(message);
+      const cuaTool = parseCuaToolName(tool.toolName);
+      if (cuaTool && !toolResult.isError) {
+        rememberCuaToolResult(context.session.threadId, cuaTool, tool.input, toolResult.text);
+      }
       const toolData = {
         toolName: tool.toolName,
         input: tool.input,
@@ -3028,7 +3058,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: toolResult.isError ? "failed" : "inProgress",
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, toolResult.isError ? "failed" : "inProgress"),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           data: toolData,
@@ -3082,7 +3112,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           itemType: tool.itemType,
           status: itemStatus,
           title: tool.title,
-          ...(tool.detail ? { detail: tool.detail } : {}),
+          ...cuaAwareDetail(context, tool, itemStatus),
           ...(tool.agentId ? { agentId: tool.agentId } : {}),
           ...(tool.parentToolUseId ? { parentToolUseId: tool.parentToolUseId } : {}),
           data: toolData,
@@ -4725,7 +4755,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           type: "preset",
           preset: "claude_code",
           // Model and effort can change after this session-level prompt is set.
-          append: buildRuntimeInstructions({ harness: "Claude Code" }),
+          append: buildRuntimeInstructions({
+            harness: "Claude Code",
+            computerUse: mcpSession?.cuaDriver !== undefined,
+          }),
         },
         settingSources: [...CLAUDE_SETTING_SOURCES],
         // `ultracode` is a Claude Code setting, not an API effort level. It is
@@ -4759,6 +4792,9 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
                     Authorization: mcpSession.authorizationHeader,
                   },
                 },
+                ...(mcpSession.cuaDriver
+                  ? { [CUA_MCP_SERVER_NAME]: cuaClaudeMcpServer(mcpSession.cuaDriver) }
+                  : {}),
               },
             }
           : {}),

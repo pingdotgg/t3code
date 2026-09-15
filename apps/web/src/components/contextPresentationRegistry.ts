@@ -44,6 +44,10 @@ const DEFINITIONS = [
     kind: "skill",
     capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
   },
+  {
+    kind: "app",
+    capabilities: { details: "tooltip", expanded: "none", defaultDraftView: "compact" },
+  },
 ] as const satisfies ReadonlyArray<ContextPresentationDefinition>;
 
 function buildDefinitionRegistry(
@@ -74,6 +78,8 @@ export function contextPresentationDefinition(
 
 export interface ContextPresentationHandler<TRecord, TRenderContext, TResult> {
   kind: KnownComposerContextKind;
+  /** Kinds whose reference carries the whole payload render without a backing record. */
+  renderWithoutRecord?: boolean;
   canRender?: (record: TRecord, context: TRenderContext) => boolean;
   render: (
     record: TRecord,
@@ -117,7 +123,13 @@ export function createContextPresentationRegistry<TRecord, TRenderContext, TResu
     definition: contextPresentationDefinition,
     render(kind, record, context) {
       const handler = handlers.get(kind as KnownComposerContextKind);
-      if (!handler || record === undefined || handler.canRender?.(record, context) === false) {
+      if (!handler) return options.fallback(kind, record, context);
+      if (record === undefined) {
+        return handler.renderWithoutRecord
+          ? handler.render(record as TRecord, context, contextPresentationDefinition(handler.kind))
+          : options.fallback(kind, record, context);
+      }
+      if (handler.canRender?.(record, context) === false) {
         return options.fallback(kind, record, context);
       }
       return handler.render(record, context, contextPresentationDefinition(handler.kind));

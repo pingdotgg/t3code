@@ -26,6 +26,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -37,6 +38,9 @@ import * as CodexErrors from "effect-codex-app-server/errors";
 
 import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { EnvironmentId } from "@t3tools/contracts";
+import { parse as parseToml } from "smol-toml";
 import { ProviderAdapterValidationError } from "../Errors.ts";
 import type { CodexAdapterShape } from "../Services/CodexAdapter.ts";
 import { ProviderSessionDirectory } from "../Services/ProviderSessionDirectory.ts";
@@ -509,6 +513,66 @@ sessionErrorLayer("CodexAdapterLive session errors", (it) => {
       NodeAssert.ok(runtime);
       NodeAssert.equal(runtime.options.launchArgs, "--strict-config --enable env-feature");
     }).pipe(Effect.provide(layer));
+  });
+
+  it.effect("attaches the session's managed Cua driver beside the T3 MCP server", () => {
+    const runtimeFactory = makeRuntimeFactory();
+    const threadId = asThreadId("cua-session");
+    const descriptor = {
+      command: "managed-cua-driver",
+      args: ["mcp", "--proxy"],
+      environment: [{ name: "CUA_SOCKET_PATH", value: "/synthetic/socket" }],
+    };
+    const layer = Layer.effect(
+      CodexAdapter,
+      makeCodexAdapter(decodeCodexSettings({ homePath: "/synthetic/codex-home" }), {
+        environment: {},
+        makeRuntime: runtimeFactory.factory,
+      }).pipe(Effect.provide(FileSystem.layerNoop({ readFileString: () => Effect.succeed("") }))),
+    ).pipe(
+      Layer.provideMerge(ServerConfig.layerTest(process.cwd(), process.cwd())),
+      Layer.provideMerge(ServerSettingsService.layerTest()),
+      Layer.provideMerge(providerSessionDirectoryTestLayer),
+      Layer.provideMerge(NodeServices.layer),
+    );
+    return Effect.scoped(
+      Effect.gen(function* () {
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+        );
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("cua-test-environment"),
+          threadId,
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          providerSessionId: "cua-test-provider-session",
+          endpoint: "http://127.0.0.1:1234/mcp",
+          authorizationHeader: "Bearer synthetic-test-token",
+          capabilities: new Set(["preview"]),
+          cuaDriver: descriptor,
+        });
+        const adapter = yield* CodexAdapter;
+        yield* adapter.startSession({
+          provider: ProviderDriverKind.make("codex"),
+          threadId,
+          runtimeMode: "full-access",
+        });
+        const runtime = runtimeFactory.lastRuntime;
+        NodeAssert.ok(runtime);
+        const args = runtime.options.appServerArgs ?? [];
+        NodeAssert.deepEqual(parseToml(args[1]!), {
+          mcp_servers: {
+            "cua-driver": {
+              command: descriptor.command,
+              args: descriptor.args,
+              env: { CUA_SOCKET_PATH: "/synthetic/socket" },
+            },
+          },
+        });
+        NodeAssert.ok(args.some((arg) => arg.startsWith("mcp_servers.t3-code.")));
+        NodeAssert.equal(runtime.options.launchArgs, "");
+        NodeAssert.equal(runtime.options.environment?.T3_MCP_BEARER_TOKEN, "synthetic-test-token");
+      }),
+    ).pipe(Effect.provide(layer));
   });
 
   it.effect("maps codex model options for the adapter's bound custom instance id", () => {
@@ -1288,6 +1352,145 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
           status: "completed",
         },
       });
+    }),
+  );
+
+  it.effect("presents Cua Driver calls as computer use with the app learned from list_apps", () =>
+    Effect.gen(function* () {
+      const { adapter, runtime } = yield* startLifecycleRuntime();
+      const eventsFiber = yield* Stream.runCollect(Stream.take(adapter.streamEvents, 3)).pipe(
+        Effect.forkChild,
+      );
+      const base = {
+        kind: "notification" as const,
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        turnId: asTurnId("turn-1"),
+      };
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-list"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        method: "item/completed",
+        itemId: asItemId("cua_list"),
+        payload: {
+          completedAtMs: 1_778_000_000_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_list",
+            server: "cua-driver",
+            tool: "list_apps",
+            arguments: {},
+            durationMs: 5,
+            error: null,
+            result: {
+              content: [
+                {
+                  type: "text",
+                  text: '{"apps":[{"pid":1246,"name":"Helium","bundle_id":"net.imput.helium"}]}',
+                },
+              ],
+            },
+            status: "completed",
+          },
+        },
+      });
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-click-start"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        method: "item/started",
+        itemId: asItemId("cua_click"),
+        payload: {
+          startedAtMs: 1_778_000_001_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_click",
+            server: "cua-driver",
+            tool: "click",
+            arguments: { pid: 1246, window_id: 59, x: 700, y: 39 },
+            durationMs: null,
+            error: null,
+            result: null,
+            status: "inProgress",
+          },
+        },
+      });
+      yield* runtime.emit({
+        ...base,
+        id: asEventId("evt-cua-click-done"),
+        createdAt: "2026-01-01T00:00:02.000Z",
+        method: "item/completed",
+        itemId: asItemId("cua_click"),
+        payload: {
+          completedAtMs: 1_778_000_002_000,
+          threadId: "thread-1",
+          turnId: "turn-1",
+          item: {
+            type: "mcpToolCall",
+            id: "cua_click",
+            server: "cua-driver",
+            tool: "click",
+            arguments: { pid: 1246, window_id: 59, x: 700, y: 39 },
+            durationMs: 40,
+            error: null,
+            result: { content: [{ type: "text", text: '{"ok":true}' }] },
+            status: "completed",
+          },
+        },
+      });
+
+      const events = Array.from(yield* Fiber.join(eventsFiber));
+      const heliumIcon = {
+        _tag: "native-app",
+        app: { _tag: "app-id", appId: "net.imput.helium" },
+      };
+      NodeAssert.deepStrictEqual(
+        events.map((event) => ({
+          type: event.type,
+          title: "title" in event.payload ? event.payload.title : undefined,
+          toolSurface: "toolSurface" in event.payload ? event.payload.toolSurface : undefined,
+          toolIcon: "toolIcon" in event.payload ? event.payload.toolIcon : undefined,
+          toolSource: "toolSource" in event.payload ? event.payload.toolSource : undefined,
+        })),
+        [
+          {
+            type: "item.completed",
+            title: "Listed apps",
+            toolSurface: "computer",
+            toolIcon: undefined,
+            toolSource: { key: "computer-use", name: "Computer Use", kind: "computer" },
+          },
+          {
+            type: "item.started",
+            title: "Clicking in Helium",
+            toolSurface: "computer",
+            toolIcon: heliumIcon,
+            toolSource: {
+              key: "native-app:net.imput.helium",
+              name: "Helium",
+              kind: "computer",
+              icon: heliumIcon,
+            },
+          },
+          {
+            type: "item.completed",
+            title: "Clicked in Helium",
+            toolSurface: "computer",
+            toolIcon: heliumIcon,
+            toolSource: {
+              key: "native-app:net.imput.helium",
+              name: "Helium",
+              kind: "computer",
+              icon: heliumIcon,
+            },
+          },
+        ],
+      );
     }),
   );
 

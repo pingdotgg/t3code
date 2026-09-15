@@ -168,6 +168,38 @@ describe("projectActivityPayload", () => {
     expect(JSON.stringify(openCode.payload).length).toBeLessThan(200);
   });
 
+  it("keeps the saved computer use screenshot on MCP rows and drops the raw image", () => {
+    const imagePath = "/state/browser-artifacts/computer-use-1.png";
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        toolSurface: "computer",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            server: "cua-driver",
+            tool: "get_window_state",
+            result: { content: [{ type: "image", data: "A".repeat(4096) }] },
+          },
+          computerUse: { imagePath, windowTitle: "December 2026" },
+        },
+      }),
+    );
+    expect(projected.payload).toMatchObject({
+      data: { imagePath, computerUse: { imagePath, windowTitle: "December 2026" } },
+    });
+    expect(JSON.stringify(projected.payload)).not.toContain("AAAA");
+    expect(projectActivityPayload(projected).payload).toMatchObject({ data: { imagePath } });
+    expect(
+      projectActivityPayload(
+        activity({
+          itemType: "mcp_tool_call",
+          data: { item: { type: "mcpToolCall" }, computerUse: { imagePath: "/etc/passwd" } },
+        }),
+      ).payload,
+    ).not.toHaveProperty("data.computerUse");
+  });
+
   it("keeps full Claude Read image paths through repeated projection", () => {
     const imagePath = `/workspace/${"nested folder/".repeat(16)}reference image.webp`;
     const projected = projectActivityPayload(

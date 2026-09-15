@@ -69,14 +69,33 @@ export function hasConfiguredMcpServer(appServerArgs: ReadonlyArray<string> | un
   return appServerArgs?.some((argument) => argument.includes("mcp_servers.")) === true;
 }
 
+export function hasConfiguredBrowserMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  // The adapter emits this exact path for T3's preview tools. Other MCPs do not provide them.
+  return appServerArgs?.some((argument) => argument.startsWith("mcp_servers.t3-code.")) === true;
+}
+
+export function hasConfiguredCuaMcpServer(
+  appServerArgs: ReadonlyArray<string> | undefined,
+): boolean {
+  return appServerArgs?.some((argument) => argument.startsWith("mcp_servers.cua-driver")) === true;
+}
+
 function configuredMcpToolAvailability(
   appServerArgs: ReadonlyArray<string> | undefined,
   mcpCapabilities: ReadonlySet<string> | undefined,
 ): T3CodeToolAvailability {
-  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false };
-  // Callers predating the capability set attached the browser toolkit only.
-  if (mcpCapabilities === undefined) return { browser: true, device: false };
-  return { browser: mcpCapabilities.has("preview"), device: mcpCapabilities.has("device") };
+  const computerUse = hasConfiguredCuaMcpServer(appServerArgs);
+  if (!hasConfiguredMcpServer(appServerArgs)) return { browser: false, device: false, computerUse };
+  // Sessions without a T3 credential can still have another MCP, such as Cua.
+  if (mcpCapabilities === undefined)
+    return { browser: hasConfiguredBrowserMcpServer(appServerArgs), device: false, computerUse };
+  return {
+    browser: mcpCapabilities.has("preview"),
+    device: mcpCapabilities.has("device"),
+    computerUse,
+  };
 }
 
 export const CodexResumeCursorSchema = Schema.Struct({

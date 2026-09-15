@@ -156,6 +156,7 @@ import {
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { NativeAppIcon } from "../NativeAppIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
 import type { AssistantCitationSourceAnchor } from "~/lib/assistantTextSelection";
@@ -2782,6 +2783,33 @@ function AssistantChangedFilesSectionInner({
 // Leaf components
 // ---------------------------------------------------------------------------
 
+function UserMessageAppChip(props: {
+  record: Extract<KnownComposerContextRecord, { kind: "app" }>;
+  copyMarkdown: string;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <UserMessageContextChip
+      icon={
+        props.record.bundleId ? (
+          <NativeAppIcon
+            environmentId={ctx.activeThreadEnvironmentId}
+            bundleId={props.record.bundleId}
+            className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME}
+          />
+        ) : (
+          <ComputerUseAppIcon className={COMPOSER_INLINE_CHIP_ICON_CLASS_NAME} />
+        )
+      }
+      label={props.record.label || props.record.name}
+      kindLabel="App"
+      tooltip={`Computer use · ${props.record.bundleId ?? props.record.name}`}
+      copyMarkdown={props.copyMarkdown}
+      toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.app}
+    />
+  );
+}
+
 function UserMessageMentionChip(props: {
   record: Extract<KnownComposerContextRecord, { kind: "mention" }>;
   copyMarkdown: string;
@@ -3057,6 +3085,16 @@ const userMessageContextPresentationRegistry = createContextPresentationRegistry
             copyMarkdown={context.copyMarkdown}
             toneClassName={CONTEXT_INLINE_CHIP_TONE_CLASS_NAMES.skill}
           />
+        ) : (
+          <UnavailableUserMessageContextChip {...context} />
+        ),
+    },
+    {
+      kind: "app",
+      canRender: (record) => record.kind === "app",
+      render: (record, context) =>
+        record.kind === "app" ? (
+          <UserMessageAppChip record={record} copyMarkdown={context.copyMarkdown} />
         ) : (
           <UnavailableUserMessageContextChip {...context} />
         ),
@@ -3732,7 +3770,7 @@ function ToolActivityImageIcon(props: {
             aria-hidden
             decoding="async"
             referrerPolicy="no-referrer"
-            className={cn("block size-full object-contain", props.muted && "light:brightness-[.6]")}
+            className="block size-full object-contain"
             onError={() => handleLoadError(displayedSrc)}
           />
         </span>

@@ -7,9 +7,12 @@ import {
   type ReactNode,
   useCallback,
   useLayoutEffect,
+  useMemo,
   useRef,
   useState,
 } from "react";
+
+import { useAssetUrlState } from "~/assets/assetUrls";
 
 import { BrowserSurfaceSlot } from "~/browser/BrowserSurfaceSlot";
 import {
@@ -32,10 +35,13 @@ import {
   usePreviewMiniPlayerStore,
 } from "~/previewMiniPlayerStore";
 import { useRightPanelStore } from "~/rightPanelStore";
+import { useCuaWindowPreview } from "~/state/cua";
 import { useDeviceState } from "~/state/device";
 
 import { DeviceStreamView } from "../device/DeviceStreamView";
 import type { DeviceScreenSize } from "../device/deviceStream";
+import { NativeAppIcon } from "../NativeAppIcon";
+import type { ComputerUsePreview } from "./computerUsePreview";
 import { previewBridge } from "./previewBridge";
 import {
   clampPreviewMiniPlayerPosition,
@@ -64,6 +70,9 @@ interface Props {
   readonly miniPlayer: PreviewMiniPlayerState;
   /** The docked composer overlay; null while the composer floats mid-screen. */
   readonly composerOverlayElement: HTMLElement | null;
+  /** The newest computer-use capture; only read by the computer source. */
+  readonly computerUse?: ComputerUsePreview | null;
+  readonly computerUseInProgress?: boolean;
 }
 
 interface Layout {
@@ -124,25 +133,143 @@ const RESIZE_HANDLES: ReadonlyArray<{
   { direction: "southeast", className: "-bottom-2 -right-2 size-4 cursor-nwse-resize" },
 ];
 
-/** Floats the thread's browser tab or device stream over chat. */
-export function ThreadPreviewMiniPlayer({ threadRef, miniPlayer, composerOverlayElement }: Props) {
+/** Floats the thread's browser tab, device stream, or computer-use capture over chat. */
+export function ThreadPreviewMiniPlayer({
+  threadRef,
+  miniPlayer,
+  composerOverlayElement,
+  computerUse = null,
+  computerUseInProgress = false,
+}: Props) {
   const { source } = miniPlayer;
-  return source.kind === "browser" ? (
-    <BrowserMiniPlayer
-      key={source.tabId}
+  switch (source.kind) {
+    case "browser":
+      return (
+        <BrowserMiniPlayer
+          key={source.tabId}
+          threadRef={threadRef}
+          tabId={source.tabId}
+          miniPlayer={miniPlayer}
+          composerOverlayElement={composerOverlayElement}
+        />
+      );
+    case "device":
+      return (
+        <DeviceMiniPlayer
+          key={previewMiniPlayerSourceKey(source)}
+          threadRef={threadRef}
+          source={source}
+          miniPlayer={miniPlayer}
+          composerOverlayElement={composerOverlayElement}
+        />
+      );
+    case "computer":
+      return computerUse ? (
+        <ComputerMiniPlayer
+          key="computer"
+          threadRef={threadRef}
+          miniPlayer={miniPlayer}
+          composerOverlayElement={composerOverlayElement}
+          preview={computerUse}
+          inProgress={computerUseInProgress}
+        />
+      ) : null;
+  }
+}
+
+/**
+ * What the agent is doing on the host desktop. While a turn is running the
+ * server streams fresh captures of the window the agent targets; between
+ * turns the card falls back to the last screenshot the agent itself took, so
+ * it goes stale rather than blank. Mounting the card is what starts the
+ * server-side capture loop, so a closed card costs the host nothing.
+ */
+function ComputerMiniPlayer({
+  threadRef,
+  miniPlayer,
+  composerOverlayElement,
+  preview,
+  inProgress,
+}: Props & { readonly preview: ComputerUsePreview; readonly inProgress: boolean }) {
+  const live = useCuaWindowPreview(threadRef);
+  const liveFrame = live.status === "live" ? (live.frame ?? null) : null;
+  const liveSrc = useMemo(
+    () => (liveFrame ? `data:${liveFrame.mimeType};base64,${liveFrame.dataBase64}` : null),
+    [liveFrame],
+  );
+  const resource = useMemo(
+    () => ({ _tag: "media-file", threadId: threadRef.threadId, path: preview.imagePath }) as const,
+    [threadRef.threadId, preview.imagePath],
+  );
+  const asset = useAssetUrlState(threadRef.environmentId, resource);
+  const [naturalSize, setNaturalSize] = useState<PreviewMiniPlayerSize | null>(null);
+  const sourceSize =
+    naturalSize ??
+    (liveFrame && liveFrame.width > 0 && liveFrame.height > 0
+      ? { width: liveFrame.width, height: liveFrame.height }
+      : asset._tag === "Success" && asset.imageDimensions
+        ? { width: asset.imageDimensions.width, height: asset.imageDimensions.height }
+        : { width: 1280, height: 800 });
+  const label = liveFrame?.appName ?? preview.appName ?? "Computer";
+  const windowTitle = liveFrame?.windowTitle ?? preview.windowTitle;
+  const caption = windowTitle && windowTitle !== label ? `${label} · ${windowTitle}` : label;
+  const src = liveSrc ?? (asset._tag === "Success" ? asset.url : null);
+
+  return (
+    <MiniPlayerShell
       threadRef={threadRef}
-      tabId={source.tabId}
       miniPlayer={miniPlayer}
+      sourceSize={sourceSize}
       composerOverlayElement={composerOverlayElement}
-    />
-  ) : (
-    <DeviceMiniPlayer
-      key={previewMiniPlayerSourceKey(source)}
-      threadRef={threadRef}
-      source={source}
-      miniPlayer={miniPlayer}
-      composerOverlayElement={composerOverlayElement}
-    />
+      label="Floating computer use preview"
+      recording={inProgress || live.status === "live"}
+    >
+      {() => (
+        <div
+          className="pointer-events-auto absolute inset-0 overflow-hidden rounded-[inherit] bg-muted"
+          style={{ zIndex: PREVIEW_MINI_PLAYER_WEBVIEW_Z_INDEX }}
+        >
+          {src ? (
+            <img
+              src={src}
+              alt={caption}
+              decoding="async"
+              draggable={false}
+              className="size-full select-none object-contain"
+              onLoad={(event) => {
+                const { naturalWidth, naturalHeight } = event.currentTarget;
+                if (naturalWidth > 0 && naturalHeight > 0) {
+                  setNaturalSize((current) =>
+                    current?.width === naturalWidth && current.height === naturalHeight
+                      ? current
+                      : { width: naturalWidth, height: naturalHeight },
+                  );
+                }
+              }}
+            />
+          ) : (
+            <div className="flex size-full items-center justify-center text-xs text-muted-foreground">
+              {asset._tag === "Failure" ? "Screenshot unavailable" : "Loading screenshot…"}
+            </div>
+          )}
+          {live.status === "unavailable" && live.detail ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 truncate bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground">
+              Live preview unavailable: {live.detail}
+            </div>
+          ) : null}
+          <div className="pointer-events-none absolute inset-x-0 bottom-0 flex items-center gap-1.5 bg-gradient-to-t from-background/85 to-background/0 px-2.5 pb-2 pt-5 text-[11px] text-foreground">
+            {preview.appIcon?.app._tag === "app-id" ? (
+              <NativeAppIcon
+                environmentId={threadRef.environmentId}
+                bundleId={preview.appIcon.app.appId}
+                className="size-3.5"
+              />
+            ) : null}
+            <span className="truncate">{caption}</span>
+          </div>
+        </div>
+      )}
+    </MiniPlayerShell>
   );
 }
 
@@ -332,7 +459,8 @@ function MiniPlayerShell({
   readonly sourceSize: PreviewMiniPlayerSize;
   readonly composerOverlayElement: HTMLElement | null;
   readonly label: string;
-  readonly onOpenInPanel: () => void;
+  /** Omitted for sources with no right-panel equivalent. */
+  readonly onOpenInPanel?: () => void;
   readonly pillActions?: ReactNode;
   readonly recording?: boolean;
   /** The clip radius for a given frame; the pill stays inside the curve. */
@@ -478,22 +606,24 @@ function MiniPlayerShell({
                   <span className="size-2 rounded-full bg-red-500 motion-safe:animate-status-pulse" />
                 </span>
               ) : null}
-              <Tooltip>
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      aria-label="Open preview in right panel"
-                      onPointerDown={(event) => event.stopPropagation()}
-                      onClick={onOpenInPanel}
-                    />
-                  }
-                >
-                  <PanelRightIcon />
-                </TooltipTrigger>
-                <TooltipPopup side="top">Open in right panel</TooltipPopup>
-              </Tooltip>
+              {onOpenInPanel ? (
+                <Tooltip>
+                  <TooltipTrigger
+                    render={
+                      <Button
+                        variant="ghost"
+                        size="icon-xs"
+                        aria-label="Open preview in right panel"
+                        onPointerDown={(event) => event.stopPropagation()}
+                        onClick={onOpenInPanel}
+                      />
+                    }
+                  >
+                    <PanelRightIcon />
+                  </TooltipTrigger>
+                  <TooltipPopup side="top">Open in right panel</TooltipPopup>
+                </Tooltip>
+              ) : null}
               {pillActions}
               <Tooltip>
                 <TooltipTrigger

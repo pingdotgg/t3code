@@ -32,6 +32,7 @@ export const GET_LOCAL_ENVIRONMENT_BEARER_TOKEN_CHANNEL =
 export const GET_CLIENT_SETTINGS_CHANNEL = "desktop:get-client-settings";
 export const SET_CLIENT_SETTINGS_CHANNEL = "desktop:set-client-settings";
 export const SETUP_SNAP_SHOT_CHANNEL = "desktop:setup-snap-shot";
+export const RESTART_CUA_DRIVER_CHANNEL = "desktop:restart-cua-driver";
 export const PREVIEW_SNAP_SHOT_CONFIG_CHANNEL = "desktop:preview-snap-shot-config";
 export const APPLY_SNAP_SHOT_CONFIG_CHANNEL = "desktop:apply-snap-shot-config";
 export const REQUEST_SNAP_SHOT_PERMISSIONS_CHANNEL = "desktop:request-snap-shot-permissions";

@@ -18,6 +18,8 @@ export const DESKTOP_RUNTIME_EXTERNAL_PREFIXES = [
   "@clerk/electron-passkeys",
   "ffi-rs",
   "@yuuang/",
+  "@trycua/cua-driver",
+  "@ubjs/",
   // Reads its own bundle from disk by resolving `playwright-core/package.json`
   // at runtime and ships the browser driver alongside; there is nothing to
   // gain from inlining a 10 MB file the code re-reads as text.

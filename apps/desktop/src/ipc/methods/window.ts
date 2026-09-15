@@ -36,6 +36,10 @@ import * as ElectronTheme from "../../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as Electron from "electron";
 import * as MacPermissions from "../../permissions/MacPermissions.ts";
+import {
+  isMacPermissionGranted,
+  requestMacPermission,
+} from "../../permissions/macPermissionStatus.ts";
 import { safariPermissionCheck } from "../../preview/BrowserImport/SafariPermission.ts";
 import * as IpcChannels from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -319,10 +323,12 @@ export const openSystemSettings = DesktopIpc.makeIpcMethod({
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
     const owner = Electron.BrowserWindow.getFocusedWindow();
+    // Let macOS list the app in the pane before the user lands there.
+    if (pane !== "full-disk-access") yield* Effect.promise(() => requestMacPermission(pane));
     const opened = yield* shell.openSystemSettings(pane);
     if (opened && environment.isPackaged) {
       const permissions = yield* MacPermissions.MacPermissions;
-      const isGranted = yield* safariPermissionCheck;
+      const isGranted = pane === "full-disk-access" ? yield* safariPermissionCheck : undefined;
       yield* permissions.showHelper(pane, owner, isGranted);
     }
     return opened;
@@ -430,9 +436,10 @@ export const checkSystemPermission = DesktopIpc.makeIpcMethod({
   channel: IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL,
   payload: SystemSettingsPaneSchema,
   result: Schema.Boolean,
-  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* () {
+  handler: Effect.fn("desktop.ipc.window.checkSystemPermission")(function* (pane) {
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
     if (environment.platform !== "darwin") return false;
+    if (pane !== "full-disk-access") return isMacPermissionGranted(pane);
     const check = yield* safariPermissionCheck;
     return yield* Effect.promise(check);
   }),

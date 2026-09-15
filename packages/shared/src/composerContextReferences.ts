@@ -233,6 +233,18 @@ function formatComposerContextProviderPayload(record: KnownComposerContextRecord
       return `path: ${record.path}`;
     case "skill":
       return `name: ${record.name}`;
+    case "app": {
+      const lines = [`app: ${record.name}`];
+      if (record.bundleId) lines.push(`bundleId: ${record.bundleId}`);
+      if (record.path) lines.push(`path: ${record.path}`);
+      lines.push(
+        "Drive this app with the cua-driver computer use tools. Find its pid with list_apps," +
+          " or launch_app with the bundleId when it is not running. Call get_window_state on its" +
+          " window before acting, then click, type, and read inside that window. Confirm each" +
+          " step with verify_state or a fresh get_window_state.",
+      );
+      return lines.join("\n");
+    }
   }
 }
 

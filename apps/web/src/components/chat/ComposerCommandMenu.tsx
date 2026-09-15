@@ -4,6 +4,8 @@ import {
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
 import {
+  type EnvironmentId,
+  type InstalledApp,
   type ProjectEntry,
   type ProviderDriverKind,
   type PullRequestContextMetadata,
@@ -25,6 +27,7 @@ import { cn } from "~/lib/utils";
 import { Badge } from "../ui/badge";
 import { Command, CommandGroup, CommandItem, CommandList } from "../ui/command";
 import { PierreEntryIcon } from "./PierreEntryIcon";
+import { NativeAppIcon } from "../NativeAppIcon";
 import { ComposerBanner } from "./ComposerBanner";
 import { resolvePullRequestState } from "../pullRequest/pullRequestPresentation";
 
@@ -64,6 +67,14 @@ export type ComposerCommandItem =
       id: string;
       type: "pull-request";
       pullRequest: PullRequestContextMetadata;
+      label: string;
+      description: string;
+    }
+  | {
+      id: string;
+      type: "app";
+      app: InstalledApp;
+      environmentId: EnvironmentId;
       label: string;
       description: string;
     };
@@ -180,6 +191,13 @@ const ComposerCommandMenuItem = memo(function ComposerCommandMenuItem(props: {
           pathValue={props.item.path}
           kind={props.item.pathKind}
           theme={props.resolvedTheme}
+        />
+      ) : null}
+      {props.item.type === "app" ? (
+        <NativeAppIcon
+          environmentId={props.item.environmentId}
+          bundleId={props.item.app.bundleId}
+          className="size-4"
         />
       ) : null}
       {pullRequestPresentation ? (

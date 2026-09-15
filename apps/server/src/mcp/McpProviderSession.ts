@@ -1,4 +1,9 @@
-import type { EnvironmentId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
+import type {
+  CuaDriverMcpConfiguration,
+  EnvironmentId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@t3tools/contracts";
 
 export interface McpProviderSessionConfig {
   readonly environmentId: EnvironmentId;
@@ -15,6 +20,12 @@ export interface McpProviderSessionConfig {
    * already pointed at the server's daemon; the agent never handles a token.
    */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /**
+   * Set when the environment's managed Cua Driver is running for this session.
+   * Every adapter attaches it as a stdio MCP server named `cua-driver` unless
+   * the user already configured one of their own for that provider.
+   */
+  readonly cuaDriver?: CuaDriverMcpConfiguration;
 }
 
 /** Provider env with the device variables applied over `base`, or `base` untouched. */

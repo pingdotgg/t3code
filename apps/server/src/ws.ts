@@ -128,6 +128,8 @@ import { issueAssetUrl } from "./assets/AssetAccess.ts";
 import { deletePendingAttachment, issueAttachmentUploadUrl } from "./assets/AttachmentUpload.ts";
 import * as PortScanner from "./preview/PortScanner.ts";
 import * as WorkspaceEntries from "./workspace/WorkspaceEntries.ts";
+import * as InstalledApps from "./cua/InstalledApps.ts";
+import * as CuaWindowPreview from "./cua/CuaWindowPreview.ts";
 import * as WorkspaceFileSystem from "./workspace/WorkspaceFileSystem.ts";
 import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
@@ -572,6 +574,8 @@ const makeWsRpcLayer = (
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
+      const installedApps = yield* InstalledApps.InstalledApps;
+      const cuaWindowPreview = yield* CuaWindowPreview.CuaWindowPreview;
       const workspaceFileSystem = yield* WorkspaceFileSystem.WorkspaceFileSystem;
       const canReplayPersistedRange = Effect.fnUntraced(function* (
         afterSequence: number,
@@ -2953,6 +2957,10 @@ const makeWsRpcLayer = (
             ),
             { "rpc.aggregate": "workspace" },
           ),
+        [WS_METHODS.appsList]: () =>
+          observeRpcEffect(WS_METHODS.appsList, installedApps.list, {
+            "rpc.aggregate": "workspace",
+          }),
         [WS_METHODS.projectsSearchContents]: (input) =>
           observeRpcEffect(
             WS_METHODS.projectsSearchContents,
@@ -3444,6 +3452,12 @@ const makeWsRpcLayer = (
             WS_METHODS.subscribeDeviceState,
             DeviceService.stateStream(deviceService),
             { "rpc.aggregate": "device" },
+          ),
+        [WS_METHODS.subscribeCuaWindowPreview]: (input) =>
+          observeRpcStream(
+            WS_METHODS.subscribeCuaWindowPreview,
+            cuaWindowPreview.stream(input.threadId),
+            { "rpc.aggregate": "workspace" },
           ),
         [WS_METHODS.subscribeDiscoveredLocalServers]: (input) =>
           observeRpcStream(

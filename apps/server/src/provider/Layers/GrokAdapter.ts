@@ -41,6 +41,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { ServerConfig } from "../../config.ts";
 import { buildRuntimeInstructions } from "../RuntimeInstructions.ts";
+import { cuaAcpMcpServer } from "../../cua/cuaMcpServer.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   ProviderAdapterProcessError,
@@ -1022,6 +1023,7 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                         },
                       ],
                     },
+                    ...(mcpSession.cuaDriver ? [cuaAcpMcpServer(mcpSession.cuaDriver)] : []),
                   ],
                 }
               : {}),
@@ -1620,6 +1622,9 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
                 harness: "Grok",
                 model: displayModel,
                 reasoningEffort: normalizeGrokReasoningEffort(requestedTurnReasoningEffort),
+                computerUse:
+                  McpProviderSession.readMcpProviderSession(input.threadId)?.cuaDriver !==
+                  undefined,
               });
               for (let yieldAttempt = 0; yieldAttempt < 8; yieldAttempt += 1) {
                 yield* Effect.yieldNow;

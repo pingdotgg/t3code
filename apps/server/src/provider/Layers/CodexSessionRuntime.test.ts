@@ -15,6 +15,8 @@ import {
   buildTurnStartParams,
   describeMcpElicitation,
   hasConfiguredMcpServer,
+  hasConfiguredBrowserMcpServer,
+  hasConfiguredCuaMcpServer,
   isRecoverableThreadResumeError,
   makeMemoryConsolidationNotificationFilter,
   openCodexThread,
@@ -552,6 +554,25 @@ describe("buildCodexDeveloperInstructions", () => {
     NodeAssert.match(instructions, /as gpt-5\.3-codex with high reasoning effort/);
   });
 
+  it("adds computer use guidance only when the Cua server is attached", () => {
+    const runtime = { model: "gpt-5.3-codex", reasoningEffort: "high" };
+    const withCua = buildCodexDeveloperInstructions("default", runtime, {
+      browser: false,
+      device: false,
+      computerUse: true,
+    });
+    NodeAssert.match(withCua, /<computer_use>/);
+    NodeAssert.doesNotMatch(withCua, /T3 Code collaborative browser/);
+    NodeAssert.doesNotMatch(
+      buildCodexDeveloperInstructions("default", runtime, { browser: true, device: false }),
+      /<computer_use>/,
+    );
+    NodeAssert.doesNotMatch(
+      buildCodexDeveloperInstructions("default", runtime, true),
+      /<computer_use>/,
+    );
+  });
+
   it("describes Markdown media support in the runtime context in both modes", () => {
     for (const mode of ["default", "plan"] as const) {
       const instructions = buildCodexDeveloperInstructions(mode, {
@@ -642,6 +663,26 @@ describe("hasConfiguredMcpServer", () => {
     NodeAssert.equal(hasConfiguredMcpServer(["--model", "gpt-5.4"]), false);
     NodeAssert.equal(
       hasConfiguredMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      true,
+    );
+  });
+  it("refreshes Cua tools without advertising T3 preview tools", () => {
+    const cua = ["-c", 'mcp_servers.cua-driver = { command = "driver" }'];
+    NodeAssert.equal(hasConfiguredMcpServer(cua), true);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(cua), false);
+    NodeAssert.equal(hasConfiguredBrowserMcpServer(undefined), false);
+    NodeAssert.equal(hasConfiguredCuaMcpServer(cua), true);
+    NodeAssert.equal(hasConfiguredCuaMcpServer(undefined), false);
+    NodeAssert.equal(
+      hasConfiguredCuaMcpServer(["-c", 'mcp_servers.t3-code.url="http://127.0.0.1/mcp"']),
+      false,
+    );
+    NodeAssert.equal(
+      hasConfiguredBrowserMcpServer([
+        ...cua,
+        "-c",
+        'mcp_servers.t3-code.url="http://127.0.0.1/mcp"',
+      ]),
       true,
     );
   });

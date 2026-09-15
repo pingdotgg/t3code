@@ -509,6 +509,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["xcode android studio sdk avd runtime"],
   },
   {
+    id: "cua-computer-use",
+    title: "Cua computer use",
+    to: "/settings/integrations",
+    scope: "environment-defaults",
+    searchTerms: ["Cua Driver computer machine host permissions accessibility screen recording"],
+  },
+  {
     id: "browser-profiles",
     title: "Browser profiles",
     to: "/settings/integrations",

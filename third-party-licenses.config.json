@@ -153,6 +153,19 @@
   ],
   "packageOverrides": [
     {
+      "repositoryUrl": "https://github.com/trycua/cua",
+      "generatedNotice": {
+        "licenseId": "MIT",
+        "copyrights": ["Copyright (c) 2025 Cua AI, Inc."]
+      }
+    },
+    {
+      "repositoryUrl": "https://github.com/jhugman/uniffi-bindgen-react-native",
+      "generatedNotice": {
+        "licenseId": "MPL-2.0"
+      }
+    },
+    {
       "license": "MIT",
       "name": "@react-grab/cli",
       "sourceUrl": "https://github.com/aidenybai/react-grab/tree/main/packages/cli",
