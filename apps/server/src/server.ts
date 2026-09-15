@@ -835,15 +835,18 @@ const makeServerLayer = Layer.unwrap(
                     }).pipe(Effect.as({ status: "unavailable" as const })),
               ),
             );
-            const startedConfirmed = yield* startManagedCloudTunnelIfOriginConfirmed(
-              localOrigin,
-            ).pipe(
-              Effect.catch((cause) =>
-                Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
-                  cause,
-                }).pipe(Effect.as(false)),
-              ),
-            );
+            // A publish-only link must not expose the host, even if a managed
+            // config from an earlier link is still stored.
+            const startedConfirmed =
+              desiredCliLinkMode === "publish_only"
+                ? false
+                : yield* startManagedCloudTunnelIfOriginConfirmed(localOrigin).pipe(
+                    Effect.catch((cause) =>
+                      Effect.logWarning("Failed to start the confirmed T3 Connect tunnel", {
+                        cause,
+                      }).pipe(Effect.as(false)),
+                    ),
+                  );
             // A host without a confirmed marker is on its first boot after the
             // upgrade. Spread those registrations so an auto-update wave does
             // not hit the relay all at once.
