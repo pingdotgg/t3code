@@ -1262,14 +1262,17 @@ export function deriveMessagesTimelineRows(input: {
     });
   }
 
-  // Until the agent starts, the setup card takes the place of the working and
-  // thinking placeholders. It stays after a failed or cancelled setup so the
-  // outcome and its actions remain visible until the thread state moves on.
-  const setupAgentStarted =
+  // Until the agent's turn is live, the setup card takes the place of the
+  // working and thinking placeholders. It stays after a failed or cancelled
+  // setup so the outcome and its actions remain visible until the thread
+  // state moves on. "Live" means the turn is in the timeline, not just that
+  // the server dispatched it: the card must not collapse in the gap between.
+  const setupHandedOff =
     input.worktreeSetup !== null &&
     input.worktreeSetup !== undefined &&
-    worktreeSetupAgentStarted(input.worktreeSetup);
-  if (input.worktreeSetup && !setupAgentStarted) {
+    worktreeSetupAgentStarted(input.worktreeSetup) &&
+    input.latestTurn?.startedAt != null;
+  if (input.worktreeSetup && !setupHandedOff) {
     const setupRow = {
       kind: "worktree-setup",
       id: WORKTREE_SETUP_ROW_ID,
@@ -1295,8 +1298,14 @@ export function deriveMessagesTimelineRows(input: {
     appendWorkingRow();
   }
   // An async setup script outlives the handoff. The turn owns the header, so
-  // the script's row sits first under it, ahead of the agent's own work.
-  if (input.worktreeSetup && setupAgentStarted) {
+  // the script's row sits first under it, ahead of the agent's own work. A
+  // script that already finished (or never ran) has nothing left to show.
+  const setupScriptStage = input.worktreeSetup?.stages.find((stage) => stage.id === "setup-script");
+  if (
+    input.worktreeSetup &&
+    setupHandedOff &&
+    (setupScriptStage?.status === "running" || setupScriptStage?.status === "failed")
+  ) {
     const setupRow = {
       kind: "worktree-setup",
       id: WORKTREE_SETUP_ROW_ID,

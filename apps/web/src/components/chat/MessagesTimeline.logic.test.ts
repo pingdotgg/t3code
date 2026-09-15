@@ -1170,18 +1170,29 @@ describe("deriveMessagesTimelineRows", () => {
 
     // Once the agent stage is done the setup script may still be running in
     // the background: the turn owns the header and the script row follows it.
-    const agentStage = {
-      id: "agent",
-      status: "done",
-      startedAt: "2026-01-01T00:00:10Z",
-      endedAt: "2026-01-01T00:00:11Z",
-      percent: null,
-      detail: null,
-      tail: [],
+    const stage = (id: "agent" | "setup-script", status: "done" | "running") =>
+      ({
+        id,
+        status,
+        startedAt: "2026-01-01T00:00:10Z",
+        endedAt: status === "done" ? "2026-01-01T00:00:11Z" : null,
+        percent: null,
+        detail: null,
+        tail: [],
+      }) as const;
+    const asyncSnapshot: WorktreeSetupSnapshot = {
+      ...snapshot,
+      stages: [stage("setup-script", "running"), stage("agent", "done")],
+    };
+    const liveTurn = {
+      turnId: "turn-1" as never,
+      state: "running",
+      startedAt: "2026-01-01T00:00:11Z",
+      completedAt: null,
     } as const;
-    const asyncSnapshot: WorktreeSetupSnapshot = { ...snapshot, stages: [agentStage] };
     const asyncRows = deriveMessagesTimelineRows({
       timelineEntries: [userEntry],
+      latestTurn: liveTurn,
       isWorking: true,
       activeTurnStartedAt: "2026-01-01T00:00:00Z",
       turnDiffSummaries: [],
@@ -1195,6 +1206,34 @@ describe("deriveMessagesTimelineRows", () => {
       "thinking",
     ]);
     expect(asyncRows[2]).toMatchObject({ kind: "worktree-setup", embedded: true });
+
+    // Dispatched but not yet visible as a turn: the full card stays put so
+    // nothing collapses during the handoff.
+    const handoffRows = deriveMessagesTimelineRows({
+      timelineEntries: [userEntry],
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: asyncSnapshot,
+    });
+    expect(handoffRows.map((row) => row.kind)).toEqual(["message", "worktree-setup"]);
+    expect(handoffRows[1]).toMatchObject({ kind: "worktree-setup", embedded: false });
+
+    // A script that already finished has nothing left to show once the turn is live.
+    const finishedRows = deriveMessagesTimelineRows({
+      timelineEntries: [userEntry],
+      latestTurn: liveTurn,
+      isWorking: true,
+      activeTurnStartedAt: "2026-01-01T00:00:00Z",
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      worktreeSetup: {
+        ...asyncSnapshot,
+        stages: [stage("setup-script", "done"), stage("agent", "done")],
+      },
+    });
+    expect(finishedRows.map((row) => row.kind)).toEqual(["message", "working", "thinking"]);
   });
 
   it("keeps context compaction visible outside folded work", () => {
