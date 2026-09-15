@@ -142,7 +142,7 @@ jobs:
               - --filter=@t3tools/mobile...
 
       - name: Verify v2 preview source
-        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
+        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
         run: |
           node --input-type=module -e '
             import * as environment from "./packages/contracts/src/environment.ts";
