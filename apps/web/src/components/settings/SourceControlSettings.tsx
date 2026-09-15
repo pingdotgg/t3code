@@ -5,6 +5,8 @@ import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
 import type {
   BackgroundActivitySettings,
+  EnvironmentId,
+  SourceControlCliCommand,
   SourceControlProviderKind,
   SourceControlDiscoveryResult,
   SourceControlProviderAuth,
@@ -21,6 +23,7 @@ import {
 import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import { useEnvironmentSettings, useUpdateEnvironmentSettings } from "../../hooks/useSettings";
 import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { sourceControlEnvironment } from "../../state/sourceControl";
@@ -43,6 +46,7 @@ import {
   NumberFieldIncrement,
   NumberFieldInput,
 } from "../ui/number-field";
+import { Input } from "../ui/input";
 import { Switch } from "../ui/switch";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
@@ -84,6 +88,18 @@ const SOURCE_CONTROL_PROVIDER_ICONS: Partial<Record<SourceControlProviderKind, I
 const VCS_ICONS: Partial<Record<VcsDriverKind, Icon>> = {
   git: GitIcon,
   jj: JujutsuIcon,
+};
+
+/**
+ * Hosting providers T3 Code reaches through a CLI. Bitbucket talks to the REST
+ * API instead, so it has no executable to point anywhere.
+ */
+const SOURCE_CONTROL_PROVIDER_CLI: Partial<
+  Record<SourceControlProviderKind, SourceControlCliCommand>
+> = {
+  github: "gh",
+  gitlab: "glab",
+  "azure-devops": "az",
 };
 
 const SOURCE_CONTROL_SKELETON_ROWS = ["primary", "secondary"] as const;
@@ -257,11 +273,18 @@ function itemSummary({
   return <span>Available</span>;
 }
 
+/**
+ * Shows a discovered tool's status and expandable details. Set `expandForSearchTarget`
+ * to reveal settings inside the row when navigating from settings search.
+ */
 function DiscoveryItemRow({
   item,
+  expandForSearchTarget,
   children,
 }: {
   readonly item: VcsDiscoveryItem | SourceControlProviderDiscoveryItem;
+  /** Search-target id of a setting inside this row, so a jump reveals it. */
+  readonly expandForSearchTarget?: string | undefined;
   readonly children?: ReactNode;
 }) {
   const version = optionLabel(item.version);
@@ -276,10 +299,10 @@ function DiscoveryItemRow({
   const searchTargetId = useSettingsSearchTargetId();
 
   useEffect(() => {
-    if (item.kind === "git" && searchTargetId === searchableSetting("git-fetch-interval").id) {
+    if (expandForSearchTarget !== undefined && searchTargetId === expandForSearchTarget) {
       setIsExpanded(true);
     }
-  }, [item.kind, searchTargetId]);
+  }, [expandForSearchTarget, searchTargetId]);
 
   return (
     <div
@@ -342,6 +365,126 @@ function DiscoveryItemRow({
       ) : null}
     </div>
   );
+}
+
+/**
+ * Edits a hosting CLI override on the environment where discovery ran. Saves on
+ * blur, cancels the draft on Escape, and restores PATH lookup when reset.
+ * Mount only when that server advertises support for hosting CLI paths.
+ */
+function HostingCliPathSettings({
+  environmentId,
+  command,
+  label,
+}: {
+  /** The executable is server-local, so it is read and written where discovery ran. */
+  readonly environmentId: EnvironmentId;
+  readonly command: SourceControlCliCommand;
+  readonly label: string;
+}) {
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const savedPath = settings.sourceControlCliPaths[command];
+  const [draft, setDraft] = useState(savedPath);
+  const [lastSavedPath, setLastSavedPath] = useState(savedPath);
+  const setting = searchableSetting("hosting-cli-path");
+
+  // Another client, or an edit to the settings file, can change this while the
+  // row is open. Adjusting during render keeps the input on the saved value
+  // without a second render pass.
+  if (lastSavedPath !== savedPath) {
+    setLastSavedPath(savedPath);
+    setDraft(savedPath);
+  }
+
+  /** Trims the draft on blur and saves only changed overrides to the target environment. */
+  const commit = (value: string) => {
+    const next = value.trim();
+    setDraft(next);
+    if (next !== savedPath) {
+      updateSettings({ sourceControlCliPaths: { [command]: next } });
+    }
+  };
+
+  return (
+    <div className="grid gap-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 space-y-1">
+          <div className="flex min-w-0 items-center gap-1">
+            <span className="text-xs font-medium text-foreground">{setting.title}</span>
+            <PolicyTooltip>
+              {`T3 Code runs \`${command}\` for ${label}. Point this at a specific binary when the name on PATH is a version-manager wrapper, or when the CLI lives somewhere the server cannot see. Rescan after changing it.`}
+            </PolicyTooltip>
+            <span
+              className={cn(
+                "inline-flex size-5 shrink-0 items-center justify-center transition-opacity",
+                savedPath ? "opacity-100" : "pointer-events-none opacity-0",
+              )}
+              aria-hidden={!savedPath}
+            >
+              {savedPath ? (
+                <SettingResetButton
+                  label={`${command} path`}
+                  onClick={() => {
+                    setDraft("");
+                    updateSettings({ sourceControlCliPaths: { [command]: "" } });
+                  }}
+                />
+              ) : null}
+            </span>
+          </div>
+          <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
+            Leave empty to resolve <code>{command}</code> on the server&apos;s PATH.
+          </p>
+        </div>
+        <div className="flex shrink-0 items-center gap-2">
+          <Input
+            size="sm"
+            className="w-full sm:w-72"
+            aria-label={`${label} CLI path`}
+            placeholder={command}
+            value={draft}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(event) => setDraft(event.target.value)}
+            onBlur={(event) => commit(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopPropagation();
+                setDraft(savedPath);
+              }
+            }}
+          />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * The hosted app has no primary environment, so gating on one would leave
+ * remote-only users looking at an unavailable provider they cannot configure.
+ */
+function hostingCliPathField(
+  kind: SourceControlProviderKind,
+  label: string,
+  environmentId: EnvironmentId | null,
+  supportsCliPaths: boolean,
+) {
+  const command = SOURCE_CONTROL_PROVIDER_CLI[kind];
+  if (!command || environmentId === null) return undefined;
+  if (!supportsCliPaths) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Update this environment&apos;s server to configure hosting CLI paths.
+      </p>
+    );
+  }
+  return <HostingCliPathSettings environmentId={environmentId} command={command} label={label} />;
 }
 
 function GitFetchIntervalSettings() {
@@ -499,6 +642,10 @@ function EmptySourceControlDiscovery({
   );
 }
 
+/**
+ * Combines scoped source-control settings with tool discovery on the selected
+ * representative environment. CLI overrides stay local to that environment.
+ */
 export function SourceControlSettingsPanel() {
   const { scope, environment, connectedEnvironments } = useSettingsScope();
   // Discovery scans one machine's tools, so it shows the representative
@@ -568,7 +715,13 @@ export function SourceControlSettingsPanel() {
               headerAction={scanButton}
             >
               {result.versionControlSystems.map((item) => (
-                <DiscoveryItemRow key={`vcs:${item.kind}`} item={item}>
+                <DiscoveryItemRow
+                  key={`vcs:${item.kind}`}
+                  item={item}
+                  expandForSearchTarget={
+                    item.kind === "git" ? searchableSetting("git-fetch-interval").id : undefined
+                  }
+                >
                   {item.kind === "git" ? <GitFetchIntervalSettings /> : undefined}
                 </DiscoveryItemRow>
               ))}
@@ -576,19 +729,39 @@ export function SourceControlSettingsPanel() {
           ) : null}
 
           {result.sourceControlProviders.length > 0 ? (
-            <SettingsSection
-              id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
-              title={
-                hasVersionControlSystems
-                  ? "Source Control Providers"
-                  : `Source Control Providers${environmentSuffix}`
-              }
-              headerAction={hasVersionControlSystems ? null : scanButton}
-            >
-              {result.sourceControlProviders.map((item) => (
-                <DiscoveryItemRow key={`provider:${item.kind}`} item={item} />
-              ))}
-            </SettingsSection>
+            // The CLI path field renders once per provider inside a collapsed
+            // row, so the section owns the anchor and the rows expand into it.
+            <SettingsSearchTarget id={searchableSetting("hosting-cli-path").id}>
+              <SettingsSection
+                id={hasVersionControlSystems ? undefined : searchableSetting("source-control").id}
+                title={
+                  hasVersionControlSystems
+                    ? "Source Control Providers"
+                    : `Source Control Providers${environmentSuffix}`
+                }
+                headerAction={hasVersionControlSystems ? null : scanButton}
+              >
+                {result.sourceControlProviders.map((item) => (
+                  <DiscoveryItemRow
+                    key={`provider:${item.kind}`}
+                    item={item}
+                    expandForSearchTarget={
+                      SOURCE_CONTROL_PROVIDER_CLI[item.kind] && environmentId !== null
+                        ? searchableSetting("hosting-cli-path").id
+                        : undefined
+                    }
+                  >
+                    {hostingCliPathField(
+                      item.kind,
+                      item.label,
+                      environmentId,
+                      environment?.serverConfig?.environment.capabilities.sourceControlCliPaths ===
+                        true,
+                    )}
+                  </DiscoveryItemRow>
+                ))}
+              </SettingsSection>
+            </SettingsSearchTarget>
           ) : null}
         </>
       ) : (
