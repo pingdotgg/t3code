@@ -10,15 +10,12 @@ import {
   ArrowDownUpIcon,
   ChevronDownIcon,
   ChevronRightIcon,
-  GitPullRequestClosedIcon,
   HammerIcon,
   PencilIcon,
-  RotateCcwIcon,
-  SendIcon,
   TagIcon,
   UsersIcon,
 } from "lucide-react";
-import { useId, useRef, useState, type ReactNode } from "react";
+import { useRef, useState, type ReactNode } from "react";
 
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -28,7 +25,6 @@ import { formatRelativeTimeLabel } from "~/timestampFormat";
 
 import { Button } from "../ui/button";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { Textarea } from "../ui/textarea";
 import { toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import {
@@ -241,11 +237,13 @@ function MetaRow({
 function Section({
   title,
   defaultOpen = true,
+  keepMounted = false,
   actions,
   children,
 }: {
   title: string;
   defaultOpen?: boolean;
+  keepMounted?: boolean;
   /** Heading controls stay separate from the collapse trigger so they remain independently usable. */
   actions?: ReactNode;
   children: ReactNode;
@@ -275,6 +273,7 @@ function Section({
     <Collapsible
       open={open}
       onOpenChange={setOpenWithScrollAnchor}
+      render={<section aria-label={title} />}
       data-pull-request-summary-section
     >
       {/* The heading rides the top of the scroll box the way a diff's file header does, so a
@@ -296,117 +295,10 @@ function Section({
         </CollapsibleTrigger>
         {actions}
       </div>
-      <CollapsiblePanel>
+      <CollapsiblePanel keepMounted={keepMounted}>
         <div className="px-4 pb-4">{children}</div>
       </CollapsiblePanel>
     </Collapsible>
-  );
-}
-
-function CommentComposer({
-  environmentId,
-  reference,
-  detail,
-  actionPending,
-  onCommentAction,
-  onCommented,
-}: {
-  environmentId: EnvironmentId;
-  reference: PullRequestRef;
-  detail: PullRequestDetailView;
-  actionPending: boolean;
-  onCommentAction: (
-    body: string,
-    action: "close" | "reopen",
-  ) => Promise<{ readonly commentPosted: boolean }>;
-  onCommented: () => void;
-}) {
-  const [body, setBody] = useState("");
-  const [submitting, setSubmitting] = useState<"comment" | "close" | "reopen" | null>(null);
-  const postComment = useAtomCommand(pullRequestEnvironment.comment, { reportFailure: false });
-  const followUpAction =
-    detail.state === "open" &&
-    detail.capabilities.actions.includes("close") &&
-    detail.viewerPermissions.actions.includes("close")
-      ? ("close" as const)
-      : detail.state === "closed" &&
-          detail.capabilities.actions.includes("reopen") &&
-          detail.viewerPermissions.actions.includes("reopen")
-        ? ("reopen" as const)
-        : null;
-
-  const submit = async (action: "comment" | "close" | "reopen") => {
-    const trimmed = body.trim();
-    if (trimmed.length === 0 || submitting !== null || actionPending) return;
-    setSubmitting(action);
-    if (action !== "comment") {
-      const result = await onCommentAction(trimmed, action);
-      if (result.commentPosted) setBody("");
-      setSubmitting(null);
-      return;
-    }
-    const result = await postComment({
-      environmentId,
-      input: {
-        ...reference,
-        body: trimmed,
-      },
-    });
-    if (result._tag === "Failure") {
-      setSubmitting(null);
-      toastManager.add({ type: "error", title: "Could not post the comment" });
-      return;
-    }
-    setBody("");
-    setSubmitting(null);
-    onCommented();
-  };
-
-  return (
-    <div className="mt-3 space-y-2">
-      <Textarea
-        // Locked while posting: the body is cleared on success, which would otherwise throw
-        // away a new draft typed while the request was still in flight.
-        disabled={submitting !== null || actionPending}
-        value={body}
-        rows={3}
-        placeholder="Leave a comment"
-        aria-label="Comment on this pull request"
-        onChange={(event) => setBody(event.target.value)}
-      />
-      <div className="flex justify-end gap-2">
-        {followUpAction === null ? null : (
-          <Button
-            size="xs"
-            variant={followUpAction === "close" ? "destructive-outline" : "outline"}
-            disabled={body.trim().length === 0 || submitting !== null || actionPending}
-            onClick={() => void submit(followUpAction)}
-          >
-            {followUpAction === "close" ? (
-              <GitPullRequestClosedIcon className="size-3.5" />
-            ) : (
-              <RotateCcwIcon className="size-3.5" />
-            )}
-            {submitting === followUpAction
-              ? followUpAction === "close"
-                ? "Closing..."
-                : "Reopening..."
-              : followUpAction === "close"
-                ? "Close with comment"
-                : "Reopen with comment"}
-          </Button>
-        )}
-        <Button
-          size="xs"
-          variant="outline"
-          disabled={body.trim().length === 0 || submitting !== null || actionPending}
-          onClick={() => void submit("comment")}
-        >
-          <SendIcon className="size-3.5" />
-          {submitting === "comment" ? "Posting..." : "Comment"}
-        </Button>
-      </div>
-    </div>
   );
 }
 
@@ -427,8 +319,6 @@ export function PullRequestSummaryTab({
   fixFindingLabel = "Fix in a thread",
   fixCheckLabel = "Fix",
   onFixFinding,
-  actionPending,
-  onCommentAction,
   onRefresh,
 }: {
   environmentId: EnvironmentId;
@@ -442,19 +332,11 @@ export function PullRequestSummaryTab({
   fixFindingLabel?: string;
   fixCheckLabel?: string;
   onFixFinding?: (finding: PullRequestFinding) => void;
-  actionPending: boolean;
-  onCommentAction: (
-    body: string,
-    action: "close" | "reopen",
-  ) => Promise<{ readonly commentPosted: boolean }>;
   onRefresh: () => void;
 }) {
   // Keyed by the pull request, so opening another one starts at the end of its conversation
   // rather than wherever the last one had been read back to.
   const [shown, setShown] = useState({ url: detail.url, count: COMMENT_PAGE });
-  const checksId = useId();
-  const [expandedChecksUrl, setExpandedChecksUrl] = useState<string | null>(null);
-  const showChecks = expandedChecksUrl === detail.url;
   const shownComments = shown.url === detail.url ? shown.count : COMMENT_PAGE;
   // Windowed by recency regardless of display order: expanding always reaches further back in
   // time, whether the newest comment currently reads first or last.
@@ -590,7 +472,7 @@ export function PullRequestSummaryTab({
 
   return (
     <div className="h-full overflow-y-auto" data-pull-request-summary-scroll>
-      <section className="px-4 py-2.5">
+      <section className="px-4 pt-2.5 pb-1">
         <div className="space-y-2">
           <MetaRow icon={<UsersIcon className="size-3.5" />} label="Reviewers">
             <span className="flex min-w-0 flex-wrap items-center gap-1.5">
@@ -719,7 +601,7 @@ export function PullRequestSummaryTab({
         </div>
       </section>
 
-      <section aria-label="Description" className="px-4 pt-2 pb-4">
+      <Section key={`description:${detail.url}`} title="Description" keepMounted>
         <div className="group">
           {bodyScope === detail.url ? (
             <PullRequestMarkdownEditor
@@ -757,87 +639,59 @@ export function PullRequestSummaryTab({
               ) : null}
             </div>
           )}
-          <PullRequestReactionBar
-            className="mt-2"
-            reactions={detail.reactions ?? []}
-            canReact={detail.capabilities.reactions === true}
-            environmentId={environmentId}
-            reference={reference}
-            onRefresh={onRefresh}
-          />
         </div>
-      </section>
+      </Section>
 
-      <section aria-label="Checks" className="px-4 py-3">
+      <Section key={`checks:${detail.url}`} title="Checks" defaultOpen={false}>
         {detail.checks.length === 0 ? (
           <p className="text-xs text-muted-foreground">No checks reported.</p>
         ) : (
-          <div>
-            <div className="flex items-center gap-1 text-xs">
-              <span className="font-medium text-muted-foreground">Checks</span>
-              <Button
-                size="icon-xs"
-                variant="ghost-muted"
-                aria-label={showChecks ? "Hide checks" : "Show checks"}
-                aria-expanded={showChecks}
-                aria-controls={checksId}
-                onClick={() => setExpandedChecksUrl(showChecks ? null : detail.url)}
+          detail.checks.map((check, index) => {
+            const finding = { kind: "check", check } as const;
+            const failing = check.status === "failure" || check.status === "cancelled";
+            return (
+              <div
+                // Position too: the host decides how many runs share a name, and a repeated
+                // key would be a rendering fault on top of whatever the list already says.
+                key={`${index}:${check.name}:${check.url ?? ""}`}
+                className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
               >
-                <ChevronRightIcon
-                  aria-hidden
-                  className={cn("size-3.5 text-muted-foreground/60", showChecks && "rotate-90")}
-                />
-              </Button>
-            </div>
-            <div id={checksId} className={showChecks ? "mt-2" : "hidden"}>
-              {(showChecks ? detail.checks : []).map((check, index) => {
-                const finding = { kind: "check", check } as const;
-                const failing = check.status === "failure" || check.status === "cancelled";
-                return (
-                  <div
-                    // Position too: the host decides how many runs share a name, and a repeated
-                    // key would be a rendering fault on top of whatever the list already says.
-                    key={`${index}:${check.name}:${check.url ?? ""}`}
-                    className="group flex items-center gap-2 rounded-md pr-1 hover:bg-accent/60"
-                  >
-                    <button
-                      type="button"
-                      disabled={!check.url}
-                      onClick={() => check.url && openCheck(check.url)}
-                      className={cn(
-                        "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
-                        check.url ? undefined : "cursor-default",
-                      )}
-                    >
-                      <PullRequestCheckStatusIcon status={check.status} />
-                      <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
-                      <span className="shrink-0 text-muted-foreground">
-                        {pullRequestCheckStatusLabel(check)}
-                      </span>
-                    </button>
-                    {/* Only where there is something to fix. A passing check has no failure to
+                <button
+                  type="button"
+                  disabled={!check.url}
+                  onClick={() => check.url && openCheck(check.url)}
+                  className={cn(
+                    "flex min-w-0 flex-1 items-start gap-2 rounded-md px-2 py-2 text-left text-xs leading-5 [&>svg]:mt-0.5",
+                    check.url ? "cursor-pointer" : "cursor-default",
+                  )}
+                >
+                  <PullRequestCheckStatusIcon status={check.status} />
+                  <span className="min-w-0 flex-1 wrap-anywhere">{check.name}</span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {pullRequestCheckStatusLabel(check)}
+                  </span>
+                </button>
+                {/* Only where there is something to fix. A passing check has no failure to
                       reproduce, and the button would be an invitation to waste a thread. */}
-                    {onFixFinding && failing ? (
-                      <Button
-                        size="xs"
-                        variant="ghost"
-                        className="shrink-0"
-                        disabled={pendingFinding !== null && pendingFinding !== undefined}
-                        onClick={() => onFixFinding(finding)}
-                      >
-                        <HammerIcon className="size-3" />
-                        {pendingFinding === pullRequestFindingKey(finding)
-                          ? "Preparing..."
-                          : fixCheckLabel}
-                      </Button>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
+                {onFixFinding && failing ? (
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    className="shrink-0"
+                    disabled={pendingFinding !== null && pendingFinding !== undefined}
+                    onClick={() => onFixFinding(finding)}
+                  >
+                    <HammerIcon className="size-3" />
+                    {pendingFinding === pullRequestFindingKey(finding)
+                      ? "Preparing..."
+                      : fixCheckLabel}
+                  </Button>
+                ) : null}
+              </div>
+            );
+          })
         )}
-      </section>
+      </Section>
 
       <Section
         title="Comments"
@@ -991,24 +845,6 @@ export function PullRequestSummaryTab({
             )}
           </>
         )}
-        {/* Posting is a core capability and remains usable even if the activity read failed. */}
-        {detail.capabilities.comment && detail.viewerPermissions.comment ? (
-          <CommentComposer
-            reference={reference}
-            key={JSON.stringify([
-              environmentId,
-              reference.projectId,
-              reference.host,
-              reference.repository,
-              reference.number,
-            ])}
-            environmentId={environmentId}
-            detail={detail}
-            actionPending={actionPending}
-            onCommentAction={onCommentAction}
-            onCommented={onRefresh}
-          />
-        ) : null}
       </Section>
     </div>
   );

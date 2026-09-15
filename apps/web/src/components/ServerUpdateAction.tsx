@@ -4,6 +4,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
+import { CircleArrowUpIcon } from "lucide-react";
 import { type ComponentProps, useRef, useState } from "react";
 
 import { requestConfirmDialog } from "~/confirmDialog";
@@ -44,8 +45,10 @@ export interface ServerUpdateTarget {
   readonly continueThreadsAfterServerUpdate?: boolean;
 }
 
-type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size"> & {
+type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" | "className"> & {
   readonly label?: string;
+  /** "icon" renders a compact icon button with the label in a tooltip. */
+  readonly appearance?: "button" | "icon";
 };
 
 function useServerUpdate() {
@@ -94,6 +97,7 @@ export function ServerUpdatesAction({
   label = "Update all",
   variant = "outline",
   size = "xs",
+  className,
 }: UpdateButtonProps & {
   readonly targets: ReadonlyArray<ServerUpdateTarget>;
 }) {
@@ -133,6 +137,7 @@ export function ServerUpdatesAction({
     <Button
       size={size}
       variant={variant}
+      className={className}
       disabled={isPending || eligible.length === 0}
       onClick={() => void handleUpdate()}
     >
@@ -191,6 +196,8 @@ export function ServerUpdateAction({
   label = "Update",
   variant = "outline",
   size = "xs",
+  className,
+  appearance = "button",
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
@@ -251,18 +258,37 @@ export function ServerUpdateAction({
     );
   }
 
-  if (selfUpdate === null) {
-    const command = manualServerUpdateCommand(targetVersion);
+  const manualCommand = selfUpdate === null ? manualServerUpdateCommand(targetVersion) : null;
+  const actionLabel = manualCommand !== null ? "Copy update command" : label;
+  const onClick =
+    manualCommand !== null
+      ? () => copyToClipboard(manualCommand, { command: manualCommand })
+      : () => void handleUpdate();
+
+  if (appearance === "icon") {
     return (
-      <Button size={size} variant={variant} onClick={() => copyToClipboard(command, { command })}>
-        Copy update command
-      </Button>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="icon-xs"
+              variant="ghost"
+              className={className ?? "text-muted-foreground hover:text-foreground"}
+              aria-label={`${actionLabel} for ${serverLabel}`}
+              onClick={onClick}
+            />
+          }
+        >
+          <CircleArrowUpIcon className="size-3.5" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{actionLabel}</TooltipPopup>
+      </Tooltip>
     );
   }
 
   return (
-    <Button size={size} variant={variant} onClick={() => void handleUpdate()}>
-      {label}
+    <Button size={size} variant={variant} className={className} onClick={onClick}>
+      {actionLabel}
     </Button>
   );
 }

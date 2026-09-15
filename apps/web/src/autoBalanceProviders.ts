@@ -1,4 +1,5 @@
 import type { EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
+import { resolveSelectableModel } from "@t3tools/shared/model";
 import {
   type EnvironmentId,
   type ProviderDriverKind,
@@ -70,6 +71,7 @@ export function environmentSupportsModelSelection(input: {
   driver: ProviderDriverKind;
   model: string | null;
   preserveUnavailableModel?: boolean;
+  exactModel?: boolean;
 }): boolean {
   return applyProviderInstanceSettings(
     deriveProviderInstanceEntries(input.providers),
@@ -81,14 +83,43 @@ export function environmentSupportsModelSelection(input: {
       entry.enabled &&
       isProviderSnapshotRoutable(entry.snapshot) &&
       (input.model === null ||
-        getAppModelOptionsForInstance(
-          input.settings,
-          entry,
-          input.preserveUnavailableModel ? input.model : null,
-        ).some(
-          (model) => model.slug === input.model || model.aliases?.includes(input.model!) === true,
-        )),
+        (input.exactModel
+          ? getAppModelOptionsForInstance(input.settings, entry).some(
+              (model) => model.slug === input.model,
+            )
+          : resolveSelectableModel(
+              entry.driverKind,
+              input.model,
+              getAppModelOptionsForInstance(
+                input.settings,
+                entry,
+                input.preserveUnavailableModel ? input.model : null,
+              ),
+            ) !== null)),
   );
+}
+
+/** Keep balancing on exact model owners whenever any eligible machine has one. */
+export function selectAutoBalanceModelEnvironments(
+  environments: ReadonlyArray<AutoBalanceEnvironment>,
+  selection: Pick<
+    Parameters<typeof environmentSupportsModelSelection>[0],
+    "instanceId" | "driver" | "model"
+  >,
+  currentEnvironmentId: EnvironmentId,
+) {
+  const exact = environments.filter((environment) =>
+    environmentSupportsModelSelection({ ...environment, ...selection, exactModel: true }),
+  );
+  return exact.length > 0
+    ? exact
+    : environments.filter((environment) =>
+        environmentSupportsModelSelection({
+          ...environment,
+          ...selection,
+          preserveUnavailableModel: environment.environmentId === currentEnvironmentId,
+        }),
+      );
 }
 
 /**
@@ -181,13 +212,20 @@ export function resolveAutoBalancePickerSelection(
   model: string,
 ) {
   const targets = catalog.targetsByInstance.get(key) ?? [];
-  const matches = (candidate: AppModelOption) =>
-    candidate.slug === model || candidate.aliases?.includes(model);
-  return (
-    targets.find((target) =>
-      target.models.some((candidate) => !candidate.isUnavailable && matches(candidate)),
-    ) ??
-    targets.find((target) => target.models.some(matches)) ??
-    null
-  );
+  const driver = targets[0]?.driver;
+  if (!driver) return null;
+  for (const availableOnly of [true, false]) {
+    const options = targets.flatMap((target) =>
+      target.models.filter((candidate) => !availableOnly || !candidate.isUnavailable),
+    );
+    const resolved = resolveSelectableModel(driver, model, options);
+    if (resolved === null) continue;
+    const target = targets.find((target) =>
+      target.models.some(
+        (candidate) => candidate.slug === resolved && (!availableOnly || !candidate.isUnavailable),
+      ),
+    );
+    if (target) return { ...target, model: resolved };
+  }
+  return null;
 }

@@ -14,6 +14,7 @@ import {
   environmentSupportsModelSelection,
   isAutoBalanceRoutableEnvironment,
   resolveAutoBalancePickerSelection,
+  selectAutoBalanceModelEnvironments,
   type AutoBalanceEnvironment,
 } from "./autoBalanceProviders";
 
@@ -314,5 +315,75 @@ describe("dynamic catalogue recovery", () => {
     const pickerId = autoBalancePickerInstanceId(kind, instanceId);
     expect(union.modelOptionsByInstance.get(pickerId)?.[0]?.isUnavailable).not.toBe(true);
     expect(resolveAutoBalancePickerSelection(union, pickerId, "recovered")?.environmentId).toBe(b);
+  });
+});
+
+describe("review regressions: exact routing and resolver parity", () => {
+  it("keeps an exact custom model ahead of a preferred alias during selection and balancing", () => {
+    const aliasOwner = environment(a, [
+      provider({ models: [model("other-model", { aliases: ["custom-model"] })] }),
+    ]);
+    const exactOwner = environment(b, [provider()]);
+    exactOwner.settings = {
+      ...exactOwner.settings,
+      providerInstances: {
+        [codex]: { driver, config: { customModels: ["custom-model"] } },
+      },
+    };
+    const environments = [aliasOwner, exactOwner];
+    const target = resolveAutoBalancePickerSelection(catalog(environments), key, "custom-model");
+    expect(target).toMatchObject({ environmentId: b, model: "custom-model" });
+    expect(
+      selectAutoBalanceModelEnvironments(
+        environments,
+        { instanceId: codex, driver, model: "custom-model" },
+        b,
+      ).map((e) => e.environmentId),
+    ).toEqual([b]);
+  });
+
+  it.each(["legacy-synthetic-model", " LEGACY-SYNTHETIC-MODEL ", "Friendly Model"])(
+    "uses normal model resolution for %s",
+    (selection) => {
+      const env = environment(b, [
+        provider({
+          models: [
+            model("synthetic-model", {
+              name: "Friendly Model",
+              aliases: ["Legacy-Synthetic-Model"],
+            }),
+          ],
+        }),
+      ]);
+      expect(supports(env, selection)).toBe(true);
+      expect(resolveAutoBalancePickerSelection(catalog([env]), key, selection)).toMatchObject({
+        environmentId: b,
+        model: "synthetic-model",
+      });
+      expect(
+        selectAutoBalanceModelEnvironments(
+          [env],
+          { instanceId: codex, driver, model: selection },
+          a,
+        ),
+      ).toEqual([env]);
+    },
+  );
+
+  it("ignores disabled exact owners and retains alias fallback", () => {
+    const alias = environment(a, [
+      provider({ models: [model("real", { aliases: ["selected"] })] }),
+    ]);
+    const disabled = environment(b, [provider({ enabled: false, models: [model("selected")] })]);
+    expect(
+      selectAutoBalanceModelEnvironments(
+        [disabled, alias],
+        { instanceId: codex, driver, model: "selected" },
+        a,
+      ),
+    ).toEqual([alias]);
+    expect(
+      resolveAutoBalancePickerSelection(catalog([disabled, alias]), key, "selected"),
+    ).toMatchObject({ environmentId: a, model: "real" });
   });
 });
