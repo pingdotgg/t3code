@@ -13,6 +13,8 @@ import {
   OrchestrationGetTurnDiffInput,
   OrchestrationLatestTurn,
   ProjectCreatedPayload,
+  OrchestrationProjectShell,
+  ProjectIconColor,
   ProjectMetaUpdatedPayload,
   OrchestrationProposedPlan,
   OrchestrationSession,
@@ -41,6 +43,18 @@ import { ProviderInstanceId } from "./providerInstance.ts";
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);
 const decodeFullThreadDiffInput = Schema.decodeUnknownEffect(OrchestrationGetFullThreadDiffInput);
 const decodeThreadTurnDiff = Schema.decodeUnknownEffect(ThreadTurnDiff);
+// The icon shape understood by clients released before monograms.
+const legacyProjectIcon = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("lucide"), name: Schema.String, color: ProjectIconColor }),
+  Schema.Struct({ kind: Schema.Literal("emoji"), emoji: Schema.String }),
+]);
+const decodeLegacyProjectShell = Schema.decodeUnknownEffect(
+  Schema.Struct({
+    ...OrchestrationProjectShell.fields,
+    projectIcon: Schema.optional(Schema.NullOr(legacyProjectIcon)),
+  }),
+);
+const encodeProjectShell = Schema.encodeEffect(OrchestrationProjectShell);
 const decodeProjectCreateCommand = Schema.decodeUnknownEffect(ProjectCreateCommand);
 const decodeProjectCreatedPayload = Schema.decodeUnknownEffect(ProjectCreatedPayload);
 const decodeProjectMetaUpdatedPayload = Schema.decodeUnknownEffect(ProjectMetaUpdatedPayload);
@@ -1506,6 +1520,64 @@ it.effect("project icon overrides accept Lucide icons, colors, and emoji", () =>
       }),
     );
     assert.strictEqual(invalid._tag, "Failure");
+  }),
+);
+
+it.effect("older clients decode monogram projects as their fallback icon", () =>
+  Effect.gen(function* () {
+    const encoded = yield* encodeProjectShell({
+      id: ProjectId.make("project-monogram"),
+      title: "Monogram",
+      workspaceRoot: "/tmp/monogram",
+      defaultModelSelection: null,
+      scripts: [],
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      projectIcon: { kind: "lucide", name: "folder-code", color: "violet", monogram: "T3" },
+    });
+    const decoded = yield* decodeLegacyProjectShell(encoded);
+    assert.deepEqual(decoded.projectIcon, { kind: "lucide", name: "folder-code", color: "violet" });
+  }),
+);
+
+it.effect("project monograms validate text and palette colors", () =>
+  Effect.gen(function* () {
+    for (const text of ["A", "T3", "É", "文書", "कि", "किखि", "e\u0301"]) {
+      const projectIcon = {
+        kind: "lucide",
+        name: "folder-code",
+        color: "violet",
+        monogram: text,
+      } as const;
+      const command = yield* decodeOrchestrationCommand({
+        type: "project.meta.update",
+        commandId: "cmd-monogram",
+        projectId: "project-1",
+        projectIcon,
+      });
+      assert.strictEqual(command.type, "project.meta.update");
+      if (command.type === "project.meta.update")
+        assert.deepEqual(command.projectIcon, projectIcon);
+    }
+    for (const projectIcon of [
+      { kind: "lucide", name: "folder-code", monogram: "", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "ABC", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "किखिगि", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "\u0301", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "A B", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "🚀", color: "blue" },
+      { kind: "lucide", name: "folder-code", monogram: "T3", color: "ultraviolet" },
+    ]) {
+      const result = yield* Effect.exit(
+        decodeOrchestrationCommand({
+          type: "project.meta.update",
+          commandId: "cmd-monogram-invalid",
+          projectId: "project-1",
+          projectIcon,
+        }),
+      );
+      assert.strictEqual(result._tag, "Failure");
+    }
   }),
 );
 
