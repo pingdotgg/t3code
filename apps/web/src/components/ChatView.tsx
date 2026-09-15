@@ -349,7 +349,7 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import { MessagesTimeline } from "./chat/MessagesTimeline";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
-import { resolveTimelineIsAtEnd } from "./chat/MessagesTimeline.logic";
+import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
 import { resolveComposerTimelineInset, resolveScrollToEndClearance } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
 import { PanelLayoutControls, RightPanelMaximizeControl } from "./chat/PanelLayoutControls";
@@ -3496,7 +3496,9 @@ export default function ChatView(props: ChatViewProps) {
   // A thread reopened mid-setup has no dispatch ref: this view remounted.
   // The server projects a starting session before any message or turn exists
   // for exactly that window, so follow the setup stream from the thread's own
-  // state until the agent's turn lands.
+  // state. The ref is adopted below so the card then follows the same
+  // lifecycle as the original send, including an async setup script that
+  // keeps running after the agent's turn lands.
   const resumedWorktreeSetupRef =
     !worktreeSetupActive &&
     isServerThread &&
@@ -3506,6 +3508,12 @@ export default function ChatView(props: ChatViewProps) {
     activeThreadShell.latestUserMessageAt === null
       ? activeThreadRef
       : null;
+  useEffect(() => {
+    if (!resumedWorktreeSetupRef) return;
+    setWorktreeSetupRef(
+      (current) => current ?? { ...resumedWorktreeSetupRef, ownerKey: worktreeSetupOwnerKey },
+    );
+  }, [resumedWorktreeSetupRef, worktreeSetupOwnerKey]);
   // The setup runs on the environment that received the dispatch, so both
   // the subscription and cancel target that one even if the draft's machine
   // picker changes underneath.
@@ -3557,6 +3565,14 @@ export default function ChatView(props: ChatViewProps) {
   useEffect(() => {
     if (worktreeSetupSettledKey) pendingWorktreeSetupByThreadKey.delete(worktreeSetupSettledKey);
   }, [worktreeSetupSettledKey]);
+  // Sends wait for the agent handoff, not for the setup script: an async
+  // script keeps the snapshot running while the agent already works, and a
+  // follow-up must not be held behind a slow install. A resumed setup has no
+  // snapshot until its first stream event, so that gap blocks as well.
+  const worktreeSetupBlocksSend =
+    worktreeSetup !== null
+      ? worktreeSetup.phase === "running" && !worktreeSetupAgentStarted(worktreeSetup)
+      : resumedWorktreeSetupRef !== null && !worktreeSetupQuery.isSuccess;
   const cancelWorktreeSetup = useAtomCommand(vcsEnvironment.cancelWorktreeSetup, {
     reportFailure: false,
   });
@@ -9333,9 +9349,7 @@ export default function ChatView(props: ChatViewProps) {
                                   ? "Sending feedback"
                                   : threadDetailLoading
                                     ? "Messages loading"
-                                    : worktreeSetup?.phase === "running" ||
-                                        (resumedWorktreeSetupRef !== null &&
-                                          !worktreeSetupQuery.isSuccess)
+                                    : worktreeSetupBlocksSend
                                       ? "Preparing worktree"
                                       : projectCloneSendBlockReason
                             }
