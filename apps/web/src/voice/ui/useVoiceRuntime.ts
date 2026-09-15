@@ -18,6 +18,7 @@ import { AsyncResult, Atom } from "effect/unstable/reactivity";
 import { useMemo } from "react";
 
 import { environmentCatalog } from "../../connection/catalog";
+import { subscribeMissingThreadRedirect } from "../../missingThreadRedirects";
 import { appAtomRegistry } from "../../rpc/atomRegistry";
 import { primaryEnvironmentIdAtom } from "../../state/primaryEnvironment";
 import { environmentSession, readPreparedConnection } from "../../state/session";
@@ -104,8 +105,9 @@ export async function resolveWebVoiceBrokerPort(): Promise<VoiceLiveBrokerPort> 
 }
 
 /** The TanStack route driver: programmatic navigation through the existing
-    router APIs, path read-back from live router state, and an onResolved
-    subscription for the navigator's late-redirect watch. */
+    router APIs, path read-back from live router state, and the thread route
+    guard's authoritative missing-thread redirect provenance for the
+    navigator's post-acknowledgment watch. */
 export function useVoiceRouteDriver(): VoiceRouteDriver {
   const navigate = useNavigate();
   const router = useRouter();
@@ -119,12 +121,7 @@ export function useVoiceRouteDriver(): VoiceRouteDriver {
         });
       },
       readCurrentPath: () => router.state.location.pathname,
-      subscribePathChange: (listener) => {
-        const unsubscribe = router.subscribe("onResolved", () => {
-          listener(router.state.location.pathname);
-        });
-        return unsubscribe;
-      },
+      subscribeMissingThreadRedirect: (listener) => subscribeMissingThreadRedirect(listener),
     }),
     [navigate, router],
   );

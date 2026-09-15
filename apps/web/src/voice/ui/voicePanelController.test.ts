@@ -134,7 +134,7 @@ const makeHarness = (): Harness => {
       driverCalls.push({ to: input.to, params: input.params });
     },
     readCurrentPath: () => `/${DESTINATION.environmentId}/${DESTINATION.threadId}`,
-    subscribePathChange: () => () => {},
+    subscribeMissingThreadRedirect: () => () => {},
   };
   harness.deps = {
     resolveBrokerPort: async () => {
@@ -575,7 +575,7 @@ describe("end during a pending connection", () => {
       driver: {
         navigate: async () => {},
         readCurrentPath: () => "/",
-        subscribePathChange: () => () => {},
+        subscribeMissingThreadRedirect: () => () => {},
       },
       reachabilityOf: () => "connected",
       attachSpeakerTrack: () => {},
