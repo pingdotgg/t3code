@@ -352,7 +352,7 @@ export const makeOrchestrationIntegrationHarness = (
       Layer.provideMerge(runtimeServicesLayer),
       Layer.provideMerge(
         Layer.mock(PullRequestService.PullRequestService)({
-          refreshAfterTurn: Effect.void,
+          refreshAfterTurn: () => Effect.void,
         }),
       ),
       Layer.provideMerge(

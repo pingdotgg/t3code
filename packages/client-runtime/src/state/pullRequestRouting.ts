@@ -49,6 +49,17 @@ const writes = new Set<string>([
 ]);
 const isRef = Schema.is(PullRequestRef);
 const isInvalidation = Schema.is(PullRequestInvalidateInput);
+const readTimeout = (environmentId: EnvironmentId) =>
+  Effect.timeoutOrElse({
+    duration: "30 seconds",
+    orElse: () =>
+      Effect.fail(
+        new EnvironmentRpcUnavailableError({
+          environmentId,
+          message: "The environment did not respond to the PR request.",
+        }),
+      ),
+  });
 interface RoutedRead {
   origin: EnvironmentId;
   reference: PullRequestRef;
@@ -318,7 +329,8 @@ export function createPullRequestRouter() {
           if (!(yield* routingAllowed(registry, origin.target.environmentId, id, writes.has(tag))))
             return yield* visit(index + 1);
         }
-        return yield* run(id).pipe(
+        const operation = run(id);
+        return yield* (reads.has(tag) ? operation.pipe(readTimeout(id)) : operation).pipe(
           Effect.catch((error) => {
             if (
               (reads.has(tag) || rejectedBeforeDispatch(error)) &&
@@ -366,12 +378,15 @@ export function createPullRequestRouter() {
     }
     if (!allowed) return yield* request(tag, input);
     const strictInput = { ...input, allowStale: false };
-    const source = yield* Effect.cached(request(tag, strictInput));
-    // Cached source reads usually finish before another environment can verify its account.
-    // Hedge slow reads only; never race mutations or retry an ambiguous write.
-    return yield* Effect.race(
-      source,
-      routedRequest(tag, strictInput, source).pipe(Effect.delay("75 millis")),
+    const source = yield* Effect.cached(
+      request(tag, strictInput).pipe(readTimeout(origin.target.environmentId)),
+    );
+    const sourceEntry = entries.get(origin.target.environmentId);
+    const routed = routedRequest(tag, strictInput, source);
+    return yield* (
+      sourceEntry !== undefined && isLocal(sourceEntry)
+        ? source.pipe(Effect.catch(() => routed))
+        : routed
     ).pipe(
       Effect.catch((error) =>
         input.allowStale !== false &&

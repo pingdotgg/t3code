@@ -7,6 +7,9 @@ import {
 } from "@t3tools/contracts";
 import { expect, it } from "@effect/vitest";
 import * as Data from "effect/Data";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Effect from "effect/Effect";
 import * as Latch from "effect/Latch";
 import * as Layer from "effect/Layer";
@@ -52,7 +55,7 @@ for (const scenario of [
   "prefers the local environment with the same github account",
   "falls back before mutation when the local account differs",
   "never retries an ambiguous mutation failure",
-  "returns a fast source read without checking alternate identities",
+  "returns a fast local source read without checking alternate identities",
   "keeps single-environment requests free of identity lookups",
   "keeps a local origin ahead of another local environment",
   "keeps mutations on an old origin server without retrying them",
@@ -79,10 +82,12 @@ for (const scenario of [
           switchedAccount;
         const ambiguous = scenario === "never retries an ambiguous mutation failure";
         const reading =
-          scenario === "returns a fast source read without checking alternate identities";
+          scenario === "returns a fast local source read without checking alternate identities";
         const single = scenario === "keeps single-environment requests free of identity lookups";
         const localOrigin =
-          scenario === "keeps a local origin ahead of another local environment" || switchedAccount;
+          scenario === "keeps a local origin ahead of another local environment" ||
+          switchedAccount ||
+          reading;
         const oldOrigin =
           scenario === "keeps mutations on an old origin server without retrying them";
         const oldAlternate =
@@ -557,15 +562,15 @@ for (const probe of ["origin", "alternate"] as const) {
   );
 }
 
-for (const source of ["pending", "pending-local", "failed", "offline"] as const) {
-  it.live(
+for (const source of ["pending", "pending-local", "failed-local", "failed", "offline"] as const) {
+  it.effect(
     source === "offline"
       ? "returns held source data only after both fresh paths fail"
-      : `hedges a ${source} source read to local and interrupts the losing read`,
+      : `uses one shared reader with a ${source} source`,
     () =>
       Effect.scoped(
         Effect.gen(function* () {
-          let interrupted = false;
+          const started = yield* Deferred.make<void>();
           const calls: string[] = [];
           const clientFor = (local: boolean) =>
             ({
@@ -590,21 +595,16 @@ for (const source of ["pending", "pending-local", "failed", "offline"] as const)
                       operation: "summary",
                       detail: "github unreachable",
                     });
-                  return yield* Effect.never.pipe(
-                    Effect.onInterrupt(() =>
-                      Effect.sync(() => {
-                        interrupted = true;
-                      }),
-                    ),
-                  );
+                  yield* Deferred.succeed(started, undefined);
+                  return yield* Effect.never;
                 }),
             }) as unknown as WsRpcProtocolClient;
           const { environmentRegistry, supervisor } = yield* makeTestRuntime(
             clientFor(false),
             clientFor(true),
-            source === "pending-local",
+            source === "failed-local" || source === "pending-local",
           );
-          const result = yield* createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
+          const request = createPullRequestRouter()(WS_METHODS.pullRequestsSummary, {
             projectId: ProjectId.make("project-1"),
             repository: "acme/web",
             number: 7,
@@ -613,14 +613,23 @@ for (const source of ["pending", "pending-local", "failed", "offline"] as const)
             Effect.provideService(GitHubRoutingPermissions, trustedRouting),
             Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
           );
+          const fiber = yield* request.pipe(Effect.forkChild);
+          if (source === "pending-local") {
+            yield* Deferred.await(started);
+            yield* TestClock.adjust("30 seconds");
+          }
+          const result = yield* Fiber.join(fiber);
           if (source === "offline") {
             expect(result).toEqual({ state: "open" });
-            expect(calls).toEqual(["origin", "local", "held"]);
+            expect(calls).toEqual(["local", "origin", "held"]);
           } else {
             expect(result).toBeNull();
-            expect(calls).toEqual(["origin", "local"]);
+            expect(calls).toEqual(
+              source === "failed-local" || source === "pending-local"
+                ? ["origin", "local"]
+                : ["local"],
+            );
           }
-          expect(interrupted).toBe(source === "pending" || source === "pending-local");
         }),
       ),
   );

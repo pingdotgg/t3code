@@ -1106,6 +1106,7 @@ export const make = Effect.gen(function* () {
     captureVerifiedCredential(input).pipe(
       Effect.flatMap(({ host, token, accountId, viewer, credentialFingerprint }) =>
         use({ accountId, viewer, credentialFingerprint }).pipe(
+          Effect.provideService(SourceControlRateLimit.CredentialScope, credentialFingerprint),
           Effect.provideService(GitHubCli.PinnedGitHubCredential, {
             host,
             token,

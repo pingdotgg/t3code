@@ -30,6 +30,33 @@ function makeProvider(github: Partial<GitHubCli.GitHubCli["Service"]>) {
   );
 }
 
+it.effect("uses the enterprise quota for a current-repository default branch read", () =>
+  Effect.gen(function* () {
+    const provider = yield* GitHubSourceControlProvider.make.pipe(
+      Effect.provide(GitHubCli.layer),
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) =>
+          Effect.sync(() => {
+            if (input.args[1] !== "rate_limit") return processResult("main");
+            assert.strictEqual(input.args[3], "enterprise.test");
+            return processResult(
+              '{"data":{"rateLimit":{"cost":1,"limit":5000,"remaining":5000,"resetAt":"2099-01-01T00:00:00Z"}}}',
+            );
+          }),
+      }),
+    );
+    const branch = yield* provider.getDefaultBranch({
+      cwd: "/enterprise-repo",
+      context: {
+        provider: { kind: "github", name: "GitHub Enterprise", baseUrl: "https://enterprise.test" },
+        remoteName: "origin",
+        remoteUrl: "https://enterprise.test/acme/web.git",
+      },
+    });
+    assert.strictEqual(branch, "main");
+  }),
+);
+
 it.effect("maps GitHub PR summaries into provider-neutral change requests", () =>
   Effect.gen(function* () {
     const provider = yield* makeProvider({
