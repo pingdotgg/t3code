@@ -627,6 +627,18 @@ describe("ClientSettings follow-up behavior", () => {
   });
 });
 
+describe("ClientSettings usage limits meter", () => {
+  it("defaults off and accepts opting in", () => {
+    expect(decodeClientSettings({}).usageLimitsMeterEnabled).toBe(false);
+    expect(decodeClientSettings({ usageLimitsMeterEnabled: true }).usageLimitsMeterEnabled).toBe(
+      true,
+    );
+    expect(
+      decodeClientSettingsPatch({ usageLimitsMeterEnabled: true }).usageLimitsMeterEnabled,
+    ).toBe(true);
+  });
+});
+
 describe("ClientSettings composer collapse", () => {
   it("collapses on scroll by default and accepts opting out", () => {
     expect(decodeClientSettings({}).composerCollapseOnScroll).toBe(true);

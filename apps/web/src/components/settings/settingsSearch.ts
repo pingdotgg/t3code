@@ -352,6 +352,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["composer rich text tiptap bold italic markdown styled wysiwyg"],
   },
   {
+    id: "usage-limits-meter",
+    title: "Usage limits meter",
+    to: "/settings/general",
+    searchTerms: ["composer quota subscription remaining rate limit weekly session percent"],
+  },
+  {
     id: "composer-collapse",
     title: "Collapse composer on scroll",
     to: "/settings/general",
