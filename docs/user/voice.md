@@ -83,14 +83,18 @@ client crash the delivery is at-least-once: in rare cases a finished result can 
 
 ## Server setup
 
-An administrator of the T3 environment enables voice by placing an OpenAI API key in the server's
-secret store and, optionally, tuning the defaults.
+Open **Settings → Integrations → Voice** and select the environment you want to use. With
+administrator access, add an OpenAI API key with GPT Live access and save. Reload the app to
+show the voice panel, then connect and allow microphone access. API usage is billed to that key.
 
-- **Key.** Create a file named `openai-api-key.bin` in the server's `secrets` directory (under the
-  T3 data directory, next to `state.sqlite`) containing the key as plain text, readable only by the
-  user running the server. The key must have Live session, Responses, and model-catalog
-  permissions. Voice appears once the key exists and disappears if it is removed; no restart is
-  needed.
+The same section lets you replace or remove the key, choose the speech and reasoning models,
+and enable fast commands on this device. Removing the key disables new voice sessions. End any
+active voice call first. Model changes apply when you next connect. Keys stay on the selected
+server and are never returned to the settings page.
+
+For unattended setup, place the key in `secrets/openai-api-key.bin` under the server's T3 data
+directory, next to `state.sqlite`, with permissions `600`.
+
 - **Overrides (optional).** A `voice-broker-config.bin` file in the same directory holds JSON that
   overrides the defaults:
 

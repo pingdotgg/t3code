@@ -9,7 +9,11 @@
  * first connected capable environment that does. Tool destinations stay
  * independent of this choice.
  */
-import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
+import {
+  VoiceSettings,
+  type VoiceSettingsUpdate,
+  AuthOrchestrationOperateScope,
+} from "@t3tools/contracts";
 import type {
   EnvironmentId,
   VoiceBrokerSessionCloseInput,
@@ -23,6 +27,7 @@ import { environmentEndpointUrl } from "@t3tools/client-runtime/environment";
 import { ManagedRelay } from "@t3tools/client-runtime/relay";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
+import * as Schema from "effect/Schema";
 
 import { runtime } from "../../lib/runtime";
 import type { VoiceLiveBrokerPort } from "../live-client";
@@ -143,7 +148,7 @@ export async function buildBrokerAuthHeaders(
   };
 }
 
-export function createFetchVoiceBrokerPort(input: FetchVoiceBrokerPortInput): VoiceLiveBrokerPort {
+function createVoicePost(input: FetchVoiceBrokerPortInput) {
   const doFetch = input.fetchImpl ?? fetch;
   const post = async (path: string, body: unknown): Promise<unknown> => {
     const url = environmentEndpointUrl(input.prepared.httpBaseUrl, path);
@@ -183,6 +188,11 @@ export function createFetchVoiceBrokerPort(input: FetchVoiceBrokerPortInput): Vo
     return parsed;
   };
 
+  return post;
+}
+
+export function createFetchVoiceBrokerPort(input: FetchVoiceBrokerPortInput): VoiceLiveBrokerPort {
+  const post = createVoicePost(input);
   return {
     async respond(request) {
       const parsed = (await post("/api/voice/backend", request)) as Record<string, unknown>;
@@ -231,4 +241,21 @@ export async function createWebVoiceBrokerPort(
     Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
   );
   return createFetchVoiceBrokerPort({ prepared, signer });
+}
+
+const decodeVoiceSettings = Schema.decodeUnknownSync(VoiceSettings);
+
+export async function requestVoiceSettings(
+  prepared: PreparedConnection,
+  update?: VoiceSettingsUpdate,
+): Promise<VoiceSettings> {
+  const signer = await runtime.runPromise(
+    Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner),
+  );
+  const post = createVoicePost({ prepared, signer });
+  const result = await post(
+    update ? "/api/voice/settings" : "/api/voice/settings/read",
+    update ?? {},
+  );
+  return decodeVoiceSettings(result);
 }
