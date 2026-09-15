@@ -3,7 +3,6 @@ import * as Schema from "effect/Schema";
 import * as SchemaIssue from "effect/SchemaIssue";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import * as Struct from "effect/Struct";
-import { countGraphemes } from "unicode-segmenter/grapheme";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { ProviderOptionSelections } from "./model.ts";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -463,8 +462,11 @@ const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 export const ProjectMonogramText = TrimmedNonEmptyString.check(
   Schema.isMaxLength(32),
   Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
-  // These contracts also load in Hermes, which does not provide Intl.Segmenter.
-  Schema.makeFilter((text) => countGraphemes(text) <= 2),
+  // Approximate monogram length without Intl.Segmenter, which Hermes lacks.
+  // Normalize composed letters and ignore marks/joiners; complex conjuncts may count as multiple letters.
+  Schema.makeFilter(
+    (text) => [...text.normalize("NFC").replace(/[\p{M}\u200c\u200d]/gu, "")].length <= 2,
+  ),
 );
 
 export const ProjectIconOverride = Schema.Union([
