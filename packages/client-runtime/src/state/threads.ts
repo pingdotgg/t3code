@@ -652,6 +652,12 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
 
       if (Result.isFailure(pageResult)) {
         const failure = pageResult.failure;
+        // A structured not-found is authoritative: the thread is gone, so the
+        // stale projection and dead cursor must not keep rendering it.
+        if (failure._tag === "EnvironmentResourceNotFoundError") {
+          yield* setDeleted();
+          return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
+        }
         // A typed invalid_history_cursor means the anchor row no longer
         // resolves (deleted or superseded). Reseed progressive meta from a
         // fresh bounded snapshot instead of retrying the dead cursor forever.
@@ -701,6 +707,14 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 return { _tag: "loaded" } satisfies ThreadHistoryLoadEarlierResult;
               }),
             );
+          }
+          // The reseed 404'd — the thread is gone, not just the cursor.
+          if (
+            Result.isFailure(refreshed) &&
+            refreshed.failure._tag === "EnvironmentResourceNotFoundError"
+          ) {
+            yield* setDeleted();
+            return { _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult;
           }
         }
         const message = formatHistoryError(pageResult.failure);

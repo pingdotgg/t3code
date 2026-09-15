@@ -889,7 +889,9 @@ export const revertThreadCheckpoint = Effect.fn("EnvironmentCommands.revertThrea
 export const stopThreadSession = Effect.fn("EnvironmentCommands.stopThreadSession")(function* (
   input: StopThreadSessionInput,
 ) {
-  const projection = yield* getProjection(input.threadId);
+  // Detach must see every live session; the bounded window only carries the
+  // retained timeline cohort, so a ready session outside it would survive.
+  const projection = yield* getProjection(input.threadId, { bounded: false });
   const commandId = yield* allocateCommandId(input);
   let result = { sequence: 0 };
   for (const session of projection.providerSessions) {
