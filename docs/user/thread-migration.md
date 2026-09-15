@@ -1,7 +1,12 @@
 # Threads from older T3 Code versions
 
-When a server first starts with the current orchestration system, it brings its existing threads
-forward automatically. You do not need to run an import command.
+On your first V2 launch, T3 Code copies the V1 database, `state.sqlite`, into `statev2.sqlite`
+in the same data directory and migrates the copy. Your threads appear automatically, with full
+transcripts imported as needed. You do not need to run an import command.
+
+You can close V2 and return to V1, which continues using its original database. Opening V2 again
+resumes your V2 history. The copy happens only once: later conversations and changes in either
+version do not sync to the other. Settings, attachments, and workspace files remain shared.
 
 The migrated thread keeps its title, project, provider and model selection, permission and
 interaction modes, branch or worktree, archive state, settlement state, snooze and pin state, and
