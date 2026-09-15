@@ -121,6 +121,7 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
+import { openFileManagerPath, useFileManagerAction } from "../fileManagerReveal";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
@@ -146,7 +147,7 @@ import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import { cn } from "~/lib/utils";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectEnvironmentBadge } from "./ProjectEnvironmentBadge";
-import { buildThreadActionMenuItems } from "./threadActionMenu.logic";
+import { buildThreadActionMenuItems, openWorkspaceMenuLabel } from "./threadActionMenu.logic";
 import {
   animateSidebarLayoutChanges,
   applySidebarThreadDrop,
@@ -2132,6 +2133,7 @@ export default function Sidebar() {
   const threads = useThreadShells();
   const router = useRouter();
   const { isMobile, setOpenMobile } = useSidebar();
+  const resolveFileManagerAction = useFileManagerAction();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
@@ -4021,6 +4023,9 @@ export default function Sidebar() {
           thread.worktreePath ??
           projectByKey.get(`${thread.environmentId}:${thread.projectId}`)?.workspaceRoot ??
           null;
+        const fileManagerAction = threadWorkspacePath
+          ? resolveFileManagerAction(thread.environmentId)
+          : null;
         // Un-settle pins the thread active until real activity clears the pin.
         // Environments without
         // the settlement capability get no lifecycle items at all.
@@ -4058,6 +4063,12 @@ export default function Sidebar() {
                 titleRegeneration: supportsTitleRegeneration,
               },
               snoozePresets,
+              openWorkspaceLabel: fileManagerAction
+                ? openWorkspaceMenuLabel(
+                    fileManagerAction.open.managerName,
+                    thread.worktreePath !== null,
+                  )
+                : null,
             }),
             position,
           ),
@@ -4158,6 +4169,15 @@ export default function Sidebar() {
             }
             copyPathToClipboard(threadWorkspacePath, { path: threadWorkspacePath });
             return;
+          case "open-in-file-manager": {
+            if (!threadWorkspacePath || !fileManagerAction) return;
+            await openFileManagerPath(
+              fileManagerAction,
+              threadWorkspacePath,
+              `Failed to open ${thread.worktreePath ? "worktree" : "project"}`,
+            );
+            return;
+          }
           case "copy-branch":
             if (thread.branch) {
               copyBranchToClipboard(thread.branch, { branch: thread.branch });
@@ -4244,6 +4264,7 @@ export default function Sidebar() {
       markThreadUnread,
       openProjectSettings,
       projectByKey,
+      resolveFileManagerAction,
       serverConfigs,
       startThreadRename,
       updateThreadMetadata,
