@@ -7,7 +7,7 @@ import {
 import { buildRemoteOpenUrl, EnvironmentId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveRemoteOpenState } from "./remoteOpen";
+import { remotePathCopyQualifier, remotePathScpHost, resolveRemoteOpenState } from "./remoteOpen";
 
 const environmentId = EnvironmentId.make("environment-1");
 
@@ -115,6 +115,50 @@ describe("resolveRemoteOpenState", () => {
         remoteOpenTargets: undefined,
       }),
     ).toEqual({ mode: "local-exec" });
+  });
+});
+
+describe("remotePathCopyQualifier", () => {
+  const resolution = (
+    mode: "local-exec" | "remote-links" | "remote-unavailable",
+    isResolved = true,
+    environmentLabel: string | null = "sol",
+  ) => ({
+    state: (mode === "remote-links"
+      ? { mode, host: { kind: "ssh-alias" as const, host: "sol" } }
+      : { mode }) as ReturnType<typeof resolveRemoteOpenState>,
+    isResolved,
+    environmentLabel,
+  });
+
+  it("names the environment when the client is off its machine", () => {
+    expect(remotePathCopyQualifier(resolution("remote-links"))).toBe("sol");
+    expect(remotePathCopyQualifier(resolution("remote-unavailable"))).toBe("sol");
+  });
+
+  it("leaves local copies unqualified", () => {
+    expect(remotePathCopyQualifier(resolution("local-exec"))).toBeNull();
+  });
+
+  it("stays quiet before the environment resolves", () => {
+    expect(remotePathCopyQualifier(resolution("remote-links", false))).toBeNull();
+  });
+
+  it("stays quiet when the environment has no name", () => {
+    expect(remotePathCopyQualifier(resolution("remote-links", true, null))).toBeNull();
+  });
+});
+
+describe("remotePathScpHost", () => {
+  it("returns the connectable host for remote links", () => {
+    expect(
+      remotePathScpHost({ mode: "remote-links", host: { kind: "mdns", host: "sol.local" } }),
+    ).toBe("sol.local");
+  });
+
+  it("returns null when no SSH route exists", () => {
+    expect(remotePathScpHost({ mode: "local-exec" })).toBeNull();
+    expect(remotePathScpHost({ mode: "remote-unavailable" })).toBeNull();
   });
 });
 
