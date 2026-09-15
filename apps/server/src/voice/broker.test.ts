@@ -1,5 +1,6 @@
 import { describe, expect, it } from "@effect/vitest";
 import {
+  AuthAccessWriteScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   VoiceSessionId,
@@ -35,6 +36,7 @@ import {
 // ---------------------------------------------------------------------------
 
 const OPERATE_TOKEN = "token-operate";
+const ADMIN_TOKEN = "token-admin";
 const READ_TOKEN = "token-read";
 const REVOKED_TOKEN = "token-revoked";
 
@@ -97,6 +99,14 @@ const makeUpstreamFetch = (state: UpstreamRecorder): typeof fetch => {
 
 const makeSecretStoreLayer = (values: Record<string, string>) =>
   Layer.mock(ServerSecretStore)({
+    set: (name, value) =>
+      Effect.sync(() => {
+        values[name] = new TextDecoder().decode(value);
+      }),
+    remove: (name) =>
+      Effect.sync(() => {
+        delete values[name];
+      }),
     get: (name: string) =>
       name in values
         ? Effect.succeed(Option.some(new TextEncoder().encode(values[name] ?? "")))
@@ -115,12 +125,16 @@ const makeEnvironmentAuthLayer = () =>
           }),
         );
       }
-      if (token === OPERATE_TOKEN) {
+      if (token === OPERATE_TOKEN || token === ADMIN_TOKEN) {
         return Effect.succeed({
           sessionId: "session-operate" as never,
           subject: "test-operate",
           method: "bearer-access-token" as const,
-          scopes: [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+          scopes: [
+            AuthOrchestrationReadScope,
+            AuthOrchestrationOperateScope,
+            ...(token === ADMIN_TOKEN ? [AuthAccessWriteScope] : []),
+          ],
         });
       }
       if (token === READ_TOKEN) {
@@ -765,4 +779,103 @@ describe("voice broker routes", () => {
     );
     expect(DEFAULT_DELEGATION_INSTRUCTIONS).toMatch(/never reframed as success/);
   });
+});
+
+describe("voice settings", () => {
+  it.effect("requires administrator access before reading or writing settings", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const secrets = { [OPENAI_API_KEY_SECRET_NAME]: "existing-key" };
+        const { handlers } = yield* makeTest({ secrets });
+        for (const token of [READ_TOKEN, OPERATE_TOKEN]) {
+          for (const handler of [handlers.getSettings, handlers.updateSettings]) {
+            const result = yield* runHandler(handler, {
+              method: "POST",
+              path: "/api/voice/settings",
+              token,
+              body: { apiKey: "new-key", liveModel: "speech", backendModel: "reasoning" },
+            }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+            expect(result.status).toBe(403);
+          }
+        }
+        expect(secrets[OPENAI_API_KEY_SECRET_NAME]).toBe("existing-key");
+      }),
+    ),
+  );
+  it.effect(
+    "saves models, preserves the key and instructions, rotates and removes the key without exposing it",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const secrets: Record<string, string> = {
+            [OPENAI_API_KEY_SECRET_NAME]: "existing-key",
+            "voice-broker-config":
+              '{"instructions":"custom speech","delegationInstructions":"custom reasoning"}',
+          };
+          const { handlers, state } = yield* makeTest({ secrets });
+          const update = (body: unknown) =>
+            runHandler(handlers.updateSettings, {
+              method: "POST",
+              path: "/api/voice/settings",
+              token: ADMIN_TOKEN,
+              body,
+            }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+          const result = yield* update({
+            liveModel: "speech-custom",
+            backendModel: "reasoning-custom",
+          });
+          expect(result.status).toBe(200);
+          expect(yield* responseBody(result)).toEqual({
+            keyConfigured: true,
+            liveModel: "speech-custom",
+            backendModel: "reasoning-custom",
+          });
+          expect(secrets[OPENAI_API_KEY_SECRET_NAME]).toBe("existing-key");
+          expect(
+            yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(
+              secrets["voice-broker-config"],
+            ),
+          ).toMatchObject({
+            instructions: "custom speech",
+            delegationInstructions: "custom reasoning",
+          });
+          yield* update({
+            apiKey: "replacement-key",
+            liveModel: "speech-custom",
+            backendModel: "reasoning-custom",
+          });
+          yield* runHandler(handlers.mintSession, {
+            method: "POST",
+            path: MINT_PATH,
+            token: OPERATE_TOKEN,
+            body: { transport: { type: "webrtc", sdp: "offer" } },
+          }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+          expect(state.recorded[0]).toMatchObject({
+            authorization: "Bearer replacement-key",
+            body: {
+              session: {
+                model: "speech-custom",
+                delegation: { responses: { model: "reasoning-custom" } },
+              },
+            },
+          });
+          const removed = yield* update({
+            apiKey: null,
+            liveModel: "speech-custom",
+            backendModel: "reasoning-custom",
+          });
+          expect(yield* responseBody(removed)).toMatchObject({ keyConfigured: false });
+          const mint = yield* runHandler(handlers.mintSession, {
+            method: "POST",
+            path: MINT_PATH,
+            token: OPERATE_TOKEN,
+            body: { transport: { type: "webrtc", sdp: "offer" } },
+          }).pipe(Effect.provide(makeEnvironmentAuthLayer()));
+          expect(mint.status).toBe(401);
+          const invalid = yield* update({ apiKey: "", liveModel: "", backendModel: "reasoning" });
+          expect(invalid.status).toBe(400);
+          expect(secrets[OPENAI_API_KEY_SECRET_NAME]).toBeUndefined();
+        }),
+      ),
+  );
 });

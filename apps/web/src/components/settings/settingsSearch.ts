@@ -91,6 +91,20 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
  */
 export const SETTINGS_SEARCH_ITEMS = [
   {
+    id: "voice",
+    title: "Voice",
+    to: "/settings/integrations",
+    targetId: "voice",
+    searchTerms: [
+      "GPT Live",
+      "OpenAI API key",
+      "speech model",
+      "reasoning model",
+      "fast commands",
+      "microphone",
+    ],
+  },
+  {
     id: "project-defaults",
     title: "Project defaults and overrides",
     to: "/settings/general",

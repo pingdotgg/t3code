@@ -21,6 +21,7 @@ import { createCommandSession, type CommandActions } from "../command-session";
 
 import type { VoiceLiveMediaStreamTrack } from "../live-client";
 import { createVoiceModule } from "../index";
+import { useVoiceFastCommands } from "./preferences";
 import { VoiceControls } from "./VoiceControls";
 import { createActionChime } from "./actionChime";
 import { VoiceTranscript } from "./VoiceTranscript";
@@ -43,7 +44,7 @@ function attachTrackToAudioElement(
 export function VoicePanel() {
   const [testText, setTestText] = useState("");
   const [chime] = useState(createActionChime);
-  const [fastCommands, setFastCommands] = useState(true);
+  const [fastCommands, setFastCommands] = useVoiceFastCommands();
   const newThread = useHandleNewThread();
   const actionsRef = useRef<CommandActions>(null!);
   const fastRef = useRef(false);

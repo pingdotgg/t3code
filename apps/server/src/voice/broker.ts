@@ -15,6 +15,9 @@
  */
 import {
   AuthOrchestrationOperateScope,
+  AuthAccessWriteScope,
+  VoiceSettings,
+  VoiceSettingsUpdate,
   EnvironmentAuthInvalidError,
   EnvironmentInternalError,
   EnvironmentScopeRequiredError,
@@ -202,6 +205,8 @@ const VoiceBrokerConfigOverrides = Schema.Struct({
   delegationInstructions: Schema.optional(Schema.String),
 });
 
+const encodeBrokerConfig = Schema.encodeEffect(Schema.fromJsonString(VoiceBrokerConfigOverrides));
+
 export interface VoiceBrokerRuntimeConfig extends VoiceBrokerSessionConfig {}
 
 const loadBrokerConfig = (secrets: ServerSecretStore["Service"]) =>
@@ -301,6 +306,10 @@ interface RetainedVoiceSession {
 export class VoiceLiveBroker extends Context.Service<
   VoiceLiveBroker,
   {
+    readonly getSettings: () => Effect.Effect<VoiceSettings, VoiceBrokerError>;
+    readonly updateSettings: (
+      input: VoiceSettingsUpdate,
+    ) => Effect.Effect<VoiceSettings, VoiceBrokerError>;
     readonly respond: (
       input: VoiceBackendRequest,
     ) => Effect.Effect<VoiceBackendResult, VoiceBrokerError>;
@@ -330,6 +339,41 @@ const makeBroker = Effect.gen(function* () {
   const httpClient = yield* HttpClient.HttpClient;
   const secrets = yield* ServerSecretStore;
   const sessions = yield* Ref.make(new Map<string, RetainedVoiceSession>());
+
+  const settingsFailure = () => brokerInvalidRequest("Could not access voice settings.", 500);
+  const getSettings = Effect.fn("VoiceLiveBroker.getSettings")(function* () {
+    const config = yield* loadBrokerConfig(secrets);
+    const key = yield* secrets
+      .get(OPENAI_API_KEY_SECRET_NAME)
+      .pipe(Effect.mapError(settingsFailure));
+    return {
+      keyConfigured: Option.isSome(key) && new TextDecoder().decode(key.value).trim().length > 0,
+      liveModel: config.model,
+      backendModel: config.delegation.model,
+    };
+  });
+  const updateSettings = Effect.fn("VoiceLiveBroker.updateSettings")(function* (
+    input: VoiceSettingsUpdate,
+  ) {
+    const config = yield* loadBrokerConfig(secrets);
+    const encoded = yield* encodeBrokerConfig({
+      liveModel: input.liveModel,
+      backendModel: input.backendModel,
+      instructions: config.instructions,
+      delegationInstructions: config.delegation.instructions,
+    }).pipe(Effect.mapError(settingsFailure));
+    yield* secrets
+      .set(VOICE_BROKER_CONFIG_SECRET_NAME, new TextEncoder().encode(encoded))
+      .pipe(Effect.mapError(settingsFailure));
+    if (input.apiKey === null) {
+      yield* secrets.remove(OPENAI_API_KEY_SECRET_NAME).pipe(Effect.mapError(settingsFailure));
+    } else if (input.apiKey !== undefined) {
+      yield* secrets
+        .set(OPENAI_API_KEY_SECRET_NAME, new TextEncoder().encode(input.apiKey))
+        .pipe(Effect.mapError(settingsFailure));
+    }
+    return yield* getSettings();
+  });
 
   const requireSession = Effect.fn("VoiceLiveBroker.requireSession")(function* (
     sessionId: VoiceSessionId,
@@ -582,6 +626,8 @@ const makeBroker = Effect.gen(function* () {
   });
 
   return VoiceLiveBroker.of({
+    getSettings,
+    updateSettings,
     respond,
     mintSession,
     closeSession,
@@ -707,9 +753,25 @@ const getSessionUsageRoute = (broker: VoiceLiveBroker["Service"]) =>
     }),
   );
 
+const voiceSettingsRoute = (broker: VoiceLiveBroker["Service"], update: boolean) =>
+  withBrokerErrorResponses(
+    Effect.gen(function* () {
+      const session = yield* authenticateVoiceBrokerRequest;
+      if (!session.scopes.includes(AuthAccessWriteScope)) {
+        return yield* failEnvironmentScopeRequired(AuthAccessWriteScope);
+      }
+      const result = update
+        ? yield* broker.updateSettings(yield* decodeJsonBody(VoiceSettingsUpdate))
+        : yield* broker.getSettings();
+      return HttpServerResponse.jsonUnsafe(result, { headers: { "cache-control": "no-store" } });
+    }),
+  );
+
 /** The four broker route handlers for one broker instance, exported for
     focused tests. */
 export const voiceBrokerRouteHandlers = (broker: VoiceLiveBroker["Service"]) => ({
+  getSettings: voiceSettingsRoute(broker, false),
+  updateSettings: voiceSettingsRoute(broker, true),
   respond: backendRoute(broker),
   mintSession: mintSessionRoute(broker),
   closeSession: closeSessionRoute(broker),
@@ -721,6 +783,8 @@ export const voiceBrokerRouteLayer = Layer.unwrap(
   Effect.gen(function* () {
     const broker = yield* VoiceLiveBroker;
     return Layer.mergeAll(
+      HttpRouter.add("POST", "/api/voice/settings/read", voiceSettingsRoute(broker, false)),
+      HttpRouter.add("POST", "/api/voice/settings", voiceSettingsRoute(broker, true)),
       HttpRouter.add("POST", VOICE_BACKEND_PATH, backendRoute(broker)),
       HttpRouter.add("POST", VOICE_BROKER_SESSIONS_PATH, mintSessionRoute(broker)),
       HttpRouter.add("POST", VOICE_BROKER_CLOSE_PATH, closeSessionRoute(broker)),
