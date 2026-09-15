@@ -11,7 +11,7 @@ import {
   CircleDashedIcon,
   SlidersHorizontalIcon,
 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 
 import {
   isCompatibleUsageContractVersion,
@@ -66,6 +66,7 @@ import { PROVIDER_ORDER, PROVIDER_PRESENTATION, providersWithUsage } from "./usa
 import {
   readUsagePagePreferences,
   saveUsagePagePreferences,
+  subscribeUsagePagePreferences,
   type UsagePagePreferences,
 } from "./usagePagePreferences";
 
@@ -101,6 +102,27 @@ export function UsagePage() {
       preferences.windowDays === 1 ? "hour" : "day",
     ),
   }));
+  // Something else may pick the metric while this page is mounted, such as
+  // the sidebar's limits pill; its save lands here instead of being lost.
+  useEffect(
+    () =>
+      subscribeUsagePagePreferences((next) => {
+        setPreferences(next);
+        setWindowSelection((current) =>
+          current.days === next.windowDays
+            ? current
+            : {
+                days: next.windowDays,
+                window: makeWindow(
+                  next.windowDays,
+                  undefined,
+                  next.windowDays === 1 ? "hour" : "day",
+                ),
+              },
+        );
+      }),
+    [],
+  );
   const metric = preferences.metric;
   const showingLimits = metric === "limits";
   const [isRefreshing, setIsRefreshing] = useState(false);

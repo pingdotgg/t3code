@@ -23,10 +23,26 @@ export function readUsagePagePreferences(): UsagePagePreferences {
   }
 }
 
+type Listener = (preferences: UsagePagePreferences) => void;
+const listeners = new Set<Listener>();
+
+/**
+ * Hear every save, wherever it came from, so a mounted Usage page follows a
+ * change made outside it, such as the sidebar opening Limits. Storage is only
+ * persistence: listeners run even when the write fails.
+ */
+export function subscribeUsagePagePreferences(listener: Listener): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
 export function saveUsagePagePreferences(preferences: UsagePagePreferences): void {
   try {
     setLocalStorageItem(STORAGE_KEY, preferences, UsagePagePreferencesSchema);
   } catch (error) {
     console.error("Could not save Usage page preferences.", error);
   }
+  for (const listener of listeners) listener(preferences);
 }
