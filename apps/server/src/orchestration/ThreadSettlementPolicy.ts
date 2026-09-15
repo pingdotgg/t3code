@@ -16,7 +16,7 @@ export interface SettlementPullRequest {
 const DAY_MS = 24 * 60 * 60 * 1_000;
 const QUEUED_TURN_START_GRACE_MS = 2 * 60 * 1_000;
 const VERIFICATION_COMMANDS = [
-  /^(?:(?:(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+exec\s+)?vp)\s+(?:test(?:\s+run)?|lint|typecheck|check)(?:\s|$)/u,
+  /^(?:(?:(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+exec\s+)?vp|(?:\.\/)?node_modules\/\.bin\/vp)\s+(?:test(?:\s+run)?|lint|typecheck|check)(?:\s|$)/u,
   /^(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+(?:(?:run\s+)?(?:test|lint|typecheck|check))(?:[\s:]|$)/u,
   /^(?:(?:corepack\s+)?(?:pnpm|npm|yarn|bun)\s+exec\s+)?(?:vitest|pytest)(?:\s|$)/u,
   /^(?:bunx|npx)\s+(?:vitest|pytest)(?:\s|$)/u,
@@ -28,6 +28,10 @@ const VERIFICATION_COMMANDS = [
   /^(?:gradle|\.\/gradlew)\s+(?:test|check)(?:\s|$)/u,
   /^git\s+diff\s+--check(?:\s|$)/u,
 ] as const;
+const MUTATING_VERIFICATION_ARGUMENT =
+  /(?:^|\s)(?:--(?:fix|write|update(?:Snapshot|-snapshots)?|bless)(?:=\S+)?|-u)(?:\s|$)/u;
+const MUTATING_VERIFICATION_SCRIPT =
+  /(?:^|\s)(?:test|lint|typecheck|check):(?:fix|write|update|snapshot|bless)(?:[-_:][^\s]+)*(?:\s|$)/u;
 
 function normalizeCommand(value: unknown): string | null {
   if (typeof value !== "string") return null;
@@ -57,7 +61,12 @@ function commandFromActivity(activity: OrchestrationThreadActivity): string | nu
 }
 
 function isVerificationCommand(command: string | null): boolean {
-  return command !== null && VERIFICATION_COMMANDS.some((pattern) => pattern.test(command));
+  return (
+    command !== null &&
+    !MUTATING_VERIFICATION_ARGUMENT.test(command) &&
+    !MUTATING_VERIFICATION_SCRIPT.test(command) &&
+    VERIFICATION_COMMANDS.some((pattern) => pattern.test(command))
+  );
 }
 
 function successfulToolActivity(
@@ -112,7 +121,7 @@ export function verificationAllowsAutoSettlement(input: {
   return (
     latestMutation !== null &&
     latestVerification !== null &&
-    compareActivityOrder(latestVerification, latestMutation) >= 0
+    compareActivityOrder(latestVerification, latestMutation) > 0
   );
 }
 

@@ -137,6 +137,23 @@ describe("verificationAllowsAutoSettlement", () => {
     ).toBe(true);
   });
 
+  it("recognizes the workspace-local vp binary used when vp is not on PATH", () => {
+    const verification = toolActivity({
+      id: "verification",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      data: { command: "./node_modules/.bin/vp test run apps/server/src/example.test.ts" },
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, verification],
+        checkpoints: [checkpoint(["apps/server/src/example.ts"])],
+      }),
+    ).toBe(true);
+  });
+
   it("rejects output that resembles verification and compound shell commands", () => {
     const outputOnly = toolActivity({
       id: "output-only",
@@ -157,6 +174,48 @@ describe("verificationAllowsAutoSettlement", () => {
     expect(
       verificationAllowsAutoSettlement({
         activities: [mutation, outputOnly, compound],
+        checkpoints: [checkpoint(["apps/server/src/example.ts"])],
+      }),
+    ).toBe(false);
+  });
+
+  it.each([
+    "vp lint --fix",
+    "pnpm lint:fix",
+    "pnpm lint:fix-all",
+    "vitest -u",
+    "vitest --updateSnapshot=true",
+    "npm run test:update",
+    "npm run test:update-snapshots",
+  ])("rejects mutating verification command %s", (command) => {
+    const verification = toolActivity({
+      id: "verification",
+      createdAt: "2026-08-28T11:01:00.000Z",
+      itemType: "command_execution",
+      status: "completed",
+      data: { command },
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, verification],
+        checkpoints: [checkpoint(["apps/server/src/example.ts"])],
+      }),
+    ).toBe(false);
+  });
+
+  it("fails closed when mutation and verification order is ambiguous", () => {
+    const verification = toolActivity({
+      id: "verification",
+      createdAt: mutation.createdAt,
+      itemType: "command_execution",
+      status: "completed",
+      data: { command: "vp test run" },
+    });
+
+    expect(
+      verificationAllowsAutoSettlement({
+        activities: [mutation, verification],
         checkpoints: [checkpoint(["apps/server/src/example.ts"])],
       }),
     ).toBe(false);
