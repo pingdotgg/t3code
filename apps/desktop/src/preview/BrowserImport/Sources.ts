@@ -159,13 +159,20 @@ export const BROWSER_IMPORT_SOURCES: ReadonlyArray<BrowserImportSourceDefinition
     linuxSegments: ["opera"],
     linuxSecretApplication: "opera",
   }),
-  // Arc has no Linux build.
+  // Arc and Dia have no Linux builds.
   chromiumSource({
     id: "arc",
     name: "Arc",
     keychainService: "Arc Safe Storage",
     keychainAccount: "Arc",
     macSegments: ["Arc", "User Data"],
+  }),
+  chromiumSource({
+    id: "dia",
+    name: "Dia",
+    keychainService: "Dia Safe Storage",
+    keychainAccount: "Dia",
+    macSegments: ["Dia", "User Data"],
   }),
   chromiumSource({
     id: "helium",

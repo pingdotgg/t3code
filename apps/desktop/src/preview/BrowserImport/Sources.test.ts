@@ -36,6 +36,7 @@ import {
 import { symlinksSupported } from "@t3tools/shared/testing/symlinks";
 
 const helium = BROWSER_IMPORT_SOURCES.find((source) => source.id === "helium")!;
+const dia = BROWSER_IMPORT_SOURCES.find((source) => String(source.id) === "dia");
 
 describe("Linux Chromium secret applications", () => {
   it("pins the libsecret application attribute for each supported fork", () => {
@@ -111,6 +112,79 @@ const writeCookieDatabase = (file: string, count: number) =>
     for (let index = 0; index < count; index += 1) insert.run("example.test", `c${index}`);
     database.close();
   });
+
+describe("Dia on macOS", () => {
+  it.effect("pins Dia's Chromium path and Keychain coordinates to macOS", () =>
+    run(
+      Effect.gen(function* () {
+        assert.isDefined(dia);
+        if (dia === undefined) return;
+
+        const darwinContext = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: "/Users/dia-user" }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const linuxContext = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: "/home/dia-user" }),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+
+        assert.equal(dia.name, "Dia");
+        assert.equal(dia.engine, "chromium");
+        assert.deepEqual([...dia.platforms], ["darwin"]);
+        assert.equal(dia.keychainService, "Dia Safe Storage");
+        assert.equal(dia.keychainAccount, "Dia");
+        assert.equal(
+          dia.userDataDirectory(darwinContext),
+          darwinContext.path.join(
+            "/Users/dia-user",
+            "Library",
+            "Application Support",
+            "Dia",
+            "User Data",
+          ),
+        );
+        assert.isUndefined(dia.userDataDirectory(linuxContext));
+      }),
+    ),
+  );
+
+  it.effect("discovers and counts Dia profiles through Chromium metadata", () =>
+    run(
+      Effect.gen(function* () {
+        assert.isDefined(dia);
+        if (dia === undefined) return;
+
+        const fileSystem = yield* FileSystem.FileSystem;
+        const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "t3code-dia-" });
+        const context = yield* sourcePathContext.pipe(
+          Effect.provideService(HostProcessEnvironment, { HOME: home }),
+          Effect.provideService(HostProcessPlatform, "darwin"),
+        );
+        const root = dia.userDataDirectory(context)!;
+        const defaultCookies = context.path.join(root, "Default", "Network", "Cookies");
+        const workCookies = context.path.join(root, "Profile 2", "Network", "Cookies");
+
+        yield* fileSystem.makeDirectory(context.path.dirname(defaultCookies), { recursive: true });
+        yield* fileSystem.makeDirectory(context.path.dirname(workCookies), { recursive: true });
+        yield* writeCookieDatabase(defaultCookies, 3);
+        yield* writeCookieDatabase(workCookies, 2);
+        yield* fileSystem.writeFileString(
+          context.path.join(root, "Local State"),
+          '{"profile":{"info_cache":{"Default":{"name":"Personal"},"Profile 2":{"name":"Work"}}}}',
+        );
+
+        assert.deepEqual(yield* listSourceProfiles(dia, context), [
+          { directory: "Default", name: "Personal", cookieCount: 3 },
+          { directory: "Profile 2", name: "Work", cookieCount: 2 },
+        ]);
+        assert.equal(yield* resolveCookieDatabase(dia, context, "Default"), defaultCookies);
+        assert.isTrue(yield* isSourceInstalled(dia, context));
+        assert.isFalse(yield* isSourceRunning(dia, context));
+      }),
+    ),
+  );
+});
 
 const writeFirefoxCookieDatabase = (
   file: string,
