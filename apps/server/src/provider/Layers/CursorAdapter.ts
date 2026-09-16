@@ -118,6 +118,10 @@ export interface CursorAdapterLiveOptions {
    * the latest snapshot so the closure isn't stale.
    */
   readonly resolveSettings?: Effect.Effect<CursorSettings>;
+  readonly onAvailableCommands?: (
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+    cwd: string,
+  ) => Effect.Effect<void>;
 }
 
 interface PendingApproval {
@@ -810,6 +814,11 @@ export function makeCursorAdapter(
                     return;
                   case "ModeChanged":
                     return;
+                  case "AvailableCommandsUpdated":
+                    yield* (
+                      options?.onAvailableCommands?.(event.availableCommands, cwd) ?? Effect.void
+                    );
+                    return;
                   case "AssistantItemStarted":
                     ctx.assistantReply = new CursorTransportFailure();
                     yield* offerRuntimeEvent(
@@ -1057,16 +1066,19 @@ export function makeCursorAdapter(
             });
           }
 
-          // ACP has no system-message field; keep runtime context separate from the user's text.
+          // ACP commands parse the complete text. Extra context can turn an exact
+          // command into an ordinary model prompt or change its arguments.
           const result = yield* ctx.acp
             .prompt({
-              prompt: [
-                ...promptParts,
-                {
-                  type: "text",
-                  text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
-                },
-              ],
+              prompt: /^\/[^\s/]+(?:\s|$)/.test(rawPrompt)
+                ? promptParts
+                : [
+                    ...promptParts,
+                    {
+                      type: "text",
+                      text: buildRuntimeInstructions({ harness: "Cursor", model: resolvedModel }),
+                    },
+                  ],
             })
             .pipe(
               Effect.mapError((error) =>

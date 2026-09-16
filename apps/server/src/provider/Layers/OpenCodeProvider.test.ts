@@ -18,7 +18,10 @@ import {
   type OpenCodeRuntimeShape,
 } from "../opencodeRuntime.ts";
 import * as OpenCodeServerOwner from "../OpenCodeServerOwner.ts";
-import { checkOpenCodeProviderStatus } from "./OpenCodeProvider.ts";
+import {
+  checkOpenCodeProviderStatus,
+  openCodeCommandsToServerProviderSlashCommands,
+} from "./OpenCodeProvider.ts";
 import type { OpenCodeInventory } from "../opencodeRuntime.ts";
 const decodeOpenCodeSettings = Schema.decodeSync(OpenCodeSettings);
 
@@ -161,6 +164,22 @@ const OpenCodeRuntimeTestDouble: OpenCodeRuntimeShape = {
 
 beforeEach(() => {
   runtimeMock.reset();
+});
+
+it("keeps native and MCP commands while preserving compaction and separate skills", () => {
+  NodeAssert.deepEqual(
+    openCodeCommandsToServerProviderSlashCommands([
+      { name: "review", description: "Review changes", source: "command", hints: ["$ARGUMENTS"] },
+      { name: "review", source: "command", hints: [] },
+      { name: "compact", source: "command", hints: [] },
+      { name: "skill", source: "skill", hints: [] },
+      { name: "mcp:search", source: "mcp", hints: ["query"] },
+    ]).slice(1),
+    [
+      { name: "review", description: "Review changes", input: { hint: "$ARGUMENTS" } },
+      { name: "mcp:search", input: { hint: "query" } },
+    ],
+  );
 });
 
 const testLayer = Layer.succeed(OpenCodeRuntime, OpenCodeRuntimeTestDouble).pipe(
