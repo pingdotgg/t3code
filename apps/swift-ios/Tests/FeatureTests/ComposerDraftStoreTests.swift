@@ -26,9 +26,13 @@ struct ComposerDraftStoreTests {
         let legacy = FeatureComposerDraft(
             text: "Unsent before updating",
             attachments: [FeatureDraftAttachment(
-                data: Data([1, 2, 3]), filename: "notes.txt", mimeType: "text/plain"
+                data: Data([1, 2, 3]), filename: "notes.txt", mimeType: "text/plain",
+                source: .pastedText
             )],
-            selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.6")
+            selection: FeatureSelection(providerID: "codex", modelID: "gpt-5.6"),
+            context: .init(records: [
+                ComposerContextRecord(label: "review", payload: .skill(.init(name: "review"))),
+            ])
         )
         let existing = FeatureComposerDraft(text: "Already saved for App 1")
         try await store.setDraft(legacy, for: repositoryKey)
@@ -44,6 +48,11 @@ struct ComposerDraftStoreTests {
         let reloaded = FeatureComposerDraftStore(fileURL: fileURL)
         #expect(try await reloaded.newTaskDraft(project: first, in: snapshot) == existing)
         #expect(try await reloaded.newTaskDraft(project: second, in: snapshot) == legacy)
+        let attachment = try #require(legacy.attachments.first)
+        #expect(try await reloaded.clipboardAttachment(
+            environmentID: second.environmentID,
+            attachmentID: attachment.id.uuidString
+        ) == attachment)
         try await reloaded.removeDraft(for: FeatureComposerDraftStore.newTaskKey(project: second))
         #expect(try await reloaded.newTaskDraft(project: second, in: snapshot) == nil)
     }
