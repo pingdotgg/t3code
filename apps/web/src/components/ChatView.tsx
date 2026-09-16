@@ -3747,7 +3747,9 @@ export default function ChatView(props: ChatViewProps) {
     live: liveWorktreeSetup,
     recorded: null,
     turnStarted: activeThread?.latestRun?.startedAt != null,
-    isWorking,
+    // Counts the optimistic send too, so the row retires the moment the
+    // follow-up is on screen rather than when the server echoes it back.
+    followUpSent: timelineMessages.filter((message) => message.role === "user").length > 1,
   });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
