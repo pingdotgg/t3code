@@ -49,7 +49,11 @@ explicit setup or model refresh; background checks use initialization only.
 signed-in user. The [runtime](../../apps/server/src/provider/acp/DevinAcpSupport.ts) therefore
 issues `authenticate` only when no ambient credential exists and the caller opted in to an
 interactive login. Devin has no `session/set_model`; model selection rides the session's
-`category: "model"` config option.
+`category: "model"` config option. `devin acp` advertises no HTTP/SSE MCP transports, so the
+thread's T3 MCP endpoint reaches it through a
+[stdio bridge script](../../apps/server/src/mcp/McpStdioBridge.ts) the agent launches. An agent
+that does advertise `http` gets the endpoint directly; the `http` entry also remains as a fallback
+when the bridge script cannot be written.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's

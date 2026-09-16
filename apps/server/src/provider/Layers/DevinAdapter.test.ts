@@ -22,6 +22,7 @@ import { ChildProcessSpawner } from "effect/unstable/process";
 import {
   ApprovalRequestId,
   DevinSettings,
+  EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
   ThreadId,
@@ -29,6 +30,7 @@ import {
 } from "@t3tools/contracts";
 
 import { ServerConfig } from "../../config.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import { makeDevinAdapter } from "./DevinAdapter.ts";
 import { makeDevinAcpRuntime } from "../acp/DevinAcpSupport.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
@@ -131,6 +133,7 @@ function signedOutEnvironment(home: string): NodeJS.ProcessEnv {
     // Blank (not delete) so a machine where these are set still reads as
     // signed out: resolution treats empty values as unset.
     XDG_DATA_HOME: "",
+    APPDATA: "",
     LOCALAPPDATA: "",
   };
   return env;
@@ -246,6 +249,133 @@ it.layer(devinAdapterTestLayer)("DevinAdapterLive", (it) => {
       assert.notInclude(methods, "authenticate");
       assert.include(methods, "session/load");
       assert.notInclude(methods, "session/new");
+    }),
+  );
+
+  const withMcpSession = <A, E, R>(threadId: ThreadId, effect: Effect.Effect<A, E, R>) =>
+    Effect.acquireUseRelease(
+      Effect.sync(() => {
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make("env-test"),
+          threadId,
+          providerSessionId: "provider-session-1",
+          providerInstanceId: DEVIN_INSTANCE,
+          endpoint: "http://127.0.0.1:1/mcp",
+          authorizationHeader: "Bearer test-mcp-token",
+          capabilities: new Set(["device"]),
+          agentDeviceEnvironment: {
+            PATH: "/t3-device-shims",
+            PATH_SEPARATOR: ":",
+            AGENT_DEVICE_NO_UPDATE_NOTIFIER: "1",
+          },
+        });
+      }),
+      () => effect,
+      () => Effect.sync(() => McpProviderSession.clearMcpProviderSession(threadId)),
+    );
+
+  const sessionSetupMcpServers = (requests: ReadonlyArray<Record<string, unknown>>) =>
+    (
+      requests.find((request) => request.method === "session/new")?.params as
+        | { mcpServers?: ReadonlyArray<Record<string, unknown>> }
+        | undefined
+    )?.mcpServers;
+
+  it.effect(
+    "attaches the T3 MCP endpoint as a stdio bridge when the agent advertises no HTTP MCP support",
+    () =>
+      Effect.gen(function* () {
+        const threadId = ThreadId.make("devin-mcp-stdio");
+        const tempDir = yield* Effect.promise(() =>
+          NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devin-mcp-stdio-")),
+        );
+        const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+        const wrapperPath = yield* Effect.promise(() =>
+          makeMockDevinWrapper({ T3_ACP_REQUEST_LOG_PATH: requestLogPath }),
+        );
+        const adapter = yield* makeTestAdapter(wrapperPath, {
+          ...process.env,
+          WINDSURF_API_KEY: "ws-test",
+        });
+
+        yield* withMcpSession(
+          threadId,
+          Effect.gen(function* () {
+            yield* adapter.startSession({
+              threadId,
+              provider: ProviderDriverKind.make("devin"),
+              cwd: process.cwd(),
+              runtimeMode: "full-access",
+            });
+            yield* adapter.stopSession(threadId);
+          }),
+        );
+
+        const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+        const mcpServers = sessionSetupMcpServers(requests);
+        assert.isDefined(mcpServers);
+        assert.lengthOf(mcpServers, 1);
+        const entry = mcpServers[0]!;
+        // ACP stdio entries carry no `type`; the bridge is a plain Node
+        // process launched from the server state directory.
+        assert.equal(entry.name, "t3-code");
+        assert.equal(entry.command, process.execPath);
+        assert.isUndefined(entry.url);
+        const bridgePath = (entry.args as ReadonlyArray<string>)[0];
+        assert.equal(typeof bridgePath, "string");
+        assert.isTrue((yield* Effect.promise(() => NodeFSP.stat(bridgePath as string))).isFile());
+        assert.deepInclude(entry.env as ReadonlyArray<{ name: string; value: string }>, {
+          name: "T3_MCP_ENDPOINT",
+          value: "http://127.0.0.1:1/mcp",
+        });
+        assert.deepInclude(entry.env as ReadonlyArray<{ name: string; value: string }>, {
+          name: "T3_MCP_AUTHORIZATION",
+          value: "Bearer test-mcp-token",
+        });
+      }),
+  );
+
+  it.effect("attaches the T3 MCP endpoint over HTTP when the agent advertises it", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("devin-mcp-http");
+      const tempDir = yield* Effect.promise(() =>
+        NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "devin-mcp-http-")),
+      );
+      const requestLogPath = NodePath.join(tempDir, "requests.ndjson");
+      const wrapperPath = yield* Effect.promise(() =>
+        makeMockDevinWrapper({
+          T3_ACP_REQUEST_LOG_PATH: requestLogPath,
+          T3_ACP_DEVIN_MCP_HTTP: "1",
+        }),
+      );
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        ...process.env,
+        WINDSURF_API_KEY: "ws-test",
+      });
+
+      yield* withMcpSession(
+        threadId,
+        Effect.gen(function* () {
+          yield* adapter.startSession({
+            threadId,
+            provider: ProviderDriverKind.make("devin"),
+            cwd: process.cwd(),
+            runtimeMode: "full-access",
+          });
+          yield* adapter.stopSession(threadId);
+        }),
+      );
+
+      const requests = yield* Effect.promise(() => readJsonLines(requestLogPath));
+      const mcpServers = sessionSetupMcpServers(requests);
+      assert.isDefined(mcpServers);
+      assert.lengthOf(mcpServers, 1);
+      assert.deepEqual(mcpServers[0], {
+        type: "http",
+        name: "t3-code",
+        url: "http://127.0.0.1:1/mcp",
+        headers: [{ name: "Authorization", value: "Bearer test-mcp-token" }],
+      });
     }),
   );
 

@@ -33,6 +33,7 @@ import type * as EffectAcpSchema from "effect-acp/schema";
 
 import { ServerConfig } from "../../config.ts";
 import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import { ensureMcpStdioBridge, mcpStdioBridgeEntry } from "../../mcp/McpStdioBridge.ts";
 import type { DevinAdapterShape } from "../Services/DevinAdapter.ts";
 import {
   type ProviderAdapterError,
@@ -184,8 +185,10 @@ function devinApprovalOptions(request: NativePermission): ReadonlyArray<Provider
 
 export interface DevinAdapterOptions {
   readonly instanceId: ProviderInstanceId;
+  /** Per-instance environment from the provider driver; the agent subprocess inherits it. */
+  readonly environment?: NodeJS.ProcessEnv;
   readonly makeRuntime: (
-    input: Omit<DevinAcpRuntimeInput, "childProcessSpawner" | "devinSettings" | "environment">,
+    input: Omit<DevinAcpRuntimeInput, "childProcessSpawner" | "devinSettings">,
   ) => Effect.Effect<
     AcpSessionRuntime.AcpSessionRuntime["Service"],
     EffectAcpErrors.AcpError,
@@ -538,11 +541,32 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
 
         return yield* Effect.gen(function* () {
           const mcpSession = McpProviderSession.readMcpProviderSession(input.threadId);
+          // Devin advertises no HTTP/SSE MCP transports, so the T3 endpoint is
+          // served through a stdio bridge the agent launches itself. When the
+          // bridge cannot be written, the HTTP entry is still sent: an agent
+          // that under-reports its capabilities may accept it, and one that
+          // does not simply ignores it.
+          const mcpBridgePath = mcpSession
+            ? yield* ensureMcpStdioBridge(serverConfig.stateDir).pipe(
+                Effect.provideService(FileSystem.FileSystem, fileSystem),
+                Effect.provideService(Path.Path, path),
+                Effect.catch((cause) =>
+                  Effect.logWarning(
+                    "Could not write the Devin MCP stdio bridge script; falling back to the HTTP MCP entry.",
+                    { cause },
+                  ).pipe(Effect.as(undefined)),
+                ),
+              )
+            : undefined;
           // The attachments dir grant lets the agent read pasted files at the
           // paths ProviderService injects into the turn text. It is a leaf
           // directory holding only uploads.
           const runtime = yield* options.makeRuntime({
             cwd,
+            environment: McpProviderSession.withAgentDeviceEnvironment(
+              options.environment ?? process.env,
+              mcpSession,
+            ),
             clientInfo: { name: "t3-code", version: "0.0.0" },
             additionalDirectories: [serverConfig.attachmentsDir],
             ...(Option.isSome(cursor) ? { resumeSessionId: cursor.value.sessionId } : {}),
@@ -555,8 +579,10 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
             browserAuth: Option.isNone(cursor),
             ...(mcpSession
               ? {
-                  mcpServers: [
-                    {
+                  mcpServers: (
+                    capabilities: EffectAcpSchema.McpCapabilities | undefined,
+                  ): ReadonlyArray<EffectAcpSchema.McpServer> => {
+                    const httpEntry = {
                       type: "http" as const,
                       name: "t3-code",
                       url: mcpSession.endpoint,
@@ -566,8 +592,18 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
                           value: mcpSession.authorizationHeader,
                         },
                       ],
-                    },
-                  ],
+                    };
+                    if (capabilities?.http === true || mcpBridgePath === undefined) {
+                      return [httpEntry];
+                    }
+                    return [
+                      mcpStdioBridgeEntry({
+                        bridgePath: mcpBridgePath,
+                        endpoint: mcpSession.endpoint,
+                        authorizationHeader: mcpSession.authorizationHeader,
+                      }),
+                    ];
+                  },
                 }
               : {}),
             ...makeNativeLoggers({

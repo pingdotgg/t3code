@@ -467,6 +467,13 @@ const program = Effect.gen(function* () {
           agentCapabilities: {
             loadSession: true,
             promptCapabilities: { image: true, embeddedContext: true },
+            // The real CLI advertises no HTTP/SSE MCP transports; only stdio
+            // MCP servers work for `devin acp`. T3_ACP_DEVIN_MCP_HTTP flips the
+            // mock to an http-capable agent for the transport-selection tests.
+            mcpCapabilities:
+              process.env.T3_ACP_DEVIN_MCP_HTTP === "1"
+                ? { http: true, sse: false }
+                : { http: false, sse: false },
           },
           authMethods: [{ id: "devin-browser", name: "Sign in with Devin" }],
         };

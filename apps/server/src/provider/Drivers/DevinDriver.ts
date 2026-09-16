@@ -113,6 +113,7 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
 
       const adapter = yield* makeDevinAdapter(effectiveConfig, {
         instanceId,
+        environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         onSessionStarted: provider.onSessionStarted,
         onConfigOptionsUpdated: provider.onConfigOptionsUpdated,
@@ -129,7 +130,6 @@ export const DevinDriver: ProviderDriver<DevinSettings, DevinDriverEnv> = {
           makeDevinAcpRuntime({
             ...input,
             devinSettings: effectiveConfig,
-            environment: processEnv,
             childProcessSpawner: spawner,
           }).pipe(
             Effect.provideService(Crypto.Crypto, crypto),

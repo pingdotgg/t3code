@@ -111,7 +111,17 @@ export interface AcpSessionRuntimeOptions {
    * open an interactive login even though the user is signed in.
    */
   readonly authMethodId?: string | undefined;
-  readonly mcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /**
+   * MCP servers attached to `session/new`, `session/load`, and `session/resume`.
+   * A function form receives the agent's `mcpCapabilities` from `initialize` so
+   * the caller can pick the transport the agent actually supports (e.g. stdio
+   * when `http`/`sse` are false).
+   */
+  readonly mcpServers?:
+    | ReadonlyArray<EffectAcpSchema.McpServer>
+    | ((
+        capabilities: EffectAcpSchema.McpCapabilities | undefined,
+      ) => ReadonlyArray<EffectAcpSchema.McpServer>);
   /** Extra workspace roots the agent may read and write besides `cwd`. */
   readonly additionalDirectories?: ReadonlyArray<string>;
   /** Transforms provider stdout before protocol parsing and protocol logging. */
@@ -716,6 +726,10 @@ export const make = (
 
     const startOnce = Effect.gen(function* () {
       const initializeResult = yield* sendInitialize;
+      const mcpServers =
+        typeof options.mcpServers === "function"
+          ? options.mcpServers(initializeResult.agentCapabilities?.mcpCapabilities)
+          : (options.mcpServers ?? []);
 
       if (options.authMethodId !== undefined) {
         const authenticatePayload = {
@@ -745,7 +759,7 @@ export const make = (
         const resumePayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
           ...(options.additionalDirectories && options.additionalDirectories.length > 0
             ? { additionalDirectories: options.additionalDirectories }
             : {}),
@@ -774,7 +788,7 @@ export const make = (
         const loadPayload = {
           sessionId: options.resumeSessionId,
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
         } satisfies EffectAcpSchema.LoadSessionRequest;
         const sessionLoadTimeout = Duration.fromInputUnsafe(
           options.sessionLoadTimeout ?? defaultSessionLoadTimeout,
@@ -862,7 +876,7 @@ export const make = (
       } else {
         const createPayload = {
           cwd: options.cwd,
-          mcpServers: options.mcpServers ?? [],
+          mcpServers,
           ...(options.additionalDirectories && options.additionalDirectories.length > 0
             ? { additionalDirectories: options.additionalDirectories }
             : {}),
