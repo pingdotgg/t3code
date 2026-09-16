@@ -539,7 +539,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-muted-foreground hover:text-foreground disabled:opacity-64"
         onClick={() => onSignal(process, "SIGINT")}
       >
         INT
@@ -547,7 +547,7 @@ function ProcessActions({
       <button
         type="button"
         disabled={isSignaling}
-        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-50"
+        className="cursor-pointer text-[10px] font-semibold text-destructive hover:underline disabled:opacity-64"
         onClick={() => onSignal(process, "SIGKILL")}
       >
         KILL
