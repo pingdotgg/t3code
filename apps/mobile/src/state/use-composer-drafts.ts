@@ -25,6 +25,7 @@ import { Atom } from "effect/unstable/reactivity";
 
 import { writeFileAtomically } from "../lib/atomic-file";
 import { createComposerContextHistory, referencedComposerContext } from "../lib/composerContext";
+import { isQueuedEditDraftKey } from "./queued-edit-draft-key";
 import {
   collectComposerContextReferences,
   formatComposerContextReference,
@@ -654,7 +655,11 @@ export function decodePersistedComposerState(value: unknown): {
         // importedShareIds are share-import receipts: a contentless draft
         // carrying one is not empty, or the same native share would be
         // re-imported after restart.
-        .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0),
+        .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0)
+        // Queued-message edits are in-memory sessions. Their draft outlives a
+        // restart on disk, but the edit record that says which run it belongs
+        // to does not, so the draft would be unreachable and invisible.
+        .filter(([key]) => !isQueuedEditDraftKey(key)),
     ),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     modelOptionMemory: parsed.modelOptionMemory ?? {},

@@ -8,6 +8,7 @@ import { copySorted } from "@t3tools/shared/Array";
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = Projection["runs"][number];
+type Message = Projection["messages"][number];
 type ProviderSession = Projection["providerSessions"][number];
 
 const ACTIVE_RUN_STATUSES = new Set<Run["status"]>(["preparing", "starting", "running", "waiting"]);
@@ -22,6 +23,9 @@ export interface QueuedThreadRun {
   readonly run: Run;
   readonly text: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
+  /** Editing replaces this message's content, so its id and context travel with the row. */
+  readonly messageId: Message["id"];
+  readonly context?: Message["context"];
 }
 
 export interface ThreadQueueWorkflowState {
@@ -31,7 +35,7 @@ export interface ThreadQueueWorkflowState {
   readonly canPromoteToSteer: boolean;
 }
 
-function resolveActiveThreadRun(projection: Projection): Run | null {
+export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
   return projection.runs.findLast((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? null;
 }
 
@@ -120,6 +124,8 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       run,
       text: message?.text ?? "Queued message",
       attachments: message?.attachments ?? [],
+      messageId: run.userMessageId,
+      ...(message?.context ? { context: message.context } : {}),
     };
   });
 

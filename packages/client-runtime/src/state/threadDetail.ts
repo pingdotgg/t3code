@@ -7,6 +7,7 @@ import {
   getUserQueuedThreadRuns,
   type ThreadQueueWorkflowState,
 } from "./threadWorkflows.ts";
+import { deriveThreadTurnSubagents, type ThreadTurnSubagents } from "./threadSubagents.ts";
 import type { EnvironmentThread } from "./models.ts";
 import { EMPTY_ENVIRONMENT_THREAD_STATE, type EnvironmentThreadState } from "./threadState.ts";
 import { derivePendingThreadRequests, type PendingThreadRequests } from "./threadRequests.ts";
@@ -98,6 +99,26 @@ export function createEnvironmentThreadDetailAtoms<E>(
     }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-queue-count:${key}`));
   });
 
+  const turnSubagentsAtomFamily = Atom.family((key: string) => {
+    let previous: Pick<OrchestrationV2ThreadProjection, "runs" | "subagents"> | null = null;
+    let value: ThreadTurnSubagents | null = null;
+    return Atom.make((get) => {
+      const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
+      if (projection === null) {
+        previous = null;
+        value = null;
+      } else if (
+        projection.runs !== previous?.runs ||
+        projection.subagents !== previous?.subagents
+      ) {
+        const { runs, subagents } = projection;
+        previous = { runs, subagents };
+        value = deriveThreadTurnSubagents(previous);
+      }
+      return value;
+    }).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-turn-subagents:${key}`));
+  });
+
   const worktreePathAtomFamily = Atom.family((key: string) =>
     Atom.make(
       (get) =>
@@ -163,6 +184,7 @@ export function createEnvironmentThreadDetailAtoms<E>(
     pendingRequestsAtom: (ref: ScopedThreadRef) => pendingRequestsAtomFamily(threadKey(ref)),
     queueWorkflowAtom: (ref: ScopedThreadRef) => queueWorkflowAtomFamily(threadKey(ref)),
     queuedCountAtom: (ref: ScopedThreadRef) => queuedCountAtomFamily(threadKey(ref)),
+    turnSubagentsAtom: (ref: ScopedThreadRef) => turnSubagentsAtomFamily(threadKey(ref)),
     stateAtom: (ref: ScopedThreadRef) => threadStateValueAtomFamily(threadKey(ref)),
     threadAtom: (ref: ScopedThreadRef) => threadAtomFamily(threadKey(ref)),
     visibleTurnItemsAtom: (ref: ScopedThreadRef) => visibleTurnItemsAtomFamily(threadKey(ref)),

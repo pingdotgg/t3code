@@ -4,11 +4,13 @@ export const REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL = "Remove queued message"
 
 export interface ThreadQueueRowControls {
   readonly canDismiss: boolean;
+  readonly canEdit: boolean;
   readonly canMoveDown: boolean;
   readonly canMoveUp: boolean;
   readonly canSteer: boolean;
   readonly dismissAccessibilityLabel: string;
   readonly displayText: string;
+  readonly isEditing: boolean;
 }
 
 export function resolveThreadQueueRowControls(input: {
@@ -16,18 +18,25 @@ export function resolveThreadQueueRowControls(input: {
   readonly canPromoteToSteer: boolean;
   readonly canReorder: boolean;
   readonly index: number;
+  /** This row's message is already open in the composer. */
+  readonly isEditing?: boolean;
   readonly queuedCount: number;
   readonly text: string;
 }): ThreadQueueRowControls {
   const mutationEnabled = !input.busy;
+  const isEditing = input.isEditing === true;
 
   return {
     canDismiss: !input.busy,
+    // Re-opening the row already in the composer would reload it and throw
+    // away whatever has been typed since.
+    canEdit: mutationEnabled && !isEditing,
     canMoveDown: mutationEnabled && input.canReorder && input.index < input.queuedCount - 1,
     canMoveUp: mutationEnabled && input.canReorder && input.index > 0,
-    canSteer: mutationEnabled && input.canPromoteToSteer,
+    canSteer: mutationEnabled && input.canPromoteToSteer && !isEditing,
     dismissAccessibilityLabel: REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
     displayText: input.text,
+    isEditing,
   };
 }
 
