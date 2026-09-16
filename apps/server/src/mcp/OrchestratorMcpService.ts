@@ -56,6 +56,7 @@ import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -77,8 +78,10 @@ import { ProviderRegistry } from "../provider/Services/ProviderRegistry.ts";
 import { ScheduledTaskService } from "../scheduledTasks/ScheduledTaskService.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 
-const DEFAULT_WAIT_TIMEOUT_MS = 10 * 60 * 1_000;
-const MAX_WAIT_TIMEOUT_MS = 60 * 60 * 1_000;
+// The HTTP transport buffers JSON and drops progress notifications. Keep waits
+// below the MCP SDK's default 60s request timeout, with room for dispatch/readback.
+const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
+const MAX_WAIT_TIMEOUT_MS = 45_000;
 const TASK_POLL_INTERVAL_MS = 50;
 const DEFAULT_THREAD_LIST_LIMIT = 50;
 const DEFAULT_THREAD_READ_LIMIT = 50;
@@ -1262,96 +1265,109 @@ const make = Effect.gen(function* () {
           requestKey: key,
           operation: "delegate-task",
         });
-        const result = yield* threadManagement
-          .dispatch({
-            type: "delegated_task.request",
-            createdBy: "agent",
-            creationSource: "mcp",
-            commandId,
-            parentThreadId: scope.threadId,
-            parentRunId: parentRun.id,
-            parentNodeId: parentRun.rootNodeId,
-            task: taskPrompt(input),
-            ...(input.title === undefined ? {} : { title: input.title }),
-            modelSelection: target.modelSelection,
-            runtimeMode,
-            interactionMode,
-            // Async delegations wake the parent on every child terminal; wait
-            // delegations deliver through the blocking tool call, so a wake is
-            // only needed if the parent settled first (timeout, disconnect).
-            completionWake: input.mode === "wait" ? "settled_only" : "always",
-          })
-          .pipe(
-            Effect.mapError((error) =>
-              failure(
-                "orchestration_error",
-                `Unable to create delegated task: ${errorMessage(error)}`,
+        const parentNodeId = parentRun.rootNodeId;
+        // Keep command commitment and recovery registration atomic with respect
+        // to request cancellation. The wait itself remains interruptible.
+        const createTask = Effect.gen(function* () {
+          const result = yield* threadManagement
+            .dispatch({
+              type: "delegated_task.request",
+              createdBy: "agent",
+              creationSource: "mcp",
+              commandId,
+              parentThreadId: scope.threadId,
+              parentRunId: parentRun.id,
+              parentNodeId,
+              task: taskPrompt(input),
+              ...(input.title === undefined ? {} : { title: input.title }),
+              modelSelection: target.modelSelection,
+              runtimeMode,
+              interactionMode,
+              // Async delegations wake the parent on every child terminal; wait
+              // delegations deliver through the blocking tool call, so a wake is
+              // only needed if the parent settled first. Timeout or disconnect
+              // upgrades delivery once this call no longer owns the result.
+              completionWake: input.mode === "wait" ? "settled_only" : "always",
+            })
+            .pipe(
+              Effect.mapError((error) =>
+                failure(
+                  "orchestration_error",
+                  `Unable to create delegated task: ${errorMessage(error)}`,
+                ),
               ),
-            ),
+            );
+          const taskEvent = result.storedEvents.find(
+            (stored) =>
+              stored.event.type === "subagent.updated" &&
+              stored.event.payload.origin === "app_owned",
           );
-        const taskEvent = result.storedEvents.find(
-          (stored) =>
-            stored.event.type === "subagent.updated" && stored.event.payload.origin === "app_owned",
-        );
-        if (taskEvent?.event.type !== "subagent.updated") {
-          return yield* failure(
-            "orchestration_error",
-            "Delegated task command did not produce a task projection.",
-          );
-        }
-        const taskId = taskEvent.event.payload.id;
-
-        if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId, false, true);
-        }
-        const timeoutMs = Math.min(
-          MAX_WAIT_TIMEOUT_MS,
-          Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
-        );
-        const waited = yield* waitForTask(scope, taskId, timeoutMs);
-        if (Option.isSome(waited)) {
-          return waited.value;
-        }
-        // The blocking wait timed out, so it no longer owns delivery: upgrade
-        // the task so a later terminal wakes the parent even mid-turn. Best
-        // effort; on failure the settled_only policy still wakes a settled
-        // parent.
-        yield* threadManagement
-          .dispatch({
-            type: "delegated_task.wake-policy",
-            commandId: stableCommandId({
-              scope,
-              requestKey: key,
-              operation: "delegate-task-wake-policy",
+          if (taskEvent?.event.type !== "subagent.updated") {
+            return yield* failure(
+              "orchestration_error",
+              "Delegated task command did not produce a task projection.",
+            );
+          }
+          const taskId = taskEvent.event.payload.id;
+          return taskId;
+        });
+        const resumeWake = (taskId: NodeId) =>
+          threadManagement
+            .dispatch({
+              type: "delegated_task.wake-policy",
+              commandId: stableCommandId({
+                scope,
+                requestKey: key,
+                operation: "delegate-task-wake-policy",
+              }),
+              parentThreadId: scope.threadId,
+              taskId,
+              completionWake: "always",
+            })
+            .pipe(
+              // Delivery recovery must not replace the tool result or its
+              // original failure, so upgrade failures stay warnings. A rejected receipt
+              // means this exact command id already failed (a replay of a
+              // no-op upgrade), while anything else is a fresh dispatch fault.
+              Effect.catch((error) =>
+                Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+                  taskId,
+                  outcome:
+                    error._tag === "OrchestratorCommandPreviouslyRejectedError"
+                      ? "previously_rejected"
+                      : "dispatch_failed",
+                  error,
+                }),
+              ),
+              Effect.catchCause((cause) =>
+                Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
+                  taskId,
+                  outcome: "defect",
+                  cause,
+                }),
+              ),
+            );
+        return yield* Effect.acquireUseRelease(
+          createTask,
+          (taskId) =>
+            Effect.gen(function* () {
+              if (input.mode !== "wait") {
+                return yield* readTask(scope, taskId, false, true);
+              }
+              const timeoutMs = Math.min(
+                MAX_WAIT_TIMEOUT_MS,
+                Math.max(1, input.timeoutMs ?? DEFAULT_WAIT_TIMEOUT_MS),
+              );
+              const waited = yield* waitForTask(scope, taskId, timeoutMs);
+              if (Option.isSome(waited)) {
+                return waited.value;
+              }
+              yield* resumeWake(taskId);
+              return yield* readTask(scope, taskId, true, true);
             }),
-            parentThreadId: scope.threadId,
-            taskId,
-            completionWake: "always",
-          })
-          .pipe(
-            // The tool result is the timed-out task either way, so failures
-            // stay warnings. Keep the two shapes apart: a rejected receipt
-            // means this exact command id already failed (a replay of a
-            // no-op upgrade), while anything else is a fresh dispatch fault.
-            Effect.catch((error) =>
-              Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-                taskId,
-                outcome:
-                  error._tag === "OrchestratorCommandPreviouslyRejectedError"
-                    ? "previously_rejected"
-                    : "dispatch_failed",
-                error,
-              }),
-            ),
-            Effect.catchCause((cause) =>
-              Effect.logWarning("orchestrator-mcp.delegate-task.wake-policy-failed", {
-                taskId,
-                outcome: "defect",
-                cause,
-              }),
-            ),
-          );
-        return yield* readTask(scope, taskId, true, true);
+          (taskId, exit) =>
+            input.mode === "wait" && Exit.isFailure(exit) ? resumeWake(taskId) : Effect.void,
+        );
       }),
     taskStatus: (scope, taskId) => readTask(scope, taskId, false, true),
     cancelTask: (scope, input) =>

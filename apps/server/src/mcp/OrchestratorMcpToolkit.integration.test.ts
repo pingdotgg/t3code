@@ -2242,6 +2242,26 @@ describe("orchestrator MCP toolkit", () => {
                 (task) => task.id === upgradedDelegated.taskId,
               )?.completionWake,
             ).toBe("always");
+            const retriedWait = yield* invoke("delegate_task", {
+              task: cancellationPrompt,
+              target: { providerInstanceId: codexInstanceId, model: codexModel },
+              mode: "wait",
+              timeoutMs: 1,
+              clientRequestId: "delegate-wait-upgrade-1",
+            });
+            const recovered = yield* decodeDelegateTaskResult(retriedWait.structuredContent).pipe(
+              Effect.orDie,
+            );
+            expect(recovered).toMatchObject({
+              taskId: upgradedDelegated.taskId,
+              childThreadId: upgradedDelegated.childThreadId,
+              waitTimedOut: true,
+            });
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).subagents.filter(
+                (task) => task.childThreadId === upgradedDelegated.childThreadId,
+              ),
+            ).toHaveLength(1);
             const upgradeCancelCall = yield* invoke("task_cancel", {
               taskId: upgradedDelegated.taskId,
               reason: "Terminalize while the parent run is live.",

@@ -5389,26 +5389,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       completionWake: command.completionWake,
       updatedAt: now,
     };
-    // A non-terminal task needs no offer here: finalize reads the upgraded
-    // policy when the child terminalizes. Both writers hold this parent lock,
-    // so a terminal task means finalize already committed the terminal row and
-    // already made its offer decision under the pre-upgrade policy: under
-    // settled_only it offered iff the parent had no live run. Plan a delivery
-    // only when the parent has a live run now, which is precisely the case
-    // where finalize skipped. The mailbox steers a capable active session or
-    // queues behind that run. When the parent is not live, finalize already
-    // offered and a second
-    // offer would wake the parent twice. (If the parent settled in between,
-    // this skips a wake that finalize also skipped; a missed wake is cheaper
-    // than a duplicate one, and the result is already in the projection.)
+    // Finalize and upgrades hold the same parent lock. A terminal task may
+    // still lack delivery if it completed while the parent was active and the
+    // parent settled before this upgrade. Reconcile through durable ownership;
+    // the planner preserves existing reservations and observed/disposed results.
     const parentRun =
       task.runId === null
         ? undefined
         : parentProjection.runs.find((candidate) => candidate.id === task.runId);
     const completionPlan =
-      command.completionWake === "always" &&
-      isTerminalDelegatedTaskStatus(task.status) &&
-      hasLiveRun(parentProjection)
+      command.completionWake === "always" && isTerminalDelegatedTaskStatus(task.status)
         ? yield* planDelegatedCompletionDelivery({
             parentProjection,
             parentRun,
@@ -6970,6 +6960,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     }
 
     const delivery = cohort?.delivery ?? null;
+    // A policy upgrade can revisit a task already owned by this wake. Only
+    // new siblings become pending behind it; demoting its own task would
+    // make finalization schedule that same result again as a successor.
+    if (taskDelivery?.state === "claimed" && delivery?.taskIds.includes(input.task.id)) {
+      return {
+        task: input.updatedTask,
+        parentRun: undefined,
+        message: undefined,
+        offer: false,
+      };
+    }
     const deliveryRun = completionDeliveryRun(input.parentProjection, delivery);
     if (delivery !== null) {
       if (deliveryRun?.status === "queued" && deliveryRun.userMessageId === delivery?.messageId) {

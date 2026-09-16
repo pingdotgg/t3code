@@ -1,0 +1,12 @@
+[extend]
+useDefault = true
+
+# Synthetic UUID used by the Codex rate-limit reset protocol test.
+[[rules]]
+id = "generic-api-key"
+[[rules.allowlists]]
+description = "Codex protocol idempotency test fixture"
+condition = "AND"
+paths = ['''(^|/)packages/effect-codex-app-server/src/protocol\.test\.ts$''']
+regexTarget = "match"
+regexes = ['''^idempotencyKey: \"8ae96ff3-3425-4f4c-8772-b6fd61502868\"$''']

@@ -11,10 +11,15 @@ import {
   type OrchestrationV2ThreadProjection,
   type ServerProvider,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as TestClock from "effect/testing/TestClock";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
 
+import { OrchestratorProjectionError } from "../orchestration-v2/Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "../orchestration-v2/ProviderAdapter.ts";
 import {
   ProviderAdapterRegistryLookupError,
@@ -431,6 +436,273 @@ describe("OrchestratorMcpService provider resolution", () => {
     providerThreads: [],
     turnItems: [],
   } as unknown as OrchestrationV2ThreadProjection;
+
+  const waitFixture = Effect.fn(function* (options?: {
+    blockDispatch?: boolean;
+    terminal?: boolean;
+    readFailure?: "error" | "defect";
+  }) {
+    const waiting = yield* Deferred.make<void>();
+    const dispatchStarted = yield* Deferred.make<void>();
+    const releaseDispatch = yield* Deferred.make<void>();
+    const commands: Array<Parameters<ThreadManagementService["Service"]["dispatch"]>[0]> = [];
+    const threadWaitBudgets: Array<number> = [];
+    const task = {
+      id: taskId,
+      threadId: parentThreadId,
+      parentThreadId,
+      parentRunId,
+      parentNodeId,
+      origin: "app_owned",
+      createdBy: "agent",
+      driver: ProviderDriverKind.make("codex"),
+      providerInstanceId: codexInstanceId,
+      providerThreadId: null,
+      childThreadId,
+      nativeTaskRef: null,
+      prompt: "Summarize the diff.",
+      title: null,
+      model: "gpt-5.4",
+      status: options?.terminal ? "completed" : "running",
+      result: options?.terminal ? "Done" : null,
+      startedAt: null,
+      completedAt: null,
+    };
+    const dependencies = Layer.mergeAll(
+      NodeServices.layer,
+      Layer.mock(ThreadManagementService)({
+        waitForThread: (input) =>
+          Effect.gen(function* () {
+            threadWaitBudgets.push(input.timeoutMs);
+            yield* Deferred.succeed(waiting, undefined);
+            yield* Effect.sleep(input.timeoutMs);
+            return { threadId: input.threadId, run: null, timedOut: true };
+          }),
+        getThreadProjection: (id) => {
+          if (id === parentThreadId) return Effect.succeed(parentProjection([task]));
+          if (options?.readFailure === "error") {
+            return Effect.fail(
+              new OrchestratorProjectionError({ threadId: id, cause: "read unavailable" }),
+            );
+          }
+          if (options?.readFailure === "defect") return Effect.die("read defect");
+          return Deferred.succeed(waiting, undefined).pipe(
+            Effect.as({
+              ...childProjection,
+              runs: parentProjection([]).runs.map((run) => ({
+                ...run,
+                id: RunId.make("run:wait-child"),
+                threadId: childThreadId,
+              })),
+            }),
+          );
+        },
+        dispatch: (command) =>
+          Effect.gen(function* () {
+            commands.push(command);
+            if (command.type === "delegated_task.request") {
+              yield* Deferred.succeed(dispatchStarted, undefined);
+              if (options?.blockDispatch) yield* Deferred.await(releaseDispatch);
+            }
+            return {
+              sequence: 1,
+              storedEvents: [
+                {
+                  sequence: 1,
+                  commandId: null,
+                  event: { type: "subagent.updated", payload: task },
+                },
+              ],
+            } as never;
+          }),
+      }),
+      Layer.mock(ProviderRegistry)({
+        getProviders: Effect.succeed([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+      }),
+      adapterRegistryLayer([codexInstanceId]),
+      Layer.mock(ScheduledTaskService)({}),
+    );
+    return {
+      waiting,
+      threadWaitBudgets,
+      dispatchStarted,
+      releaseDispatch,
+      commands,
+      layer: OrchestratorMcpService.layer.pipe(Layer.provide(dependencies)),
+    };
+  });
+
+  it.effect.each([
+    { timeoutMs: undefined, budget: 30_000 },
+    { timeoutMs: 10 * 60 * 1_000, budget: 45_000 },
+    { timeoutMs: 60 * 60 * 1_000, budget: 45_000 },
+    { timeoutMs: 100, budget: 100 },
+  ])(
+    "returns recoverable task handles within the MCP wait budget ($budget ms)",
+    ({ timeoutMs, budget }) =>
+      Effect.gen(function* () {
+        const fixture = yield* waitFixture();
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const fiber = yield* service
+            .delegateTask(scope, {
+              task: "Summarize the diff.",
+              mode: "wait",
+              clientRequestId: "bounded-wait",
+              ...(timeoutMs === undefined ? {} : { timeoutMs }),
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(fixture.waiting);
+          yield* TestClock.adjust(budget);
+          assert.isDefined(fiber.pollUnsafe(), "wait must return before the client's timeout");
+          const result = yield* Fiber.join(fiber);
+          assert.equal(result.taskId, taskId);
+          assert.equal(result.childThreadId, childThreadId);
+          assert.isTrue(result.waitTimedOut);
+          assert.equal(result.status, "running");
+          assert.deepEqual(
+            fixture.commands.map((command) => command.type),
+            ["delegated_task.request", "delegated_task.wake-policy"],
+          );
+          assert.equal((yield* service.taskStatus(scope, taskId)).waitTimedOut, false);
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+  );
+
+  it.effect.each([
+    { timeoutMs: undefined, budget: 30_000 },
+    { timeoutMs: 10 * 60 * 1_000, budget: 45_000 },
+    { timeoutMs: 60 * 60 * 1_000, budget: 45_000 },
+    { timeoutMs: 100, budget: 100 },
+  ])("bounds t3_thread_wait to $budget ms without interrupting work", ({ timeoutMs, budget }) =>
+    Effect.gen(function* () {
+      const fixture = yield* waitFixture();
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const fiber = yield* service
+          .waitForThread(scope, {
+            threadId: parentThreadId,
+            ...(timeoutMs === undefined ? {} : { timeoutMs }),
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.waiting);
+        assert.deepEqual(fixture.threadWaitBudgets, [budget]);
+        yield* TestClock.adjust(budget);
+        assert.isDefined(fiber.pollUnsafe());
+        const result = yield* Fiber.join(fiber);
+        assert.isTrue(result.timedOut);
+        assert.equal(result.threadId, parentThreadId);
+        assert.deepEqual(fixture.commands, []);
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect(
+    "upgrades delivery when a waiting MCP request is interrupted without cancelling the child",
+    () =>
+      Effect.gen(function* () {
+        const fixture = yield* waitFixture();
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const fiber = yield* service
+            .delegateTask(scope, {
+              task: "Summarize the diff.",
+              mode: "wait",
+              clientRequestId: "interrupted-wait",
+            })
+            .pipe(Effect.forkChild);
+          yield* Deferred.await(fixture.waiting);
+          yield* Fiber.interrupt(fiber);
+          assert.deepEqual(
+            fixture.commands.map((command) => command.type),
+            ["delegated_task.request", "delegated_task.wake-policy"],
+          );
+          assert.equal(
+            fixture.commands[1]?.type === "delegated_task.wake-policy" &&
+              fixture.commands[1].completionWake,
+            "always",
+          );
+          assert.equal((yield* service.taskStatus(scope, taskId)).status, "running");
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+  );
+
+  it.effect("does not lose delivery if a disconnect arrives while dispatch is committing", () =>
+    Effect.gen(function* () {
+      const fixture = yield* waitFixture({ blockDispatch: true });
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const fiber = yield* service
+          .delegateTask(scope, {
+            task: "Summarize the diff.",
+            mode: "wait",
+            clientRequestId: "dispatch-disconnect",
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(fixture.dispatchStarted);
+        yield* Fiber.interrupt(fiber).pipe(Effect.forkChild);
+        yield* Deferred.succeed(fixture.releaseDispatch, undefined);
+        yield* Fiber.await(fiber);
+        assert.deepEqual(
+          fixture.commands.map((command) => command.type),
+          ["delegated_task.request", "delegated_task.wake-policy"],
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
+
+  it.effect.each(["error", "defect"] as const)(
+    "preserves a wait's %s while recovering completion delivery",
+    (readFailure) =>
+      Effect.gen(function* () {
+        const fixture = yield* waitFixture({ readFailure });
+        yield* Effect.gen(function* () {
+          const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+          const exit = yield* Effect.exit(
+            service.delegateTask(scope, {
+              task: "Summarize the diff.",
+              mode: "wait",
+              clientRequestId: "failed-wait",
+            }),
+          );
+          assert.equal(exit._tag, "Failure");
+          if (exit._tag === "Failure") {
+            assert.equal(Cause.hasDies(exit.cause), readFailure === "defect");
+            assert.equal(Cause.hasFails(exit.cause), readFailure === "error");
+          }
+          assert.deepEqual(
+            fixture.commands.map((command) => command.type),
+            ["delegated_task.request", "delegated_task.wake-policy"],
+          );
+        }).pipe(Effect.provide(fixture.layer));
+      }),
+  );
+
+  it.effect("keeps successful waits on settled-only delivery", () =>
+    Effect.gen(function* () {
+      const fixture = yield* waitFixture({ terminal: true });
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const result = yield* service.delegateTask(scope, {
+          task: "Summarize the diff.",
+          mode: "wait",
+          clientRequestId: "completed-wait",
+        });
+        assert.equal(result.status, "completed");
+        assert.isFalse(result.waitTimedOut);
+        assert.deepEqual(
+          fixture.commands.map((command) => command.type),
+          ["delegated_task.request", "delegated_task.completion-delivery.acknowledge"],
+        );
+      }).pipe(Effect.provide(fixture.layer));
+    }),
+  );
 
   it.effect(
     "advertises orchestration capability from registered adapters rather than a driver allowlist",

@@ -16,6 +16,7 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -133,9 +134,10 @@ const seedParentWithTerminalTask = (input: {
   readonly runId: RunId;
   readonly rootNodeId: NodeId;
   readonly taskId: NodeId;
-  readonly deliveryState: "delivered" | "claimed" | "acknowledged" | "disposed";
+  readonly deliveryState?: "delivered" | "claimed" | "acknowledged" | "disposed";
   readonly completionWake?: "always" | "settled_only";
   readonly deliveryTaskIds?: ReadonlyArray<NodeId>;
+  readonly settledDeliveryCount?: number;
   readonly now: DateTime.Utc;
 }) =>
   Effect.gen(function* () {
@@ -231,7 +233,7 @@ const seedParentWithTerminalTask = (input: {
             delegatedCompletion: {
               disposition: "open",
               nextGeneration: 2,
-              settledDeliveryCount: 1,
+              settledDeliveryCount: input.settledDeliveryCount ?? 1,
               delivery:
                 input.deliveryTaskIds === undefined
                   ? null
@@ -268,10 +270,14 @@ const seedParentWithTerminalTask = (input: {
             title: null,
             model: null,
             completionWake: input.completionWake ?? "settled_only",
-            completionDelivery: {
-              state: input.deliveryState,
-              observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
-            },
+            ...(input.deliveryState === undefined
+              ? {}
+              : {
+                  completionDelivery: {
+                    state: input.deliveryState,
+                    observedByRunId: input.deliveryState === "acknowledged" ? input.runId : null,
+                  },
+                }),
             status: "completed",
             result: "child finished",
             startedAt: input.now,
@@ -429,6 +435,242 @@ it.layer(TestLayer)("delegated completion delivery repairs", (it) => {
       assert.include(message?.text ?? "", String(secondTaskId));
       assert.include(message?.text ?? "", "task_status");
     }),
+  );
+
+  it.effect.each([undefined, "claimed", "delivered", "acknowledged", "disposed"] as const)(
+    "recovers a settled parent's missing delivery without duplicating %s ownership",
+    (deliveryState) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const suffix = deliveryState ?? "unobserved";
+        const threadId = ThreadId.make(`thread:late-wake:${suffix}`);
+        const runId = RunId.make(`run:late-wake:${suffix}`);
+        const taskId = NodeId.make(`node:late-wake:${suffix}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:late-wake:${suffix}`),
+          runId,
+          rootNodeId: NodeId.make(`node:late-wake-root:${suffix}`),
+          taskId,
+          ...(deliveryState === undefined ? {} : { deliveryState }),
+          ...(deliveryState === "claimed" ? { deliveryTaskIds: [taskId] } : {}),
+          completionWake: "settled_only",
+          now,
+        });
+        // Finalization already left this terminal task without an offer while
+        // its parent was active. The parent settles before wait cleanup upgrades it.
+        const before = yield* orchestrator.getThreadProjection(threadId);
+        const parentRun = before.runs.find((run) => run.id === runId)!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:late-wake-parent-settled:${suffix}`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const command = {
+          type: "delegated_task.wake-policy" as const,
+          commandId: CommandId.make(`command:late-wake:${suffix}`),
+          parentThreadId: threadId,
+          taskId,
+          completionWake: "always" as const,
+        };
+        const upgraded = yield* orchestrator.dispatch(command);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        const updatedRun = after.runs.find((run) => run.id === runId)!;
+        const task = after.subagents.find((task) => task.id === taskId)!;
+        assert.equal(task.completionWake, "always");
+        if (deliveryState === undefined) {
+          assert.equal(task.completionDelivery?.state, "claimed");
+          assert.deepEqual(updatedRun.delegatedCompletion?.delivery?.taskIds, [taskId]);
+          assert.equal(updatedRun.delegatedCompletion?.nextGeneration, 3);
+        } else {
+          assert.equal(task.completionDelivery?.state, deliveryState);
+          assert.deepEqual(updatedRun.delegatedCompletion, parentRun.delegatedCompletion);
+        }
+        // Recovery retries retain the same durable reservation and message ID.
+        const replay = yield* orchestrator.dispatch(command);
+        assert.equal(replay.sequence, upgraded.sequence);
+        const replayed = yield* orchestrator.getThreadProjection(threadId);
+        assert.deepEqual(
+          replayed.runs.find((run) => run.id === runId)?.delegatedCompletion,
+          updatedRun.delegatedCompletion,
+        );
+      }),
+  );
+
+  it.effect.each([
+    { status: "waiting", alreadyIncluded: true },
+    { status: "completed", alreadyIncluded: true },
+    { status: "waiting", alreadyIncluded: false },
+    { status: "completed", alreadyIncluded: false },
+  ] as const)(
+    "preserves ownership during a $status wake (included=$alreadyIncluded)",
+    ({ status, alreadyIncluded }) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* OrchestratorV2;
+        const sink = yield* EventSinkV2;
+        const now = yield* DateTime.now;
+        const suffix = `${status}-${alreadyIncluded}`;
+        const threadId = ThreadId.make(`thread:owned-wake:${suffix}`);
+        const runId = RunId.make(`run:owned-wake:${suffix}`);
+        const wakeRunId = RunId.make(`run:owned-wake-delivery:${suffix}`);
+        const taskId = NodeId.make(`node:owned-wake:${suffix}`);
+        const includedId = alreadyIncluded
+          ? taskId
+          : NodeId.make(`node:owned-wake-sibling:${suffix}`);
+        const messageId = MessageId.make(`message:delegated-delivery:${threadId}`);
+        yield* seedParentWithTerminalTask({
+          threadId,
+          projectId: ProjectId.make(`project:owned-wake:${suffix}`),
+          runId,
+          rootNodeId: NodeId.make(`node:owned-wake-root:${suffix}`),
+          taskId,
+          ...(alreadyIncluded ? { deliveryState: "claimed" as const } : {}),
+          deliveryTaskIds: [includedId],
+          settledDeliveryCount: 0,
+          completionWake: "settled_only",
+          now,
+        });
+        const projection = yield* orchestrator.getThreadProjection(threadId);
+        const parentRun = projection.runs.find((run) => run.id === runId)!;
+        const task = projection.subagents.find((task) => task.id === taskId)!;
+        // Seed the durable snapshot just before the wake's terminal listener gets
+        // the parent lock. Reconciliation events intentionally do not run that listener.
+        yield* sink.write({
+          commandId: CommandId.make(`command:runtime-reconcile:owned-wake:${suffix}`),
+          events: [
+            {
+              id: EventId.make(`event:owned-parent:${suffix}`),
+              type: "run.updated",
+              threadId,
+              runId,
+              occurredAt: now,
+              payload: { ...parentRun, status: "completed", completedAt: now },
+            },
+            {
+              id: EventId.make(`event:owned-wake-run:${suffix}`),
+              type: "run.updated",
+              threadId,
+              runId: wakeRunId,
+              occurredAt: now,
+              payload: {
+                ...parentRun,
+                id: wakeRunId,
+                ordinal: 2,
+                userMessageId: messageId,
+                status,
+                delegatedCompletion: undefined,
+                completedAt: status === "completed" ? now : null,
+              },
+            },
+            {
+              id: EventId.make(`event:owned-wake-message:${suffix}`),
+              type: "message.updated",
+              threadId,
+              runId: wakeRunId,
+              occurredAt: now,
+              payload: {
+                id: messageId,
+                threadId,
+                runId: wakeRunId,
+                nodeId: null,
+                role: "user",
+                text: "Background task finished",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "server",
+                createdAt: now,
+                updatedAt: now,
+                delegatedCompletion: { parentRunId: runId, generation: 1, taskIds: [includedId] },
+              },
+            },
+            ...(alreadyIncluded
+              ? []
+              : [
+                  {
+                    id: EventId.make(`event:owned-sibling:${suffix}`),
+                    type: "subagent.updated" as const,
+                    threadId,
+                    runId,
+                    nodeId: includedId,
+                    occurredAt: now,
+                    payload: {
+                      ...task,
+                      id: includedId,
+                      completionDelivery: { state: "claimed" as const, observedByRunId: null },
+                    },
+                  },
+                ]),
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "delegated_task.wake-policy",
+          commandId: CommandId.make(`command:owned-wake:${suffix}`),
+          parentThreadId: threadId,
+          taskId,
+          completionWake: "always",
+        });
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(
+          after.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+          alreadyIncluded ? "claimed" : "pending",
+        );
+        assert.deepEqual(
+          after.runs.find((run) => run.id === runId)?.delegatedCompletion,
+          parentRun.delegatedCompletion,
+        );
+
+        const afterSequence = yield* sink.latestSequence();
+        const reconciled = yield* sink.stream({ threadId, afterSequence }).pipe(
+          Stream.filter(
+            (stored) =>
+              stored.event.type === "run.updated" &&
+              stored.event.payload.id === runId &&
+              stored.event.payload.delegatedCompletion?.settledDeliveryCount === 1,
+          ),
+          Stream.runHead,
+          Effect.forkChild,
+        );
+        const wakeRun = after.runs.find((run) => run.id === wakeRunId)!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`event:owned-wake-terminal:${suffix}`),
+              type: "run.updated",
+              threadId,
+              runId: wakeRunId,
+              occurredAt: now,
+              payload: { ...wakeRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* Fiber.join(reconciled);
+        const settled = yield* orchestrator.getThreadProjection(threadId);
+        const delivery = settled.runs.find((run) => run.id === runId)?.delegatedCompletion
+          ?.delivery;
+        if (alreadyIncluded) {
+          assert.isNull(delivery, "the completed wake must not reserve a duplicate successor");
+          assert.equal(
+            settled.subagents.find((task) => task.id === taskId)?.completionDelivery?.state,
+            "delivered",
+          );
+        } else {
+          assert.deepEqual(
+            delivery?.taskIds,
+            [taskId],
+            "an unseen sibling still needs its successor",
+          );
+        }
+      }),
   );
 
   it.effect("does not re-offer when wake-policy upgrades after delivered ownership settled", () =>

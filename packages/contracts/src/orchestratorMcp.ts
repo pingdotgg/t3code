@@ -180,9 +180,12 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   timeoutMs: Schema.optional(Schema.Number).annotate({
     description:
-      "Wait budget for mode=wait only. Default 10 minutes. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
+      "Wait budget for mode=wait only. Default 30 seconds, capped at 45 seconds. Elapsing it returns waitTimedOut=true on that call and does not cancel the child.",
   }),
-  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId).annotate({
+    description:
+      "Choose an ID before dispatch and reuse it when retrying this delegation after a transport error while the parent is active in the same provider session to recover the same child. If rejected, settled, or the session changed, reconcile children with t3_thread_list first.",
+  }),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
@@ -426,7 +429,10 @@ export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendRe
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   threadId: ThreadId,
   runId: Schema.optional(RunId),
-  timeoutMs: Schema.optional(Schema.Number),
+  timeoutMs: Schema.optional(Schema.Number).annotate({
+    description:
+      "Parent wait budget only. Default 30 seconds, capped at 45 seconds. Does not interrupt the thread; call again to continue waiting.",
+  }),
 });
 export type OrchestratorMcpThreadWaitInput = typeof OrchestratorMcpThreadWaitInput.Type;
 
