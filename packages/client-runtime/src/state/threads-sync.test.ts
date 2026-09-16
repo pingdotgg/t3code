@@ -671,6 +671,42 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("coalesces streaming cache writes and flushes the latest thread on teardown", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make();
+      const harness = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
+      yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
+      yield* awaitThreadState(harness.observed, (state) => state.status === "live");
+      yield* TestClock.adjust("500 millis");
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
+
+      for (let sequence = 2; sequence <= 10; sequence++) {
+        yield* Queue.offer(harness.inputs, titleUpdated(`Title ${sequence}`, sequence));
+        yield* awaitThreadState(
+          harness.observed,
+          (state) =>
+            Option.isSome(state.data) && state.data.value.thread.title === `Title ${sequence}`,
+        );
+        yield* TestClock.adjust("1 second");
+      }
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
+      yield* TestClock.adjust("1 second");
+      expect((yield* Ref.get(harness.savedThreads)).map((saved) => saved.snapshotSequence)).toEqual(
+        [1, 10],
+      );
+
+      yield* Queue.offer(harness.inputs, titleUpdated("Final title", 11));
+      yield* awaitThreadState(
+        harness.observed,
+        (state) => Option.isSome(state.data) && state.data.value.thread.title === "Final title",
+      );
+      yield* Scope.close(scope, Exit.void);
+      expect((yield* Ref.get(harness.savedThreads)).map((saved) => saved.snapshotSequence)).toEqual(
+        [1, 10, 11],
+      );
+    }),
+  );
+
   it.effect("reduces live events and persists the latest thread", () =>
     Effect.gen(function* () {
       const harness = yield* makeHarness({ cached: BASE_PROJECTION });
@@ -914,7 +950,7 @@ describe("EnvironmentThreads", () => {
           Option.isSome(value.data) &&
           value.data.value.thread.title === "Settled bounded",
       );
-      yield* TestClock.adjust("500 millis");
+      yield* TestClock.adjust("10 seconds");
       yield* Effect.yieldNow;
 
       const saved = (yield* Ref.get(harness.savedThreads)).at(-1);
