@@ -26,6 +26,7 @@ import { ServerSettingsService } from "../../serverSettings.ts";
 import { makeCursorTextGeneration } from "../../textGeneration/CursorTextGeneration.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeCursorAdapter } from "../Layers/CursorAdapter.ts";
+import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 import {
   buildInitialCursorProviderSnapshot,
   checkCursorProviderStatus,
@@ -139,7 +140,15 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
         processEnv,
         discoverModels,
       ).pipe(
+        Effect.flatMap((snapshot) =>
+          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
+            ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
+                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+              )
+            : Effect.succeed(snapshot),
+        ),
         Effect.map(stampIdentity),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         Effect.provideService(FileSystem.FileSystem, fileSystem),

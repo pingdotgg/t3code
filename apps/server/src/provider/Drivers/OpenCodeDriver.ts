@@ -27,6 +27,7 @@ import { ServerConfig } from "../../config.ts";
 import { ServerSettingsService } from "../../serverSettings.ts";
 import { ProviderDriverError } from "../Errors.ts";
 import { makeOpenCodeAdapter } from "../Layers/OpenCodeAdapter.ts";
+import { readOpenCodeGoUsageLimits } from "../Layers/openCodeUsageLimits.ts";
 import {
   checkOpenCodeProviderStatus,
   makePendingOpenCodeProvider,
@@ -148,12 +149,22 @@ export const OpenCodeDriver: ProviderDriver<OpenCodeSettings, OpenCodeDriverEnv>
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
       );
 
-      const checkProvider = checkOpenCodeProviderStatus(
-        effectiveConfig,
-        serverConfig.cwd,
-        processEnv,
+      const checkProvider = Effect.all(
+        {
+          provider: checkOpenCodeProviderStatus(effectiveConfig, serverConfig.cwd, processEnv),
+          usageLimits: readOpenCodeGoUsageLimits({
+            enabled: effectiveConfig.enabled,
+            serverUrl: effectiveConfig.serverUrl,
+            environment: processEnv,
+          }),
+        },
+        { concurrency: "unbounded" },
       ).pipe(
+        Effect.map(({ provider, usageLimits }) => ({ ...provider, usageLimits })),
         Effect.map(stampIdentity),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, pathService),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
         Effect.provideService(OpenCodeServerOwner.OpenCodeServerOwner, serverOwner),
         Effect.provideService(OpenCodeRuntime, openCodeRuntime),
       );
