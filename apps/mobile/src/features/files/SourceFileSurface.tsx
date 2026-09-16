@@ -33,6 +33,7 @@ import {
 import { MarkdownTextPrimitive } from "@t3tools/mobile-markdown-text/primitive";
 
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
+import { createSourceFileScrollRequest } from "./source-file-scroll";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 
 interface SourceFileSurfaceProps {
@@ -240,44 +241,29 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [props.selectable, tokens],
   );
   const listRef = useRef<FlatList<string>>(null);
-  const scrollRetryCountRef = useRef(0);
+  const scrollRequestRef = useRef<ReturnType<typeof createSourceFileScrollRequest> | null>(null);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
-  const scrollToLine = useCallback((index: number) => {
-    listRef.current?.scrollToIndex({ index, animated: false, viewPosition: 0.3 });
-  }, []);
-
   useEffect(() => {
-    if (targetIndex === null) {
+    if (targetIndex === null || listRef.current === null) {
       return;
     }
-    scrollRetryCountRef.current = 0;
-    const frame = requestAnimationFrame(() => {
-      scrollToLine(targetIndex);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [props.path, scrollToLine, targetIndex]);
+    const request = createSourceFileScrollRequest(listRef.current, targetIndex);
+    scrollRequestRef.current = request;
+    return () => {
+      scrollRequestRef.current = null;
+      request.dispose();
+    };
+  }, [codeWordBreak, props.path, props.selectable, targetIndex]);
 
   const handleScrollToIndexFailed = useCallback(
     (info: { index: number; averageItemLength: number }) => {
-      if (scrollRetryCountRef.current >= 5) {
-        return;
-      }
-      scrollRetryCountRef.current += 1;
-      const itemLength =
-        info.averageItemLength > 0 ? info.averageItemLength : codeSurface.rowHeight;
-      listRef.current?.scrollToOffset({
-        offset: info.index * itemLength,
-        animated: false,
-      });
-      requestAnimationFrame(() => {
-        scrollToLine(info.index);
-      });
+      scrollRequestRef.current?.retry(info, codeSurface.rowHeight);
     },
-    [codeSurface.rowHeight, scrollToLine],
+    [codeSurface.rowHeight],
   );
 
   const renderLine = useCallback(
