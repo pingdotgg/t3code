@@ -483,6 +483,7 @@ describe("ClientSettings environment identification", () => {
 describe("ClientSettings sidebar", () => {
   it("defaults to the current sidebar", () => {
     expect(decodeClientSettings({}).legacySidebarEnabled).toBe(false);
+    expect(decodeClientSettings({}).sidebarProjectListEnabled).toBe(false);
   });
 
   it("drops the retired sidebar v2 beta keys, resetting everyone to the default", () => {
@@ -508,6 +509,15 @@ describe("ClientSettings sidebar", () => {
     expect(decodeClientSettingsPatch({ legacySidebarEnabled: true }).legacySidebarEnabled).toBe(
       true,
     );
+  });
+
+  it("preserves an explicit inline project list opt-in", () => {
+    expect(
+      decodeClientSettings({ sidebarProjectListEnabled: true }).sidebarProjectListEnabled,
+    ).toBe(true);
+    expect(
+      decodeClientSettingsPatch({ sidebarProjectListEnabled: true }).sidebarProjectListEnabled,
+    ).toBe(true);
   });
 
   it("keeps unpin confirmation opt-in and patchable", () => {

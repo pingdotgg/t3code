@@ -549,6 +549,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarThreadPreviewCount !== DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount
         ? ["Visible threads"]
         : []),
+      ...(settings.sidebarProjectListEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarProjectListEnabled
+        ? ["Show projects in sidebar"]
+        : []),
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
@@ -664,6 +667,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
+      settings.sidebarProjectListEnabled,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -758,6 +762,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
       panelAnimationDurationMs: DEFAULT_UNIFIED_SETTINGS.panelAnimationDurationMs,
       sidebarThreadPreviewCount: DEFAULT_UNIFIED_SETTINGS.sidebarThreadPreviewCount,
+      sidebarProjectListEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarProjectListEnabled,
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -1184,6 +1189,32 @@ export function AppearanceSettingsPanel() {
       </SettingsSection>
 
       <SettingsSection id="appearance-interface" title="Interface">
+        <SettingsRow
+          {...searchableSetting("sidebar-project-list")}
+          description="Show projects directly in the sidebar instead of behind the project picker."
+          resetAction={
+            settings.sidebarProjectListEnabled !==
+            DEFAULT_UNIFIED_SETTINGS.sidebarProjectListEnabled ? (
+              <SettingResetButton
+                label="project list"
+                onClick={() =>
+                  updateSettings({
+                    sidebarProjectListEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarProjectListEnabled,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.sidebarProjectListEnabled}
+              onCheckedChange={(checked) =>
+                updateSettings({ sidebarProjectListEnabled: Boolean(checked) })
+              }
+              aria-label="Show projects in sidebar"
+            />
+          }
+        />
         <SettingsRow
           {...searchableSetting("setting-appearance-contrast")}
           description="Adjust the contrast of colors and borders across the interface."

@@ -207,6 +207,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["long lines code blocks tables diffs file previews"],
   },
   {
+    id: "sidebar-project-list",
+    title: "Show projects in sidebar",
+    to: "/settings/appearance",
+    searchTerms: ["project list picker dropdown navigation always visible"],
+  },
+  {
     id: "project-grouping",
     title: "Project grouping",
     to: "/settings/general",

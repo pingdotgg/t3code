@@ -2135,6 +2135,7 @@ export default function Sidebar() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const confirmThreadDelete = useClientSettings((s) => s.confirmThreadDelete);
   const confirmThreadArchive = useClientSettings((s) => s.confirmThreadArchive);
+  const sidebarProjectListEnabled = useClientSettings((s) => s.sidebarProjectListEnabled);
   const sidebarProjectSortOrder = useClientSettings((s) => s.sidebarProjectSortOrder);
   const timestampFormat = useClientSettings((s) => s.timestampFormat);
   const projectGroupingSettings = useClientSettings(selectProjectGroupingSettings);
@@ -4375,7 +4376,7 @@ export default function Sidebar() {
           <SidebarGroup className="relative z-[1] p-[var(--sidebar-content-inset)] pt-1">
             <SidebarThreadHeader
               searchFieldRef={headerSearchRef}
-              hasProjects={projectGroups.length > 0}
+              hasProjects={!sidebarProjectListEnabled && projectGroups.length > 0}
               projectScope={
                 <Combobox
                   items={projectScopeItems}
@@ -4531,6 +4532,92 @@ export default function Sidebar() {
           </SidebarGroup>
         }
       >
+        {sidebarProjectListEnabled ? (
+          <>
+            <SidebarGroup className="px-[var(--sidebar-content-inset)] pb-2 pt-0">
+              <div className="flex h-8 items-center gap-2 px-2">
+                <h2 className="min-w-0 flex-1 truncate text-xs font-semibold text-sidebar-muted-foreground">
+                  Projects
+                </h2>
+                <Button
+                  type="button"
+                  size="icon-xs"
+                  variant="ghost-muted"
+                  aria-label="New project"
+                  title="New project"
+                  className="size-7 shrink-0 text-sidebar-muted-foreground hover:text-sidebar-foreground"
+                  onClick={openAddProjectCommandPalette}
+                >
+                  <PlusIcon className="size-4" />
+                </Button>
+              </div>
+              <nav aria-label="Projects">
+                <ul className="flex flex-col gap-px">
+                  <li>
+                    <button
+                      type="button"
+                      aria-pressed={projectScopeKey === null}
+                      onClick={() => setProjectScopeKey(null)}
+                      className={cn(
+                        "flex h-9 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 pointer-coarse:h-11",
+                        projectScopeKey === null &&
+                          "bg-sidebar-row-selected text-sidebar-foreground",
+                      )}
+                    >
+                      <FolderIcon className="size-4 shrink-0 text-[var(--sidebar-icon-color)]" />
+                      <span className="min-w-0 flex-1 truncate">All projects</span>
+                    </button>
+                  </li>
+                  {projectGroups.map((project) => {
+                    const selected = projectScopeKey === project.projectKey;
+                    return (
+                      <li
+                        key={project.projectKey}
+                        className={cn(
+                          "group/project flex min-w-0 items-center rounded-md hover:bg-sidebar-row-hover",
+                          selected && "bg-sidebar-row-selected",
+                        )}
+                      >
+                        <button
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setProjectScopeKey(project.projectKey)}
+                          onContextMenu={(event) => handleProjectSettings(event, project)}
+                          className={cn(
+                            "flex h-9 min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md px-2 text-left text-sm font-medium text-sidebar-muted-foreground outline-hidden ring-ring hover:text-sidebar-foreground focus-visible:z-[1] focus-visible:ring-2 pointer-coarse:h-11",
+                            selected && "text-sidebar-foreground",
+                          )}
+                        >
+                          <ProjectFavicon project={project} className="size-4 shrink-0" />
+                          <span className="min-w-0 flex-1 truncate">{project.displayName}</span>
+                          {showProjectEnvironments ? (
+                            <ProjectEnvironmentBadge
+                              group={project}
+                              primaryEnvironmentId={primaryEnvironmentId}
+                              machineByEnvironmentId={environmentMachineById}
+                            />
+                          ) : null}
+                        </button>
+                        <Button
+                          type="button"
+                          size="icon-xs"
+                          variant="ghost-muted"
+                          aria-label={`Project settings for ${project.displayName}`}
+                          title={`Project settings for ${project.displayName}`}
+                          className="me-1 size-7 shrink-0 text-icon-muted hover:text-sidebar-foreground focus-visible:z-[1] pointer-coarse:size-11"
+                          onClick={(event) => handleProjectSettings(event, project)}
+                        >
+                          <SettingsIcon className="size-3.5" />
+                        </Button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </nav>
+            </SidebarGroup>
+            <div className="mx-[var(--sidebar-content-inset)] border-t border-sidebar-border" />
+          </>
+        ) : null}
         <SidebarGroup className="ps-[calc(var(--sidebar-content-inset)+1px)] pe-[var(--sidebar-content-inset)] pb-1 pt-0 flex-1">
           {isSearchingThreads ? (
             threadSearchResults.length > 0 ? (
