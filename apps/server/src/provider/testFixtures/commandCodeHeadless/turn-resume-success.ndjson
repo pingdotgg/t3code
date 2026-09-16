@@ -1,0 +1,27 @@
+﻿{"type":"event","event":{"type":"run_start","sessionId":"70f4e0db-f3d6-439f-b7f3-dfb935b30ef1"}}
+{"type":"event","event":{"type":"turn_start","turnNumber":1}}
+{"type":"event","event":{"type":"message_start"}}
+{"type":"event","event":{"type":"model_request_start","model":"deepseek/deepseek-v4-flash"}}
+{"type":"event","event":{"type":"model_trace","traceId":"3590c1d4488f49ea3ccc228374540e00"}}
+{"type":"event","event":{"type":"text_delta","delta":"\n\n"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"\n\n"}]}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"\n\n"},{"type":"tool_use","id":"call_2e043c0c6e674329ac5d8484","name":"read_file","input":{"file_path":"D:\\t3code/.commandcode/cc-probe/probe-tool.txt"}}]}}
+{"type":"event","event":{"type":"model_request_end","model":"deepseek/deepseek-v4-flash","usage":{"inputTokens":21864,"outputTokens":61,"cacheReadTokens":21504,"cacheWriteTokens":0},"stopReason":"tool_calls"}}
+{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"\n\n"},{"type":"tool_use","id":"call_2e043c0c6e674329ac5d8484","name":"read_file","input":{"file_path":"D:\\t3code/.commandcode/cc-probe/probe-tool.txt"}}]}}
+{"type":"event","event":{"type":"tool_queued","toolCallId":"call_2e043c0c6e674329ac5d8484","toolName":"read_file","input":{"file_path":"D:\\t3code/.commandcode/cc-probe/probe-tool.txt"}}}
+{"type":"event","event":{"type":"tool_running","toolCallId":"call_2e043c0c6e674329ac5d8484","toolName":"read_file","description":null}}
+{"type":"event","event":{"type":"tool_errored","toolCallId":"call_2e043c0c6e674329ac5d8484","toolName":"read_file","error":"File not found or not readable: D:\\t3code/.commandcode/cc-probe/probe-tool.txt","deferred":false}}
+{"type":"event","event":{"type":"turn_end","turnNumber":1,"hadToolCalls":true,"usage":{"inputTokens":21864,"outputTokens":61,"cacheReadTokens":21504,"cacheWriteTokens":0}}}
+{"type":"event","event":{"type":"turn_start","turnNumber":2}}
+{"type":"event","event":{"type":"message_start"}}
+{"type":"event","event":{"type":"model_request_start","model":"deepseek/deepseek-v4-flash"}}
+{"type":"event","event":{"type":"model_trace","traceId":"8de84f3c5761deca6e89e7684544e8f9"}}
+{"type":"event","event":{"type":"text_delta","delta":"res"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"res"}]}}
+{"type":"event","event":{"type":"text_delta","delta":"ume-ok"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"resume-ok"}]}}
+{"type":"event","event":{"type":"model_request_end","model":"deepseek/deepseek-v4-flash","usage":{"inputTokens":21960,"outputTokens":5,"cacheReadTokens":21760,"cacheWriteTokens":0},"stopReason":"stop"}}
+{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"resume-ok"}]}}
+{"type":"event","event":{"type":"turn_end","turnNumber":2,"hadToolCalls":false,"usage":{"inputTokens":21960,"outputTokens":5,"cacheReadTokens":21760,"cacheWriteTokens":0}}}
+{"type":"event","event":{"type":"run_end","result":{"finalText":"resume-ok","stopReason":"end_turn","turnCount":2,"usage":{"inputTokens":43824,"outputTokens":66,"cacheReadTokens":43264,"cacheWriteTokens":0},"systemPromptTokens":null,"nextState":{"sessionId":"70f4e0db-f3d6-439f-b7f3-dfb935b30ef1","messages":[{"role":"user","content":[{"type":"text","text":"Read .commandcode/cc-probe/probe-tool.txt and reply with exactly: resume-ok"}],"meta":{"source":"user","createdAt":1788896775050,"messageId":"eaf02549-0fad-4d30-a67b-de05b044be19"}},{"role":"assistant","content":[{"type":"text","text":"\n\n"},{"type":"tool_use","id":"call_2e043c0c6e674329ac5d8484","name":"read_file","input":{"file_path":"D:\\t3code/.commandcode/cc-probe/probe-tool.txt"}}],"meta":{"source":"model","createdAt":1788896779420,"messageId":"56a7ccdd-473e-40e4-ba58-247e63e5a294"}},{"role":"user","content":[{"type":"tool_result","tool_use_id":"call_2e043c0c6e674329ac5d8484","content":[{"type":"text","text":"File not found or not readable: D:\\t3code/.commandcode/cc-probe/probe-tool.txt"}]}],"meta":{"source":"tool","messageId":"00a3c992-15b4-4634-bf47-5a27f382ad4b"}},{"role":"assistant","content":[{"type":"text","text":"resume-ok"}],"meta":{"source":"model","createdAt":1788896781150,"messageId":"79513f42-4b86-4fa6-9bd1-fa77df2fab40"}}],"interrupted":false,"modState":{"workspace":{"cwd":"D:\\t3code","platform":"win32","branch":"main","gitStatus":"M .gitignore","recentCommits":["0fe4c99ee fix(desktop): neutral artwork for stable macOS installer (#10820)","772ea1473 fix(web): honor terminal link browser overrides (#10060)","5d14c0e96 fix(desktop): use official logo in macOS installer (#10819)","12391bd0d feat(web): show project favicon in new-thread project picker (#10790)","4664c572a feat(mobile): add optional Material You layout (#10692)"],"additionalDirectories":[]},"compaction":{"tokens":21969,"basis":{"role":"assistant","content":[{"type":"text","text":"resume-ok"}],"meta":{"source":"model","createdAt":1788896781150,"messageId":"79513f42-4b86-4fa6-9bd1-fa77df2fab40"}}}}}}}}
+{"type":"result","subtype":"success","sessionId":"70f4e0db-f3d6-439f-b7f3-dfb935b30ef1","stopReason":"end_turn","usage":{"inputTokens":43824,"outputTokens":66,"cacheReadTokens":43264,"cacheWriteTokens":0},"durationMs":12291,"finalText":"resume-ok"}

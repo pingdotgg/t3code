@@ -73,6 +73,16 @@ export function ProviderIcon(props: ProviderIconProps) {
     );
   }
 
+  if (props.provider === "commandCode") {
+    return (
+      <Image
+        source={require("../../assets/commandcode.png")}
+        style={{ width: size, height: size }}
+        contentFit="contain"
+      />
+    );
+  }
+
   // codex (and unknown drivers)
   return (
     <Svg width={size} height={size} viewBox="0 0 256 260" fill="none">

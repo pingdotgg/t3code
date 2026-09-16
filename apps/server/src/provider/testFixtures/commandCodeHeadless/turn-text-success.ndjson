@@ -1,0 +1,14 @@
+﻿{"type":"event","event":{"type":"run_start","sessionId":"ccde3580-6a70-4346-b9ed-aab7f1ff72d1"}}
+{"type":"event","event":{"type":"turn_start","turnNumber":1}}
+{"type":"event","event":{"type":"message_start"}}
+{"type":"event","event":{"type":"model_request_start","model":"deepseek/deepseek-v4-flash"}}
+{"type":"event","event":{"type":"model_trace","traceId":"52dcf2a5886a0f59c0deae34b997e9e2"}}
+{"type":"event","event":{"type":"text_delta","delta":"p"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"p"}]}}
+{"type":"event","event":{"type":"text_delta","delta":"ong"}}
+{"type":"event","event":{"type":"message_update","content":[{"type":"text","text":"pong"}]}}
+{"type":"event","event":{"type":"model_request_end","model":"deepseek/deepseek-v4-flash","usage":{"inputTokens":21869,"outputTokens":3,"cacheReadTokens":5376,"cacheWriteTokens":0},"stopReason":"stop"}}
+{"type":"event","event":{"type":"message_end","content":[{"type":"text","text":"pong"}]}}
+{"type":"event","event":{"type":"turn_end","turnNumber":1,"hadToolCalls":false,"usage":{"inputTokens":21869,"outputTokens":3,"cacheReadTokens":5376,"cacheWriteTokens":0}}}
+{"type":"event","event":{"type":"run_end","result":{"finalText":"pong","stopReason":"end_turn","turnCount":1,"usage":{"inputTokens":21869,"outputTokens":3,"cacheReadTokens":5376,"cacheWriteTokens":0},"systemPromptTokens":null,"nextState":{"sessionId":"ccde3580-6a70-4346-b9ed-aab7f1ff72d1","messages":[{"role":"user","content":[{"type":"text","text":"Reply with exactly the word: pong"}],"meta":{"source":"user","createdAt":1788896728127,"messageId":"9dca4c7b-6b61-497a-b912-351de7917cd2"}},{"role":"assistant","content":[{"type":"text","text":"pong"}],"meta":{"source":"model","createdAt":1788896730920,"messageId":"64d589bb-93bd-4b72-bef2-925381e9ea66"}}],"interrupted":false,"modState":{"workspace":{"cwd":"D:\\t3code","platform":"win32","branch":"main","gitStatus":"M .gitignore","recentCommits":["0fe4c99ee fix(desktop): neutral artwork for stable macOS installer (#10820)","772ea1473 fix(web): honor terminal link browser overrides (#10060)","5d14c0e96 fix(desktop): use official logo in macOS installer (#10819)","12391bd0d feat(web): show project favicon in new-thread project picker (#10790)","4664c572a feat(mobile): add optional Material You layout (#10692)"],"additionalDirectories":[]},"compaction":{"tokens":21877,"basis":{"role":"assistant","content":[{"type":"text","text":"pong"}],"meta":{"source":"model","createdAt":1788896730920,"messageId":"64d589bb-93bd-4b72-bef2-925381e9ea66"}}}}}}}}
+{"type":"result","subtype":"success","sessionId":"ccde3580-6a70-4346-b9ed-aab7f1ff72d1","stopReason":"end_turn","usage":{"inputTokens":21869,"outputTokens":3,"cacheReadTokens":5376,"cacheWriteTokens":0},"durationMs":12719,"finalText":"pong"}
