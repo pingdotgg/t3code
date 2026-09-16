@@ -63,10 +63,19 @@ describe("preview automation open readiness", () => {
     ).toBe(true);
   });
 
-  it("gives newly-created automation tabs a stable desktop viewport", () => {
+  it("uses the fallback for new automation tabs without a viewport", () => {
     expect(previewAutomationDefaultViewport(false, snapshot({ _tag: "Idle" }))).toEqual(
       DEFAULT_PREVIEW_AUTOMATION_VIEWPORT,
     );
+  });
+
+  it("preserves the configured fill viewport when opening an automation tab", () => {
+    expect(
+      previewAutomationDefaultViewport(false, {
+        ...snapshot({ _tag: "Idle" }),
+        viewport: { _tag: "fill" },
+      }),
+    ).toBeNull();
   });
 
   it("preserves reused and already-fixed browser viewports", () => {
