@@ -36,6 +36,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
+import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
 import { ensureAgentDevice } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
@@ -1003,18 +1004,20 @@ export const make = Effect.gen(function* () {
   );
   return {
     ...service,
-    agentCli: ensureAgentDevice(config.baseDir).pipe(
+    agentCli: resolveNodeExecutable("Device automation").pipe(
+      Effect.flatMap(() => ensureAgentDevice(config.baseDir)),
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(ProcessRunner.ProcessRunner, runner),
       Effect.map((tool) => tool.entryPath),
-      Effect.mapError(
-        (error) =>
-          new DeviceOperationError({
-            operation: "install agent CLI",
-            reason: "command_failed",
-            cause: error,
-          }),
+      Effect.mapError((error) =>
+        error._tag === "NodeRuntimeUnavailableError"
+          ? new DeviceHostUnavailableError({ hostId: LOCAL_DEVICE_HOST_ID, reason: error.message })
+          : new DeviceOperationError({
+              operation: "install agent CLI",
+              reason: "command_failed",
+              cause: error,
+            }),
       ),
     ),
   };

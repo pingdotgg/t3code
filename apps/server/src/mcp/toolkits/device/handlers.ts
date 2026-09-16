@@ -182,9 +182,12 @@ const handlers = {
         stateDir: config.stateDir,
       }).pipe(
         Effect.mapError(
-          () =>
+          (error) =>
             new DeviceToolUnavailableError({
-              reason: "Could not prepare the agent-device launcher.",
+              reason:
+                error._tag === "NodeRuntimeUnavailableError"
+                  ? error.message
+                  : "Could not prepare the agent-device launcher.",
             }),
         ),
       );

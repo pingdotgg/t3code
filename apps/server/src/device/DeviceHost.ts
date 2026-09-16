@@ -23,9 +23,10 @@ export class DeviceHostError extends Schema.TaggedError<DeviceHostError>()("Devi
   hostId: Schema.String,
   step: Schema.String,
   cause: Schema.Defect(),
+  detail: Schema.optional(Schema.String),
 }) {
   override get message(): string {
-    return `Device host ${this.hostId} failed while ${this.step}.`;
+    return this.detail ?? `Device host ${this.hostId} failed while ${this.step}.`;
   }
 }
 

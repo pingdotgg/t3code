@@ -8,6 +8,7 @@ import {
 import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
+  HostProcessIsExecutable,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
@@ -260,6 +261,21 @@ const testLayer = ServerConfig.layerTest(process.cwd(), {
 );
 
 it.layer(testLayer)("AntigravityDriver", (it) => {
+  it.effect.skipIf(windowsHost)(
+    "preserves the Node install message when starting a standalone provider",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        const error = yield* h.refresh().pipe(Effect.flip);
+        expect(error.detail).toContain("Install Node.js");
+        expect(h.launches).toEqual([]);
+      }).pipe(
+        Effect.scoped,
+        Effect.provideService(HostProcessIsExecutable, true),
+        Effect.provideService(HostProcessEnvironment, { PATH: "" }),
+      ),
+  );
+
   it.effect.skipIf(windowsHost)("does not launch a process for a disabled instance", () =>
     Effect.gen(function* () {
       const h = yield* makeHarness();

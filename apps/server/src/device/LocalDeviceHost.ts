@@ -18,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -76,6 +77,7 @@ const AgentDeviceDaemonFile = Schema.Struct({
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
 
 interface HubProcess {
+  readonly nodePath: string;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
   readonly scope: Scope.Closeable;
   readonly origin: string;
@@ -310,6 +312,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const spawnHub = Effect.fn("LocalDeviceHost.spawnHub")(function* (
     hubTool: DeviceToolPaths,
+    nodePath: string,
   ): Effect.fn.Return<HubProcess, DeviceHost.DeviceHostError> {
     yield* reapStaleHub;
     yield* fs
@@ -330,7 +333,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     const child = yield* spawner
       .spawn(
         ChildProcess.make(
-          process.execPath,
+          nodePath,
           [
             hubTool.entryPath,
             "--port",
@@ -361,7 +364,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         ),
       );
     const startedAtMillis = yield* Clock.currentTimeMillis;
-    const hub: HubProcess = { child, scope, origin, startedAtMillis };
+    const hub: HubProcess = { child, scope, origin, startedAtMillis, nodePath };
     yield* Effect.forkIn(observeHubOutput(hub), scope);
     yield* waitForHttpReady({
       baseUrl: origin,
@@ -418,7 +421,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         Effect.gen(function* () {
           const current = yield* Ref.get(runningRef);
           if (current?.hub.child.pid !== hub.child.pid) return;
-          const replacement = yield* spawnHub(hubTool);
+          const replacement = yield* spawnHub(hubTool, hub.nodePath);
           yield* Ref.set(runningRef, { ...current, hub: replacement });
           yield* Effect.forkDetach(superviseHub(replacement, hubTool));
         }),
@@ -441,6 +444,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
    */
   const startAgentDeviceDaemon = Effect.fn("LocalDeviceHost.startAgentDeviceDaemon")(function* (
     agentTool: DeviceToolPaths,
+    nodePath: string,
   ): Effect.fn.Return<DeviceHost.AgentDeviceEndpoint, DeviceHost.DeviceHostTimeoutError> {
     const stateDir = agentDeviceStateDir(path, config.stateDir);
     yield* fs.makeDirectory(stateDir, { recursive: true }).pipe(Effect.ignore);
@@ -481,7 +485,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     // daemon and blocks until it answers. `devices` is the cheapest one.
     yield* runner
       .run({
-        command: process.execPath,
+        command: nodePath,
         args: [agentTool.entryPath, "devices", "--json"],
         env: daemonEnvironment,
         timeout: Duration.millis(DAEMON_READY_TIMEOUT_MS),
@@ -502,11 +506,13 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     }
   });
 
-  const stopAgentDeviceDaemon = (agentTool: DeviceToolPaths | null) =>
+  const stopAgentDeviceDaemon = (
+    agentTool: { readonly entryPath: string; readonly nodePath: string } | null,
+  ) =>
     agentTool
       ? runner
           .run({
-            command: process.execPath,
+            command: agentTool.nodePath,
             args: [
               agentTool.entryPath,
               "daemon",
@@ -521,7 +527,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           .pipe(Effect.ignore)
       : Effect.void;
 
-  let agentToolRef: DeviceToolPaths | null = null;
+  let agentToolRef: { readonly entryPath: string; readonly nodePath: string } | null = null;
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
@@ -532,6 +538,20 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       if (alive) return running;
       yield* Ref.set(runningRef, null);
     }
+    const nodePath = yield* resolveNodeExecutable("Local device support", hostEnvironment).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.provideService(HostProcessPlatform, hostPlatform),
+      Effect.mapError(
+        (cause) =>
+          new DeviceHost.DeviceHostError({
+            hostId,
+            step: "finding Node.js",
+            detail: cause.message,
+            cause,
+          }),
+      ),
+    );
     const installed = yield* isDeviceHubInstalled(config.baseDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
@@ -551,7 +571,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       ),
     );
     yield* onPhase("starting");
-    const hub = yield* spawnHub(hubTool);
+    const hub = yield* spawnHub(hubTool, nodePath);
     const candidate = helperPaths(hubTool);
     const [axExists, cliExists] = yield* Effect.all([
       fs.exists(candidate.serveSimAxSettings).pipe(Effect.orElseSucceed(() => false)),
@@ -600,9 +620,9 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               }),
           ),
         );
-        agentToolRef = agentTool;
+        agentToolRef = { entryPath: agentTool.entryPath, nodePath: running.hub.nodePath };
         yield* onPhase("starting");
-        const agentDevice = yield* startAgentDeviceDaemon(agentTool);
+        const agentDevice = yield* startAgentDeviceDaemon(agentTool, running.hub.nodePath);
         const next = { ...running, agentDevice };
         yield* Ref.set(runningRef, next);
         return { ...toReady(next), agentDevice };
@@ -652,7 +672,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
-    nodePath: process.execPath,
+    nodePath: running.hub.nodePath,
     run,
     helpers: running.helpers,
   });

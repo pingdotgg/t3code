@@ -164,6 +164,15 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.mapError(
+            (cause) =>
+              new ProviderSetupError({
+                instanceId,
+                operation: "start",
+                detail: cause.detail ?? cause.message,
+                cause,
+              }),
+          ),
         );
         // Each process unpacks into its own directory that dies with the
         // runtime scope, after the child is killed. A shared directory would
@@ -422,7 +431,8 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                 instanceId,
                 detail: isAntigravitySignInRequiredError(cause)
                   ? "Sign in to Antigravity in provider settings before refreshing models."
-                  : cause._tag === "ProviderSetupError" && cause.operation === "configure"
+                  : cause._tag === "ProviderSetupError" &&
+                      (cause.operation === "configure" || cause.operation === "start")
                     ? cause.detail
                     : "Could not refresh Antigravity models. The previous model list is unchanged.",
                 cause,
