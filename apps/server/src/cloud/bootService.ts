@@ -189,19 +189,25 @@ export function renderBootServicePlist(
   ].join("\n");
 }
 
-export interface BootServiceStep {
+interface BootServiceStepBase {
   readonly step: string;
   readonly command: string;
   readonly args: ReadonlyArray<string>;
-  /**
-   * Non-zero exit is logged and ignored. Reserved for steps whose common
-   * failures (not loaded, already enabled) leave a state a later strict step
-   * either tolerates or fails loudly on.
-   */
-  readonly optional?: boolean;
   /** Override the ProcessRunner default (60s) for steps that block longer. */
   readonly timeout?: Duration.Input;
 }
+
+export type BootServiceStep = BootServiceStepBase &
+  (
+    | { readonly operation?: "command" }
+    | {
+        readonly operation: "launchd-bootout";
+        readonly verifyAbsent: {
+          readonly serviceTarget: string;
+          readonly notLoadedMessages: ReadonlyArray<string>;
+        };
+      }
+  );
 
 /**
  * Stop commands block until the service manager gives up: 90s by default for
@@ -210,6 +216,36 @@ export interface BootServiceStep {
  * next step races a still-loaded service.
  */
 const STOP_STEP_TIMEOUT = Duration.seconds(120);
+const LAUNCHD_STOP_POLL_INTERVAL = Duration.millis(100);
+
+function launchdOutputLines(result: ProcessRunner.ProcessRunOutput): ReadonlyArray<string> {
+  return `${result.stdout}\n${result.stderr}`
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line !== "");
+}
+
+export function isConfirmedLaunchdNotLoaded(
+  result: ProcessRunner.ProcessRunOutput,
+  notLoadedMessages: ReadonlyArray<string>,
+): boolean {
+  if (result.code === 0 || result.timedOut) return false;
+  const lines = launchdOutputLines(result);
+  return (
+    (lines.length === 1 && notLoadedMessages.includes(lines[0] ?? "")) ||
+    (lines.length === 2 &&
+      lines[0] === "Bad request." &&
+      notLoadedMessages.includes(lines[1] ?? ""))
+  );
+}
+
+export function isConfirmedLaunchdBootoutNotLoaded(
+  result: ProcessRunner.ProcessRunOutput,
+): boolean {
+  if (result.code === 0 || result.timedOut) return false;
+  const lines = launchdOutputLines(result);
+  return lines.length === 1 && lines[0] === "Boot-out failed: 3: No such process";
+}
 
 /**
  * Platform service-manager integration as data: paths, a pure renderer, and
@@ -312,8 +348,9 @@ function launchdManager(input: {
   );
   const domainTarget = `gui/${input.uid}`;
   const serviceTarget = `${domainTarget}/${BOOT_SERVICE_LAUNCHD_LABEL}`;
-  // bootout/enable are optional: they fail on not-loaded states that are fine
-  // to proceed from. The strict `bootstrap` runs last and is also the start:
+  const notLoadedMessage = `Could not find service "${BOOT_SERVICE_LAUNCHD_LABEL}" in domain for user gui: ${input.uid}`;
+  const missingDomainMessage = `Could not find domain for user gui: ${input.uid}`;
+  // `bootstrap` runs last and is also the start:
   // loading a RunAtLoad/KeepAlive plist starts the job, so a separate
   // kickstart would kill and restart a server it just booted. A lingering job
   // that survived bootout, or a gui domain with nobody logged in at the
@@ -327,17 +364,16 @@ function launchdManager(input: {
         homeDir: input.homeDir,
         environmentPath: input.environmentPath,
       }),
-    // Without --wait, bootout returns in milliseconds while the job drains
-    // for up to ExitTimeOut, and a bootstrap during the drain fails EIO.
-    // --wait (present on modern macOS, absent from the man page) blocks until
-    // the job is removed from the domain; STOP_STEP_TIMEOUT outlives it.
+    // The supported bootout form can return before a draining job is absent.
+    // Poll the exact label so bootstrap cannot race the prior process.
     stop: [
       {
         step: "stopping the installed launch agent",
         command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
-        optional: true,
+        args: ["bootout", serviceTarget],
         timeout: STOP_STEP_TIMEOUT,
+        operation: "launchd-bootout",
+        verifyAbsent: { serviceTarget, notLoadedMessages: [notLoadedMessage] },
       },
     ],
     activate: [
@@ -346,7 +382,6 @@ function launchdManager(input: {
         step: "enabling the launch agent",
         command: "launchctl",
         args: ["enable", serviceTarget],
-        optional: true,
       },
       // Start last. No administrative state write occurs after this succeeds.
       {
@@ -364,15 +399,17 @@ function launchdManager(input: {
     ],
     // No `launchctl disable` here: a persisted override would sabotage a
     // later reinstall. Removing the plist is what stops the next login load.
-    // A bootout that fails for a reason other than "not loaded" leaves the
-    // job running until logout; the failure is in the boot-service log.
     deactivate: [
       {
         step: "stopping the service",
         command: "launchctl",
-        args: ["bootout", "--wait", serviceTarget],
-        optional: true,
+        args: ["bootout", serviceTarget],
         timeout: STOP_STEP_TIMEOUT,
+        operation: "launchd-bootout",
+        verifyAbsent: {
+          serviceTarget,
+          notLoadedMessages: [notLoadedMessage, missingDomainMessage],
+        },
       },
     ],
     finalize: [],
@@ -420,10 +457,14 @@ export class BootServiceCommandError extends Schema.TaggedError<BootServiceComma
     exitCode: Schema.optional(Schema.Number),
     stdoutLength: Schema.optional(Schema.Number),
     stderrLength: Schema.optional(Schema.Number),
+    timedOut: Schema.optional(Schema.Boolean),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {
   override get message(): string {
+    if (this.timedOut === true) {
+      return `Background setup timed out while ${this.step}.`;
+    }
     return this.exitCode === undefined
       ? `Background setup failed while ${this.step}.`
       : `Background setup failed while ${this.step} (exit code ${this.exitCode}).`;
@@ -667,19 +708,91 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
   });
 
+  const runLaunchdBootout = Effect.fn("cloud.boot_service.run_launchd_bootout")(function* (
+    entry: Extract<BootServiceStep, { readonly operation: "launchd-bootout" }>,
+  ) {
+    yield* Effect.gen(function* () {
+      const bootoutResult = yield* runner
+        .run({
+          command: entry.command,
+          args: entry.args,
+          timeout: entry.timeout,
+          timeoutBehavior: "timedOutResult",
+        })
+        .pipe(Effect.mapError((cause) => new BootServiceCommandError({ step: entry.step, cause })));
+      const bootoutError =
+        bootoutResult.code === 0
+          ? undefined
+          : new BootServiceCommandError({
+              step: entry.step,
+              exitCode: bootoutResult.code === null ? undefined : Number(bootoutResult.code),
+              stdoutLength: bootoutResult.stdout.length,
+              stderrLength: bootoutResult.stderr.length,
+              timedOut: bootoutResult.timedOut,
+            });
+      if (
+        bootoutError !== undefined &&
+        !isConfirmedLaunchdBootoutNotLoaded(bootoutResult) &&
+        !isConfirmedLaunchdNotLoaded(bootoutResult, entry.verifyAbsent.notLoadedMessages)
+      ) {
+        return yield* bootoutError;
+      }
+
+      while (true) {
+        const printResult = yield* runner
+          .run({
+            command: "launchctl",
+            args: ["print", entry.verifyAbsent.serviceTarget],
+            timeoutBehavior: "timedOutResult",
+          })
+          .pipe(
+            Effect.mapError(
+              (cause) =>
+                new BootServiceCommandError({
+                  step: "checking whether the launch agent stopped",
+                  cause,
+                }),
+            ),
+          );
+        if (isConfirmedLaunchdNotLoaded(printResult, entry.verifyAbsent.notLoadedMessages)) return;
+        if (bootoutError !== undefined) return yield* bootoutError;
+        if (printResult.code !== 0) {
+          return yield* new BootServiceCommandError({
+            step: "checking whether the launch agent stopped",
+            exitCode: printResult.code === null ? undefined : Number(printResult.code),
+            stdoutLength: printResult.stdout.length,
+            stderrLength: printResult.stderr.length,
+            timedOut: printResult.timedOut,
+          });
+        }
+        yield* Effect.sleep(LAUNCHD_STOP_POLL_INTERVAL);
+      }
+    }).pipe(
+      Effect.timeoutOrElse({
+        // One deadline covers both bootout and absence verification. Without
+        // this outer bound, each phase could consume a full stop timeout.
+        duration: entry.timeout ?? STOP_STEP_TIMEOUT,
+        orElse: () =>
+          new BootServiceCommandError({
+            step: "waiting for the launch agent to stop",
+            timedOut: true,
+          }),
+      }),
+    );
+  }, Effect.tapError(logFailure));
+
   const runSteps = (steps: ReadonlyArray<BootServiceStep>) =>
     Effect.forEach(
       steps,
       (entry) => {
+        if (entry.operation === "launchd-bootout") return runLaunchdBootout(entry);
         const run = runStep(
           entry.step,
           entry.command,
           entry.args,
           entry.timeout === undefined ? undefined : { timeout: entry.timeout },
         );
-        // runStep's tapError already appends the failure to the log, so an
-        // ignored optional step still leaves a trace.
-        return entry.optional === true ? run.pipe(Effect.ignore) : run.pipe(Effect.asVoid);
+        return run.pipe(Effect.asVoid);
       },
       { discard: true },
     );
