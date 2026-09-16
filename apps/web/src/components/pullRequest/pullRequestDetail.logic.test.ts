@@ -1479,6 +1479,9 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("success"), check("pending")] }),
       ),
     ).toBeNull();
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail({ checks: [check("action-required")] })),
+    ).toBeNull();
   });
 
   it("ranks conflicts above everything, then draft, then failing checks", () => {
@@ -1527,6 +1530,10 @@ describe("the compact row's single action slot", () => {
       ]),
     ).toBe("7 of 16 running · 1 failed");
     expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
+    expect(describePullRequestChecks([check("action-required")])).toBe("1 of 1 awaiting action");
+    expect(describePullRequestChecks([check("action-required"), check("failure")])).toBe(
+      "1 of 2 awaiting action · 1 failed",
+    );
   });
 
   it("reads the checks as one word, failing outranking running", () => {

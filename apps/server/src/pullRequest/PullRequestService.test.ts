@@ -2,6 +2,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as KeyValueStore from "effect/unstable/persistence/KeyValueStore";
 import * as Persistence from "effect/unstable/persistence/Persistence";
 import { assert, it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
@@ -1525,6 +1526,60 @@ it.effect("stops new reads after a rate limit while leaving manual actions avail
     assert.lengthOf(paused.errors, 1);
   }),
 );
+
+for (const [provider, host] of [
+  ["github", "github.com"],
+  ["gitlab", "gitlab.com"],
+  ["forgejo", "code.example.test"],
+  ["bitbucket", "bitbucket.org"],
+  ["azure-devops", "dev.azure.com"],
+] as const) {
+  it.effect(`shares fresh ${provider} detail reads and respects rate-limit resets`, () =>
+    Effect.gen(function* () {
+      let calls = 0;
+      let limited = false;
+      const repository = provider === "azure-devops" ? "web" : "acme/web";
+      const service = yield* makeService({
+        projects: [
+          project({ id: "p1", title: "web", workspaceRoot: "/repo", repository, provider, host }),
+        ],
+        providers: [
+          fakeProvider(provider, {
+            getChangeRequest: () =>
+              Effect.gen(function* () {
+                calls += 1;
+                if (limited) {
+                  return yield* new PullRequestProviderError({
+                    provider,
+                    operation: "getChangeRequest",
+                    reason: "rate-limited",
+                    detail: "Retry after the reset.",
+                    retryAt: (yield* Clock.currentTimeMillis) + 120_000,
+                  });
+                }
+                return hostedChangeRequest("current details");
+              }),
+          }),
+        ],
+      });
+      const reference = { projectId: "p1" as ProjectId, repository, number: 1, allowStale: false };
+      yield* Effect.all([service.detail(reference), service.detail(reference)], { concurrency: 2 });
+      assert.strictEqual(calls, 1);
+      yield* TestClock.adjust("45 seconds");
+      limited = true;
+      yield* Effect.flip(service.detail(reference));
+      assert.strictEqual(calls, 2);
+      yield* TestClock.adjust("45 seconds");
+      yield* Effect.flip(service.detail(reference));
+      assert.strictEqual(calls, 2);
+      yield* TestClock.adjust("75 seconds");
+      limited = false;
+      const recovered = yield* service.detail(reference);
+      assert.strictEqual(recovered.body, "current details");
+      assert.strictEqual(calls, 3);
+    }),
+  );
+}
 
 it.effect("uses a manual rate limit to pause later reads", () =>
   Effect.gen(function* () {

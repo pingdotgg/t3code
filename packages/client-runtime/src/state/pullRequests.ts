@@ -65,12 +65,18 @@ function writableQueryFamily<A, E>(
   );
   return ({
     environmentId,
-    input: { projectId, host, repository, number },
+    input: { projectId, host, repository, number, allowStale },
   }: Parameters<typeof family>[0]) =>
     writable(
       family({
         environmentId,
-        input: { projectId, ...(host === undefined ? {} : { host }), repository, number },
+        input: {
+          projectId,
+          ...(host === undefined ? {} : { host }),
+          repository,
+          number,
+          ...(allowStale === undefined ? {} : { allowStale }),
+        },
       }),
     );
 }
