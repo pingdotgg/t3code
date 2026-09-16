@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./assistant-insights": {
+      "types": "./src/assistantInsights.ts",
+      "default": "./src/assistantInsights.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
