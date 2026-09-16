@@ -26,7 +26,6 @@ export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasLoadedShellSnapshot: boolean;
   readonly hasPendingShellSnapshot: boolean;
   readonly shellSnapshotError: string | null;
-  readonly latestCachedSnapshotReceivedAt: string | null;
 }
 
 function overallConnectionState(
@@ -101,7 +100,6 @@ export function projectWorkspaceState(input: {
     hasLoadedShellSnapshot: input.shellSummary.hasSnapshot,
     hasPendingShellSnapshot: input.shellSummary.hasSynchronizingShell,
     shellSnapshotError: input.shellSummary.firstError,
-    latestCachedSnapshotReceivedAt: input.shellSummary.latestSnapshotUpdatedAt,
   };
 }
 

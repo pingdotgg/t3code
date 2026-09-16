@@ -88,6 +88,7 @@ function makeHarness() {
   });
 
   return {
+    catalogValueAtom,
     registry: AtomRegistry.make(),
     shellStateAtom: shellStateAtoms,
     configAtom: configAtoms,
@@ -107,7 +108,6 @@ describe("environment shell projections", () => {
       hasCachedShell: true,
       hasLiveShell: false,
       firstError: "Retrying.",
-      latestSnapshotUpdatedAt: "2026-06-02T00:00:00.000Z",
     });
 
     harness.registry.set(
@@ -120,6 +120,101 @@ describe("environment shell projections", () => {
     );
 
     expect(harness.registry.get(harness.summaryAtom)).toBe(summary);
+  });
+
+  it("does not notify summary subscribers when thread timestamps advance", () => {
+    const harness = makeHarness();
+    const initial = harness.registry.get(harness.summaryAtom);
+    let changes = 0;
+    const unsubscribe = harness.registry.subscribe(harness.summaryAtom, () => changes++);
+    try {
+      for (let index = 0; index < 20; index++) {
+        harness.registry.set(
+          harness.shellStateAtom(ENVIRONMENT_ID),
+          shellState({
+            status: "cached",
+            updatedAt: `2026-07-01T00:00:${String(index).padStart(2, "0")}.000Z`,
+            snapshotSequence: index + 2,
+          }),
+        );
+        expect(harness.registry.get(harness.summaryAtom)).toBe(initial);
+      }
+      expect(changes).toBe(0);
+    } finally {
+      unsubscribe();
+      harness.registry.dispose();
+    }
+  });
+
+  it("notifies for shell availability, status, errors, and enabled environment changes", () => {
+    const harness = makeHarness();
+    let changes = 0;
+    const unsubscribe = harness.registry.subscribe(harness.summaryAtom, () => changes++);
+    const setCatalog = (entries: ReturnType<typeof environmentEntry>[]) => {
+      harness.registry.set(harness.catalogValueAtom, {
+        isReady: true,
+        entries: new Map(entries.map((entry) => [entry.target.environmentId, entry])),
+      });
+      return harness.registry.get(harness.summaryAtom);
+    };
+    try {
+      expect(setCatalog([])).toEqual({
+        hasSnapshot: false,
+        hasSynchronizingShell: false,
+        hasCachedShell: false,
+        hasLiveShell: false,
+        firstError: null,
+      });
+      expect(setCatalog([environmentEntry(ENVIRONMENT_ID, "Environment")])).toMatchObject({
+        hasSnapshot: true,
+        hasCachedShell: true,
+      });
+      harness.registry.set(harness.shellStateAtom(ENVIRONMENT_ID), shellState({ status: "empty" }));
+      expect(harness.registry.get(harness.summaryAtom)).toMatchObject({
+        hasSnapshot: false,
+        hasCachedShell: false,
+      });
+      harness.registry.set(
+        harness.shellStateAtom(ENVIRONMENT_ID),
+        shellState({ status: "synchronizing", error: "Retrying." }),
+      );
+      expect(harness.registry.get(harness.summaryAtom)).toMatchObject({
+        hasSnapshot: false,
+        hasSynchronizingShell: true,
+        firstError: "Retrying.",
+      });
+      harness.registry.set(
+        harness.shellStateAtom(ENVIRONMENT_ID),
+        shellState({ status: "live", updatedAt: "2026-07-01T00:00:00.000Z" }),
+      );
+      expect(harness.registry.get(harness.summaryAtom)).toMatchObject({
+        hasSnapshot: true,
+        hasSynchronizingShell: false,
+        hasLiveShell: true,
+        firstError: null,
+      });
+      harness.registry.set(
+        harness.shellStateAtom(ENVIRONMENT_ID),
+        shellState({
+          status: "live",
+          updatedAt: "2026-07-01T00:00:00.000Z",
+          error: "Disconnected.",
+        }),
+      );
+      expect(harness.registry.get(harness.summaryAtom).firstError).toBe("Disconnected.");
+      harness.registry.set(
+        harness.shellStateAtom(ENVIRONMENT_ID),
+        shellState({ status: "live", updatedAt: "2026-07-01T00:00:00.000Z" }),
+      );
+      expect(harness.registry.get(harness.summaryAtom).firstError).toBeNull();
+      expect(
+        setCatalog([{ ...environmentEntry(ENVIRONMENT_ID, "Environment"), enabled: false }]),
+      ).toMatchObject({ hasSnapshot: false, hasLiveShell: false });
+      expect(changes).toBe(8);
+    } finally {
+      unsubscribe();
+      harness.registry.dispose();
+    }
   });
 
   it("preserves server-config map identity until a config reference changes", () => {
