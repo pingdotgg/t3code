@@ -217,6 +217,9 @@ interface ChatMarkdownProps {
       to the file's own directory when rendering a markdown file. */
   imageBaseDir?: string | undefined;
   onImageExpand?: ((preview: ExpandedImagePreview) => void) | undefined;
+  resolveImageResource?:
+    | ((src: string) => ComponentProps<typeof ChatMarkdownAssetImage>["resource"] | null)
+    | undefined;
   extraRemarkPlugins?: NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
   /** Renders a `t3-context://` link as a chip; without it the link shows its label as text. */
   renderContextReference?: ((reference: ChatMarkdownContextReference) => ReactNode) | undefined;
@@ -1573,7 +1576,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
   readonly environmentId: EnvironmentId;
   readonly resource: Extract<
     AssetResource,
-    { readonly _tag: "attachment" | "workspace-file" | "media-file" }
+    { readonly _tag: "attachment" | "workspace-file" | "media-file" | "gitcafe-attachment" }
   >;
   readonly kind?: "image" | "video";
   readonly alt: string;
@@ -1617,7 +1620,7 @@ export const ChatMarkdownAssetImage = memo(function ChatMarkdownAssetImage(props
     src,
     asset: { environmentId: props.environmentId, resource },
     ...(reference ? { reference } : {}),
-    ...(relativePath && resource._tag !== "attachment"
+    ...(relativePath && (resource._tag === "workspace-file" || resource._tag === "media-file")
       ? {
           onOpenFile: () =>
             useRightPanelStore
@@ -2224,6 +2227,7 @@ function useChatMarkdownState({
   onUseArtifactTemplate,
   imageBaseDir,
   onImageExpand,
+  resolveImageResource,
   renderContextReference,
   headingLevelOffset = 0,
 }: ChatMarkdownProps) {
@@ -2624,6 +2628,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       renderContextReference,
+      resolveImageResource,
       headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
@@ -2653,6 +2658,7 @@ function useChatMarkdownState({
       expandMedia,
       fileLinkChip,
       renderContextReference,
+      resolveImageResource,
       headingLevelOffset,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
@@ -3081,9 +3087,15 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
   },
   img: function MarkdownImage({ node, title, src, alt, ...props }) {
-    const { expandMedia, cwd, imageBaseDir, threadRef, renderContextReference } = use(
-      ChatMarkdownRendererContext,
-    );
+    const {
+      expandMedia,
+      cwd,
+      imageBaseDir,
+      threadRef,
+      renderContextReference,
+      resolveImageResource,
+      environmentId,
+    } = use(ChatMarkdownRendererContext);
     const imageExpand = use(MarkdownLinkContext) ? undefined : expandMedia;
     const contextReference = typeof src === "string" ? parseComposerContextHref(src) : null;
     if (contextReference) {
@@ -3107,6 +3119,20 @@ const CHAT_MARKDOWN_COMPONENTS = {
     const copyMarkdown = markdownImageCopy(altText, srcString, authoredTitle);
     const { className, style: _style, width, height, ...imageProps } = props;
     const authoredSizeStyle = authoredImageSizeStyle(width, height);
+    const resource = resolveImageResource?.(srcString);
+    if (resource && environmentId) {
+      return (
+        <ChatMarkdownAssetImage
+          environmentId={environmentId}
+          resource={resource}
+          alt={altText}
+          copyMarkdown={copyMarkdown}
+          standalone={standalone}
+          style={authoredSizeStyle}
+          onImageExpand={imageExpand}
+        />
+      );
+    }
     const imageSource = classifyMarkdownImageSource(classifiedSrc, imageBaseDir ?? cwd);
     const kind = mediaKindFromPath(classifiedSrc) ?? "image";
     if (imageSource._tag === "Direct") {

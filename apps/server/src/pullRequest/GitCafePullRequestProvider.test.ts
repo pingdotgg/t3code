@@ -396,23 +396,91 @@ describe("deployed GitCafe PR API", () => {
     const calls: Request[] = [];
     return Effect.gen(function* () {
       const provider = yield* make;
-      yield* provider.getDiff({ ...target, commit: "selected" });
+      const first = yield* provider.getDiff({ ...target, commit: "selected" });
+      expect(first.nextCursor).not.toBeNull();
+      const second = yield* provider.getDiff({
+        ...target,
+        commit: "selected",
+        cursor: first.nextCursor!,
+      });
+      expect(second.nextCursor).toBeNull();
       const compare = new URL(calls[2]!.endpoint, "https://git.cafe");
       expect(compare.pathname).toBe("/repos/fork/project/compare");
       expect(compare.searchParams.get("baseOid")).toBe("parent1");
       expect(compare.searchParams.get("headOid")).toBe("selected");
+      const continued = new URL(calls.at(-1)!.endpoint, "https://git.cafe");
+      expect(continued.searchParams.get("after")).toBe("src/a.ts");
+      expect(continued.searchParams.get("baseOid")).toBe("parent1");
+      expect(continued.searchParams.get("headOid")).toBe("selected");
     }).pipe(
       Effect.provide(
         withApi((input) => {
           calls.push(input);
           if (input.endpoint.includes("/commit?"))
             return { oid: "selected", parents: ["parent1", "parent2"] };
-          if (input.endpoint.includes("/compare?")) return { items: [], truncated: false };
+          if (input.endpoint.includes("/compare?"))
+            return {
+              items: [],
+              truncated: false,
+              nextAfter: new URL(input.endpoint, "https://git.cafe").searchParams.has("after")
+                ? null
+                : "src/a.ts",
+            };
           return { ...detail, sourceRepo: { owner: "fork", name: "project" } };
         }),
       ),
     );
   });
+  for (const fails of [false, true]) {
+    it.effect(`reads activity with read-only reactions (reaction request fails: ${fails})`, () =>
+      Effect.gen(function* () {
+        const provider = yield* make;
+        const activity = yield* provider.getChangeRequestActivity(target);
+        expect(activity.comments).toEqual([]);
+        expect(activity.reactions).toEqual(
+          fails
+            ? undefined
+            : [{ content: "thumbs-up", count: 3, actors: [], viewerHasReacted: true }],
+        );
+        expect(provider.capabilities.reactions).toBe(false);
+      }).pipe(
+        Effect.provide(
+          Layer.mock(GitCafeCli.GitCafeCli)({
+            api: (input) => {
+              if (input.endpoint.endsWith("/reactions")) {
+                if (fails)
+                  return Effect.fail(
+                    new GitCafeCli.GitCafeCliError({
+                      command: "cafe",
+                      cwd: target.cwd,
+                      code: "UNAVAILABLE",
+                      detail: "unavailable",
+                      status: 503,
+                    }),
+                  );
+                return Effect.succeed(
+                  json({
+                    items: [
+                      {
+                        subject: { kind: "pull_request", id: "pr_one" },
+                        emoji: { kind: "unicode", value: "👍" },
+                        count: 3,
+                        viewerReactionId: "mine",
+                        reactors: [],
+                      },
+                    ],
+                  }),
+                );
+              }
+              if (input.endpoint.includes("/comments?") || input.endpoint.includes("/reviews?"))
+                return Effect.succeed(json({ items: [], nextAfter: null }));
+              return Effect.succeed(json({ ...detail, headOid: null }));
+            },
+          }),
+        ),
+      ),
+    );
+  }
   it.effect("reports root commits without fabricating an empty diff", () =>
     Effect.gen(function* () {
       const provider = yield* make;
@@ -431,11 +499,13 @@ describe("deployed GitCafe PR API", () => {
       const provider = yield* make;
       const result = yield* provider.getDiff(target);
       expect(result.truncated).toBe(true);
+      expect(result.nextCursor).toBeNull();
       expect(result.omittedFileStats).toEqual([{ path: "large.ts", additions: 0, deletions: 0 }]);
     }).pipe(
       Effect.provide(
         withApi((input) => {
-          expect(input.endpoint).toBe("/repos/owner/repo/pulls/7/diff");
+          if (!input.endpoint.includes("/diff?")) return detail;
+          expect(input.endpoint).toContain("expectedVersion=1&limit=500");
           return {
             items: [
               {
@@ -450,11 +520,145 @@ describe("deployed GitCafe PR API", () => {
               },
             ],
             truncated: false,
+            version: 1,
+            nextAfter: null,
           };
         }),
       ),
     ),
   );
+  it.effect("continues diff pages at the pinned revision and ends", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const first = yield* provider.getDiff(target);
+      expect(first.nextCursor).not.toBeNull();
+      expect(first.patch).toContain("a/src/a.ts b/src/a.ts");
+      const second = yield* provider.getDiff({ ...target, cursor: first.nextCursor! });
+      expect(second.nextCursor).toBeNull();
+      expect(second.patch).toContain("a/src/b.ts b/src/b.ts");
+      expect(second.patch).not.toContain("src/a.ts");
+      const query = new URL(calls.at(-1)!.endpoint, "https://git.cafe").searchParams;
+      expect(query.get("expectedVersion")).toBe("4");
+      expect(query.get("after")).toBe("src/a.ts");
+      expect(calls.filter((call) => !call.endpoint.includes("/diff?")).length).toBe(1);
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          calls.push(input);
+          if (!input.endpoint.includes("/diff?")) return { ...detail, version: 4 };
+          const continued = new URL(input.endpoint, "https://git.cafe").searchParams.has("after");
+          return {
+            items: [{ path: continued ? "src/b.ts" : "src/a.ts", status: "modified", hunks: [] }],
+            truncated: continued,
+            version: 4,
+            nextAfter: continued ? null : "src/a.ts",
+          };
+        }),
+      ),
+    );
+  });
+  it.effect("rejects malformed diff cursors before calling GitCafe", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiff({ ...target, cursor: "not-json" }).pipe(Effect.flip);
+      expect(result.detail).toContain("Invalid GitCafe diff cursor");
+      expect(calls).toHaveLength(0);
+    }).pipe(Effect.provide(withApi((input) => (calls.push(input), detail))));
+  });
+  for (const [changeType, oldContent, newContent, expected] of [
+    ["change", "before", "after", ["before", "after"]],
+    ["new", null, "created", ["", "created"]],
+    ["deleted", "removed", null, ["removed", ""]],
+    ["rename-changed", "old name", "new name", ["old name", "new name"]],
+  ] as const) {
+    it.effect(`expands ${changeType} files from the pull snapshot`, () =>
+      Effect.gen(function* () {
+        const provider = yield* make;
+        const result = yield* provider.getDiffFileContents!({
+          ...target,
+          changeType,
+          oldPath: "old name.ts",
+          newPath: "new name.ts",
+        });
+        expect([result.oldContents, result.newContents]).toEqual(expected);
+      }).pipe(
+        Effect.provide(
+          withApi((input) => {
+            if (!input.endpoint.includes("/diff-file?")) return { ...detail, version: 9 };
+            const query = new URL(input.endpoint, "https://git.cafe").searchParams;
+            expect(query.get("expectedVersion")).toBe("9");
+            expect(query.get("path")).toBe(
+              changeType === "deleted" ? "old name.ts" : "new name.ts",
+            );
+            return { version: 9, file: { oldContent, newContent } };
+          }),
+        ),
+      ),
+    );
+  }
+  it.effect("reports unavailable full-file content", () =>
+    Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiffFileContents!({
+        ...target,
+        changeType: "change",
+        oldPath: "large.ts",
+        newPath: "large.ts",
+      }).pipe(Effect.flip);
+      expect(result.detail).toContain("too_large");
+    }).pipe(
+      Effect.provide(
+        withApi((input) =>
+          input.endpoint.includes("/diff-file?")
+            ? {
+                version: 1,
+                file: {
+                  oldContent: null,
+                  newContent: "after",
+                  oldContentUnavailableReason: "too_large",
+                },
+              }
+            : detail,
+        ),
+      ),
+    ),
+  );
+  it.effect("expands fork commit renames using exact parent and commit OIDs", () => {
+    const calls: Request[] = [];
+    return Effect.gen(function* () {
+      const provider = yield* make;
+      const result = yield* provider.getDiffFileContents!({
+        ...target,
+        commit: "headoid",
+        changeType: "rename-changed",
+        oldPath: "old.ts",
+        newPath: "new.ts",
+      });
+      expect(result).toEqual({ oldContents: "parent file", newContents: "head file" });
+      const blobs = calls.filter((call) => call.endpoint.includes("/blob?"));
+      expect(blobs.every((call) => call.endpoint.startsWith("/repos/fork/project/blob?"))).toBe(
+        true,
+      );
+      expect(
+        blobs.map((call) => new URL(call.endpoint, "https://git.cafe").searchParams.get("oid")),
+      ).toEqual(expect.arrayContaining(["parentoid", "headoid"]));
+    }).pipe(
+      Effect.provide(
+        withApi((input) => {
+          calls.push(input);
+          if (input.endpoint.includes("/commit?"))
+            return { oid: "headoid", parents: ["parentoid"] };
+          if (input.endpoint.includes("/blob?")) {
+            const oid = new URL(input.endpoint, "https://git.cafe").searchParams.get("oid");
+            return { binary: false, content: oid === "parentoid" ? "parent file" : "head file" };
+          }
+          return { ...detail, sourceRepo: { owner: "fork", name: "project" } };
+        }),
+      ),
+    );
+  });
   it.effect("reports absent native stacks directly", () =>
     Effect.gen(function* () {
       const provider = yield* make;

@@ -1,6 +1,6 @@
 import { ExternalLinkIcon, PaperclipIcon } from "lucide-react";
 import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
-import { createContext, useContext, useMemo } from "react";
+import { createContext, useCallback, useContext, useMemo } from "react";
 import type { Options as ReactMarkdownOptions } from "react-markdown";
 
 import { cn } from "~/lib/utils";
@@ -8,10 +8,15 @@ import { PULL_REQUESTS_PANEL_REF } from "~/rightPanelStore";
 
 import ChatMarkdown from "../ChatMarkdown";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
-import { remarkPullRequestAutolinks, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import {
+  pullRequestImageResource,
+  remarkPullRequestAutolinks,
+  splitPullRequestBody,
+} from "./pullRequestMarkdown.logic";
 
 export const PullRequestMarkdownContext = createContext<{
   repositoryUrl: string | null;
+  imageRepositoryUrl: string | null;
   threadRef: ScopedThreadRef | null;
 } | null>(null);
 
@@ -33,6 +38,11 @@ export function PullRequestMarkdown({
   const segments = splitPullRequestBody(text);
   const context = useContext(PullRequestMarkdownContext);
   const repositoryUrl = context?.repositoryUrl;
+  const imageRepositoryUrl = context?.imageRepositoryUrl;
+  const resolveImageResource = useCallback(
+    (src: string) => pullRequestImageResource(src, imageRepositoryUrl),
+    [imageRepositoryUrl],
+  );
   const resolvedThreadRef = threadRef ?? context?.threadRef ?? undefined;
   const extraRemarkPlugins = useMemo<NonNullable<ReactMarkdownOptions["remarkPlugins"]>>(
     () => (repositoryUrl ? [[remarkPullRequestAutolinks, { repositoryUrl }]] : []),
@@ -57,6 +67,7 @@ export function PullRequestMarkdown({
               pullRequestPanelRef={resolvedThreadRef ?? PULL_REQUESTS_PANEL_REF}
               environmentId={environmentId}
               extraRemarkPlugins={extraRemarkPlugins}
+              resolveImageResource={resolveImageResource}
             />
           );
         }

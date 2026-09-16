@@ -6,6 +6,8 @@ import {
   PositiveInt,
   TrimmedNonEmptyString,
   type PullRequestActor,
+  type PullRequestReaction,
+  type PullRequestReactionContent,
   type PullRequestReviewThread,
 } from "@t3tools/contracts";
 import type {
@@ -181,6 +183,67 @@ export const ReviewsSchema = Schema.Struct({
   items: Schema.Array(ReviewSchema),
   nextAfter: Schema.NullOr(Schema.String),
 });
+const ReactionSubjectSchema = Schema.Struct({
+  kind: Schema.Literals(["issue", "issue_comment", "pull_request", "pull_request_comment"]),
+  id: TrimmedNonEmptyString,
+});
+const ReactionEmojiSchema = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("unicode"), value: TrimmedNonEmptyString }),
+  Schema.Struct({ kind: Schema.Literal("custom"), id: TrimmedNonEmptyString }),
+]);
+const ReactionSchema = Schema.Struct({
+  subject: ReactionSubjectSchema,
+  emoji: ReactionEmojiSchema,
+  count: PositiveInt,
+  viewerReactionId: Schema.NullOr(Schema.String),
+  reactors: Schema.Array(ActorSchema),
+});
+export const ReactionsSchema = Schema.Struct({ items: Schema.Array(ReactionSchema) });
+
+const REACTION_CONTENT_BY_EMOJI: Readonly<Record<string, PullRequestReactionContent>> = {
+  "👍": "thumbs-up",
+  "👎": "thumbs-down",
+  "😄": "laugh",
+  "🎉": "hooray",
+  "😕": "confused",
+  "❤": "heart",
+  "❤️": "heart",
+  "🚀": "rocket",
+  "👀": "eyes",
+};
+
+export interface GitCafeReactions {
+  readonly reactions: ReadonlyArray<PullRequestReaction>;
+  readonly reactionsByCommentId: ReadonlyMap<string, ReadonlyArray<PullRequestReaction>>;
+}
+
+/** Custom and unsupported Unicode emoji cannot be represented by the shared eight-emoji contract. */
+export function toReactions(data: typeof ReactionsSchema.Type): GitCafeReactions {
+  const reactions: PullRequestReaction[] = [];
+  const reactionsByCommentId = new Map<string, PullRequestReaction[]>();
+  for (const item of data.items) {
+    if (item.emoji.kind !== "unicode") continue;
+    const content = REACTION_CONTENT_BY_EMOJI[item.emoji.value];
+    if (content === undefined) continue;
+    const reaction = {
+      content,
+      count: item.count,
+      actors: item.reactors.flatMap((actor) => {
+        const reactor = toActor(actor);
+        return reactor === null ? [] : [reactor.login];
+      }),
+      viewerHasReacted: item.viewerReactionId !== null,
+    } satisfies PullRequestReaction;
+    if (item.subject.kind === "pull_request") {
+      reactions.push(reaction);
+    } else if (item.subject.kind === "pull_request_comment") {
+      const entries = reactionsByCommentId.get(item.subject.id) ?? [];
+      entries.push(reaction);
+      reactionsByCommentId.set(item.subject.id, entries);
+    }
+  }
+  return { reactions, reactionsByCommentId };
+}
 export const ReviewersSchema = Schema.Struct({
   items: Schema.Array(Schema.Struct({ id: Schema.String, actor: ActorSchema })),
   nextAfter: Schema.NullOr(Schema.String),
@@ -217,7 +280,9 @@ export function toActivity(
   commits: typeof CommitListSchema.Type,
   headOid?: string,
   host = "git.cafe",
+  reactionData?: typeof ReactionsSchema.Type,
 ): ProviderChangeRequestActivity {
+  const mappedReactions = reactionData === undefined ? undefined : toReactions(reactionData);
   const ordered = [...comments.items].sort(
     (a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id),
   );
@@ -248,6 +313,9 @@ export function toActivity(
         body: comment.body ?? "",
         createdAt: comment.createdAt,
         url: null,
+        ...(mappedReactions === undefined
+          ? {}
+          : { reactions: mappedReactions.reactionsByCommentId.get(comment.id) ?? [] }),
       })),
     });
   }
@@ -262,6 +330,9 @@ export function toActivity(
         url: null,
         path: comment.path,
         reviewState: null,
+        ...(mappedReactions === undefined
+          ? {}
+          : { reactions: mappedReactions.reactionsByCommentId.get(comment.id) ?? [] }),
       })),
       ...reviews.items.map((review) => ({
         id: review.id,
@@ -285,6 +356,7 @@ export function toActivity(
     commentsTruncated: comments.nextAfter !== null || reviews.nextAfter !== null,
     reviewThreads,
     commits: toCommits(commits),
+    ...(mappedReactions === undefined ? {} : { reactions: mappedReactions.reactions }),
   };
 }
 

@@ -5,6 +5,7 @@ import {
   DiffSchema,
   PullDetailSchema,
   RawPullSchema,
+  ReactionsSchema,
   StackEnvelopeSchema,
   toActivity,
   toChangeRequest,
@@ -16,6 +17,7 @@ const decodePullDetail = Schema.decodeUnknownSync(PullDetailSchema);
 const decodeComments = Schema.decodeUnknownSync(CommentsSchema);
 const decodeStackEnvelope = Schema.decodeUnknownSync(StackEnvelopeSchema);
 const decodeDiff = Schema.decodeUnknownSync(DiffSchema);
+const decodeReactions = Schema.decodeUnknownSync(ReactionsSchema);
 const timestamp = "2026-09-12T12:00:00Z";
 const actor = {
   kind: "local",
@@ -137,6 +139,96 @@ describe("deployed GitCafe PR normalization", () => {
       expect(activity.reviewThreads[0]?.comments).toHaveLength(2);
     },
   );
+  it("maps supported reactions to the pull request and matching comments in both views", () => {
+    const base = {
+      author: actor,
+      body: "Review",
+      path: "file.ts",
+      line: 3,
+      side: "right",
+      createdAt: timestamp,
+      commitOid: "abcdef",
+      resolvedAt: null,
+    };
+    const activity = toActivity(
+      decodeComments({
+        items: [
+          { ...base, id: "comment-a", threadId: "comment-a" },
+          { ...base, id: "comment-b", threadId: "comment-a" },
+        ],
+        nextAfter: null,
+      }),
+      { items: [], nextAfter: null },
+      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      "abcdef",
+      "git.cafe",
+      decodeReactions({
+        items: [
+          {
+            subject: { kind: "pull_request_comment", id: "comment-b" },
+            emoji: { kind: "unicode", value: "👍" },
+            count: 3,
+            viewerReactionId: "reaction-viewer",
+            reactors: [actor, { kind: "unavailable", actorId: "deleted" }],
+          },
+          {
+            subject: { kind: "pull_request", id: "pr-id-is-not-a-comment-id" },
+            emoji: { kind: "unicode", value: "🚀" },
+            count: 1,
+            viewerReactionId: null,
+            reactors: [actor],
+          },
+        ],
+      }),
+    );
+    const thumbsUp = {
+      content: "thumbs-up",
+      count: 3,
+      actors: ["alice"],
+      viewerHasReacted: true,
+    };
+    expect(activity.reactions).toEqual([
+      { content: "rocket", count: 1, actors: ["alice"], viewerHasReacted: false },
+    ]);
+    expect(activity.comments.map((comment) => [comment.id, comment.reactions])).toEqual([
+      ["comment-a", []],
+      ["comment-b", [thumbsUp]],
+    ]);
+    expect(
+      activity.reviewThreads[0]?.comments.map((comment) => [comment.id, comment.reactions]),
+    ).toEqual([
+      ["comment-a", []],
+      ["comment-b", [thumbsUp]],
+    ]);
+  });
+  it("drops custom and unsupported Unicode emoji instead of misrepresenting them", () => {
+    const activity = toActivity(
+      decodeComments({ items: [], nextAfter: null }),
+      { items: [], nextAfter: null },
+      { items: [], headOid: "abcdef", truncated: false, nextAfter: null },
+      undefined,
+      "git.cafe",
+      decodeReactions({
+        items: [
+          {
+            subject: { kind: "pull_request", id: "pr-one" },
+            emoji: { kind: "custom", id: "party-parrot" },
+            count: 2,
+            viewerReactionId: "viewer-custom",
+            reactors: [actor],
+          },
+          {
+            subject: { kind: "pull_request", id: "pr-one" },
+            emoji: { kind: "unicode", value: "🔥" },
+            count: 1,
+            viewerReactionId: null,
+            reactors: [actor],
+          },
+        ],
+      }),
+    );
+    expect(activity.reactions).toEqual([]);
+  });
   it("orders stack members and retains their independent draft flags", () => {
     const { stack } = decodeStackEnvelope({
       stack: {

@@ -389,6 +389,15 @@ export const assetRouteLayer = HttpRouter.add(
     if (!asset) {
       return HttpServerResponse.text("Not Found", { status: 404 });
     }
+    if (asset.kind === "bytes") {
+      return HttpServerResponse.uint8Array(asset.bytes, {
+        headers: {
+          "Cache-Control": "private, no-store",
+          "Content-Type": asset.mimeType,
+          "X-Content-Type-Options": "nosniff",
+        },
+      });
+    }
     return yield* assetFileResponse(
       asset,
       request.method === "GET" ? request.headers.range : undefined,

@@ -11,8 +11,11 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpServerResponse } from "effect/unstable/http";
+import { ChildProcessSpawner } from "effect/unstable/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -47,6 +50,56 @@ const testLayer = Layer.mergeAll(
 ).pipe(Layer.provideMerge(NodeServices.layer));
 
 describe("AssetAccess", () => {
+  it.effect(
+    "signs exact GitCafe attachment access and rejects tampering, sibling ids and expiry",
+    () => {
+      const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 128, 255]);
+      let downloads = 0;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.sync(() => {
+          downloads++;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(png),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      return Effect.gen(function* () {
+        const url = yield* issueAssetUrl({
+          resource: {
+            _tag: "gitcafe-attachment",
+            host: "git.cafe",
+            attachmentId: "attach_123abc",
+          },
+        });
+        const suffix = url.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "attach_123abc")).toEqual({
+          kind: "bytes",
+          bytes: png,
+          mimeType: "image/png",
+        });
+        expect(downloads).toBe(1);
+        expect(yield* resolveAsset(token, "attach_other")).toBeNull();
+        expect(yield* resolveAsset(`${token}tampered`, "attach_123abc")).toBeNull();
+        yield* TestClock.adjust("61 minutes");
+        expect(yield* resolveAsset(token, "attach_123abc")).toBeNull();
+        expect(downloads).toBe(1);
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provide(testLayer),
+      );
+    },
+  );
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -228,7 +281,7 @@ describe("AssetAccess", () => {
             suffix.slice(0, separator),
             suffix.slice(separator + 1),
           );
-          if (!asset) throw new Error("Expected a resolved media file");
+          if (asset?.kind !== "file") throw new Error("Expected a resolved media file");
 
           yield* fs.rename(filePath, savedPath);
           yield* fs.symlink(secretPath, filePath);
@@ -391,7 +444,7 @@ describe("AssetAccess", () => {
       const name = suffix.slice(separator + 1);
       yield* fs.writeFileString(filePath, "in-place edit");
       const edited = yield* resolveAsset(token, name);
-      if (!edited) throw new Error("Expected the edited media file");
+      if (edited?.kind !== "file") throw new Error("Expected the edited media file");
       const editedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(edited));
       expect(yield* Effect.promise(() => editedResponse.text())).toBe("in-place edit");
 
@@ -407,7 +460,7 @@ describe("AssetAccess", () => {
         renewedSuffix.slice(0, renewedSeparator),
         renewedSuffix.slice(renewedSeparator + 1),
       );
-      if (!renewedAsset) throw new Error("Expected the replacement media file");
+      if (renewedAsset?.kind !== "file") throw new Error("Expected the replacement media file");
       const renewedResponse = HttpServerResponse.toWeb(yield* assetFileResponse(renewedAsset));
       expect(yield* Effect.promise(() => renewedResponse.text())).toBe("replacement");
       yield* fs.remove(filePath);
