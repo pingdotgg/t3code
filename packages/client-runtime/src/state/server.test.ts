@@ -15,6 +15,7 @@ import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import * as TestClock from "effect/testing/TestClock";
@@ -760,6 +761,67 @@ describe("server state projection", () => {
       ),
     ).toBe(live);
   });
+
+  it.effect("throttles server configuration writes and flushes the latest on teardown", () =>
+    Effect.gen(function* () {
+      const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
+      const client = {
+        [WS_METHODS.subscribeServerConfig]: () => Stream.fromQueue(events),
+      } as unknown as WsRpcProtocolClient;
+      const supervisor = EnvironmentSupervisor.EnvironmentSupervisor.of({
+        target: TARGET,
+        state: yield* SubscriptionRef.make(AVAILABLE_CONNECTION_STATE),
+        session: yield* SubscriptionRef.make(Option.some(session(client))),
+        prepared: yield* SubscriptionRef.make(Option.none<PreparedConnection>()),
+        connect: Effect.void,
+        disconnect: Effect.void,
+        retryNow: Effect.void,
+      } satisfies EnvironmentSupervisor.EnvironmentSupervisor["Service"]);
+      const savedConfigs = yield* Queue.unbounded<ServerConfig>();
+      const cache = Persistence.EnvironmentCacheStore.of({
+        loadShell: () => Effect.succeed(Option.none()),
+        saveShell: () => Effect.void,
+        loadThread: () => Effect.succeed(Option.none()),
+        saveThread: () => Effect.void,
+        removeThread: () => Effect.void,
+        loadServerConfig: () => Effect.succeed(Option.some(CONFIG)),
+        saveServerConfig: (_environmentId, config) => Queue.offer(savedConfigs, config),
+        loadVcsRefs: () => Effect.succeed(Option.none()),
+        saveVcsRefs: () => Effect.void,
+        removeVcsRefs: () => Effect.void,
+        clearVcsRefs: () => Effect.void,
+        clear: () => Effect.void,
+      });
+
+      const scope = yield* Scope.make();
+      const state = yield* makeEnvironmentServerConfigState({}).pipe(
+        Effect.provideService(EnvironmentSupervisor.EnvironmentSupervisor, supervisor),
+        Effect.provideService(Persistence.EnvironmentCacheStore, cache),
+        Effect.provideService(Scope.Scope, scope),
+      );
+      const sendConfig = Effect.fn(function* (cwd: string) {
+        yield* Queue.offer(events, { version: 1, type: "snapshot", config: { ...CONFIG, cwd } });
+        yield* SubscriptionRef.changes(state).pipe(
+          Stream.filter((value) => Option.isSome(value) && value.value.config.cwd === cwd),
+          Stream.runHead,
+        );
+      });
+      yield* sendConfig("/first");
+      yield* TestClock.adjust("500 millis");
+      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/first");
+      for (let index = 1; index <= 9; index++) {
+        yield* sendConfig(`/repo-${index}`);
+        yield* TestClock.adjust("1 second");
+      }
+      expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
+      yield* TestClock.adjust("1 second");
+      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/repo-9");
+      yield* sendConfig("/final");
+      yield* Scope.close(scope, Exit.void);
+      expect((yield* Queue.take(savedConfigs)).cwd).toBe("/final");
+      expect(yield* Queue.poll(savedConfigs)).toEqual(Option.none());
+    }),
+  );
 
   it.effect("starts from cached configuration and persists the live projection", () =>
     Effect.gen(function* () {
