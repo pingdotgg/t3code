@@ -1,7 +1,7 @@
 import { siblingPullRequestUrl } from "@t3tools/shared/changeRequestUrl";
 import {
   CommandId,
-  type OrchestrationThreadShell,
+  type OrchestrationV2ThreadShell,
   type PullRequestSummary,
   type ThreadPullRequestKey,
   type ThreadPullRequestLink,
@@ -26,15 +26,14 @@ import type * as Scope from "effect/Scope";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import { forkParked } from "../serverActivation.ts";
-import * as OrchestrationEngine from "./Services/OrchestrationEngine.ts";
-import * as ProjectionSnapshotQuery from "./Services/ProjectionSnapshotQuery.ts";
+import { OrchestratorV2 } from "../orchestration-v2/Orchestrator.ts";
 
 const SLOW_SYNC_INTERVAL_MS = 15 * 60 * 1_000;
 
 type SnapshotFields = Omit<ThreadPullRequestSnapshot, "syncedAt">;
 
 interface LinkEntry {
-  readonly thread: OrchestrationThreadShell;
+  readonly thread: OrchestrationV2ThreadShell;
   readonly link: ThreadPullRequestLink;
 }
 
@@ -102,7 +101,7 @@ function stacksEqual(
   );
 }
 
-function isUnsettled(thread: OrchestrationThreadShell): boolean {
+function isUnsettled(thread: OrchestrationV2ThreadShell): boolean {
   return thread.settledOverride !== "settled" && thread.settledAt === null;
 }
 
@@ -124,8 +123,7 @@ export class PullRequestSyncReactor extends Context.Service<
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
-  const engine = yield* OrchestrationEngine.OrchestrationEngineService;
-  const snapshots = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
+  const engine = yield* OrchestratorV2;
   const pullRequests = yield* PullRequestService.PullRequestService;
   const crypto = yield* Crypto.Crypto;
 
@@ -151,7 +149,7 @@ export const make = Effect.gen(function* () {
       Cause.hasInterruptsOnly(cause) ? Effect.failCause(cause) : Effect.logWarning(message, fields);
 
   const sweep = Effect.fn("PullRequestSyncReactor.sweep")(function* () {
-    const snapshot = yield* snapshots.getShellSnapshot();
+    const snapshot = yield* engine.getShellSnapshot();
     const now = yield* DateTime.now;
     const nowMs = DateTime.toEpochMillis(now);
     const nowIso = DateTime.formatIso(now);
@@ -159,7 +157,7 @@ export const make = Effect.gen(function* () {
     const groups = new Map<string, Array<LinkEntry>>();
     for (const thread of snapshot.threads) {
       if (thread.archivedAt !== null) continue;
-      for (const link of visibleThreadPullRequests(thread.pullRequests)) {
+      for (const link of visibleThreadPullRequests(thread.pullRequests ?? [])) {
         const key = threadPullRequestKeyOf(link);
         const entries = groups.get(key) ?? [];
         entries.push({ thread, link });
@@ -210,7 +208,9 @@ export const make = Effect.gen(function* () {
         if (linkedThisSweep.has(dedupeKey)) continue;
         // Tombstones count as present: a dismissed layer is never re-added.
         if (
-          thread.pullRequests.some((existing) => threadPullRequestKeysEqual(existing, layerKey))
+          (thread.pullRequests ?? []).some((existing) =>
+            threadPullRequestKeysEqual(existing, layerKey),
+          )
         ) {
           continue;
         }

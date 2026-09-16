@@ -15,6 +15,13 @@ import * as Effect from "effect/Effect";
 const WINDOWS_SHIM_EXTENSIONS: ReadonlySet<string> = new Set([".cmd", ".bat", ".ps1"]);
 
 /**
+ * Whether `filePath` names a Windows launcher script that the Claude Agent SDK
+ * cannot spawn directly as `pathToClaudeCodeExecutable`.
+ */
+export const isWindowsClaudeLauncherShimPath = (filePath: string): boolean =>
+  WINDOWS_SHIM_EXTENSIONS.has(NodePath.win32.extname(filePath).toLowerCase());
+
+/**
  * Entry points of the npm `@anthropic-ai/claude-code` package relative to the
  * global `node_modules` directory that sits next to the npm launcher shim.
  * Newer package versions ship a native `bin/claude.exe`; older versions only

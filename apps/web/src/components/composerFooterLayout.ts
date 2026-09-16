@@ -36,10 +36,8 @@ export function shouldUseRestingComposerLayout(input: {
   // line and overlays its actions; non-image attachment and context
   // rows keep their natural height above it while image previews move inline.
   // Banners and the tasks badge dock above the surface, so they are absent
-  // too. Whether the context strip can host the relocated controls is
-  // deliberately absent here: resting reclaims vertical space at every
-  // desktop width, and where the strip is missing or too narrow the controls
-  // simply return when the composer is focused.
+  // too. The context strip is optional: collapsed controls use it when
+  // present and otherwise occupy a compact row inside the composer.
   //
   // Only a timeline scroll rests the composer: the user asked for it with the
   // gesture, and it lifts on the next composer interaction. Losing focus never
@@ -74,18 +72,25 @@ export const COMPOSER_RESTING_EXPANSION_MIN_PX = 94;
  * an expanded one. Reserving only the resting height lets a scroll to the end
  * land flush against the short composer, and the expansion that follows then
  * covers the last rows because the timeline never moves for footer growth.
- * While resting, the reservation keeps the last expanded height, or at least
- * the resting height plus the empty expansion, so expanding again changes
- * nothing above the composer. An expanded measurement is authoritative and
- * may shrink it.
+ * While resting, keep the measured expanded height. Estimate the empty
+ * expansion only before that measurement exists: strip mounting can otherwise
+ * inflate the estimate mid-transition and move the timeline. An expanded
+ * measurement is authoritative and may shrink the reservation.
  */
 export function resolveComposerTimelineInset(input: {
   currentInset: number;
   overlayHeight: number;
   isResting: boolean;
+  restingOnlyHeight?: number;
 }): number {
   return input.isResting
-    ? Math.max(input.currentInset, input.overlayHeight + COMPOSER_RESTING_EXPANSION_MIN_PX)
+    ? Math.max(
+        input.currentInset,
+        input.overlayHeight +
+          (input.currentInset === 0
+            ? COMPOSER_RESTING_EXPANSION_MIN_PX - (input.restingOnlyHeight ?? 0)
+            : 0),
+      )
     : input.overlayHeight;
 }
 

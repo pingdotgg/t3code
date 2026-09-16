@@ -1,0 +1,7532 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodePath from "node:path";
+
+import {
+  type ChatAttachment,
+  type ModelSelection,
+  type OrchestrationV2ConversationMessage,
+  type OrchestrationV2ExecutionNode,
+  type OrchestrationV2PlanArtifact,
+  type OrchestrationV2PlanStep,
+  type OrchestrationV2ProviderCapabilities,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2ProviderSession,
+  type OrchestrationV2ProviderThread,
+  type OrchestrationV2ProviderThreadNativeMetadata,
+  type OrchestrationV2ProviderTurn,
+  type OrchestrationV2RuntimeRequest,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
+  type OrchestrationV2UserInputQuestion,
+  type ProviderApprovalDecision,
+  type ProviderApprovalOption,
+  type ProviderInstanceId,
+  type ProviderInteractionMode,
+  type ProviderDriverKind,
+  type ProviderRequestKind,
+  type ProviderThreadId,
+  type ProviderUserInputAnswers,
+  type RuntimeRequestId,
+  type ThreadTokenUsageSnapshot,
+  type ThreadId,
+} from "@t3tools/contracts";
+import { modelSelectionsEqual } from "@t3tools/shared/model";
+import * as Cause from "effect/Cause";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
+import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as FileSystem from "effect/FileSystem";
+import * as Fiber from "effect/Fiber";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Ref from "effect/Ref";
+import * as Result from "effect/Result";
+import * as Scope from "effect/Scope";
+import * as Semaphore from "effect/Semaphore";
+import * as Stream from "effect/Stream";
+import type { ChildProcessSpawner } from "effect/unstable/process";
+import * as EffectAcpErrors from "effect-acp/errors";
+import type * as EffectAcpProtocol from "effect-acp/protocol";
+import type * as EffectAcpSchema from "effect-acp/compat";
+
+import { resolveAttachmentPath } from "../../attachmentStore.ts";
+import { ServerConfig } from "../../config.ts";
+import {
+  makeAcpMcpOverAcpBridge,
+  type AcpMcpOverAcpBridge,
+} from "../../mcp/AcpMcpOverAcpBridge.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
+import {
+  applyAcpAgentTerminalUpdate,
+  acpContentBlockDisplayText,
+  embeddedTerminalIdsFromSessionUpdate,
+  extractMcpToolCallIdentity,
+  mergeToolCallState,
+  parsePermissionRequest,
+  parseSessionUpdateEvent,
+  type AcpPlanUpdate,
+  type AcpAgentTerminalState,
+  type AcpSessionModeState,
+  type AcpToolCallState,
+} from "../../provider/acp/AcpRuntimeModel.ts";
+import type {
+  AcpSessionRuntimeOptions,
+  AcpSessionRuntimeStartResult,
+} from "../../provider/acp/AcpSessionRuntime.ts";
+import { acpReadTextFile, acpWriteTextFile } from "../../provider/acp/AcpClientFs.ts";
+import {
+  acpClientExecuteDisposition,
+  acpClientReadDisposition,
+  acpClientWriteDisposition,
+  acpMcpToolApprovalElicitationDisposition,
+  acpPermissionDisposition,
+  makeAcpClientPolicyGrants,
+  unknownRecord,
+} from "../../provider/acp/AcpClientPolicy.ts";
+import {
+  makeAcpClientTerminals,
+  resolveEmbeddedTerminalContent,
+  type AcpClientTerminals,
+} from "../../provider/acp/AcpClientTerminals.ts";
+import { ACP_SESSION_MODE_OPTION_ID } from "../../provider/acp/AcpSessionConfig.ts";
+import * as AcpSessionRuntime from "../../provider/acp/AcpSessionRuntime.ts";
+import {
+  t3AcpPromptWithInstructions,
+  type T3AcpInstructionState,
+} from "../../provider/T3OrchestrationInstructions.ts";
+import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import { IdAllocatorV2, type IdAllocatorV2Shape } from "../IdAllocator.ts";
+import { type ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
+import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
+import {
+  isProviderNativeImageAttachment,
+  providerMessageTextWithAttachmentPaths,
+} from "../AttachmentPrompt.ts";
+import {
+  makeSubagentChildThread,
+  makeSubagentConversationArtifacts,
+  subagentThreadTitle,
+} from "../SubagentProjection.ts";
+import {
+  ProviderAdapterEnsureThreadError,
+  ProviderAdapterForkThreadError,
+  ProviderAdapterInterruptError,
+  ProviderAdapterOpenSessionError,
+  ProviderAdapterProtocolError,
+  ProviderAdapterReadThreadSnapshotError,
+  ProviderAdapterResumeThreadError,
+  ProviderAdapterRollbackThreadError,
+  ProviderAdapterRuntimeRequestResponseError,
+  ProviderAdapterSteerRunUnsupportedError,
+  ProviderAdapterTurnStartError,
+  ProviderAdapterV2,
+  type ProviderAdapterV2EnsureThreadInput,
+  type ProviderAdapterV2Event,
+  type ProviderAdapterV2InterruptInput,
+  type ProviderAdapterV2OpenSessionInput,
+  type ProviderAdapterV2RuntimePolicy,
+  type ProviderAdapterV2SessionRuntime,
+  type ProviderAdapterV2Shape,
+  type ProviderAdapterV2TurnInput,
+} from "../ProviderAdapter.ts";
+
+export const ACP_PROTOCOL = "acp.ndjson-jsonrpc" as const;
+
+export interface AcpAdapterV2RuntimeInput {
+  readonly cwd: string;
+  readonly mcpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly acpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
+  /** Scoped credentials for terminal fallback when an ACP agent drops `mcpServers`. */
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly resumeSessionId?: string;
+  readonly interruptPromptOnCancel?: boolean;
+  readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
+  readonly clientInfo: AcpSessionRuntimeOptions["clientInfo"];
+  readonly requestLogger?: NonNullable<AcpSessionRuntimeOptions["requestLogger"]>;
+  readonly protocolLogging: NonNullable<AcpSessionRuntimeOptions["protocolLogging"]>;
+  readonly onTermination: NonNullable<AcpSessionRuntimeOptions["onTermination"]>;
+  readonly onOutgoingResponseFailure?: AcpSessionRuntimeOptions["onOutgoingResponseFailure"];
+  readonly onOutgoingResponse?: AcpSessionRuntimeOptions["onOutgoingResponse"];
+}
+
+export type AcpAdapterV2NativeLogging = Pick<
+  AcpSessionRuntimeOptions,
+  "requestLogger" | "protocolLogging"
+>;
+
+export interface AcpAdapterV2UserInputRequest {
+  readonly nativeItemId: string;
+  readonly nativeRequestId: string;
+  readonly questions: ReadonlyArray<OrchestrationV2UserInputQuestion>;
+}
+
+export interface AcpAdapterV2ExtensionContext {
+  readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+  /**
+   * Session-scoped background-task lifecycle reported via extension
+   * notifications (e.g. Grok `x.ai/task_backgrounded`; older builds use the
+   * underscore alias). Mutations for non-root sessions are ignored.
+   */
+  readonly applyBackgroundTaskMutation: (mutation: {
+    readonly sessionId: string;
+    readonly taskId: string;
+    readonly status: "running" | "completed" | "failed";
+  }) => Effect.Effect<void>;
+  readonly requestUserInput: (
+    input: AcpAdapterV2UserInputRequest,
+    requestContext: EffectAcpProtocol.AcpRequestContext,
+  ) => Effect.Effect<
+    {
+      readonly acknowledgeNativeResponse: Effect.Effect<void, EffectAcpErrors.AcpError>;
+      readonly answers: ProviderUserInputAnswers | null;
+    },
+    EffectAcpErrors.AcpError
+  >;
+  /** Surfaces plan markdown as this turn's proposed-plan card (#8358). */
+  readonly captureProposedPlan: (input: { readonly planMarkdown: string }) => Effect.Effect<void>;
+  /** Last markdown captured for the active turn, as the exit-gate fallback. */
+  readonly lastProposedPlanMarkdown: Effect.Effect<string | undefined>;
+}
+
+export interface AcpAdapterV2Flavor {
+  readonly driver: ProviderDriverKind;
+  readonly capabilities: OrchestrationV2ProviderCapabilities;
+  readonly clientCapabilitiesMeta?: Record<string, boolean>;
+  readonly normalizeSessionUpdate?: (
+    notification: EffectAcpSchema.SessionNotification,
+  ) => EffectAcpSchema.SessionNotification;
+  readonly onAvailableCommandsUpdate?: (
+    commands: ReadonlyArray<EffectAcpSchema.AvailableCommand>,
+  ) => Effect.Effect<void>;
+  readonly onSessionConfigurationUpdate?: (
+    configOptions: ReadonlyArray<EffectAcpSchema.SessionConfigOption>,
+    modeState: AcpSessionModeState | undefined,
+  ) => Effect.Effect<void>;
+  readonly onUrlElicitation?: (input: {
+    readonly elicitationId: string;
+    readonly url: string;
+    readonly message: string;
+  }) => Effect.Effect<boolean>;
+  readonly withRuntimeStartup?: <A, E, R>(effect: Effect.Effect<A, E, R>) => Effect.Effect<A, E, R>;
+  readonly makeRuntime: (
+    input: AcpAdapterV2RuntimeInput,
+  ) => Effect.Effect<
+    AcpSessionRuntime.AcpSessionRuntime["Service"],
+    EffectAcpErrors.AcpError,
+    Crypto.Crypto | Scope.Scope
+  >;
+  readonly resolveModelId?: (selection: ModelSelection) => string | undefined;
+  /**
+   * Replaces the default model application on session setup. Returns the model
+   * the session now runs on. Antigravity resolves its provider-default alias
+   * against the account's catalog instead of sending it to the agent.
+   */
+  readonly applyModelSelection?: (input: {
+    readonly runtime: AcpSessionRuntime.AcpSessionRuntime["Service"];
+    readonly startResult: AcpSessionRuntimeStartResult;
+    readonly modelSelection: ModelSelection;
+  }) => Effect.Effect<string | undefined, EffectAcpErrors.AcpError>;
+  /** Native session mode to select for a runtime policy (e.g. Antigravity `yolo`). */
+  readonly sessionModeForPolicy?: (policy: ProviderAdapterV2RuntimePolicy) => string | undefined;
+  /**
+   * Permission requests that are really questions (Antigravity `interaction_*`
+   * tool calls). Returns the question and a response builder; undefined routes
+   * the request through the normal approval card.
+   */
+  readonly extractPermissionQuestion?: (request: EffectAcpSchema.RequestPermissionRequest) =>
+    | {
+        readonly question: OrchestrationV2UserInputQuestion;
+        readonly respond: (
+          answers: ProviderUserInputAnswers,
+        ) => EffectAcpSchema.RequestPermissionResponse | undefined;
+      }
+    | undefined;
+  /** Approval choices to advertise on the approval card for a permission request. */
+  readonly approvalOptions?: (
+    request: EffectAcpSchema.RequestPermissionRequest,
+  ) => ReadonlyArray<ProviderApprovalOption>;
+  /**
+   * Activate saved sessions with `session/resume` before `session/load` when
+   * the agent supports both. Antigravity's load replays history slowly.
+   */
+  readonly preferResumeSession?: boolean;
+  readonly onSessionEvent?: (
+    event: AcpSessionRuntime.AcpSessionRuntimeEvent,
+  ) => Effect.Effect<void>;
+  /** Batch launches without child completion signals become idle when the root turn ends. */
+  readonly subagentsIdleOnTurnCompletion?: boolean;
+  readonly supportsCompaction?: boolean;
+  readonly runtimeHarness?: string;
+  readonly registerExtensions?: (
+    context: AcpAdapterV2ExtensionContext,
+  ) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  readonly extractSubagentUpdate?: (
+    toolCall: AcpToolCallState,
+  ) => AcpAdapterV2SubagentUpdate | undefined;
+  /**
+   * Optional Grok-style rewrite before tool projection (e.g. keep monitor start
+   * ACKs in the running state until stream end).
+   */
+  readonly normalizeToolCall?: (toolCall: AcpToolCallState) => AcpToolCallState;
+  /**
+   * Optional plan-file sniffing (#8358): providers that write their proposed
+   * plan to a file mid-turn (Grok plan.md) return its markdown from a tool
+   * call so T3 can show the proposed-plan card while plan mode is active.
+   */
+  readonly extractProposedPlanMarkdown?: (toolCall: AcpToolCallState) => string | undefined;
+  /**
+   * Optional mapping from a long-lived background tool start ACK to a task id
+   * (e.g. monitor task uuid) so later synthetic text events can update it.
+   */
+  readonly extractBackgroundTaskId?: (toolCall: AcpToolCallState) => string | undefined;
+  /**
+   * Optional parse of root-session synthetic text (monitor-event lines, monitor
+   * ended reminders). Returns every task mutation in the chunk so coalesced
+   * progress / end notices are not dropped.
+   */
+  readonly extractBackgroundToolMutation?: (text: string) => ReadonlyArray<{
+    readonly taskId: string;
+    readonly status: "running" | "completed" | "failed";
+    readonly appendOutput: string;
+  }>;
+  /**
+   * Optional parse of root-session synthetic text announcing a background
+   * subagent's end ("Background subagent "<uuid>" ... completed successfully").
+   * Older builds may never hydrate via get_command_or_subagent_output, so this
+   * remains a terminal fallback. Current Grok additionally emits structured
+   * `subagent_finished` session notifications.
+   */
+  readonly extractSubagentEndNotice?: (text: string) =>
+    | {
+        readonly childSessionId: string;
+        readonly status: "completed" | "failed";
+      }
+    | undefined;
+  /**
+   * Optional hydration when a later tool (e.g. get_command TaskOutput) completes
+   * previously registered background task id(s).
+   */
+  readonly extractBackgroundTaskCompletion?: (toolCall: AcpToolCallState) => ReadonlyArray<{
+    readonly taskId: string;
+    readonly status: "running" | "completed" | "failed";
+    readonly appendOutput: string;
+  }>;
+  /**
+   * Persistent monitors (e.g. Grok `persistent: true`) should not hold root-turn
+   * deferred finalize open forever. Still tracked for post-settle wake.
+   */
+  readonly isPersistentBackgroundTool?: (toolCall: AcpToolCallState) => boolean;
+  /**
+   * When true, keep the active turn open after session/prompt returns while
+   * background tools/subagents are still running so later monitor/wake traffic
+   * can project (Grok monitors finish after the root prompt settles).
+   */
+  readonly deferFinalizeForBackgroundWork?: boolean;
+  readonly assertComplete?: Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Interrupt the local prompt fiber before `session/cancel` (Grok wedged prompts). */
+  readonly interruptPromptOnCancel?: boolean;
+  /**
+   * Kill and respawn the ACP child process before the next `session/prompt` after a
+   * user interrupt. Grok can keep `task_already_running` state until the process exits.
+   */
+  readonly restartRuntimeAfterInterrupt?: boolean;
+  /**
+   * When true, every interrupt restarts the runtime, not just those carrying
+   * `requestRuntimeRestart` (user Stop). Leave unset to keep non-Stop
+   * interrupts (steering, restart_active) soft: `session/cancel` plus session
+   * reuse in the same process.
+   */
+  readonly restartRuntimeOnEveryInterrupt?: boolean;
+  readonly terminateRuntimeProcessGroupOnInterrupt?: boolean;
+  /**
+   * When true, an interrupt without `requestRuntimeRestart` (steering restart)
+   * on a turn whose native prompt already settled skips the hard process-group
+   * kill, the ACP cancel, and the runtime respawn entirely: the turn
+   * terminalizes locally while background subagents keep running in the same
+   * process and carry over into the replacement turn. Verified against the
+   * real Grok CLI (tmp/grok-acp-experiments E1): a new session/prompt is
+   * accepted concurrently while a fire-and-forget subagent is still running,
+   * with no task_already_running. User Stop (`requestRuntimeRestart: true`)
+   * keeps the hard teardown; mid-prompt non-Stop interrupts go soft
+   * (`session/cancel` plus same-session re-prompt) unless
+   * `restartRuntimeOnEveryInterrupt` is set.
+   */
+  readonly preserveRuntimeOnSettledInterrupt?: boolean;
+  /**
+   * When true (with continuationRequests), post-settle root session/update traffic
+   * buffers and requests a provider continuation run instead of being dropped or
+   * only appended to loaded history.
+   */
+  readonly enablePostSettleContinuation?: boolean;
+  /**
+   * When true, send image attachment content blocks even if the ACP agent
+   * advertises `promptCapabilities.image: false`. Grok CLI currently accepts
+   * and vision-processes image blocks while still reporting the capability as
+   * false; without this override, screenshot turns fail before `session/prompt`.
+   */
+  readonly supportsImagePrompts?: boolean;
+}
+
+/** Whether image attachment blocks may be included in session/prompt. */
+export function acpSupportsImagePrompts(input: {
+  readonly flavorSupportsImagePrompts?: boolean | undefined;
+  readonly negotiatedImage?: boolean | undefined;
+}): boolean {
+  return input.flavorSupportsImagePrompts === true || input.negotiatedImage === true;
+}
+
+/** Keeps provider-derived ids distinct when two configured ACP instances reuse native ids. */
+export function acpScopedNativeId(instanceId: ProviderInstanceId, nativeId: string): string {
+  return `provider-instance:${encodeURIComponent(instanceId)}:${nativeId}`;
+}
+
+/** Keeps pre-v2 persisted ids stable while scoping ids for newly created threads. */
+export function acpProviderItemNativeId(input: {
+  readonly instanceId: ProviderInstanceId;
+  readonly itemIdentityVersion: 2 | undefined;
+  readonly nativeId: string;
+}): string {
+  return input.itemIdentityVersion === 2
+    ? acpScopedNativeId(input.instanceId, input.nativeId)
+    : input.nativeId;
+}
+
+export interface AcpAdapterV2SubagentUpdate {
+  readonly nativeTaskId: string;
+  readonly prompt: string;
+  readonly title: string | null;
+  readonly model: string | null;
+  readonly status:
+    | "pending"
+    | "running"
+    | "idle"
+    | "completed"
+    | "failed"
+    | "interrupted"
+    | "cancelled";
+  readonly childSessionId: string | null;
+  readonly result: string | null;
+  /**
+   * When false, still project a normal tool turn item after the subagent update
+   * (hydration tools like get_command_or_subagent_output). Defaults to true.
+   */
+  readonly suppressNormalTool?: boolean;
+}
+
+export interface AcpAdapterV2Options {
+  readonly instanceId: ProviderInstanceId;
+  readonly flavor: AcpAdapterV2Flavor;
+  readonly crypto: Crypto.Crypto;
+  readonly fileSystem: FileSystem.FileSystem;
+  readonly idAllocator: IdAllocatorV2Shape;
+  readonly serverConfig: ServerConfig["Service"];
+  /**
+   * Enables the ACP client `terminal` capability. Sessions advertise
+   * `terminal: true` and run agent-created terminals through this spawner
+   * with the provider instance's environment.
+   */
+  readonly clientTerminals?: {
+    readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
+    readonly environment?: NodeJS.ProcessEnv;
+    readonly shellCommands?: boolean;
+  };
+  readonly nativeLogging?: (threadId: ThreadId) => AcpAdapterV2NativeLogging;
+  /**
+   * Shared with ProviderContinuationService so post-settle wake traffic can start
+   * a continuation run. Optional: adapters that omit it keep pre-continuation drop
+   * / history-only behavior for null-activeTurn updates.
+   */
+  readonly continuationRequests?: {
+    readonly offer: (request: ProviderContinuationRequest) => Effect.Effect<void>;
+  };
+  readonly testHooks?: {
+    readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
+    readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
+    readonly beforeNativeResponseAdmissionCheck?: (
+      generation: number,
+      requestId: string,
+    ) => Effect.Effect<void>;
+    readonly onNativeResponseLifecycle?: (event: {
+      readonly generation?: number;
+      readonly requestId?: string;
+      readonly type:
+        | "admission_rejected"
+        | "failed"
+        | "late_noop"
+        | "registered"
+        | "removed"
+        | "timer_exited"
+        | "timer_started"
+        | "watcher_exited"
+        | "watcher_started";
+    }) => Effect.Effect<void>;
+  };
+}
+
+export const AcpProviderCapabilitiesV2 = {
+  sessions: {
+    supportsMultipleProviderThreadsPerSession: false,
+    supportsModelSwitchInSession: false,
+    supportsProviderSwitchingViaHandoff: true,
+    supportsRuntimeModeSwitchInSession: false,
+    pendingRequestsSurviveRestart: false,
+  },
+  threads: {
+    canCreateEmptyThread: true,
+    canReadThreadSnapshot: false,
+    canRollbackThread: true,
+    canForkThread: false,
+    canForkFromTurn: false,
+    canForkFromSubagentThread: false,
+    exposesNativeThreadId: true,
+  },
+  turns: {
+    exposesNativeTurnId: false,
+    emitsTurnStarted: true,
+    emitsTurnCompleted: true,
+    supportsInterrupt: true,
+    supportsActiveSteering: false,
+    supportsSteeringByInterruptRestart: true,
+    supportsQueuedMessages: true,
+    terminalStatusQuality: "strong",
+  },
+  streaming: {
+    streamsAssistantText: true,
+    streamsReasoning: true,
+    streamsToolOutput: true,
+    streamsPlanText: false,
+    emitsMessageCompleted: true,
+  },
+  tools: {
+    exposesToolItemIds: true,
+    emitsToolStarted: true,
+    emitsToolCompleted: true,
+    emitsToolOutput: true,
+    supportsMcpTools: false,
+    supportsDynamicToolCallbacks: false,
+  },
+  approvals: {
+    supportsCommandApproval: true,
+    supportsFileReadApproval: true,
+    supportsFileChangeApproval: true,
+    supportsApplyPatchApproval: false,
+    approvalsHaveNativeRequestIds: false,
+    approvalCallbacksAreLiveOnly: true,
+    approvalsCanOriginateFromSubagents: false,
+  },
+  planning: {
+    emitsPlanUpdated: true,
+    emitsTodoList: true,
+    emitsProposedPlan: false,
+    supportsStructuredQuestions: true,
+    planDeltasHaveItemIds: false,
+  },
+  subagents: {
+    supportsSubagents: false,
+    exposesSubagentThreadIds: false,
+    emitsSubagentLifecycle: false,
+    canWaitForSubagents: false,
+    canCloseSubagents: false,
+    canForkSubagentThread: false,
+  },
+  context: {
+    acceptsSystemContext: false,
+    acceptsDeveloperContext: false,
+    acceptsSyntheticUserContext: true,
+    canGenerateSummaries: true,
+    canConsumeHandoffSummaries: true,
+    supportsDeltaHandoff: true,
+    supportsFullThreadHandoff: true,
+    maxRecommendedHandoffChars: null,
+  },
+  checkpointing: {
+    appCanCheckpointFilesystem: true,
+    supportsNestedCheckpointScopes: true,
+    // ACP defines no conversation truncation, so rollback resets the provider
+    // conversation: T3 restores checkpointed state and the next turn starts a
+    // fresh agent session without the rolled-back context.
+    providerCanRollbackConversation: true,
+    providerRollbackReturnsSnapshot: true,
+    providerCanReadConversationSnapshot: false,
+  },
+  identity: {
+    nativeThreadIds: "strong",
+    nativeTurnIds: "weak",
+    nativeItemIds: "weak",
+    nativeRequestIds: "weak",
+  },
+  runtimePolicy: {
+    // T3 policy-checks permission requests and its own client fs/terminal
+    // handlers, but ACP agents execute their own tools unconfined.
+    enforcement: "client-boundary",
+  },
+} satisfies OrchestrationV2ProviderCapabilities;
+
+function negotiatedCapabilities(
+  base: OrchestrationV2ProviderCapabilities,
+  started: AcpSessionRuntimeStartResult,
+): OrchestrationV2ProviderCapabilities {
+  const agent = started.initializeResult.agentCapabilities ?? {};
+  const session = agent.sessionCapabilities;
+  const setup = started.sessionSetupResult;
+  const hasModelConfig =
+    setup.configOptions?.some((option) => option.category === "model") === true;
+  const canLoad = agent.loadSession === true;
+  const canFork = session?.fork != null;
+  return {
+    ...base,
+    sessions: {
+      ...base.sessions,
+      supportsModelSwitchInSession: hasModelConfig,
+    },
+    threads: {
+      ...base.threads,
+      canReadThreadSnapshot: canLoad,
+      canForkThread: canFork,
+      canForkFromTurn: false,
+    },
+    tools: {
+      ...base.tools,
+      // The stdio bridge (`t3 acp-mcp-bridge`) makes the t3-code MCP toolkit
+      // available regardless of the agent's optional http/sse MCP support.
+      supportsMcpTools: true,
+    },
+    checkpointing: {
+      ...base.checkpointing,
+      providerCanReadConversationSnapshot: canLoad,
+    },
+  };
+}
+
+interface AcpMcpContext {
+  readonly servers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly acpServers: ReadonlyArray<EffectAcpSchema.McpServer>;
+  readonly processEnvironment?: NodeJS.ProcessEnv;
+  readonly endpoint?: string;
+  readonly authorization?: string;
+}
+
+function acpMcpContext(threadId: ThreadId | null): AcpMcpContext {
+  if (threadId === null) return { servers: [], acpServers: [] };
+  const session = McpProviderSession.readMcpProviderSession(threadId);
+  if (session === undefined) {
+    return { servers: [], acpServers: [] };
+  }
+  // Stdio is ACP's required baseline MCP transport. Agents that advertise
+  // optional http support still routinely fail to wire injected http servers
+  // through to their backend (codex-acp 1.2.0 and pi-acp both drop them), so
+  // every ACP session gets the `t3 acp-mcp-bridge` stdio server, which
+  // forwards JSON-RPC to T3's authenticated MCP endpoint. The credential
+  // travels via environment variables, never the command line.
+  // The agent spawns the bridge from its own working directory, so the server
+  // entrypoint must be an absolute path.
+  const serverEntrypoint = process.argv[1] === undefined ? "t3" : NodePath.resolve(process.argv[1]);
+  return {
+    servers: [
+      {
+        name: "t3-code",
+        command: process.execPath,
+        args: [serverEntrypoint, "acp-mcp-bridge"],
+        env: [
+          { name: "ELECTRON_RUN_AS_NODE", value: "1" },
+          { name: "T3_ACP_MCP_ENDPOINT", value: session.endpoint },
+          { name: "T3_ACP_MCP_AUTHORIZATION", value: session.authorizationHeader },
+        ],
+      },
+    ],
+    acpServers: [{ type: "acp", name: "t3-code", serverId: "t3-code" }],
+    endpoint: session.endpoint,
+    authorization: session.authorizationHeader,
+    processEnvironment: {
+      T3_ACP_MCP_ENDPOINT: session.endpoint,
+      T3_ACP_MCP_AUTHORIZATION: session.authorizationHeader,
+      T3_ACP_MCP_NODE: process.execPath,
+      T3_ACP_MCP_ENTRYPOINT: serverEntrypoint,
+    },
+  };
+}
+
+function acpMcpServers(threadId: ThreadId | null): ReadonlyArray<EffectAcpSchema.McpServer> {
+  return acpMcpContext(threadId).servers;
+}
+
+function acpMcpActivation(threadId: ThreadId | null) {
+  const context = acpMcpContext(threadId);
+  return { mcpServers: context.servers, acpMcpServers: context.acpServers };
+}
+
+function nativeThreadId(
+  driver: ProviderDriverKind,
+  thread: OrchestrationV2ProviderThread,
+): Effect.Effect<string, ProviderAdapterProtocolError> {
+  const id = thread.nativeThreadRef?.nativeId;
+  if (id === null || id === undefined || id.trim().length === 0) {
+    return Effect.fail(
+      new ProviderAdapterProtocolError({
+        driver,
+        detail: `Provider thread ${thread.id} is missing its ACP session id`,
+      }),
+    );
+  }
+  return Effect.succeed(id);
+}
+
+function makeProviderThread(input: {
+  readonly driver: ProviderDriverKind;
+  readonly providerInstanceId: ProviderInstanceId;
+  readonly idAllocator: IdAllocatorV2Shape;
+  readonly appThreadId: OrchestrationV2ProviderThread["appThreadId"];
+  readonly providerSessionId: OrchestrationV2ProviderThread["providerSessionId"];
+  readonly nativeThreadId: string;
+  readonly ownerNodeId?: OrchestrationV2ProviderThread["ownerNodeId"];
+  readonly forkedFrom?: OrchestrationV2ProviderThread["forkedFrom"];
+  readonly itemIdentityVersion?: 2;
+  readonly now: DateTime.Utc;
+}): OrchestrationV2ProviderThread {
+  return {
+    id: input.idAllocator.derive.providerThread({
+      driver: input.driver,
+      providerInstanceId: input.providerInstanceId,
+      nativeThreadId: input.nativeThreadId,
+    }),
+    driver: input.driver,
+    providerInstanceId: input.providerInstanceId,
+    providerSessionId: input.providerSessionId,
+    appThreadId: input.appThreadId,
+    ownerNodeId: input.ownerNodeId ?? null,
+    nativeThreadRef: {
+      driver: input.driver,
+      nativeId: input.nativeThreadId,
+      strength: "strong",
+    },
+    nativeConversationHeadRef: null,
+    status: "idle",
+    firstRunOrdinal: null,
+    lastRunOrdinal: null,
+    handoffIds: [],
+    forkedFrom: input.forkedFrom ?? null,
+    contextUsage: null,
+    nativeMetadata:
+      input.itemIdentityVersion === undefined
+        ? null
+        : { itemIdentityVersion: input.itemIdentityVersion },
+    createdAt: input.now,
+    updatedAt: input.now,
+  };
+}
+
+/**
+ * Unwrap a codex-acp style MCP call result (`{ result, error }` around MCP
+ * `content`/`structuredContent`) the same way the native Codex adapter does,
+ * so recovered MCP items render identical output. Unknown shapes pass through.
+ */
+function acpMcpToolCallOutput(rawOutput: unknown): unknown {
+  const record = unknownRecord(rawOutput);
+  if (record === undefined) return rawOutput;
+  if (!("result" in record) && !("error" in record)) return rawOutput;
+  const result = unknownRecord(record.result);
+  const resultOutput =
+    result === undefined ? undefined : (result.structuredContent ?? result.content ?? undefined);
+  const errorMessage = unknownRecord(record.error)?.message;
+  if (typeof errorMessage !== "string") {
+    return resultOutput ?? rawOutput;
+  }
+  return resultOutput === undefined
+    ? { error: errorMessage }
+    : { error: errorMessage, result: resultOutput };
+}
+
+function nonEmptyText(value: unknown, fallback: string): string {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : fallback;
+}
+
+function decodeByteText(value: unknown): string | undefined {
+  if (!Array.isArray(value) || value.length === 0) return undefined;
+  if (!value.every((entry) => typeof entry === "number" && Number.isInteger(entry))) {
+    return undefined;
+  }
+  try {
+    // Preserve leading/trailing whitespace like the string path in textFromUnknown.
+    const text = new TextDecoder().decode(Uint8Array.from(value as number[]));
+    return text.length > 0 ? text : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function textFromUnknown(value: unknown): string | undefined {
+  if (typeof value === "string") {
+    return value;
+  }
+  const fromBytes = decodeByteText(value);
+  if (fromBytes !== undefined) {
+    return fromBytes;
+  }
+  if (Array.isArray(value)) {
+    const parts = value.flatMap((entry) => {
+      const text = textFromUnknown(entry);
+      return text === undefined || text.length === 0 ? [] : [text];
+    });
+    return parts.length === 0 ? undefined : parts.join("\n");
+  }
+  const record = unknownRecord(value);
+  if (record === undefined) {
+    return undefined;
+  }
+  // Prefer prompt-facing Grok fields before nested envelopes.
+  for (const key of [
+    "output_for_prompt",
+    "stdout",
+    "stderr",
+    "output",
+    "content",
+    "text",
+    "message",
+  ]) {
+    const direct = record[key];
+    if (typeof direct === "string" && direct.length > 0) {
+      return direct;
+    }
+    const decoded = decodeByteText(direct);
+    if (decoded !== undefined) {
+      return decoded;
+    }
+    const text = textFromUnknown(direct);
+    if (text !== undefined && text.length > 0) {
+      return text;
+    }
+  }
+  const result = unknownRecord(record.Result) ?? unknownRecord(record.result);
+  if (result !== undefined) {
+    return textFromUnknown(result);
+  }
+  return undefined;
+}
+
+function commandExitCode(value: unknown): number | undefined {
+  const record = unknownRecord(value);
+  for (const key of ["exitCode", "exit_code", "code"]) {
+    const candidate = record?.[key];
+    if (typeof candidate === "number" && Number.isInteger(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Project an exit code only when the tool has a terminal native status.
+ * Mid-stream Grok Bash re-reports carry exit_code 0 while still in progress;
+ * interrupted tools must not retain that stale success code.
+ */
+export function acpProjectedCommandExitCode(
+  status: "pending" | "running" | "waiting" | "completed" | "failed" | "interrupted",
+  rawOutput: unknown,
+): number | undefined {
+  if (status !== "completed" && status !== "failed") {
+    return undefined;
+  }
+  return commandExitCode(rawOutput);
+}
+
+function structuredFileChanges(toolCall: AcpToolCallState) {
+  const content = toolCall.data.content;
+  if (!Array.isArray(content)) return [];
+  return content.flatMap((entry) => {
+    const diff = unknownRecord(entry);
+    if (diff?.type !== "diff" || !Array.isArray(diff.changes)) return [];
+    return diff.changes.flatMap((candidate) => {
+      const change = unknownRecord(candidate);
+      const operation = typeof change?.operation === "string" ? change.operation.trim() : "";
+      const path = typeof change?.path === "string" ? change.path.trim() : "";
+      if (operation.length === 0 || path.length === 0) return [];
+      const oldPath = typeof change?.oldPath === "string" ? change.oldPath.trim() : "";
+      const fileType = typeof change?.fileType === "string" ? change.fileType.trim() : "";
+      const mimeType = typeof change?.mimeType === "string" ? change.mimeType.trim() : "";
+      return [
+        {
+          operation,
+          path,
+          ...(oldPath.length === 0 ? {} : { oldPath }),
+          ...(fileType.length === 0 ? {} : { fileType }),
+          ...(mimeType.length === 0 ? {} : { mimeType }),
+        },
+      ];
+    });
+  });
+}
+
+function structuredDiffPatch(toolCall: AcpToolCallState): string | undefined {
+  const content = toolCall.data.content;
+  if (!Array.isArray(content)) return undefined;
+  for (const entry of content) {
+    const diff = unknownRecord(entry);
+    const patch = unknownRecord(diff?.patch);
+    if (diff?.type === "diff" && typeof patch?.text === "string") return patch.text;
+  }
+  return undefined;
+}
+
+function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+  const locations = toolCall.data.locations;
+  if (Array.isArray(locations)) {
+    for (const location of locations) {
+      const path = unknownRecord(location)?.path;
+      if (typeof path === "string" && path.trim().length > 0) {
+        return path.trim();
+      }
+    }
+  }
+  const rawInput = unknownRecord(toolCall.data.rawInput);
+  for (const key of ["path", "filePath", "file_path", "url", "query", "pattern"]) {
+    const candidate = rawInput?.[key];
+    if (typeof candidate === "string" && candidate.trim().length > 0) {
+      return candidate.trim();
+    }
+  }
+  return undefined;
+}
+
+function providerRequestKind(kind: string | "unknown"): ProviderRequestKind {
+  switch (kind) {
+    case "execute":
+      return "command";
+    case "read":
+    case "search":
+    case "fetch":
+      return "file-read";
+    case "edit":
+    case "delete":
+    case "move":
+      return "file-change";
+    default:
+      return "command";
+  }
+}
+
+function toolStatus(
+  status: AcpToolCallState["status"],
+): "pending" | "running" | "waiting" | "completed" | "failed" {
+  switch (status) {
+    case "completed":
+      return "completed";
+    case "failed":
+      return "failed";
+    case "pending":
+      return "pending";
+    case "requiresAction":
+      return "waiting";
+    default:
+      return "running";
+  }
+}
+
+type ProjectedToolStatus = ReturnType<typeof toolStatus> | "interrupted";
+
+function nodeStatus(status: ProjectedToolStatus): OrchestrationV2ExecutionNode["status"] {
+  return status === "pending" ? "running" : status;
+}
+
+function completedAtForStatus(status: ProjectedToolStatus, now: DateTime.Utc): DateTime.Utc | null {
+  return status === "completed" || status === "failed" || status === "interrupted" ? now : null;
+}
+
+function selectPermissionOptionId(
+  request: EffectAcpSchema.RequestPermissionRequest,
+  decision: Exclude<ProviderApprovalDecision, "cancel">,
+): string | undefined {
+  const kind =
+    decision === "acceptForSession"
+      ? "allow_always"
+      : decision === "accept"
+        ? "allow_once"
+        : "reject_once";
+  return request.options.find((option) => option.kind === kind)?.optionId.trim() || undefined;
+}
+
+function selectAutoApprovedPermissionOption(
+  request: EffectAcpSchema.RequestPermissionRequest,
+): string | undefined {
+  return (
+    selectPermissionOptionId(request, "acceptForSession") ??
+    selectPermissionOptionId(request, "accept")
+  );
+}
+
+function elicitationContent(
+  answers: ProviderUserInputAnswers,
+  allowedKeys: ReadonlySet<string>,
+): Record<string, EffectAcpSchema.ElicitationContentValue> {
+  const content: Record<string, EffectAcpSchema.ElicitationContentValue> = {};
+  for (const [key, value] of Object.entries(answers)) {
+    if (!allowedKeys.has(key)) continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      content[key] = value;
+    } else if (Array.isArray(value)) {
+      content[key] = value.filter((entry): entry is string => typeof entry === "string");
+    }
+  }
+  return content;
+}
+
+interface ActiveTextSegment {
+  readonly nativeItemId: string;
+  readonly startedAt: DateTime.Utc;
+  sourceMessageId: string | null;
+  text: string;
+}
+
+interface ActiveTextStream {
+  current: ActiveTextSegment | null;
+  nextSegment: number;
+}
+
+interface AcpNativeBuildConfiguration {
+  readonly modeId?: string;
+  readonly configOptions: ReadonlyArray<{ readonly id: string; readonly value: string }>;
+}
+
+interface ActiveAcpTurn {
+  readonly input: ProviderAdapterV2TurnInput;
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly nativeThreadId: string;
+  readonly nativeTurnId: string;
+  readonly startedAt: DateTime.Utc;
+  readonly completed: Deferred.Deferred<void, never>;
+  readonly user: ActiveTextStream;
+  readonly assistant: ActiveTextStream;
+  readonly reasoning: ActiveTextStream;
+  contextUsage: ThreadTokenUsageSnapshot | null;
+  nativeMetadata: OrchestrationV2ProviderThreadNativeMetadata | null;
+  readonly tools: Map<string, AcpToolCallState>;
+  readonly toolStartedAt: Map<string, DateTime.Utc>;
+  readonly subagents: Map<string, ActiveAcpSubagent>;
+  readonly subagentsBySessionId: Map<string, ActiveAcpSubagent>;
+  readonly pendingSubagentNotifications: Map<string, Array<EffectAcpSchema.SessionNotification>>;
+  /** Background monitor/task id → toolCallId for synthetic root text updates. */
+  readonly toolCallIdsByBackgroundTaskId: Map<string, string>;
+  /**
+   * Persistent monitors registered this turn. Excluded from deferred-finalize
+   * holds so the root turn can settle while they keep streaming post-settle.
+   */
+  readonly persistentBackgroundTaskIds: Set<string>;
+  /**
+   * Monitor end events often only say "use get_command…"; keep the turn open
+   * until TaskOutput hydration arrives (or the safety timeout elapses).
+   */
+  readonly awaitingBackgroundHydration: Set<string>;
+  /**
+   * A monitor end notice landed after the prompt settled: the CLI runs an
+   * injected turn whose report never gets a turn_completed marker, so the
+   * report chunk races the deferred-finalize debounce (thread a8e8b0a9 run 5
+   * dropped the listing this way). Hold finalize until the report streams or
+   * the safety timeout elapses.
+   */
+  readonly pendingInjectedReport: Set<string>;
+  /**
+   * An injected assistant report can race ahead of its monitor end notice.
+   * Remember that unmatched report so the later notice consumes, rather than
+   * re-arming, the task's pre-settle completion marker.
+   */
+  earlyInjectedReportObserved: boolean;
+  readonly plans: Map<
+    string,
+    {
+      readonly id: OrchestrationV2PlanArtifact["id"];
+      readonly startedAt: DateTime.Utc;
+      latest: OrchestrationV2PlanArtifact | null;
+    }
+  >;
+  interrupted: boolean;
+  finalized: boolean;
+  finalizedStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  /** session/prompt already returned; finalize deferred for background work. */
+  promptSettled: boolean;
+  promptSettledStatus: "completed" | "interrupted" | "failed" | "cancelled" | null;
+  /**
+   * Completed the moment `runtime.prompt` resolves on the wire, before the
+   * completion callback requests `runtimeCallbackPermit`. Failure does not
+   * complete this; settled-soft classification ORs it with `promptSettled`.
+   */
+  readonly promptWireSettled: Deferred.Deferred<void, never>;
+  backgroundFinalizeGeneration: number;
+}
+
+type AcpRuntimeTeardownState =
+  | { readonly _tag: "Idle" }
+  | {
+      readonly _tag: "InProgress";
+      readonly completed: Deferred.Deferred<void, ProviderAdapterProtocolError>;
+    }
+  | { readonly _tag: "Failed"; readonly error: ProviderAdapterProtocolError };
+
+/** True when a root session/update carries ingestible turn output, not keepalive noise. */
+function acpRootSessionUpdateIngestsOutput(
+  notification: EffectAcpSchema.SessionNotification,
+): boolean {
+  const update = notification.update;
+  switch (update.sessionUpdate) {
+    case "agent_message_chunk":
+    case "agent_thought_chunk":
+      return (acpContentBlockDisplayText(update.content)?.length ?? 0) > 0;
+    case "agent_message":
+    case "agent_thought":
+      return (update.content ?? []).some(
+        (content) => (acpContentBlockDisplayText(content)?.length ?? 0) > 0,
+      );
+    case "tool_call":
+    case "tool_call_update":
+    case "plan":
+    case "plan_update":
+    case "plan_removed":
+    case "compaction_update":
+    case "compaction_summary_chunk":
+      return parseSessionUpdateEvent(notification).events.some(
+        (event) => event._tag === "ToolCallUpdated" || event._tag === "PlanUpdated",
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * Post-settle traffic that should be *buffered* for a continuation attach.
+ * Excludes monitor end/event chatter that must not become ghost history.
+ * Broader than {@link acpPostSettleContinuationOfferEvidence}: incremental
+ * tool progress may still need replay once a real completion offers a run.
+ */
+export function acpPostSettleWakeEvidence(
+  notification: EffectAcpSchema.SessionNotification,
+  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundToolMutation"> = {},
+): boolean {
+  if (!acpRootSessionUpdateIngestsOutput(notification)) return false;
+  const update = notification.update;
+  if (
+    (update.sessionUpdate === "user_message_chunk" ||
+      update.sessionUpdate === "agent_message_chunk") &&
+    update.content.type === "text"
+  ) {
+    const text = update.content.text;
+    if ((flavor.extractBackgroundToolMutation?.(text) ?? []).length > 0) return false;
+    if (update.sessionUpdate === "agent_message_chunk" && text.trim().length === 0) return false;
+    if (/<monitor-event\b/i.test(text) || /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether buffered post-settle traffic should *offer* a continuation run now.
+ * Still-running tool streams often land farther apart than the deferred-finalize
+ * quiet window; treating every tool_call_update as offer evidence re-opens a
+ * synthetic "Background task completed." run on each chunk. Only completion-like
+ * frames (real agent text, or a terminal tool status) should open a new run.
+ */
+export function acpPostSettleContinuationOfferEvidence(
+  notification: EffectAcpSchema.SessionNotification,
+  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundToolMutation" | "normalizeToolCall"> = {},
+): boolean {
+  if (!acpPostSettleWakeEvidence(notification, flavor)) {
+    return false;
+  }
+  const update = notification.update;
+  // Assistant text only. Thought/reasoning bursts alone must not open synthetic
+  // "Background task completed." runs (duplicate-run spam after monitors).
+  if (update.sessionUpdate === "agent_message_chunk") {
+    return (acpContentBlockDisplayText(update.content)?.trim().length ?? 0) > 0;
+  }
+  if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+    return parseSessionUpdateEvent(notification).events.some((event) => {
+      if (event._tag !== "ToolCallUpdated") return false;
+      // Normalize first: a Grok monitor start ACK arrives with raw status
+      // "completed" but is a still-running background task, not completion.
+      const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+      return toolCall.status === "completed" || toolCall.status === "failed";
+    });
+  }
+  return false;
+}
+
+export function acpPostSettleWakeShouldBuffer(
+  notification: EffectAcpSchema.SessionNotification,
+  backgroundWorkRunning: boolean,
+): boolean {
+  if (!backgroundWorkRunning) return true;
+  const update = notification.update;
+  return (
+    update.sessionUpdate !== "agent_message_chunk" && update.sessionUpdate !== "agent_thought_chunk"
+  );
+}
+
+/**
+ * An app-owned wake (a delegated child finishing) is injected by the
+ * orchestrator, not typed by the user. It reports on a sibling child and says
+ * nothing about this session's own pending wake frames, so it must not discard
+ * them the way a real user turn does. ClaudeAdapterV2 already leaves its buffer
+ * alone on non-continuation turns; this keeps ACP consistent.
+ */
+export function acpIsAppOwnedWakeTurn(message: {
+  readonly createdBy: string;
+  readonly creationSource: string;
+}): boolean {
+  return message.createdBy === "agent" && message.creationSource === "server";
+}
+
+export function acpCarryoverTerminalShouldClearContinuation(input: {
+  readonly continuationOffered: boolean;
+  readonly wakeBufferLength: number;
+}): boolean {
+  return !input.continuationOffered && input.wakeBufferLength === 0;
+}
+
+export function acpTurnStartShouldPreserveContinuation(input: {
+  readonly continuationRequested: boolean;
+  readonly isContinuationTurn: boolean;
+  readonly wakeBufferLength: number;
+}): boolean {
+  return !input.isContinuationTurn && input.continuationRequested && input.wakeBufferLength > 0;
+}
+
+export function acpPostSettleMonitorPromptShouldSuppress(
+  mutation:
+    | {
+        readonly taskId: string;
+        readonly status: "running" | "completed" | "failed";
+      }
+    | undefined,
+): boolean {
+  return mutation?.status === "running";
+}
+
+export function acpCompletedTurnShouldTerminalizeTool(
+  tool: AcpToolCallState,
+  flavor: Pick<AcpAdapterV2Flavor, "extractBackgroundTaskId" | "extractSubagentUpdate">,
+): boolean {
+  const status = toolStatus(tool.status);
+  if (status !== "pending" && status !== "running") return false;
+  if (flavor.extractBackgroundTaskId?.(tool) !== undefined) return false;
+  return flavor.extractSubagentUpdate?.(tool) === undefined;
+}
+
+interface ActiveAcpSubagent {
+  task: OrchestrationV2Subagent;
+  readonly childThreadId: ThreadId;
+  readonly childRootNodeId: OrchestrationV2ExecutionNode["id"];
+  readonly turnItemId: OrchestrationV2TurnItem["id"];
+  readonly turnItemOrdinal: number;
+  /** Turn that spawned the subagent; carryover updates keep this lineage. */
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly parentProviderThreadId: ProviderThreadId;
+  childSessionId: string | null;
+  assistantText: string;
+  readonly assistantMessages: Map<string, string>;
+  nextChildOrdinal: number;
+  /**
+   * Whether a terminal carryover status has been projected to events.
+   * Completed roots project post-settle terminals immediately while their
+   * subscriber remains observable. Non-completed roots retain terminals in
+   * memory until the next attach. A later project:true path for the same entry
+   * must still project once; this flag prevents double emission and pins
+   * hasPendingBackgroundWork until projection lands.
+   */
+  terminalStatusProjected: boolean;
+}
+
+function acpSubagentStatusIsTerminal(status: OrchestrationV2Subagent["status"]): boolean {
+  return (
+    status === "completed" ||
+    status === "failed" ||
+    status === "interrupted" ||
+    status === "cancelled" ||
+    status === "idle"
+  );
+}
+
+export function acpSubagentStatusBlocksTurnSettlement(
+  status: OrchestrationV2Subagent["status"],
+): boolean {
+  return status === "running" || status === "pending";
+}
+
+function acpSubagentHasPendingBackgroundWork(subagent: ActiveAcpSubagent): boolean {
+  return (
+    acpSubagentStatusBlocksTurnSettlement(subagent.task.status) || !subagent.terminalStatusProjected
+  );
+}
+
+type AcpCarryoverSubagents = {
+  readonly sessionId: string;
+  readonly rootTerminalStatus: "completed" | "interrupted" | "failed" | "cancelled";
+  readonly subagents: ReadonlyArray<ActiveAcpSubagent>;
+};
+
+type PendingRuntimeRequest = {
+  readonly generation: number;
+  readonly nativeResponseAcknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>;
+  readonly transportRequestId: string;
+  readonly requestId: RuntimeRequestId;
+  readonly runtimeRequest: OrchestrationV2RuntimeRequest;
+  readonly node: OrchestrationV2ExecutionNode;
+  readonly turnItem: OrchestrationV2TurnItem;
+} & (
+  | {
+      readonly type: "approval";
+      readonly decision: Deferred.Deferred<ProviderApprovalDecision>;
+    }
+  | {
+      readonly type: "user_input";
+      readonly answers: Deferred.Deferred<ProviderUserInputAnswers | null>;
+    }
+);
+
+interface SnapshotMessageState {
+  readonly order: Array<string>;
+  readonly messages: Map<string, OrchestrationV2ConversationMessage>;
+  loadingRole: "user" | "assistant" | "thought" | null;
+  loadingMessageId: string | null;
+  loadingIndex: number;
+}
+
+export function makeAcpAdapterV2(options: AcpAdapterV2Options): ProviderAdapterV2Shape {
+  const { flavor, fileSystem, idAllocator, serverConfig } = options;
+  const driver = flavor.driver;
+  const continuationRequests = options.continuationRequests;
+  const postSettleContinuationEnabled =
+    flavor.enablePostSettleContinuation === true && continuationRequests !== undefined;
+
+  return ProviderAdapterV2.of({
+    instanceId: options.instanceId,
+    driver,
+    getCapabilities: () => Effect.succeed(flavor.capabilities),
+    planSelectionTransition: (input) => Effect.succeed(acpSelectionTransition(input)),
+    openSession: Effect.fn("AcpAdapterV2.openSession")(
+      function* (input: ProviderAdapterV2OpenSessionInput) {
+        const sessionScope = yield* Effect.scope;
+        // Persisted ACP threads from before item identity v2 retain their old
+        // deterministic ids. Fresh threads scope native ids by instance so
+        // separately configured agents cannot collide.
+        let itemIdentityVersion: 2 | undefined =
+          input.initialProviderItemIdentityVersion ??
+          (input.initialNativeThreadId === undefined ? 2 : undefined);
+        const providerNativeId = (nativeId: string) =>
+          acpProviderItemNativeId({
+            instanceId: options.instanceId,
+            itemIdentityVersion,
+            nativeId,
+          });
+        const providerNodeId = (nativeItemId: string) =>
+          idAllocator.derive.nodeFromProviderItem({
+            driver,
+            nativeItemId: providerNativeId(nativeItemId),
+          });
+        const providerMessageId = (nativeItemId: string) =>
+          idAllocator.derive.messageFromProviderItem({
+            driver,
+            nativeItemId: providerNativeId(nativeItemId),
+          });
+        const providerTurnItemId = (nativeItemId: string) =>
+          idAllocator.derive.turnItemFromProviderItem({
+            driver,
+            nativeItemId: providerNativeId(nativeItemId),
+          });
+        const deriveProviderTurnId = (nativeTurnId: string) =>
+          idAllocator.derive.providerTurn({
+            driver,
+            nativeTurnId: providerNativeId(nativeTurnId),
+          });
+        const useProviderThreadIdentity = (thread: OrchestrationV2ProviderThread): void => {
+          itemIdentityVersion = thread.nativeMetadata?.itemIdentityVersion;
+        };
+        const terminalEnvironmentBySessionId = new Map<string, NodeJS.ProcessEnv>();
+        interface PendingTerminalEnvironment {
+          readonly environment: NodeJS.ProcessEnv | undefined;
+          readonly claimUnknownSession: boolean;
+          readonly sessionId: string | null;
+        }
+        let pendingTerminalEnvironment: PendingTerminalEnvironment | null = {
+          environment: acpMcpContext(input.threadId).processEnvironment,
+          claimUnknownSession: input.initialNativeThreadId === undefined,
+          sessionId: input.initialNativeThreadId ?? null,
+        };
+        const prepareTerminalEnvironment = (
+          threadId: ThreadId | null,
+          sessionId?: string,
+        ): void => {
+          pendingTerminalEnvironment = {
+            environment: acpMcpContext(threadId).processEnvironment,
+            claimUnknownSession: false,
+            sessionId: sessionId ?? null,
+          };
+        };
+        const prepareClaimableTerminalEnvironment = (threadId: ThreadId | null): void => {
+          pendingTerminalEnvironment = {
+            environment: acpMcpContext(threadId).processEnvironment,
+            claimUnknownSession: true,
+            sessionId: null,
+          };
+        };
+        const rememberTerminalEnvironment = (
+          sessionId: string,
+          threadId: ThreadId | null,
+        ): void => {
+          const environment = acpMcpContext(threadId).processEnvironment;
+          pendingTerminalEnvironment = null;
+          if (environment === undefined) {
+            terminalEnvironmentBySessionId.delete(sessionId);
+          } else {
+            terminalEnvironmentBySessionId.set(sessionId, environment);
+          }
+        };
+        const clientTerminals: AcpClientTerminals | undefined =
+          options.clientTerminals === undefined
+            ? undefined
+            : yield* makeAcpClientTerminals({
+                spawner: options.clientTerminals.childProcessSpawner,
+                defaultCwd: input.runtimePolicy.cwd ?? process.cwd(),
+                environment: options.clientTerminals.environment,
+                shellCommands: options.clientTerminals.shellCommands,
+                environmentForSession: (sessionId) => {
+                  const remembered = terminalEnvironmentBySessionId.get(sessionId);
+                  if (remembered !== undefined) return remembered;
+                  if (pendingTerminalEnvironment === null) return undefined;
+                  if (
+                    pendingTerminalEnvironment.sessionId === null &&
+                    pendingTerminalEnvironment.claimUnknownSession
+                  ) {
+                    pendingTerminalEnvironment = {
+                      ...pendingTerminalEnvironment,
+                      sessionId,
+                    };
+                  }
+                  return pendingTerminalEnvironment.sessionId === sessionId
+                    ? pendingTerminalEnvironment.environment
+                    : undefined;
+                },
+              });
+        if (clientTerminals !== undefined) {
+          yield* Scope.addFinalizer(sessionScope, clientTerminals.disposeAll);
+        }
+        // Terminal ids embedded in raw tool_call updates, remembered before the
+        // content rewrite so emitTool can recover MCP-fallback command lines.
+        const sessionScopedId = (sessionId: string, nativeId: string): string =>
+          JSON.stringify([sessionId, nativeId]);
+        const embeddedTerminalsByToolCallId = new Map<
+          string,
+          {
+            readonly sessionId: string;
+            readonly terminalIds: ReadonlyArray<string>;
+            readonly toolCallId: string;
+          }
+        >();
+        const toolCallIdsByAgentTerminalId = new Map<string, Set<string>>();
+        const agentTerminalsById = new Map<string, AcpAgentTerminalState>();
+        const rememberEmbeddedTerminals = (input: {
+          readonly sessionId: string;
+          readonly toolCallId: string;
+          readonly terminalIds: ReadonlyArray<string>;
+        }): void => {
+          const toolCallKey = sessionScopedId(input.sessionId, input.toolCallId);
+          for (const terminalId of embeddedTerminalsByToolCallId.get(toolCallKey)?.terminalIds ??
+            []) {
+            const terminalKey = sessionScopedId(input.sessionId, terminalId);
+            const toolCallIds = toolCallIdsByAgentTerminalId.get(terminalKey);
+            toolCallIds?.delete(input.toolCallId);
+            if (toolCallIds?.size === 0) toolCallIdsByAgentTerminalId.delete(terminalKey);
+          }
+          embeddedTerminalsByToolCallId.delete(toolCallKey);
+          embeddedTerminalsByToolCallId.set(toolCallKey, {
+            sessionId: input.sessionId,
+            terminalIds: input.terminalIds,
+            toolCallId: input.toolCallId,
+          });
+          for (const terminalId of input.terminalIds) {
+            const terminalKey = sessionScopedId(input.sessionId, terminalId);
+            const toolCallIds = toolCallIdsByAgentTerminalId.get(terminalKey) ?? new Set<string>();
+            toolCallIds.add(input.toolCallId);
+            toolCallIdsByAgentTerminalId.set(terminalKey, toolCallIds);
+          }
+          for (const oldest of embeddedTerminalsByToolCallId.keys()) {
+            if (embeddedTerminalsByToolCallId.size <= 256) break;
+            const remembered = embeddedTerminalsByToolCallId.get(oldest);
+            if (remembered === undefined) continue;
+            for (const terminalId of remembered.terminalIds) {
+              const terminalKey = sessionScopedId(remembered.sessionId, terminalId);
+              const toolCallIds = toolCallIdsByAgentTerminalId.get(terminalKey);
+              toolCallIds?.delete(remembered.toolCallId);
+              if (toolCallIds?.size === 0) toolCallIdsByAgentTerminalId.delete(terminalKey);
+            }
+            embeddedTerminalsByToolCallId.delete(oldest);
+          }
+        };
+        // Client fs/terminal requests run with the T3 server's privileges, so
+        // they are policy-checked against the active turn policy; approvals the
+        // user already granted satisfy an "ask" disposition.
+        const clientPolicyGrants = makeAcpClientPolicyGrants();
+        let latestRuntimePolicy: ProviderAdapterV2RuntimePolicy = input.runtimePolicy;
+        const events = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const activeTurn = yield* Ref.make<ActiveAcpTurn | null>(null);
+        const activeSessionId = yield* Ref.make<string | null>(null);
+        const contextUsageBySessionId = yield* Ref.make(
+          new Map<string, ThreadTokenUsageSnapshot>(),
+        );
+        const nativeMetadataBySessionId = yield* Ref.make(
+          new Map<string, OrchestrationV2ProviderThreadNativeMetadata>(),
+        );
+        const providerThreadByNativeSessionId = yield* Ref.make(
+          new Map<string, OrchestrationV2ProviderThread>(),
+        );
+        // T3 only owns the temporary Plan override. Remember the agent's
+        // effective native configuration on entry and restore it on Build.
+        const nativeBuildConfigurationBySessionId = new Map<string, AcpNativeBuildConfiguration>();
+        const initialSessionActivationFailure = yield* Ref.make<{
+          readonly sessionId: string;
+          readonly error: EffectAcpErrors.AcpError;
+        } | null>(null);
+        const activeSessionSetup = yield* Ref.make<AcpSessionRuntimeStartResult | null>(null);
+        const activeSelection = yield* Ref.make<ModelSelection | null>(null);
+        const activeInteractionMode = yield* Ref.make<ProviderInteractionMode | null>(null);
+        const promptInstructionStates = yield* Ref.make(new Map<string, T3AcpInstructionState>());
+        const runtimeRestartRequired = yield* Ref.make(false);
+        const runtimeTeardownState = yield* Ref.make<AcpRuntimeTeardownState>({ _tag: "Idle" });
+        const runtimeCallbackGeneration = yield* Ref.make(0);
+        const runtimeCallbackGenerationCounter = yield* Ref.make(0);
+        const allocateRuntimeCallbackGeneration = Ref.updateAndGet(
+          runtimeCallbackGenerationCounter,
+          (generation) => generation + 1,
+        );
+        const advanceRuntimeCallbackGeneration = allocateRuntimeCallbackGeneration.pipe(
+          Effect.tap((generation) => Ref.set(runtimeCallbackGeneration, generation)),
+        );
+        const runtimeCallbackPermit = yield* Semaphore.make(1);
+        const runtimeTransitionPermit = yield* Semaphore.make(1);
+        const nativeResponseAcknowledgements = yield* Ref.make(
+          new Map<
+            string,
+            {
+              readonly acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>;
+              readonly generation: number;
+            }
+          >(),
+        );
+        const pendingRuntimeRequests = yield* Ref.make(new Map<string, PendingRuntimeRequest>());
+        const emitNativeResponseLifecycle =
+          options.testHooks?.onNativeResponseLifecycle ?? (() => Effect.void);
+        const nextElicitationOrdinal = yield* Ref.make(0);
+        const itemOrdinals = yield* Ref.make(new Map<string, number>());
+        const nextItemOrdinalsByTurn = yield* Ref.make(new Map<string, number>());
+        const providerTurns = yield* Ref.make(new Map<string, OrchestrationV2ProviderTurn>());
+        const snapshot = yield* Ref.make<SnapshotMessageState>({
+          order: [],
+          messages: new Map(),
+          loadingRole: null,
+          loadingMessageId: null,
+          loadingIndex: 0,
+        });
+
+        const awaitRuntimeTeardown = Effect.fnUntraced(function* () {
+          const state = yield* Ref.get(runtimeTeardownState);
+          if (state._tag === "InProgress") {
+            yield* Deferred.await(state.completed);
+          } else if (state._tag === "Failed") {
+            return yield* state.error;
+          }
+        });
+        const runRuntimeCallbackAtGeneration = <A, E, R>(
+          generation: number,
+          effect: Effect.Effect<A, E, R>,
+        ) =>
+          runtimeCallbackPermit.withPermit(
+            Effect.gen(function* () {
+              if ((yield* Ref.get(runtimeTeardownState))._tag !== "Idle") {
+                return Option.none<A>();
+              }
+              if ((yield* Ref.get(runtimeCallbackGeneration)) !== generation) {
+                return Option.none<A>();
+              }
+              return Option.some(yield* effect);
+            }),
+          );
+        const registerNativeResponseAcknowledgement = (
+          generation: number,
+          transportRequestId: string,
+          acknowledgement: Deferred.Deferred<void, EffectAcpErrors.AcpError>,
+        ) =>
+          Effect.gen(function* () {
+            yield* Ref.update(nativeResponseAcknowledgements, (current) => {
+              const updated = new Map(current);
+              updated.set(transportRequestId, { acknowledgement, generation });
+              return updated;
+            });
+            yield* emitNativeResponseLifecycle({
+              type: "registered",
+              generation,
+              requestId: transportRequestId,
+            });
+            if (!(yield* Deferred.isDone(acknowledgement))) return;
+            yield* Ref.update(nativeResponseAcknowledgements, (current) => {
+              if (current.get(transportRequestId)?.acknowledgement !== acknowledgement) {
+                return current;
+              }
+              const updated = new Map(current);
+              updated.delete(transportRequestId);
+              return updated;
+            });
+          });
+        const acknowledgeNativeResponse = (generation: number, transportRequestId: string) =>
+          (
+            options.testHooks?.beforeNativeResponseAdmissionCheck?.(
+              generation,
+              transportRequestId,
+            ) ?? Effect.void
+          ).pipe(
+            Effect.andThen(runRuntimeCallbackAtGeneration(generation, Effect.void)),
+            Effect.flatMap((registered) =>
+              Option.isSome(registered)
+                ? Effect.void
+                : emitNativeResponseLifecycle({
+                    type: "admission_rejected",
+                    generation,
+                    requestId: transportRequestId,
+                  }).pipe(
+                    Effect.andThen(
+                      new EffectAcpErrors.AcpTransportError({
+                        detail: "The ACP runtime closed before its response could be admitted",
+                        cause: "Native response registration rejected during teardown",
+                      }),
+                    ),
+                  ),
+            ),
+          );
+        const awaitNativeResponseAcknowledgements = Effect.fnUntraced(function* (
+          acknowledgements: ReadonlyArray<
+            readonly [string | undefined, Deferred.Deferred<void, EffectAcpErrors.AcpError>]
+          >,
+        ) {
+          if (acknowledgements.length === 0) return true;
+          const completed = yield* Deferred.make<"settled" | "timeout">();
+          yield* emitNativeResponseLifecycle({ type: "watcher_started" });
+          const acknowledgementFiber = yield* Effect.forEach(
+            acknowledgements,
+            ([, acknowledgement]) => Deferred.await(acknowledgement).pipe(Effect.exit),
+            { concurrency: "unbounded", discard: true },
+          ).pipe(
+            Effect.andThen(Deferred.succeed(completed, "settled")),
+            Effect.interruptible,
+            Effect.ensuring(emitNativeResponseLifecycle({ type: "watcher_exited" })),
+            Effect.forkDetach,
+          );
+          yield* emitNativeResponseLifecycle({ type: "timer_started" });
+          const timerFiber = yield* Effect.sleep("2 seconds").pipe(
+            Effect.andThen(Deferred.succeed(completed, "timeout")),
+            Effect.interruptible,
+            Effect.ensuring(emitNativeResponseLifecycle({ type: "timer_exited" })),
+            Effect.forkDetach,
+          );
+          const outcome = yield* Deferred.await(completed);
+          yield* Fiber.interrupt(acknowledgementFiber);
+          yield* Fiber.interrupt(timerFiber);
+          if (outcome === "settled") return true;
+
+          yield* Ref.update(nativeResponseAcknowledgements, (current) => {
+            const updated = new Map(current);
+            for (const [requestId, acknowledgement] of acknowledgements) {
+              if (
+                requestId !== undefined &&
+                updated.get(requestId)?.acknowledgement === acknowledgement
+              ) {
+                updated.delete(requestId);
+              }
+            }
+            return updated;
+          });
+          yield* Effect.forEach(
+            acknowledgements,
+            ([requestId]) =>
+              emitNativeResponseLifecycle({
+                type: "removed",
+                ...(requestId === undefined ? {} : { requestId }),
+              }),
+            { concurrency: "unbounded", discard: true },
+          );
+          const timeoutError = new EffectAcpErrors.AcpTransportError({
+            detail: "Timed out waiting for an admitted ACP response to reach the transport queue",
+            cause: "Native response acknowledgement timed out",
+          });
+          yield* Effect.forEach(
+            acknowledgements,
+            ([requestId, acknowledgement]) =>
+              Deferred.fail(acknowledgement, timeoutError).pipe(
+                Effect.andThen(
+                  emitNativeResponseLifecycle({
+                    type: "failed",
+                    ...(requestId === undefined ? {} : { requestId }),
+                  }),
+                ),
+              ),
+            { concurrency: "unbounded", discard: true },
+          );
+          return false;
+        });
+        const awaitAdmittedNativeResponses = Ref.get(nativeResponseAcknowledgements).pipe(
+          Effect.flatMap((current) =>
+            awaitNativeResponseAcknowledgements(
+              [...current.entries()].map(
+                ([requestId, entry]) => [requestId, entry.acknowledgement] as const,
+              ),
+            ),
+          ),
+        );
+        const quarantineNativeTransportAtGeneration = Effect.fnUntraced(function* (
+          generation: number,
+        ) {
+          const quarantined = yield* Ref.modify(nativeResponseAcknowledgements, (current) => {
+            const updated = new Map(current);
+            const acknowledgements: Array<Deferred.Deferred<void, EffectAcpErrors.AcpError>> = [];
+            for (const [requestId, entry] of updated) {
+              if (entry.generation !== generation) continue;
+              updated.delete(requestId);
+              acknowledgements.push(entry.acknowledgement);
+            }
+            return [acknowledgements, updated] as const;
+          });
+          const error = new EffectAcpErrors.AcpTransportError({
+            detail: "The ACP runtime was replaced before its response reached the transport queue",
+            cause: "ACP runtime transport was quarantined during teardown",
+          });
+          yield* Effect.forEach(
+            quarantined,
+            (acknowledgement) => Deferred.fail(acknowledgement, error),
+            { concurrency: "unbounded", discard: true },
+          );
+        });
+        const closeNativeTransport = runtimeCallbackPermit.withPermit(
+          Effect.gen(function* () {
+            yield* advanceRuntimeCallbackGeneration;
+            const acknowledgements = yield* Ref.getAndSet(
+              nativeResponseAcknowledgements,
+              new Map(),
+            );
+            const error = new EffectAcpErrors.AcpTransportError({
+              detail: "The ACP session closed before its admitted response reached the transport",
+              cause: "ACP session transport closed",
+            });
+            yield* Effect.forEach(
+              acknowledgements,
+              ([requestId, entry]) =>
+                Deferred.fail(entry.acknowledgement, error).pipe(
+                  Effect.andThen(
+                    emitNativeResponseLifecycle({
+                      type: "removed",
+                      generation: entry.generation,
+                      requestId,
+                    }),
+                  ),
+                  Effect.andThen(
+                    emitNativeResponseLifecycle({
+                      type: "failed",
+                      generation: entry.generation,
+                      requestId,
+                    }),
+                  ),
+                ),
+              { concurrency: "unbounded", discard: true },
+            );
+            return acknowledgements.size > 0;
+          }),
+        );
+        // Post-settle wake support (Grok async subagent/monitor follow-up). After
+        // the root turn finalizes, later root session/update traffic buffers here
+        // until a provider continuation run attaches and drains it.
+        const lastTurnRoute = yield* Ref.make<{
+          readonly threadId: ThreadId;
+          readonly providerThreadId: ProviderThreadId;
+        } | null>(null);
+        const wakeBuffer = yield* Ref.make<Array<EffectAcpSchema.SessionNotification>>([]);
+        const continuationRequested = yield* Ref.make(false);
+        const continuationGeneration = yield* Ref.make(0);
+        const continuationPermit = yield* Semaphore.make(1);
+        const continuationClosed = yield* Ref.make(false);
+        // Direct Stop (requestRuntimeRestart) quarantines residual events from the
+        // stopped run so they cannot wake or attach to a later prompt/run.
+        const stoppedRunQuarantine = yield* Ref.make(false);
+        // A steering restart (or any interrupt) can finalize a turn while its
+        // spawned subagents are still running natively. Carry the live
+        // lineages into the next turn on the same session so their terminal
+        // signals can still flip the original turn items instead of leaving
+        // them running forever.
+        const carryoverSubagents = yield* Ref.make<AcpCarryoverSubagents | null>(null);
+        const handledBackgroundTaskIdsInActiveTurn = yield* Ref.make<ReadonlySet<string>>(
+          new Set(),
+        );
+        // Background tasks that reached a genuine terminal mutation while a root
+        // turn was still streaming and were not yet marked handled in-turn. The
+        // mid-turn offer is suppressed (active turn owns the work); on finalize
+        // these ids re-arm a single continuation when the agent never hydrated
+        // or reported them before settle (regression: mid-turn complete + no
+        // get_command must still wake after finalize).
+        const midTurnUnreportedCompletedTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // A monitor-event can arrive after its task and the user-facing provider
+        // turn already completed. Grok starts another internal prompt for that
+        // stale notification; suppress its agent output until a genuine terminal
+        // mutation or the next app turn so it cannot create a redundant app
+        // continuation. Tool frames continue through normal hydration.
+        const suppressPostSettleMonitorPrompt = yield* Ref.make(false);
+        // Background tasks (Grok monitors) known to still run at session level.
+        // Turn contexts are too short-lived to carry this: a continuation run
+        // finalizes between monitor events, and the next commentary burst must
+        // not reopen a run while the monitor is still streaming.
+        const runningBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        // Task ids with a GENUINE end signal (monitor-ended reminder or
+        // TaskOutput completion). Normalized tool statuses are not genuine:
+        // Grok Bash re-reports carry exit_code 0 mid-stream. A straggler
+        // monitor-event can land after the real end (the CLI keeps streaming
+        // while the agent already consumed the output via
+        // get_command_or_subagent_output); without the tombstone it would
+        // resurrect the running set and pin offers/idle-release forever.
+        // A tool-level failed get_command tombstones too: failing open to a
+        // single continuation beats failing closed to a dead thread.
+        const endedBackgroundTaskIds = yield* Ref.make<ReadonlySet<string>>(new Set());
+        const endedBackgroundTaskIdLimit = 128;
+
+        const setBackgroundTaskRunning = (taskId: string, running: boolean) =>
+          Effect.gen(function* () {
+            if (running && (yield* Ref.get(endedBackgroundTaskIds)).has(taskId)) {
+              return;
+            }
+            yield* Ref.update(runningBackgroundTaskIds, (current) => {
+              if (current.has(taskId) === running) return current;
+              const next = new Set(current);
+              if (running) {
+                next.add(taskId);
+              } else {
+                next.delete(taskId);
+              }
+              return next;
+            });
+          });
+
+        const markBackgroundTaskEnded = (taskId: string) =>
+          Ref.update(endedBackgroundTaskIds, (current) => {
+            if (current.has(taskId)) return current;
+            const next = new Set(current).add(taskId);
+            for (const oldest of next) {
+              if (next.size <= endedBackgroundTaskIdLimit) break;
+              next.delete(oldest);
+            }
+            return next;
+          }).pipe(Effect.andThen(setBackgroundTaskRunning(taskId, false)));
+
+        const applyBackgroundTaskMutationRunning = (mutation: {
+          readonly taskId: string;
+          readonly status: "running" | "completed" | "failed";
+        }) =>
+          mutation.status === "running"
+            ? setBackgroundTaskRunning(mutation.taskId, true)
+            : markBackgroundTaskEnded(mutation.taskId);
+
+        const trackRunningBackgroundTools = (
+          notification: EffectAcpSchema.SessionNotification,
+        ): Effect.Effect<void> =>
+          Effect.gen(function* () {
+            if (flavor.extractBackgroundTaskId === undefined) return;
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const taskId = flavor.extractBackgroundTaskId(toolCall);
+              if (taskId === undefined) continue;
+              const status = toolStatus(toolCall.status);
+              yield* setBackgroundTaskRunning(taskId, status === "pending" || status === "running");
+            }
+          });
+
+        const emitProviderEvent = (event: ProviderAdapterV2Event) =>
+          Queue.offer(events, event).pipe(Effect.asVoid);
+        let scheduleDeferredFinalize: (context: ActiveAcpTurn) => Effect.Effect<void> = () =>
+          Effect.void;
+
+        const nativeLogging = options.nativeLogging?.(input.threadId);
+        const handleRuntimeTerminationAtGeneration = (runtimeGeneration: number) =>
+          runRuntimeCallbackAtGeneration(
+            runtimeGeneration,
+            Ref.set(runtimeRestartRequired, true),
+          ).pipe(Effect.asVoid);
+        const makeRuntimeInput = (
+          runtimeGeneration: number,
+          threadId: ThreadId | null,
+          resumeSessionId?: string,
+          onTermination: AcpAdapterV2RuntimeInput["onTermination"] = () =>
+            handleRuntimeTerminationAtGeneration(runtimeGeneration),
+        ): AcpAdapterV2RuntimeInput => {
+          const mcpContext = acpMcpContext(threadId);
+          return {
+            cwd: input.runtimePolicy.cwd ?? process.cwd(),
+            mcpServers: mcpContext.servers,
+            acpMcpServers: mcpContext.acpServers,
+            ...(mcpContext.processEnvironment === undefined
+              ? {}
+              : { processEnvironment: mcpContext.processEnvironment }),
+            ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
+            interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
+            clientCapabilities: {
+              fs: { readTextFile: true, writeTextFile: true },
+              terminal: clientTerminals !== undefined,
+              elicitation: { form: {} },
+              ...(flavor.clientCapabilitiesMeta ? { _meta: flavor.clientCapabilitiesMeta } : {}),
+            },
+            clientInfo: { name: "t3-code", version: "0.0.0" },
+            onTermination,
+            onOutgoingResponseFailure: (requestId, error) =>
+              Ref.modify(nativeResponseAcknowledgements, (current) => {
+                const entry = current.get(requestId);
+                if (entry === undefined || entry.generation !== runtimeGeneration) {
+                  return [
+                    emitNativeResponseLifecycle({
+                      type: "late_noop",
+                      generation: runtimeGeneration,
+                      requestId,
+                    }),
+                    current,
+                  ] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(requestId);
+                return [
+                  Deferred.fail(entry.acknowledgement, error).pipe(
+                    Effect.andThen(
+                      emitNativeResponseLifecycle({
+                        type: "removed",
+                        generation: runtimeGeneration,
+                        requestId,
+                      }),
+                    ),
+                    Effect.asVoid,
+                  ),
+                  updated,
+                ] as const;
+              }).pipe(Effect.flatten),
+            onOutgoingResponse: (requestId) =>
+              Ref.modify(nativeResponseAcknowledgements, (current) => {
+                const entry = current.get(requestId);
+                if (entry === undefined || entry.generation !== runtimeGeneration) {
+                  return [
+                    emitNativeResponseLifecycle({
+                      type: "late_noop",
+                      generation: runtimeGeneration,
+                      requestId,
+                    }),
+                    current,
+                  ] as const;
+                }
+                const updated = new Map(current);
+                updated.delete(requestId);
+                return [
+                  Deferred.succeed(entry.acknowledgement, undefined).pipe(
+                    Effect.andThen(
+                      emitNativeResponseLifecycle({
+                        type: "removed",
+                        generation: runtimeGeneration,
+                        requestId,
+                      }),
+                    ),
+                    Effect.asVoid,
+                  ),
+                  updated,
+                ] as const;
+              }).pipe(Effect.flatten),
+            ...(nativeLogging?.requestLogger === undefined
+              ? {}
+              : { requestLogger: nativeLogging.requestLogger }),
+            protocolLogging: nativeLogging?.protocolLogging ?? {
+              logIncoming: true,
+              logOutgoing: true,
+              logger: () => Effect.void,
+            },
+          };
+        };
+        let runtimeScope: Scope.Closeable | undefined;
+        let runtime!: AcpSessionRuntime.AcpSessionRuntime["Service"];
+        let runtimeMcpBridge: AcpMcpOverAcpBridge | undefined;
+        yield* Effect.addFinalizer(() =>
+          runtimeScope === undefined
+            ? Effect.void
+            : Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore),
+        );
+
+        const resolveItemOrdinal = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          nativeItemId: string,
+        ) {
+          const existing = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+          if (existing !== undefined) return existing;
+          const nextWithinTurn = yield* Ref.modify(nextItemOrdinalsByTurn, (current) => {
+            const next = (current.get(context.nativeTurnId) ?? 0) + 1;
+            const updated = new Map(current);
+            updated.set(context.nativeTurnId, next);
+            return [next, updated] as const;
+          });
+          const ordinal = context.input.providerTurnOrdinal * 100 + nextWithinTurn;
+          yield* Ref.update(itemOrdinals, (current) => {
+            const updated = new Map(current);
+            updated.set(nativeItemId, ordinal);
+            return updated;
+          });
+          return ordinal;
+        });
+
+        const lastCapturedProposedPlan = yield* Ref.make<{
+          readonly nativeTurnId: string;
+          readonly markdown: string;
+          readonly planId: OrchestrationV2PlanArtifact["id"];
+        } | null>(null);
+        /**
+         * Emits a completed proposed-plan artifact for the active turn. Same
+         * plan id per turn so repeated captures (plan.md rewrites, the exit
+         * gate) update one card; identical markdown within a turn is a no-op.
+         */
+        const captureProposedPlan = Effect.fnUntraced(function* (input: {
+          readonly planMarkdown: string;
+        }) {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null) return;
+          const markdown = input.planMarkdown.trim();
+          if (markdown.length === 0) return;
+          const previous = yield* Ref.get(lastCapturedProposedPlan);
+          if (
+            previous !== null &&
+            previous.nativeTurnId === context.nativeTurnId &&
+            previous.markdown === markdown
+          ) {
+            return;
+          }
+          const nativeItemId = `${context.nativeTurnId}:proposed-plan`;
+          const planId =
+            previous !== null && previous.nativeTurnId === context.nativeTurnId
+              ? previous.planId
+              : yield* idAllocator.allocate
+                  .plan({
+                    threadId: context.input.threadId,
+                    runId: context.input.runId,
+                    driver,
+                  })
+                  .pipe(Effect.orDie);
+          yield* Ref.set(lastCapturedProposedPlan, {
+            nativeTurnId: context.nativeTurnId,
+            markdown,
+            planId,
+          });
+          const now = yield* DateTime.now;
+          const nodeId = idAllocator.derive.nodeFromProviderItem({ driver, nativeItemId });
+          const turnItemId = idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId });
+          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
+          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              rootNodeId: context.input.rootNodeId,
+              kind: "plan",
+              status: "completed",
+              countsForRun: false,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt: now,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "plan.updated",
+            driver,
+            plan: {
+              id: planId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              kind: "proposed_plan",
+              status: "completed",
+              markdown,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal,
+              status: "completed",
+              title: null,
+              startedAt: context.startedAt,
+              completedAt: now,
+              updatedAt: now,
+              type: "proposed_plan",
+              planId,
+              markdown,
+              streaming: false,
+            },
+          });
+        });
+        const lastProposedPlanMarkdown = Effect.gen(function* () {
+          const context = yield* Ref.get(activeTurn);
+          const previous = yield* Ref.get(lastCapturedProposedPlan);
+          return context !== null && previous?.nativeTurnId === context.nativeTurnId
+            ? previous.markdown
+            : undefined;
+        });
+
+        const rememberSnapshotMessage = (message: OrchestrationV2ConversationMessage) =>
+          Ref.update(snapshot, (current) => {
+            const key = String(message.id);
+            const exists = current.messages.has(key);
+            const messages = new Map(current.messages);
+            messages.set(key, message);
+            return {
+              ...current,
+              order: exists ? current.order : [...current.order, key],
+              messages,
+            };
+          });
+
+        const textStreamFor = (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+        ): ActiveTextStream =>
+          kind === "user"
+            ? context.user
+            : kind === "assistant"
+              ? context.assistant
+              : context.reasoning;
+
+        const emitTextSegment = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          completed: boolean,
+        ) {
+          const stream = textStreamFor(context, kind);
+          const segment = stream.current;
+          if (segment === null) return;
+          const now = yield* DateTime.now;
+          const ordinal = yield* resolveItemOrdinal(context, segment.nativeItemId);
+          const nodeId = providerNodeId(segment.nativeItemId);
+          const turnItemId = providerTurnItemId(segment.nativeItemId);
+          const nativeItemRef = {
+            driver,
+            nativeId: segment.nativeItemId,
+            strength: "weak" as const,
+          };
+          if (kind !== "user") {
+            yield* emitProviderEvent({
+              type: "node.updated",
+              driver,
+              node: {
+                id: nodeId,
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                parentNodeId: context.input.rootNodeId,
+                rootNodeId: context.input.rootNodeId,
+                kind: kind === "assistant" ? "assistant_message" : "reasoning",
+                status: completed ? "completed" : "running",
+                countsForRun: false,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: segment.startedAt,
+                completedAt: completed ? now : null,
+              },
+            });
+          }
+          if (kind !== "reasoning") {
+            const messageId = providerMessageId(segment.nativeItemId);
+            const messageNodeId = kind === "user" ? context.input.rootNodeId : nodeId;
+            const message: OrchestrationV2ConversationMessage = {
+              createdBy: kind === "user" ? "user" : "agent",
+              creationSource: "provider",
+              id: messageId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId: messageNodeId,
+              role: kind,
+              text: segment.text,
+              attachments: [],
+              streaming: !completed,
+              createdAt: segment.startedAt,
+              updatedAt: now,
+            };
+            yield* emitProviderEvent({ type: "message.updated", driver, message });
+            yield* emitProviderEvent(
+              kind === "user"
+                ? {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      createdBy: "user",
+                      creationSource: "provider",
+                      id: turnItemId,
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      nodeId: messageNodeId,
+                      providerThreadId: context.input.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      nativeItemRef,
+                      parentItemId: null,
+                      ordinal,
+                      status: completed ? "completed" : "running",
+                      title: null,
+                      startedAt: segment.startedAt,
+                      completedAt: completed ? now : null,
+                      updatedAt: now,
+                      type: "user_message",
+                      messageId,
+                      inputIntent: "turn_start",
+                      text: segment.text,
+                      attachments: [],
+                    },
+                  }
+                : {
+                    type: "turn_item.updated",
+                    driver,
+                    turnItem: {
+                      id: turnItemId,
+                      threadId: context.input.threadId,
+                      runId: context.input.runId,
+                      nodeId,
+                      providerThreadId: context.input.providerThread.id,
+                      providerTurnId: context.providerTurnId,
+                      nativeItemRef,
+                      parentItemId: null,
+                      ordinal,
+                      status: completed ? "completed" : "running",
+                      title: null,
+                      startedAt: segment.startedAt,
+                      completedAt: completed ? now : null,
+                      updatedAt: now,
+                      type: "assistant_message",
+                      messageId,
+                      text: segment.text,
+                      streaming: !completed,
+                    },
+                  },
+            );
+            if (completed) yield* rememberSnapshotMessage(message);
+            return;
+          }
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal,
+              status: completed ? "completed" : "running",
+              title: null,
+              startedAt: segment.startedAt,
+              completedAt: completed ? now : null,
+              updatedAt: now,
+              type: "reasoning",
+              text: segment.text,
+              streaming: !completed,
+            },
+          });
+        });
+
+        const closeTextStream = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+        ) {
+          const stream = textStreamFor(context, kind);
+          if (stream.current === null) return;
+          yield* emitTextSegment(context, kind, true);
+          stream.current = null;
+        });
+
+        const closeTextStreams = Effect.fnUntraced(function* (context: ActiveAcpTurn) {
+          yield* closeTextStream(context, "user");
+          yield* closeTextStream(context, "reasoning");
+          yield* closeTextStream(context, "assistant");
+        });
+
+        const appendText = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          text: string,
+          messageId?: string | null,
+        ) {
+          if (text.length === 0) return;
+          for (const other of ["user", "reasoning", "assistant"] as const) {
+            if (other !== kind) yield* closeTextStream(context, other);
+          }
+          const stream = textStreamFor(context, kind);
+          const sourceMessageId = messageId?.trim() || null;
+          if (
+            stream.current !== null &&
+            sourceMessageId !== null &&
+            stream.current.sourceMessageId !== null &&
+            stream.current.sourceMessageId !== sourceMessageId
+          ) {
+            yield* closeTextStream(context, kind);
+          }
+          if (stream.current === null) {
+            const now = yield* DateTime.now;
+            stream.current = {
+              nativeItemId:
+                sourceMessageId === null
+                  ? `${context.nativeTurnId}:${kind}:${stream.nextSegment}`
+                  : `${context.nativeTurnId}:${kind}:message:${sourceMessageId}`,
+              startedAt: now,
+              sourceMessageId,
+              text: "",
+            };
+            stream.nextSegment += 1;
+          } else if (stream.current.sourceMessageId === null && sourceMessageId !== null) {
+            // Some agents omit messageId on the first chunk. Keep the already
+            // projected identity and use the first later id as its boundary.
+            stream.current.sourceMessageId = sourceMessageId;
+          }
+          stream.current.text += text;
+          yield* emitTextSegment(context, kind, false);
+        });
+
+        const replaceText = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          kind: "user" | "assistant" | "reasoning",
+          text: string,
+          messageId: string,
+        ) {
+          for (const other of ["user", "reasoning", "assistant"] as const) {
+            if (other !== kind) yield* closeTextStream(context, other);
+          }
+          const stream = textStreamFor(context, kind);
+          if (stream.current?.sourceMessageId !== messageId) {
+            yield* closeTextStream(context, kind);
+            const now = yield* DateTime.now;
+            stream.current = {
+              nativeItemId: `${context.nativeTurnId}:${kind}:message:${messageId}`,
+              startedAt: now,
+              sourceMessageId: messageId,
+              text,
+            };
+            stream.nextSegment += 1;
+          } else {
+            stream.current.text = text;
+          }
+          yield* emitTextSegment(context, kind, false);
+        });
+
+        const emitSubagentAssistant = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          text: string,
+          mode: "append" | "replace" = "append",
+          messageId?: string | null,
+        ) {
+          if (text.length === 0 && mode === "append") return;
+          const nativeItemId = `${subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id}:message:${messageId ?? "result"}`;
+          const previous = subagent.assistantMessages.get(nativeItemId) ?? "";
+          const messageText = mode === "replace" ? text : `${previous}${text}`;
+          subagent.assistantMessages.set(nativeItemId, messageText);
+          subagent.assistantText = messageText;
+          const now = yield* DateTime.now;
+          let ordinal = (yield* Ref.get(itemOrdinals)).get(nativeItemId);
+          if (ordinal === undefined) {
+            ordinal = subagent.nextChildOrdinal++;
+            const allocated = ordinal;
+            yield* Ref.update(itemOrdinals, (current) =>
+              new Map(current).set(nativeItemId, allocated),
+            );
+          }
+          const artifacts = makeSubagentConversationArtifacts({
+            messageId: providerMessageId(nativeItemId),
+            turnItemId: providerTurnItemId(nativeItemId),
+            threadId: subagent.childThreadId,
+            rootNodeId: subagent.childRootNodeId,
+            providerThreadId: subagent.task.providerThreadId,
+            providerTurnId: null,
+            nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+            role: "assistant",
+            text: subagent.assistantText,
+            ordinal,
+            now,
+          });
+          yield* emitProviderEvent({ type: "message.updated", driver, message: artifacts.message });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: artifacts.turnItem,
+          });
+        });
+
+        const projectSubagentNotification = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const update = notification.update;
+          if (update.sessionUpdate === "agent_message_chunk") {
+            const text = acpContentBlockDisplayText(update.content);
+            if (text !== undefined) {
+              yield* emitSubagentAssistant(subagent, text, "append", update.messageId);
+            }
+          } else if (update.sessionUpdate === "agent_message") {
+            if (update.content === undefined) return;
+            const text = (update.content ?? [])
+              .flatMap((content) => {
+                const display = acpContentBlockDisplayText(content);
+                return display === undefined ? [] : [display];
+              })
+              .join("\n");
+            yield* emitSubagentAssistant(subagent, text, "replace", update.messageId);
+          }
+        });
+
+        const emitSubagent = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          update: AcpAdapterV2SubagentUpdate,
+        ) {
+          // Hydration tools (get_command_or_subagent_output) use a new toolCallId
+          // but reference the child via subagent_id / task id.
+          const existing =
+            context.subagents.get(update.nativeTaskId) ??
+            (update.childSessionId !== null
+              ? context.subagentsBySessionId.get(update.childSessionId)
+              : undefined);
+          const updateIsTerminal = acpSubagentStatusIsTerminal(update.status);
+          if (
+            existing !== undefined &&
+            acpSubagentStatusIsTerminal(existing.task.status) &&
+            !updateIsTerminal
+          ) {
+            return;
+          }
+          if (
+            existing !== undefined &&
+            existing.task.status === update.status &&
+            updateIsTerminal &&
+            existing.terminalStatusProjected
+          ) {
+            return;
+          }
+          // get_command_or_subagent_output may target monitors/bash tasks. Only
+          // hydrate when we already have a matching subagent lineage. Spawn ACKs
+          // (non-empty prompt) may create a new lineage; empty-prompt hydration
+          // with suppressNormalTool must not invent a phantom subagent.
+          if (existing === undefined) {
+            const isHydrationOnly = update.prompt === "" && update.title === null;
+            if (isHydrationOnly || update.suppressNormalTool === false) {
+              return;
+            }
+          }
+          const now = yield* DateTime.now;
+          const nativeTaskId = existing?.task.nativeTaskRef?.nativeId ?? update.nativeTaskId;
+          const nativeItemRef = {
+            driver,
+            nativeId: nativeTaskId,
+            strength: "strong" as const,
+          };
+          const nodeId = existing?.task.id ?? providerNodeId(nativeTaskId);
+          const childThreadId =
+            existing?.childThreadId ??
+            idAllocator.derive.threadFromProviderThread({
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              nativeThreadId: `${context.nativeThreadId}:task:${nativeTaskId}`,
+            });
+          const childRootNodeId =
+            existing?.childRootNodeId ?? providerNodeId(`${nativeTaskId}:child-root`);
+          const turnItemId = existing?.turnItemId ?? providerTurnItemId(nativeTaskId);
+          const turnItemOrdinal =
+            existing?.turnItemOrdinal ?? (yield* resolveItemOrdinal(context, nativeTaskId));
+          const taskStatus = update.status;
+          const task: OrchestrationV2Subagent = {
+            ...(existing?.task ?? {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              origin: "provider_native" as const,
+              createdBy: "agent" as const,
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              providerThreadId: null,
+              childThreadId,
+              nativeTaskRef: nativeItemRef,
+              prompt: update.prompt,
+              title: update.title,
+              model: update.model,
+              result: null,
+              startedAt: now,
+            }),
+            status: taskStatus,
+            result: update.result ?? existing?.task.result ?? null,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            updatedAt: now,
+          };
+          const subagent: ActiveAcpSubagent = existing ?? {
+            task,
+            childThreadId,
+            childRootNodeId,
+            turnItemId,
+            turnItemOrdinal,
+            providerTurnId: context.providerTurnId,
+            parentProviderThreadId: context.input.providerThread.id,
+            childSessionId: null,
+            assistantText: "",
+            assistantMessages: new Map(),
+            nextChildOrdinal: 101,
+            terminalStatusProjected: false,
+          };
+          subagent.task = task;
+          context.subagents.set(nativeTaskId, subagent);
+
+          if (existing === undefined) {
+            yield* emitProviderEvent({
+              type: "app_thread.created",
+              driver,
+              appThread: makeSubagentChildThread({
+                parentThread: context.input.appThread,
+                childThreadId,
+                parentNodeId: nodeId,
+                activeProviderThreadId: null,
+                providerInstanceId: context.input.modelSelection.instanceId,
+                modelSelection: {
+                  ...context.input.modelSelection,
+                  model: update.model ?? context.input.modelSelection.model,
+                },
+                title: subagentThreadTitle({
+                  parentTitle: context.input.appThread.title,
+                  title: update.title,
+                  prompt: update.prompt,
+                  ordinal: context.subagents.size,
+                }),
+                now,
+                createdBy: "agent",
+                creationSource: "provider",
+              }),
+            });
+            const promptNativeItemId = `${nativeTaskId}:prompt`;
+            const promptArtifacts = makeSubagentConversationArtifacts({
+              messageId: providerMessageId(promptNativeItemId),
+              turnItemId: providerTurnItemId(promptNativeItemId),
+              threadId: childThreadId,
+              rootNodeId: childRootNodeId,
+              providerThreadId: null,
+              providerTurnId: null,
+              nativeItemRef: { driver, nativeId: promptNativeItemId, strength: "weak" },
+              role: "user",
+              text: update.prompt,
+              ordinal: 100,
+              now,
+            });
+            yield* emitProviderEvent({
+              type: "message.updated",
+              driver,
+              message: promptArtifacts.message,
+            });
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver,
+              turnItem: promptArtifacts.turnItem,
+            });
+          }
+
+          const childSessionId = update.childSessionId;
+          if (childSessionId !== null && subagent.childSessionId === null) {
+            subagent.childSessionId = childSessionId;
+            context.subagentsBySessionId.set(childSessionId, subagent);
+            const providerThread = makeProviderThread({
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              idAllocator,
+              appThreadId: childThreadId,
+              providerSessionId: input.providerSessionId,
+              nativeThreadId: childSessionId,
+              ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
+              forkedFrom: {
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+              },
+              now,
+            });
+            subagent.task = { ...subagent.task, providerThreadId: providerThread.id };
+            yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+              new Map(current).set(childSessionId, providerThread),
+            );
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: { ...providerThread, status: "idle" },
+            });
+            const buffered = context.pendingSubagentNotifications.get(childSessionId) ?? [];
+            context.pendingSubagentNotifications.delete(childSessionId);
+            yield* Effect.forEach(
+              buffered,
+              (notification) => projectSubagentNotification(subagent, notification),
+              { concurrency: 1, discard: true },
+            );
+          }
+
+          if (
+            taskStatus !== "running" &&
+            subagent.assistantText.length === 0 &&
+            update.result !== null
+          ) {
+            yield* emitSubagentAssistant(subagent, update.result);
+          }
+          const result = update.result ?? subagent.task.result ?? (subagent.assistantText || null);
+          subagent.task = {
+            ...subagent.task,
+            status: taskStatus,
+            result,
+            completedAt: acpSubagentStatusIsTerminal(taskStatus) ? now : null,
+            updatedAt: now,
+          };
+          const providerThreadId = subagent.task.providerThreadId;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: subagent.task.runId,
+              parentNodeId: subagent.task.parentNodeId,
+              rootNodeId: subagent.task.parentNodeId,
+              kind: "subagent",
+              status: taskStatus,
+              countsForRun: false,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: childRootNodeId,
+              threadId: childThreadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: childRootNodeId,
+              kind: "root_turn",
+              status: taskStatus,
+              countsForRun: false,
+              providerThreadId,
+              providerTurnId: null,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+            },
+          });
+          yield* emitProviderEvent({ type: "subagent.updated", driver, subagent: subagent.task });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: subagent.task.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal: turnItemOrdinal,
+              status: taskStatus,
+              title: subagent.task.title,
+              startedAt: subagent.task.startedAt,
+              completedAt: subagent.task.completedAt,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: subagent.task.id,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: context.input.modelSelection.instanceId,
+              childThreadId,
+              prompt: subagent.task.prompt,
+              result,
+            },
+          });
+          if (acpSubagentStatusIsTerminal(taskStatus)) {
+            subagent.terminalStatusProjected = true;
+          }
+        });
+
+        const toolOutputText = (toolCall: AcpToolCallState): string => {
+          if (typeof toolCall.data.rawOutput === "string") {
+            return toolCall.data.rawOutput;
+          }
+          if (
+            typeof (toolCall.data.rawOutput as { text?: unknown } | undefined)?.text === "string"
+          ) {
+            return String((toolCall.data.rawOutput as { text: string }).text);
+          }
+          return textFromUnknown(toolCall.data.rawOutput) ?? "";
+        };
+
+        const setToolOutputText = (toolCall: AcpToolCallState, text: string): AcpToolCallState => ({
+          ...toolCall,
+          data: {
+            ...toolCall.data,
+            rawOutput: {
+              type: "Text",
+              text,
+            },
+          },
+        });
+
+        const appendToolOutputText = (
+          toolCall: AcpToolCallState,
+          appendOutput: string,
+        ): AcpToolCallState => {
+          if (appendOutput.length === 0) return toolCall;
+          return setToolOutputText(toolCall, `${toolOutputText(toolCall)}${appendOutput}`);
+        };
+
+        const isMonitorEndNoticeText = (text: string): boolean =>
+          /Monitor\s+["']?[0-9a-f-]{8,}/i.test(text) && /ended/i.test(text);
+
+        const hasDeferredBackgroundWork = (context: ActiveAcpTurn): boolean => {
+          if (context.awaitingBackgroundHydration.size > 0) return true;
+          if (context.pendingInjectedReport.size > 0) return true;
+          for (const [taskId, toolCallId] of context.toolCallIdsByBackgroundTaskId) {
+            // Persistent monitors stream after root settle; do not pin finalize.
+            if (context.persistentBackgroundTaskIds.has(taskId)) continue;
+            const tool = context.tools.get(toolCallId);
+            if (tool === undefined) continue;
+            const status = toolStatus(tool.status);
+            if (status === "pending" || status === "running") return true;
+          }
+          for (const subagent of context.subagents.values()) {
+            if (acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) {
+              return true;
+            }
+          }
+          return false;
+        };
+
+        // scheduleDeferredFinalize is declared above openSession body start and
+        // assigned after finalizeTurn so forked finalize Effect typing stays clean.
+        const rearmDeferredFinalize = (context: ActiveAcpTurn) =>
+          Effect.gen(function* () {
+            if (!flavor.deferFinalizeForBackgroundWork) return;
+            if (!context.promptSettled || context.finalized) return;
+            if (hasDeferredBackgroundWork(context)) return;
+            yield* scheduleDeferredFinalize(context);
+          });
+
+        // `let` breaks circular inference from monitor hydration re-entry.
+        let emitTool: (
+          context: ActiveAcpTurn,
+          incoming: AcpToolCallState,
+          projectedStatus?: ProjectedToolStatus,
+        ) => Effect.Effect<void> = () => Effect.void;
+
+        const markAwaitingBackgroundHydration = (context: ActiveAcpTurn, taskId: string) =>
+          Effect.gen(function* () {
+            if (context.awaitingBackgroundHydration.has(taskId)) return;
+            context.awaitingBackgroundHydration.add(taskId);
+            // Safety: do not hold the root turn forever if the agent never hydrates.
+            yield* Effect.gen(function* () {
+              yield* Effect.sleep("60000 millis");
+              if (context.finalized || !context.awaitingBackgroundHydration.has(taskId)) return;
+              context.awaitingBackgroundHydration.delete(taskId);
+              // End notices keep the tool running until hydration; force-complete so
+              // deferred finalize can proceed when get_command never arrives.
+              const toolCallId = context.toolCallIdsByBackgroundTaskId.get(taskId);
+              const tool = toolCallId !== undefined ? context.tools.get(toolCallId) : undefined;
+              if (tool !== undefined) {
+                const status = toolStatus(tool.status);
+                if (status === "pending" || status === "running") {
+                  yield* emitTool(context, { ...tool, status: "completed" });
+                }
+              }
+              yield* rearmDeferredFinalize(context);
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          });
+
+        const markPendingInjectedReport = (context: ActiveAcpTurn, taskId: string) =>
+          Effect.gen(function* () {
+            // Only the settled-and-held window has the race; mid-turn reports
+            // are protected by the prompt RPC still being open.
+            if (!context.promptSettled) return;
+            if (context.pendingInjectedReport.has(taskId)) return;
+            context.pendingInjectedReport.add(taskId);
+            // Safety: the injected turn may end without a report chunk.
+            yield* Effect.gen(function* () {
+              yield* Effect.sleep("25000 millis");
+              if (context.finalized || !context.pendingInjectedReport.has(taskId)) return;
+              context.pendingInjectedReport.delete(taskId);
+              yield* rearmDeferredFinalize(context);
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          });
+
+        const clearMidTurnUnreportedTaskIds = (taskIds: ReadonlyArray<string>) =>
+          Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+            let next: Set<string> | null = null;
+            for (const taskId of taskIds) {
+              if (!current.has(taskId)) continue;
+              if (next === null) next = new Set(current);
+              next.delete(taskId);
+            }
+            return next ?? current;
+          });
+
+        emitTool = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          incoming: AcpToolCallState,
+          projectedStatus?: ProjectedToolStatus,
+        ) {
+          // An identified message can stream concurrently with tool updates.
+          // Keep its identity until the provider starts another message.
+          if (context.assistant.current?.sourceMessageId == null)
+            yield* closeTextStream(context, "assistant");
+          if (context.reasoning.current?.sourceMessageId == null)
+            yield* closeTextStream(context, "reasoning");
+          yield* closeTextStream(context, "user");
+          const previous = context.tools.get(incoming.toolCallId);
+          const merged = mergeToolCallState(previous, incoming);
+          const toolCall = flavor.normalizeToolCall?.(merged) ?? merged;
+          context.tools.set(toolCall.toolCallId, toolCall);
+          const backgroundTaskId = flavor.extractBackgroundTaskId?.(toolCall);
+          if (backgroundTaskId !== undefined) {
+            context.toolCallIdsByBackgroundTaskId.set(backgroundTaskId, toolCall.toolCallId);
+            if (flavor.isPersistentBackgroundTool?.(toolCall) === true) {
+              context.persistentBackgroundTaskIds.add(backgroundTaskId);
+            }
+            const backgroundStatus = projectedStatus ?? toolStatus(toolCall.status);
+            yield* setBackgroundTaskRunning(
+              backgroundTaskId,
+              backgroundStatus === "pending" || backgroundStatus === "running",
+            );
+            // Background tool that reaches a terminal status while the root
+            // prompt is still open (completed, failed, or interrupted) was
+            // consumed in-turn. Mark handled so late CLI re-reports and residual
+            // agent chatter do not open synthetic "Background task completed."
+            // runs. get_command TaskOutput still marks handled below.
+            // Only before promptSettled: after STARTED the deferred-finalize
+            // hold can let a monitor finish while the turn is still active;
+            // marking then would suppress the legitimate post-settle TaskOutput
+            // continuation (live: grok-post-settle-continuation-poll).
+            // Terminal statuses only after normalizeToolCall (start ACKs stay
+            // inProgress/running).
+            //
+            // Tradeoff: a pre-settle false "completed" normalization (Bash-
+            // shaped re-report with exit_code 0, or the hydration safety
+            // force-complete firing pre-settle) would permanently mark the task
+            // handled and suppress its injected report chatter. The deleted
+            // handled-id removal on late monitor-event mutations used to rescue
+            // that case; likelihood is low because mid-turn monitor ends
+            // normally arrive as reminder mutations that force inProgress, and
+            // re-reports are documented post-settle traffic.
+            if (
+              !context.promptSettled &&
+              backgroundStatus !== "pending" &&
+              backgroundStatus !== "running"
+            ) {
+              yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
+                new Set(current).add(backgroundTaskId),
+              );
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+                if (!current.has(backgroundTaskId)) return current;
+                const next = new Set(current);
+                next.delete(backgroundTaskId);
+                return next;
+              });
+            }
+          }
+
+          // get_command TaskOutput for registered monitor(s): hydrate those tools.
+          const backgroundCompletions =
+            projectedStatus === undefined
+              ? (flavor.extractBackgroundTaskCompletion?.(toolCall) ?? [])
+              : [];
+          let hydratedRegisteredMonitor = false;
+          for (const backgroundCompletion of backgroundCompletions) {
+            // Genuine end signal when terminal: tombstone so straggler
+            // monitor-event chatter cannot resurrect the running set after the
+            // task truly ended. A still-running poll keeps the id running.
+            yield* applyBackgroundTaskMutationRunning(backgroundCompletion);
+            if (backgroundCompletion.status !== "running") {
+              yield* Ref.update(handledBackgroundTaskIdsInActiveTurn, (current) =>
+                new Set(current).add(backgroundCompletion.taskId),
+              );
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) => {
+                if (!current.has(backgroundCompletion.taskId)) return current;
+                const next = new Set(current);
+                next.delete(backgroundCompletion.taskId);
+                return next;
+              });
+            }
+            // A still-running fetch must keep the hydration hold (and its
+            // safety timer) alive until output actually lands.
+            if (backgroundCompletion.status !== "running") {
+              context.awaitingBackgroundHydration.delete(backgroundCompletion.taskId);
+            }
+            const targetToolCallId = context.toolCallIdsByBackgroundTaskId.get(
+              backgroundCompletion.taskId,
+            );
+            // Known background-task id (monitor registration) — never open a
+            // phantom subagent for the same get_output poll.
+            if (targetToolCallId !== undefined) {
+              hydratedRegisteredMonitor = true;
+            }
+            const target =
+              targetToolCallId !== undefined ? context.tools.get(targetToolCallId) : undefined;
+            if (target !== undefined && target.toolCallId !== toolCall.toolCallId) {
+              const nextStatus =
+                backgroundCompletion.status === "running"
+                  ? ("inProgress" as const)
+                  : backgroundCompletion.status === "failed"
+                    ? ("failed" as const)
+                    : ("completed" as const);
+              const hydrated =
+                backgroundCompletion.appendOutput.length > 0
+                  ? // TaskOutput is the real stdout; replace end-notice boilerplate
+                    // so the timeline shows the listing, not only "Monitor ended…".
+                    isMonitorEndNoticeText(toolOutputText(target)) ||
+                    toolOutputText(target).trim().length === 0
+                    ? setToolOutputText(
+                        { ...target, status: nextStatus },
+                        backgroundCompletion.appendOutput,
+                      )
+                    : appendToolOutputText(
+                        { ...target, status: nextStatus },
+                        backgroundCompletion.appendOutput,
+                      )
+                  : { ...target, status: nextStatus };
+              yield* emitTool(context, hydrated);
+            }
+          }
+
+          // Monitor TaskOutput shares the get_command tool shape with subagent
+          // hydration; do not spawn a phantom subagent for a registered monitor.
+          const subagentUpdate = hydratedRegisteredMonitor
+            ? undefined
+            : flavor.extractSubagentUpdate?.(toolCall);
+          if (subagentUpdate !== undefined) {
+            yield* emitSubagent(context, subagentUpdate);
+            if (subagentUpdate.suppressNormalTool !== false) {
+              yield* rearmDeferredFinalize(context);
+              return;
+            }
+          }
+          const status = projectedStatus ?? toolStatus(toolCall.status);
+          const now = yield* DateTime.now;
+          const nativeItemId = `${context.nativeThreadId}:tool:${toolCall.toolCallId}`;
+          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
+          const nodeId = providerNodeId(nativeItemId);
+          const turnItemId = providerTurnItemId(nativeItemId);
+          const nativeItemRef = {
+            driver,
+            nativeId: toolCall.toolCallId,
+            strength: "strong" as const,
+          };
+          const startedAt = context.toolStartedAt.get(toolCall.toolCallId) ?? now;
+          context.toolStartedAt.set(toolCall.toolCallId, startedAt);
+          const completedAt = completedAtForStatus(status, now);
+          const title = toolCall.title ?? null;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              rootNodeId: context.input.rootNodeId,
+              kind: "tool_call",
+              status: nodeStatus(status),
+              countsForRun: true,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt,
+              completedAt,
+            },
+          });
+
+          const base = {
+            id: turnItemId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status,
+            title,
+            startedAt,
+            completedAt,
+            updatedAt: now,
+          } as const;
+          const rawInput = toolCall.data.rawInput;
+          const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
+          const changes = structuredFileChanges(toolCall);
+          const path = changes[0]?.path ?? pathFromToolCall(toolCall);
+          const diffText = structuredDiffPatch(toolCall) ?? textFromUnknown(rawOutput);
+          const rawInputRecord = unknownRecord(rawInput);
+          const inputVariant =
+            typeof rawInputRecord?.variant === "string"
+              ? rawInputRecord.variant.trim().toLowerCase()
+              : "";
+          const rawOutputRecord = unknownRecord(rawOutput);
+          const outputCommand =
+            typeof rawOutputRecord?.command === "string" &&
+            rawOutputRecord.command.trim().length > 0
+              ? rawOutputRecord.command.trim()
+              : undefined;
+          const monitorCommand =
+            (typeof rawInputRecord?.command === "string" && rawInputRecord.command.trim().length > 0
+              ? rawInputRecord.command.trim()
+              : undefined) ?? outputCommand;
+          const outputIsBashResult =
+            typeof rawOutputRecord?.type === "string" &&
+            rawOutputRecord.type.trim().toLowerCase() === "bash" &&
+            commandExitCode(rawOutput) !== undefined;
+          // Grok Monitor tools arrive as generic kind + variant; project like shell
+          // so stdout is plain text in the timeline (not JSON {type:Text,text:...}).
+          // Post-settle wake re-reports of a finished monitor carry no rawInput at
+          // all, only a structured Bash result; project those as commands too.
+          const projectAsCommandExecution = inputVariant === "monitor" || outputIsBashResult;
+          // ACP has no typed MCP item, so recover MCP identity from the
+          // agent-specific shape and project the same branded dynamic_tool
+          // item native providers produce (e.g. the T3 orchestration tools).
+          const mcpIdentity = extractMcpToolCallIdentity(toolCall, {
+            embeddedTerminalCommands: (
+              embeddedTerminalsByToolCallId.get(
+                sessionScopedId(context.nativeThreadId, toolCall.toolCallId),
+              )?.terminalIds ?? []
+            ).flatMap((terminalId) => {
+              const command =
+                clientTerminals?.readCommandLine(terminalId) ??
+                agentTerminalsById.get(sessionScopedId(context.nativeThreadId, terminalId))
+                  ?.command;
+              return command === undefined ? [] : [command];
+            }),
+          });
+          let turnItem: OrchestrationV2TurnItem;
+          if (toolCall.toolCallId.startsWith("acp-compaction:")) {
+            const summary = textFromUnknown(rawOutput);
+            turnItem = {
+              ...base,
+              type: "compaction",
+              driver,
+              ...(summary === undefined ? {} : { summary }),
+              ...(context.contextUsage?.usedTokens === undefined
+                ? {}
+                : { beforeTokenCount: context.contextUsage.usedTokens }),
+            };
+            if (status === "completed") {
+              context.contextUsage = null;
+              yield* Ref.update(contextUsageBySessionId, (current) => {
+                const updated = new Map(current);
+                updated.delete(context.nativeThreadId);
+                return updated;
+              });
+            }
+          } else if (mcpIdentity !== undefined) {
+            turnItem = {
+              ...base,
+              // Identity lives in toolName, like native Codex MCP items; the
+              // agent's own title (e.g. "Ran command") would shadow it.
+              title: null,
+              type: "dynamic_tool",
+              toolName: `${mcpIdentity.server}.${mcpIdentity.tool}`,
+              input:
+                mcpIdentity.input ??
+                unknownRecord(rawInputRecord?.arguments) ??
+                rawInputRecord ??
+                {},
+              ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
+            };
+            yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
+            yield* rearmDeferredFinalize(context);
+            return;
+          } else if (changes.length > 0) {
+            turnItem = {
+              ...base,
+              type: "file_change",
+              fileName: changes[0]!.path,
+              changes,
+              ...(diffText === undefined ? {} : { diffStr: diffText }),
+            };
+          } else {
+            switch (toolCall.kind) {
+              case "read":
+              case "search":
+                turnItem = {
+                  ...base,
+                  type: "file_search",
+                  ...(path === undefined ? {} : { pattern: path }),
+                  ...(path === undefined
+                    ? {}
+                    : {
+                        results: [
+                          {
+                            fileName: path,
+                            ...(textFromUnknown(rawOutput) === undefined
+                              ? {}
+                              : { preview: textFromUnknown(rawOutput) }),
+                          },
+                        ],
+                      }),
+                };
+                break;
+              case "execute": {
+                const exitCode = acpProjectedCommandExitCode(status, rawOutput);
+                turnItem = {
+                  ...base,
+                  type: "command_execution",
+                  input: toolCall.command ?? monitorCommand ?? toolCall.title ?? "Command",
+                  ...(textFromUnknown(rawOutput) === undefined
+                    ? {}
+                    : { output: textFromUnknown(rawOutput) }),
+                  ...(exitCode === undefined ? {} : { exitCode }),
+                };
+                break;
+              }
+              case "edit":
+              case "delete":
+              case "move":
+                turnItem = {
+                  ...base,
+                  type: "file_change",
+                  fileName: path ?? toolCall.title ?? "File change",
+                  ...(diffText === undefined ? {} : { diffStr: diffText }),
+                };
+                break;
+              case "fetch":
+                turnItem = {
+                  ...base,
+                  type: "web_search",
+                  ...(path === undefined ? {} : { patterns: [path] }),
+                  ...(path === undefined
+                    ? {}
+                    : {
+                        results: [
+                          {
+                            url: path,
+                            ...(textFromUnknown(rawOutput) === undefined
+                              ? {}
+                              : { snippet: textFromUnknown(rawOutput) }),
+                          },
+                        ],
+                      }),
+                };
+                break;
+              default:
+                if (projectAsCommandExecution) {
+                  const exitCode = acpProjectedCommandExitCode(status, rawOutput);
+                  turnItem = {
+                    ...base,
+                    type: "command_execution",
+                    input:
+                      toolCall.command ??
+                      monitorCommand ??
+                      toolCall.title ??
+                      (inputVariant === "monitor" ? "Monitor" : "Command"),
+                    ...(textFromUnknown(rawOutput) === undefined
+                      ? {}
+                      : { output: textFromUnknown(rawOutput) }),
+                    ...(exitCode === undefined ? {} : { exitCode }),
+                  };
+                } else {
+                  turnItem = {
+                    ...base,
+                    type: "dynamic_tool",
+                    toolName: toolCall.title ?? toolCall.kind ?? null,
+                    input: rawInput ?? {},
+                    ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                  };
+                }
+            }
+          }
+          yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
+          yield* rearmDeferredFinalize(context);
+        });
+
+        const emitPlan = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          update: AcpPlanUpdate,
+        ) {
+          yield* closeTextStreams(context);
+          const existing = context.plans.get(update.nativePlanId);
+          if (update.kind === "removed" && existing === undefined) return;
+          const nativeItemId = `${context.nativeTurnId}:plan:${encodeURIComponent(update.nativePlanId)}`;
+          const ordinal = yield* resolveItemOrdinal(context, nativeItemId);
+          const now = yield* DateTime.now;
+          const nodeId = providerNodeId(nativeItemId);
+          const turnItemId = providerTurnItemId(nativeItemId);
+          const planState = existing ?? {
+            id: yield* idAllocator.allocate.plan({
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              driver,
+            }),
+            startedAt: now,
+            latest: null,
+          };
+          const planId = planState.id;
+          const nativeItemRef = { driver, nativeId: nativeItemId, strength: "weak" as const };
+          const base = {
+            id: planId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+          } as const;
+          let plan: OrchestrationV2PlanArtifact;
+          if (update.kind === "removed") {
+            if (planState.latest === null) return;
+            plan = { ...planState.latest, status: "superseded" };
+          } else if (update.kind === "items") {
+            const steps: ReadonlyArray<OrchestrationV2PlanStep> = update.plan.map(
+              (step, index) => ({
+                id: `acp-step-${index + 1}`,
+                text: nonEmptyText(step.step, `Step ${index + 1}`),
+                status:
+                  step.status === "inProgress"
+                    ? "running"
+                    : step.status === "completed"
+                      ? "completed"
+                      : "pending",
+              }),
+            );
+            const completed =
+              steps.length > 0 && steps.every((step) => step.status === "completed");
+            plan = {
+              ...base,
+              status: completed ? "completed" : "active",
+              kind: "todo_list",
+              steps,
+              ...(update.explanation == null ? {} : { explanation: update.explanation }),
+            };
+          } else {
+            const markdown =
+              update.kind === "markdown"
+                ? update.markdown
+                : update.kind === "file"
+                  ? `Plan file: ${update.uri}`
+                  : `[Unsupported ACP plan content: ${update.contentType}]`;
+            plan = {
+              ...base,
+              status: "active",
+              kind: "proposed_plan",
+              markdown,
+            };
+          }
+          planState.latest = plan;
+          context.plans.set(update.nativePlanId, planState);
+          const completed = plan.status === "completed" || plan.status === "superseded";
+          const nodeKind = plan.kind === "todo_list" ? "todo_list" : "plan";
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: nodeId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              parentNodeId: context.input.rootNodeId,
+              rootNodeId: context.input.rootNodeId,
+              kind: nodeKind,
+              status: completed ? "completed" : "running",
+              countsForRun: false,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: planState.startedAt,
+              completedAt: completed ? now : null,
+            },
+          });
+          yield* emitProviderEvent({ type: "plan.updated", driver, plan });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: turnItemId,
+              threadId: context.input.threadId,
+              runId: context.input.runId,
+              nodeId,
+              providerThreadId: context.input.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal,
+              status: completed ? "completed" : "running",
+              title: null,
+              startedAt: planState.startedAt,
+              completedAt: completed ? now : null,
+              updatedAt: now,
+              ...(plan.kind === "todo_list"
+                ? {
+                    type: "todo_list" as const,
+                    planId,
+                    steps: plan.steps,
+                    ...(plan.explanation === undefined ? {} : { explanation: plan.explanation }),
+                  }
+                : {
+                    type: "proposed_plan" as const,
+                    planId,
+                    markdown: plan.markdown,
+                    streaming: !completed,
+                  }),
+            },
+          });
+        });
+
+        const appendLoadedHistory = (
+          notification: EffectAcpSchema.SessionNotification,
+          role: "user" | "assistant" | "thought",
+          text: string,
+          replace = false,
+        ) =>
+          Effect.gen(function* () {
+            if (text.length === 0 && !replace) return;
+            const now = yield* DateTime.now;
+            yield* Ref.update(snapshot, (current) => {
+              const update = notification.update;
+              const sourceMessageId =
+                (update.sessionUpdate === "user_message_chunk" ||
+                  update.sessionUpdate === "agent_message_chunk" ||
+                  update.sessionUpdate === "agent_thought_chunk" ||
+                  update.sessionUpdate === "user_message" ||
+                  update.sessionUpdate === "agent_message" ||
+                  update.sessionUpdate === "agent_thought") &&
+                update.messageId
+                  ? update.messageId
+                  : null;
+              const startsNew =
+                current.loadingRole !== role ||
+                (sourceMessageId !== null && current.loadingMessageId !== sourceMessageId);
+              const loadingIndex = startsNew ? current.loadingIndex + 1 : current.loadingIndex;
+              const nativeItemId =
+                sourceMessageId === null
+                  ? `${notification.sessionId}:history:${role}:${loadingIndex}`
+                  : `${notification.sessionId}:history:${role}:message:${sourceMessageId}`;
+              const messageId = providerMessageId(nativeItemId);
+              const key = String(messageId);
+              const previous = current.messages.get(key);
+              const messages = new Map(current.messages);
+              messages.set(key, {
+                createdBy: previous?.createdBy ?? (role === "user" ? "user" : "agent"),
+                creationSource: previous?.creationSource ?? "provider",
+                id: messageId,
+                threadId: input.threadId,
+                runId: null,
+                nodeId: null,
+                role: role === "user" ? "user" : "assistant",
+                text: replace ? text : `${previous?.text ?? ""}${text}`,
+                attachments: [],
+                streaming: false,
+                createdAt: previous?.createdAt ?? now,
+                updatedAt: now,
+              });
+              return {
+                order: current.order.includes(key) ? current.order : [...current.order, key],
+                messages,
+                loadingRole: role,
+                loadingMessageId: sourceMessageId ?? (startsNew ? null : current.loadingMessageId),
+                loadingIndex,
+              };
+            });
+          });
+
+        const offerContinuationRun = Effect.fnUntraced(function* (_sessionId: string) {
+          if (continuationRequests === undefined) {
+            return false;
+          }
+          const pending = yield* continuationPermit.withPermit(
+            Effect.gen(function* () {
+              if (yield* Ref.get(continuationClosed)) return Option.none();
+              if (yield* Ref.get(stoppedRunQuarantine)) return Option.none();
+              if (yield* Ref.get(continuationRequested)) return Option.none();
+              const route = yield* Ref.get(lastTurnRoute);
+              if (route === null) return Option.none();
+              yield* Ref.set(continuationRequested, true);
+              const generation = yield* Ref.updateAndGet(
+                continuationGeneration,
+                (value) => value + 1,
+              );
+              return Option.some({ route, generation });
+            }),
+          );
+          if (Option.isNone(pending)) return false;
+          const { route, generation } = pending.value;
+          yield* Effect.logInfo("orchestration-v2.acp-wake-turn-detected", {
+            driver,
+            providerSessionId: input.providerSessionId,
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+          });
+          yield* continuationRequests.offer({
+            threadId: route.threadId,
+            providerThreadId: route.providerThreadId,
+            driver,
+            detail: null,
+            clearIfCurrent: () =>
+              continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  if ((yield* Ref.get(continuationGeneration)) === generation) {
+                    yield* Ref.set(continuationRequested, false);
+                  }
+                }),
+              ),
+            dispatchIfCurrent: (effect) =>
+              continuationPermit.withPermit(
+                Effect.gen(function* () {
+                  const clearIfOwner = Effect.gen(function* () {
+                    if ((yield* Ref.get(continuationGeneration)) === generation) {
+                      yield* Ref.set(continuationRequested, false);
+                    }
+                  });
+                  if (yield* Ref.get(stoppedRunQuarantine)) {
+                    yield* clearIfOwner;
+                    return Option.none();
+                  }
+                  if ((yield* Ref.get(continuationGeneration)) !== generation) {
+                    // Superseded by a newer offer; do not clear its flag.
+                    return Option.none();
+                  }
+                  if (!(yield* Ref.get(continuationRequested))) return Option.none();
+                  // A successful durable dispatch owns the sticky flag until its
+                  // continuation turn starts. Clearing here opens a dispatch-to-
+                  // start race where every late ACP frame can enqueue another
+                  // synthetic continuation. Failures clear immediately because
+                  // no turn will arrive to do so.
+                  const exit = yield* Effect.exit(effect);
+                  if (Exit.isFailure(exit)) {
+                    yield* clearIfOwner;
+                    return yield* Effect.failCause(exit.cause);
+                  }
+                  return Option.some(exit.value);
+                }),
+              ),
+          });
+          return true;
+        });
+
+        const applyLateBackgroundMutation = Effect.fnUntraced(function* (
+          sessionId: string,
+          mutation: {
+            readonly taskId: string;
+            readonly status: "running" | "completed" | "failed";
+          },
+        ) {
+          const taskAlreadyEnded = (yield* Ref.get(endedBackgroundTaskIds)).has(mutation.taskId);
+          yield* applyBackgroundTaskMutationRunning(mutation);
+          if (mutation.status === "running") {
+            // Straggler running notice after a genuine end: suppress residual
+            // monitor-prompt agent chatter so it cannot open a synthetic wake.
+            if (taskAlreadyEnded && acpPostSettleMonitorPromptShouldSuppress(mutation)) {
+              yield* Ref.set(suppressPostSettleMonitorPrompt, true);
+            }
+            return;
+          }
+          // First genuine terminal: allow subsequent agent output. Re-delivery
+          // of an already-ended terminal must not un-suppress residual ack
+          // chatter from the injected monitor-event turn.
+          if (!taskAlreadyEnded) {
+            yield* Ref.set(suppressPostSettleMonitorPrompt, false);
+          }
+          // Keep handledBackgroundTaskIdsInActiveTurn intact. Erasing the mark
+          // on a late monitor-event mutation defeated the in-turn chatter guard
+          // and let injected-turn acks arm wakeBuffer for a later spurious
+          // "Background task completed." run (multiturn live repro). Monitors
+          // the agent settled without reporting never enter that set, so their
+          // injected report still streams via pendingInjectedReport / hold.
+          const activeContext = yield* Ref.get(activeTurn);
+          // Completions that land while a root turn is still streaming are
+          // owned by in-turn machinery (emitTool handled marks, deferred
+          // finalize, injected-report hold). Do not open a synthetic wake mid-
+          // turn; finalizeTurn re-checks wakeBuffer / midTurnUnreported once
+          // the turn leaves the active slot so legitimate unhandled evidence
+          // still offers after finalize.
+          if (activeContext !== null && !activeContext.finalized) {
+            const handled = yield* Ref.get(handledBackgroundTaskIdsInActiveTurn);
+            // Only arm deferred wake when this turn registered the task (monitor
+            // tool started in-turn) and the root prompt is still open. Completions
+            // that land in the settled-held window (promptSettled, deferred
+            // finalize holding for injected report) fall back to the pre-existing
+            // post-finalize injected-turn path; arming here would spuriously
+            // offer "Background task completed." after the report streams into
+            // the held turn. Residual cancel-backgrounded completions from a
+            // prior interrupt must not open a synthetic continuation.
+            if (
+              !activeContext.promptSettled &&
+              !handled.has(mutation.taskId) &&
+              activeContext.toolCallIdsByBackgroundTaskId.has(mutation.taskId)
+            ) {
+              yield* Ref.update(midTurnUnreportedCompletedTaskIds, (current) =>
+                new Set(current).add(mutation.taskId),
+              );
+            }
+            return;
+          }
+          if (
+            postSettleContinuationEnabled &&
+            (yield* Ref.get(activeSessionId)) === sessionId &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            ((yield* Ref.get(wakeBuffer)).length > 0 ||
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+          ) {
+            yield* offerContinuationRun(sessionId);
+          }
+        });
+
+        const bufferPostSettleWake = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          if (!postSettleContinuationEnabled || continuationRequests === undefined) {
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
+          }
+          // Direct Stop quarantine: drop residual wake evidence instead of
+          // buffering it for a later continuation or follow-up run.
+          if (yield* Ref.get(stoppedRunQuarantine)) {
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
+          }
+          const rootSessionId = yield* Ref.get(activeSessionId);
+          if (rootSessionId === null || notification.sessionId !== rootSessionId) {
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
+          }
+          if (!acpPostSettleWakeEvidence(notification, flavor)) {
+            return {
+              buffered: false,
+              offerContinuation: false,
+              stopProcessing: false,
+            };
+          }
+          const update = notification.update;
+          let alreadyHandledToolUpdate = false;
+          if (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update") {
+            yield* trackRunningBackgroundTools(notification);
+            // When the agent consumes the monitor output itself via
+            // get_command_or_subagent_output (long timeout), the TaskOutput
+            // completion is the ONLY end signal: no "Monitor ended" reminder
+            // follows. Without applying it here the running set never clears,
+            // every offer stays suppressed, and the wake buffer never drains
+            // (observed live 2026-07-12, thread 8dbe607f). The completion
+            // frame itself is offer evidence, so clearing the id before the
+            // gate below lets it open the single continuation run.
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const proposedPlanMarkdown = flavor.extractProposedPlanMarkdown?.(toolCall);
+              if (proposedPlanMarkdown !== undefined && proposedPlanMarkdown.length > 0) {
+                yield* captureProposedPlan({ planMarkdown: proposedPlanMarkdown });
+              }
+              const toolTaskId = flavor.extractBackgroundTaskId?.(toolCall);
+              if (
+                toolTaskId !== undefined &&
+                (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(toolTaskId)
+              ) {
+                alreadyHandledToolUpdate = true;
+              }
+              if (flavor.extractBackgroundTaskCompletion !== undefined) {
+                for (const completion of flavor.extractBackgroundTaskCompletion(toolCall)) {
+                  alreadyHandledToolUpdate =
+                    alreadyHandledToolUpdate ||
+                    (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).has(completion.taskId);
+                  yield* applyBackgroundTaskMutationRunning(completion);
+                }
+              }
+            }
+          }
+          const backgroundWorkRunning = (yield* Ref.get(runningBackgroundTaskIds)).size > 0;
+          // Residual Grok agent/thought chatter after in-turn-handled background
+          // work must not be retained as wake evidence. Tool-path alreadyHandled
+          // covers re-reports with a task id; this covers agent_message_chunk /
+          // agent_thought_chunk frames that carry no task id (live:
+          // grok-in-turn-monitor-no-wake, multiturn stale-buffer arm). Check
+          // before buffering so the frames cannot dirty wakeBuffer and later
+          // arm a mid-turn offer when a second monitor completes.
+          const handledInTurnCount = (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size;
+          const isInTurnHandledAgentChatter =
+            handledInTurnCount > 0 &&
+            (update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk");
+          // Grok prompts itself for every monitor event after the root turn
+          // settles. Its assistant/reasoning replies are progress chatter, not
+          // separate wake results. Retaining them would replay the entire burst
+          // into the single continuation once the monitor finishes. Keep tool
+          // state so the final command card still hydrates, then begin retaining
+          // agent output again after the genuine end signal clears the running
+          // set. With multiple tasks, text remains best-effort until every task
+          // ends; their retained tool cards are the authoritative results.
+          //
+          // Skip retaining frames for tasks already hydrated in the root turn
+          // (`handledBackgroundTaskIdsInActiveTurn`). Those re-reports must not
+          // pin `hasPendingBackgroundWork` via a wake buffer that never drains
+          // (the already-handled gate below intentionally skips
+          // `offerContinuationRun` to avoid synthetic "Background task
+          // completed." spam).
+          let buffered = false;
+          if (
+            !alreadyHandledToolUpdate &&
+            !isInTurnHandledAgentChatter &&
+            acpPostSettleWakeShouldBuffer(notification, backgroundWorkRunning)
+          ) {
+            yield* Ref.update(wakeBuffer, (current) => [...current, notification]);
+            buffered = true;
+          }
+          // Buffer progress without offering; only completion-like frames open a run.
+          if (!acpPostSettleContinuationOfferEvidence(notification, flavor)) {
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
+          }
+          // While a monitor is still streaming, tool re-reports buffer without
+          // offering and per-event agent commentary is consumed without being
+          // retained. Grok re-reports a running monitor as Bash frames that
+          // already carry exit_code 0 mid-stream, so a "terminal" normalized
+          // status is not evidence the task ended; each burst would otherwise
+          // reopen a synthetic "Background task completed." run. Retained tool
+          // frames drain into the single continuation offered once the monitor
+          // actually ends (end-notice mutation below, or the first frame after
+          // it).
+          if (backgroundWorkRunning) {
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
+          }
+          if (alreadyHandledToolUpdate) {
+            // Drop leftover wake noise for in-turn-handled work so idle release
+            // is not pinned forever. Leave the buffer alone when a continuation
+            // is already outstanding: its startTurn will drain legitimate frames
+            // from other tasks.
+            if (!(yield* Ref.get(continuationRequested))) {
+              yield* Ref.set(wakeBuffer, []);
+            }
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
+          }
+          // Same in-turn-handled agent chatter: do not open a synthetic wake.
+          // Do not clear wakeBuffer here: frames for other still-tracked tasks
+          // must remain drainable when a real (tool) completion later offers.
+          if (isInTurnHandledAgentChatter) {
+            return {
+              buffered,
+              offerContinuation: false,
+              stopProcessing: true,
+            };
+          }
+          return {
+            buffered,
+            offerContinuation: true,
+            stopProcessing: true,
+          };
+        });
+
+        let applyFinalizedActiveTurnSubagentTerminal: (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+        ) => Effect.Effect<boolean> = () => Effect.succeed(false);
+
+        const projectAgentTerminalUpdate = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+          context: ActiveAcpTurn | null,
+        ) {
+          const update = notification.update;
+          if (
+            update.sessionUpdate !== "terminal_update" &&
+            update.sessionUpdate !== "terminal_output_chunk"
+          ) {
+            return false;
+          }
+          const terminalKey = sessionScopedId(notification.sessionId, update.terminalId);
+          const next = applyAcpAgentTerminalUpdate(agentTerminalsById.get(terminalKey), update);
+          agentTerminalsById.set(terminalKey, next);
+          if (context === null || notification.sessionId !== context.nativeThreadId) return true;
+          const status =
+            next.exitStatus === undefined
+              ? ("inProgress" as const)
+              : next.exitStatus.exitCode === 0
+                ? ("completed" as const)
+                : ("failed" as const);
+          const embeddedToolCallIds = toolCallIdsByAgentTerminalId.get(terminalKey);
+          const projectedToolCallIds =
+            embeddedToolCallIds === undefined || embeddedToolCallIds.size === 0
+              ? [`acp-agent-terminal:${update.terminalId}`]
+              : [...embeddedToolCallIds];
+          for (const toolCallId of projectedToolCallIds) {
+            const existing = context.tools.get(toolCallId);
+            const seeded: AcpToolCallState =
+              existing ??
+              ({
+                toolCallId,
+                kind: "execute",
+                title: next.command ?? "Terminal",
+                status,
+                ...(next.command === undefined ? {} : { command: next.command }),
+                data: { toolCallId },
+              } satisfies AcpToolCallState);
+            yield* emitTool(
+              context,
+              setToolOutputText(
+                {
+                  ...seeded,
+                  status,
+                  ...(next.command === undefined ? {} : { command: next.command }),
+                },
+                next.output,
+              ),
+            );
+          }
+          return true;
+        });
+
+        const handleSessionUpdate = Effect.fnUntraced(function* (
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          const context = yield* Ref.get(activeTurn);
+          const update = notification.update;
+          if (yield* projectAgentTerminalUpdate(notification, context)) return;
+          if (
+            update.sessionUpdate === "usage_update" ||
+            update.sessionUpdate === "session_info_update" ||
+            (update.sessionUpdate === "state_update" &&
+              update.state === "idle" &&
+              update.usage != null)
+          ) {
+            const stateEvent = parseSessionUpdateEvent(notification).events.find(
+              (event) => event._tag === "UsageUpdated" || event._tag === "SessionInfoUpdated",
+            );
+            if (stateEvent === undefined) return;
+            if (stateEvent._tag === "UsageUpdated") {
+              yield* Ref.update(contextUsageBySessionId, (current) =>
+                new Map(current).set(notification.sessionId, stateEvent.usage),
+              );
+              if (context?.nativeThreadId === notification.sessionId) {
+                context.contextUsage = stateEvent.usage;
+              }
+            } else {
+              const metadata = yield* Ref.modify(nativeMetadataBySessionId, (current) => {
+                const merged = {
+                  ...current.get(notification.sessionId),
+                  ...stateEvent.metadata,
+                };
+                return [merged, new Map(current).set(notification.sessionId, merged)] as const;
+              });
+              if (context?.nativeThreadId === notification.sessionId) {
+                context.nativeMetadata = metadata;
+              }
+            }
+            const knownProviderThread = (yield* Ref.get(providerThreadByNativeSessionId)).get(
+              notification.sessionId,
+            );
+            if (knownProviderThread !== undefined) {
+              const now = yield* DateTime.now;
+              const providerThread: OrchestrationV2ProviderThread = {
+                ...knownProviderThread,
+                contextUsage:
+                  (yield* Ref.get(contextUsageBySessionId)).get(notification.sessionId) ??
+                  knownProviderThread.contextUsage ??
+                  null,
+                nativeMetadata:
+                  (yield* Ref.get(nativeMetadataBySessionId)).get(notification.sessionId) ??
+                  knownProviderThread.nativeMetadata ??
+                  null,
+                updatedAt: now,
+              };
+              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                new Map(current).set(notification.sessionId, providerThread),
+              );
+              yield* emitProviderEvent({
+                type: "provider_thread.updated",
+                driver,
+                providerThread,
+              });
+            }
+            return;
+          }
+          if (
+            context?.finalized === true &&
+            (yield* applyFinalizedActiveTurnSubagentTerminal(context, notification))
+          ) {
+            return;
+          }
+          // Only while a finalized turn is still the active context. When
+          // activeTurn is null, post-settle agent frames must reach
+          // bufferPostSettleWake so continuation can attach (context?.finalized
+          // !== false incorrectly treated null as finalized and dropped them).
+          if (
+            context !== null &&
+            context.finalized &&
+            (yield* Ref.get(handledBackgroundTaskIdsInActiveTurn)).size > 0 &&
+            (update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk")
+          ) {
+            yield* Ref.set(suppressPostSettleMonitorPrompt, true);
+            return;
+          }
+          if (
+            context !== null &&
+            (yield* Ref.get(suppressPostSettleMonitorPrompt)) &&
+            (update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk")
+          ) {
+            return;
+          }
+          if (
+            context?.finalized === true &&
+            update.sessionUpdate === "user_message_chunk" &&
+            update.content.type === "text"
+          ) {
+            const mutations = flavor.extractBackgroundToolMutation?.(update.content.text) ?? [];
+            for (const mutation of mutations) {
+              yield* applyLateBackgroundMutation(notification.sessionId, mutation);
+            }
+            return;
+          }
+          if (context === null) {
+            // Direct Stop: quarantine residual events from the stopped run so
+            // they cannot become history, wake buffers, or a later run attach.
+            if (yield* Ref.get(stoppedRunQuarantine)) {
+              return;
+            }
+            const bufferOutcome = yield* bufferPostSettleWake(notification);
+            // Post-settle carryover sync: keep in-memory carryover accurate so
+            // hasPendingBackgroundWork reasons correctly after root settle.
+            // A completed root keeps its subscriber open while background items
+            // remain, so project its terminals immediately even when the wake
+            // frame is buffered for a continuation. Non-completed roots stay
+            // memory-only: durable ingest requires a subscriber that owns the
+            // original runId, which the interrupted path does not guarantee.
+            const carryover = yield* Ref.get(carryoverSubagents);
+            const rootTerminalCanStillProject =
+              carryover !== null &&
+              carryover.sessionId === (yield* Ref.get(activeSessionId)) &&
+              carryover.rootTerminalStatus === "completed";
+            const projectCarryover = rootTerminalCanStillProject;
+            let carryoverTerminalized = false;
+            if (
+              flavor.extractSubagentUpdate !== undefined &&
+              (update.sessionUpdate === "tool_call" || update.sessionUpdate === "tool_call_update")
+            ) {
+              for (const event of parseSessionUpdateEvent(notification).events) {
+                if (event._tag !== "ToolCallUpdated") continue;
+                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+                if (subagentUpdate === undefined) continue;
+                if (!acpSubagentStatusIsTerminal(subagentUpdate.status)) {
+                  continue;
+                }
+                if (
+                  yield* updateCarryoverSubagentStatus(
+                    subagentUpdate.nativeTaskId,
+                    subagentUpdate.status,
+                    subagentUpdate.result,
+                    { project: projectCarryover },
+                  )
+                ) {
+                  carryoverTerminalized = true;
+                }
+                if (
+                  subagentUpdate.childSessionId !== null &&
+                  (yield* updateCarryoverSubagentStatus(
+                    subagentUpdate.childSessionId,
+                    subagentUpdate.status,
+                    subagentUpdate.result,
+                    { project: projectCarryover },
+                  ))
+                ) {
+                  carryoverTerminalized = true;
+                }
+              }
+            }
+            if (
+              update.sessionUpdate === "user_message_chunk" &&
+              update.content.type === "text" &&
+              flavor.extractSubagentEndNotice !== undefined
+            ) {
+              const notice = flavor.extractSubagentEndNotice(update.content.text);
+              if (
+                notice !== undefined &&
+                (yield* updateCarryoverSubagentStatus(
+                  notice.childSessionId,
+                  notice.status,
+                  undefined,
+                  {
+                    project: projectCarryover,
+                  },
+                ))
+              ) {
+                carryoverTerminalized = true;
+              }
+            }
+            // Synchronize carryover before an eager continuation can attach and
+            // drain the frame.
+            const continuationOffered = bufferOutcome.offerContinuation
+              ? yield* offerContinuationRun(notification.sessionId)
+              : false;
+            const wakeOutcome = { ...bufferOutcome, continuationOffered };
+            // Frames that will not buffer never reach the continuation drain for
+            // this traffic. Once carryover is terminalized, skip history append /
+            // residual handling (and avoid double-projecting on child re-entry).
+            if (carryoverTerminalized && !wakeOutcome.buffered) {
+              // Projected above. Never clear a non-empty wakeBuffer. A sticky
+              // continuationRequested with an empty buffer is safe to drop so
+              // idle release is not wed on a pin with nothing to deliver.
+              if (
+                acpCarryoverTerminalShouldClearContinuation({
+                  continuationOffered: wakeOutcome.continuationOffered,
+                  wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                })
+              ) {
+                yield* Ref.set(continuationRequested, false);
+              }
+              return;
+            }
+            // Prefer continuation buffering over history append so the same
+            // frames are not double-counted once a continuation run attaches.
+            if (wakeOutcome.stopProcessing) {
+              return;
+            }
+            if (
+              update.sessionUpdate === "user_message_chunk" ||
+              update.sessionUpdate === "agent_message_chunk" ||
+              update.sessionUpdate === "agent_thought_chunk"
+            ) {
+              // Late monitor end/event reminders must not become ghost user/assistant
+              // history (or OS-facing chatter) after the root turn already finalized.
+              const text = acpContentBlockDisplayText(update.content);
+              if (text === undefined) return;
+              const lateBackgroundMutations =
+                update.content.type === "text"
+                  ? (flavor.extractBackgroundToolMutation?.(text) ?? [])
+                  : [];
+              for (const lateBackgroundMutation of lateBackgroundMutations) {
+                yield* applyLateBackgroundMutation(notification.sessionId, lateBackgroundMutation);
+              }
+              const lateMonitorChatter =
+                /<monitor-event\b/i.test(text) ||
+                /Monitor\s+["']?[0-9a-f-]{8,}["']?\s+ended/i.test(text);
+              if (
+                text.trim().length > 0 &&
+                lateBackgroundMutations.length === 0 &&
+                !lateMonitorChatter
+              ) {
+                yield* appendLoadedHistory(
+                  notification,
+                  update.sessionUpdate === "user_message_chunk"
+                    ? "user"
+                    : update.sessionUpdate === "agent_thought_chunk"
+                      ? "thought"
+                      : "assistant",
+                  text,
+                );
+              }
+            } else if (
+              update.sessionUpdate === "user_message" ||
+              update.sessionUpdate === "agent_message" ||
+              update.sessionUpdate === "agent_thought"
+            ) {
+              if (update.content === undefined) return;
+              const text = (update.content ?? [])
+                .flatMap((content) => {
+                  const display = acpContentBlockDisplayText(content);
+                  return display === undefined ? [] : [display];
+                })
+                .join("\n");
+              yield* appendLoadedHistory(
+                notification,
+                update.sessionUpdate === "user_message"
+                  ? "user"
+                  : update.sessionUpdate === "agent_thought"
+                    ? "thought"
+                    : "assistant",
+                text,
+                true,
+              );
+            } else if (
+              update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "tool_call_update" ||
+              update.sessionUpdate === "plan" ||
+              update.sessionUpdate === "plan_update" ||
+              update.sessionUpdate === "plan_removed"
+            ) {
+              yield* Ref.update(snapshot, (current) => ({
+                ...current,
+                loadingRole: null,
+                loadingMessageId: null,
+              }));
+            }
+            return;
+          }
+          if (context.finalized) return;
+          if (notification.sessionId !== (yield* Ref.get(activeSessionId))) {
+            // Finalize may have completed during the activeSessionId yield.
+            if (context.finalized) return;
+            if (flavor.extractSubagentUpdate === undefined) return;
+            const subagent = context.subagentsBySessionId.get(notification.sessionId);
+            if (
+              update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "tool_call_update"
+            ) {
+              if (subagent === undefined) return;
+              const nativeTaskId =
+                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+              for (const event of parseSessionUpdateEvent(notification).events) {
+                if (event._tag !== "ToolCallUpdated") continue;
+                const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+                const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+                if (subagentUpdate !== undefined) {
+                  if (
+                    subagentUpdate.nativeTaskId === nativeTaskId ||
+                    subagentUpdate.childSessionId === notification.sessionId
+                  ) {
+                    yield* emitSubagent(context, subagentUpdate);
+                  }
+                  continue;
+                }
+                const key = `${nativeTaskId}:tool:${toolCall.toolCallId}`;
+                const merged = mergeToolCallState(context.tools.get(key), toolCall);
+                context.tools.set(key, merged);
+                const now = yield* DateTime.now;
+                const status = toolStatus(merged.status);
+                const startedAt = context.toolStartedAt.get(key) ?? now;
+                context.toolStartedAt.set(key, startedAt);
+                let ordinal = (yield* Ref.get(itemOrdinals)).get(key);
+                if (ordinal === undefined) {
+                  ordinal = subagent.nextChildOrdinal++;
+                  const allocated = ordinal;
+                  yield* Ref.update(itemOrdinals, (current) =>
+                    new Map(current).set(key, allocated),
+                  );
+                }
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    id: providerTurnItemId(key),
+                    threadId: subagent.childThreadId,
+                    runId: null,
+                    nodeId: subagent.childRootNodeId,
+                    providerThreadId: subagent.task.providerThreadId,
+                    providerTurnId: null,
+                    nativeItemRef: { driver, nativeId: key, strength: "strong" },
+                    parentItemId: null,
+                    ordinal,
+                    status,
+                    title: merged.title ?? merged.kind ?? "Tool",
+                    startedAt,
+                    completedAt: completedAtForStatus(status, now),
+                    updatedAt: now,
+                    type: "dynamic_tool",
+                    toolName: merged.title ?? merged.kind ?? "Tool",
+                    input: merged.data.rawInput ?? null,
+                    output: merged.data.rawOutput ?? merged.data.content ?? null,
+                  },
+                });
+              }
+              return;
+            }
+            const isDisplayableAssistantUpdate =
+              (update.sessionUpdate === "agent_message_chunk" &&
+                acpContentBlockDisplayText(update.content) !== undefined) ||
+              (update.sessionUpdate === "agent_message" && update.content !== undefined);
+            if (!isDisplayableAssistantUpdate) {
+              return;
+            }
+            if (subagent !== undefined) {
+              yield* projectSubagentNotification(subagent, notification);
+              return;
+            }
+            const buffered = context.pendingSubagentNotifications.get(notification.sessionId) ?? [];
+            buffered.push(notification);
+            context.pendingSubagentNotifications.set(notification.sessionId, buffered);
+            return;
+          }
+          // Re-check after the activeSessionId yield: idle/prompt settle can
+          // finalize the same context object while we waited.
+          if (context.finalized) return;
+          switch (update.sessionUpdate) {
+            case "state_update": {
+              const toolCallId = `${context.nativeTurnId}:requires-action`;
+              const existing = context.tools.get(toolCallId);
+              if (update.state === "requires_action") {
+                yield* emitTool(context, {
+                  toolCallId,
+                  kind: "other",
+                  title: "Action required",
+                  status: "requiresAction",
+                  data: { state: "requires_action" },
+                });
+              } else if (existing?.status === "requiresAction") {
+                yield* emitTool(context, {
+                  ...existing,
+                  status: "completed",
+                  data: { ...existing.data, state: update.state },
+                });
+              }
+              break;
+            }
+            case "agent_message_chunk": {
+              const text = acpContentBlockDisplayText(update.content);
+              if (text !== undefined) {
+                const startsNewAssistantSegment = context.assistant.current === null;
+                // The injected-turn report is streaming; the normal debounce
+                // after the last chunk takes over from here. Drop matching
+                // mid-turn armed ids so finalize does not open a duplicate
+                // wake after the report already projected into this turn.
+                if (context.pendingInjectedReport.size > 0) {
+                  const reportedTaskIds = [...context.pendingInjectedReport];
+                  context.pendingInjectedReport.clear();
+                  yield* clearMidTurnUnreportedTaskIds(reportedTaskIds);
+                } else if (
+                  startsNewAssistantSegment &&
+                  context.promptSettled &&
+                  (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0
+                ) {
+                  // Some ACP implementations deliver the injected assistant
+                  // report before the synthetic monitor end notice. Correlation
+                  // arrives with that notice, so remember the unmatched report
+                  // and consume its task id when the notice follows.
+                  context.earlyInjectedReportObserved = true;
+                }
+                yield* appendText(context, "assistant", text, update.messageId);
+              }
+              break;
+            }
+            case "agent_thought_chunk": {
+              const text = acpContentBlockDisplayText(update.content);
+              if (text !== undefined) {
+                yield* appendText(context, "reasoning", text, update.messageId);
+              }
+              break;
+            }
+            case "user_message":
+            case "agent_message":
+            case "agent_thought": {
+              if (update.content === undefined) break;
+              const text = (update.content ?? [])
+                .flatMap((content) => {
+                  const display = acpContentBlockDisplayText(content);
+                  return display === undefined ? [] : [display];
+                })
+                .join("\n");
+              yield* replaceText(
+                context,
+                update.sessionUpdate === "user_message"
+                  ? "user"
+                  : update.sessionUpdate === "agent_message"
+                    ? "assistant"
+                    : "reasoning",
+                text,
+                update.messageId,
+              );
+              break;
+            }
+            case "tool_call_content_chunk": {
+              const text =
+                update.content.type === "content"
+                  ? acpContentBlockDisplayText(update.content.content)
+                  : update.content.type === "diff"
+                    ? "changes" in update.content
+                      ? update.content.patch?.text
+                      : update.content.newText
+                    : undefined;
+              if (text !== undefined) {
+                const previous = context.tools.get(update.toolCallId) ?? {
+                  toolCallId: update.toolCallId,
+                  status: "inProgress" as const,
+                  data: { toolCallId: update.toolCallId },
+                };
+                yield* emitTool(context, appendToolOutputText(previous, text));
+              }
+              break;
+            }
+            case "compaction_summary_chunk": {
+              const text = acpContentBlockDisplayText(update.content);
+              if (text !== undefined) {
+                const toolCallId = `acp-compaction:${update.compactionId}`;
+                const previous = context.tools.get(toolCallId) ?? {
+                  toolCallId,
+                  kind: "think",
+                  title: "Compact context",
+                  status: "inProgress" as const,
+                  data: { toolCallId },
+                };
+                yield* emitTool(context, appendToolOutputText(previous, text));
+              }
+              break;
+            }
+            case "user_message_chunk": {
+              if (update.content.type === "text" && flavor.extractBackgroundToolMutation) {
+                const mutations = flavor.extractBackgroundToolMutation(update.content.text);
+                const terminalTaskIds = mutations
+                  .filter((mutation) => mutation.status !== "running")
+                  .map((mutation) => mutation.taskId);
+                const reportArrivedBeforeNotice =
+                  context.earlyInjectedReportObserved && terminalTaskIds.length > 0;
+                if (reportArrivedBeforeNotice) {
+                  context.earlyInjectedReportObserved = false;
+                  yield* clearMidTurnUnreportedTaskIds(terminalTaskIds);
+                }
+                for (const mutation of mutations) {
+                  const toolCallId = context.toolCallIdsByBackgroundTaskId.get(mutation.taskId);
+                  const previous =
+                    toolCallId !== undefined ? context.tools.get(toolCallId) : undefined;
+                  if (previous !== undefined) {
+                    let nextStatus =
+                      mutation.status === "running"
+                        ? ("inProgress" as const)
+                        : mutation.status === "failed"
+                          ? ("failed" as const)
+                          : ("completed" as const);
+                    // End notices typically omit full stdout (no get_command mention
+                    // either). Keep the tool running and hold finalize until
+                    // TaskOutput hydrates, or the safety timer force-completes.
+                    if (nextStatus !== "inProgress") {
+                      yield* markAwaitingBackgroundHydration(context, mutation.taskId);
+                      nextStatus = "inProgress";
+                    }
+                    yield* emitTool(
+                      context,
+                      appendToolOutputText(
+                        { ...previous, status: nextStatus },
+                        mutation.appendOutput,
+                      ),
+                    );
+                  }
+                  // After emitTool: the hydration hold keeps the tool row at
+                  // inProgress past an end notice, but the offer gate must see
+                  // the mutation's semantic status. Also tracks monitors that
+                  // never surfaced a tool_call row at all.
+                  yield* applyBackgroundTaskMutationRunning(mutation);
+                  if (mutation.status !== "running" && !reportArrivedBeforeNotice) {
+                    yield* markPendingInjectedReport(context, mutation.taskId);
+                  }
+                }
+              }
+              if (update.content.type === "text" && flavor.extractSubagentEndNotice) {
+                const notice = flavor.extractSubagentEndNotice(update.content.text);
+                const subagent =
+                  notice !== undefined
+                    ? context.subagentsBySessionId.get(notice.childSessionId)
+                    : undefined;
+                if (
+                  notice !== undefined &&
+                  subagent !== undefined &&
+                  (subagent.task.status === "running" || subagent.task.status === "pending")
+                ) {
+                  // The agent is free to answer with text only and never call
+                  // get_command_or_subagent_output; without this, the subagent
+                  // row stays running and holds deferred finalize open forever.
+                  yield* emitSubagent(context, {
+                    nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? notice.childSessionId,
+                    prompt: subagent.task.prompt,
+                    title: subagent.task.title,
+                    model: subagent.task.model,
+                    status: notice.status,
+                    childSessionId: notice.childSessionId,
+                    result: null,
+                    suppressNormalTool: true,
+                  });
+                }
+              }
+              // startTurn already projects the submitted prompt. Active ACP
+              // user chunks are transport echoes or injected background
+              // notices, so only their semantic mutations belong in the turn.
+              break;
+            }
+            default: {
+              const parsed = parseSessionUpdateEvent(notification);
+              for (const event of parsed.events) {
+                if (event._tag === "ToolCallUpdated") {
+                  yield* emitTool(context, event.toolCall);
+                } else if (event._tag === "PlanUpdated") {
+                  yield* emitPlan(context, event.payload);
+                } else if (event._tag === "UnknownUpdate") {
+                  yield* emitTool(context, {
+                    toolCallId: `${context.nativeTurnId}:unsupported:${event.updateType}`,
+                    kind: "other",
+                    title: `Unsupported ACP update: ${event.updateType}`,
+                    status: "completed",
+                    data: { updateType: event.updateType },
+                  });
+                }
+              }
+            }
+          }
+          // Keep deferred finalize quiet-window fresh while wake traffic lands.
+          yield* rearmDeferredFinalize(context);
+        });
+
+        const activeContext = Effect.gen(function* () {
+          const context = yield* Ref.get(activeTurn);
+          if (context === null) {
+            return yield* new EffectAcpErrors.AcpTransportError({
+              detail: "ACP agent requested input without an active turn",
+              cause: "No active ACP turn",
+            });
+          }
+          return context;
+        });
+
+        const beginApprovalRequest = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          params: EffectAcpSchema.RequestPermissionRequest,
+          generation: number,
+          transportRequestId: string,
+        ) {
+          yield* closeTextStreams(context);
+          const parsed = parsePermissionRequest(params);
+          const approvalOptions = flavor.approvalOptions?.(params);
+          const nativeRequestId = params.toolCall.toolCallId;
+          const requestId = yield* idAllocator.allocate.runtimeRequest({
+            driver,
+            providerTurnId: context.providerTurnId,
+            nativeRequestId,
+          });
+          const decision = yield* Deferred.make<ProviderApprovalDecision>();
+          const nativeResponseAcknowledgement = yield* Deferred.make<
+            void,
+            EffectAcpErrors.AcpError
+          >();
+          yield* registerNativeResponseAcknowledgement(
+            generation,
+            transportRequestId,
+            nativeResponseAcknowledgement,
+          );
+          const now = yield* DateTime.now;
+          const nodeId = idAllocator.derive.approvalNode({ requestId });
+          const requestKind = providerRequestKind(parsed.kind);
+          const nativeItemRef = { driver, nativeId: nativeRequestId, strength: "weak" as const };
+          const ordinal = yield* resolveItemOrdinal(
+            context,
+            `${context.nativeTurnId}:approval:${nativeRequestId}`,
+          );
+          const runtimeRequest: OrchestrationV2RuntimeRequest = {
+            id: requestId,
+            nodeId,
+            providerTurnId: context.providerTurnId,
+            nativeRequestRef: nativeItemRef,
+            kind: requestKind,
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: input.providerSessionId,
+            },
+            createdAt: now,
+            resolvedAt: null,
+          };
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            parentNodeId: context.input.rootNodeId,
+            rootNodeId: context.input.rootNodeId,
+            kind: "approval_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          };
+          const turnItem: OrchestrationV2TurnItem = {
+            id: idAllocator.derive.approvalTurnItem({ requestId }),
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "approval_request",
+            requestId,
+            requestKind,
+            ...(parsed.detail === undefined ? {} : { prompt: parsed.detail }),
+            ...(approvalOptions === undefined ? {} : { options: approvalOptions }),
+          };
+          yield* Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.set(String(requestId), {
+              type: "approval",
+              generation,
+              nativeResponseAcknowledgement,
+              requestId,
+              transportRequestId,
+              decision,
+              runtimeRequest,
+              node,
+              turnItem,
+            });
+            return updated;
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node,
+          });
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver,
+            threadId: context.input.threadId,
+            runtimeRequest,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem,
+          });
+          return {
+            context,
+            decision,
+            nativeResponseAcknowledgement,
+            requestId,
+            transportRequestId,
+          } as const;
+        });
+
+        const beginUserInputRequest = Effect.fnUntraced(function* (
+          request: AcpAdapterV2UserInputRequest,
+          generation: number,
+          transportRequestId: string,
+        ) {
+          const context = yield* activeContext;
+          yield* closeTextStreams(context);
+          const requestId = yield* idAllocator.allocate.runtimeRequest({
+            driver,
+            providerTurnId: context.providerTurnId,
+            nativeRequestId: request.nativeRequestId,
+          });
+          const answers = yield* Deferred.make<ProviderUserInputAnswers | null>();
+          const nativeResponseAcknowledgement = yield* Deferred.make<
+            void,
+            EffectAcpErrors.AcpError
+          >();
+          yield* registerNativeResponseAcknowledgement(
+            generation,
+            transportRequestId,
+            nativeResponseAcknowledgement,
+          );
+          const now = yield* DateTime.now;
+          const nodeId = providerNodeId(request.nativeItemId);
+          const turnItemId = providerTurnItemId(request.nativeItemId);
+          const nativeItemRef = {
+            driver,
+            nativeId: request.nativeItemId,
+            strength: "weak" as const,
+          };
+          const ordinal = yield* resolveItemOrdinal(context, request.nativeItemId);
+          const runtimeRequest: OrchestrationV2RuntimeRequest = {
+            id: requestId,
+            nodeId,
+            providerTurnId: context.providerTurnId,
+            nativeRequestRef: {
+              driver,
+              nativeId: request.nativeRequestId,
+              strength: "weak",
+            },
+            kind: "user_input",
+            status: "pending",
+            responseCapability: {
+              type: "live",
+              providerSessionId: input.providerSessionId,
+            },
+            createdAt: now,
+            resolvedAt: null,
+          };
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            parentNodeId: context.input.rootNodeId,
+            rootNodeId: context.input.rootNodeId,
+            kind: "user_input_request",
+            status: "waiting",
+            countsForRun: false,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: requestId,
+            checkpointScopeId: null,
+            startedAt: now,
+            completedAt: null,
+          };
+          const turnItem: OrchestrationV2TurnItem = {
+            id: turnItemId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            nodeId,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            parentItemId: null,
+            ordinal,
+            status: "waiting",
+            title: null,
+            startedAt: now,
+            completedAt: null,
+            updatedAt: now,
+            type: "user_input_request",
+            requestId,
+            questions: [...request.questions],
+          };
+          yield* Ref.update(pendingRuntimeRequests, (current) => {
+            const updated = new Map(current);
+            updated.set(String(requestId), {
+              type: "user_input",
+              generation,
+              nativeResponseAcknowledgement,
+              requestId,
+              transportRequestId,
+              answers,
+              runtimeRequest,
+              node,
+              turnItem,
+            });
+            return updated;
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node,
+          });
+          yield* emitProviderEvent({
+            type: "runtime_request.updated",
+            driver,
+            threadId: context.input.threadId,
+            runtimeRequest,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem,
+          });
+          return {
+            answers,
+            context,
+            nativeResponseAcknowledgement,
+            requestId,
+            transportRequestId,
+          } as const;
+        });
+
+        const requestUserInputWithAdmission = (
+          generation: number,
+          request: Effect.Effect<AcpAdapterV2UserInputRequest>,
+          transportRequestId: string,
+        ) =>
+          runRuntimeCallbackAtGeneration(
+            generation,
+            request.pipe(
+              Effect.flatMap((value) =>
+                beginUserInputRequest(value, generation, transportRequestId),
+              ),
+            ),
+          ).pipe(
+            Effect.flatMap((pending) => {
+              if (Option.isNone(pending)) return Effect.never;
+              const { answers, requestId, transportRequestId } = pending.value;
+              return Deferred.await(answers).pipe(
+                Effect.flatMap((result) =>
+                  runRuntimeCallbackAtGeneration(generation, Effect.succeed(result)).pipe(
+                    Effect.flatMap((checked) =>
+                      Option.isSome(checked)
+                        ? Effect.succeed({
+                            acknowledgeNativeResponse: acknowledgeNativeResponse(
+                              generation,
+                              transportRequestId,
+                            ),
+                            answers: checked.value,
+                          })
+                        : Effect.never,
+                    ),
+                  ),
+                ),
+                Effect.ensuring(
+                  runRuntimeCallbackAtGeneration(
+                    generation,
+                    Effect.gen(function* () {
+                      yield* Ref.update(pendingRuntimeRequests, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(String(requestId));
+                        return updated;
+                      });
+                    }),
+                  ).pipe(Effect.asVoid),
+                ),
+              );
+            }),
+            Effect.mapError(
+              (cause) =>
+                new EffectAcpErrors.AcpTransportError({
+                  detail: "Failed to handle ACP user input request",
+                  cause,
+                }),
+            ),
+          );
+
+        const cancelPendingRuntimeRequests = Effect.fnUntraced(function* () {
+          const requests = yield* Ref.modify(pendingRuntimeRequests, (current) => [
+            [...current.values()],
+            new Map<string, PendingRuntimeRequest>(),
+          ]);
+          if (requests.length === 0) return;
+
+          const now = yield* DateTime.now;
+          yield* Effect.forEach(
+            requests,
+            (request) =>
+              Effect.gen(function* () {
+                const cancelled = yield* request.type === "approval"
+                  ? Deferred.succeed(request.decision, "cancel")
+                  : Deferred.succeed(request.answers, null);
+                if (!cancelled) return;
+
+                yield* emitProviderEvent({
+                  type: "runtime_request.updated",
+                  driver,
+                  threadId: request.node.threadId,
+                  runtimeRequest: {
+                    ...request.runtimeRequest,
+                    status: "cancelled",
+                    resolvedAt: now,
+                  },
+                });
+                yield* emitProviderEvent({
+                  type: "node.updated",
+                  driver,
+                  node: {
+                    ...request.node,
+                    status: "cancelled",
+                    completedAt: now,
+                  },
+                });
+                yield* emitProviderEvent({
+                  type: "turn_item.updated",
+                  driver,
+                  turnItem: {
+                    ...request.turnItem,
+                    status: "cancelled",
+                    completedAt: now,
+                    updatedAt: now,
+                  },
+                });
+              }),
+            { concurrency: 1, discard: true },
+          );
+        });
+
+        /**
+         * Mutate a carryover subagent's in-memory task status without projecting.
+         * Used after a non-completed root whose original run subscriber is no
+         * longer guaranteed to ingest the terminal event.
+         */
+        const mutateCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          status: OrchestrationV2Subagent["status"],
+          resultOverride?: string | null,
+        ) {
+          const now = yield* DateTime.now;
+          const result =
+            resultOverride !== undefined && resultOverride !== null && resultOverride.length > 0
+              ? resultOverride
+              : (subagent.task.result ?? (subagent.assistantText || null));
+          const completedAt = acpSubagentStatusIsTerminal(status) ? now : null;
+          subagent.task = {
+            ...subagent.task,
+            status,
+            result,
+            completedAt,
+            updatedAt: now,
+          };
+        });
+
+        /**
+         * Project a carryover subagent status change without an ActiveAcpTurn.
+         * Shared by completed-root post-settle completion, deferred attach, and
+         * Direct Stop terminalization.
+         */
+        const projectCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          subagent: ActiveAcpSubagent,
+          status: OrchestrationV2Subagent["status"],
+          resultOverride?: string | null,
+        ) {
+          yield* mutateCarryoverSubagentStatus(subagent, status, resultOverride);
+          const now = subagent.task.updatedAt;
+          const nativeTaskId = subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id;
+          const nativeItemRef = {
+            driver,
+            nativeId: nativeTaskId,
+            strength: "strong" as const,
+          };
+          const parentProviderThreadId = subagent.parentProviderThreadId;
+          const result = subagent.task.result;
+          const completedAt = subagent.task.completedAt;
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: subagent.task.id,
+              threadId: subagent.task.threadId,
+              runId: subagent.task.runId,
+              parentNodeId: subagent.task.parentNodeId,
+              rootNodeId: subagent.task.parentNodeId,
+              kind: "subagent",
+              status,
+              countsForRun: false,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver,
+            node: {
+              id: subagent.childRootNodeId,
+              threadId: subagent.childThreadId,
+              runId: null,
+              parentNodeId: null,
+              rootNodeId: subagent.childRootNodeId,
+              kind: "root_turn",
+              status,
+              countsForRun: false,
+              providerThreadId: subagent.task.providerThreadId,
+              providerTurnId: null,
+              nativeItemRef,
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+            },
+          });
+          yield* emitProviderEvent({
+            type: "subagent.updated",
+            driver,
+            subagent: subagent.task,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver,
+            turnItem: {
+              id: subagent.turnItemId,
+              threadId: subagent.task.threadId,
+              runId: subagent.task.runId,
+              nodeId: subagent.task.id,
+              providerThreadId: parentProviderThreadId,
+              providerTurnId: subagent.providerTurnId,
+              nativeItemRef,
+              parentItemId: null,
+              ordinal: subagent.turnItemOrdinal,
+              status,
+              title: subagent.task.title,
+              startedAt: subagent.task.startedAt,
+              completedAt,
+              updatedAt: now,
+              type: "subagent",
+              subagentId: subagent.task.id,
+              origin: "provider_native",
+              driver,
+              providerInstanceId: subagent.task.providerInstanceId,
+              childThreadId: subagent.childThreadId,
+              prompt: subagent.task.prompt,
+              result,
+            },
+          });
+          if (acpSubagentStatusIsTerminal(status)) {
+            subagent.terminalStatusProjected = true;
+          }
+        });
+
+        /**
+         * Update a carryover subagent matched by native task id or child session
+         * id. Post-settle completions must flip the pin in hasPendingBackgroundWork
+         * without waiting for a new user turn to consume carryover.
+         * When `project` is false, only the in-memory carryover status advances
+         * (the next attach projects the terminal state).
+         * If status already matches but projection was deferred, a later
+         * project:true caller still projects once via terminalStatusProjected.
+         */
+        const updateCarryoverSubagentStatus = Effect.fnUntraced(function* (
+          nativeIdOrChildSessionId: string,
+          status: OrchestrationV2Subagent["status"],
+          result?: string | null,
+          options?: { readonly project?: boolean },
+        ) {
+          const carryover = yield* Ref.get(carryoverSubagents);
+          if (carryover === null) return false;
+          const match = carryover.subagents.find((subagent) => {
+            const nativeId = subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+            return (
+              nativeId === nativeIdOrChildSessionId ||
+              subagent.childSessionId === nativeIdOrChildSessionId
+            );
+          });
+          if (match === undefined) return false;
+          const shouldProject = options?.project !== false;
+          if (match.task.status === status) {
+            // Already at this status: only project if requested and not yet done.
+            if (!shouldProject || match.terminalStatusProjected) {
+              return true;
+            }
+            yield* projectCarryoverSubagentStatus(match, status, result);
+            return true;
+          }
+          // Only advance nonterminal entries; do not resurrect a terminal one.
+          if (match.task.status !== "running" && match.task.status !== "pending") {
+            return false;
+          }
+          if (!shouldProject) {
+            yield* mutateCarryoverSubagentStatus(match, status, result);
+          } else {
+            yield* projectCarryoverSubagentStatus(match, status, result);
+          }
+          return true;
+        });
+
+        applyFinalizedActiveTurnSubagentTerminal = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          notification: EffectAcpSchema.SessionNotification,
+        ) {
+          if (flavor.extractSubagentUpdate === undefined) return false;
+
+          const applyTerminal = Effect.fnUntraced(function* (
+            subagent: ActiveAcpSubagent,
+            update: AcpAdapterV2SubagentUpdate,
+          ) {
+            if (!acpSubagentStatusIsTerminal(update.status)) return false;
+            if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+              if (subagent.terminalStatusProjected || context.finalizedStatus !== "completed") {
+                return true;
+              }
+            }
+            if (context.finalizedStatus === "completed") {
+              yield* emitSubagent(context, update);
+            } else {
+              yield* mutateCarryoverSubagentStatus(subagent, update.status, update.result);
+            }
+            return true;
+          });
+
+          const sessionUpdate = notification.update;
+          if (
+            sessionUpdate.sessionUpdate === "tool_call" ||
+            sessionUpdate.sessionUpdate === "tool_call_update"
+          ) {
+            for (const event of parseSessionUpdateEvent(notification).events) {
+              if (event._tag !== "ToolCallUpdated") continue;
+              const toolCall = flavor.normalizeToolCall?.(event.toolCall) ?? event.toolCall;
+              const subagentUpdate = flavor.extractSubagentUpdate(toolCall);
+              if (
+                subagentUpdate === undefined ||
+                !acpSubagentStatusIsTerminal(subagentUpdate.status)
+              ) {
+                continue;
+              }
+              const subagent =
+                context.subagents.get(subagentUpdate.nativeTaskId) ??
+                (subagentUpdate.childSessionId === null
+                  ? undefined
+                  : context.subagentsBySessionId.get(subagentUpdate.childSessionId)) ??
+                context.subagentsBySessionId.get(notification.sessionId);
+              if (subagent === undefined) continue;
+              const nativeTaskId =
+                subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id);
+              if (
+                subagentUpdate.nativeTaskId !== nativeTaskId &&
+                (subagentUpdate.childSessionId === null ||
+                  (subagentUpdate.childSessionId !== subagent.childSessionId &&
+                    subagentUpdate.childSessionId !== notification.sessionId))
+              ) {
+                continue;
+              }
+              if (yield* applyTerminal(subagent, subagentUpdate)) return true;
+            }
+          }
+
+          if (
+            sessionUpdate.sessionUpdate === "user_message_chunk" &&
+            sessionUpdate.content.type === "text" &&
+            flavor.extractSubagentEndNotice !== undefined
+          ) {
+            const notice = flavor.extractSubagentEndNotice(sessionUpdate.content.text);
+            const subagent =
+              notice === undefined
+                ? undefined
+                : context.subagentsBySessionId.get(notice.childSessionId);
+            if (notice !== undefined && subagent !== undefined) {
+              return yield* applyTerminal(subagent, {
+                nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? String(subagent.task.id),
+                prompt: subagent.task.prompt,
+                title: subagent.task.title,
+                model: subagent.task.model,
+                status: notice.status,
+                childSessionId: notice.childSessionId,
+                result: null,
+                suppressNormalTool: true,
+              });
+            }
+          }
+
+          return false;
+        });
+
+        const projectDeferredCarryoverTerminals = Effect.fnUntraced(function* (
+          subagents: ReadonlyArray<ActiveAcpSubagent>,
+        ) {
+          for (const subagent of subagents) {
+            if (
+              subagent.task.status === "running" ||
+              subagent.task.status === "pending" ||
+              subagent.terminalStatusProjected
+            ) {
+              continue;
+            }
+            yield* projectCarryoverSubagentStatus(
+              subagent,
+              subagent.task.status,
+              subagent.task.result,
+            );
+          }
+        });
+
+        /**
+         * Direct Stop after a soft steer clears carryover without an active turn.
+         * Emit the same interrupted terminal events terminalizeOpenRunOwnedItems
+         * would have, context-free (no ActiveAcpTurn).
+         */
+        const terminalizeCarryoverSubagents = Effect.fnUntraced(function* (
+          carryover: AcpCarryoverSubagents | null,
+        ) {
+          if (carryover === null) return;
+          for (const subagent of carryover.subagents) {
+            if (acpSubagentStatusIsTerminal(subagent.task.status)) {
+              if (!subagent.terminalStatusProjected) {
+                yield* projectCarryoverSubagentStatus(
+                  subagent,
+                  subagent.task.status,
+                  subagent.task.result,
+                );
+              }
+              continue;
+            }
+            yield* projectCarryoverSubagentStatus(subagent, "interrupted");
+          }
+        });
+
+        const projectAcpRuntimeSessionUpdateEffect = (
+          rawNotification: EffectAcpSchema.SessionNotification,
+        ) =>
+          Effect.gen(function* () {
+            if (clientTerminals !== undefined) {
+              const embedded = embeddedTerminalIdsFromSessionUpdate(rawNotification);
+              if (embedded !== undefined) {
+                rememberEmbeddedTerminals({
+                  ...embedded,
+                  sessionId: rawNotification.sessionId,
+                });
+              }
+            }
+            const notification =
+              clientTerminals === undefined
+                ? rawNotification
+                : resolveEmbeddedTerminalContent(
+                    rawNotification,
+                    clientTerminals.readOutputSnapshot,
+                  );
+            if (notification.update.sessionUpdate === "available_commands_update") {
+              yield* (
+                flavor.onAvailableCommandsUpdate?.(notification.update.availableCommands) ??
+                  Effect.void
+              );
+            }
+            if (
+              notification.update.sessionUpdate === "config_option_update" ||
+              notification.update.sessionUpdate === "current_mode_update"
+            ) {
+              yield* (
+                flavor.onSessionConfigurationUpdate?.(
+                  yield* runtime.getConfigOptions,
+                  yield* runtime.getModeState,
+                ) ?? Effect.void
+              );
+            }
+            yield* handleSessionUpdate(
+              flavor.normalizeSessionUpdate?.(notification) ?? notification,
+            );
+          }).pipe(
+            Effect.mapError(
+              (cause) =>
+                new EffectAcpErrors.AcpTransportError({
+                  detail: "Failed to project an ACP session update",
+                  cause,
+                }),
+            ),
+          );
+        const projectAcpRuntimeSessionUpdate = (
+          handlerGeneration: number,
+          rawNotification: EffectAcpSchema.SessionNotification,
+        ) =>
+          runRuntimeCallbackAtGeneration(
+            handlerGeneration,
+            projectAcpRuntimeSessionUpdateEffect(rawNotification),
+          ).pipe(Effect.asVoid);
+
+        // Falls back to the latest turn policy when no turn is active so
+        // post-settle background work stays under the policy it started with.
+        const clientPolicyContext = Effect.map(Ref.get(activeTurn), (context) => ({
+          policy: context?.input.runtimePolicy ?? latestRuntimePolicy,
+          turnKey: context === null ? null : String(context.providerTurnId),
+        }));
+
+        const denyClientRequest = (operation: string, disposition: "ask" | "deny") =>
+          Effect.logWarning("ACP client policy denied a client-mediated operation", {
+            operation,
+            disposition,
+          }).pipe(
+            Effect.andThen(
+              Effect.fail(
+                EffectAcpErrors.AcpRequestError.internalError(
+                  disposition === "ask"
+                    ? `The active T3 runtime policy requires approval for ${operation}. Request permission with session/request_permission before retrying.`
+                    : `The active T3 runtime policy does not allow ${operation}.`,
+                ),
+              ),
+            ),
+          );
+
+        const guardClientFsWrite = (path: string) =>
+          clientPolicyContext.pipe(
+            Effect.flatMap(({ policy, turnKey }) => {
+              const disposition = acpClientWriteDisposition(policy, path);
+              if (
+                disposition === "allow" ||
+                (disposition === "ask" &&
+                  clientPolicyGrants.allowsWrite({ path, cwd: policy.cwd, turnKey }))
+              ) {
+                return Effect.void;
+              }
+              return denyClientRequest(`fs/write_text_file for '${path}'`, disposition);
+            }),
+          );
+
+        const guardClientFsRead = (path: string) =>
+          clientPolicyContext.pipe(
+            Effect.flatMap(({ policy, turnKey }) => {
+              const disposition = acpClientReadDisposition(policy, path);
+              if (
+                disposition === "allow" ||
+                (disposition === "ask" &&
+                  clientPolicyGrants.allowsRead({ path, cwd: policy.cwd, turnKey }))
+              ) {
+                return Effect.void;
+              }
+              return denyClientRequest(`fs/read_text_file for '${path}'`, disposition);
+            }),
+          );
+
+        const guardClientTerminalCreate = clientPolicyContext.pipe(
+          Effect.flatMap(({ policy, turnKey }) => {
+            const disposition = acpClientExecuteDisposition(policy);
+            if (
+              disposition === "allow" ||
+              (disposition === "ask" && clientPolicyGrants.allowsExecute(turnKey))
+            ) {
+              return Effect.void;
+            }
+            return denyClientRequest("terminal/create", disposition);
+          }),
+        );
+
+        const wireAcpRuntimeTerminalHandlers = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+        ) {
+          if (clientTerminals === undefined) return;
+          yield* targetRuntime.handleCreateTerminal((request) =>
+            guardClientTerminalCreate.pipe(Effect.andThen(clientTerminals.create(request))),
+          );
+          yield* targetRuntime.handleTerminalOutput(clientTerminals.output);
+          yield* targetRuntime.handleTerminalWaitForExit(clientTerminals.waitForExit);
+          yield* targetRuntime.handleTerminalKill(clientTerminals.kill);
+          yield* targetRuntime.handleTerminalRelease(clientTerminals.release);
+        });
+
+        const wireAcpRuntimeMcpHandlers = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+          mcpBridge: AcpMcpOverAcpBridge | undefined,
+        ) {
+          if (mcpBridge === undefined) return;
+          const mapMcpBridgeError = Effect.mapError(
+            (error: Error) =>
+              new EffectAcpErrors.AcpRequestError({
+                code: -32603,
+                errorMessage: error.message,
+                cause: error,
+              }),
+          );
+          yield* targetRuntime.handleMcpConnect((request) =>
+            mcpBridge.connect(request).pipe(mapMcpBridgeError),
+          );
+          yield* targetRuntime.handleMcpMessage((request) =>
+            mcpBridge.message(request).pipe(mapMcpBridgeError),
+          );
+          yield* targetRuntime.handleMcpNotification((request) =>
+            mcpBridge.notification(request).pipe(mapMcpBridgeError),
+          );
+          yield* targetRuntime.handleMcpDisconnect((request) =>
+            mcpBridge.disconnect(request).pipe(mapMcpBridgeError),
+          );
+        });
+
+        const wireAcpRuntimeHandlers = Effect.fnUntraced(function* (
+          targetRuntime: AcpSessionRuntime.AcpSessionRuntime["Service"],
+          handlerGeneration: number,
+          handlerOptions: {
+            readonly sessionUpdates?: boolean;
+            readonly terminals?: boolean;
+            readonly mcp?: boolean;
+          } = {},
+        ) {
+          yield* targetRuntime.getEvents().pipe(
+            Stream.runForEach((event) => {
+              if (event._tag === "EventStreamBarrier") {
+                return Deferred.succeed(event.acknowledge, undefined).pipe(Effect.asVoid);
+              }
+              return runRuntimeCallbackAtGeneration(
+                handlerGeneration,
+                flavor.onSessionEvent?.(event) ?? Effect.void,
+              ).pipe(Effect.asVoid);
+            }),
+            Effect.forkIn(runtimeScope ?? sessionScope),
+          );
+          const requestUserInput = (
+            request: AcpAdapterV2UserInputRequest,
+            requestContext: EffectAcpProtocol.AcpRequestContext,
+          ) =>
+            requestUserInputWithAdmission(
+              handlerGeneration,
+              Effect.succeed(request),
+              requestContext.requestId,
+            );
+          yield* targetRuntime.handleReadTextFile((request) =>
+            guardClientFsRead(request.path).pipe(
+              Effect.andThen(acpReadTextFile(options.fileSystem, request)),
+            ),
+          );
+          yield* targetRuntime.handleWriteTextFile((request) =>
+            guardClientFsWrite(request.path).pipe(
+              Effect.andThen(acpWriteTextFile(options.fileSystem, request)),
+            ),
+          );
+          if (handlerOptions.mcp !== false) {
+            yield* wireAcpRuntimeMcpHandlers(targetRuntime, runtimeMcpBridge);
+          }
+          if (handlerOptions.terminals !== false) {
+            yield* wireAcpRuntimeTerminalHandlers(targetRuntime);
+          }
+          if (handlerOptions.sessionUpdates !== false) {
+            yield* targetRuntime.handleSessionUpdate((rawNotification) =>
+              projectAcpRuntimeSessionUpdate(handlerGeneration, rawNotification),
+            );
+          }
+          yield* targetRuntime.handleRequestPermission((params, requestContext) =>
+            Effect.gen(function* () {
+              const transportRequestId = requestContext.requestId;
+              const permissionQuestion = flavor.extractPermissionQuestion?.(params);
+              if (permissionQuestion !== undefined) {
+                const userInput = yield* requestUserInputWithAdmission(
+                  handlerGeneration,
+                  Effect.succeed({
+                    nativeItemId: `${params.sessionId}:question:${params.toolCall.toolCallId}`,
+                    nativeMethod: "session/request_permission",
+                    nativeRequestId: params.toolCall.toolCallId,
+                    nativeSessionId: params.sessionId,
+                    questions: [permissionQuestion.question],
+                  }),
+                  transportRequestId,
+                );
+                const response =
+                  userInput.answers === null
+                    ? undefined
+                    : permissionQuestion.respond(userInput.answers);
+                yield* userInput.acknowledgeNativeResponse;
+                return response ?? ({ outcome: { outcome: "cancelled" } } as const);
+              }
+              const admitted = yield* runRuntimeCallbackAtGeneration(
+                handlerGeneration,
+                Effect.gen(function* () {
+                  const context = yield* activeContext;
+                  const disposition = acpPermissionDisposition(context.input.runtimePolicy, params);
+                  if (disposition === "allow") {
+                    const optionId = selectAutoApprovedPermissionOption(params);
+                    return {
+                      _tag: "Immediate" as const,
+                      response:
+                        optionId === undefined
+                          ? ({ outcome: { outcome: "cancelled" } } as const)
+                          : ({ outcome: { outcome: "selected", optionId } } as const),
+                    };
+                  }
+                  if (disposition === "deny") {
+                    const optionId = selectPermissionOptionId(params, "decline");
+                    return {
+                      _tag: "Immediate" as const,
+                      response:
+                        optionId === undefined
+                          ? ({ outcome: { outcome: "cancelled" } } as const)
+                          : ({ outcome: { outcome: "selected", optionId } } as const),
+                    };
+                  }
+                  return {
+                    _tag: "Pending" as const,
+                    pending: yield* beginApprovalRequest(
+                      context,
+                      params,
+                      handlerGeneration,
+                      transportRequestId,
+                    ),
+                  };
+                }),
+              );
+              if (Option.isNone(admitted)) {
+                return yield* Effect.never;
+              }
+              if (admitted.value._tag === "Immediate") {
+                const response = admitted.value.response;
+                const checked = yield* runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    const nativeResponseAcknowledgement = yield* Deferred.make<
+                      void,
+                      EffectAcpErrors.AcpError
+                    >();
+                    yield* registerNativeResponseAcknowledgement(
+                      handlerGeneration,
+                      transportRequestId,
+                      nativeResponseAcknowledgement,
+                    );
+                    return response;
+                  }),
+                );
+                return Option.isSome(checked) ? checked.value : yield* Effect.never;
+              }
+              const {
+                context,
+                decision: pendingDecision,
+                requestId,
+                transportRequestId: pendingTransportRequestId,
+              } = admitted.value.pending;
+              const parsedPermission = parsePermissionRequest(params);
+              const decision = yield* Deferred.await(pendingDecision).pipe(
+                Effect.ensuring(
+                  runRuntimeCallbackAtGeneration(
+                    handlerGeneration,
+                    Effect.gen(function* () {
+                      yield* Ref.update(pendingRuntimeRequests, (current) => {
+                        const updated = new Map(current);
+                        updated.delete(String(requestId));
+                        return updated;
+                      });
+                    }),
+                  ).pipe(Effect.asVoid),
+                ),
+              );
+              if (
+                parsedPermission.kind !== "unknown" &&
+                (decision === "accept" || decision === "acceptForSession")
+              ) {
+                clientPolicyGrants.recordApproval({
+                  kind: providerRequestKind(parsedPermission.kind),
+                  locations: (params.toolCall.locations ?? []).map((location) => location.path),
+                  cwd: context.input.runtimePolicy.cwd,
+                  scope: decision === "acceptForSession" ? "session" : "turn",
+                  turnKey: String(context.providerTurnId),
+                });
+              }
+              const response = (() => {
+                if (decision === "cancel") {
+                  return { outcome: { outcome: "cancelled" } } as const;
+                }
+                const optionId = selectPermissionOptionId(params, decision);
+                return optionId === undefined
+                  ? ({ outcome: { outcome: "cancelled" } } as const)
+                  : ({ outcome: { outcome: "selected", optionId } } as const);
+              })();
+              const checked = yield* runRuntimeCallbackAtGeneration(
+                handlerGeneration,
+                Effect.succeed(response),
+              );
+              if (Option.isNone(checked)) return yield* Effect.never;
+              yield* acknowledgeNativeResponse(handlerGeneration, pendingTransportRequestId);
+              return checked.value;
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new EffectAcpErrors.AcpTransportError({
+                    detail: "Failed to handle an ACP permission request",
+                    cause,
+                  }),
+              ),
+            ),
+          );
+          yield* targetRuntime.handleElicitation((params, requestContext) =>
+            Effect.gen(function* () {
+              const transportRequestId = requestContext.requestId;
+              if (
+                params.mode === "form" &&
+                (unknownRecord(params._meta)?.codex_approval_kind === "mcp_tool_call" ||
+                  transportRequestId.startsWith("mcp_tool_call_approval_"))
+              ) {
+                const mcpApprovalDisposition = yield* runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    const context = yield* activeContext;
+                    const disposition = acpMcpToolApprovalElicitationDisposition(
+                      context.input.runtimePolicy,
+                      params,
+                      transportRequestId,
+                    );
+                    if (disposition === undefined || disposition === "ask") {
+                      return disposition;
+                    }
+                    const nativeResponseAcknowledgement = yield* Deferred.make<
+                      void,
+                      EffectAcpErrors.AcpError
+                    >();
+                    yield* registerNativeResponseAcknowledgement(
+                      handlerGeneration,
+                      transportRequestId,
+                      nativeResponseAcknowledgement,
+                    );
+                    return disposition;
+                  }),
+                );
+                if (Option.isNone(mcpApprovalDisposition)) return yield* Effect.never;
+                if (mcpApprovalDisposition.value === "allow") {
+                  return { action: "accept", content: {} } as const;
+                }
+                if (mcpApprovalDisposition.value === "deny") {
+                  return { action: "decline" } as const;
+                }
+              }
+              if (
+                params.mode === "url" &&
+                "url" in params &&
+                typeof params.url === "string" &&
+                "elicitationId" in params &&
+                typeof params.elicitationId === "string"
+              ) {
+                const { elicitationId, url } = params;
+                const admitted = yield* runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    const nativeResponseAcknowledgement = yield* Deferred.make<
+                      void,
+                      EffectAcpErrors.AcpError
+                    >();
+                    yield* registerNativeResponseAcknowledgement(
+                      handlerGeneration,
+                      transportRequestId,
+                      nativeResponseAcknowledgement,
+                    );
+                    const accepted = yield* (
+                      flavor.onUrlElicitation?.({
+                        elicitationId,
+                        url,
+                        message: params.message,
+                      }) ?? Effect.succeed(false)
+                    );
+                    return accepted
+                      ? ({ action: "accept" } as const)
+                      : ({ action: "decline" } as const);
+                  }),
+                );
+                if (Option.isNone(admitted)) return yield* Effect.never;
+                return admitted.value;
+              }
+              if (params.mode !== "form" || !("requestedSchema" in params)) {
+                // Future elicitation modes beyond form and url decline rather
+                // than guessing at their semantics.
+                return { action: "decline" } as const;
+              }
+              const requestedSchema = unknownRecord(params.requestedSchema);
+              const properties = unknownRecord(requestedSchema?.properties) ?? {};
+              const elicitationScopeId =
+                "sessionId" in params ? params.sessionId : `request:${params.requestId}`;
+              const questions = Object.entries(properties).map(
+                ([id, property], index): OrchestrationV2UserInputQuestion => {
+                  const record = unknownRecord(property);
+                  const enumValues = Array.isArray(record?.enum)
+                    ? record.enum.filter((value): value is string => typeof value === "string")
+                    : [];
+                  const options =
+                    enumValues.length > 0
+                      ? enumValues.map((value) => ({ label: value, description: value }))
+                      : record?.type === "boolean"
+                        ? [
+                            { label: "true", description: "Yes" },
+                            { label: "false", description: "No" },
+                          ]
+                        : [];
+                  return {
+                    id,
+                    header: nonEmptyText(record?.title, `Question ${index + 1}`),
+                    question: nonEmptyText(record?.description, params.message),
+                    options,
+                  };
+                },
+              );
+              const userInput = yield* requestUserInputWithAdmission(
+                handlerGeneration,
+                Effect.gen(function* () {
+                  const ordinal = yield* Ref.getAndUpdate(
+                    nextElicitationOrdinal,
+                    (current) => current + 1,
+                  );
+                  const nativeRequestId = `${elicitationScopeId}:elicitation:${ordinal}`;
+                  return {
+                    nativeItemId: nativeRequestId,
+                    nativeRequestId,
+                    questions,
+                  };
+                }),
+                transportRequestId,
+              );
+              const response =
+                userInput.answers === null
+                  ? ({ action: "cancel" } as const)
+                  : ({
+                      action: "accept",
+                      content: elicitationContent(
+                        userInput.answers,
+                        new Set(Object.keys(properties)),
+                      ),
+                    } as const);
+              yield* userInput.acknowledgeNativeResponse;
+              return response;
+            }),
+          );
+          if (flavor.registerExtensions !== undefined) {
+            yield* flavor.registerExtensions({
+              runtime: targetRuntime,
+              requestUserInput,
+              captureProposedPlan,
+              lastProposedPlanMarkdown,
+              applyBackgroundTaskMutation: (mutation) =>
+                runRuntimeCallbackAtGeneration(
+                  handlerGeneration,
+                  Effect.gen(function* () {
+                    // Direct Stop quarantine: drop residual task lifecycle from
+                    // the stopped run instead of mutating wake machinery.
+                    if (yield* Ref.get(stoppedRunQuarantine)) return;
+                    // Root-session tasks only: a cancelled subagent's re-run in
+                    // its child session must not gate root wake machinery.
+                    if ((yield* Ref.get(activeSessionId)) !== mutation.sessionId) return;
+                    yield* applyLateBackgroundMutation(mutation.sessionId, mutation);
+                  }),
+                ).pipe(Effect.asVoid),
+            });
+          }
+        });
+
+        /** Builds the MCP-over-ACP bridge for one runtime, disposed with that runtime's scope. */
+        const makeRuntimeMcpBridge = Effect.fnUntraced(function* (
+          threadId: ThreadId | null,
+          scope: Scope.Scope,
+        ) {
+          const mcpContext = acpMcpContext(threadId);
+          if (mcpContext.endpoint === undefined || mcpContext.authorization === undefined) {
+            return undefined;
+          }
+          const mcpBridge = yield* makeAcpMcpOverAcpBridge({
+            endpoint: mcpContext.endpoint,
+            authorization: mcpContext.authorization,
+            allocateConnectionId: options.crypto.randomUUIDv4.pipe(Effect.orDie),
+          });
+          yield* Scope.addFinalizer(scope, mcpBridge.dispose);
+          return mcpBridge;
+        });
+
+        const spawnAcpRuntime = Effect.fnUntraced(function* (
+          threadId: ThreadId | null,
+          resumeSessionId?: string,
+        ) {
+          if (runtimeScope !== undefined) {
+            yield* Scope.close(runtimeScope, Exit.void);
+          }
+          runtimeScope = yield* Scope.make();
+          runtimeMcpBridge = yield* makeRuntimeMcpBridge(threadId, runtimeScope);
+          const runtimeGeneration = yield* Ref.get(runtimeCallbackGeneration);
+          runtime = yield* flavor
+            .makeRuntime(makeRuntimeInput(runtimeGeneration, threadId, resumeSessionId))
+            .pipe(
+              Effect.provideService(Scope.Scope, runtimeScope),
+              Effect.provideService(Crypto.Crypto, options.crypto),
+            );
+        });
+
+        const startAcpRuntime = Effect.fnUntraced(function* (
+          threadId: ThreadId | null,
+          resumeSessionId?: string,
+        ) {
+          const startup = Effect.gen(function* () {
+            yield* spawnAcpRuntime(threadId, resumeSessionId);
+            yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
+            return yield* runtime.start();
+          });
+          return yield* flavor.withRuntimeStartup?.(startup) ?? startup;
+        });
+
+        const restartAcpRuntime = Effect.fnUntraced(function* (threadId: ThreadId | null) {
+          yield* spawnAcpRuntime(threadId);
+          yield* wireAcpRuntimeHandlers(runtime, yield* Ref.get(runtimeCallbackGeneration));
+        });
+
+        const startReplacementAcpRuntime = Effect.fnUntraced(function* (
+          threadId: ThreadId | null,
+          commitSessionState: (replacement: AcpSessionRuntimeStartResult) => Effect.Effect<void>,
+        ) {
+          const previousScope = runtimeScope;
+          const previousGeneration = yield* Ref.get(runtimeCallbackGeneration);
+          yield* runtimeCallbackPermit.withPermit(awaitAdmittedNativeResponses);
+
+          // Keep the original generation active until the candidate has
+          // completed session startup. A failed candidate therefore cannot
+          // suppress termination or background callbacks from the live session.
+          const replacementGeneration = yield* allocateRuntimeCallbackGeneration;
+          const replacementScope = yield* Scope.make();
+          type CandidateLifecycle =
+            | { readonly _tag: "Starting" }
+            | { readonly _tag: "Terminated"; readonly error: EffectAcpErrors.AcpError }
+            | { readonly _tag: "Committed" };
+          const candidateLifecycle = yield* Ref.make<CandidateLifecycle>({ _tag: "Starting" });
+          const handleCandidateTermination: AcpAdapterV2RuntimeInput["onTermination"] = (error) =>
+            Ref.modify(
+              candidateLifecycle,
+              (current): readonly [Effect.Effect<void>, CandidateLifecycle] => {
+                if (current._tag === "Committed") {
+                  return [handleRuntimeTerminationAtGeneration(replacementGeneration), current];
+                }
+                return [
+                  Effect.void,
+                  current._tag === "Terminated"
+                    ? current
+                    : ({ _tag: "Terminated", error } as const),
+                ];
+              },
+            ).pipe(Effect.flatten);
+          const stagedSessionUpdates: Array<EffectAcpSchema.SessionNotification> = [];
+          let handleCandidateSessionUpdate: (
+            notification: EffectAcpSchema.SessionNotification,
+          ) => Effect.Effect<void, EffectAcpErrors.AcpError> = (notification) =>
+            Effect.sync(() => {
+              stagedSessionUpdates.push(notification);
+            });
+          let replacementMcpBridge: AcpMcpOverAcpBridge | undefined;
+          const startup = Effect.gen(function* () {
+            replacementMcpBridge = yield* makeRuntimeMcpBridge(threadId, replacementScope);
+            const replacementRuntime = yield* flavor
+              .makeRuntime(
+                makeRuntimeInput(
+                  replacementGeneration,
+                  threadId,
+                  undefined,
+                  handleCandidateTermination,
+                ),
+              )
+              .pipe(
+                Effect.provideService(Scope.Scope, replacementScope),
+                Effect.provideService(Crypto.Crypto, options.crypto),
+              );
+            // Session setup may publish commands before it returns. Buffer those
+            // notifications, but do not expose request or extension handlers
+            // until the candidate generation has committed.
+            yield* replacementRuntime.handleSessionUpdate((notification) =>
+              Effect.suspend(() => handleCandidateSessionUpdate(notification)),
+            );
+            yield* wireAcpRuntimeMcpHandlers(replacementRuntime, replacementMcpBridge);
+            const started = yield* replacementRuntime.start();
+            return { replacementRuntime, started };
+          });
+          const replacementExit = yield* Effect.exit(
+            (flavor.withRuntimeStartup?.(startup) ?? startup).pipe(
+              Effect.onInterrupt(() =>
+                Scope.close(replacementScope, Exit.void).pipe(Effect.ignore),
+              ),
+            ),
+          );
+          if (Exit.isFailure(replacementExit)) {
+            yield* runtimeCallbackPermit.withPermit(
+              quarantineNativeTransportAtGeneration(replacementGeneration),
+            );
+            yield* Scope.close(replacementScope, Exit.void).pipe(Effect.ignore);
+            return yield* Effect.failCause(replacementExit.cause);
+          }
+
+          yield* runtimeCallbackPermit
+            .withPermit(
+              Effect.uninterruptible(
+                Effect.gen(function* () {
+                  yield* awaitAdmittedNativeResponses;
+                  // Session updates and MCP were wired during candidate startup
+                  // (against its own bridge); terminals attach after commit below.
+                  yield* wireAcpRuntimeHandlers(
+                    replacementExit.value.replacementRuntime,
+                    replacementGeneration,
+                    { sessionUpdates: false, terminals: false, mcp: false },
+                  );
+                  const lifecycle = yield* Ref.modify(
+                    candidateLifecycle,
+                    (current): readonly [CandidateLifecycle, CandidateLifecycle] =>
+                      current._tag === "Terminated"
+                        ? [current, current]
+                        : [{ _tag: "Committed" }, { _tag: "Committed" }],
+                  );
+                  if (lifecycle._tag === "Terminated") {
+                    return yield* lifecycle.error;
+                  }
+                  yield* quarantineNativeTransportAtGeneration(previousGeneration);
+                  runtime = replacementExit.value.replacementRuntime;
+                  runtimeScope = replacementScope;
+                  runtimeMcpBridge = replacementMcpBridge;
+                  yield* Ref.set(runtimeCallbackGeneration, replacementGeneration);
+                  prepareTerminalEnvironment(threadId, replacementExit.value.started.sessionId);
+                  yield* wireAcpRuntimeTerminalHandlers(replacementExit.value.replacementRuntime);
+                  yield* commitSessionState(replacementExit.value.started);
+                  while (true) {
+                    const buffered = stagedSessionUpdates.splice(0, stagedSessionUpdates.length);
+                    if (buffered.length === 0) {
+                      handleCandidateSessionUpdate = (notification) =>
+                        projectAcpRuntimeSessionUpdate(replacementGeneration, notification);
+                      break;
+                    }
+                    yield* Effect.forEach(
+                      buffered,
+                      (notification) =>
+                        projectAcpRuntimeSessionUpdateEffect(notification).pipe(
+                          Effect.catchCause((cause) =>
+                            Effect.logError("failed to replay staged ACP session update", {
+                              driver,
+                              cause,
+                            }),
+                          ),
+                        ),
+                      { discard: true },
+                    );
+                  }
+                  yield* cancelPendingRuntimeRequests();
+                  if (previousScope !== undefined) {
+                    yield* Scope.close(previousScope, Exit.void).pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logError("failed to close replaced ACP runtime scope", {
+                          driver,
+                          cause,
+                        }),
+                      ),
+                    );
+                  }
+                }),
+              ),
+            )
+            .pipe(
+              Effect.onExit((exit) =>
+                Exit.isFailure(exit)
+                  ? Ref.get(candidateLifecycle).pipe(
+                      Effect.flatMap((lifecycle) =>
+                        lifecycle._tag === "Committed"
+                          ? Effect.void
+                          : Scope.close(replacementScope, Exit.void).pipe(Effect.ignore),
+                      ),
+                    )
+                  : Effect.void,
+              ),
+            );
+          return replacementExit.value.started;
+        });
+
+        const initialStart = yield* Effect.result(
+          startAcpRuntime(input.threadId, input.initialNativeThreadId),
+        );
+        const started = Result.isSuccess(initialStart)
+          ? initialStart.success
+          : yield* Effect.gen(function* () {
+              const failedMethod =
+                "method" in initialStart.failure ? initialStart.failure.method : undefined;
+              if (
+                input.initialNativeThreadId === undefined ||
+                (failedMethod !== "session/load" && failedMethod !== "session/resume")
+              ) {
+                return yield* initialStart.failure;
+              }
+              yield* Ref.set(initialSessionActivationFailure, {
+                sessionId: input.initialNativeThreadId,
+                error: initialStart.failure,
+              });
+              itemIdentityVersion = 2;
+              yield* Ref.set(runtimeRestartRequired, false);
+              prepareClaimableTerminalEnvironment(input.threadId);
+              return yield* startAcpRuntime(input.threadId);
+            });
+        yield* Ref.set(activeSessionId, started.sessionId);
+        yield* Ref.set(activeSessionSetup, started);
+        rememberTerminalEnvironment(started.sessionId, input.threadId);
+        const capabilities = negotiatedCapabilities(flavor.capabilities, started);
+        const canLoadSession = started.initializeResult.agentCapabilities?.loadSession === true;
+        const canResumeSession =
+          started.initializeResult.agentCapabilities?.sessionCapabilities?.resume != null;
+        const supportsImagePrompts = acpSupportsImagePrompts({
+          flavorSupportsImagePrompts: flavor.supportsImagePrompts,
+          negotiatedImage:
+            started.initializeResult.agentCapabilities?.promptCapabilities?.image === true,
+        });
+
+        const activateSession = Effect.fnUntraced(function* (
+          sessionId: string,
+          threadId: ThreadId | null,
+        ) {
+          const initialFailure = yield* Ref.modify(initialSessionActivationFailure, (failure) =>
+            failure?.sessionId === sessionId ? [failure.error, null] : [undefined, failure],
+          );
+          if (initialFailure !== undefined) {
+            return yield* initialFailure;
+          }
+          const activationOptions = acpMcpActivation(threadId);
+          prepareTerminalEnvironment(threadId, sessionId);
+          const activated = canLoadSession
+            ? yield* runtime.loadSession(sessionId, activationOptions)
+            : canResumeSession
+              ? yield* runtime.resumeSession(sessionId, activationOptions)
+              : yield* new ProviderAdapterProtocolError({
+                  driver,
+                  detail: `ACP driver cannot load or resume session ${sessionId}`,
+                });
+          rememberTerminalEnvironment(activated.sessionId, threadId);
+          return activated;
+        });
+
+        const configureSession = Effect.fnUntraced(function* (
+          startResult: AcpSessionRuntimeStartResult,
+          modelSelection: ModelSelection,
+          runtimePolicy: ProviderAdapterV2RuntimePolicy,
+        ) {
+          const requestedModel = flavor.resolveModelId?.(modelSelection) ?? modelSelection.model;
+          let appliedModel: string | undefined;
+          if (flavor.applyModelSelection !== undefined) {
+            appliedModel = yield* flavor.applyModelSelection({
+              runtime,
+              startResult,
+              modelSelection,
+            });
+          } else if (
+            requestedModel.length > 0 &&
+            requestedModel !== "auto" &&
+            requestedModel !== "default"
+          ) {
+            const hasModelConfig =
+              startResult.sessionSetupResult.configOptions?.some(
+                (option) => option.category === "model",
+              ) === true;
+            if (hasModelConfig) {
+              yield* runtime.setModel(requestedModel);
+            }
+          }
+          // Same-runtime switches compare against this stored setup, so keep
+          // its model metadata in sync with what the session now runs on;
+          // otherwise switching A -> B -> A would see the stale setup-time A
+          // and skip the final switch.
+          if (appliedModel !== undefined) {
+            const applied = appliedModel;
+            yield* Ref.update(activeSessionSetup, (setup) => {
+              if (setup === null) {
+                return setup;
+              }
+              const models = setup.sessionSetupResult.models;
+              if (models == null || models.currentModelId === applied) {
+                return setup;
+              }
+              return {
+                ...setup,
+                sessionSetupResult: {
+                  ...setup.sessionSetupResult,
+                  models: { ...models, currentModelId: applied },
+                },
+              };
+            });
+          }
+          const optionSelections = modelSelection.options ?? [];
+          const configOptions = yield* runtime.getConfigOptions;
+          const availableConfigIds = new Set(configOptions.map((option) => option.id));
+          const hasNativeConfigWithSyntheticModeId = availableConfigIds.has(
+            ACP_SESSION_MODE_OPTION_ID,
+          );
+          const modeSelection = hasNativeConfigWithSyntheticModeId
+            ? undefined
+            : optionSelections.find((selection) => selection.id === ACP_SESSION_MODE_OPTION_ID);
+          const configSelections = hasNativeConfigWithSyntheticModeId
+            ? optionSelections
+            : optionSelections.filter((selection) => selection.id !== ACP_SESSION_MODE_OPTION_ID);
+          // Probe-time descriptors are a per-model union, so a stored
+          // selection can reference an option the live session does not
+          // expose (Kilo advertises per-model "effort" descriptors while its
+          // session config omits them). Failing the open here wedges the run
+          // in a retry loop; skip like the out-of-range values below and let
+          // the agent default apply.
+          const unsupportedConfigIds = configSelections
+            .map((selection) => selection.id)
+            .filter((id) => !availableConfigIds.has(id));
+          if (unsupportedConfigIds.length > 0) {
+            yield* Effect.logWarning(
+              "ACP session does not expose requested configuration option(s)",
+              {
+                driver,
+                sessionId: startResult.sessionId,
+                optionIds: unsupportedConfigIds,
+              },
+            );
+          }
+          for (const selection of configSelections) {
+            if (!availableConfigIds.has(selection.id)) continue;
+            // Tuning knobs degrade instead of failing the session open: agents
+            // advertise the union of values across models but can reject a
+            // per-model invalid one at set time (codex-acp advertises "ultra"
+            // reasoning effort and then rejects it for most models). Skip
+            // values the session does not currently offer and downgrade an
+            // agent-side set rejection to a warning; the agent's default
+            // applies for that option.
+            const option = configOptions.find((candidate) => candidate.id === selection.id);
+            if (
+              option !== undefined &&
+              option.type === "select" &&
+              typeof selection.value === "string"
+            ) {
+              const advertisedValues = option.options.flatMap((entry) =>
+                "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+              );
+              if (!advertisedValues.includes(selection.value)) continue;
+            }
+            yield* runtime.setConfigOption(selection.id, selection.value).pipe(
+              Effect.catchTags({
+                AcpRequestError: (error) =>
+                  Effect.logWarning("ACP session rejected a configuration option value", {
+                    optionId: selection.id,
+                    value: selection.value,
+                    detail: error.message,
+                  }),
+              }),
+            );
+          }
+          const policyMode = flavor.sessionModeForPolicy?.(runtimePolicy);
+          if (policyMode !== undefined) {
+            yield* runtime.setMode(policyMode);
+          }
+          const modeState = yield* runtime.getModeState;
+          // The synthetic mode selection is skipped rather than failed when the
+          // agent no longer advertises it: mode sets are volatile across agent
+          // versions and a stale persisted mode should not block the turn.
+          if (
+            modeSelection !== undefined &&
+            typeof modeSelection.value === "string" &&
+            modeState?.availableModes.some((mode) => mode.id === modeSelection.value) === true &&
+            modeState.currentModeId !== modeSelection.value
+          ) {
+            yield* runtime.setMode(modeSelection.value);
+          }
+          const effectiveModeState = yield* runtime.getModeState;
+          const effectiveConfigOptions = yield* runtime.getConfigOptions;
+          const planSensitiveOptions = effectiveConfigOptions.filter(
+            (
+              option,
+            ): option is Extract<
+              EffectAcpSchema.SessionConfigOption,
+              { readonly type: "select" }
+            > =>
+              option.type === "select" &&
+              (option.category === "mode" || option.category === "collaboration_mode"),
+          );
+          if (runtimePolicy.interactionMode === "plan") {
+            if (!nativeBuildConfigurationBySessionId.has(startResult.sessionId)) {
+              nativeBuildConfigurationBySessionId.set(startResult.sessionId, {
+                ...(effectiveModeState === undefined
+                  ? {}
+                  : { modeId: effectiveModeState.currentModeId }),
+                configOptions: planSensitiveOptions.map((option) => ({
+                  id: option.id,
+                  value: option.currentValue,
+                })),
+              });
+            }
+            const planMode = effectiveModeState?.availableModes.find(
+              (mode) => mode.id === "plan" || mode.id === "architect",
+            );
+            if (planMode !== undefined && effectiveModeState?.currentModeId !== planMode.id) {
+              yield* runtime.setMode(planMode.id);
+            }
+            for (const option of planSensitiveOptions) {
+              const choices = option.options.flatMap((entry) =>
+                "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+              );
+              const requested = choices.find(
+                (choice) => choice === "plan" || choice === "architect",
+              );
+              if (requested !== undefined && option.currentValue !== requested) {
+                yield* runtime.setConfigOption(option.id, requested);
+              }
+            }
+          } else {
+            const nativeBuild = nativeBuildConfigurationBySessionId.get(startResult.sessionId);
+            if (nativeBuild !== undefined) {
+              if (
+                nativeBuild.modeId !== undefined &&
+                effectiveModeState?.currentModeId !== nativeBuild.modeId &&
+                effectiveModeState?.availableModes.some(
+                  (mode) => mode.id === nativeBuild.modeId,
+                ) === true
+              ) {
+                yield* runtime.setMode(nativeBuild.modeId);
+              }
+              for (const saved of nativeBuild.configOptions) {
+                const option = effectiveConfigOptions.find(
+                  (candidate) => candidate.type === "select" && candidate.id === saved.id,
+                );
+                if (option === undefined || option.type !== "select") continue;
+                const choices = option.options.flatMap((entry) =>
+                  "value" in entry ? [entry.value] : entry.options.map((choice) => choice.value),
+                );
+                if (option.currentValue !== saved.value && choices.includes(saved.value)) {
+                  yield* runtime.setConfigOption(option.id, saved.value);
+                }
+              }
+              nativeBuildConfigurationBySessionId.delete(startResult.sessionId);
+            }
+          }
+          yield* (
+            flavor.onSessionConfigurationUpdate?.(
+              yield* runtime.getConfigOptions,
+              yield* runtime.getModeState,
+            ) ?? Effect.void
+          );
+        });
+
+        yield* configureSession(started, input.modelSelection, input.runtimePolicy);
+        yield* Ref.set(activeSelection, input.modelSelection);
+        yield* Ref.set(activeInteractionMode, input.runtimePolicy.interactionMode);
+        const createdAt = yield* DateTime.now;
+        const providerSession: OrchestrationV2ProviderSession = {
+          id: input.providerSessionId,
+          driver,
+          providerInstanceId: options.instanceId,
+          status: "ready",
+          cwd: input.runtimePolicy.cwd ?? process.cwd(),
+          model: input.modelSelection.model,
+          capabilities,
+          createdAt,
+          updatedAt: createdAt,
+          lastError: null,
+        };
+
+        const providerTurnPayload = (
+          context: ActiveAcpTurn,
+          status: OrchestrationV2ProviderTurn["status"],
+          completedAt: DateTime.Utc | null,
+        ): OrchestrationV2ProviderTurn => ({
+          id: context.providerTurnId,
+          providerThreadId: context.input.providerThread.id,
+          nodeId: context.input.rootNodeId,
+          runAttemptId: context.input.attemptId,
+          nativeTurnRef: {
+            driver,
+            nativeId: context.nativeTurnId,
+            strength: "weak",
+          },
+          ordinal: context.input.providerTurnOrdinal,
+          status,
+          startedAt: context.startedAt,
+          completedAt,
+        });
+
+        const terminalizeOpenRunOwnedItems = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          options: { readonly terminalizeSubagents: boolean },
+        ) {
+          for (const tool of context.tools.values()) {
+            const status = toolStatus(tool.status);
+            if (status === "pending" || status === "running" || status === "waiting") {
+              yield* emitTool(context, tool, "interrupted");
+            }
+          }
+          if (!options.terminalizeSubagents) return;
+          for (const subagent of context.subagents.values()) {
+            if (subagent.task.status !== "running" && subagent.task.status !== "pending") {
+              continue;
+            }
+            yield* emitSubagent(context, {
+              nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
+              prompt: subagent.task.prompt,
+              title: subagent.task.title,
+              model: subagent.task.model,
+              status: "interrupted",
+              childSessionId: subagent.childSessionId,
+              result: subagent.task.result,
+              suppressNormalTool: true,
+            });
+          }
+        });
+
+        const terminalizeOpenForegroundTools = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+        ) {
+          for (const tool of context.tools.values()) {
+            if (!acpCompletedTurnShouldTerminalizeTool(tool, flavor)) continue;
+            yield* emitTool(context, tool, "completed");
+          }
+        });
+
+        const quarantineStoppedRun = Effect.fnUntraced(function* () {
+          yield* continuationPermit.withPermit(
+            Effect.gen(function* () {
+              yield* Ref.update(continuationGeneration, (value) => value + 1);
+              yield* Ref.set(stoppedRunQuarantine, true);
+              yield* Ref.set(wakeBuffer, []);
+              yield* Ref.set(continuationRequested, false);
+              yield* Ref.set(runningBackgroundTaskIds, new Set());
+              yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+              yield* Ref.set(carryoverSubagents, null);
+              yield* Ref.set(lastTurnRoute, null);
+            }),
+          );
+        });
+
+        const finalizeTurn = Effect.fnUntraced(function* (
+          context: ActiveAcpTurn,
+          status: "completed" | "interrupted" | "failed" | "cancelled",
+          failure?: OrchestrationV2ProviderFailure,
+        ) {
+          if (context.finalized) return;
+          const settledStatus = context.interrupted ? "interrupted" : status;
+          context.finalizedStatus = settledStatus;
+          context.finalized = true;
+          const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
+          if (flavor.subagentsIdleOnTurnCompletion === true) {
+            for (const subagent of context.subagents.values()) {
+              if (!acpSubagentStatusBlocksTurnSettlement(subagent.task.status)) continue;
+              yield* emitSubagent(context, {
+                nativeTaskId: subagent.task.nativeTaskRef?.nativeId ?? subagent.task.id,
+                prompt: subagent.task.prompt,
+                title: subagent.task.title,
+                model: subagent.task.model,
+                status: settledStatus === "completed" ? "idle" : settledStatus,
+                childSessionId: subagent.childSessionId,
+                result: null,
+              });
+            }
+          }
+          if (settledStatus === "completed") {
+            yield* terminalizeOpenForegroundTools(context);
+          } else if (settledStatus === "interrupted") {
+            // Direct Stop terminalizes every visible run-owned item. restart_active
+            // keeps live subagent lineages for in-process replacement carryover.
+            yield* terminalizeOpenRunOwnedItems(context, {
+              terminalizeSubagents: directStopQuarantine,
+            });
+          }
+          yield* closeTextStreams(context);
+          const now = yield* DateTime.now;
+          if (
+            flavor.supportsCompaction === true &&
+            context.input.message.text.trim() === "/compact" &&
+            context.input.message.attachments.length === 0 &&
+            settledStatus === "completed"
+          ) {
+            const nativeItemId = `${context.nativeTurnId}:compaction`;
+            yield* emitProviderEvent({
+              type: "turn_item.updated",
+              driver,
+              turnItem: {
+                id: idAllocator.derive.turnItemFromProviderItem({ driver, nativeItemId }),
+                threadId: context.input.threadId,
+                runId: context.input.runId,
+                nodeId: context.input.rootNodeId,
+                providerThreadId: context.input.providerThread.id,
+                providerTurnId: context.providerTurnId,
+                nativeItemRef: { driver, nativeId: nativeItemId, strength: "weak" },
+                parentItemId: null,
+                ordinal: yield* resolveItemOrdinal(context, nativeItemId),
+                type: "compaction",
+                driver,
+                status: "completed",
+                title: "Context compacted",
+                startedAt: context.startedAt,
+                completedAt: now,
+                updatedAt: now,
+              },
+            });
+          }
+          const turn = providerTurnPayload(context, settledStatus, now);
+          yield* Ref.update(providerTurns, (current) => {
+            const updated = new Map(current);
+            updated.set(String(turn.id), turn);
+            return updated;
+          });
+          yield* emitProviderEvent({
+            type: "provider_turn.updated",
+            driver,
+            threadId: context.input.threadId,
+            providerTurn: turn,
+          });
+          const updatedProviderThread: OrchestrationV2ProviderThread = {
+            ...context.input.providerThread,
+            providerSessionId: input.providerSessionId,
+            status: "active",
+            lastRunOrdinal: context.input.runOrdinal,
+            firstRunOrdinal:
+              context.input.providerThread.firstRunOrdinal ?? context.input.runOrdinal,
+            contextUsage: context.contextUsage,
+            nativeMetadata: context.nativeMetadata,
+            updatedAt: now,
+          };
+          yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+            new Map(current).set(context.nativeThreadId, updatedProviderThread),
+          );
+          yield* emitProviderEvent({
+            type: "provider_thread.updated",
+            driver,
+            providerThread: updatedProviderThread,
+          });
+          yield* emitProviderEvent(
+            settledStatus === "failed"
+              ? {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  runOrdinal: context.input.runOrdinal,
+                  failureItemOrdinal: yield* resolveItemOrdinal(
+                    context,
+                    `terminal-failure:${context.providerTurnId}`,
+                  ),
+                  status: settledStatus,
+                  failure: failure ?? makeProviderFailure({ class: "provider_error" }),
+                  threadDisposition: "reusable",
+                }
+              : {
+                  type: "turn.terminal",
+                  driver,
+                  providerThreadId: context.input.providerThread.id,
+                  providerTurnId: context.providerTurnId,
+                  runOrdinal: context.input.runOrdinal,
+                  status: settledStatus,
+                  failure: null,
+                  threadDisposition: "reusable",
+                },
+          );
+          const subagentsRequiringCarryover = [...context.subagents.values()].filter(
+            acpSubagentHasPendingBackgroundWork,
+          );
+          // Direct Stop must not carry residual subagents into a later run.
+          if (subagentsRequiringCarryover.length > 0 && !directStopQuarantine) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            if (sessionId !== null) {
+              yield* Ref.set(carryoverSubagents, {
+                sessionId,
+                rootTerminalStatus: settledStatus,
+                subagents: subagentsRequiringCarryover,
+              });
+            }
+          }
+          yield* Ref.set(activeTurn, null);
+          // A mid-turn background completion may have deferred its offer while
+          // this root turn was still streaming. Once the turn leaves the active
+          // slot, re-check: empty running set + residual wake evidence (or a
+          // mid-turn unreported completion) means a legitimate unhandled
+          // completion can open exactly one continuation. Sticky
+          // continuationRequested prevents double-offer if a later frame also
+          // races into offerContinuationRun.
+          if (
+            postSettleContinuationEnabled &&
+            settledStatus === "completed" &&
+            !directStopQuarantine &&
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0 &&
+            ((yield* Ref.get(wakeBuffer)).length > 0 ||
+              (yield* Ref.get(midTurnUnreportedCompletedTaskIds)).size > 0)
+          ) {
+            const sessionId = yield* Ref.get(activeSessionId);
+            if (sessionId !== null) {
+              yield* offerContinuationRun(sessionId);
+            }
+          }
+          // Clear mid-turn unreported marks unless a completed turn still has
+          // running background work: keep them so the post-finalize gate can
+          // offer once when the last task ends. Interrupted/failed turns must
+          // not leave marks that open a wake after interrupt (quarantine owns
+          // that path). Non-continuation turn start also clears (~user turn).
+          if (
+            settledStatus !== "completed" ||
+            (yield* Ref.get(runningBackgroundTaskIds)).size === 0
+          ) {
+            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+          }
+          yield* Deferred.succeed(context.completed, undefined).pipe(Effect.ignore);
+        });
+
+        scheduleDeferredFinalize = (context) =>
+          Effect.gen(function* () {
+            if (!flavor.deferFinalizeForBackgroundWork) return;
+            if (!context.promptSettled || context.finalized || context.interrupted) return;
+            if (hasDeferredBackgroundWork(context)) return;
+            context.backgroundFinalizeGeneration += 1;
+            const generation = context.backgroundFinalizeGeneration;
+            // Minimal quiet for all models (no per-model carveouts). Defer +
+            // awaitingBackgroundHydration hold the turn through monitors; this
+            // is only a short debounce after the last rearm so a slightly late
+            // post-hydration assistant chunk stays in the same continuation.
+            // Grok commonly sends its final summary just over two seconds after
+            // the hydrated tool frame; two seconds split that tail into a second
+            // synthetic wake. Longer floors (4–20s) only prolonged Working.
+            yield* Effect.gen(function* () {
+              yield* Effect.sleep("3000 millis");
+              if (
+                context.finalized ||
+                context.interrupted ||
+                context.backgroundFinalizeGeneration !== generation
+              ) {
+                return;
+              }
+              if (hasDeferredBackgroundWork(context)) return;
+              const status = context.promptSettledStatus ?? "completed";
+              yield* finalizeTurn(context, status);
+            }).pipe(Effect.forkIn(sessionScope), Effect.asVoid);
+          });
+
+        const resolvePromptParts = Effect.fnUntraced(function* (
+          turnInput: ProviderAdapterV2TurnInput,
+          sessionId: string,
+        ) {
+          const prompt: Array<EffectAcpSchema.ContentBlock> = [];
+          const instructionState = {
+            interactionMode: turnInput.runtimePolicy.interactionMode,
+            hasT3Mcp: acpMcpServers(turnInput.threadId).length > 0,
+          } satisfies T3AcpInstructionState;
+          const previousInstructionState = (yield* Ref.get(promptInstructionStates)).get(sessionId);
+          const messageText = providerMessageTextWithAttachmentPaths({
+            text: turnInput.message.text,
+            attachments: turnInput.message.attachments,
+            attachmentsDir: serverConfig.attachmentsDir,
+          });
+          const text = t3AcpPromptWithInstructions({
+            prompt: messageText,
+            state: instructionState,
+            ...(previousInstructionState === undefined
+              ? {}
+              : { previousState: previousInstructionState }),
+          });
+          if (text.length > 0) {
+            prompt.push({ type: "text", text });
+          }
+          const imageAttachments = turnInput.message.attachments.filter(
+            isProviderNativeImageAttachment,
+          );
+          if (imageAttachments.length > 0 && !supportsImagePrompts) {
+            return yield* new ProviderAdapterProtocolError({
+              driver,
+              detail: "ACP driver did not negotiate image prompt support",
+            });
+          }
+          for (const attachment of imageAttachments) {
+            const path = resolveAttachmentPath({
+              attachmentsDir: serverConfig.attachmentsDir,
+              attachment: attachment as ChatAttachment,
+            });
+            if (path === null) {
+              return yield* new ProviderAdapterProtocolError({
+                driver,
+                detail: `Invalid attachment id '${attachment.id}'`,
+              });
+            }
+            const bytes = yield* fileSystem.readFile(path).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterProtocolError({
+                    driver,
+                    detail: `Failed to read attachment '${attachment.id}'`,
+                    payload: cause,
+                  }),
+              ),
+            );
+            prompt.push({
+              type: "image",
+              data: Buffer.from(bytes).toString("base64"),
+              mimeType: attachment.mimeType,
+            });
+          }
+          if (prompt.length === 0) {
+            return yield* new ProviderAdapterProtocolError({
+              driver,
+              detail: "ACP turn requires non-empty text or attachments",
+            });
+          }
+          prompt.push({
+            type: "text",
+            text: buildRuntimeInstructions({
+              harness: flavor.runtimeHarness ?? driver,
+              model: turnInput.modelSelection.model,
+            }),
+          });
+          return { prompt, instructionState: text === messageText ? undefined : instructionState };
+        });
+
+        const restartRuntimeAfterTeardownIfRequired = Effect.fnUntraced(function* (
+          threadId: ThreadId | null,
+        ) {
+          const restartRequired = yield* Ref.get(runtimeRestartRequired);
+          if (!restartRequired) return false;
+          yield* restartAcpRuntime(threadId);
+          yield* Ref.set(runtimeRestartRequired, false);
+          yield* Ref.set(activeSessionId, null);
+          yield* Ref.set(activeSessionSetup, null);
+          yield* Ref.set(activeSelection, null);
+          yield* Ref.set(activeInteractionMode, null);
+          yield* Ref.set(snapshot, {
+            order: [],
+            messages: new Map(),
+            loadingRole: null,
+            loadingMessageId: null,
+            loadingIndex: 0,
+          });
+          return true;
+        });
+
+        const startTurnUnlocked = Effect.fn("AcpAdapterV2.startTurn")(
+          function* (turnInput: ProviderAdapterV2TurnInput) {
+            yield* awaitRuntimeTeardown();
+            const existing = yield* Ref.get(activeTurn);
+            if (existing !== null) {
+              return yield* new ProviderAdapterProtocolError({
+                driver,
+                detail: `ACP provider turn ${existing.providerTurnId} is still active`,
+              });
+            }
+            useProviderThreadIdentity(turnInput.providerThread);
+            // Session activation can itself invoke client fs/terminal methods.
+            // Install the incoming thread policy before load/resume so those
+            // requests can never inherit the previously active thread's policy.
+            latestRuntimePolicy = turnInput.runtimePolicy;
+            const requestedSessionId = yield* nativeThreadId(driver, turnInput.providerThread);
+            const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
+              turnInput.threadId,
+            );
+            const needsSessionActivation =
+              (yield* Ref.get(activeSessionId)) !== requestedSessionId || restartAfterInterrupt;
+            if (needsSessionActivation) {
+              const activated = yield* activateSession(requestedSessionId, turnInput.threadId);
+              yield* Ref.set(activeSessionId, activated.sessionId);
+              yield* Ref.set(activeSessionSetup, activated);
+              yield* configureSession(activated, turnInput.modelSelection, turnInput.runtimePolicy);
+              yield* Ref.set(activeSelection, turnInput.modelSelection);
+              yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+            } else {
+              const configuredSelection = yield* Ref.get(activeSelection);
+              const configuredInteractionMode = yield* Ref.get(activeInteractionMode);
+              if (
+                configuredSelection === null ||
+                !modelSelectionsEqual(configuredSelection, turnInput.modelSelection) ||
+                configuredInteractionMode !== turnInput.runtimePolicy.interactionMode
+              ) {
+                const currentSessionSetup = yield* Ref.get(activeSessionSetup);
+                if (currentSessionSetup === null) {
+                  return yield* new ProviderAdapterProtocolError({
+                    driver,
+                    detail: `ACP session ${requestedSessionId} has no active setup metadata`,
+                  });
+                }
+                yield* configureSession(
+                  currentSessionSetup,
+                  turnInput.modelSelection,
+                  turnInput.runtimePolicy,
+                );
+                yield* Ref.set(activeSelection, turnInput.modelSelection);
+                yield* Ref.set(activeInteractionMode, turnInput.runtimePolicy.interactionMode);
+              }
+            }
+            yield* Ref.set(lastTurnRoute, {
+              threadId: turnInput.threadId,
+              providerThreadId: turnInput.providerThread.id,
+            });
+            yield* Ref.set(suppressPostSettleMonitorPrompt, false);
+            yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+            // Continuation turns attach to wake traffic the agent already produced
+            // after the prior root turn settled; do not re-prompt the ACP session.
+            const isContinuationTurn =
+              postSettleContinuationEnabled &&
+              turnInput.message.createdBy === "agent" &&
+              turnInput.message.creationSource === "provider";
+            const isAppOwnedWakeTurn = acpIsAppOwnedWakeTurn(turnInput.message);
+            // An app-owned wake reports on a sibling delegated child and owns
+            // none of this session's background work, so it must not discard
+            // pending wake evidence: neither the mid-turn completion marks kept
+            // across a settle with work still running, nor the wake buffer
+            // below. Dropping the marks here would lose the offer for a task
+            // that completed unreported before the settle.
+            if (!isAppOwnedWakeTurn) {
+              yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+            }
+            // A user turn supersedes an empty offer, but not an offer that owns
+            // buffered wake traffic. ProviderContinuationService queues that
+            // continuation behind the user run so it can drain afterwards.
+            const continuationWasRequested = yield* continuationPermit.withPermit(
+              Effect.gen(function* () {
+                const wasRequested = yield* Ref.get(continuationRequested);
+                const preserveBufferedContinuation = acpTurnStartShouldPreserveContinuation({
+                  continuationRequested: wasRequested,
+                  isContinuationTurn,
+                  wakeBufferLength: (yield* Ref.get(wakeBuffer)).length,
+                });
+                // User turns must not inherit prior-turn wake residue. Stale
+                // injected-turn ack chatter can otherwise arm a later offer.
+                // Preserve only a queued continuation that owns buffered wake
+                // traffic, and exempt app-owned sibling wakes entirely.
+                if (!isContinuationTurn && !isAppOwnedWakeTurn && !preserveBufferedContinuation) {
+                  yield* Ref.set(wakeBuffer, []);
+                }
+                if (preserveBufferedContinuation) return wasRequested;
+                yield* Ref.update(continuationGeneration, (value) => value + 1);
+                yield* Ref.set(continuationRequested, false);
+                return wasRequested;
+              }),
+            );
+            const promptParts = isContinuationTurn
+              ? null
+              : yield* resolvePromptParts(turnInput, requestedSessionId);
+            const startedAt = yield* DateTime.now;
+            const nativeTurnId = `${requestedSessionId}:turn:${turnInput.providerTurnOrdinal}`;
+            const providerTurnId = deriveProviderTurnId(nativeTurnId);
+            const completed = yield* Deferred.make<void, never>();
+            const promptWireSettled = yield* Deferred.make<void, never>();
+            const rememberedContextUsage = (yield* Ref.get(contextUsageBySessionId)).get(
+              requestedSessionId,
+            );
+            const rememberedNativeMetadata = (yield* Ref.get(nativeMetadataBySessionId)).get(
+              requestedSessionId,
+            );
+            const initialNativeMetadata =
+              rememberedNativeMetadata === undefined
+                ? (turnInput.providerThread.nativeMetadata ?? null)
+                : {
+                    ...turnInput.providerThread.nativeMetadata,
+                    ...rememberedNativeMetadata,
+                  };
+            if (initialNativeMetadata !== null) {
+              yield* Ref.update(nativeMetadataBySessionId, (current) =>
+                new Map(current).set(requestedSessionId, initialNativeMetadata),
+              );
+            }
+            const context: ActiveAcpTurn = {
+              input: turnInput,
+              providerTurnId,
+              nativeThreadId: requestedSessionId,
+              nativeTurnId,
+              startedAt,
+              completed,
+              user: { current: null, nextSegment: 0 },
+              assistant: { current: null, nextSegment: 0 },
+              reasoning: { current: null, nextSegment: 0 },
+              contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
+              nativeMetadata: initialNativeMetadata,
+              tools: new Map(),
+              toolStartedAt: new Map(),
+              subagents: new Map(),
+              subagentsBySessionId: new Map(),
+              pendingSubagentNotifications: new Map(),
+              toolCallIdsByBackgroundTaskId: new Map(),
+              persistentBackgroundTaskIds: new Set(),
+              awaitingBackgroundHydration: new Set(),
+              pendingInjectedReport: new Set(),
+              earlyInjectedReportObserved: false,
+              plans: new Map(),
+              interrupted: false,
+              finalized: false,
+              finalizedStatus: null,
+              promptSettled: false,
+              promptSettledStatus: null,
+              promptWireSettled,
+              backgroundFinalizeGeneration: 0,
+            };
+            const carryover = yield* Ref.getAndSet(carryoverSubagents, null);
+            let rehydratedCarryoverSubagents: ReadonlyArray<ActiveAcpSubagent> = [];
+            if (carryover !== null && carryover.sessionId === requestedSessionId) {
+              rehydratedCarryoverSubagents = carryover.subagents;
+              for (const subagent of carryover.subagents) {
+                const nativeId = subagent.task.nativeTaskRef?.nativeId ?? null;
+                if (nativeId !== null) {
+                  context.subagents.set(nativeId, subagent);
+                }
+                if (subagent.childSessionId !== null) {
+                  context.subagentsBySessionId.set(subagent.childSessionId, subagent);
+                }
+              }
+            }
+            yield* Ref.set(activeTurn, context);
+            // Direct Stop closes and recreates the old runtime before reaching
+            // this reset. The quarantine remains session-scoped by design.
+            yield* Ref.set(stoppedRunQuarantine, false);
+            const runningTurn = providerTurnPayload(context, "running", null);
+            yield* Ref.update(providerTurns, (current) => {
+              const updated = new Map(current);
+              updated.set(String(runningTurn.id), runningTurn);
+              return updated;
+            });
+            yield* emitProviderEvent({
+              type: "provider_turn.updated",
+              driver,
+              threadId: turnInput.threadId,
+              providerTurn: runningTurn,
+            });
+            const activeProviderThread: OrchestrationV2ProviderThread = {
+              ...turnInput.providerThread,
+              providerSessionId: input.providerSessionId,
+              status: "active",
+              contextUsage: context.contextUsage,
+              nativeMetadata: context.nativeMetadata,
+              updatedAt: startedAt,
+            };
+            yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+              new Map(current).set(requestedSessionId, activeProviderThread),
+            );
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver,
+              providerThread: activeProviderThread,
+            });
+            yield* rememberSnapshotMessage({
+              createdBy: turnInput.message.createdBy,
+              creationSource: turnInput.message.creationSource,
+              ...(turnInput.message.scheduledTaskId === undefined
+                ? {}
+                : { scheduledTaskId: turnInput.message.scheduledTaskId }),
+              id: turnInput.message.messageId,
+              threadId: turnInput.threadId,
+              runId: turnInput.runId,
+              nodeId: turnInput.rootNodeId,
+              role: "user",
+              text: turnInput.message.text,
+              attachments: [...turnInput.message.attachments],
+              streaming: false,
+              createdAt: startedAt,
+              updatedAt: startedAt,
+            });
+            // Every attach ends the deferred-terminal contract, but only the
+            // queued provider continuation owns wake traffic. A user turn may
+            // start before that continuation and must leave its buffer intact.
+            yield* projectDeferredCarryoverTerminals(rehydratedCarryoverSubagents);
+            // Keep projected terminals addressable through the wake drain so
+            // emitSubagent's monotonic guard can reject replayed spawn frames.
+            // Finalize carries only entries with pending background work, so a
+            // terminal-and-projected lineage still expires with this turn.
+            if (isContinuationTurn) {
+              yield* Ref.set(continuationRequested, false);
+              const drainedWakeCount = yield* Ref.modify(wakeBuffer, (current) => {
+                const next: Array<EffectAcpSchema.SessionNotification> = [];
+                return [
+                  current.filter((notification) => notification.sessionId === requestedSessionId),
+                  next,
+                ] as const;
+              }).pipe(
+                Effect.tap((drained) =>
+                  Effect.forEach(drained, handleSessionUpdate, {
+                    concurrency: 1,
+                    discard: true,
+                  }),
+                ),
+                Effect.map((drained) => drained.length),
+              );
+              // Treat attach mode as prompt-settled so deferred finalize / quiet
+              // windows can complete the continuation after wake traffic drains.
+              context.promptSettled = true;
+              context.promptSettledStatus = "completed";
+              if (drainedWakeCount === 0) {
+                // A requested continuation with only mid-turn evidence has no
+                // buffered frame yet. Wait the quiet window so late CLI frames
+                // can attach. A provider-authored attach without a matching
+                // request only exists to project deferred carryover terminals,
+                // so it can finish immediately once those terminals are visible.
+                if (continuationWasRequested && flavor.deferFinalizeForBackgroundWork === true) {
+                  if (hasDeferredBackgroundWork(context)) {
+                    yield* rearmDeferredFinalize(context);
+                  } else {
+                    yield* scheduleDeferredFinalize(context);
+                  }
+                } else {
+                  yield* finalizeTurn(context, "completed");
+                }
+                return;
+              }
+              if (!context.finalized) {
+                if (hasDeferredBackgroundWork(context)) {
+                  yield* rearmDeferredFinalize(context);
+                } else {
+                  yield* scheduleDeferredFinalize(context);
+                }
+              }
+              return;
+            }
+            const promptGeneration = yield* Ref.get(runtimeCallbackGeneration);
+            yield* runtime.prompt({ prompt: promptParts!.prompt }).pipe(
+              Effect.tap(() =>
+                Ref.update(promptInstructionStates, (current) => {
+                  if (promptParts?.instructionState === undefined) return current;
+                  const updated = new Map(current);
+                  updated.set(requestedSessionId, promptParts.instructionState);
+                  return updated;
+                }),
+              ),
+              // Wire settlement precedes the completion callback's permit request so
+              // settled-soft classification can observe the native return even when
+              // the completion fiber has not yet set promptSettled under the permit.
+              Effect.tap(() =>
+                Deferred.succeed(context.promptWireSettled, undefined).pipe(Effect.asVoid),
+              ),
+              Effect.flatMap((result) =>
+                runRuntimeCallbackAtGeneration(
+                  promptGeneration,
+                  Effect.gen(function* () {
+                    if (context.finalized) return;
+                    const status =
+                      result.stopReason === "cancelled"
+                        ? context.interrupted
+                          ? "interrupted"
+                          : "cancelled"
+                        : "completed";
+                    // Grok monitors (and async subagents) keep working after the root
+                    // prompt RPC returns. Defer finalize so their later updates and
+                    // wake-turn traffic still project onto this run.
+                    if (
+                      flavor.deferFinalizeForBackgroundWork === true &&
+                      !context.interrupted &&
+                      hasDeferredBackgroundWork(context)
+                    ) {
+                      context.promptSettled = true;
+                      context.promptSettledStatus = status;
+                      return;
+                    }
+                    yield* finalizeTurn(context, status);
+                  }),
+                ).pipe(Effect.asVoid),
+              ),
+              // Prompt failure is not wire-settled: only a successful resolve marks
+              // the signal. catchCause must not complete promptWireSettled.
+              Effect.catchCause((cause) =>
+                runRuntimeCallbackAtGeneration(
+                  promptGeneration,
+                  Effect.gen(function* () {
+                    if (context.finalized) return;
+                    yield* finalizeTurn(
+                      context,
+                      context.interrupted ? "interrupted" : "failed",
+                      makeProviderFailure({
+                        cause: Cause.squash(cause),
+                        class: "provider_error",
+                      }),
+                    ).pipe(
+                      Effect.andThen(
+                        Effect.logWarning("orchestration-v2.acp-prompt-failed", {
+                          driver,
+                          providerSessionId: input.providerSessionId,
+                          providerThreadId: turnInput.providerThread.id,
+                          providerTurnId,
+                          cause,
+                        }),
+                      ),
+                    );
+                  }),
+                ).pipe(Effect.asVoid),
+              ),
+              Effect.forkIn(sessionScope),
+            );
+          },
+          (effect, turnInput) =>
+            effect.pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterTurnStartError({
+                    driver,
+                    threadId: turnInput.threadId,
+                    providerThreadId: turnInput.providerThread.id,
+                    runId: turnInput.runId,
+                    cause,
+                  }),
+              ),
+            ),
+        );
+
+        const startTurn = Effect.fn("AcpAdapterV2.startTurn.transition")(function* (
+          turnInput: ProviderAdapterV2TurnInput,
+        ) {
+          return yield* runtimeTransitionPermit.withPermit(startTurnUnlocked(turnInput));
+        });
+
+        yield* Effect.addFinalizer(() =>
+          Effect.gen(function* () {
+            yield* continuationPermit.withPermit(
+              Effect.gen(function* () {
+                yield* Ref.set(continuationClosed, true);
+                yield* Ref.update(continuationGeneration, (value) => value + 1);
+              }),
+            );
+            const requests = [...(yield* Ref.get(pendingRuntimeRequests)).values()];
+            yield* Effect.forEach(
+              requests,
+              (request) =>
+                request.type === "approval"
+                  ? Deferred.succeed(request.decision, "cancel").pipe(Effect.ignore)
+                  : Deferred.succeed(request.answers, null).pipe(Effect.ignore),
+              { discard: true },
+            );
+            const closingError = new EffectAcpErrors.AcpTransportError({
+              detail: "The ACP session closed before its admitted response reached the transport",
+              cause: "ACP session transport closed",
+            });
+            yield* Effect.forEach(
+              requests,
+              (request) => Deferred.fail(request.nativeResponseAcknowledgement, closingError),
+              { discard: true },
+            );
+            const transportHadOutstandingResponses = yield* closeNativeTransport;
+            yield* options.testHooks?.afterNativeResponseTransportClosed?.() ?? Effect.void;
+            const sessionCapabilities =
+              started.initializeResult.agentCapabilities?.sessionCapabilities;
+            if (sessionCapabilities?.close != null) {
+              yield* runtimeTransitionPermit.withPermitsIfAvailable(1)(
+                Effect.gen(function* () {
+                  const teardownState = yield* Ref.get(runtimeTeardownState);
+                  const restartRequired = yield* Ref.get(runtimeRestartRequired);
+                  if (
+                    teardownState._tag === "Idle" &&
+                    !restartRequired &&
+                    !transportHadOutstandingResponses
+                  ) {
+                    yield* runtime.closeSession().pipe(Effect.ignore);
+                  }
+                }),
+              );
+            }
+            if (flavor.assertComplete !== undefined) {
+              yield* flavor.assertComplete.pipe(Effect.orDie);
+            }
+            if (runtimeScope !== undefined) {
+              yield* Scope.close(runtimeScope, Exit.void).pipe(Effect.ignore);
+            }
+          }),
+        );
+
+        const sessionRuntime: ProviderAdapterV2SessionRuntime = {
+          instanceId: options.instanceId,
+          driver,
+          providerSessionId: input.providerSessionId,
+          providerSession,
+          events: Stream.fromEffectRepeat(Queue.take(events)),
+          ...(postSettleContinuationEnabled
+            ? {
+                hasPendingBackgroundWork: Effect.gen(function* () {
+                  if ((yield* Ref.get(wakeBuffer)).length > 0) return true;
+                  if (yield* Ref.get(continuationRequested)) return true;
+                  if ((yield* Ref.get(runningBackgroundTaskIds)).size > 0) return true;
+                  // Projected post-settle Grok subagents can outlive the root
+                  // turn via carryover; keep the ACP process pinned until they
+                  // terminalize or teardown clears the carryover.
+                  // Also pin while a terminal status is held only in memory
+                  // (project:false) so idle release cannot drop the session
+                  // before the continuation drain (or a later project:true path)
+                  // delivers the turn_item terminal.
+                  const active = yield* Ref.get(activeTurn);
+                  if (
+                    active !== null &&
+                    [...active.subagents.values()].some(acpSubagentHasPendingBackgroundWork)
+                  ) {
+                    return true;
+                  }
+                  const carryover = yield* Ref.get(carryoverSubagents);
+                  if (
+                    carryover !== null &&
+                    carryover.subagents.some(acpSubagentHasPendingBackgroundWork)
+                  ) {
+                    return true;
+                  }
+                  return false;
+                }),
+              }
+            : {}),
+          ensureThread: Effect.fn("AcpAdapterV2.ensureThread")(
+            function* (threadInput: ProviderAdapterV2EnsureThreadInput) {
+              const now = yield* DateTime.now;
+              const sessionId = yield* Ref.get(activeSessionId);
+              if (sessionId === null) {
+                return yield* new ProviderAdapterProtocolError({
+                  driver,
+                  detail: "ACP runtime did not produce a session id",
+                });
+              }
+              const providerThread = makeProviderThread({
+                driver,
+                providerInstanceId: options.instanceId,
+                idAllocator,
+                appThreadId: threadInput.threadId,
+                providerSessionId: input.providerSessionId,
+                nativeThreadId: sessionId,
+                ...(itemIdentityVersion === undefined ? {} : { itemIdentityVersion }),
+                now,
+              });
+              yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                new Map(current).set(sessionId, providerThread),
+              );
+              return providerThread;
+            },
+            (effect, threadInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterEnsureThreadError({
+                      driver,
+                      threadId: threadInput.threadId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+          resumeThread: Effect.fn("AcpAdapterV2.resumeThread")(
+            function* (threadInput: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly modelSelection?: ModelSelection;
+              readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+            }) {
+              return yield* runtimeTransitionPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* awaitRuntimeTeardown();
+                  const sessionId = yield* nativeThreadId(driver, threadInput.providerThread);
+                  const previousItemIdentityVersion = itemIdentityVersion;
+                  useProviderThreadIdentity(threadInput.providerThread);
+                  const restorePreviousItemIdentity = Effect.sync(() => {
+                    itemIdentityVersion = previousItemIdentityVersion;
+                  });
+                  const restartAfterInterrupt = yield* restartRuntimeAfterTeardownIfRequired(
+                    threadInput.providerThread.appThreadId,
+                  ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                  if ((yield* Ref.get(activeSessionId)) !== sessionId || restartAfterInterrupt) {
+                    yield* Ref.set(snapshot, {
+                      order: [],
+                      messages: new Map(),
+                      loadingRole: null,
+                      loadingMessageId: null,
+                      loadingIndex: 0,
+                    });
+                    const activated = yield* activateSession(
+                      sessionId,
+                      threadInput.providerThread.appThreadId,
+                    ).pipe(Effect.tapError(() => restorePreviousItemIdentity));
+                    yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* Ref.set(activeSessionSetup, activated);
+                    const nextSelection = threadInput.modelSelection ?? input.modelSelection;
+                    const nextRuntimePolicy = threadInput.runtimePolicy ?? input.runtimePolicy;
+                    yield* configureSession(activated, nextSelection, nextRuntimePolicy);
+                    yield* Ref.set(activeSelection, nextSelection);
+                    yield* Ref.set(activeInteractionMode, nextRuntimePolicy.interactionMode);
+                  }
+                  const now = yield* DateTime.now;
+                  return {
+                    ...threadInput.providerThread,
+                    providerSessionId: input.providerSessionId,
+                    status: "idle" as const,
+                    updatedAt: now,
+                  };
+                }),
+              );
+            },
+            (effect, threadInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterResumeThreadError({
+                      driver,
+                      providerSessionId: input.providerSessionId,
+                      providerThreadId: threadInput.providerThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+          startTurn,
+          ...(flavor.supportsCompaction === true
+            ? {
+                compactThread: (turnInput: ProviderAdapterV2TurnInput) =>
+                  startTurn({
+                    ...turnInput,
+                    message: { ...turnInput.message, text: "/compact" },
+                  }),
+              }
+            : {}),
+          steerTurn: (turnInput) =>
+            Effect.fail(
+              new ProviderAdapterSteerRunUnsupportedError({
+                driver,
+                providerThreadId: turnInput.providerThread.id,
+              }),
+            ),
+          interruptTurn: Effect.fn("AcpAdapterV2.interruptTurn")(
+            function* (turnInput: ProviderAdapterV2InterruptInput) {
+              return yield* Effect.uninterruptibleMask((restore) =>
+                Effect.gen(function* () {
+                  yield* restore(runtimeTransitionPermit.take(1));
+                  return yield* Effect.gen(function* () {
+                    const transition = yield* Effect.gen(function* () {
+                      const interruptContext = yield* Ref.get(activeTurn);
+                      // Settled steering restart: the native prompt already
+                      // returned and this is not a user Stop, so keep the
+                      // process (and its background subagents) alive instead
+                      // of hard-killing it. The turn still terminalizes below.
+                      const softSteerCandidate =
+                        flavor.preserveRuntimeOnSettledInterrupt === true &&
+                        turnInput.requestRuntimeRestart !== true &&
+                        interruptContext?.providerTurnId === turnInput.providerTurnId;
+                      // Settlement is read under the callback permit after
+                      // draining admitted responses: the native prompt can have
+                      // returned on the wire while its completion callback has
+                      // not yet run, and a cancel sent in that window is exactly
+                      // what settled-soft mode exists to avoid. Also treat the
+                      // turn as settled when the wire signal is already done
+                      // (non-blocking; do not await under the permit).
+                      let settledSoftInterrupt = false;
+                      if (softSteerCandidate && interruptContext !== null) {
+                        const promptSettledUnderPermit = yield* runtimeCallbackPermit.withPermit(
+                          awaitAdmittedNativeResponses.pipe(
+                            Effect.andThen(
+                              Effect.sync(() => interruptContext.promptSettled === true),
+                            ),
+                          ),
+                        );
+                        const wireSettled = yield* Deferred.isDone(
+                          interruptContext.promptWireSettled,
+                        );
+                        settledSoftInterrupt = promptSettledUnderPermit || wireSettled;
+                      }
+                      const restartRuntime =
+                        !settledSoftInterrupt &&
+                        (turnInput.requestRuntimeRestart === true ||
+                          flavor.restartRuntimeOnEveryInterrupt === true);
+                      const hardRestart =
+                        restartRuntime && flavor.terminateRuntimeProcessGroupOnInterrupt === true;
+                      if (hardRestart) {
+                        const teardownState = yield* Ref.get(runtimeTeardownState);
+                        if (teardownState._tag === "Failed") {
+                          return yield* teardownState.error;
+                        }
+                        if (teardownState._tag === "InProgress") {
+                          // Concurrent Stop/restart: wait for the in-flight hard
+                          // teardown instead of failing the durable effect.
+                          yield* Effect.logInfo(
+                            "ACP interrupt awaiting in-progress hard teardown",
+                            {
+                              driver,
+                              providerTurnId: turnInput.providerTurnId,
+                            },
+                          );
+                          yield* Deferred.await(teardownState.completed);
+                          return undefined;
+                        }
+                      }
+                      const context = interruptContext;
+                      if (context?.providerTurnId !== turnInput.providerTurnId) {
+                        // A soft steering interrupt can clear the turn while
+                        // intentionally leaving the process alive. A queued user
+                        // Stop must still contain that orphan runtime. With a
+                        // different live turn active this stays a pure no-op
+                        // success instead: quarantine and teardown are
+                        // session-global and would maim the replacement turn.
+                        const containOrphanRuntime =
+                          context === null &&
+                          hardRestart &&
+                          turnInput.requestRuntimeRestart === true;
+                        // Transport death or a prior Stop already cleared the
+                        // turn. Failing here caused effect-worker retries while
+                        // the process was already gone; treat as success.
+                        yield* Effect.logWarning(
+                          containOrphanRuntime
+                            ? "ACP Stop raced a soft interrupt that cleared the turn; containing the orphan runtime"
+                            : "ACP interrupt raced transport teardown or a prior Stop; treating as already interrupted",
+                          {
+                            driver,
+                            requestedProviderTurnId: turnInput.providerTurnId,
+                            activeProviderTurnId: context?.providerTurnId ?? null,
+                            hardRestart,
+                            requestRuntimeRestart: turnInput.requestRuntimeRestart === true,
+                            teardownState: (yield* Ref.get(runtimeTeardownState))._tag,
+                          },
+                        );
+                        if (containOrphanRuntime) {
+                          const teardownBarrier = yield* Deferred.make<
+                            void,
+                            ProviderAdapterProtocolError
+                          >();
+                          yield* runtimeCallbackPermit.withPermit(
+                            Effect.gen(function* () {
+                              yield* awaitAdmittedNativeResponses;
+                              const stoppedGeneration = yield* Ref.get(runtimeCallbackGeneration);
+                              yield* quarantineNativeTransportAtGeneration(stoppedGeneration);
+                              yield* Ref.set(runtimeTeardownState, {
+                                _tag: "InProgress",
+                                completed: teardownBarrier,
+                              });
+                              yield* advanceRuntimeCallbackGeneration;
+                            }),
+                          );
+                          // Capture before quarantineStoppedRun clears carryover.
+                          const orphanCarryover = yield* Ref.getAndSet(carryoverSubagents, null);
+                          yield* quarantineStoppedRun();
+                          // Match the main hard-restart path: cancel pending
+                          // approvals/elicitations after quarantine, before kill.
+                          yield* cancelPendingRuntimeRequests();
+                          yield* terminalizeCarryoverSubagents(orphanCarryover);
+                          if (runtime.terminateProcessGroup === undefined) {
+                            const error = new ProviderAdapterProtocolError({
+                              driver,
+                              detail:
+                                "ACP runtime does not expose its required process-group teardown; the session is poisoned",
+                            });
+                            yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
+                            yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            return yield* error;
+                          }
+                          const teardownExit = yield* runtime.terminateProcessGroup.pipe(
+                            Effect.exit,
+                          );
+                          if (Exit.isFailure(teardownExit)) {
+                            const error = new ProviderAdapterProtocolError({
+                              driver,
+                              detail:
+                                "ACP orphan runtime process-group teardown failed; the session is poisoned",
+                              payload: Cause.squash(teardownExit.cause),
+                            });
+                            yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
+                            yield* Deferred.fail(teardownBarrier, error).pipe(Effect.ignore);
+                            return yield* error;
+                          }
+                          yield* Ref.set(runtimeRestartRequired, true);
+                          yield* Ref.set(runtimeTeardownState, { _tag: "Idle" });
+                          yield* Deferred.succeed(teardownBarrier, undefined).pipe(Effect.ignore);
+                        }
+                        return undefined;
+                      }
+                      const teardownBarrier = hardRestart
+                        ? yield* Deferred.make<void, ProviderAdapterProtocolError>()
+                        : null;
+                      if (teardownBarrier !== null) {
+                        yield* runtimeCallbackPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* awaitAdmittedNativeResponses;
+                            const stoppedGeneration = yield* Ref.get(runtimeCallbackGeneration);
+                            yield* quarantineNativeTransportAtGeneration(stoppedGeneration);
+                            yield* Ref.set(runtimeTeardownState, {
+                              _tag: "InProgress",
+                              completed: teardownBarrier,
+                            });
+                            yield* advanceRuntimeCallbackGeneration;
+                            yield* (
+                              options.testHooks?.afterHardTeardownTransportDrained?.() ??
+                                Effect.void
+                            );
+                          }),
+                        );
+                      }
+                      return {
+                        context,
+                        restartRuntime,
+                        hardRestart,
+                        teardownBarrier,
+                        settledSoftInterrupt,
+                      };
+                    });
+                    // Concurrent hard teardown already completed above.
+                    if (transition === undefined) return;
+                    const {
+                      context,
+                      restartRuntime,
+                      hardRestart,
+                      teardownBarrier,
+                      settledSoftInterrupt,
+                    } = transition;
+                    const poisonTeardown = Effect.fnUntraced(function* (
+                      detail: string,
+                      payload?: unknown,
+                    ) {
+                      const error = new ProviderAdapterProtocolError({
+                        driver,
+                        detail,
+                        ...(payload === undefined ? {} : { payload }),
+                      });
+                      yield* Ref.set(runtimeTeardownState, { _tag: "Failed", error });
+                      yield* Deferred.fail(teardownBarrier!, error).pipe(Effect.ignore);
+                      return error;
+                    });
+                    const runTransition = Effect.gen(function* () {
+                      context.interrupted = true;
+                      // Quarantine only when this run is discarded (user Stop /
+                      // hard process kill). Soft in-process restarts must keep
+                      // carryoverSubagents so a still-running subagent can
+                      // complete into the replacement turn.
+                      if (hardRestart || turnInput.requestRuntimeRestart === true) {
+                        yield* quarantineStoppedRun();
+                      }
+                      yield* cancelPendingRuntimeRequests();
+                      // Finalize before process-group kill so projection/UI cannot
+                      // lag a dead transport, and concurrent interrupt effects see
+                      // activeTurn cleared (idempotent success) rather than racing.
+                      if (
+                        (hardRestart || context.promptSettled || settledSoftInterrupt) &&
+                        !context.finalized
+                      ) {
+                        // hardRestart: always terminalize locally.
+                        // promptSettled / settledSoftInterrupt (incl. wire-settled):
+                        // native prompt already returned; only deferred background
+                        // work remains, so session/cancel has nothing to acknowledge.
+                        yield* finalizeTurn(context, "interrupted");
+                      }
+                      if (hardRestart) {
+                        if (runtime.terminateProcessGroup === undefined) {
+                          return yield* poisonTeardown(
+                            "ACP runtime does not expose its required process-group teardown; the session is poisoned",
+                          ).pipe(Effect.flatMap(Effect.fail));
+                        }
+                        const teardownExit = yield* runtime.terminateProcessGroup!.pipe(
+                          Effect.exit,
+                        );
+                        if (Exit.isFailure(teardownExit)) {
+                          return yield* poisonTeardown(
+                            "ACP runtime process-group teardown failed; the session is poisoned",
+                            Cause.squash(teardownExit.cause),
+                          ).pipe(Effect.flatMap(Effect.fail));
+                        }
+                        // Process group is gone; the next turn must spawn a
+                        // replacement even if the flavor only set hardRestart
+                        // without restartRuntimeAfterInterrupt.
+                        yield* Ref.set(runtimeRestartRequired, true);
+                        yield* Ref.set(runtimeTeardownState, { _tag: "Idle" });
+                        yield* Deferred.succeed(teardownBarrier!, undefined).pipe(Effect.ignore);
+                      } else {
+                        // Settled soft interrupt: the native prompt already
+                        // returned, so session/cancel has nothing to
+                        // acknowledge and would only threaten still-running
+                        // background subagents. Skip it and leave the runtime
+                        // untouched for the replacement turn.
+                        if (!settledSoftInterrupt) {
+                          yield* runtime.cancel;
+                        }
+                        if (restartRuntime && flavor.restartRuntimeAfterInterrupt === true) {
+                          yield* Ref.set(runtimeRestartRequired, true);
+                        }
+                      }
+                      const stopped = yield* Deferred.await(context.completed).pipe(
+                        Effect.timeoutOption("10 seconds"),
+                      );
+                      if (Option.isNone(stopped)) {
+                        if (!context.finalized) {
+                          yield* finalizeTurn(context, "interrupted");
+                        }
+                        return yield* new ProviderAdapterProtocolError({
+                          driver,
+                          detail: `ACP provider turn ${turnInput.providerTurnId} did not acknowledge cancellation before the interrupt timeout`,
+                        });
+                      }
+                    });
+                    if (!hardRestart) {
+                      return yield* restore(runTransition);
+                    }
+                    return yield* runTransition.pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.gen(function* () {
+                          const state = yield* Ref.get(runtimeTeardownState);
+                          if (state._tag === "InProgress") {
+                            yield* poisonTeardown(
+                              "ACP hard teardown failed unexpectedly; the session is poisoned",
+                              Cause.squash(cause),
+                            );
+                          }
+                          return yield* Effect.failCause(cause);
+                        }),
+                      ),
+                    );
+                  }).pipe(Effect.ensuring(runtimeTransitionPermit.release(1)));
+                }),
+              );
+            },
+            (effect, turnInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterInterruptError({
+                      driver,
+                      providerThreadId: turnInput.providerThread.id,
+                      providerTurnId: turnInput.providerTurnId,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+          respondToRuntimeRequest: (requestInput) =>
+            Effect.uninterruptibleMask((restore) =>
+              Effect.gen(function* () {
+                yield* restore(runtimeTransitionPermit.take(1));
+                return yield* Effect.gen(function* () {
+                  yield* awaitRuntimeTeardown();
+                  const generation = yield* Ref.get(runtimeCallbackGeneration);
+                  const pending = (yield* Ref.get(pendingRuntimeRequests)).get(
+                    String(requestInput.requestId),
+                  );
+                  if (pending === undefined || pending.generation !== generation) {
+                    return yield* new ProviderAdapterProtocolError({
+                      driver,
+                      detail: `No pending ACP runtime request ${requestInput.requestId}`,
+                    });
+                  }
+                  const settled =
+                    pending.type === "user_input"
+                      ? yield* Deferred.succeed(pending.answers, requestInput.answers ?? null)
+                      : requestInput.decision === undefined
+                        ? yield* new ProviderAdapterProtocolError({
+                            driver,
+                            detail: `ACP approval request ${requestInput.requestId} requires a decision`,
+                          })
+                        : yield* Deferred.succeed(pending.decision, requestInput.decision);
+                  if (!settled) {
+                    return yield* new ProviderAdapterProtocolError({
+                      driver,
+                      detail: `ACP runtime request ${requestInput.requestId} was already resolved`,
+                    });
+                  }
+                  yield* awaitNativeResponseAcknowledgements([
+                    [pending.transportRequestId, pending.nativeResponseAcknowledgement],
+                  ]);
+                  yield* Deferred.await(pending.nativeResponseAcknowledgement);
+                }).pipe(Effect.ensuring(runtimeTransitionPermit.release(1)));
+              }),
+            ).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterRuntimeRequestResponseError({
+                    driver,
+                    requestId: requestInput.requestId,
+                    cause,
+                  }),
+              ),
+            ),
+          readThreadSnapshot: Effect.fn("AcpAdapterV2.readThreadSnapshot")(
+            function* (snapshotInput) {
+              return yield* runtimeTransitionPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* awaitRuntimeTeardown();
+                  useProviderThreadIdentity(snapshotInput.providerThread);
+                  yield* restartRuntimeAfterTeardownIfRequired(
+                    snapshotInput.providerThread.appThreadId,
+                  );
+                  const sessionId = yield* nativeThreadId(driver, snapshotInput.providerThread);
+                  if ((yield* Ref.get(activeSessionId)) !== sessionId) {
+                    if (!capabilities.threads.canReadThreadSnapshot) {
+                      return yield* new ProviderAdapterProtocolError({
+                        driver,
+                        detail: "ACP driver does not support session/load snapshots",
+                      });
+                    }
+                    yield* Ref.set(snapshot, {
+                      order: [],
+                      messages: new Map(),
+                      loadingRole: null,
+                      loadingMessageId: null,
+                      loadingIndex: 0,
+                    });
+                    prepareTerminalEnvironment(snapshotInput.providerThread.appThreadId, sessionId);
+                    const activated = yield* runtime.loadSession(
+                      sessionId,
+                      acpMcpActivation(snapshotInput.providerThread.appThreadId),
+                    );
+                    rememberTerminalEnvironment(
+                      activated.sessionId,
+                      snapshotInput.providerThread.appThreadId,
+                    );
+                    yield* Ref.set(activeSessionId, activated.sessionId);
+                    yield* Ref.set(activeSessionSetup, activated);
+                    yield* Ref.set(activeSelection, null);
+                    yield* Ref.set(activeInteractionMode, null);
+                  }
+                  const state = yield* Ref.get(snapshot);
+                  const now = yield* DateTime.now;
+                  return {
+                    providerThread: {
+                      ...snapshotInput.providerThread,
+                      providerSessionId: input.providerSessionId,
+                      status: "idle" as const,
+                      updatedAt: now,
+                    },
+                    providerTurns: [...(yield* Ref.get(providerTurns)).values()],
+                    messages: state.order.flatMap((key) => {
+                      const message = state.messages.get(key);
+                      return message === undefined ? [] : [message];
+                    }),
+                    runtimeRequests: [],
+                    providerPayload: { protocol: ACP_PROTOCOL, sessionId },
+                  };
+                }),
+              );
+            },
+            (effect, snapshotInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterReadThreadSnapshotError({
+                      driver,
+                      providerThreadId: snapshotInput.providerThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+          rollbackThread: (rollbackInput) =>
+            runtimeTransitionPermit
+              .withPermit(
+                Effect.gen(function* () {
+                  const currentTurn = yield* Ref.get(activeTurn);
+                  if (currentTurn !== null) {
+                    return yield* new ProviderAdapterProtocolError({
+                      driver,
+                      detail: `Cannot roll back ACP provider thread ${rollbackInput.providerThread.id} while turn ${currentTurn.providerTurnId} is active`,
+                    });
+                  }
+                  // ACP defines no conversation truncation, so rollback stages
+                  // a fresh native session before retiring the original.
+                  // Returning its binding keeps the next turn runnable without
+                  // loading any of the rolled-back conversation.
+                  yield* awaitRuntimeTeardown();
+                  itemIdentityVersion = 2;
+                  prepareTerminalEnvironment(rollbackInput.providerThread.appThreadId);
+                  const replacement = yield* startReplacementAcpRuntime(
+                    rollbackInput.providerThread.appThreadId,
+                    (candidate) =>
+                      Effect.gen(function* () {
+                        rememberTerminalEnvironment(
+                          candidate.sessionId,
+                          rollbackInput.providerThread.appThreadId,
+                        );
+                        yield* Ref.set(runtimeRestartRequired, false);
+                        yield* Ref.set(activeSessionId, candidate.sessionId);
+                        yield* Ref.set(activeSessionSetup, candidate);
+                        yield* Ref.set(activeSelection, null);
+                        yield* Ref.set(activeInteractionMode, null);
+                        yield* Ref.set(promptInstructionStates, new Map());
+                        yield* Ref.set(itemOrdinals, new Map());
+                        yield* Ref.set(nextItemOrdinalsByTurn, new Map());
+                        yield* Ref.set(providerTurns, new Map());
+                        yield* Ref.set(snapshot, {
+                          order: [],
+                          messages: new Map(),
+                          loadingRole: null,
+                          loadingMessageId: null,
+                          loadingIndex: 0,
+                        });
+                        yield* continuationPermit.withPermit(
+                          Effect.gen(function* () {
+                            yield* Ref.update(continuationGeneration, (value) => value + 1);
+                            yield* Ref.set(stoppedRunQuarantine, false);
+                            yield* Ref.set(wakeBuffer, []);
+                            yield* Ref.set(continuationRequested, false);
+                            yield* Ref.set(runningBackgroundTaskIds, new Set());
+                            yield* Ref.set(endedBackgroundTaskIds, new Set());
+                            yield* Ref.set(midTurnUnreportedCompletedTaskIds, new Set());
+                            yield* Ref.set(handledBackgroundTaskIdsInActiveTurn, new Set());
+                            yield* Ref.set(carryoverSubagents, null);
+                            yield* Ref.set(suppressPostSettleMonitorPrompt, false);
+                            yield* Ref.set(lastTurnRoute, null);
+                          }),
+                        );
+                      }),
+                  ).pipe(Effect.retry({ times: 1 }));
+                  const now = yield* DateTime.now;
+                  return {
+                    providerThread: {
+                      ...rollbackInput.providerThread,
+                      nativeThreadRef: {
+                        driver,
+                        nativeId: replacement.sessionId,
+                        strength: "strong" as const,
+                      },
+                      nativeConversationHeadRef: null,
+                      nativeMetadata: {
+                        ...rollbackInput.providerThread.nativeMetadata,
+                        itemIdentityVersion: 2 as const,
+                      },
+                      status: "idle" as const,
+                      updatedAt: now,
+                    },
+                    providerTurns: [],
+                    messages: [],
+                    runtimeRequests: [],
+                  };
+                }),
+              )
+              .pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterRollbackThreadError({
+                      driver,
+                      providerThreadId: rollbackInput.providerThread.id,
+                      checkpointId: rollbackInput.target.checkpointId,
+                      cause,
+                    }),
+                ),
+              ),
+          forkThread: Effect.fn("AcpAdapterV2.forkThread")(
+            function* (forkInput) {
+              return yield* runtimeTransitionPermit.withPermit(
+                Effect.gen(function* () {
+                  yield* awaitRuntimeTeardown();
+                  useProviderThreadIdentity(forkInput.sourceProviderThread);
+                  yield* restartRuntimeAfterTeardownIfRequired(
+                    forkInput.sourceProviderThread.appThreadId,
+                  );
+                  if (!capabilities.threads.canForkThread) {
+                    return yield* new ProviderAdapterProtocolError({
+                      driver,
+                      detail: "ACP driver did not negotiate session/fork",
+                    });
+                  }
+                  if (forkInput.providerTurnId !== undefined) {
+                    return yield* new ProviderAdapterProtocolError({
+                      driver,
+                      detail: "ACP session/fork can only fork the current session head",
+                    });
+                  }
+                  const sourceSessionId = yield* nativeThreadId(
+                    driver,
+                    forkInput.sourceProviderThread,
+                  );
+                  prepareTerminalEnvironment(forkInput.targetThreadId);
+                  const forked = yield* runtime.forkSession(
+                    sourceSessionId,
+                    acpMcpActivation(forkInput.targetThreadId),
+                  );
+                  rememberTerminalEnvironment(forked.sessionId, forkInput.targetThreadId);
+                  yield* Ref.set(activeSessionId, forked.sessionId);
+                  yield* Ref.set(activeSessionSetup, forked);
+                  yield* Ref.set(activeSelection, null);
+                  yield* Ref.set(activeInteractionMode, null);
+                  itemIdentityVersion = 2;
+                  const now = yield* DateTime.now;
+                  const providerThread = makeProviderThread({
+                    driver,
+                    providerInstanceId: options.instanceId,
+                    idAllocator,
+                    appThreadId: forkInput.targetThreadId,
+                    providerSessionId: input.providerSessionId,
+                    nativeThreadId: forked.sessionId,
+                    itemIdentityVersion: 2,
+                    ...(forkInput.ownerNodeId === undefined
+                      ? {}
+                      : { ownerNodeId: forkInput.ownerNodeId }),
+                    forkedFrom: {
+                      providerThreadId: forkInput.sourceProviderThread.id,
+                      ...(forkInput.providerTurnId === undefined
+                        ? {}
+                        : { providerTurnId: forkInput.providerTurnId }),
+                    },
+                    now,
+                  });
+                  yield* Ref.update(providerThreadByNativeSessionId, (current) =>
+                    new Map(current).set(forked.sessionId, providerThread),
+                  );
+                  return providerThread;
+                }),
+              );
+            },
+            (effect, forkInput) =>
+              effect.pipe(
+                Effect.mapError(
+                  (cause) =>
+                    new ProviderAdapterForkThreadError({
+                      driver,
+                      providerThreadId: forkInput.sourceProviderThread.id,
+                      cause,
+                    }),
+                ),
+              ),
+          ),
+        };
+        return sessionRuntime;
+      },
+      (effect, input) =>
+        effect.pipe(
+          Effect.mapError(
+            (cause) =>
+              new ProviderAdapterOpenSessionError({
+                driver,
+                providerSessionId: input.providerSessionId,
+                cause,
+              }),
+          ),
+        ),
+    ),
+  });
+}
+
+export type AcpAdapterV2Env = FileSystem.FileSystem | IdAllocatorV2;

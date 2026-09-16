@@ -233,6 +233,7 @@ describe("KeybindingsSettings.logic", () => {
     expect(options).toEqual(
       expect.arrayContaining([
         "chat.new",
+        "threadPanel.toggle",
         "rightPanel.toggleMaximized",
         "thread.stop",
         "script.setup-db.run",

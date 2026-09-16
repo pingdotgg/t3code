@@ -1,0 +1,167 @@
+export type T3McpToolLogo = "t3-code";
+
+export interface T3McpToolPresentation {
+  readonly displayName: string;
+  readonly logo: T3McpToolLogo;
+}
+
+export type T3McpToolSummaryAction =
+  | "capabilities"
+  | "delegate"
+  | "task-status"
+  | "task-cancel"
+  | "schedule-create"
+  | "schedule-list"
+  | "schedule-update"
+  | "schedule-delete"
+  | "thread-create"
+  | "thread-list"
+  | "thread-read"
+  | "thread-send"
+  | "thread-wait"
+  | "thread-interrupt";
+
+const T3_MCP_SERVER_ALIASES = new Set(["t3-code", "t3_code", "t3code"]);
+
+const T3_MCP_TOOLS: Record<
+  string,
+  { readonly displayName: string; readonly summaryAction?: T3McpToolSummaryAction }
+> = {
+  orchestrator_capabilities: {
+    displayName: "Get orchestration capabilities",
+    summaryAction: "capabilities",
+  },
+  delegate_task: { displayName: "Delegate a child task", summaryAction: "delegate" },
+  task_status: { displayName: "Get delegated task status", summaryAction: "task-status" },
+  task_cancel: { displayName: "Cancel delegated task", summaryAction: "task-cancel" },
+  run_scheduled_task_now: { displayName: "Run scheduled task now" },
+  schedule_task: { displayName: "Schedule a recurring task", summaryAction: "schedule-create" },
+  list_scheduled_tasks: { displayName: "List scheduled tasks", summaryAction: "schedule-list" },
+  update_scheduled_task: {
+    displayName: "Update a scheduled task",
+    summaryAction: "schedule-update",
+  },
+  delete_scheduled_task: {
+    displayName: "Delete a scheduled task",
+    summaryAction: "schedule-delete",
+  },
+  create_threads: { displayName: "Create T3 threads", summaryAction: "thread-create" },
+  t3_thread_start: { displayName: "Start a T3 thread", summaryAction: "thread-create" },
+  t3_thread_list: { displayName: "List T3 threads", summaryAction: "thread-list" },
+  t3_thread_read: { displayName: "Read a T3 thread", summaryAction: "thread-read" },
+  t3_queue_list: { displayName: "List queued messages" },
+  t3_queue_read: { displayName: "Read a queued message" },
+  t3_queue_edit: { displayName: "Edit a queued message" },
+  t3_queue_cancel: { displayName: "Cancel a queued run" },
+  t3_queue_reorder: { displayName: "Reorder a queued run" },
+  t3_queue_promote_to_steer: { displayName: "Steer with a queued message" },
+  t3_pending_request_list: { displayName: "List pending questions" },
+  t3_pending_request_read: { displayName: "Read pending questions" },
+  t3_pending_request_respond: { displayName: "Answer pending questions" },
+  t3_thread_configuration: { displayName: "Read thread configuration" },
+  t3_thread_configure: { displayName: "Set thread model" },
+  t3_thread_fork: { displayName: "Fork this thread" },
+  t3_thread_merge_back: { displayName: "Merge thread context" },
+  t3_thread_search: { displayName: "Search thread content" },
+  t3_thread_transfers: { displayName: "Read thread transfers" },
+  t3_thread_organize: { displayName: "Organize a thread" },
+  t3_thread_update: { displayName: "Update T3 thread metadata" },
+  t3_thread_send: { displayName: "Send to a T3 thread", summaryAction: "thread-send" },
+  t3_thread_wait: { displayName: "Wait for a T3 thread", summaryAction: "thread-wait" },
+  t3_thread_interrupt: { displayName: "Interrupt a T3 thread", summaryAction: "thread-interrupt" },
+  t3_worktree_handoff: { displayName: "Hand off thread to a git worktree" },
+  t3_worktree_list: { displayName: "List workspace branches" },
+  t3_worktree_status: { displayName: "Get thread worktree status" },
+  t3_preview_list: { displayName: "List preview tabs" },
+  t3_preview_close: { displayName: "Close a preview tab" },
+  t3_environment_read: { displayName: "Read environment preferences" },
+  t3_environment_preferences_update: { displayName: "Update environment preferences" },
+  t3_thread_launch: { displayName: "Launch a project thread" },
+  t3_project_list: { displayName: "List projects" },
+  t3_project_read: { displayName: "Read a project" },
+  t3_project_create: { displayName: "Create a project" },
+  t3_project_update: { displayName: "Update a project" },
+  t3_project_delete: { displayName: "Delete a project" },
+  t3_project_clone: { displayName: "Clone a repository" },
+  t3_attachment_prepare_upload: { displayName: "Prepare attachment upload" },
+  t3_attachment_discard: { displayName: "Discard pending attachment" },
+  t3_thread_send_attachments: { displayName: "Send attachments" },
+  preview_status: { displayName: "Get preview browser status" },
+  preview_open: { displayName: "Open a page in the preview browser" },
+  preview_navigate: { displayName: "Navigate the preview browser" },
+  preview_snapshot: { displayName: "Snapshot the preview page" },
+  preview_click: { displayName: "Click in the preview browser" },
+  preview_press: { displayName: "Press a key in the preview browser" },
+  preview_type: { displayName: "Type in the preview browser" },
+  preview_scroll: { displayName: "Scroll the preview browser" },
+  preview_resize: { displayName: "Resize the preview browser" },
+  preview_evaluate: { displayName: "Evaluate script in the preview browser" },
+  preview_wait_for: { displayName: "Wait for the preview page" },
+  preview_set_appearance: { displayName: "Set preview browser appearance" },
+  preview_recording_start: { displayName: "Start recording the preview browser" },
+  preview_recording_stop: { displayName: "Stop recording the preview browser" },
+};
+
+/**
+ * The T3 orchestration tool inventory, used to gate loose name matching on
+ * both the server (ACP MCP identity recovery) and the client (logo branding).
+ */
+export const T3_MCP_TOOL_NAMES: ReadonlySet<string> = new Set(Object.keys(T3_MCP_TOOLS));
+
+function normalizeT3McpToolLabel(value: string): string {
+  return value.replace(/\s+(?:complete|completed)\s*$/i, "").trim();
+}
+
+/**
+ * ACP agents disagree on how the injected T3 server prefixes its tools:
+ * `mcp__t3-code__x` (Claude/Cursor), `t3-code.x` (Codex), plus single
+ * underscore, colon, slash, dash, and space separators seen from registry
+ * agents. The prefix match is deliberately loose because the display-name
+ * table below is the real gate; unknown tools stay on the generic renderer.
+ */
+function resolveT3McpToolName(value: string): string | null {
+  const label = normalizeT3McpToolLabel(value);
+  const mcpMatch = /^mcp__(?<server>.+?)__(?<tool>.+)$/.exec(label);
+  if (mcpMatch?.groups) {
+    const { server, tool } = mcpMatch.groups;
+    return server !== undefined &&
+      tool !== undefined &&
+      T3_MCP_SERVER_ALIASES.has(server.toLowerCase())
+      ? tool
+      : null;
+  }
+
+  const namespaceMatch = /^(?<server>t3-code|t3_code|t3code)[.:/](?<tool>.+)$/i.exec(label);
+  if (namespaceMatch?.groups) {
+    return namespaceMatch.groups.tool ?? null;
+  }
+
+  const prefixed = /^(?:mcp[-_]{1,2})?t3[-_ ]?code(?:__|[-_.:/ ])(?<tool>.+)$/i.exec(label);
+  const candidate = prefixed?.groups?.tool ?? label;
+  return Object.hasOwn(T3_MCP_TOOLS, candidate) ? candidate : null;
+}
+
+export function resolveT3McpToolPresentation(
+  toolName: string | null | undefined,
+): T3McpToolPresentation | null {
+  const resolvedToolName =
+    toolName === undefined || toolName === null ? null : resolveT3McpToolName(toolName);
+  if (resolvedToolName === null) {
+    return null;
+  }
+  const displayName = T3_MCP_TOOLS[resolvedToolName]?.displayName;
+  if (displayName === undefined) {
+    return null;
+  }
+  return {
+    displayName,
+    logo: "t3-code",
+  };
+}
+
+export function resolveT3McpToolSummaryAction(
+  toolName: string | null | undefined,
+): T3McpToolSummaryAction | null {
+  const name = toolName == null ? null : resolveT3McpToolName(toolName);
+  return name === null ? null : (T3_MCP_TOOLS[name]?.summaryAction ?? null);
+}

@@ -754,7 +754,8 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     : null;
   const accessiblePreview = [previewText, answerPreview].filter(Boolean).join(": ");
   const displayText = workEntryRowLabel(row.workEntry, expanded);
-  const iconIsDestructive = row.icon === "alert" || row.icon === "warning";
+  const isSystemNotice = row.projectedItem.item.type === "system_notice";
+  const iconIsDestructive = !isSystemNotice && (row.icon === "alert" || row.icon === "warning");
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
   const icon = toolPresentation?.icon ?? workRowSymbolName(row.icon);
@@ -827,7 +828,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
                 )}
                 numberOfLines={expanded ? undefined : 1}
               >
-                {displayText}
+                {isSystemNotice ? row.summary : displayText}
                 {answerPreview ? (
                   <Text
                     className={
@@ -1267,6 +1268,8 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
       return { ios: "eye", android: "visibility" };
     case "edit":
       return { ios: "square.and.pencil", android: "edit" };
+    case "thread-create":
+      return { ios: "bubble.left", android: "chat" };
     case "command":
       return { ios: "terminal", android: "terminal" };
     case "device":

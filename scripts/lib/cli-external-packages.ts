@@ -1,6 +1,3 @@
-// @effect-diagnostics nodeBuiltinImport:off
-import * as NodeModule from "node:module";
-
 /**
  * The single source of truth for packages the server CLI bundle must NOT inline.
  *
@@ -84,40 +81,6 @@ export function selectCliRuntimeExternalDependencies(
   return Object.fromEntries(
     Object.entries(dependencies).filter(([name]) => isRuntimeExternalCliDependency(name)),
   );
-}
-
-/**
- * Scan an emitted bundle chunk for ESM imports of packages that are not Node
- * built-ins.
- *
- * Inside a Node single-executable, `import` statements and `import()` can only
- * resolve built-in modules; any file-backed specifier throws at module
- * evaluation (static) or at first use (dynamic). External packages therefore
- * have to be reached through `createRequire`, which reads the real filesystem
- * in every runtime. The bundler cannot enforce this, so the check reads what it
- * produced.
- */
-export function findEsmImportsOfExternalPackages(source: string): ReadonlyArray<string> {
-  const specifiers = new Set<string>();
-  // `import x from`, `import "side-effect"`, `export ... from`, and `import()`
-  // all resolve through the module loader.
-  const patterns = [
-    /^import\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
-    /^import\s+["']([^"']+)["']/gm,
-    /^export\s[^;]*?\sfrom\s+["']([^"']+)["']/gm,
-    // Rolldown may leave a `/* @vite-ignore */` style comment before the specifier.
-    /\bimport\(\s*(?:\/\*[\s\S]*?\*\/\s*)*["']([^"']+)["']\s*[,)]/g,
-  ];
-  for (const pattern of patterns) {
-    for (const match of source.matchAll(pattern)) {
-      const specifier = match[1];
-      if (specifier === undefined) continue;
-      if (NodeModule.isBuiltin(specifier)) continue;
-      if (specifier.startsWith("./") || specifier.startsWith("../")) continue;
-      specifiers.add(specifier);
-    }
-  }
-  return [...specifiers].sort();
 }
 
 /**

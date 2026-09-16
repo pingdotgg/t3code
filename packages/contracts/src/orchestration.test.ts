@@ -6,11 +6,7 @@ import { CommandId, ProjectId, ThreadId } from "./baseSchemas.ts";
 
 import {
   ProjectIconOverride,
-  DEFAULT_PROVIDER_INTERACTION_MODE,
-  DEFAULT_RUNTIME_MODE,
-  type ChatImageAttachment,
   ClientOrchestrationCommand,
-  ModelSelection,
   OrchestrationCommand,
   OrchestrationDispatchCommandError,
   OrchestrationEvent,
@@ -33,10 +29,15 @@ import {
   ThreadCreatedPayload,
   ThreadTurnDiff,
   ThreadTurnStartRequestedPayload,
-  SnapShotAccessibility,
+} from "./orchestration.ts";
+import {
+  type ChatImageAttachment,
   isProviderSendTurnSupportedImageMimeType,
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
-} from "./orchestration.ts";
+  SnapShotAccessibility,
+} from "./chatAttachment.ts";
+import { ModelSelection } from "./modelSelection.ts";
+import { DEFAULT_PROVIDER_INTERACTION_MODE, DEFAULT_RUNTIME_MODE } from "./providerPolicy.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
 const decodeTurnDiffInput = Schema.decodeUnknownEffect(OrchestrationGetTurnDiffInput);

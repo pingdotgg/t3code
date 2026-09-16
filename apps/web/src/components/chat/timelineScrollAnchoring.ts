@@ -1,3 +1,39 @@
+import type { MessageId, RunId } from "@t3tools/contracts";
+
+export interface TimelineRunObservation {
+  readonly threadKey: string | null;
+  readonly hydrated: boolean;
+  readonly runId: RunId | null;
+}
+
+/** Opening a thread establishes a baseline; only later runs get new-turn framing. */
+export function observeTimelineRun(
+  previous: TimelineRunObservation | null,
+  input: TimelineRunObservation & {
+    readonly queued: boolean;
+    readonly messageId: MessageId | null;
+  },
+): { observation: TimelineRunObservation; anchorMessageId: MessageId | null } {
+  const observation = {
+    threadKey: input.threadKey,
+    hydrated: input.hydrated,
+    runId: input.queued ? null : input.runId,
+  };
+  if (previous?.threadKey !== input.threadKey || !previous.hydrated) {
+    return { observation, anchorMessageId: null };
+  }
+  if (
+    !input.hydrated ||
+    input.runId === null ||
+    input.queued ||
+    previous.runId === input.runId ||
+    input.messageId === null
+  ) {
+    return { observation: previous, anchorMessageId: null };
+  }
+  return { observation, anchorMessageId: input.messageId };
+}
+
 // Match the titlebar fade inset so draft promotion preserves the first row's position.
 export const CHAT_TIMELINE_ANCHOR_OFFSET = 24;
 

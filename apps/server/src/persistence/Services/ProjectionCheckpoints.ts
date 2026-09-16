@@ -11,11 +11,13 @@ import {
   IsoDateTime,
   MessageId,
   NonNegativeInt,
-  OrchestrationCheckpointFile,
-  OrchestrationCheckpointStatus,
   ThreadId,
   TurnId,
 } from "@t3tools/contracts";
+import {
+  OrchestrationCheckpointFile,
+  OrchestrationCheckpointStatus,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Option from "effect/Option";
 import * as Context from "effect/Context";
 import * as Schema from "effect/Schema";
@@ -89,7 +91,7 @@ export interface ProjectionCheckpointRepositoryShape {
 /**
  * ProjectionCheckpointRepository - Service tag for checkpoint projection persistence.
  */
-export class ProjectionCheckpointRepository extends Context.Service<
+class ProjectionCheckpointRepository extends Context.Service<
   ProjectionCheckpointRepository,
   ProjectionCheckpointRepositoryShape
 >()("t3/persistence/Services/ProjectionCheckpoints/ProjectionCheckpointRepository") {}

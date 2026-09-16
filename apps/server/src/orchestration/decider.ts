@@ -253,7 +253,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           defaultModelSelection: null,
           faviconPath: null,
           projectIcon: null,
-          scripts: [],
+          scripts: command.scripts ?? [],
           createdAt: command.createdAt,
           updatedAt: command.createdAt,
         },
@@ -392,7 +392,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: command.createdAt,
           commandId: command.commandId,
-          ...(command.historyImport === true ? { metadata: { historyImport: true } } : {}),
         })),
         type: "thread.created",
         payload: {
@@ -2013,7 +2012,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
             aggregateId: command.threadId,
             occurredAt: message.createdAt,
             commandId: command.commandId,
-            metadata: { historyImport: true },
           })),
           type: "thread.message-sent",
           payload: {
@@ -2039,7 +2037,6 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           aggregateId: command.threadId,
           occurredAt: settledAt,
           commandId: command.commandId,
-          metadata: { historyImport: true },
         })),
         type: "thread.settled",
         payload: {

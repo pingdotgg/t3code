@@ -37,12 +37,12 @@ describe("deriveActiveWorkStartedAt", () => {
       expect(
         deriveActiveWorkStartedAt(
           {
-            turnId: "old",
+            runId: "old",
             requestedAt: "2026-09-06T23:33:00.000Z",
             startedAt: null,
             completedAt: null,
           },
-          { orchestrationStatus: "running", activeTurnId: "new" },
+          { orchestrationStatus: "running", activeRunId: "new" },
           sendStartedAt,
         ),
       ).toBe(sendStartedAt);
@@ -53,12 +53,12 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: "turn-1",
+          runId: "turn-1",
           requestedAt: "2026-09-06T23:33:00.000Z",
           startedAt: null,
           completedAt: "2026-09-06T23:33:05.000Z",
         },
-        { orchestrationStatus: "error", activeTurnId: null },
+        { orchestrationStatus: "error", activeRunId: null },
         null,
       ),
     ).toBeNull();
@@ -72,12 +72,12 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: "turn-1",
+          runId: "turn-1",
           requestedAt: "2026-09-06T23:33:00.000Z",
           startedAt: null,
           completedAt: null,
         },
-        { orchestrationStatus: "starting", activeTurnId: null },
+        { orchestrationStatus: "starting", activeRunId: null },
         null,
       ),
     ).toBe("2026-09-06T23:33:00.000Z");
@@ -87,12 +87,12 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: "turn-1",
+          runId: "turn-1",
           requestedAt: "2026-09-06T23:33:00.000Z",
           startedAt: "2026-09-06T23:33:05.000Z",
           completedAt: null,
         },
-        { orchestrationStatus: "running", activeTurnId: "turn-1" },
+        { orchestrationStatus: "running", activeRunId: "turn-1" },
         null,
       ),
     ).toBe("2026-09-06T23:33:05.000Z");
@@ -103,12 +103,12 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: "turn-1",
+          runId: "turn-1",
           requestedAt: "2026-09-06T23:33:00.000Z",
           startedAt: "2026-09-06T23:33:05.000Z",
           completedAt: "2026-09-06T23:33:09.000Z",
         },
-        { orchestrationStatus: "idle", activeTurnId: null },
+        { orchestrationStatus: "idle", activeRunId: null },
         null,
       ),
     ).toBeNull();
@@ -119,12 +119,12 @@ describe("deriveActiveWorkStartedAt", () => {
     expect(
       deriveActiveWorkStartedAt(
         {
-          turnId: "turn-1",
+          runId: "turn-1",
           requestedAt: "2026-09-06T23:33:00.000Z",
           startedAt: "2026-09-06T23:33:05.000Z",
           completedAt: "2026-09-06T23:33:09.000Z",
         },
-        { orchestrationStatus: "starting", activeTurnId: null },
+        { orchestrationStatus: "starting", activeRunId: null },
         null,
       ),
     ).toBeNull();

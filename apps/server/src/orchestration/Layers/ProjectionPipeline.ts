@@ -3,11 +3,13 @@ import {
   isImportedAgentSessionMessageId,
   UserInputAttachmentAnswerPayload,
   type ChatAttachment,
-  type OrchestrationEvent,
-  type OrchestrationSessionStatus,
   ThreadId,
 } from "@t3tools/contracts";
 import { compareDateTimeStrings } from "@t3tools/shared/dateTime";
+import type {
+  OrchestrationEvent,
+  OrchestrationSessionStatus,
+} from "@t3tools/contracts/legacy-orchestration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -1128,35 +1130,21 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
 
         case "thread.message-sent": {
-          if (event.payload.streaming) {
-            const attachments =
-              event.payload.attachments !== undefined
-                ? yield* materializeAttachmentsForProjection({
-                    attachments: event.payload.attachments,
-                  })
-                : undefined;
-            yield* projectionThreadMessageRepository.appendStreaming({
-              messageId: event.payload.messageId,
-              threadId: event.payload.threadId,
-              turnId: event.payload.turnId,
-              role: event.payload.role,
-              text: event.payload.text,
-              ...(attachments !== undefined ? { attachments: [...attachments] } : {}),
-              ...(event.payload.context !== undefined ? { context: event.payload.context } : {}),
-              createdAt: event.payload.createdAt,
-              updatedAt: event.payload.updatedAt,
-            });
-            return;
-          }
-
           const existingMessage = yield* projectionThreadMessageRepository.getByMessageId({
             messageId: event.payload.messageId,
           });
           const previousMessage = Option.getOrUndefined(existingMessage);
           const nextText = Option.match(existingMessage, {
             onNone: () => event.payload.text,
-            onSome: (message) =>
-              event.payload.text.length === 0 ? message.text : event.payload.text,
+            onSome: (message) => {
+              if (event.payload.streaming) {
+                return `${message.text}${event.payload.text}`;
+              }
+              if (event.payload.text.length === 0) {
+                return message.text;
+              }
+              return event.payload.text;
+            },
           });
           const nextAttachments =
             event.payload.attachments !== undefined
@@ -1174,7 +1162,7 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             ...((event.payload.context ?? previousMessage?.context) !== undefined
               ? { context: event.payload.context ?? previousMessage?.context }
               : {}),
-            isStreaming: false,
+            isStreaming: event.payload.streaming,
             createdAt: previousMessage?.createdAt ?? event.payload.createdAt,
             updatedAt: event.payload.updatedAt,
           });
