@@ -5,6 +5,7 @@ import * as Schema from "effect/Schema";
 import type {
   PullRequestStackMembership,
   PullRequestActor,
+  PullRequestPreview,
   PullRequestCheck,
   PullRequestCheckStatus,
   PullRequestChecksState,
@@ -639,6 +640,44 @@ export const PULL_REQUEST_LIST_JSON_FIELDS =
   "number,title,url,author,headRefName,baseRefName,state,isDraft,mergeable,reviewDecision,additions,deletions,createdAt,updatedAt,mergedAt,reviewRequests,labels,statusCheckRollup";
 
 export const PULL_REQUEST_DETAIL_JSON_FIELDS = `${PULL_REQUEST_LIST_JSON_FIELDS},body,changedFiles,closedAt,isCrossRepository,headRepositoryOwner,headRefOid,autoMergeRequest`;
+
+export const PULL_REQUEST_PREVIEW_GRAPHQL_QUERY = `query($owner: String!, $name: String!, $number: Int!) {
+  repository(owner: $owner, name: $name) {
+    pullRequest(number: $number) {
+      number title url state isDraft createdAt
+      author { login avatarUrl ... on User { name } }
+    }
+  }
+}`;
+
+const decodePullRequestPreview = decodeJsonResult(
+  Schema.Struct({
+    data: Schema.Struct({
+      repository: Schema.Struct({
+        pullRequest: Schema.Struct({
+          number: Schema.Int,
+          title: Schema.String,
+          url: Schema.String,
+          state: Schema.String,
+          isDraft: Schema.Boolean,
+          createdAt: Schema.String,
+          author: Schema.NullOr(RawActorSchema),
+        }),
+      }),
+    }),
+  }),
+);
+
+export function decodePullRequestPreviewJson(
+  raw: string,
+): Result.Result<Omit<PullRequestPreview, "projectId" | "repository">, DecodeFailure> {
+  return Result.map(decodePullRequestPreview(raw), ({ data }) => ({
+    ...data.repository.pullRequest,
+    author: toActor(data.repository.pullRequest.author),
+    state: toState(data.repository.pullRequest),
+  }));
+}
+
 export const PULL_REQUEST_ACTIVITY_JSON_FIELDS = "author,comments,reviews,commits";
 
 /** GitHub's own ceiling on a connection page, which is what both thread reads ask for. */
