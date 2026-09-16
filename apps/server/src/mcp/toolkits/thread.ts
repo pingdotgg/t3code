@@ -8,6 +8,15 @@ import * as Toolkit from "effect/unstable/ai/Toolkit";
 import { OrchestrationEngineService } from "../../orchestration/Services/OrchestrationEngine.ts";
 import { McpInvocationContext } from "../McpInvocationContext.ts";
 
+class ThreadRenameFailedError extends Schema.TaggedError<ThreadRenameFailedError>()(
+  "ThreadRenameFailedError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not rename the thread.";
+  }
+}
+
 const RenameThreadTool = Tool.make("rename_thread", {
   description:
     "Rename the thread you are running in. Use it when the user or a skill asks for a specific title, such as a task ID followed by a short description. The title is used verbatim and kept as user-chosen, so automatic title generation never overwrites it.",
@@ -15,6 +24,7 @@ const RenameThreadTool = Tool.make("rename_thread", {
     title: TrimmedNonEmptyString.annotate({ description: "The new title, used as given." }),
   }),
   success: Schema.Struct({ title: Schema.String }),
+  failure: ThreadRenameFailedError,
   dependencies: [McpInvocationContext, OrchestrationEngineService, Crypto.Crypto],
 })
   .annotate(Tool.Title, "Rename thread")
@@ -39,7 +49,7 @@ export const ThreadToolkitHandlersLive = ThreadToolkit.toLayer({
           threadId,
           title,
         })
-        .pipe(Effect.orDie);
+        .pipe(Effect.mapError((cause) => new ThreadRenameFailedError({ cause })));
       return { title };
     }),
 });
