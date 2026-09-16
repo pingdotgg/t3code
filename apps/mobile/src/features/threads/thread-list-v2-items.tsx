@@ -17,7 +17,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentMachineKind, ServerConfig } from "@t3tools/contracts";
+import type { EnvironmentMachineKind } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -25,6 +25,7 @@ import { memo, useCallback, useEffect, useMemo, useState, type ComponentProps } 
 import { Alert, Pressable, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
+import type { ThreadListProvider } from "../../state/thread-list-environments";
 import { SymbolView } from "../../components/AppSymbol";
 import { AppText as Text } from "../../components/AppText";
 import { ControlPillMenu } from "../../components/ControlPill";
@@ -361,7 +362,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
   /** Keep the environment's provider array stable across unrelated list updates. */
-  readonly providers: ServerConfig["providers"] | undefined;
+  readonly providers: ReadonlyArray<ThreadListProvider> | undefined;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
