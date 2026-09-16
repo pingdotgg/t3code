@@ -559,9 +559,13 @@ export type UserInputResolvedPayload = typeof UserInputResolvedPayload.Type;
  * usage vocabulary (#4779) so the eventual migration is a rename, not a remap.
  * Claude reports per-activation deltas; Codex reports cumulative totals — the
  * merge strategy is provider-specific and lives in client-runtime.
+ * `usedTokens` is the task's current context size (its last request, same
+ * definition as ThreadTokenUsageSnapshot.usedTokens): it shrinks after
+ * compaction, so it is a snapshot rather than a running total.
  */
 export const RuntimeTaskUsage = Schema.Struct({
   totalTokens: NonNegativeInt,
+  usedTokens: Schema.optional(NonNegativeInt),
   inputTokens: Schema.optional(NonNegativeInt),
   cachedInputTokens: Schema.optional(NonNegativeInt),
   outputTokens: Schema.optional(NonNegativeInt),

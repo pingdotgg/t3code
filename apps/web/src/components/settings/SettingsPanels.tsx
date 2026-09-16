@@ -41,6 +41,7 @@ import {
   type ResponseStreamingMode,
   MIN_TERMINAL_FONT_SIZE,
   type QuitConfirmationMode,
+  type AgentsPanelTokenMetric,
 } from "@t3tools/contracts/settings";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
 import { createModelSelection } from "@t3tools/shared/model";
@@ -198,6 +199,11 @@ const TIMESTAMP_FORMAT_LABELS = {
 const DIFF_LAYOUT_LABELS: Record<DiffLayout, string> = {
   stacked: "Stacked",
   split: "Split",
+};
+
+const AGENTS_PANEL_TOKEN_METRIC_LABELS: Record<AgentsPanelTokenMetric, string> = {
+  processed: "Processed tokens",
+  context: "Context size",
 };
 
 const QUIT_CONFIRMATION_MODE_LABELS: Record<QuitConfirmationMode, string> = {
@@ -581,6 +587,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.followUpBehavior !== DEFAULT_UNIFIED_SETTINGS.followUpBehavior
         ? ["Follow-up behavior"]
         : []),
+      ...(settings.agentsPanelTokenMetric !== DEFAULT_UNIFIED_SETTINGS.agentsPanelTokenMetric
+        ? ["Agents panel tokens"]
+        : []),
       ...(settings.contextWindowMeterEnabled !== DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled
         ? ["Context window indicator"]
         : []),
@@ -649,6 +658,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
       settings.contextWindowMeterEnabled,
+      settings.agentsPanelTokenMetric,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -753,6 +763,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
       composerCollapseOnScroll: DEFAULT_UNIFIED_SETTINGS.composerCollapseOnScroll,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
+      agentsPanelTokenMetric: DEFAULT_UNIFIED_SETTINGS.agentsPanelTokenMetric,
       contextWindowMeterEnabled: DEFAULT_UNIFIED_SETTINGS.contextWindowMeterEnabled,
       environmentIdentificationMode: DEFAULT_UNIFIED_SETTINGS.environmentIdentificationMode,
       glassOpacity: DEFAULT_UNIFIED_SETTINGS.glassOpacity,
@@ -2630,6 +2641,46 @@ export function GeneralSettingsPanel() {
                 <SelectItem hideIndicator value="steer">
                   Steer
                 </SelectItem>
+              </SelectPopup>
+            </Select>
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("agents-panel-token-metric")}
+          description="Show each subagent's cumulative processed tokens or its current context size."
+          resetAction={
+            settings.agentsPanelTokenMetric !== DEFAULT_UNIFIED_SETTINGS.agentsPanelTokenMetric ? (
+              <SettingResetButton
+                label="agents panel tokens"
+                onClick={() =>
+                  updateSettings({
+                    agentsPanelTokenMetric: DEFAULT_UNIFIED_SETTINGS.agentsPanelTokenMetric,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Select
+              value={settings.agentsPanelTokenMetric}
+              onValueChange={(value) => {
+                if (value === "processed" || value === "context") {
+                  updateSettings({ agentsPanelTokenMetric: value });
+                }
+              }}
+            >
+              <SelectTrigger size="sm" className="w-full sm:w-40" aria-label="Agents panel tokens">
+                <SelectValue>
+                  {AGENTS_PANEL_TOKEN_METRIC_LABELS[settings.agentsPanelTokenMetric]}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectPopup align="end" alignItemWithTrigger={false}>
+                {Object.entries(AGENTS_PANEL_TOKEN_METRIC_LABELS).map(([value, label]) => (
+                  <SelectItem key={value} hideIndicator value={value}>
+                    {label}
+                  </SelectItem>
+                ))}
               </SelectPopup>
             </Select>
           }

@@ -120,7 +120,9 @@ for custom configuration.
 
 ## Inspect agent work
 
-On web and desktop, use **Agents** to follow work delegated to subagents.
+On web and desktop, use **Agents** to follow work delegated to subagents. Its token
+figures show cumulative processed tokens by default; switch them to each subagent's
+current context size under **Settings → General → Agents panel tokens**.
 
 Expand a tool call in the conversation to see its full command and output.
 Summaries shorten shell wrappers and can still describe the latest call after it

@@ -305,6 +305,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: ["queue steer running turn send default behavior composer"],
   },
   {
+    id: "agents-panel-token-metric",
+    title: "Agents panel tokens",
+    to: "/settings/general",
+    searchTerms: ["subagent context window size processed cumulative usage tok ctx"],
+  },
+  {
     id: "provider-update-checks",
     title: "Provider update checks",
     to: "/settings/general",

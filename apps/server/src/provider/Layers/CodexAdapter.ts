@@ -1207,8 +1207,9 @@ function mapCollabAgentEvent(
       return [];
     }
     case "collabAgent/tokenUsage": {
-      // Cumulative per child thread: always the `total` breakdown, never
-      // `last` (which shrinks on follow-ups). Client folds max-merge.
+      // Cumulative per child thread: the `total` breakdown, which the client
+      // max-merges. `last` shrinks on follow-ups and after compaction, so it
+      // rides separately as the child's current context size (usedTokens).
       const tokenUsage =
         typeof payload.tokenUsage === "object" && payload.tokenUsage !== null
           ? (payload.tokenUsage as Record<string, unknown>)
@@ -1216,6 +1217,10 @@ function mapCollabAgentEvent(
       const total =
         typeof tokenUsage?.total === "object" && tokenUsage.total !== null
           ? (tokenUsage.total as Record<string, unknown>)
+          : undefined;
+      const last =
+        typeof tokenUsage?.last === "object" && tokenUsage.last !== null
+          ? (tokenUsage.last as Record<string, unknown>)
           : undefined;
       const count = (value: unknown): number | undefined =>
         typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
@@ -1225,8 +1230,10 @@ function mapCollabAgentEvent(
       if (totalTokens === undefined) {
         return [];
       }
+      const usedTokens = count(last?.totalTokens);
       const typedUsage: RuntimeTaskUsage = {
         totalTokens,
+        ...(usedTokens ? { usedTokens } : {}),
         ...(count(total?.inputTokens) !== undefined
           ? { inputTokens: count(total?.inputTokens) }
           : {}),
