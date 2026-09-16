@@ -399,6 +399,22 @@ describe("projectActivityPayload", () => {
     expect(data.structuredResult).toEqual(result);
   });
 
+  it("keeps structuredResult when an already-projected activity is projected again", () => {
+    const result = { threadId: "thrd_4", title: "Reprojected" };
+    const once = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          toolName: "mcp__t3-code__threads_create",
+          result: { content: JSON.stringify(result) },
+        },
+      }),
+    );
+    const twice = projectActivityPayload(once);
+    const data = (twice.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toEqual(result);
+  });
+
   it("does not fabricate structuredResult when a threads-surface result is unparseable", () => {
     const projected = projectActivityPayload(
       activity({

@@ -326,6 +326,14 @@ function extractThreadsSurfaceStructuredResult(
   data: Record<string, unknown>,
   item: Record<string, unknown> | null,
 ): Record<string, unknown> | undefined {
+  // Projection runs twice on snapshot reads (hydration, then
+  // projectThreadDetailSnapshot): the first pass replaces `data.result` with a
+  // summary that no longer parses, so an already-projected value carries
+  // through verbatim.
+  const existing = asRecord(data.structuredResult);
+  if (existing) {
+    return existing;
+  }
   const rawResult = item?.result ?? data.result;
   if (rawResult === undefined || rawResult === null) {
     return undefined;
