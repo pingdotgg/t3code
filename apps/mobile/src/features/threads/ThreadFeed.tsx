@@ -1506,6 +1506,9 @@ function renderFeedEntry(
         </ThreadReasoningRow>
       );
     }
+    if (message.role === "system") {
+      return null;
+    }
     const isUser = message.role === "user";
     const renderedText = renderAssistantCitationsAsText(message.text);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;

@@ -43,15 +43,18 @@ export type { PendingApproval, PendingUserInput } from "@t3tools/client-runtime/
 
 /**
  * Servers that do not hear `reasoningMessages=true` remap thinking traces to
- * `system` so older role decoders keep their sequence watermarks. Web leaves
- * those rows unrendered. Mobile used to fall through to assistant markdown,
- * so Android (and any client that missed the opt-in) showed every thought as
- * a regular answer. Treat both roles as thinking chrome.
+ * `system` so older role decoders keep their sequence watermarks. The remap
+ * keeps the turn. Persisted system instructions are not turn-scoped, so
+ * `system` is thinking chrome only with that turn provenance. `reasoning`
+ * is always a trace.
  */
 export function isThinkingTraceMessage(
-  message: Pick<OrchestrationThread["messages"][number], "role">,
+  message: Pick<OrchestrationThread["messages"][number], "role" | "turnId">,
 ): boolean {
-  return message.role === "reasoning" || message.role === "system";
+  if (message.role === "reasoning") {
+    return true;
+  }
+  return message.role === "system" && message.turnId !== null;
 }
 
 export interface PendingUserInputDraftAnswer {
@@ -2445,7 +2448,15 @@ export function buildThreadFeed(
   const entries = Arr.sortWith(
     [
       ...messages
-        .filter((message) => message.role !== "user" || !foldedAnswerMessageIds.has(message.id))
+        .filter((message) => {
+          if (message.role === "user" && foldedAnswerMessageIds.has(message.id)) {
+            return false;
+          }
+          // Web leaves ordinary system rows unrendered. Keep remapped traces
+          // (turn-scoped system) and drop the rest so they cannot become
+          // assistant markdown on mobile.
+          return message.role !== "system" || isThinkingTraceMessage(message);
+        })
         .map((message) => {
           let entry = messageEntriesCache.get(message);
           if (!entry) {

@@ -2531,6 +2531,42 @@ describe("buildThreadFeed", () => {
     ]);
   });
 
+  it("does not treat unscoped system instructions as thinking or as answers", () => {
+    const turnId = TurnId.make("system-instruction");
+    const instruction: OrchestrationThread["messages"][number] = {
+      id: MessageId.make("system-instruction"),
+      role: "system",
+      text: "You are a coding agent.",
+      turnId: null,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:01.000Z",
+      updatedAt: "2026-04-01T00:00:01.000Z",
+    };
+    const answer: OrchestrationThread["messages"][number] = {
+      id: MessageId.make("assistant-answer"),
+      role: "assistant",
+      text: "Here is the answer.",
+      turnId,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:02.000Z",
+      updatedAt: "2026-04-01T00:00:02.000Z",
+    };
+    expect(isThinkingTraceMessage(instruction)).toBe(false);
+    const thread = makeThread({
+      id: ThreadId.make("system-instruction"),
+      projectId: ProjectId.make("project-1"),
+      title: "System instruction",
+      messages: [instruction, answer],
+    });
+    const feed = buildThreadFeed(thread);
+    expect(feed.some((entry) => entry.type === "message" && entry.message.role === "system")).toBe(
+      false,
+    );
+    expect(deriveThreadFeedPresentation(feed, null, new Set([turnId]))).toMatchObject([
+      { type: "message", message: { role: "assistant", text: "Here is the answer." } },
+    ]);
+  });
+
   it.each(["tool", "failed-tool", "assistant", "turn", "unknown-turn"] as const)(
     "preserves a %s boundary in expanded activity history",
     (boundary) => {
