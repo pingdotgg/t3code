@@ -752,6 +752,12 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
   const checkpoints: VcsDriver.VcsCheckpointOps = {
     captureCheckpoint: Effect.fn("GitVcsDriver.checkpoints.captureCheckpoint")(function* (input) {
       const operation = "GitVcsDriver.checkpoints.captureCheckpoint";
+      const indexConfig = [
+        "-c",
+        "core.fsmonitor=false",
+        "-c",
+        "sparse.expectFilesOutsideOfPatterns=false",
+      ];
       const gitCommonDir = yield* resolveGitCommonDir(input.cwd);
       const tempIndexPath = path.join(
         gitCommonDir,
@@ -772,6 +778,13 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
 
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
+        const sparseConfig = yield* execute({
+          operation,
+          cwd: input.cwd,
+          args: ["config", "--bool", "core.sparseCheckout"],
+          allowNonZeroExit: true,
+        });
+        const sparseCheckout = sparseConfig.stdout.trim() === "true";
         if (headExists) {
           const reusedIndex = yield* Effect.gen(function* () {
             const indexPath = yield* execute({
@@ -789,26 +802,44 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             yield* execute({
               operation,
               cwd: input.cwd,
-              args: ["-c", "core.fsmonitor=false", "read-tree", "--reset", "HEAD"],
+              args: [...indexConfig, "read-tree", "--reset", "HEAD"],
               env: commitEnv,
             });
             // read-tree can rewrite the index, so restore its racy timestamp afterward.
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
-            const entries = yield* execute({
+            let specialFlags = false;
+            let recordStart = true;
+            yield* vcsProcess.run({
               operation,
+              command: "git",
               cwd: input.cwd,
-              args: ["ls-files", "-v"],
+              args: [...indexConfig, "ls-files", "--sparse", "-v", "-z"],
               env: commitEnv,
-              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+              maxOutputBytes: 4_096,
+              outputMode: "truncate",
+              // Inspect every tag without retaining paths or stopping at the output cap.
+              onStdoutChunk: (chunk) => {
+                for (const byte of chunk) {
+                  if (
+                    recordStart &&
+                    ((byte >= 97 && byte <= 122) || (!sparseCheckout && byte === 83))
+                  ) {
+                    specialFlags = true;
+                  }
+                  recordStart = byte === 0;
+                }
+              },
             });
-            // A fresh index must still capture assume-unchanged/skip-worktree files.
-            return !entries.stdoutTruncated && !/^[a-zS] /m.test(entries.stdout);
+            // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
+            return !specialFlags;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
+            yield* cleanupTempIndex;
             yield* execute({
               operation,
               cwd: input.cwd,
-              args: ["read-tree", "HEAD"],
+              // A fresh sparse index represents excluded directories without marking them deleted.
+              args: [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"],
               env: commitEnv,
             });
           }
@@ -817,14 +848,15 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
         yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["add", "-A", "--", "."],
+          // Preserve absent skipped entries, but capture present nonignored files outside the cone.
+          args: [...indexConfig, "add", ...(sparseCheckout ? ["--sparse"] : []), "-A", "--", "."],
           env: commitEnv,
         });
 
         const writeTreeResult = yield* execute({
           operation,
           cwd: input.cwd,
-          args: ["write-tree"],
+          args: [...indexConfig, "write-tree"],
           env: commitEnv,
         });
         const treeOid = writeTreeResult.stdout.trim();
