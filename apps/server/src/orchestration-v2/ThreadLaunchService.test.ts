@@ -124,6 +124,7 @@ interface HarnessOptions {
   readonly createWorktree?: GitWorkflow.GitWorkflowService["Service"]["createWorktree"];
   readonly fetchWorktreeBaseCommit?: GitWorkflow.GitWorkflowService["Service"]["fetchWorktreeBaseCommit"];
   readonly remoteExists?: GitWorkflow.GitWorkflowService["Service"]["remoteExists"];
+  readonly listRefs?: GitWorkflow.GitWorkflowService["Service"]["listRefs"];
   readonly hasCommit?: GitWorkflow.GitWorkflowService["Service"]["hasCommit"];
   readonly renameBranch?: GitWorkflow.GitWorkflowService["Service"]["renameBranch"];
   readonly runSetup?: ProjectSetupScriptRunner.ProjectSetupScriptRunner["Service"]["runForThread"];
@@ -203,6 +204,16 @@ function makeHarness(options: HarnessOptions = {}) {
     }),
     Layer.mock(GitWorkflow.GitWorkflowService)({
       createWorktree,
+      listRefs:
+        options.listRefs ??
+        (() =>
+          Effect.succeed({
+            refs: [],
+            nextCursor: null,
+            isRepo: true,
+            hasPrimaryRemote: true,
+            totalCount: 0,
+          })),
       renameBranch,
       fetchWorktreeBaseCommit:
         options.fetchWorktreeBaseCommit ??
@@ -2534,3 +2545,92 @@ it.effect("uses repository instructions and naming policy for generated worktree
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 
+for (const worktreePath of [null, "/already-checked-out"]) {
+  it.effect(`only reuses an available local base branch (${worktreePath ?? "available"})`, () =>
+    Effect.gen(function* () {
+      const created =
+        yield* Deferred.make<
+          Parameters<GitWorkflow.GitWorkflowService["Service"]["createWorktree"]>[0]
+        >();
+      const harness = makeHarness({
+        listRefs: () =>
+          Effect.succeed({
+            refs: [{ name: "feature/reuse", current: false, isDefault: false, worktreePath }],
+            nextCursor: null,
+            isRepo: true,
+            hasPrimaryRemote: true,
+            totalCount: 1,
+          }),
+        createWorktree: (input) =>
+          Deferred.succeed(created, input).pipe(
+            Effect.as({
+              worktree: {
+                path: "/repo-worktrees/reuse",
+                refName: input.newRefName ?? input.refName,
+                headSha: "abc",
+              },
+            }),
+          ),
+      });
+      yield* Effect.gen(function* () {
+        const launches = yield* ThreadLaunch.ThreadLaunchService;
+        yield* launches.launch(
+          launchInput({
+            command: "command:launch:reuse",
+            thread: "thread:launch:reuse",
+            workspace: {
+              type: "worktree",
+              baseRef: "feature/reuse",
+              reuseBaseBranchIfAvailable: true,
+            },
+          }),
+        );
+        const input = yield* Deferred.await(created);
+        assert.equal(input.refName, "feature/reuse");
+        if (worktreePath === null) assert.isUndefined(input.newRefName);
+        else assert.isTrue(input.newRefName?.startsWith("t3/") ?? false);
+      }).pipe(Effect.provide(harness.layer));
+    }),
+  );
+}
+
+it.effect("preserves a reused branch when cancelling a claimed worktree", () =>
+  Effect.gen(function* () {
+    const claimed = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      listRefs: () =>
+        Effect.succeed({
+          refs: [{ name: "feature/reuse", current: false, isDefault: false, worktreePath: null }],
+          nextCursor: null,
+          isRepo: true,
+          hasPrimaryRemote: true,
+          totalCount: 1,
+        }),
+      createWorktree: (_input, options) =>
+        (options?.progress?.onWorktreeClaimed?.("/repo-worktrees/reuse") ?? Effect.void).pipe(
+          Effect.andThen(Deferred.succeed(claimed, undefined)),
+          Effect.andThen(Effect.never),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      const tracker = yield* WorktreeSetupTracker.WorktreeSetupTracker;
+      const launched = yield* launches.launch(
+        launchInput({
+          command: "launch:cancel-reused",
+          thread: "thread:cancel-reused",
+          message: "Start",
+          workspace: {
+            type: "worktree",
+            baseRef: "feature/reuse",
+            reuseBaseBranchIfAvailable: true,
+          },
+        }),
+      );
+      yield* Deferred.await(claimed);
+      assert.isTrue(yield* tracker.cancel(launched.threadId));
+      assert.equal(harness.removeWorktree.mock.calls[0]?.[0].path, "/repo-worktrees/reuse");
+      assert.isEmpty(harness.deleteLocalBranch.mock.calls);
+    }).pipe(Effect.provide(harness.layer));
+  }),
+);
