@@ -1,4 +1,4 @@
-import type { ThreadRowProviderInstance } from "./thread-provider-instance";
+import { resolveThreadProviderInstance } from "./thread-provider-instance";
 import {
   THREAD_LIST_V2_MONO_FONT as MONO_FONT,
   THREAD_LIST_V2_ROW_CONTENT_CLASS_NAME,
@@ -17,7 +17,7 @@ import type {
   EnvironmentThreadShell,
 } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state/thread-search";
-import type { EnvironmentMachineKind } from "@t3tools/contracts";
+import type { EnvironmentMachineKind, ServerConfig } from "@t3tools/contracts";
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import { resolveSettledThreadTimestamp } from "@t3tools/client-runtime/state/thread-sort";
 import type { MenuAction } from "@react-native-menu/menu";
@@ -43,6 +43,7 @@ import {
   resolveThreadListV2SnoozeMenuSelection,
   threadHasUnseenCompletion,
   resolveThreadListV2Status,
+  resolveThreadListV2ProviderDrivers,
   resolveThreadListV2SwipeActions,
   type ThreadListV2Status,
 } from "./threadListV2";
@@ -359,12 +360,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly snoozePresetMinute: string;
   readonly project: EnvironmentProject | null;
   readonly projectTitle?: string;
-  /** Provider drivers back to front: earlier owners first, current last.
-      Empty when the environment's config has not resolved yet. */
-  readonly providerDrivers: ReadonlyArray<string>;
-  /** Account-aware presentation for the current provider owner. */
-  readonly providerInstance: ThreadRowProviderInstance | null;
-  readonly providerIconUrl?: string | null;
+  /** Keep the environment's provider array stable across unrelated list updates. */
+  readonly providers: ServerConfig["providers"] | undefined;
   /** Which machine hosts the thread. Null when only one environment is
       connected — repeating the same label on every row is noise. Mirrors
       the web sidebar's remote-environment cloud icon, but as text since
@@ -445,6 +442,19 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   } = props;
   const snoozedRow = props.snoozed === true;
   const pinnedRow = props.pinned === true;
+
+  const { providerDrivers, providerInstance, providerIconUrl } = useMemo(() => {
+    const provider = props.providers?.find(
+      (candidate) =>
+        candidate.instanceId ===
+        (thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId),
+    );
+    return {
+      providerDrivers: resolveThreadListV2ProviderDrivers(thread, props.providers),
+      providerInstance: resolveThreadProviderInstance(props.providers, thread),
+      providerIconUrl: provider?.iconUrl,
+    };
+  }, [thread, props.providers]);
 
   const pr = useThreadPr(thread);
 
@@ -897,23 +907,23 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
             </Text>
           </View>
         ) : null}
-        {props.providerInstance ? (
+        {providerInstance ? (
           // Earlier owners peek out behind the current provider so a
           // handed-off thread shows where it has been. The current owner
           // keeps its account badge so same-driver instances stay distinct.
           <View className="flex-row items-center">
-            {props.providerDrivers.slice(0, -1).map((driver, index) => (
+            {providerDrivers.slice(0, -1).map((driver, index) => (
               <View key={`${driver}:${index}`} className="-mr-1 opacity-30">
                 <ProviderIcon provider={driver} size={12} />
               </View>
             ))}
             <ProviderInstanceIcon
-              iconUrl={props.providerIconUrl}
-              provider={props.providerInstance.driverKind}
+              iconUrl={providerIconUrl}
+              provider={providerInstance.driverKind}
               size={14}
-              displayName={props.providerInstance.displayName}
-              accentColor={props.providerInstance.accentColor}
-              showBadge={props.providerInstance.showBadge}
+              displayName={providerInstance.displayName}
+              accentColor={providerInstance.accentColor}
+              showBadge={providerInstance.showBadge}
               surfaceColor={rowAppearance.providerIconSurfaceColor}
             />
           </View>
