@@ -349,6 +349,19 @@ const PHOTO_RENDER_ATTEMPTS = [
   { maxEdge: 1024, quality: 0.6 },
 ] as const;
 
+/** Removes a JPEG output that was rendered only to discover it cannot be attached. */
+async function removeRejectedPhotoRender(uri: string): Promise<void> {
+  try {
+    const { File } = await import("expo-file-system");
+    const rejectedRender = new File(uri);
+    if (rejectedRender.exists) {
+      rejectedRender.delete();
+    }
+  } catch (cleanupError) {
+    console.warn("[composer-attachments] could not remove an oversized render", cleanupError);
+  }
+}
+
 /**
  * Renders a camera or photo-library pick to a provider-readable JPEG. Decode, downscale, and encode
  * run natively; only the bounded result crosses the bridge. If a detailed first render still
@@ -384,15 +397,7 @@ async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: st
       ) {
         return { base64: saved.base64, uri: saved.uri };
       }
-      try {
-        const { File } = await import("expo-file-system");
-        const rejectedRender = new File(saved.uri);
-        if (rejectedRender.exists) {
-          rejectedRender.delete();
-        }
-      } catch (cleanupError) {
-        console.warn("[composer-attachments] could not remove an oversized render", cleanupError);
-      }
+      await removeRejectedPhotoRender(saved.uri);
     }
     throw new Error("The photo renderer has no output configuration.");
   } finally {
@@ -624,6 +629,9 @@ async function pickComposerMediaFrom(
 
     const sizeBytes = estimateBase64ByteSize(image.base64);
     if (sizeBytes <= 0 || sizeBytes > PROVIDER_SEND_TURN_MAX_IMAGE_BYTES) {
+      if (originalMimeType === null) {
+        await removeRejectedPhotoRender(image.previewUri);
+      }
       error = `'${name}' exceeds the 10 MB attachment limit.`;
       continue;
     }

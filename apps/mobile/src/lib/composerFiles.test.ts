@@ -240,6 +240,32 @@ describe("composer file attachments", () => {
 
     it("recompresses an oversized camera render", recompressOversizedCameraPhoto);
 
+    /** Verifies that every temporary render is deleted when no attempt fits the wire limit. */
+    async function rejectPersistentlyOversizedCameraPhoto() {
+      const oversized =
+        rendered.base64.slice(0, 4) +
+        "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      native.size = { width: 4032, height: 3024 };
+      mocks.save.mockResolvedValue({ uri: rendered.uri, base64: oversized });
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      await expect(takeComposerPhoto({ existingCount: 0 })).resolves.toEqual({
+        attachments: [],
+        error: "'photo.HEIC' exceeds the 10 MB attachment limit.",
+      });
+
+      expect(native.resizes).toEqual([{ width: 2048 }, { width: 1536 }, { width: 1024 }]);
+      expect(mocks.delete).toHaveBeenCalledTimes(3);
+      expect(mocks.delete).toHaveBeenNthCalledWith(1, rendered.uri);
+      expect(mocks.delete).toHaveBeenNthCalledWith(2, rendered.uri);
+      expect(mocks.delete).toHaveBeenNthCalledWith(3, rendered.uri);
+    }
+
+    it(
+      "cleans up every persistently oversized camera render",
+      rejectPersistentlyOversizedCameraPhoto,
+    );
+
     /** Verifies that denied camera permission stops capture and closes the handoff. */
     async function rejectDeniedCameraAccess() {
       mocks.requestCameraPermission.mockResolvedValue({ granted: false });
