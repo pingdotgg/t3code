@@ -1467,6 +1467,28 @@ it.layer(
     }),
   );
 
+  it.effect("resets keypad and key encoding modes a dead process left in inherited history", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager();
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      expect(process).toBeDefined();
+      if (!process) return;
+
+      // terminfo smkx sends DECKPAM as a plain escape, not a CSI mode, and the
+      // key encoder reads modes 66, 67, and 1036 when the client syncs it.
+      process.emitData("prompt % vim\n\u001b[?1h\u001b=\u001b[?67h\u001b[?1036l");
+
+      yield* manager.close({ threadId: "thread-1" });
+
+      const reopened = yield* manager.open(openInput());
+      assert.equal(
+        reopened.history,
+        "prompt % vim\n\u001b[?1h\u001b=\u001b[?67h\u001b[?1036l\u001b[?1l\u001b[?66l\u001b[?67l\u001b[?1036h",
+      );
+    }),
+  );
+
   it.effect("leaves the alternate screen before restoring the cursor in inherited history", () =>
     Effect.gen(function* () {
       const { manager, ptyAdapter } = yield* createManager();

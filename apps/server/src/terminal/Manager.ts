@@ -1012,6 +1012,8 @@ const INHERITED_DEC_MODE_DEFAULTS = new Map<number, boolean>([
   [9, false], // X10 mouse reporting
   [25, true], // cursor visible
   [47, false], // legacy alternate screen
+  [66, false], // application keypad (also set by DECKPAM, `ESC =`)
+  [67, false], // backarrow key sends BS
   [1000, false], // mouse press/release tracking
   [1002, false], // mouse button-event tracking
   [1003, false], // mouse any-event tracking
@@ -1019,6 +1021,8 @@ const INHERITED_DEC_MODE_DEFAULTS = new Map<number, boolean>([
   [1005, false], // UTF-8 mouse encoding
   [1006, false], // SGR mouse encoding
   [1015, false], // urxvt mouse encoding
+  [1035, true], // numlock overrides application keypad
+  [1036, true], // alt sends ESC prefix
   [1047, false], // alternate screen buffer
   [1049, false], // alternate screen with cursor save
   [2004, false], // bracketed paste
@@ -1033,13 +1037,14 @@ const ALTERNATE_SCREEN_DEC_MODES = [47, 1047, 1049];
 const KITTY_KEYBOARD_CLEAR = "\u001b[=0;1u";
 // Every sequence of interest starts with ESC, so the history is split there
 // and each fragment's head is matched: DEC mode set/reset, Kitty keyboard
-// push/pop/set, or RIS (`c`). The scanner tracks only what the client's
-// replay parser acts on: libghostty-vt ignores the 8-bit CSI byte (U+009B,
-// which the UTF-8 history would carry as C2 9B) and leaves every tracked
-// mode alone on DECSTR (`CSI ! p`), so neither is treated as a sequence.
+// push/pop/set, DECKPAM/DECKPNM (`ESC =` / `ESC >`, which toggle mode 66),
+// or RIS (`c`). The scanner tracks only what the client's replay parser acts
+// on: libghostty-vt ignores the 8-bit CSI byte (U+009B, which the UTF-8
+// history would carry as C2 9B) and leaves every tracked mode alone on DECSTR
+// (`CSI ! p`), so neither is treated as a sequence.
 const ESCAPE = "\u001b";
 const INHERITED_MODE_SEQUENCE =
-  /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)(?:;([0-9]*))?[0-9;]*u)|(c))/u;
+  /^(?:\[(?:\?([0-9;]+)([hl])|([<>=])([0-9]*)(?:;([0-9]*))?[0-9;]*u)|(c)|([=>]))/u;
 
 function neutralizeInheritedHistory(history: string): string {
   if (history.length === 0) return history;
@@ -1054,6 +1059,10 @@ function neutralizeInheritedHistory(history: string): string {
       kittyStacks.main = [0];
       kittyStacks.alternate = [0];
       screen = "main";
+      continue;
+    }
+    if (match[7] !== undefined) {
+      modes.set(66, match[7] === "=");
       continue;
     }
     if (match[3] !== undefined) {
