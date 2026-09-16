@@ -43,13 +43,16 @@ export type ProviderSessionDirectoryWriteError =
 
 export interface ProviderSessionDirectoryUpsertOptions {
   readonly onConflict?: "update" | "ignore";
+  // For insert-ignore imports, allow insertion or reuse only without a native owner.
+  readonly unlessNativeSessionId?: string;
 }
 
 export interface ProviderSessionDirectoryShape {
+  // Returns false when native ownership blocks an import reservation.
   readonly upsert: (
     binding: ProviderRuntimeBinding,
     options?: ProviderSessionDirectoryUpsertOptions,
-  ) => Effect.Effect<void, ProviderSessionDirectoryWriteError>;
+  ) => Effect.Effect<boolean, ProviderSessionDirectoryWriteError>;
 
   /** Record an imported file without changing the current provider session. */
   readonly recordImportedTranscript: (input: {

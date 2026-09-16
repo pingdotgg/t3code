@@ -221,7 +221,7 @@ function makeScopedRuntimeFactory(options?: { readonly failConstruction?: boolea
 }
 
 const providerSessionDirectoryTestLayer = Layer.succeed(ProviderSessionDirectory, {
-  upsert: () => Effect.void,
+  upsert: () => Effect.succeed(true),
   recordImportedTranscript: () => Effect.die("unused"),
   getProvider: () =>
     Effect.die(new Error("ProviderSessionDirectory.getProvider is not used in test")),
