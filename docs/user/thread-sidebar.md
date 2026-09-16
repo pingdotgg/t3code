@@ -20,6 +20,14 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+### Start from an agent
+
+An agent can start a new thread in its own project with the `start_thread` tool
+on the T3 Code MCP server. The new thread keeps the agent's provider, checkout,
+and worktree, and runs on its own. Ask for it when you want work split across
+threads, or when a follow-up should keep going after the current turn ends. Two
+threads editing one checkout can conflict, so ask the agent to split by files.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
