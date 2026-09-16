@@ -32,6 +32,7 @@ import {
   type PullRequestCommentInput,
   type PullRequestCommentUpdateInput,
   type PullRequestDetail,
+  type PullRequestChecks,
   type PullRequestDiffFileContentsInput,
   type PullRequestDiffFileContentsResult,
   type PullRequestDiffStat,
@@ -202,6 +203,9 @@ export class PullRequestService extends Context.Service<
     readonly subscribeRefreshes: Stream.Stream<number>;
     readonly refreshAfterTurn: (projectId: ProjectId) => Effect.Effect<void>;
     readonly detail: (input: PullRequestRef) => Effect.Effect<PullRequestDetail, PullRequestError>;
+    readonly checks: (
+      input: PullRequestRef,
+    ) => Effect.Effect<PullRequestChecks | null, PullRequestError>;
     readonly activity: (
       input: PullRequestRef,
     ) => Effect.Effect<PullRequestActivity, PullRequestError>;
@@ -546,6 +550,9 @@ function withRateLimitBackoff(
           listChangeRequestStats: wrap("listChangeRequestStats", api.listChangeRequestStats),
         }),
     getChangeRequest: wrap("getChangeRequest", api.getChangeRequest),
+    ...(api.getChangeRequestChecks === undefined
+      ? {}
+      : { getChangeRequestChecks: wrap("getChangeRequestChecks", api.getChangeRequestChecks) }),
     ...(api.getChangeRequestSummary === undefined
       ? {}
       : {
@@ -2800,6 +2807,30 @@ export const make = Effect.gen(function* () {
     return Cache.get(listCache, key);
   };
 
+  const checksCache = yield* Cache.makeWith(
+    (key: string) => {
+      const input = refOfCacheKey(key);
+      return requireProject(input).pipe(
+        Effect.flatMap((project) =>
+          project.api.getChangeRequestChecks === undefined
+            ? Effect.succeed(null)
+            : project.api
+                .getChangeRequestChecks({
+                  cwd: project.project.workspaceRoot,
+                  repository: project.repository,
+                  host: project.host,
+                  number: input.number,
+                })
+                .pipe(Effect.mapError(toPullRequestError("checks"))),
+        ),
+      );
+    },
+    {
+      capacity: DETAIL_CACHE_CAPACITY,
+      timeToLive: (exit) => (Exit.isSuccess(exit) ? DETAIL_CACHE_TTL : Duration.zero),
+    },
+  );
+
   const detailCache = yield* Cache.makeWith(
     (key: string) => {
       const statsKey = statsCacheKey(key);
@@ -3130,6 +3161,7 @@ export const make = Effect.gen(function* () {
     ),
     refreshAfterTurn,
     detail: credentialCached(detail),
+    checks: credentialCached((input) => Cache.get(checksCache, refCacheKey(input))),
     activity: credentialCached(activity),
     threadComments,
     diff: credentialCached(diff),
