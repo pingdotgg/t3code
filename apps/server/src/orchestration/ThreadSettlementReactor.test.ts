@@ -316,6 +316,20 @@ describe("ThreadSettlementReactor", () => {
     assert.notStrictEqual(inherits, never);
   });
 
+  it("re-arms the sweep when the pinned-threads toggle changes", () => {
+    const protected_ = ThreadSettlementReactor.autoSettlementSettingsKey(DEFAULT_SERVER_SETTINGS);
+    const optedIn = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      sidebarAutoSettlePinnedThreads: true,
+    });
+    assert.notStrictEqual(protected_, optedIn);
+    const projectOptIn = ThreadSettlementReactor.autoSettlementSettingsKey({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [PROJECT_ID]: { sidebarAutoSettlePinnedThreads: true } },
+    });
+    assert.notStrictEqual(protected_, projectOptIn);
+  });
+
   it("ignores project overrides that do not touch settlement", () => {
     const base = ThreadSettlementReactor.autoSettlementSettingsKey({
       ...DEFAULT_SERVER_SETTINGS,
@@ -586,6 +600,10 @@ describe("ThreadSettlementReactor", () => {
           makeThread("snoozed", {
             branch: "skip-snoozed",
             snoozedUntil: "2026-08-29T00:00:00.000Z",
+          }),
+          makeThread("pinned", {
+            branch: "skip-pinned",
+            pinnedAt: "2026-08-20T00:00:00.000Z",
           }),
         ];
         const fixture = yield* makeHarness({

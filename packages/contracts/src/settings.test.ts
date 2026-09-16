@@ -562,6 +562,7 @@ describe("ServerSettings thread settlement", () => {
     const settings = decodeServerSettings({});
     expect(settings.sidebarAutoSettleAfterDays).toBe(3);
     expect(settings.sidebarAutoSettleOnMerge).toBe(true);
+    expect(settings.sidebarAutoSettlePinnedThreads).toBe(false);
   });
 
   it("allows both automatic rules to be disabled", () => {
@@ -569,14 +570,24 @@ describe("ServerSettings thread settlement", () => {
       decodeServerSettings({
         sidebarAutoSettleAfterDays: null,
         sidebarAutoSettleOnMerge: false,
+        sidebarAutoSettlePinnedThreads: true,
       }),
-    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
+    ).toMatchObject({
+      sidebarAutoSettleAfterDays: null,
+      sidebarAutoSettleOnMerge: false,
+      sidebarAutoSettlePinnedThreads: true,
+    });
     expect(
       decodeServerSettingsPatch({
         sidebarAutoSettleAfterDays: null,
         sidebarAutoSettleOnMerge: false,
+        sidebarAutoSettlePinnedThreads: true,
       }),
-    ).toMatchObject({ sidebarAutoSettleAfterDays: null, sidebarAutoSettleOnMerge: false });
+    ).toMatchObject({
+      sidebarAutoSettleAfterDays: null,
+      sidebarAutoSettleOnMerge: false,
+      sidebarAutoSettlePinnedThreads: true,
+    });
   });
 
   it.each([-1, 0, 91])("rejects an auto-settle threshold outside 1..90: %s", (value) => {

@@ -36,6 +36,7 @@ describe("auto-settle settings sync", () => {
     expect(plan.patch).toEqual({
       sidebarAutoSettleAfterDays: 7,
       sidebarAutoSettleOnMerge: true,
+      sidebarAutoSettlePinnedThreads: false,
     });
   });
 

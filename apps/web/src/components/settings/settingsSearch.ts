@@ -229,6 +229,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     scope: "project-defaults",
   },
   {
+    id: "auto-settle-pinned-threads",
+    title: "Auto-settle pinned threads",
+    to: "/settings/general",
+    searchTerms: ["pin pinned keep active automatically sidebar"],
+    requiresThreadAutoSettlement: true,
+    scope: "project-defaults",
+  },
+  {
     id: "days-before-auto-settle",
     title: "Days of inactivity before auto-settle",
     to: "/settings/general",

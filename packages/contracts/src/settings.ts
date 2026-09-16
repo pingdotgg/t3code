@@ -977,6 +977,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "pullRequestMergeMethod",
   "sidebarAutoSettleOnMerge",
   "sidebarAutoSettleAfterDays",
+  "sidebarAutoSettlePinnedThreads",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
 ] as const;
@@ -1002,6 +1003,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   pullRequestMergeMethod: Schema.optionalKey(Schema.NullOr(PullRequestMergeMethod)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  sidebarAutoSettlePinnedThreads: Schema.optionalKey(Schema.Boolean),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
@@ -1087,6 +1089,11 @@ export const ServerSettings = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  // Pinned threads stay active by default: a pin is an explicit keep-active
+  // signal. Opt in to let pins auto-settle like any other thread.
+  sidebarAutoSettlePinnedThreads: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
   // consumers should resolve `backgroundActivity` instead.
@@ -1381,6 +1388,7 @@ export const ServerSettingsPatch = Schema.Struct({
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   sidebarAutoSettleOnMerge: Schema.optionalKey(Schema.Boolean),
+  sidebarAutoSettlePinnedThreads: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

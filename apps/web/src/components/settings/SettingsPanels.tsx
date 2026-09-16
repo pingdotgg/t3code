@@ -560,6 +560,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
         ? ["Auto-settle merged threads"]
         : []),
+      ...(settings.sidebarAutoSettlePinnedThreads !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettlePinnedThreads
+        ? ["Auto-settle pinned threads"]
+        : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
       ...(settings.diffFilesCollapsed !== DEFAULT_UNIFIED_SETTINGS.diffFilesCollapsed
@@ -664,6 +668,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.continueThreadsAfterServerUpdate,
       settings.sidebarAutoSettleAfterDays,
       settings.sidebarAutoSettleOnMerge,
+      settings.sidebarAutoSettlePinnedThreads,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
       settings.showSkillsInSlashMenu,
@@ -761,6 +766,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      sidebarAutoSettlePinnedThreads: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettlePinnedThreads,
       responseStreamingMode: DEFAULT_UNIFIED_SETTINGS.responseStreamingMode,
       enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
       continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
@@ -2235,6 +2241,37 @@ export function GeneralSettingsPanel() {
                     updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
                   }
                   aria-label="Auto-settle merged threads"
+                />
+              }
+            />
+
+            <SettingsRow
+              serverScoped
+              settingKeys={["sidebarAutoSettlePinnedThreads"]}
+              {...searchableSetting("auto-settle-pinned-threads")}
+              description="Pinned threads stay active by default. Turn this on to let pins settle like any other thread."
+              resetAction={
+                settings.sidebarAutoSettlePinnedThreads !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettlePinnedThreads ? (
+                  <SettingResetButton
+                    label="auto-settle pinned threads"
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoSettlePinnedThreads:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettlePinnedThreads,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <ScopedSwitch
+                  settingKeys={["sidebarAutoSettlePinnedThreads"]}
+                  checked={settings.sidebarAutoSettlePinnedThreads}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarAutoSettlePinnedThreads: Boolean(checked) })
+                  }
+                  aria-label="Auto-settle pinned threads"
                 />
               }
             />

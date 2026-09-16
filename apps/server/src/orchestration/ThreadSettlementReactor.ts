@@ -52,6 +52,7 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
   return JSON.stringify([
     settings.sidebarAutoSettleOnMerge,
     settings.sidebarAutoSettleAfterDays,
+    settings.sidebarAutoSettlePinnedThreads,
     // Only entries that touch settlement, in a stable order, so a project
     // override on an unrelated key does not queue a sweep. JSON drops
     // undefined, so inherit (absent) and never (null) need distinct marks.
@@ -59,7 +60,8 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
       .filter(
         ([, entry]) =>
           entry.sidebarAutoSettleOnMerge !== undefined ||
-          entry.sidebarAutoSettleAfterDays !== undefined,
+          entry.sidebarAutoSettleAfterDays !== undefined ||
+          entry.sidebarAutoSettlePinnedThreads !== undefined,
       )
       .sort(([left], [right]) => left.localeCompare(right))
       .map(([projectId, entry]) => [
@@ -68,6 +70,7 @@ export function autoSettlementSettingsKey(settings: ServerSettingsValue): string
         entry.sidebarAutoSettleAfterDays === undefined
           ? "inherit"
           : entry.sidebarAutoSettleAfterDays,
+        entry.sidebarAutoSettlePinnedThreads ?? "inherit",
       ]),
   ]);
 }
@@ -94,7 +97,15 @@ export const make = Effect.gen(function* () {
     const projects = new Map(snapshot.projects.map((project) => [project.id, project]));
     // A merge rechecks all candidates, including branches that discovery has
     // not linked yet. Those lookups can still have cached the PR as open.
-    const candidates = snapshot.threads.filter((thread) => isAutoSettlementCandidate(thread, now));
+    // The pinned-threads toggle is per-project, so resolve it here: the cheap
+    // pre-filter must not drop pinned threads that opted back in, nor pay for
+    // PR lookups on pins that stay protected.
+    const candidates = snapshot.threads.filter((thread) => {
+      const resolved = resolveProjectSettings(settings, thread.projectId).settings;
+      return isAutoSettlementCandidate(thread, now, {
+        autoSettlePinnedThreads: resolved.sidebarAutoSettlePinnedThreads,
+      });
+    });
 
     // Return the thread when it still needs a pull request decision. A rejected
     // dispatch skips it for this snapshot instead of retrying through a lookup.
@@ -111,6 +122,7 @@ export const make = Effect.gen(function* () {
           now: decisionNow,
           autoSettleAfterDays: settings.sidebarAutoSettleAfterDays,
           autoSettleOnMerge: settings.sidebarAutoSettleOnMerge,
+          autoSettlePinnedThreads: settings.sidebarAutoSettlePinnedThreads,
         });
         if (settledAt === null) {
           return thread;

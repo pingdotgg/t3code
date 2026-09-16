@@ -120,6 +120,39 @@ it.layer(NodeServices.layer)("settled thread decider", (it) => {
     }),
   );
 
+  it.effect("auto-settle leaves pin gating to the reactor: pinned threads settle and unpin", () =>
+    Effect.gen(function* () {
+      // The pinned-threads toggle lives in ThreadSettlementPolicy / the
+      // reactor (which resolves per-project settings). The engine already
+      // rejects a stale auto-settle whose snapshot predates the pin, so the
+      // decider itself must not block pins — otherwise opting back into
+      // pinned auto-settlement could never take effect.
+      const auto = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.auto-settle" as const,
+          commandId: CommandId.make("cmd-auto-settle-pinned"),
+          threadId: ThreadId.make("thread-1"),
+          snapshotSequence: 0,
+          settledAt: SETTLED_AT,
+        },
+        readModel: makeReadModel(null, null, null, [], [], { pinnedAt: NOW }),
+      });
+      const autoEvents = Array.isArray(auto) ? auto : [auto];
+      expect(autoEvents.map((event) => event.type)).toEqual(["thread.settled", "thread.unpinned"]);
+
+      const manual = yield* decideOrchestrationCommand({
+        command: {
+          type: "thread.settle" as const,
+          commandId: CommandId.make("cmd-settle-pinned"),
+          threadId: ThreadId.make("thread-1"),
+        },
+        readModel: makeReadModel(null, null, null, [], [], { pinnedAt: NOW }),
+      });
+      const events = Array.isArray(manual) ? manual : [manual];
+      expect(events.map((event) => event.type)).toEqual(["thread.settled", "thread.unpinned"]);
+    }),
+  );
+
   it.effect("settles awake threads without a redundant wake and re-emits idempotently", () =>
     Effect.gen(function* () {
       const event = yield* decideOrchestrationCommand({

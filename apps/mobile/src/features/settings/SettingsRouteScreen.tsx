@@ -672,6 +672,13 @@ function AutoSettleSettingsRows() {
         onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
       />
       <SettingsSwitchRow
+        icon="pin"
+        label="Auto-settle pinned threads"
+        subtitle="Pinned threads stay active unless this is on"
+        value={referenceSettings.sidebarAutoSettlePinnedThreads}
+        onValueChange={(value) => writeToAll({ sidebarAutoSettlePinnedThreads: value })}
+      />
+      <SettingsSwitchRow
         icon="clock"
         label="Auto-settle inactive threads"
         subtitle={afterDays === null ? undefined : `After ${afterDays} days without activity`}

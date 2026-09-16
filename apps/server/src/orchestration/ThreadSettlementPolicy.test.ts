@@ -39,7 +39,7 @@ const makeThread = (
 const decide = (
   thread: OrchestrationThreadShell,
   pullRequest: SettlementPullRequest | null = null,
-  settings: { days?: number | null; merge?: boolean } = {},
+  settings: { days?: number | null; merge?: boolean; pinned?: boolean } = {},
 ) =>
   resolveAutoSettlementAt({
     thread,
@@ -47,6 +47,7 @@ const decide = (
     now: NOW,
     autoSettleAfterDays: settings.days === undefined ? 3 : settings.days,
     autoSettleOnMerge: settings.merge ?? true,
+    autoSettlePinnedThreads: settings.pinned ?? false,
   }) !== null;
 
 describe("resolveAutoSettlementAt", () => {
@@ -67,6 +68,7 @@ describe("resolveAutoSettlementAt", () => {
         now: NOW,
         autoSettleAfterDays: 3,
         autoSettleOnMerge: true,
+        autoSettlePinnedThreads: false,
       }),
     ).toBe("2026-08-21T00:00:00.000Z");
   });
@@ -83,6 +85,7 @@ describe("resolveAutoSettlementAt", () => {
         now: NOW,
         autoSettleAfterDays: null,
         autoSettleOnMerge: true,
+        autoSettlePinnedThreads: false,
       }),
     ).toBe("2026-08-01T00:00:00.000Z");
   });
@@ -171,6 +174,10 @@ describe("resolveAutoSettlementAt", () => {
 
   it("blocks pins, snooze, pending work, live sessions, and queued starts", () => {
     expect(decide(makeThread({ settledOverride: "active" }))).toBe(false);
+    expect(decide(makeThread({ pinnedAt: "2026-08-20T00:00:00.000Z" }))).toBe(false);
+    expect(
+      decide(makeThread({ pinnedAt: "2026-08-20T00:00:00.000Z" }), null, { pinned: true }),
+    ).toBe(true);
     expect(decide(makeThread({ snoozedUntil: "2026-08-29T00:00:00.000Z" }))).toBe(false);
     expect(decide(makeThread({ hasPendingApprovals: true }))).toBe(false);
     expect(decide(makeThread({ hasPendingUserInput: true }))).toBe(false);

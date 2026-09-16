@@ -492,6 +492,10 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
         );
       }
+      // The pinned-threads toggle lives in the settlement reactor/policy:
+      // the engine already rejects a stale auto-settle whose snapshot predates
+      // the pin (any event after snapshotSequence fails), so the decider must
+      // not second-guess pins here. Manual settle clears the pin below.
       // The server owns settle eligibility. A stale command must not settle
       // a thread whose session is coming alive or working.
       if (thread.session?.status === "starting" || thread.session?.status === "running") {

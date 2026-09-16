@@ -72,6 +72,7 @@ export function resolveAutoSettlementAt(input: {
   readonly now: string;
   readonly autoSettleAfterDays: number | null;
   readonly autoSettleOnMerge: boolean;
+  readonly autoSettlePinnedThreads: boolean;
 }): string | null {
   const { thread } = input;
   let pullRequest = input.pullRequest;
@@ -96,7 +97,12 @@ export function resolveAutoSettlementAt(input: {
             closedAt: latest.snapshot.closedAt ?? null,
           };
   }
-  if (!isAutoSettlementCandidate(thread, input.now)) return null;
+  if (
+    !isAutoSettlementCandidate(thread, input.now, {
+      autoSettlePinnedThreads: input.autoSettlePinnedThreads,
+    })
+  )
+    return null;
   const activityAt = latestTimestamp([
     thread.latestUserMessageAt,
     thread.latestTurn?.requestedAt,
@@ -115,8 +121,16 @@ export function resolveAutoSettlementAt(input: {
 }
 
 /** Cheap checks that run before any source control lookup. */
-export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now: string): boolean {
+export function isAutoSettlementCandidate(
+  thread: OrchestrationThreadShell,
+  now: string,
+  options: { readonly autoSettlePinnedThreads?: boolean } = {},
+): boolean {
   if (thread.archivedAt !== null || thread.settledOverride !== null) return false;
+  // A sidebar pin is an explicit keep-active signal unless the pinned-threads
+  // toggle opts back into the old behavior. Manual settle always works and
+  // clears the pin.
+  if (thread.pinnedAt != null && options.autoSettlePinnedThreads !== true) return false;
   if (thread.hasPendingApprovals || thread.hasPendingUserInput) return false;
   if (thread.session?.status === "starting" || thread.session?.status === "running") return false;
   if (thread.backgroundLiveness != null) return false;
