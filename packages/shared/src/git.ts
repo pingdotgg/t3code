@@ -143,28 +143,75 @@ export function normalizeGitRemoteUrl(value: string): string {
   return normalized;
 }
 
-/**
- * Unquote a git config value: strip an inline `#` or `;` comment outside
- * quotes, then drop surrounding quotes and backslash escapes.
- */
-function parseGitConfigValue(raw: string): string {
-  let out = "";
+/** Join continued config lines without consuming escaped backslashes or comments. */
+function gitConfigLines(configText: string): string[] {
+  const lines: string[] = [];
+  const text = configText.replaceAll("\r\n", "\n");
+  let line = "";
   let quoted = false;
-  for (let index = 0; index < raw.length; index += 1) {
-    const char = raw[index]!;
-    if (char === "\\" && index + 1 < raw.length) {
-      out += raw[index + 1];
-      index += 1;
+  let comment = false;
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index]!;
+    if (char === "\n") {
+      lines.push(line);
+      line = "";
+      quoted = false;
+      comment = false;
       continue;
     }
-    if (char === '"') {
-      quoted = !quoted;
+    if (char === "\\" && !comment && index + 1 < text.length) {
+      const next = text[++index]!;
+      if (next !== "\n") line += char + next;
       continue;
     }
-    if (!quoted && (char === "#" || char === ";")) break;
-    out += char;
+    if (!comment && char === '"') quoted = !quoted;
+    if (!quoted && (char === "#" || char === ";")) comment = true;
+    line += char;
   }
-  return out.trim();
+  lines.push(line);
+  return lines;
+}
+
+/** Decode Git value escapes, retaining quoted whitespace but dropping trailing comments. */
+function parseGitConfigValue(raw: string): string | null {
+  let out = "";
+  let whitespace = "";
+  let quoted = false;
+  for (let index = 0; index < raw.length; index++) {
+    const char = raw[index]!;
+    if (!quoted && (char === "#" || char === ";")) break;
+    if (!quoted && (char === " " || char === "\t")) {
+      whitespace += char;
+      continue;
+    }
+    out += whitespace;
+    whitespace = "";
+    if (char === "\\") {
+      const next = raw[++index];
+      switch (next) {
+        case "n":
+          out += "\n";
+          break;
+        case "t":
+          out += "\t";
+          break;
+        case "b":
+          out += "\b";
+          break;
+        case '"':
+        case "\\":
+          out += next;
+          break;
+        default:
+          return null;
+      }
+    } else if (char === '"') {
+      quoted = !quoted;
+    } else {
+      out += char;
+    }
+  }
+  return quoted ? null : out;
 }
 
 /**
@@ -176,9 +223,7 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
   let section: string | null = null;
   let originUrl: string | null = null;
   let firstRemoteUrl: string | null = null;
-  // A trailing backslash continues the value on the next line.
-  const joined = configText.replace(/\\\r?\n[ \t]*/g, "");
-  for (const rawLine of joined.split(/\r?\n/)) {
+  for (const rawLine of gitConfigLines(configText)) {
     const line = rawLine.trim();
     if (line.length === 0 || line.startsWith("#") || line.startsWith(";")) continue;
     // Both `[remote "origin"]` and the legacy `[remote.origin]` form, with an
@@ -197,7 +242,7 @@ export function parseOriginUrlFromGitConfig(configText: string): string | null {
     const match = /^url\s*=\s*(.*)$/i.exec(line);
     if (!match) continue;
     const url = parseGitConfigValue(match[1] ?? "");
-    if (url.length === 0) continue;
+    if (url === null || url.length === 0) continue;
     if (section === "origin") {
       originUrl ??= url;
     } else {
