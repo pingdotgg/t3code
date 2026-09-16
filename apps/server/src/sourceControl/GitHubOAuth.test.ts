@@ -102,6 +102,72 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
     }),
   );
 
+  it.effect("surfaces fast OAuth terminal states to later subscribers", () =>
+    Effect.gen(function* () {
+      let nextExitCode = 0;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.sync(() =>
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(2),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(nextExitCode++)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args[0] === "api" ? "octocat\n" : "oauth-secret\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+      );
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const succeededAccountId = GitHubAccountId.make("fast-success");
+        yield* oauth.start({
+          accountId: succeededAccountId,
+          label: "Fast success",
+          host: "github.com",
+        });
+        yield* Effect.yieldNow;
+        const succeeded = yield* oauth.subscribe(succeededAccountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(succeeded));
+        assert.equal(Option.getOrThrow(succeeded).phase, "succeeded");
+
+        const failedAccountId = GitHubAccountId.make("fast-failure");
+        yield* oauth.start({
+          accountId: failedAccountId,
+          label: "Fast failure",
+          host: "github.com",
+        });
+        yield* Effect.yieldNow;
+        const failed = yield* oauth.subscribe(failedAccountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(failed));
+        assert.equal(Option.getOrThrow(failed).phase, "failed");
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
   it.effect("rejects a stale account snapshot before starting OAuth", () =>
     Effect.gen(function* () {
       const accountId = GitHubAccountId.make("stale-start");
