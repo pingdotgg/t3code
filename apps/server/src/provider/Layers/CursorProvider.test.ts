@@ -1,14 +1,16 @@
 import * as NodeOS from "node:os";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import { it as effectIt } from "@effect/vitest";
 import type * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Stream from "effect/Stream";
 import type * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "effect-acp/schema";
-import type { CursorSettings } from "@t3tools/contracts";
+import { ProviderDriverKind, ProviderInstanceId, type CursorSettings } from "@t3tools/contracts";
 import { createModelCapabilities } from "@t3tools/shared/model";
 
 import {
@@ -17,6 +19,7 @@ import {
   checkCursorProviderStatus,
   discoverCursorModelsViaAcp,
   makeCursorModelDiscovery,
+  makeCursorCommandCatalog,
   getCursorParameterizedModelPickerUnsupportedMessage,
   parseCursorAboutOutput,
   parseCursorCliConfigChannel,
@@ -473,6 +476,87 @@ describe("Cursor skills", () => {
       expect(rewriteCursorSkillMentions(text, names)).toBe(text);
     }
   });
+});
+
+describe("Cursor command catalog", () => {
+  effectIt.effect(
+    "publishes workspace commands without leaking them globally and retains them across refreshes",
+    () =>
+      Effect.gen(function* () {
+        const base = {
+          ...buildCursorProviderSnapshot({
+            checkedAt: "2026-01-01T00:00:00.000Z",
+            cursorSettings: baseCursorSettings,
+            parsed: { version: null, status: "ready", auth: { status: "authenticated" } },
+          }),
+          instanceId: ProviderInstanceId.make("cursor-catalog"),
+          driver: ProviderDriverKind.make("cursor"),
+        };
+        const catalog = yield* makeCursorCommandCatalog({
+          getSnapshot: Effect.succeed(base),
+          refresh: Effect.succeed(base),
+          streamChanges: Stream.empty,
+          resolveMaintenance: () => Effect.die("Not used"),
+          applyUsageLimits: () => Effect.void,
+        });
+        const skills = [
+          { name: "review", path: "/one/.cursor/skills/review/SKILL.md", enabled: true },
+        ];
+        const probedSkills = [
+          { name: "explain", path: "/probed/.cursor/skills/explain/SKILL.md", enabled: true },
+        ];
+        yield* catalog.snapshotForCwd("/probed", probedSkills);
+        yield* catalog.onAvailableCommands(
+          [
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+            { name: "compact", description: "Native duplicate" },
+            { name: "review", description: "Duplicate" },
+          ],
+          "/one",
+          skills,
+        );
+        yield* catalog.onAvailableCommands([{ name: "deploy", description: "Deploy" }], "/two", []);
+        const reprobed = yield* catalog.snapshotForCwd("/one", skills);
+        expect(reprobed.slashCommands.map((command) => command.name)).toEqual([
+          "compact",
+          "review",
+        ]);
+        const published = yield* catalog.snapshot.streamChanges.pipe(
+          Stream.take(1),
+          Stream.runCollect,
+        );
+        expect(published[0]?.slashCommands.map((command) => command.name)).toEqual(["compact"]);
+        const refreshed = yield* catalog.snapshot.refresh;
+        expect(
+          refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/probed"),
+        ).toMatchObject({
+          slashCommands: [{ name: "compact" }],
+          skills: probedSkills,
+        });
+        expect(refreshed.workspaceSnapshots?.find((entry) => entry.cwd === "/one")).toMatchObject({
+          slashCommands: [
+            { name: "compact" },
+            { name: "review", description: "Review changes", input: { hint: "target" } },
+          ],
+          skills,
+        });
+        yield* catalog.onAvailableCommands([], "/one", skills);
+        const updated = yield* catalog.snapshot.getSnapshot;
+        expect(
+          updated.workspaceSnapshots?.find((entry) => entry.cwd === "/probed")?.skills,
+        ).toEqual(probedSkills);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/one")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact"]);
+        expect(
+          updated.workspaceSnapshots
+            ?.find((entry) => entry.cwd === "/two")
+            ?.slashCommands.map((command) => command.name),
+        ).toEqual(["compact", "deploy"]);
+      }),
+  );
 });
 
 describe("buildCursorProviderSnapshot", () => {

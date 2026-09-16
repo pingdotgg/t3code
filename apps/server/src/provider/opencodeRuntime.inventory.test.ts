@@ -47,14 +47,67 @@ it.layer(testLayer)("OpenCodeRuntime inventory", (it) => {
       });
 
       const inventoryFiber = yield* runtime.loadOpenCodeInventory(client).pipe(Effect.forkChild);
-      yield* Queue.takeN(started, 3);
+      yield* Queue.takeN(started, 4);
       yield* Fiber.interrupt(inventoryFiber);
 
       NodeAssert.deepEqual((yield* Queue.takeAll(aborted)).toSorted(), [
         "/agent",
+        "/command",
         "/provider",
         "/skill",
       ]);
+    }),
+  );
+
+  it.effect("discovers directory-scoped commands without retaining prompt templates", () =>
+    Effect.gen(function* () {
+      const runtime = yield* OpenCodeRuntime;
+      const requests: Request[] = [];
+      const client = createOpencodeClient({
+        baseUrl: "http://opencode.test",
+        directory: "/workspace/project",
+        fetch: Object.assign(
+          async (input: string | Request | URL) => {
+            const request = input instanceof Request ? input : new Request(input.toString());
+            requests.push(request);
+            const route = new URL(request.url).pathname;
+            return Response.json(
+              route === "/provider"
+                ? { connected: ["openai"], all: [], default: {} }
+                : route === "/command"
+                  ? [
+                      {
+                        name: "review",
+                        description: "Review changes",
+                        source: "command",
+                        hints: ["$ARGUMENTS"],
+                        template: "private native template",
+                      },
+                    ]
+                  : [],
+            );
+          },
+          { preconnect: () => undefined },
+        ),
+      });
+      const inventory = yield* runtime.loadOpenCodeInventory(client);
+      NodeAssert.deepEqual(inventory.commands, [
+        {
+          name: "review",
+          description: "Review changes",
+          source: "command",
+          hints: ["$ARGUMENTS"],
+        },
+      ]);
+      const commandRequest = requests.find(
+        (request) => new URL(request.url).pathname === "/command",
+      );
+      NodeAssert.ok(commandRequest);
+      NodeAssert.equal(
+        new URL(commandRequest.url).searchParams.get("directory") ??
+          decodeURIComponent(commandRequest.headers.get("x-opencode-directory") ?? ""),
+        "/workspace/project",
+      );
     }),
   );
 
