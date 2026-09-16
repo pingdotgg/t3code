@@ -342,41 +342,50 @@ export async function pickComposerFiles(input: {
   return { files: attachments, error };
 }
 
-/**
- * Longest edge kept when a photo has to be re-encoded. Matches the web composer's
- * MAX_DIMENSION so every client hands providers the same resolution.
- */
-const PHOTO_MAX_EDGE = 2048;
-const PHOTO_JPEG_QUALITY = 0.85;
+/** Start at the web composer's 2048px bound, then trade detail for an attachable payload. */
+const PHOTO_RENDER_ATTEMPTS = [
+  { maxEdge: 2048, quality: 0.85 },
+  { maxEdge: 1536, quality: 0.72 },
+  { maxEdge: 1024, quality: 0.6 },
+] as const;
 
 /**
- * Renders a camera or photo-library pick to a provider-readable JPEG. Decode, downscale, and encode run
- * natively; only the bounded result crosses the bridge. Camera photos are 12-48 MP HEIC files,
- * so a full-size conversion is both slow to transfer and far more than a model can use.
+ * Renders a camera or photo-library pick to a provider-readable JPEG. Decode, downscale, and encode
+ * run natively; only the bounded result crosses the bridge. If a detailed first render still
+ * exceeds the wire limit, progressively smaller renders keep the capture attachable instead of
+ * rejecting it. Camera photos are 12-48 MP HEIC files, far more than a model can use directly.
  */
 async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: string }> {
   const { ImageManipulator, SaveFormat } = await import("expo-image-manipulator");
   let image = await ImageManipulator.manipulate(uri).renderAsync();
   try {
-    const longestEdge = Math.max(image.width, image.height);
-    if (longestEdge > PHOTO_MAX_EDGE) {
-      const resized = await ImageManipulator.manipulate(image)
-        .resize(
-          image.width >= image.height ? { width: PHOTO_MAX_EDGE } : { height: PHOTO_MAX_EDGE },
-        )
-        .renderAsync();
-      image.release();
-      image = resized;
+    for (const [index, attempt] of PHOTO_RENDER_ATTEMPTS.entries()) {
+      const longestEdge = Math.max(image.width, image.height);
+      if (longestEdge > attempt.maxEdge) {
+        const resized = await ImageManipulator.manipulate(image)
+          .resize(
+            image.width >= image.height ? { width: attempt.maxEdge } : { height: attempt.maxEdge },
+          )
+          .renderAsync();
+        image.release();
+        image = resized;
+      }
+      const saved = await image.saveAsync({
+        format: SaveFormat.JPEG,
+        compress: attempt.quality,
+        base64: true,
+      });
+      if (!saved.base64) {
+        throw new Error("The rendered photo has no bytes.");
+      }
+      if (
+        estimateBase64ByteSize(saved.base64) <= PROVIDER_SEND_TURN_MAX_IMAGE_BYTES ||
+        index === PHOTO_RENDER_ATTEMPTS.length - 1
+      ) {
+        return { base64: saved.base64, uri: saved.uri };
+      }
     }
-    const saved = await image.saveAsync({
-      format: SaveFormat.JPEG,
-      compress: PHOTO_JPEG_QUALITY,
-      base64: true,
-    });
-    if (!saved.base64) {
-      throw new Error("The rendered photo has no bytes.");
-    }
-    return { base64: saved.base64, uri: saved.uri };
+    throw new Error("The photo renderer has no output configuration.");
   } finally {
     image.release();
   }

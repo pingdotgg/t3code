@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   readBase64: vi.fn(),
   manipulate: vi.fn(),
   release: vi.fn(),
+  save: vi.fn(),
 }));
 
 vi.mock("expo-file-system", () => {
@@ -151,6 +152,8 @@ describe("composer file attachments", () => {
       native.saved = rendered;
       mocks.manipulate.mockReset();
       mocks.release.mockReset();
+      mocks.save.mockReset();
+      mocks.save.mockImplementation(async () => native.saved);
       mocks.manipulate.mockImplementation(() => {
         const context = {
           resize(size: { width?: number | null; height?: number | null }) {
@@ -160,7 +163,7 @@ describe("composer file attachments", () => {
           renderAsync: async () => ({
             ...native.size,
             release: mocks.release,
-            saveAsync: async () => native.saved,
+            saveAsync: mocks.save,
           }),
         };
         return context;
@@ -197,6 +200,43 @@ describe("composer file attachments", () => {
     }
 
     it("requests camera access and attaches a captured photo", attachCapturedPhoto);
+
+    /** Verifies that an oversized first camera render is retried at a smaller output size. */
+    async function recompressOversizedCameraPhoto() {
+      const oversized =
+        rendered.base64.slice(0, 4) +
+        "A".repeat(Math.ceil(PROVIDER_SEND_TURN_MAX_IMAGE_BYTES / 3) * 4);
+      native.size = { width: 4032, height: 3024 };
+      mocks.save.mockResolvedValueOnce({ uri: rendered.uri, base64: oversized });
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      const result = await takeComposerPhoto({ existingCount: 0 });
+
+      expect(native.resizes).toEqual([{ width: 2048 }, { width: 1536 }]);
+      expect(mocks.save).toHaveBeenNthCalledWith(1, {
+        format: "jpeg",
+        compress: 0.85,
+        base64: true,
+      });
+      expect(mocks.save).toHaveBeenNthCalledWith(2, {
+        format: "jpeg",
+        compress: 0.72,
+        base64: true,
+      });
+      expect(result).toEqual({
+        attachments: [
+          expect.objectContaining({
+            type: "image",
+            name: "photo.jpg",
+            sizeBytes: 4,
+            previewUri: rendered.uri,
+          }),
+        ],
+        error: null,
+      });
+    }
+
+    it("recompresses an oversized camera render", recompressOversizedCameraPhoto);
 
     /** Verifies that denied camera permission stops capture and closes the handoff. */
     async function rejectDeniedCameraAccess() {
