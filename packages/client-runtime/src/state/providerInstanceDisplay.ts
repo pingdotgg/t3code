@@ -71,6 +71,31 @@ export function normalizeProviderAccentColor(value: string | undefined): string 
 }
 
 /**
+ * Text color that stays readable on an accent badge: white on dark and
+ * saturated accents, near-black on light ones such as white or pastel picks.
+ * The threshold sits above the WCAG midpoint so mid-tones like Claude's
+ * orange keep the white text users already see. Accepts `#rgb` and `#rrggbb`;
+ * anything else keeps the historical white.
+ */
+export function providerAccentForegroundColor(accentColor: string): "#ffffff" | "#0a0a0a" {
+  const hex = accentColor.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/iu)?.[1];
+  if (hex === undefined) return "#ffffff";
+  const numeric = Number.parseInt(
+    hex.length === 3 ? Array.from(hex, (digit) => digit + digit).join("") : hex,
+    16,
+  );
+  const linearize = (channel: number) => {
+    const normalized = channel / 255;
+    return normalized <= 0.03928 ? normalized / 12.92 : ((normalized + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance =
+    0.2126 * linearize((numeric >> 16) & 255) +
+    0.7152 * linearize((numeric >> 8) & 255) +
+    0.0722 * linearize(numeric & 255);
+  return luminance > 0.4 ? "#0a0a0a" : "#ffffff";
+}
+
+/**
  * Whether an instance's icon carries the account badge: accent color set, or
  * several instances sharing a driver so the brand glyph alone is ambiguous.
  * Shared by the composer trigger, the picker rail, and sidebar/thread rows.
