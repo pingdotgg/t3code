@@ -207,6 +207,12 @@ describe("resolveEnvironmentMachineKind", () => {
     ).toBe("mac-mini");
   });
 
+  it("uses detection from a bare descriptor before connecting", () => {
+    expect(resolveEnvironmentMachineKind({ environment: descriptor({ machine: "laptop" }) })).toBe(
+      "laptop",
+    );
+  });
+
   it("falls back to a server for older servers and before connect", () => {
     expect(
       resolveEnvironmentMachineKind({

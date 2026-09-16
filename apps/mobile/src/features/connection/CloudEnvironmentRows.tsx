@@ -7,6 +7,7 @@ import {
 import {
   type EnvironmentId,
   type EnvironmentMachineKind,
+  type ExecutionEnvironmentDescriptor,
   resolveEnvironmentMachineKind,
 } from "@t3tools/contracts";
 import { useAtomValue } from "@effect/atom-react";
@@ -99,6 +100,16 @@ function CloudEnvironmentRowsContent(
     [controller],
   );
 
+  // The relay's health probe carries each server's descriptor, so a machine
+  // can wear its detected glyph before this device ever connects to it.
+  const discoveredDescriptors = new Map(
+    controller.relayEnvironments.flatMap((entry) =>
+      entry.status?.descriptor === undefined
+        ? []
+        : [[entry.environment.environmentId, entry.status.descriptor] as const],
+    ),
+  );
+
   const handleToggleCloudError = useCallback((environmentId: string) => {
     setExpandedErrorId((current) => (current === environmentId ? null : environmentId));
   }, []);
@@ -140,6 +151,7 @@ function CloudEnvironmentRowsContent(
             <ConnectedCloudEnvironmentRow
               key={environment.environmentId}
               environment={environment}
+              descriptor={discoveredDescriptors.get(environment.environmentId)}
               borderTop={index !== 0}
               onSetEnabled={(enabled) =>
                 props.onSetEnvironmentEnabled(environment.environmentId, enabled)
@@ -210,6 +222,8 @@ function CloudEnvironmentRowsContent(
  */
 function ConnectedCloudEnvironmentRow(props: {
   readonly environment: ConnectedEnvironmentSummary;
+  /** Discovery's view of the server, for the glyph before the first connection. */
+  readonly descriptor: ExecutionEnvironmentDescriptor | undefined;
   readonly borderTop: boolean;
   readonly errorExpanded: boolean;
   readonly onSetEnabled: (enabled: boolean) => void;
@@ -233,7 +247,10 @@ function ConnectedCloudEnvironmentRow(props: {
         connectionState={enabled || unsupported ? props.environment.connectionState : "available"}
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
-        machine={resolveEnvironmentMachineKind(serverConfig)}
+        machine={resolveEnvironmentMachineKind(
+          serverConfig ??
+            (props.descriptor === undefined ? null : { environment: props.descriptor }),
+        )}
         onValueChange={props.onSetEnabled}
         onToggleError={props.onToggleError}
         disabled={unsupported}
@@ -266,6 +283,11 @@ function CloudEnvironmentRow(props: {
       connectionState={presentation.connectionState}
       errorExpanded={props.errorExpanded}
       label={props.environment.environment.label}
+      machine={resolveEnvironmentMachineKind(
+        props.environment.status?.descriptor === undefined
+          ? null
+          : { environment: props.environment.status.descriptor },
+      )}
       onValueChange={(enabled) => {
         if (enabled) {
           props.onConnect();
@@ -287,8 +309,7 @@ function CloudEnvironmentRowShell(props: {
   readonly disabled?: boolean;
   readonly errorExpanded: boolean;
   readonly label: string;
-  /** Absent for environments the relay lists but this device has not connected to. */
-  readonly machine?: EnvironmentMachineKind;
+  readonly machine: EnvironmentMachineKind;
   readonly onToggleError: () => void;
   readonly onValueChange: (enabled: boolean) => void;
   readonly statusText?: string;
@@ -304,9 +325,11 @@ function CloudEnvironmentRowShell(props: {
       error: props.connectionError,
       traceId: props.connectionErrorTraceId,
     });
-  const statusClassName = props.connectionError
-    ? "text-danger-foreground"
-    : "text-foreground-muted";
+  // Unsupported is a compatibility note, not a failure, so it stays muted.
+  const statusClassName =
+    props.connectionError && props.connectionState !== "unsupported"
+      ? "text-danger-foreground"
+      : "text-foreground-muted";
   const [errorMeasurement, setErrorMeasurement] = useState<{
     readonly text: string;
     readonly lineCount: number;
@@ -344,13 +367,11 @@ function CloudEnvironmentRowShell(props: {
       <View className="min-w-0 flex-1 gap-0.5">
         <View className="min-w-0 flex-row items-center gap-2">
           <ConnectionStatusDot state={props.connectionState} pulse={shouldPulse} size={7} />
-          {props.machine ? (
-            <EnvironmentMachineSymbol
-              kind={props.machine}
-              size={14}
-              tintColorClassName="accent-foreground-muted"
-            />
-          ) : null}
+          <EnvironmentMachineSymbol
+            kind={props.machine}
+            size={14}
+            tintColorClassName="accent-foreground-muted"
+          />
           <Text
             className="min-w-0 flex-shrink text-base font-t3-bold leading-snug text-foreground"
             numberOfLines={1}
