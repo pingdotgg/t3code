@@ -8,6 +8,8 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
 } from "@t3tools/contracts";
+import { OrchestrationProjectShell as ProjectShellSchema } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 /** Build the regular navigation shell without duplicating the archive dataset. */
@@ -75,6 +77,51 @@ export function composeShellStreamWithEnrichment<A, E, R, A2, E2, R2, A3, E3, R3
   readonly enrichment: Stream.Stream<A3, E3, R3>;
 }): Stream.Stream<A | A2 | A3, E | E2 | E3, R | R2 | R3> {
   return Stream.concat(input.initial, Stream.merge(input.tail, input.enrichment));
+}
+
+const sameProjects = Schema.toEquivalence(Schema.Array(ProjectShellSchema));
+
+/** Drop repeated metadata refreshes within one subscription, preserving resolution progress. */
+export function dedupeShellEnrichment<E, R>(
+  stream: Stream.Stream<OrchestrationV2ShellStreamItem, E, R>,
+): Stream.Stream<OrchestrationV2ShellStreamItem, E, R> {
+  return Stream.suspend(() => {
+    let previous:
+      | {
+          readonly projects: ReadonlyArray<OrchestrationProjectShell>;
+          readonly roots: ReadonlySet<string>;
+        }
+      | undefined;
+    return stream.pipe(
+      Stream.filter((item) => {
+        if (item.kind !== "snapshot") {
+          // A project delta may change which projects/identities a later refresh repairs.
+          if (item.kind === "project.updated" || item.kind === "project.removed")
+            previous = undefined;
+          return true;
+        }
+        if (
+          item.resolvedRepositoryIdentityRoots === undefined ||
+          item.snapshot.threads.length > 0 ||
+          item.snapshot.archivedThreads.length > 0
+        ) {
+          previous = undefined;
+          return true;
+        }
+        const roots = new Set(item.resolvedRepositoryIdentityRoots);
+        const prior = previous;
+        if (
+          prior !== undefined &&
+          roots.size === prior.roots.size &&
+          [...roots].every((root) => prior.roots.has(root)) &&
+          sameProjects(prior.projects, item.snapshot.projects)
+        )
+          return false;
+        previous = { projects: item.snapshot.projects, roots };
+        return true;
+      }),
+    );
+  });
 }
 
 /** Build a shell snapshot stream item for a batched enrichment completion. */
