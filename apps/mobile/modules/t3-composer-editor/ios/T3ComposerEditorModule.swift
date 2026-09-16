@@ -87,6 +87,12 @@ public class T3ComposerEditorModule: Module {
       Prop("spellCheck") { (view: T3ComposerEditorView, spellCheck: Bool) in
         view.setSpellCheck(spellCheck)
       }
+      Prop("submitTitle") { (view: T3ComposerEditorView, title: String) in
+        view.setSubmitTitle(title)
+      }
+      Prop("alternateSubmitTitle") { (view: T3ComposerEditorView, title: String) in
+        view.setAlternateSubmitTitle(title)
+      }
       Prop("enterBehavior") { (view: T3ComposerEditorView, behavior: String) in
         view.setEnterBehavior(behavior)
       }

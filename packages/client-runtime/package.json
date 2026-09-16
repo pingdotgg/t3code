@@ -255,6 +255,14 @@
       "types": "./src/state/threadWorkflows.ts",
       "default": "./src/state/threadWorkflows.ts"
     },
+    "./state/composer-dispatch": {
+      "types": "./src/state/composerDispatch.ts",
+      "default": "./src/state/composerDispatch.ts"
+    },
+    "./state/thread-subagents": {
+      "types": "./src/state/threadSubagents.ts",
+      "default": "./src/state/threadSubagents.ts"
+    },
     "./state/thread-settled": {
       "types": "./src/state/threadSettled.ts",
       "default": "./src/state/threadSettled.ts"
