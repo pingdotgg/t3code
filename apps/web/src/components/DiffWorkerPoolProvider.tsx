@@ -13,7 +13,6 @@ import {
 import { useTheme } from "../hooks/useTheme";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../lib/syntaxHighlighting";
-import { DiffPanelLoadingState } from "./DiffPanelShell";
 
 export class DiffWorkerError extends Schema.TaggedError<DiffWorkerError>()("DiffWorkerError", {
   operation: Schema.Literals(["create-worker", "get-render-options", "set-render-options"]),
@@ -117,7 +116,16 @@ function DiffWorkerReady({ children }: { children?: ReactNode }) {
     };
   }, [ready, workerPool]);
 
-  return ready ? children : <DiffPanelLoadingState label="Loading code…" />;
+  return ready ? (
+    children
+  ) : (
+    <div
+      role="status"
+      className="flex min-h-0 flex-1 items-center justify-center p-4 text-xs text-muted-foreground"
+    >
+      Loading code...
+    </div>
+  );
 }
 
 export function DiffWorkerPoolProvider({ children }: { children?: ReactNode }) {

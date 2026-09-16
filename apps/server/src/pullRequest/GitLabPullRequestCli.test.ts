@@ -44,7 +44,7 @@ function mergeRequests(count: number, firstNumber: number): string {
 }
 
 /** A page of `/diffs` as GitLab serves it, a full one unless the count says otherwise. */
-function diffPage(firstIndex: number, count = 4): string {
+function diffPage(firstIndex: number, count = 100): string {
   return JSON.stringify(
     Array.from({ length: count }, (_, index) => ({
       old_path: `src/${firstIndex + index}.ts`,
@@ -538,7 +538,7 @@ layer("GitLabPullRequestCli.layer", (it) => {
       assert.isNotNull(diff.nextCursor);
       // A full page means more files, not a slice with something missing from it.
       assert.isFalse(diff.truncated);
-      expect(argsOfCall(0)[1]).toContain("merge_requests/7/diffs?per_page=4&page=1");
+      expect(argsOfCall(0)[1]).toContain("merge_requests/7/diffs?per_page=100&page=1");
     }),
   );
 
@@ -598,10 +598,10 @@ layer("GitLabPullRequestCli.layer", (it) => {
 
       const commitPath =
         "projects/acme%2Fweb/repository/commits/a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0/diff";
-      expect(argsOfCall(0)[1]).toBe(`${commitPath}?per_page=4&page=1`);
+      expect(argsOfCall(0)[1]).toBe(`${commitPath}?per_page=100&page=1`);
       // The whole path, not just the page: a cursor branch that dropped the commit would still
       // ask for page 2, of the merge request's own diff.
-      expect(argsOfCall(1)[1]).toBe(`${commitPath}?per_page=4&page=2`);
+      expect(argsOfCall(1)[1]).toBe(`${commitPath}?per_page=100&page=2`);
       assert.isNull(second.nextCursor);
     }),
   );

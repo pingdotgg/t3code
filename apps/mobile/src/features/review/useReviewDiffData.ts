@@ -76,33 +76,44 @@ export function useReviewDiffData(input: {
   const source = selectedSection?.source;
   const lazySource = source?.truncated && source.files ? source : null;
   const { environmentId, cwd } = input;
-  const scope = JSON.stringify([environmentId, cwd, source?.kind, source?.diffHash]);
-  const [requested, setRequested] = useState({ scope, count: 3 });
-  const count = requested.scope === scope ? requested.count : 3;
+  const scope = JSON.stringify([
+    environmentId,
+    cwd,
+    source?.kind,
+    source?.baseRef,
+    source?.diffHash,
+  ]);
+  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
+  const indices = useMemo(
+    () => (requested.scope === scope ? requested.indices : [0, 1, 2]),
+    [requested, scope],
+  );
   const queries = useMemo(
     () =>
       !environmentId || !cwd || !lazySource
         ? []
-        : (lazySource.files ?? []).slice(0, count).map((file) =>
-            reviewEnvironment.diffFilePatch({
-              environmentId,
-              input: {
-                cacheKey: scope,
-                request: {
-                  cwd,
-                  ...(lazySource.kind === "branch-range" && lazySource.baseRef
-                    ? { baseRef: lazySource.baseRef }
-                    : {}),
-                  file: {
-                    path: file.path,
-                    previousPath: file.previousPath,
-                    sourceKind: lazySource.kind,
+        : (lazySource.files ?? []).map((file, index) =>
+            indices.includes(index)
+              ? reviewEnvironment.diffFilePatch({
+                  environmentId,
+                  input: {
+                    cacheKey: scope,
+                    request: {
+                      cwd,
+                      ...(lazySource.kind === "branch-range" && lazySource.baseRef
+                        ? { baseRef: lazySource.baseRef }
+                        : {}),
+                      file: {
+                        path: file.path,
+                        previousPath: file.previousPath,
+                        sourceKind: lazySource.kind,
+                      },
+                    },
                   },
-                },
-              },
-            }),
+                })
+              : null,
           ),
-    [environmentId, cwd, lazySource, count, scope],
+    [environmentId, cwd, lazySource, indices, scope],
   );
   const parsedQuery = useMemo(
     () =>
@@ -118,23 +129,23 @@ export function useReviewDiffData(input: {
   );
   const patches = useAtomValue(
     useMemo(
-      () => Atom.make((get) => queries.map((query) => get(parsedQuery(query)))),
+      () => Atom.make((get) => queries.map((query) => (query ? get(parsedQuery(query)) : null))),
       [queries, parsedQuery],
     ),
   );
   const refreshFilePatches = useCallback(() => {
-    for (const query of queries) registry.refresh(query);
+    for (const query of queries) if (query) registry.refresh(query);
   }, [queries, registry]);
   const loadVisibleFile = useCallback(
     (fileId: string | null, retry = false) => {
       const index =
         fileId === null ? 0 : (lazySource?.files?.findIndex((file) => file.path === fileId) ?? -1);
       if (index < 0) return;
-      setRequested((current) =>
-        current.scope === scope && current.count >= index + 3
-          ? current
-          : { scope, count: index + 3 },
-      );
+      setRequested((current) => {
+        const previous = current.scope === scope ? current.indices : [0, 1, 2];
+        const added = [index, index + 1, index + 2].filter((next) => !previous.includes(next));
+        return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+      });
       if (retry && patches[index]?._tag === "Failure" && queries[index])
         registry.refresh(queries[index]);
     },
@@ -236,7 +247,7 @@ export function useReviewDiffData(input: {
     parsedDiff,
     loadVisibleFile,
     refreshFilePatches,
-    isPending: patches.some((patch) => patch._tag === "Initial" || patch.waiting),
+    isPending: patches.some((patch) => patch?._tag === "Initial" || patch?.waiting),
     headerDiffSummary,
     nativeReviewDiffData,
     pendingReviewCommentCount,

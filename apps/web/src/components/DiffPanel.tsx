@@ -256,7 +256,7 @@ export default function DiffPanel({
     },
     { enabled: isGitRepo && selectedTurn !== undefined },
   );
-  const branchDiffPreview = useEnvironmentQuery(
+  const primaryBranchDiffPreview = useEnvironmentQuery(
     selectedTurnId === null && activeThread && activeCwd
       ? reviewEnvironment.diffPreview({
           environmentId: activeThread.environmentId,
@@ -268,6 +268,26 @@ export default function DiffPanel({
         })
       : null,
   );
+  const shouldRetryBranchDiffAtEnvironmentCwd =
+    selectedTurnId === null &&
+    primaryBranchDiffPreview.error?.includes("configured workspace root") === true &&
+    serverConfig?.cwd !== undefined &&
+    serverConfig.cwd !== activeCwd;
+  const fallbackBranchDiffPreview = useEnvironmentQuery(
+    shouldRetryBranchDiffAtEnvironmentCwd && activeThread && serverConfig
+      ? reviewEnvironment.diffPreview({
+          environmentId: activeThread.environmentId,
+          input: {
+            cwd: serverConfig.cwd,
+            ...(selectedBaseRef ? { baseRef: selectedBaseRef } : {}),
+            ignoreWhitespace: diffIgnoreWhitespace,
+          },
+        })
+      : null,
+  );
+  const branchDiffPreview = shouldRetryBranchDiffAtEnvironmentCwd
+    ? fallbackBranchDiffPreview
+    : primaryBranchDiffPreview;
   const canRefreshGitDiff =
     isGitRepo && selectedTurnId === null && activeThread != null && activeCwd != null;
   const activeThreadRefreshKey = routeThreadRef
@@ -392,7 +412,8 @@ export default function DiffPanel({
     isPending: areFilePatchesPending,
     fileStates,
     retry,
-    requestThrough,
+    requestFile,
+    readyFilePaths,
     renderableFiles,
     settledFileCount,
     loadNextFiles,
@@ -458,18 +479,21 @@ export default function DiffPanel({
   );
   const codeViewFiles = useMemo(
     () =>
-      renderableFileEntries.slice(0, settledFileCount).map(({ fileDiff, fileKey, fileVersion }) => {
-        return {
-          fileDiff,
-          filePath: resolveFileDiffPath(fileDiff),
-          fileKey,
-          fileVersion,
-          // Header-only placeholders use the viewer's collapsed geometry until their patch arrives.
-          collapsed:
-            collapsedDiffFileKeys.has(fileKey) || fileDiff.cacheKey?.endsWith(":pending") === true,
-        };
-      }),
-    [collapsedDiffFileKeys, renderableFileEntries, settledFileCount],
+      renderableFileEntries
+        .filter(({ fileDiff }) => !lazySource || readyFilePaths.has(resolveFileDiffPath(fileDiff)))
+        .map(({ fileDiff, fileKey, fileVersion }) => {
+          return {
+            fileDiff,
+            filePath: resolveFileDiffPath(fileDiff),
+            fileKey,
+            fileVersion,
+            // Header-only placeholders use the viewer's collapsed geometry until their patch arrives.
+            collapsed:
+              collapsedDiffFileKeys.has(fileKey) ||
+              fileDiff.cacheKey?.endsWith(":pending") === true,
+          };
+        }),
+    [collapsedDiffFileKeys, renderableFileEntries, lazySource, readyFilePaths],
   );
   const diffFileKeys = useMemo(
     () => renderableFileEntries.map((file) => file.fileKey),
@@ -522,7 +546,7 @@ export default function DiffPanel({
         return { scopeKey: collapseScopeKey, fileKeys: next };
       });
       if (lazySource && index >= settledFileCount) {
-        requestThrough(index + 1);
+        requestFile(index);
       }
       requestTreeReveal(file.fileKey);
     },
@@ -533,7 +557,7 @@ export default function DiffPanel({
       requestTreeReveal,
       lazySource,
       settledFileCount,
-      requestThrough,
+      requestFile,
     ],
   );
 
@@ -1093,7 +1117,7 @@ export default function DiffPanel({
                                 size="icon-micro"
                                 variant="ghost"
                                 className={cn(
-                                  "-ms-0.5 [--control-icon-color:currentColor]",
+                                  "-ms-0.5 [--control-icon-color:currentColor] bg-transparent hover:bg-foreground/10",
                                   getDiffCollapseIconClassName(fileDiff),
                                 )}
                                 aria-label={

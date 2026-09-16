@@ -35,8 +35,11 @@ export function useReviewFilePatches({
     ignoreWhitespace,
     revision,
   ]);
-  const [requested, setRequested] = useState({ scope, count: 4 });
-  const count = requested.scope === scope ? requested.count : 4;
+  const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
+  const indices = useMemo(
+    () => (requested.scope === scope ? requested.indices : [0, 1, 2, 3]),
+    [requested, scope],
+  );
   const files = useMemo(
     () =>
       source?.files?.toSorted((a, b) =>
@@ -48,25 +51,31 @@ export function useReviewFilePatches({
     () =>
       !environmentId || !cwd || !source
         ? []
-        : files.slice(0, count).map((file) =>
-            reviewEnvironment.diffFilePatch({
-              environmentId,
-              input: {
-                cacheKey: scope,
-                request: {
-                  cwd,
-                  ...(baseRef ? { baseRef } : {}),
-                  ignoreWhitespace,
-                  file: {
-                    path: file.path,
-                    previousPath: file.previousPath,
-                    sourceKind: source.kind,
+        : indices
+            .filter((index) => index < files.length)
+            .map((index) => {
+              const file = files[index]!;
+              return {
+                index,
+                query: reviewEnvironment.diffFilePatch({
+                  environmentId,
+                  input: {
+                    cacheKey: scope,
+                    request: {
+                      cwd,
+                      ...(baseRef ? { baseRef } : {}),
+                      ignoreWhitespace,
+                      file: {
+                        path: file.path,
+                        previousPath: file.previousPath,
+                        sourceKind: source.kind,
+                      },
+                    },
                   },
-                },
-              },
+                }),
+              };
             }),
-          ),
-    [environmentId, cwd, source, files, count, scope, baseRef, ignoreWhitespace],
+    [environmentId, cwd, source, files, indices, scope, baseRef, ignoreWhitespace],
   );
   // Derived atoms parse each query result once, even when another file finishes loading.
   const parsedQuery = useMemo(
@@ -85,35 +94,44 @@ export function useReviewFilePatches({
   );
   const patches = useAtomValue(
     useMemo(
-      () => Atom.make((get) => queries.map((query) => get(parsedQuery(query)))),
+      () =>
+        Atom.make(
+          (get) => new Map(queries.map(({ index, query }) => [index, get(parsedQuery(query))])),
+        ),
       [queries, parsedQuery],
     ),
   );
-  const pendingIndex = patches.findIndex((patch) => patch._tag === "Initial");
+  const pendingIndex = files.findIndex((_, index) => {
+    const patch = patches.get(index);
+    return !patch || patch._tag === "Initial";
+  });
   const settledFileCount = source
     ? pendingIndex < 0
-      ? patches.length
+      ? files.length
       : pendingIndex
     : preview?.kind === "files"
       ? preview.files.length
       : 0;
-  const requestThrough = useCallback(
-    (count: number) =>
-      setRequested((current) =>
-        current.scope === scope && current.count >= count ? current : { scope, count },
-      ),
+  const requestFiles = useCallback(
+    (indices: number[]) =>
+      setRequested((current) => {
+        const previous = current.scope === scope ? current.indices : [0, 1, 2, 3];
+        const added = indices.filter((index) => !previous.includes(index));
+        return added.length === 0 ? current : { scope, indices: [...previous, ...added] };
+      }),
     [scope],
   );
   const loadNextFiles = useCallback(
-    () => requestThrough(settledFileCount + 4),
-    [requestThrough, settledFileCount],
+    () => requestFiles(Array.from({ length: 4 }, (_, index) => settledFileCount + index)),
+    [requestFiles, settledFileCount],
   );
+  const requestFile = useCallback((index: number) => requestFiles([index]), [requestFiles]);
   const refresh = useCallback(() => {
-    for (const query of queries) registry.refresh(query);
+    for (const { query } of queries) registry.refresh(query);
   }, [queries, registry]);
   const retry = useCallback(
     (path: string) => {
-      const query = queries[files.findIndex((file) => file.path === path)];
+      const query = queries.find(({ index }) => files[index]?.path === path)?.query;
       if (query) registry.refresh(query);
     },
     [queries, files, registry],
@@ -122,7 +140,7 @@ export function useReviewFilePatches({
     () =>
       source
         ? files.map((file, index): FileDiffMetadata => {
-            const result = patches[index];
+            const result = patches.get(index);
             if (result?._tag === "Success" && result.value.patch?.kind === "files") {
               const loaded = result.value.patch.files.find(
                 (candidate) => resolveFileDiffPath(candidate) === file.path,
@@ -151,21 +169,38 @@ export function useReviewFilePatches({
     [source, files, patches, scope, preview],
   );
   const fileStates = new Map(
-    files.map((file, index) => [
-      file.path,
-      {
-        error: patches[index]?._tag === "Failure",
-        truncated: patches[index]?._tag === "Success" && patches[index].value.source.truncated,
-      },
-    ]),
+    files.map((file, index) => {
+      const patch = patches.get(index);
+      return [
+        file.path,
+        {
+          error:
+            patch?._tag === "Failure" ||
+            (patch?._tag === "Success" &&
+              (patch.value.patch?.kind !== "files" ||
+                !patch.value.patch.files.some(
+                  (candidate) => resolveFileDiffPath(candidate) === file.path,
+                ))),
+          truncated: patch?._tag === "Success" && patch.value.source.truncated,
+        },
+      ] as const;
+    }),
   );
   return {
     scope,
     refresh,
     fileStates,
-    isPending: patches.some((patch) => patch._tag === "Initial" || patch.waiting),
+    isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
-    requestThrough,
+    requestFile,
+    readyFilePaths: new Set(
+      files
+        .filter((_, index) => {
+          const patch = patches.get(index);
+          return patch && patch._tag !== "Initial";
+        })
+        .map((file) => file.path),
+    ),
     renderableFiles,
     settledFileCount,
     loadNextFiles,

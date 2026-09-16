@@ -820,7 +820,6 @@ export function PullRequestDetailPanel({
   }, [activityQuery.refresh, detailQuery.refresh, nativeStackQuery.refresh]);
   const [refreshToken, setRefreshToken] = useState(0);
   const codeRefreshToken = refreshToken + (turnRefresh ?? 0);
-  const [codeLoading, setCodeLoading] = useState(false);
   const activityRevision = useRef<{ readonly key: string; readonly updatedAt: string } | null>(
     null,
   );
@@ -1984,9 +1983,7 @@ export function PullRequestDetailPanel({
                   >
                     <RefreshIcon
                       className="size-3.5"
-                      refreshing={
-                        isInvalidating || detailQuery.isPending || (tab === "code" && codeLoading)
-                      }
+                      refreshing={isInvalidating || detailQuery.isPending}
                     />
                     Refresh
                   </MenuItem>
@@ -2649,7 +2646,7 @@ export function PullRequestDetailPanel({
         {detailQuery.error && !detail ? (
           <PullRequestsUnavailableState
             error={detailQuery.error}
-            refreshing={detailQuery.isPending || (tab === "code" && codeLoading)}
+            refreshing={detailQuery.isPending}
             onRetry={refreshDetail}
             {...(unavailableGitHubUrl ? { gitHubUrl: unavailableGitHubUrl } : {})}
           />
@@ -2709,7 +2706,6 @@ export function PullRequestDetailPanel({
                     onFixFinding={startFixFinding}
                     onRefresh={refreshDetail}
                     refreshToken={codeRefreshToken}
-                    onLoadingChange={setCodeLoading}
                   />
                 </Suspense>
               </div>

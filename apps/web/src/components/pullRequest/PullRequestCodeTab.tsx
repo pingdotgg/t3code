@@ -21,7 +21,7 @@ import {
   MessageSquareOffIcon,
   Rows3Icon,
   TextWrapIcon,
-  InfoIcon,
+  TriangleAlertIcon,
   XIcon,
 } from "lucide-react";
 import { useAtomRefresh } from "@effect/atom-react";
@@ -56,7 +56,7 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 import { useAtomCommand } from "~/state/use-atom-command";
 
-import { DiffFileLoadingBoundary } from "../diffs/DiffFileLoadingBoundary";
+import { DiffPanelLoadingState } from "../DiffPanelShell";
 import { DiffCommentAnnotation } from "../diffs/DiffCommentAnnotation";
 import { DiffFileTree } from "../diffs/DiffFileTree";
 import { useCodeViewFileReveal } from "../diffs/useCodeViewFileReveal";
@@ -76,7 +76,6 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PendingReviewCommentCard, ReviewThreadCard } from "./PullRequestReviewAnnotation";
 import { PullRequestReviewBar } from "./PullRequestReviewBar";
 import {
-  getPullRequestDiffStats,
   isFileDiffCollapsed,
   isLineInFileDiff,
   type DiffFoldOverride,
@@ -199,7 +198,6 @@ function PullRequestCodeTab({
   onAddToAgentSelection,
   onRefresh,
   refreshToken = 0,
-  onLoadingChange,
 }: {
   environmentId: EnvironmentId;
   reference: PullRequestRef;
@@ -216,7 +214,6 @@ function PullRequestCodeTab({
   onRefresh: () => void;
   /** Bumped by the panel's refresh button: drop the accumulated pages and re-read the diff. */
   refreshToken?: number;
-  onLoadingChange?: (loading: boolean) => void;
 }) {
   const { resolvedTheme } = useTheme();
   const settings = useClientSettings();
@@ -258,7 +255,7 @@ function PullRequestCodeTab({
   const commit = selectedCommitOid;
   // One commit's own changes and the whole change are two different diffs, paged separately, so
   // everything below is keyed by both.
-  const scopeKey = `${environmentId}:${referenceKey}:${commit ?? ""}`;
+  const scopeKey = commit === null ? referenceKey : `${referenceKey}@${commit}`;
   // The panel keeps this mounted across pull requests, so an open composer would otherwise
   // survive the switch and attach its comment to whichever one is on screen when it is sent.
   useEffect(() => {
@@ -419,11 +416,6 @@ function PullRequestCodeTab({
   const withheldContent =
     loadedSlices.some((slice) => slice.truncated) ||
     parsedSlices.some((parsed) => parsed?.kind === "raw");
-  // Omitted previews can still carry complete counts. GitLab can withhold hunks without
-  // reporting their statistics, so those slices must retain the detail totals.
-  const incompleteStats =
-    parsedSlices.some((parsed) => parsed?.kind === "raw") ||
-    loadedSlices.some((slice) => slice.truncated && slice.omittedFileStats.length === 0);
 
   // Placing a conversation takes more than its file being in the diff: its line has to fall
   // inside a hunk that was rendered. One that does not is drawn nowhere, so it belongs in the
@@ -562,44 +554,12 @@ function PullRequestCodeTab({
       ),
     [loadedSlices],
   );
-  const lineStat = useMemo(
-    () =>
-      getPullRequestDiffStats({
-        files,
-        omittedFileStats,
-        complete: loadedSlices.length > 0 && nextCursor === null && !incompleteStats,
-        totals:
-          commit === null
-            ? {
-                additions: detail.additions,
-                deletions: detail.deletions,
-                changedFiles: detail.changedFiles,
-              }
-            : null,
-      }),
-    [
-      commit,
-      detail.additions,
-      detail.deletions,
-      detail.changedFiles,
-      files,
-      omittedFileStats,
-      loadedSlices.length,
-      nextCursor,
-      incompleteStats,
-    ],
-  );
-  const fileCount = lineStat.changedFiles;
-  const remainingFileCount = commit === null ? Math.max(1, fileCount - files.length) : 1;
   const fileKeys = useMemo(() => items.map((item) => item.id), [items]);
   const collapsedFileKeys = useMemo(
     () => new Set(items.filter((item) => item.collapsed === true).map((item) => item.id)),
     [items],
   );
-  const allFilesCollapsed =
-    fileKeys.length > 0
-      ? areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys)
-      : (foldOverride ?? (settings.diffFilesCollapsed ? "folded" : "expanded")) === "folded";
+  const allFilesCollapsed = areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys);
   const fileTreeEntries = useMemo(() => diffFileTreeEntries(files), [files]);
 
   // A failed slice must not be asked for again on its own. The files already loaded keep the
@@ -614,17 +574,21 @@ function PullRequestCodeTab({
     setSliceState((previous) => ({ ...previous, cursor: nextCursor }));
   }, [nextCursor]);
 
-  const loadVisibleSlice = useCallback(() => {
-    if (canLoadNextSlice) loadNextSlice();
-  }, [canLoadNextSlice, loadNextSlice]);
-  const loading =
-    diffQuery.isPending ||
-    (diffQuery.error === null &&
-      (loadedSlices.length === 0 || loadedSlices.at(-1)?.cursor !== cursor));
+  // The sentinel is held as state rather than a ref because the viewer mounts its own footer:
+  // an effect reading a ref could run before that node exists and would never arm the observer.
+  const [sentinel, setSentinel] = useState<HTMLDivElement | null>(null);
   useEffect(() => {
-    onLoadingChange?.(loading);
-    return () => onLoadingChange?.(false);
-  }, [loading, onLoadingChange]);
+    if (sentinel === null || !canLoadNextSlice) return;
+    const observer = new IntersectionObserver(
+      (observed) => {
+        if (observed.some((entry) => entry.isIntersecting)) loadNextSlice();
+      },
+      // Start the next slice slightly before the sentinel is on screen.
+      { rootMargin: "240px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [canLoadNextSlice, loadNextSlice, sentinel]);
 
   // A stable identity: the viewer's SlotPortals memoizes each file's header/annotation portal on
   // these render props, so a fresh function here would recreate every visible file's portal on
@@ -657,7 +621,7 @@ function PullRequestCodeTab({
     // Held as an override of the default rather than as the file keys on screen: a diff that is
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
-    setFoldOverride(allFilesCollapsed ? "expanded" : "folded");
+    setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
     setToggledFiles(new Set());
   };
 
@@ -728,17 +692,27 @@ function PullRequestCodeTab({
   // update), which is the jank this file is otherwise clean of.
   const renderCodeViewFooter = useCallback(
     () =>
-      nextCursor === null ? null : diffQuery.error !== null ? (
-        <div className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground">
-          <span>The rest of this diff could not be loaded.</span>
-          <Button size="xs" variant="ghost-muted" onClick={diffQuery.refresh}>
-            Retry
-          </Button>
+      // Only while something is still owed. A finished diff whose query fails on a later
+      // refresh — a reconnect re-runs every one of them — is whole on screen already, and
+      // saying otherwise sends the reader looking for files that are all there.
+      nextCursor === null ? null : (
+        <div
+          ref={setSentinel}
+          className="flex items-center justify-center gap-2 py-2 text-xs text-muted-foreground"
+        >
+          {diffQuery.error !== null ? (
+            <>
+              <span>The rest of this diff could not be loaded.</span>
+              <Button size="xs" variant="outline" onClick={() => diffQuery.refresh()}>
+                Retry
+              </Button>
+            </>
+          ) : diffQuery.isPending ? (
+            "Loading more files..."
+          ) : null}
         </div>
-      ) : (
-        <DiffFileLoadingBoundary count={remainingFileCount} load={loadVisibleSlice} />
       ),
-    [nextCursor, diffQuery.error, diffQuery.refresh, remainingFileCount, loadVisibleSlice],
+    [nextCursor, diffQuery.error, diffQuery.isPending, diffQuery.refresh],
   );
 
   const renderHeaderPrefix = useCallback(
@@ -752,7 +726,7 @@ function PullRequestCodeTab({
           variant="ghost-muted"
           aria-expanded={!collapsed}
           aria-label={collapsed ? "Expand diff" : "Collapse diff"}
-          className="mr-1 rounded [--control-icon-color:currentColor]"
+          className="mr-1 rounded hover:bg-transparent"
           onClick={(event) => {
             event.stopPropagation();
             toggleFile(item.id);
@@ -778,8 +752,10 @@ function PullRequestCodeTab({
         additions += hunk.additionLines;
         deletions += hunk.deletionLines;
       }
-      const withheld = omittedFileStats.get(resolveFileDiffPath(item.fileDiff));
-      if (withheld) ({ additions, deletions } = withheld);
+      if (additions === 0 && deletions === 0) {
+        const withheld = omittedFileStats.get(resolveFileDiffPath(item.fileDiff));
+        if (withheld) ({ additions, deletions } = withheld);
+      }
       return (
         <PullRequestDiffStat
           additions={additions}
@@ -1113,27 +1089,20 @@ function PullRequestCodeTab({
             competed for a strip this narrow and every one of them truncated to nothing. */}
         <PullRequestMetaLine className="shrink-0">
           <span className="shrink-0 tabular-nums">
-            {fileCount} {fileCount === 1 ? "file" : "files"}
-            {nextCursor !== null && (commit !== null || detail.changedFiles < files.length)
-              ? "+"
-              : ""}
+            {files.length} {files.length === 1 ? "file" : "files"}
+            {nextCursor === null ? "" : "+"}
           </span>
           {withheldContent ? (
             <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost-muted"
-                    size="icon-micro"
-                    aria-label="Some file previews are incomplete"
-                  />
-                }
-              >
-                <InfoIcon className="size-3.5" />
+              <TooltipTrigger render={<span className="flex shrink-0 items-center" />}>
+                <TriangleAlertIcon
+                  aria-label="Some of this diff was not shown"
+                  className="size-3.5 text-amber-600 dark:text-amber-500"
+                />
               </TooltipTrigger>
               <TooltipPopup side="bottom">
-                Some file previews are incomplete because the files are binary or exceed the preview
-                limit.
+                The host withheld part of this diff — a binary file, or a change too large to
+                inline.
               </TooltipPopup>
             </Tooltip>
           ) : null}
@@ -1153,7 +1122,7 @@ function PullRequestCodeTab({
         </PullRequestMetaLine>
       </div>
       <div className="flex shrink-0 items-center gap-1">
-        {fileCount > 0 || loading ? (
+        {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1216,7 +1185,7 @@ function PullRequestCodeTab({
             {wordWrap ? "Disable line wrapping" : "Enable line wrapping"}
           </TooltipPopup>
         </Tooltip>
-        {fileCount > 0 || loading ? (
+        {fileKeys.length > 0 ? (
           <Tooltip>
             <TooltipTrigger
               render={
@@ -1257,9 +1226,7 @@ function PullRequestCodeTab({
   // Under the toolbar rather than in place of it, so choosing a commit does not take the
   // dropdown that was just used off the screen while its diff loads.
   if (diffQuery.isPending && loadedSlices.length === 0) {
-    return withReviewBar(
-      <DiffFileLoadingBoundary count={Math.max(1, fileCount)} load={loadVisibleSlice} />,
-    );
+    return withReviewBar(<DiffPanelLoadingState label="Loading pull request diff..." />);
   }
 
   // A slice that fails once there are files on screen is reported at the end of them instead:
@@ -1467,8 +1434,8 @@ function PullRequestCodeTab({
                       {diffQuery.error !== null
                         ? "Retry"
                         : diffQuery.isPending
-                          ? "Loading…"
-                          : "Show remaining files"}
+                          ? "Loading more files..."
+                          : "Load more files"}
                     </Button>
                   </div>
                 )

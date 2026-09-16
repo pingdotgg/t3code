@@ -593,12 +593,12 @@ export function ReviewSheet(props: ReviewSheetProps) {
     (event: { nativeEvent: { event: string } }) => {
       const id = event.nativeEvent.event;
       if (id === "refresh") {
-        void refreshSelectedSection();
+        void handlePullToRefresh();
       } else if (id.startsWith("section:")) {
         selectSection(id.slice("section:".length));
       }
     },
-    [refreshSelectedSection, selectSection],
+    [handlePullToRefresh, selectSection],
   );
   const handleRetryEnvironment = useCallback(() => {
     void retryEnvironment(environmentId);
