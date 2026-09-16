@@ -30,6 +30,7 @@ import {
   isAntigravitySignInRequiredError,
   prepareAntigravityProfile,
   resolveAntigravityProfileDirectory,
+  resolveAntigravityRuntimeTempDirectory,
   type AntigravityAuthConfig,
 } from "../antigravityAuthSupport.ts";
 import {
@@ -39,7 +40,7 @@ import {
 import type { AcpSessionRuntime, AcpSessionRuntimeStartResult } from "../acp/AcpSessionRuntime.ts";
 import type { ServerProviderDraft } from "../providerSnapshot.ts";
 import {
-  cleanOrphanedAntigravityTempDirs,
+  removeAntigravityRuntimeTempDirs,
   removeAntigravitySessionFiles,
 } from "../acp/AntigravitySessionFiles.ts";
 import { ProviderDriverError } from "../Errors.ts";
@@ -101,11 +102,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         serverConfig.stateDir,
         instanceId,
       );
-      yield* cleanOrphanedAntigravityTempDirs(profileDirectory).pipe(
-        Effect.provideService(FileSystem.FileSystem, fileSystem),
-        Effect.provideService(Path.Path, path),
-        Effect.ignore,
-      );
+      // No process of this instance exists yet, so every runtime temp
+      // directory left under the profile is an orphan from a killed server.
+      yield* removeAntigravityRuntimeTempDirs(
+        resolveAntigravityRuntimeTempDirectory(profileDirectory),
+      ).pipe(Effect.provideService(FileSystem.FileSystem, fileSystem));
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER,
         instanceId,
@@ -163,6 +164,31 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           Effect.provideService(Path.Path, path),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
         );
+        // Each process unpacks into its own directory that dies with the
+        // runtime scope, after the child is killed. A shared directory would
+        // let one session's teardown delete files a sibling still reads.
+        // Removal is best effort: a handle can outlive the kill on Windows,
+        // and the sweep on the next driver start reclaims what is left.
+        const runtimeTempDirectory = yield* Effect.acquireRelease(
+          fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
+            Effect.mapError(
+              () =>
+                new ProviderSetupError({
+                  instanceId,
+                  operation: "start",
+                  detail: "Could not create an Antigravity runtime temp directory.",
+                }),
+            ),
+          ),
+          (directory) =>
+            fileSystem
+              .remove(directory, { recursive: true, force: true })
+              .pipe(
+                Effect.catch(() =>
+                  Effect.logWarning("Could not remove an Antigravity runtime temp directory."),
+                ),
+              ),
+        );
         const runtime = yield* makeAntigravityAcpRuntime({
           ...input,
           authMethod: auth.authMethod,
@@ -173,6 +199,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
             cwd: input.cwd,
             baseEnv: withAgentDeviceEnvironment(processEnvironment, input),
             auth,
+            runtimeTempDirectory,
           }),
         }).pipe(Effect.provideService(Crypto.Crypto, crypto));
         return {
@@ -266,11 +293,11 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
       // Kick the TTL-gated manifest refresh alongside the health check, as
       // Codex and Claude do. Without it an environment that only runs
       // Antigravity would keep classifying against a stale disk cache.
-      // Antigravity's binary is a PyInstaller single-file bundle. Spawning it
-      // extracts ~860 MB of files to a temporary directory on every run.
-      // The health probe only needs to verify that the executable and harness
-      // exist on disk and resolve the installed version; actual ACP sessions
-      // and explicit model refreshes spawn the runtime when needed.
+      // The probe must not spawn. The agent is a PyInstaller one-file bundle
+      // that unpacks about 1 GB per launch, and the health check runs every
+      // minute. Resolving the install on disk is enough to report installed
+      // and version. The response below is synthetic: only agentInfo.version
+      // is read from it. Sessions and manual refreshes still spawn.
       const probe = Effect.gen(function* () {
         yield* modelManifest.refreshInBackground;
         if (authConfigIssue !== null) {

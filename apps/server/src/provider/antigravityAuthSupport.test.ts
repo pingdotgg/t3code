@@ -51,6 +51,7 @@ describe("Antigravity process environment", () => {
     geminiHome: "/t3/userdata/providers/antigravity/profile",
     acpDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp",
     tokenPath: "/t3/userdata/providers/antigravity/profile/antigravity-acp/acp_token.json",
+    tempDirectory: "/t3/userdata/providers/antigravity/profile/antigravity-acp/tmp",
     browserCommand: "managed-browser-helper",
   };
 
@@ -101,6 +102,7 @@ describe("Antigravity process environment", () => {
         BROWSER: profile.browserCommand,
         PYTHONUNBUFFERED: "1",
         ELECTRON_RUN_AS_NODE: "1",
+        TMPDIR: profile.tempDirectory,
       },
     });
   });
@@ -193,9 +195,10 @@ describe("Antigravity process environment", () => {
       geminiHome: "C:\\state\\providers\\antigravity\\profile",
       acpDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp",
       tokenPath: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\acp_token.json",
+      tempDirectory: "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp",
       browserCommand: "managed-browser-helper",
     };
-    const spawn = buildAntigravityAcpSpawnInput({
+    const input = {
       installation: {
         executablePath: "C:\\release\\agy_acp_server.exe",
         harnessPath: "C:\\release\\localharness_external.exe",
@@ -203,11 +206,28 @@ describe("Antigravity process environment", () => {
       profile: windowsProfile,
       cwd: "C:\\project",
       baseEnv: { PATH: "C:\\Windows\\system32", TEMP: "C:\\Users\\user\\AppData\\Local\\Temp" },
+    };
+    const shared = buildAntigravityAcpSpawnInput(input);
+    expect(shared.env?.TEMP).toBe(windowsProfile.tempDirectory);
+    expect(shared.env?.TMP).toBe(windowsProfile.tempDirectory);
+    const perRun = buildAntigravityAcpSpawnInput({
+      ...input,
+      runtimeTempDirectory: `${windowsProfile.tempDirectory}\\run-1`,
     });
-    expect(spawn.env?.TEMP).toBe(
-      "C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp",
-    );
-    expect(spawn.env?.TMP).toBe("C:\\state\\providers\\antigravity\\profile\\antigravity-acp\\tmp");
+    expect(perRun.env?.TEMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
+    expect(perRun.env?.TMP).toBe(`${windowsProfile.tempDirectory}\\run-1`);
+  });
+
+  it("isolates TMPDIR to the profile directory on POSIX hosts", () => {
+    const spawn = buildAntigravityAcpSpawnInput({
+      installation: { executablePath: "/release/acp", harnessPath: "/release/harness" },
+      profile,
+      cwd: "/project",
+      baseEnv: { TMPDIR: "/tmp" },
+      runtimeTempDirectory: `${profile.tempDirectory}/run-1`,
+    });
+    expect(spawn.env?.TMPDIR).toBe(`${profile.tempDirectory}/run-1`);
+    expect(spawn.env?.TEMP).toBeUndefined();
   });
 
   it("uses the registry launch arguments for each supported host platform", () => {
