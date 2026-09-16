@@ -5,6 +5,7 @@ import { TextInput, type TextInput as RNTextInput } from "react-native";
 import { useFontFamily } from "../lib/useFontFamily";
 import { useScaledTextRole } from "../features/settings/appearance/useScaledTextRole";
 import { useNativePaste } from "../lib/useNativePaste";
+import { useComposerEditorAutoHeight } from "./useComposerEditorAutoHeight";
 import type { ComposerEditorProps } from "./T3ComposerEditor.types";
 
 export function ComposerEditor({
@@ -25,6 +26,7 @@ export function ComposerEditor({
   const bodyText = useScaledTextRole("body");
   const fontFamily = useFontFamily("regular");
   const handlePaste = useNativePaste((uris) => onPasteImages?.(uris));
+  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style);
 
   useImperativeHandle(
     ref,
@@ -38,13 +40,14 @@ export function ComposerEditor({
   );
 
   return (
-    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
+    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, resolvedStyle]}>
       <TextInput
         ref={inputRef}
         {...props}
         editable={(props.editable ?? true) && !readOnly}
         selection={selection}
         onSelectionChange={(event) => props.onSelectionChange?.(event.nativeEvent.selection)}
+        onContentSizeChange={(event) => onContentHeight(event.nativeEvent.contentSize.height)}
         multiline={props.multiline ?? true}
         placeholderTextColorClassName={"accent-placeholder"}
         className="text-foreground"

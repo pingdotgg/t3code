@@ -36,6 +36,7 @@ import {
   resolveComposerControlledEventCount,
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
+import { useComposerEditorAutoHeight } from "./useComposerEditorAutoHeight";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
@@ -101,6 +102,9 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerPasteText?: (event: NativePasteTextEvent) => void;
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
+  readonly onComposerContentSizeChange?: (
+    event: NativeSyntheticEvent<{ width: number; height: number }>,
+  ) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -273,8 +277,9 @@ export function ComposerEditor({
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
   const regularFontFamily = useFontFamily("regular");
+  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style);
   return (
-    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, style]}>
+    <TextInputWrapper onPaste={handlePaste} style={[{ minHeight: 0 }, resolvedStyle]}>
       <NativeView
         ref={nativeRef}
         controlledDocumentJson={controlledDocumentJson}
@@ -307,6 +312,7 @@ export function ComposerEditor({
         textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
         maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
         style={{ flex: 1, minHeight: 0 }}
+        onComposerContentSizeChange={(event) => onContentHeight(event.nativeEvent.height)}
         onComposerChange={(event) => {
           const acknowledgedEventCount = acceptNativeEvent(
             event.nativeEvent.eventCount,

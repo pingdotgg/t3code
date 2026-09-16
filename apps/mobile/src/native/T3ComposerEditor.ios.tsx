@@ -34,6 +34,7 @@ import {
   type ComposerNativeEventSnapshot,
 } from "./composerEditorRevision";
 import { DEFAULT_COMPOSER_ENTER_BEHAVIOR } from "../lib/composerEnterBehavior";
+import { useComposerEditorAutoHeight } from "./useComposerEditorAutoHeight";
 import type { ComposerEditorProps, ComposerEditorSelection } from "./T3ComposerEditor.types";
 
 const NATIVE_MODULE_NAME = "T3ComposerEditor";
@@ -100,6 +101,9 @@ interface NativeComposerEditorProps extends ViewProps {
   readonly onComposerFocus?: () => void;
   readonly onComposerBlur?: () => void;
   readonly onComposerSubmit?: () => void;
+  readonly onComposerContentSizeChange?: (
+    event: NativeSyntheticEvent<{ width: number; height: number }>,
+  ) => void;
 }
 
 const NativeView = requireNativeView<NativeComposerEditorProps>(NATIVE_MODULE_NAME);
@@ -270,6 +274,11 @@ export function ComposerEditor({
     fileTint: theme["--color-icon-muted"],
   });
   const resolvedTextStyle = StyleSheet.flatten(textStyle) ?? {};
+  // iOS assigns the text view to the ExpoView bounds, so Yoga padding is not
+  // an inset on contentSize and must not be added to the laid-out height.
+  const { onContentHeight, resolvedStyle } = useComposerEditorAutoHeight(style, {
+    includeVerticalPadding: false,
+  });
   return (
     <NativeView
       ref={nativeRef}
@@ -300,7 +309,8 @@ export function ComposerEditor({
       spellCheck={props.spellCheck ?? true}
       textPasteThresholdBytes={onPasteText ? PASTED_TEXT_ATTACHMENT_THRESHOLD_BYTES : 0}
       maxInputChars={PROVIDER_SEND_TURN_MAX_INPUT_CHARS}
-      style={style as StyleProp<ViewStyle>}
+      style={resolvedStyle as StyleProp<ViewStyle>}
+      onComposerContentSizeChange={(event) => onContentHeight(event.nativeEvent.height)}
       onComposerChange={(event) => {
         const acknowledgedEventCount = acceptNativeEvent(
           event.nativeEvent.eventCount,

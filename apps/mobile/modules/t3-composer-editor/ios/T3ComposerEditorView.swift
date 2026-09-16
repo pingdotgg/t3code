@@ -585,6 +585,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
       height: max(lineHeight, placeholderLabel.font.lineHeight)
     )
     emitContentSizeIfNeeded()
+    scrollCaretIntoViewIfNeeded()
   }
 
   func setClipboardFragment(_ fragment: String) {
@@ -678,6 +679,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   func setScrollEnabled(_ scrollEnabled: Bool) {
     textView.isScrollEnabled = scrollEnabled
+    scrollCaretIntoViewIfNeeded()
   }
 
   func setAutoFocus(_ autoFocus: Bool) {
@@ -719,6 +721,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
 
   public func textViewDidChange(_ textView: UITextView) {
     emitTextChange()
+    scrollCaretIntoViewIfNeeded()
   }
 
   public func textViewDidChangeSelection(_ textView: UITextView) {
@@ -810,6 +813,7 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     isApplyingControlledValue = false
     updatePlaceholderVisibility()
     emitContentSizeIfNeeded()
+    scrollCaretIntoViewIfNeeded()
   }
 
   private func makeAttributedDocument() -> NSAttributedString {
@@ -1164,6 +1168,18 @@ public final class T3ComposerEditorView: ExpoView, UITextViewDelegate, UITextDro
     isApplyingControlledValue = true
     textView.selectedRange = nextRange
     isApplyingControlledValue = false
+    scrollCaretIntoViewIfNeeded()
+  }
+
+  private func scrollCaretIntoViewIfNeeded() {
+    guard textView.isFirstResponder, textView.isScrollEnabled else {
+      return
+    }
+    let range = textView.selectedRange
+    guard range.location != NSNotFound else {
+      return
+    }
+    textView.scrollRangeToVisible(range)
   }
 
   private func updatePlaceholderVisibility() {
