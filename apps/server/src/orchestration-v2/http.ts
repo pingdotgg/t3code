@@ -24,10 +24,11 @@ import {
   buildBoundedThreadProjection,
   decodeThreadHistoryCursor,
   InvalidThreadHistoryCursorError,
-  selectHistoryPageFromCursor,
+  selectHistoryPageFromCursorOrError,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
+  type ThreadHistoryCursorPayload,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import { buildActiveShellSnapshot } from "./ShellStream.ts";
@@ -39,22 +40,6 @@ function isThreadNotFound(error: unknown): boolean {
     Predicate.hasProperty(error.cause, "_tag") &&
     error.cause._tag === "ProjectionStoreThreadNotFoundError"
   );
-}
-
-function selectHistoryPageFromCursorOrError(
-  input: Parameters<typeof selectHistoryPageFromCursor>[0],
-):
-  | { readonly _tag: "ok"; readonly page: ReturnType<typeof selectHistoryPageFromCursor> }
-  | { readonly _tag: "invalid_cursor" }
-  | { readonly _tag: "error"; readonly cause: unknown } {
-  try {
-    return { _tag: "ok", page: selectHistoryPageFromCursor(input) };
-  } catch (cause) {
-    if (cause instanceof InvalidThreadHistoryCursorError) {
-      return { _tag: "invalid_cursor" };
-    }
-    return { _tag: "error", cause };
-  }
 }
 
 /**
@@ -134,22 +119,30 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
     const loadThreadSnapshotWindow = Effect.fn("http.orchestration.loadThreadSnapshotWindow")(
       function* (
         threadId: Parameters<typeof threadManagement.getThreadSnapshot>[0],
-        anchorItemId?: Parameters<
-          typeof threadManagement.getThreadSnapshotWindow
-        >[1]["anchorItemId"],
-        anchorThreadId?: Parameters<
-          typeof threadManagement.getThreadSnapshotWindow
-        >[1]["anchorThreadId"],
+        cursor?: ThreadHistoryCursorPayload,
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
             rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
             userTurnLimit:
-              anchorItemId === undefined
+              cursor === undefined
                 ? THREAD_HISTORY_PAGE_POLICY.maxUserTurns
                 : OLDER_THREAD_USER_TURN_LIMIT,
-            ...(anchorItemId === undefined ? {} : { anchorItemId }),
-            ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
+            ...(cursor === undefined
+              ? {}
+              : cursor.v === 2
+                ? {
+                    // v2 anchors by ordinal plus fixed-length digests of the
+                    // source thread and item ids — stored ids can be any length
+                    // without overflowing the cursor cap.
+                    anchorOrdinal: cursor.so,
+                    anchorThreadDigest: cursor.sth,
+                    anchorItemDigest: cursor.sih,
+                  }
+                : {
+                    anchorItemId: TurnItemId.make(cursor.si),
+                    anchorThreadId: ThreadId.make(cursor.st),
+                  }),
           })
           .pipe(
             Effect.map((snapshot) => ({
@@ -205,6 +198,7 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
+            hasOlderHistory: snapshot.hasOlderHistory,
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
@@ -221,25 +215,21 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadHistoryPage")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          let anchorItemId;
+          let decodedCursor: ThreadHistoryCursorPayload;
           try {
-            anchorItemId = TurnItemId.make(decodeThreadHistoryCursor(args.query.cursor).si);
+            decodedCursor = decodeThreadHistoryCursor(args.query.cursor);
           } catch (cause) {
             if (cause instanceof InvalidThreadHistoryCursorError) {
               return yield* failEnvironmentInvalidRequest("invalid_history_cursor");
             }
             return yield* failEnvironmentInternal("orchestration_thread_history_failed", cause);
           }
-          const decodedCursor = decodeThreadHistoryCursor(args.query.cursor);
-          const snapshot = yield* loadThreadSnapshotWindow(
-            args.params.threadId,
-            anchorItemId,
-            ThreadId.make(decodedCursor.st),
-          );
+          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId, decodedCursor);
           const pageOrError = selectHistoryPageFromCursorOrError({
             items: snapshot.projection.visibleTurnItems,
             cursor: args.query.cursor,
             snapshotSequence: snapshot.snapshotSequence,
+            hasOlderHistory: snapshot.hasOlderHistory,
           });
           if (pageOrError._tag === "invalid_cursor") {
             return yield* failEnvironmentInvalidRequest("invalid_history_cursor");

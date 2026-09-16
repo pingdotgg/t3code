@@ -13,18 +13,22 @@ layer("053_OrchestrationV2", (it) => {
     Effect.sync(() => {
       assert.deepStrictEqual(
         migrationEntries.map(([id]) => id),
-        Array.from({ length: 53 }, (_, index) => index + 1),
+        Array.from({ length: 55 }, (_, index) => index + 1),
       );
     }),
   );
 
-  it.effect("upgrades released schema 52 with one complete V2 migration", () =>
+  it.effect("upgrades released schema 52 through the V2 migrations", () =>
     Effect.gen(function* () {
       const sql = yield* SqlClient.SqlClient;
       yield* runMigrations({ toMigrationInclusive: 52 });
 
       const executed = yield* runMigrations();
-      assert.deepStrictEqual(executed, [[53, "OrchestrationV2"]]);
+      assert.deepStrictEqual(executed, [
+        [53, "OrchestrationV2"],
+        [54, "ProjectionV2BoundedPayloadPreviews"],
+        [55, "ProjectionV2TurnItemIdDigest"],
+      ]);
       assert.deepStrictEqual(yield* runMigrations(), []);
 
       const migrations = yield* sql<{
@@ -43,6 +47,8 @@ layer("053_OrchestrationV2", (it) => {
         { migration_id: 51, name: "ProjectionThreadMessageContext" },
         { migration_id: 52, name: "ProjectionThreadTitleState" },
         { migration_id: 53, name: "OrchestrationV2" },
+        { migration_id: 54, name: "ProjectionV2BoundedPayloadPreviews" },
+        { migration_id: 55, name: "ProjectionV2TurnItemIdDigest" },
       ]);
 
       const tables = yield* sql<{ readonly name: string }>`
@@ -92,8 +98,10 @@ layer("053_OrchestrationV2", (it) => {
       assert.ok(eventColumns.some(({ name }) => name === "application_event_version"));
       assert.ok(receiptColumns.some(({ name }) => name === "command_type"));
       assert.ok(threadColumns.some(({ name }) => name === "provider_instance_id"));
+      assert.ok(threadColumns.some(({ name }) => name === "bounded_json"));
       assert.ok(subagentColumns.some(({ name }) => name === "driver"));
       assert.ok(subagentColumns.some(({ name }) => name === "provider_instance_id"));
+      assert.ok(subagentColumns.some(({ name }) => name === "bounded_json"));
 
       const indexes = yield* sql<{ readonly name: string }>`
         SELECT name
