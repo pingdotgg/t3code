@@ -1,0 +1,61 @@
+name: PR Superseded Runs
+
+# Fork PRs need maintainer approval before `pull_request` workflows may run.
+# Until then every push leaves one jobless run per workflow parked in
+# "action required", and `concurrency` never reaches them because they never
+# start. When the PR closes GitHub flips every parked run to failure and emails
+# the author once per run. This deletes the parked runs for commits that a
+# newer push has already replaced, so only the current head keeps its runs.
+#
+# `pull_request_target` runs without approval and never checks out PR code.
+
+on:
+  pull_request_target:
+    types: [synchronize]
+
+permissions:
+  contents: read
+
+jobs:
+  delete:
+    name: Delete superseded pending runs
+    if: github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: write
+    concurrency:
+      group: pr-superseded-runs-${{ github.event.pull_request.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Delete pending runs for replaced commits
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+
+            const runs = await github.paginate(github.rest.actions.listWorkflowRunsForRepo, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              branch: pr.head.ref,
+              event: "pull_request",
+              status: "action_required",
+              per_page: 100,
+            });
+
+            const superseded = runs.filter(
+              (run) => run.head_repository?.id === pr.head.repo.id && run.head_sha !== pr.head.sha,
+            );
+
+            for (const run of superseded) {
+              await github.rest.actions.deleteWorkflowRun({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                run_id: run.id,
+              });
+              core.info(`Deleted ${run.name} run ${run.id} for ${run.head_sha.slice(0, 7)}`);
+            }
+
+            core.info(
+              `PR #${pr.number}: deleted ${superseded.length} pending run(s) superseded by ${pr.head.sha.slice(0, 7)}`,
+            );
