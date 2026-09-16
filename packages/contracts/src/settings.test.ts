@@ -896,3 +896,55 @@ it("validates remote device hosts and rejects ambiguous host ids", () => {
   ).toThrow();
   expect(() => decodeDeviceHostSettings({ deviceHosts: [{ ...host, port: 0 }] })).toThrow();
 });
+
+describe("ServerSettings disabled skills", () => {
+  const key = { source: "personal", name: "review" };
+  const stale = { source: "repo", name: "skill-from-another-worktree" };
+
+  it("defaults to nothing disabled anywhere", () => {
+    expect(decodeServerSettings({}).disabledSkills).toEqual([]);
+  });
+
+  it("round-trips keys, including ones nothing discovered matches", () => {
+    const settings = decodeServerSettings({
+      disabledSkills: [key, stale],
+      projectSettingsOverrides: { "/repo/app": { disabledSkills: [stale] } },
+    });
+    expect(settings.disabledSkills).toEqual([key, stale]);
+    const encoded = encodeServerSettings(settings);
+    expect(encoded.disabledSkills).toEqual([key, stale]);
+    expect(encoded.projectSettingsOverrides).toEqual({ "/repo/app": { disabledSkills: [stale] } });
+  });
+
+  it("keeps an empty project override, which disables nothing there", () => {
+    const settings = decodeServerSettings({
+      projectSettingsOverrides: { "/repo/app": { disabledSkills: [] } },
+    });
+    expect(encodeServerSettings(settings).projectSettingsOverrides).toEqual({
+      "/repo/app": { disabledSkills: [] },
+    });
+  });
+
+  it("trims stored names so a picker's dedupe and a key agree", () => {
+    const settings = decodeServerSettings({ disabledSkills: [{ ...key, name: "  review  " }] });
+    expect(settings.disabledSkills).toEqual([key]);
+  });
+
+  it("rejects a source kind this build does not classify", () => {
+    expect(() =>
+      decodeServerSettings({ disabledSkills: [{ source: "plugin", name: "review" }] }),
+    ).toThrow();
+  });
+
+  it("accepts a patch that sets the list and one that clears a project's entry", () => {
+    const patch = decodeServerSettingsPatch({
+      disabledSkills: [key],
+      projectSettingsOverrides: { "/repo/app": null, "/repo/other": { disabledSkills: [key] } },
+    });
+    expect(patch.disabledSkills).toEqual([key]);
+    expect(patch.projectSettingsOverrides).toEqual({
+      "/repo/app": null,
+      "/repo/other": { disabledSkills: [key] },
+    });
+  });
+});

@@ -22,6 +22,7 @@ import {
   ResolvedKeybindingsConfig,
 } from "./keybindings.ts";
 import { EditorId, FileManagerRevealKind, RemoteOpenTarget } from "./editor.ts";
+import { ProviderSkillDisabledBy } from "./providerSkill.ts";
 import { ModelCapabilities } from "./model.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./providerUsageLimits.ts";
@@ -112,6 +113,13 @@ export const ServerProviderSkill = Schema.Struct({
    * only the agent can start it. Composers must not offer it under `/`.
    */
   userInvocable: Schema.optional(Schema.Boolean),
+  /**
+   * Why {@link ServerProviderSkill.enabled} is `false`. Providers set
+   * `"provider"` when their own configuration switched the skill off;
+   * `"settings"` only ever comes from the shared fold that applies the user's
+   * `disabledSkills`, never from the registry.
+   */
+  disabledBy: Schema.optional(ProviderSkillDisabledBy),
 });
 export type ServerProviderSkill = typeof ServerProviderSkill.Type;
 

@@ -24,6 +24,7 @@ import {
   ProjectScript,
   RuntimeMode,
 } from "./orchestration.ts";
+import { ProviderSkillKey } from "./providerSkill.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
 import {
   DEFAULT_PREVIEW_APPEARANCE,
@@ -982,6 +983,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "sidebarAutoSettleAfterDays",
   "continueThreadsAfterServerUpdate",
   "responseStreamingMode",
+  "disabledSkills",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1007,6 +1009,10 @@ export const ProjectSettingsOverrides = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
   continueThreadsAfterServerUpdate: Schema.optionalKey(Schema.Boolean),
   responseStreamingMode: Schema.optionalKey(ResponseStreamingMode),
+  // A present list replaces the environment one outright rather than adding to
+  // it, so the effective set for a project is exactly what its settings page
+  // shows. An empty list is a real override meaning nothing is disabled here.
+  disabledSkills: Schema.optionalKey(Schema.Array(ProviderSkillKey)),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1047,6 +1053,18 @@ export const ServerSettings = Schema.Struct({
   ),
   projectAutoPullOverrides: Schema.Record(ProjectId, Schema.Boolean).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
+  ),
+  /**
+   * Skills the user switched off in T3 Code. They are hidden from the pickers
+   * and a typed `$name` is sent as prose; the provider's own configuration is
+   * never written, so the agent may still start the skill on its own.
+   *
+   * Environment-wide, and kept even when nothing discovered matches the key —
+   * a skill that disappears with a worktree or a provider upgrade stays off
+   * when it comes back.
+   */
+  disabledSkills: Schema.Array(ProviderSkillKey).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
   ),
   defaultModelSelection: Schema.NullOr(ModelSelection).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
@@ -1366,6 +1384,7 @@ export const ServerSettingsPatch = Schema.Struct({
   projectAutoPullOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(Schema.Boolean)),
   ),
+  disabledSkills: Schema.optionalKey(Schema.Array(ProviderSkillKey)),
   defaultModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
