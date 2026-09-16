@@ -2817,7 +2817,8 @@ describe("composerDraftStore model seed migration", () => {
       });
       expect(draftByKey(serverThreadKey)).toBeUndefined();
       expect(draftByKey(typedServerThreadKey)).toMatchObject({
-        prompt: "keep this server thread prompt",
+        prompt:
+          "keep this server thread prompt [Keep this annotation.](t3-context://v1/preview-annotation/preview-annotation_annotation-migration) ",
         previewAnnotations: [previewAnnotation],
         modelSelectionByProvider: {},
         activeProvider: null,
