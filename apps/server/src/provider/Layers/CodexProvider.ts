@@ -255,12 +255,8 @@ export function applyPreferredCodexDefaultModel(
   });
 }
 
-/**
- * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
- */
-function appendCustomCodexModels(
+/** Custom models without explicit capabilities remain unknown. */
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
@@ -269,7 +265,6 @@ function appendCustomCodexModels(
   }
 
   const seen = new Set(models.map((model) => model.slug));
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
   const customEntries: ServerProviderModel[] = [];
   for (const entry of readCustomModelEntries(customModels)) {
     if (seen.has(entry.slug)) {
@@ -280,7 +275,7 @@ function appendCustomCodexModels(
       slug: entry.slug,
       name: entry.name,
       isCustom: true,
-      capabilities: entry.capabilities ?? fallbackCapabilities,
+      capabilities: entry.capabilities ?? null,
     });
   }
   return customEntries.length === 0 ? models : [...models, ...customEntries];

@@ -1,6 +1,50 @@
 import { assert, it } from "@effect/vitest";
 
-import { applyPreferredCodexDefaultModel, mapCodexModelCapabilities } from "./CodexProvider.ts";
+import {
+  appendCustomCodexModels,
+  applyPreferredCodexDefaultModel,
+  mapCodexModelCapabilities,
+} from "./CodexProvider.ts";
+
+it("keeps bare custom capabilities unknown instead of borrowing another model's controls", () => {
+  const builtIn = {
+    slug: "native-model",
+    name: "Native",
+    isCustom: false,
+    capabilities: {
+      optionDescriptors: [
+        {
+          id: "reasoningEffort",
+          label: "Reasoning",
+          type: "select" as const,
+          options: [{ id: "ultra", label: "Ultra" }],
+        },
+      ],
+    },
+  };
+  const models = appendCustomCodexModels([builtIn], ["personal/other", "work/other"]);
+  assert.strictEqual(models[0], builtIn);
+  assert.deepStrictEqual(
+    models.slice(1).map((model) => model.capabilities),
+    [null, null],
+  );
+});
+
+it("preserves explicit empty custom capabilities and exact catalog matches", () => {
+  const builtIn = { slug: "native-model", name: "Native", isCustom: false, capabilities: null };
+  const explicit = { optionDescriptors: [] };
+  const models = appendCustomCodexModels(
+    [builtIn],
+    ["native-model", { slug: "custom", name: "Custom", capabilities: explicit }],
+  );
+  assert.strictEqual(models.length, 2);
+  assert.strictEqual(models[0], builtIn);
+  assert.deepStrictEqual(models[1]?.capabilities, explicit);
+});
+
+it("keeps custom capabilities unknown when discovery is empty", () => {
+  assert.strictEqual(appendCustomCodexModels([], ["custom"])[0]?.capabilities, null);
+});
 
 it("maps current Codex model capability fields", () => {
   const capabilities = mapCodexModelCapabilities({
