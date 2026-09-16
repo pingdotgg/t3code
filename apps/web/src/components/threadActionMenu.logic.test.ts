@@ -65,6 +65,18 @@ describe("buildThreadActionMenuItems", () => {
     },
   );
 
+  it("offers reschedule beside wake on a snoozed thread, with the same presets", () => {
+    const items = buildThreadActionMenuItems({ ...baseState, isSnoozed: true });
+    const wakeIndex = items.findIndex((item) => item.id === "unsnooze");
+    expect(items[wakeIndex]).toMatchObject({ label: "Wake thread" });
+    expect(items[wakeIndex + 1]).toMatchObject({ id: "snooze", label: "Reschedule" });
+    expect(items[wakeIndex + 1]?.children?.map((child) => child.id)).toEqual([
+      "snooze:hour",
+      "snooze:custom",
+    ]);
+    expect(buildThreadActionMenuItems(baseState).map((item) => item.id)).not.toContain("unsnooze");
+  });
+
   it("disables archive and turning into a project while the thread is running", () => {
     const items = buildThreadActionMenuItems({
       ...baseState,
