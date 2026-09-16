@@ -13,7 +13,7 @@ export function buildRuntimeInstructions(runtime: {
   const effort = toSingleLine(runtime.reasoningEffort ?? "");
   const modelInfo = model && model !== "auto" && model !== "default" ? `, as ${model}` : "";
   const effortInfo = effort ? ` with ${effort} reasoning effort` : "";
-  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths.</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+  return `<runtime_info>In case you're asked: you are running in T3 Code through the ${harness} harness${modelInfo}${effortInfo}. No need to mention this otherwise. You can embed images and videos in your response using Markdown with absolute file paths. A code block that contains triple backticks needs a longer fence (four backticks or ~~~).</runtime_info>\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
 }
 
 function toSingleLine(value: string): string {
