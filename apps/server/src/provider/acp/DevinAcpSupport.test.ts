@@ -297,20 +297,44 @@ it.layer(NodeServices.layer)("DevinAcpSupport", (it) => {
     ]);
   });
 
-  it("honours XDG_DATA_HOME and LOCALAPPDATA credential locations", () => {
+  it("honours XDG_DATA_HOME, APPDATA and LOCALAPPDATA credential locations", () => {
     assert.deepEqual(
       devinCredentialsFilePaths({
         HOME: "/home/tester",
         XDG_DATA_HOME: "/data/xdg",
+        APPDATA: "C:/Users/tester/AppData/Roaming",
         LOCALAPPDATA: "C:/Users/tester/AppData/Local",
       }),
       [
         "/data/xdg/devin/credentials.toml",
+        "C:/Users/tester/AppData/Roaming/devin/credentials.toml",
         "C:/Users/tester/AppData/Local/devin/credentials.toml",
         "/home/tester/.local/share/devin/credentials.toml",
       ],
     );
   });
+
+  it.effect("finds credentials stored under %APPDATA% on Windows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "t3code-devin-appdata-" });
+      const appData = NodePath.join(dir, "AppData", "Roaming");
+      yield* fs.makeDirectory(NodePath.join(appData, "devin"), { recursive: true });
+      yield* fs.writeFileString(
+        NodePath.join(appData, "devin", "credentials.toml"),
+        'token = "x"\n',
+      );
+
+      // No HOME/USERPROFILE fallback dir should exist; APPDATA must carry it.
+      const environment = {
+        HOME: NodePath.join(dir, "missing-home"),
+        USERPROFILE: NodePath.join(dir, "missing-profile"),
+        APPDATA: appData,
+      };
+      assert.isTrue(yield* devinHasAmbientCredentials(environment));
+      assert.isUndefined(yield* resolveDevinAuthMethodId({ environment, browserAuth: true }));
+    }).pipe(Effect.scoped),
+  );
 
   it.effect("builds prompt blocks for text and attachments", () =>
     Effect.gen(function* () {

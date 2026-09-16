@@ -47,10 +47,10 @@ type DevinAcpRuntimeDevinSettings = Pick<DevinSettings, "binaryPath">;
 /**
  * Candidate locations for the `devin auth login` credentials file. The CLI's
  * documented path is `$XDG_DATA_HOME/devin/credentials.toml`, defaulting to
- * `~/.local/share`; on Windows it lives under `%LOCALAPPDATA%`. Checking every
- * candidate keeps the auth skip honest on non-default setups — a false
- * negative here sends `devin-browser` and opens a browser for a signed-in
- * user.
+ * `~/.local/share`; on Windows its user config lives under `%APPDATA%` (with
+ * `%LOCALAPPDATA%` checked as a fallback). Checking every candidate keeps the
+ * auth skip honest on non-default setups — a false negative here sends
+ * `devin-browser` and opens a browser for a signed-in user.
  */
 export function devinCredentialsFilePaths(
   environment: NodeJS.ProcessEnv | undefined,
@@ -59,6 +59,10 @@ export function devinCredentialsFilePaths(
   const xdgDataHome = environment?.XDG_DATA_HOME?.trim();
   if (xdgDataHome) {
     candidates.add([xdgDataHome, "devin", "credentials.toml"].join("/"));
+  }
+  const appData = environment?.APPDATA?.trim();
+  if (appData) {
+    candidates.add([appData, "devin", "credentials.toml"].join("/"));
   }
   const localAppData = environment?.LOCALAPPDATA?.trim();
   if (localAppData) {
