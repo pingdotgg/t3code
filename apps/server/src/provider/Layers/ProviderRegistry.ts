@@ -151,6 +151,22 @@ const mergeProviderModels = (
   // the user and must not be resurrected from the previous snapshot.
   const retainablePreviousModels = previousModels.filter((model) => !model.isCustom);
 
+  // Incomplete Claude probes carry the unfiltered catalog. Keep the last
+  // inventory, including its omissions, while applying current custom models.
+  if (
+    provider.driver === "claudeAgent" &&
+    provider.enabled &&
+    provider.auth.status === "unknown" &&
+    provider.status !== "ready"
+  ) {
+    const customModels = nextModels.filter((model) => model.isCustom);
+    const customSlugs = new Set(customModels.map((model) => model.slug));
+    return [
+      ...retainablePreviousModels.filter((model) => !customSlugs.has(model.slug)),
+      ...customModels,
+    ];
+  }
+
   if (shouldRetainMissingModels && nextModels.length === 0 && retainablePreviousModels.length > 0) {
     return retainablePreviousModels;
   }

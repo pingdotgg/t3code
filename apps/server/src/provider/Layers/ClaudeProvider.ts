@@ -588,8 +588,8 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
   const dedupedSlashCommands = dedupeSlashCommands(slashCommands);
 
   if (!capabilities) {
-    // Without a probe there is no entitlement list, so nothing is withheld:
-    // an unknown org is treated as unrestrictive.
+    // An unknown account starts with the catalog. The registry retains any
+    // previous inventory when a later probe fails to reach the account.
     return buildServerProvider({
       presentation: CLAUDE_PRESENTATION,
       enabled: claudeSettings.enabled,

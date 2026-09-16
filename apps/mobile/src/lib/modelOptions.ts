@@ -75,9 +75,14 @@ export function isModelSelectionUnavailable(
   );
   const driver =
     provider?.driver ?? config.settings?.providerInstances[selection.instanceId]?.driver;
-  // A completed Claude probe omits version-gated and organization-restricted
-  // models. A saved selection must not make those models selectable again.
-  if (provider?.driver === "claudeAgent" && provider.status === "ready") {
+  // The server retains Claude's inventory through failed refreshes. A saved
+  // selection must not restore models it omits, even while status is unknown.
+  if (
+    provider?.driver === "claudeAgent" &&
+    provider.enabled &&
+    provider.installed &&
+    provider.auth.status !== "unauthenticated"
+  ) {
     return resolveSelectableModel(provider.driver, selection.model, provider.models) === null;
   }
   return (

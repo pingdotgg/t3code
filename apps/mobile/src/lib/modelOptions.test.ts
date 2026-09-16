@@ -218,28 +218,38 @@ describe("mobile model options", () => {
       auth: { status: "authenticated" },
       models: [allowedModel],
     };
-    const config = { providers: [provider] } as unknown as ServerConfig;
-
-    it("keeps a saved restricted model disabled instead of making it selectable again", () => {
-      expect(buildModelOptions(config, null).map((option) => option.selection.model)).toEqual([
-        "claude-opus-5",
-      ]);
-      expect(buildModelOptions(config, selection)).toMatchObject([
-        { selection: { model: "claude-opus-5" } },
-        { selection, isUnavailable: true },
-      ]);
-      expect(isModelSelectionUnavailable(config, selection)).toBe(true);
-      expect(resolveSelectableModelSelection(config, selection)).toBeNull();
-      expect(resolveDefaultableModelSelection(config, selection)).toBeNull();
-      expect(
-        resolveNewTaskModelSelection({
-          draftSelection: resolveSelectableModelSelection(config, selection),
-          projectDefaultSelection: resolveDefaultableModelSelection(config, selection),
-          stickySelection: resolveDefaultableModelSelection(config, selection),
-          modelOptions: buildModelOptions(config, null),
-        }),
-      ).toMatchObject({ instanceId: selection.instanceId, model: "claude-opus-5" });
-    });
+    it.each(["ready", "warning", "error"])(
+      "keeps a saved restricted model disabled while the provider is %s",
+      (status) => {
+        const config = {
+          providers: [
+            {
+              ...provider,
+              status,
+              auth: { status: status === "ready" ? "authenticated" : "unknown" },
+            },
+          ],
+        } as unknown as ServerConfig;
+        expect(buildModelOptions(config, null).map((option) => option.selection.model)).toEqual([
+          "claude-opus-5",
+        ]);
+        expect(buildModelOptions(config, selection)).toMatchObject([
+          { selection: { model: "claude-opus-5" } },
+          { selection, isUnavailable: true },
+        ]);
+        expect(isModelSelectionUnavailable(config, selection)).toBe(true);
+        expect(resolveSelectableModelSelection(config, selection)).toBeNull();
+        expect(resolveDefaultableModelSelection(config, selection)).toBeNull();
+        expect(
+          resolveNewTaskModelSelection({
+            draftSelection: resolveSelectableModelSelection(config, selection),
+            projectDefaultSelection: resolveDefaultableModelSelection(config, selection),
+            stickySelection: resolveDefaultableModelSelection(config, selection),
+            modelOptions: buildModelOptions(config, null),
+          }),
+        ).toMatchObject({ instanceId: selection.instanceId, model: "claude-opus-5" });
+      },
+    );
 
     it("allows the model again when access returns or it is explicitly configured", () => {
       for (const isCustom of [false, true]) {
@@ -261,9 +271,18 @@ describe("mobile model options", () => {
       }
     });
 
-    it("does not infer restrictions from a pending or failed probe or an offline environment", () => {
+    it("does not infer restrictions from an unfiltered probe or an offline environment", () => {
       for (const status of ["warning", "error"]) {
-        const unchecked = { providers: [{ ...provider, status }] } as unknown as ServerConfig;
+        const unchecked = {
+          providers: [
+            {
+              ...provider,
+              status,
+              auth: { status: "unknown" },
+              models: [allowedModel, { ...allowedModel, slug: selection.model }],
+            },
+          ],
+        } as unknown as ServerConfig;
         expect(isModelSelectionUnavailable(unchecked, selection)).toBe(false);
         expect(resolveSelectableModelSelection(unchecked, selection)).toBe(selection);
       }

@@ -647,17 +647,37 @@ it.layer(Layer.mergeAll(NodeServices.layer, ServerSettingsModule.layerTest(), Te
           model("claude-opus-5", "Claude Opus 5"),
         ]);
 
-        // A check that never reached the account keeps what was known.
-        const failedRefresh = {
-          ...refreshedProvider,
-          status: "error",
-          auth: { status: "unknown" },
-          models: [model("claude-opus-5", "Claude Opus 5")],
-        } satisfies ServerProvider;
-        assert.deepStrictEqual(
-          mergeProviderSnapshot(previousProvider, failedRefresh).models.map((m) => m.slug),
-          ["claude-opus-5", "claude-fable-5-1"],
-        );
+        const removedCustom = { ...model("old-custom", "Old custom"), isCustom: true };
+        const currentCustom = { ...model("new-custom", "New custom"), isCustom: true };
+        for (const status of ["warning", "error"] as const) {
+          // Failed probes carry an unfiltered catalog, not an account inventory.
+          const failedRefresh = {
+            ...refreshedProvider,
+            status,
+            auth: { status: "unknown" },
+            models: [...previousProvider.models, currentCustom],
+          } satisfies ServerProvider;
+          const retained = mergeProviderSnapshot(
+            { ...refreshedProvider, models: [...refreshedProvider.models, removedCustom] },
+            failedRefresh,
+          );
+          assert.deepStrictEqual(retained.models, [...refreshedProvider.models, currentCustom]);
+          assert.deepStrictEqual(
+            mergeProviderSnapshot(retained, failedRefresh).models,
+            retained.models,
+          );
+          assert.deepStrictEqual(
+            mergeProviderSnapshot({ ...refreshedProvider, models: [] }, failedRefresh).models,
+            [currentCustom],
+          );
+          assert.deepStrictEqual(
+            mergeProviderSnapshot(retained, {
+              ...refreshedProvider,
+              models: previousProvider.models,
+            }).models,
+            previousProvider.models,
+          );
+        }
       });
 
       it("preserves previously discovered provider models when a refresh returns none", () => {
