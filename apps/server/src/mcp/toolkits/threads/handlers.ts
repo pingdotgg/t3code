@@ -27,8 +27,35 @@ const isThreadSettled = (thread: OrchestrationReadModel["threads"][number]): boo
   thread.settledOverride === "settled" ||
   (thread.settledOverride === null && thread.settledAt !== null);
 
-const liveThreads = (readModel: OrchestrationReadModel) =>
-  readModel.threads.filter((thread) => thread.deletedAt === null && thread.archivedAt === null);
+/**
+ * Shapes live read-model threads into the tool's result: filtered by project
+ * and settled state, newest first by instant (ISO strings can carry offsets,
+ * so they are parsed rather than compared as text), capped by the input limit.
+ */
+export const threadsListItems = (
+  threads: ReadonlyArray<OrchestrationReadModel["threads"][number]>,
+  input: ThreadsListInput,
+): ThreadsListItem[] =>
+  threads
+    .filter((thread) => thread.deletedAt === null && thread.archivedAt === null)
+    .filter((thread) => input.projectId === undefined || thread.projectId === input.projectId)
+    .filter((thread) => {
+      if (input.filter === "settled") return isThreadSettled(thread);
+      if (input.filter === "active") return !isThreadSettled(thread);
+      return true;
+    })
+    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
+    .slice(
+      0,
+      Math.min(input.limit ?? THREADS_SURFACE_LIST_DEFAULT_LIMIT, THREADS_SURFACE_LIST_MAX_LIMIT),
+    )
+    .map((thread) => ({
+      threadId: thread.id,
+      projectId: thread.projectId,
+      title: thread.title,
+      settled: isThreadSettled(thread),
+      updatedAt: thread.updatedAt,
+    }));
 
 const threadsList = (input: ThreadsListInput) =>
   Effect.gen(function* () {
@@ -37,27 +64,7 @@ const threadsList = (input: ThreadsListInput) =>
       .getCommandReadModel()
       .pipe(failFrom("threads_list", "Failed to load the environment's threads."));
 
-    const threads = liveThreads(readModel)
-      .filter((thread) => input.projectId === undefined || thread.projectId === input.projectId)
-      .filter((thread) => {
-        if (input.filter === "settled") return isThreadSettled(thread);
-        if (input.filter === "active") return !isThreadSettled(thread);
-        return true;
-      })
-      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
-      .slice(
-        0,
-        Math.min(input.limit ?? THREADS_SURFACE_LIST_DEFAULT_LIMIT, THREADS_SURFACE_LIST_MAX_LIMIT),
-      );
-
-    const items: ThreadsListItem[] = threads.map((thread) => ({
-      threadId: thread.id,
-      projectId: thread.projectId,
-      title: thread.title,
-      settled: isThreadSettled(thread),
-      updatedAt: thread.updatedAt,
-    }));
-    return { threads: items } satisfies ThreadsListResult;
+    return { threads: threadsListItems(readModel.threads, input) } satisfies ThreadsListResult;
   });
 
 const threadsCreate = (input: ThreadsCreateInput) =>
