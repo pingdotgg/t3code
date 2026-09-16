@@ -1523,14 +1523,20 @@ function SavedBackendListRow({
   const serverVersion = environment.serverConfig?.environment.serverVersion ?? null;
   // A saved T3 Connect machine this device has never reached (unsupported,
   // or not yet connected) still has a descriptor from relay discovery, so
-  // it can wear its detected glyph instead of the generic server.
+  // it can wear its detected glyph instead of the generic server. Discovery
+  // empties its map on every refresh, so hold the last descriptor seen or
+  // the glyph would blink back to the generic one each time.
   const relayDiscovery = useRelayEnvironmentDiscovery();
   const discoveredDescriptor = Option.getOrNull(
     relayDiscovery.environments.get(environmentId)?.status ?? Option.none(),
   )?.descriptor;
+  const [lastDescriptor, setLastDescriptor] = useState(discoveredDescriptor);
+  if (discoveredDescriptor !== undefined && discoveredDescriptor !== lastDescriptor) {
+    setLastDescriptor(discoveredDescriptor);
+  }
   const machineKind = resolveEnvironmentMachineKind(
     environment.serverConfig ??
-      (discoveredDescriptor === undefined ? null : { environment: discoveredDescriptor }),
+      (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
   );
   const subtitleText = [
     environmentTransportLabel(environment),
@@ -1560,10 +1566,7 @@ function SavedBackendListRow({
               <span
                 className={cn(
                   "block truncate",
-                  (enabled || unsupported) &&
-                    status.tone === "error" &&
-                    !resumingServerUpdate &&
-                    "text-destructive",
+                  enabled && status.tone === "error" && !resumingServerUpdate && "text-destructive",
                 )}
               />
             }
@@ -1571,8 +1574,8 @@ function SavedBackendListRow({
             {subtitleText}
           </TooltipTrigger>
           <TooltipPopup side="top" className="max-w-80 whitespace-pre-wrap leading-tight">
-            {unsupported && environment.connection.error
-              ? environment.connection.error
+            {unsupported
+              ? (environment.connection.error ?? connectionStatusText(environment.connection))
               : enabled
                 ? connectionStatusText(environment.connection)
                 : "Switched off"}

@@ -235,6 +235,12 @@ function ConnectedCloudEnvironmentRow(props: {
   );
   const unsupported = props.environment.connectionState === "unsupported";
   const enabled = props.environment.isEnabled && !unsupported;
+  // Discovery empties its map on every refresh; hold the last descriptor seen
+  // so the glyph does not blink back to the generic one each time.
+  const [lastDescriptor, setLastDescriptor] = useState(props.descriptor);
+  if (props.descriptor !== undefined && props.descriptor !== lastDescriptor) {
+    setLastDescriptor(props.descriptor);
+  }
   return (
     <Pressable
       accessibilityHint="Long press to remove from this device"
@@ -248,8 +254,7 @@ function ConnectedCloudEnvironmentRow(props: {
         errorExpanded={props.errorExpanded}
         label={props.environment.environmentLabel}
         machine={resolveEnvironmentMachineKind(
-          serverConfig ??
-            (props.descriptor === undefined ? null : { environment: props.descriptor }),
+          serverConfig ?? (lastDescriptor === undefined ? null : { environment: lastDescriptor }),
         )}
         onValueChange={props.onSetEnabled}
         onToggleError={props.onToggleError}
