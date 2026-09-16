@@ -11,7 +11,7 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { ChevronDownIcon } from "lucide-react";
+import { AlarmClockIcon, ChevronDownIcon, CircleCheckIcon } from "lucide-react";
 import {
   memo,
   useCallback,
@@ -25,6 +25,7 @@ import {
 import GitActionsControl from "../GitActionsControl";
 import { isTrailingDoubleClick } from "../Sidebar.logic";
 import { type DraftId } from "~/composerDraftStore";
+import { Button } from "../ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
 import ProjectScriptsControl, {
@@ -55,6 +56,18 @@ interface ChatHeaderProps {
   activeThreadTitle: string;
   /** Drafts have no server thread yet, so the title carries no action menu. */
   isServerThread: boolean;
+  /**
+   * A settled or snoozed thread says so next to its title, since the header is
+   * the one thread-scoped spot that stays on screen at any scroll position.
+   * Clicking the pill is the way out. Null for an active thread.
+   */
+  parkedState: {
+    readonly kind: "settled" | "snoozed";
+    readonly detail: string;
+    /** A release request is in flight, so a second click must not send another. */
+    readonly releasing: boolean;
+    readonly onRelease: () => void;
+  } | null;
   activeProject: EnvironmentProject | null;
   openInCwd: string | null;
   activeProjectScripts: ReadonlyArray<ProjectScript> | undefined;
@@ -124,6 +137,7 @@ export const ChatHeader = memo(function ChatHeader({
   draftId,
   activeThreadTitle,
   isServerThread,
+  parkedState,
   activeProject,
   openInCwd,
   activeProjectScripts,
@@ -398,6 +412,30 @@ export const ChatHeader = memo(function ChatHeader({
               <TooltipPopup side="top">{activeThreadTitle}</TooltipPopup>
             </Tooltip>
           )}
+          {parkedState ? (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <Button
+                    size="xs"
+                    variant="ghost-muted"
+                    data-thread-parked={parkedState.kind}
+                    disabled={parkedState.releasing}
+                    onClick={parkedState.onRelease}
+                    className="ml-2 h-5 rounded-full border-border/80 px-1.5 text-[11px] sm:h-5 [:hover,[data-pressed]]:border-foreground/40 [&_svg:not([class*='size-'])]:size-3 sm:[&_svg:not([class*='size-'])]:size-3"
+                  />
+                }
+              >
+                {parkedState.kind === "settled" ? (
+                  <CircleCheckIcon aria-hidden className="size-3" />
+                ) : (
+                  <AlarmClockIcon aria-hidden className="size-3" />
+                )}
+                {parkedState.kind === "settled" ? "Settled" : "Snoozed"}
+              </TooltipTrigger>
+              <TooltipPopup side="bottom">{parkedState.detail}</TooltipPopup>
+            </Tooltip>
+          ) : null}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
       <div

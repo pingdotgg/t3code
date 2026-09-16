@@ -46,12 +46,14 @@ export function resolveEnvironmentOptionLabel(input: {
 
 // A remote (non-primary) environment is always surfaced, even when it is the
 // only environment available: with a single connected machine there is nothing
-// to pick, but the user still needs to see where the project runs.
+// to pick, but the user still needs to see where the project runs. A server
+// with an update waiting is named too, so the update dot has a server next to it.
 export function shouldShowEnvironmentIndicator(input: {
   activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
   canPickEnvironment: boolean;
+  serverUpdateAvailable?: boolean;
 }): boolean {
-  if (input.canPickEnvironment) return true;
+  if (input.canPickEnvironment || input.serverUpdateAvailable) return true;
   return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
 }
 

@@ -1342,6 +1342,8 @@ export interface ChatComposerProps {
   activeTasksProgress: ComposerTasksProgress | null;
   activeTaskSteps: readonly ComposerTaskStep[] | null;
   threadSyncPhase: ThreadSyncPhase | null;
+  /** Placeholder for a settled or snoozed thread. Sending is the way out, so the input says so. */
+  parkedPlaceholder: string | null;
 
   // Mode
   runtimeMode: RuntimeMode;
@@ -6700,9 +6702,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                               ? "Choose a project above to start a thread"
                               : showProviderUnavailable
                                 ? "Enable a provider in Settings to send a message"
-                                : phase === "disconnected"
-                                  ? DISCONNECTED_COMPOSER_PLACEHOLDER
-                                  : "Ask anything, @tag files/folders, $use skills, or / for commands"
+                                : (props.parkedPlaceholder ??
+                                  (phase === "disconnected"
+                                    ? DISCONNECTED_COMPOSER_PLACEHOLDER
+                                    : "Ask anything, @tag files/folders, $use skills, or / for commands"))
                     }
                     disabled={
                       isConnecting ||
