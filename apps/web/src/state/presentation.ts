@@ -1,6 +1,9 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentPresentation } from "@t3tools/client-runtime/connection";
-import { createEnvironmentPresentationAtoms } from "@t3tools/client-runtime/state/presentation";
+import {
+  createEnvironmentPresentationAtoms,
+  createEnvironmentSummaryAtoms,
+} from "@t3tools/client-runtime/state/presentation";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { Atom } from "effect/unstable/reactivity";
 
@@ -11,6 +14,11 @@ export const environmentPresentations = createEnvironmentPresentationAtoms({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   stateAtom: environmentCatalog.stateAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,
+});
+
+export const environmentSummaries = createEnvironmentSummaryAtoms({
+  catalogValueAtom: environmentCatalog.catalogValueAtom,
+  presentationAtom: environmentPresentations.presentationAtom,
 });
 
 const EMPTY_ENVIRONMENT_PRESENTATION_ATOM = Atom.make<EnvironmentPresentation | null>(null).pipe(
