@@ -28,6 +28,7 @@ import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import * as Schedule from "effect/Schedule";
 import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process";
@@ -1486,41 +1487,61 @@ export const makeCodexSessionRuntime = (
         return;
       }
 
-      // The child is already loaded. This rejoins it without starting a turn,
-      // and excludeTurns avoids loading or replaying its history.
-      yield* client.raw
-        .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
-        .pipe(
-          Effect.flatMap(decodeCodexChildResumeMetadata),
-          Effect.timeout("5 seconds"),
-          Effect.flatMap((response) =>
-            Effect.gen(function* () {
-              if (response.thread.id !== agentThreadId) {
-                return;
+      // Registration can precede readiness. Retry without starting a turn or
+      // replaying history, and skip attempts once the child has closed.
+      yield* Ref.get(collabChildMetadataRef).pipe(
+        Effect.flatMap((metadata) =>
+          metadata.get(agentThreadId)?.closed
+            ? Effect.succeed(undefined)
+            : client.raw
+                .request("thread/resume", { threadId: agentThreadId, excludeTurns: true })
+                .pipe(Effect.flatMap(decodeCodexChildResumeMetadata), Effect.timeout("5 seconds")),
+        ),
+        Effect.retry({ times: 2, schedule: Schedule.spaced("250 millis") }),
+        Effect.flatMap((response) =>
+          Effect.gen(function* () {
+            if (!response || response.thread.id !== agentThreadId) {
+              return;
+            }
+            const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
+            const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
+            if (!child || metadata?.closed) {
+              return;
+            }
+            const model = nonEmptyMetadataValue(response.model);
+            const effort = nonEmptyMetadataValue(response.reasoningEffort);
+            const changed = yield* updateCollabChildMetadata(
+              agentThreadId,
+              {
+                ...(model ? { model } : {}),
+                ...(effort ? { effort } : {}),
+              },
+              false,
+            );
+            if (changed) {
+              yield* emitCollabChildMetadataUpdated(agentThreadId);
+            }
+          }),
+        ),
+        Effect.catch((cause) =>
+          Effect.gen(function* () {
+            yield* Ref.update(collabChildMetadataRef, (current) => {
+              const previous = current.get(agentThreadId);
+              if (!previous) {
+                return current;
               }
-              const child = (yield* Ref.get(collabChildAgentsRef)).get(agentThreadId);
-              const metadata = (yield* Ref.get(collabChildMetadataRef)).get(agentThreadId);
-              if (!child || metadata?.closed) {
-                return;
-              }
-              const model = nonEmptyMetadataValue(response.model);
-              const effort = nonEmptyMetadataValue(response.reasoningEffort);
-              const changed = yield* updateCollabChildMetadata(
-                agentThreadId,
-                {
-                  ...(model ? { model } : {}),
-                  ...(effort ? { effort } : {}),
-                },
-                false,
-              );
-              if (changed) {
-                yield* emitCollabChildMetadataUpdated(agentThreadId);
-              }
-            }),
-          ),
-          Effect.catch(() => Effect.void),
-          Effect.forkIn(runtimeScope),
-        );
+              const next = new Map(current);
+              next.set(agentThreadId, { ...previous, lookupStarted: false });
+              return next;
+            });
+            yield* Effect.logWarning("Failed to read Codex child model metadata after retries", {
+              agentThreadId,
+              cause,
+            });
+          }),
+        ),
+        Effect.forkIn(runtimeScope),
+      );
     });
 
     const settlePendingApprovals = (decision: ProviderApprovalDecision) =>
@@ -1725,6 +1746,7 @@ export const makeCodexSessionRuntime = (
         switch (notification.method) {
           case "turn/started": {
             yield* markCollabChildOpen(child.agentThreadId);
+            yield* startCollabChildMetadataLookup(child.agentThreadId);
             const childTurnId =
               typeof (notification.params as { turn?: { id?: unknown } }).turn?.id === "string"
                 ? ((notification.params as { turn: { id: string } }).turn.id as string)
