@@ -24,7 +24,7 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
-import { useWorkspaceState } from "../../state/workspace";
+import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
 import { useAdaptiveWorkspaceLayout } from "../layout/AdaptiveWorkspaceLayout";
 import { ThreadSearchMatchExcerpt } from "../threads/thread-search-match";
@@ -123,7 +123,7 @@ export function CommandPalette(props: {
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);
-  const { environments } = useWorkspaceState();
+  const environments = useWorkspaceEnvironments();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const [query, setQuery] = useState("");
   const [selection, setSelection] = useState<string | null>(null);
