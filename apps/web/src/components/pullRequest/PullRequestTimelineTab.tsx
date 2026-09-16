@@ -39,6 +39,7 @@ import { canEditPullRequestComment } from "./pullRequestEditing.logic";
 import { PullRequestMarkdown } from "./PullRequestMarkdown";
 import { PullRequestMarkdownEditor } from "./PullRequestMarkdownEditor";
 import { PullRequestReactionBar } from "./PullRequestReactions";
+import { canReactPullRequestComment } from "./pullRequestReactions.logic";
 import {
   PullRequestActorAvatar,
   PullRequestDiffStat,
@@ -617,7 +618,13 @@ export function PullRequestTimelineTab({
                   stale={isPullRequestVerdictStale(event.at, newestCommitAt)}
                   cwd={detail.workspaceRoot}
                   onOpen={openOnHost}
-                  reactions={reactions}
+                  reactions={{
+                    ...reactions,
+                    canReact:
+                      event.kind === "review"
+                        ? canReactPullRequestComment(detail, { kind: event.kind })
+                        : reactions.canReact,
+                  }}
                 />
               );
             }

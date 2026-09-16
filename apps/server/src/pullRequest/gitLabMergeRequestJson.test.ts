@@ -247,6 +247,71 @@ describe("decodeViewerJson", () => {
 });
 
 describe("decodeNotesJson", () => {
+  it("retains approval and withdrawal notes without classifying authored comments as verdicts", () => {
+    const notes = expectSuccess(
+      decodeNotesJson(
+        JSON.stringify([
+          {
+            id: 1,
+            body: "approved this merge request",
+            author: { username: "reviewer" },
+            system: true,
+            created_at: "2026-07-01T00:00:00Z",
+          },
+          {
+            id: 2,
+            body: "unapproved this merge request",
+            author: { username: "reviewer" },
+            system: true,
+            created_at: "2026-07-02T00:00:00Z",
+          },
+          {
+            id: 3,
+            body: "approved this merge request",
+            author: { username: "author" },
+            system: false,
+            created_at: "2026-07-03T00:00:00Z",
+          },
+          {
+            id: 4,
+            body: "assigned to @reviewer",
+            system: true,
+            created_at: "2026-07-04T00:00:00Z",
+          },
+          {
+            id: 5,
+            body: "approved this merge request with a custom message",
+            system: true,
+            created_at: "2026-07-05T00:00:00Z",
+          },
+        ]),
+      ),
+    );
+
+    expect(notes.rawCount).toBe(5);
+    expect(notes.comments).toMatchObject([
+      {
+        id: "1",
+        kind: "review",
+        body: "approved this merge request",
+        author: { login: "reviewer" },
+        createdAt: "2026-07-01T00:00:00Z",
+        reviewState: "APPROVED",
+        path: null,
+      },
+      {
+        id: "2",
+        kind: "review",
+        body: "unapproved this merge request",
+        author: { login: "reviewer" },
+        createdAt: "2026-07-02T00:00:00Z",
+        reviewState: "DISMISSED",
+        path: null,
+      },
+      { id: "3", kind: "issue-comment", reviewState: null },
+    ]);
+  });
+
   it("keeps comments and drops GitLab's own activity notes", () => {
     const notes = expectSuccess(
       decodeNotesJson(
