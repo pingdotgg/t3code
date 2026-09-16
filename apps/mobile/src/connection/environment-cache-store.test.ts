@@ -66,6 +66,8 @@ const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
       pendingRuntimeRequest: null,
       latestVisibleMessage: null,
       latestUserMessageAt: NOW,
+      activityRunStartedAt: NOW,
+      activityRunStatus: "running",
       hasActionableProposedPlan: false,
       itemCount: 0,
       visibleItemCount: 0,
@@ -74,6 +76,7 @@ const SHELL_SNAPSHOT: OrchestrationV2ShellSnapshot = {
       archivedAt: null,
       settledOverride: null,
       settledAt: NOW,
+      unsettledAt: NOW,
       lastVisitedAt: null,
       titleRegeneration: {
         requestId: CommandId.make("title-regeneration-1"),
@@ -219,6 +222,12 @@ describe("mobile SQLite environment cache store", () => {
       expect(DateTime.formatIso(shell.threads[0]!.titleRegeneration!.startedAt)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
+      // Working and unsettled threads are exactly what a backgrounded app
+      // caches; a decode failure here discards the whole shell on relaunch.
+      expect(DateTime.formatIso(shell.threads[0]!.activityRunStartedAt!)).toBe(
+        "2026-07-29T12:00:00.000Z",
+      );
+      expect(DateTime.formatIso(shell.threads[0]!.unsettledAt!)).toBe("2026-07-29T12:00:00.000Z");
       expect(DateTime.formatIso(thread.projection.thread.updatedAt)).toBe(
         "2026-07-29T12:00:00.000Z",
       );
