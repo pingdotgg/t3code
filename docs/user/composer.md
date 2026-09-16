@@ -35,7 +35,8 @@ On web and desktop, choose **Settings → General → Follow-up behavior** to qu
 new messages for a later turn or steer the running turn immediately. The setting
 applies to this client; already queued messages keep their place. Queued messages
 are saved on the server and can be edited, reordered, or removed above the composer.
-`Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux always queues a follow-up.
+`Cmd+Enter` on macOS or `Ctrl+Enter` on Windows and Linux uses the opposite action:
+it steers when your default is Queue and queues when your default is Steer.
 
 Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
 the oldest queued message as a steer. This leaves the current draft intact and
