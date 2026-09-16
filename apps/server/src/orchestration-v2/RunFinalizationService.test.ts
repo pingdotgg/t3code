@@ -34,7 +34,7 @@ it.effect("captures the root checkpoint and refreshes workspace state", () => {
         }),
         Layer.succeed(RunFinalization.RunFinalizationObserver, {
           refresh,
-          refreshAfterTurn: Effect.void,
+          refreshAfterTurn: () => Effect.void,
         }),
       ),
     ),
@@ -85,7 +85,9 @@ for (const scenario of [
       Layer.provide(
         Layer.mergeAll(
           Layer.mock(WorkspaceEntries.WorkspaceEntries)({ refresh: () => Effect.void }),
-          Layer.mock(PullRequestService.PullRequestService)({ refreshAfterTurn: Effect.void }),
+          Layer.mock(PullRequestService.PullRequestService)({
+            refreshAfterTurn: () => Effect.void,
+          }),
           Layer.mock(VcsStatusBroadcaster.VcsStatusBroadcaster)({
             refreshLocalStatus: () =>
               Effect.succeed({
