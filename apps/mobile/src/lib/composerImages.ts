@@ -399,6 +399,7 @@ async function loadClipboard() {
   }
 }
 
+/** Preserves the image-only picker result used by composer surfaces that cannot upload videos. */
 export async function pickComposerImages(input: { readonly existingCount: number }): Promise<{
   readonly images: ReadonlyArray<DraftComposerImageAttachment>;
   readonly error: string | null;
