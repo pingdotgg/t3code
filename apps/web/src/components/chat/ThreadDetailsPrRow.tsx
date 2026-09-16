@@ -16,9 +16,11 @@ import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
  */
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
+import { sourceControlRepositorySelector } from "@t3tools/shared/sourceControl";
 import { ArrowUpRightIcon, FileDiffIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
+import { useLiveRefresh } from "~/hooks/useLiveRefresh";
 import { cn } from "~/lib/utils";
 import { useServerConfigs } from "~/state/entities";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -34,7 +36,9 @@ import {
   allowedPullRequestMergeMethods,
   resolveThreadPanelPullRequestAction,
 } from "../pullRequest/pullRequestDetail.logic";
+import { PullRequestChecksPopover } from "../pullRequest/PullRequestChecksPopover";
 import {
+  pullRequestChecksState,
   PullRequestCheckStatusIcon,
   PullRequestDiffStat,
   resolvePullRequestState,
@@ -96,11 +100,7 @@ export function ThreadDetailsPrRow({
   const serverConfigs = useServerConfigs();
   const supportsPullRequests =
     serverConfigs.get(environmentId)?.environment.capabilities.pullRequests === true;
-  // The identity's own spelling, the way the detail panel is addressed everywhere else.
-  const identity = project?.repositoryIdentity;
-  const repository =
-    identity?.displayName ??
-    (identity?.owner && identity.name ? `${identity.owner}/${identity.name}` : null);
+  const repository = sourceControlRepositorySelector(project?.repositoryIdentity);
   const reference: PullRequestRef | null =
     supportsPullRequests && project !== null
       ? linkedReference
@@ -110,15 +110,45 @@ export function ThreadDetailsPrRow({
           : null
       : null;
   const detailQuery = useEnvironmentQuery(
-    reference === null ? null : pullRequestEnvironment.detail({ environmentId, input: reference }),
+    reference === null
+      ? null
+      : pullRequestEnvironment.detail({
+          environmentId,
+          input: { ...reference, allowStale: false },
+        }),
   );
-  const detail = detailQuery.data ?? null;
+  const supportsChecks =
+    serverConfigs.get(environmentId)?.environment.capabilities.pullRequestChecks === true;
+  const checksQuery = useEnvironmentQuery(
+    supportsChecks && reference !== null && detailQuery.data !== null
+      ? pullRequestEnvironment.checks({ environmentId, input: reference })
+      : null,
+  );
+  const detail =
+    detailQuery.data === null
+      ? null
+      : checksQuery.data !== null && checksQuery.dataUpdatedAt >= detailQuery.dataUpdatedAt
+        ? { ...detailQuery.data, ...checksQuery.data }
+        : detailQuery.data;
+  const open = reference !== null && (detail?.state ?? pr?.state) === "open";
+  const refreshKey = `${environmentId}:${project?.id}:${reference?.host}:${reference?.repository}:${number}`;
+  useLiveRefresh(detailQuery.isPending ? null : detailQuery.refresh, {
+    enabled: open,
+    key: `workspace-pr:${refreshKey}`,
+    intervalMs: 10 * 60_000,
+  });
+  useLiveRefresh(checksQuery.isPending || detailQuery.isPending ? null : checksQuery.refresh, {
+    enabled: open && supportsChecks && !(checksQuery.isSuccess && checksQuery.data === null),
+    key: `workspace-pr-checks:${refreshKey}`,
+    intervalMs: 45_000,
+  });
 
   const { actionPending, perform } = usePullRequestActionRunner({
     environmentId,
     reference,
     onSuccess: () => {
       detailQuery.refresh();
+      checksQuery.refresh();
       onActed?.();
     },
   });
@@ -126,9 +156,12 @@ export function ThreadDetailsPrRow({
   const [confirmingMerge, setConfirmingMerge] = useState(false);
 
   const rowAction = resolveThreadPanelPullRequestAction(detail);
+  if (confirmingMerge && rowAction !== "merge") {
+    setConfirmingMerge(false);
+  }
   const conflicting = isPullRequestConflicting(detail);
   const checksState = detail === null ? "none" : classifyPullRequestChecks(detail.checks);
-  const checksRunning = detail?.state === "open" && rowAction === null && checksState === "pending";
+  const checksRollup = detail === null ? null : pullRequestChecksState(detail.checks);
   const selectedMergeMethod = resolveSelectedMergeMethod(
     allowedPullRequestMergeMethods(detail),
     "merge",
@@ -310,7 +343,7 @@ export function ThreadDetailsPrRow({
 
   return (
     <>
-      {trailingAction || checksRunning ? (
+      {detail ? (
         <div className={THREAD_DETAILS_PANEL_LINK_SPLIT_GROUP_CLASS}>
           <Tooltip>
             <TooltipTrigger
@@ -329,51 +362,43 @@ export function ThreadDetailsPrRow({
             </TooltipTrigger>
             {rowTooltip}
           </Tooltip>
-          <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+          {checksRollup !== null && !conflicting && !detail.isDraft ? (
+            <>
+              <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+              <PullRequestChecksPopover
+                checksState={checksRollup}
+                checks={detail.checks}
+                variant="count"
+              />
+            </>
+          ) : null}
           {trailingAction ? (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    className={cn(
-                      THREAD_DETAILS_PANEL_LINK_SPLIT_ACTION_CLASS,
-                      trailingAction.destructive &&
-                        "text-destructive hover:text-destructive data-pressed:text-destructive",
-                    )}
-                    disabled={actionPending || handoff !== null}
-                    onClick={trailingAction.onClick}
-                  />
-                }
-              >
-                {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
-                {trailingAction.suffix}
-              </TooltipTrigger>
-              <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
-            </Tooltip>
-          ) : (
-            // Checks are still running: the slot reports that instead of offering a merge that
-            // would race them. Not a button — there is nothing to press until they finish.
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <span className="flex h-9 shrink-0 cursor-default items-center gap-1.5 px-2.5 text-[13px] font-medium text-muted-foreground" />
-                }
-              >
-                <PullRequestCheckStatusIcon status="pending" />
-                <span className="tabular-nums">
-                  {detail === null
-                    ? null
-                    : `${detail.checks.filter((check) => check.status === "pending").length}/${detail.checks.length}`}
-                </span>
-              </TooltipTrigger>
-              <TooltipPopup side="top">
-                {detail ? describePullRequestChecks(detail.checks) : "Checks are running"}
-              </TooltipPopup>
-            </Tooltip>
-          )}
+            <>
+              <span aria-hidden="true" className={THREAD_DETAILS_PANEL_SPLIT_SEPARATOR_CLASS} />
+              <Tooltip>
+                <TooltipTrigger
+                  render={
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      className={cn(
+                        THREAD_DETAILS_PANEL_LINK_SPLIT_ACTION_CLASS,
+                        trailingAction.destructive &&
+                          "text-destructive hover:text-destructive data-pressed:text-destructive",
+                      )}
+                      disabled={actionPending || handoff !== null}
+                      onClick={trailingAction.onClick}
+                    />
+                  }
+                >
+                  {trailingAction.pending ? trailingAction.pendingLabel : trailingAction.label}
+                  {trailingAction.suffix}
+                </TooltipTrigger>
+                <TooltipPopup side="top">{trailingAction.tooltip}</TooltipPopup>
+              </Tooltip>
+            </>
+          ) : null}
         </div>
       ) : (
         <Tooltip>
