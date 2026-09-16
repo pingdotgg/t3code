@@ -7,6 +7,8 @@ import {
   buildProviderOptionSelectionsFromDescriptors,
   createModelCapabilities,
   createModelSelection,
+  formatCodexModelName,
+  formatModelSlugName,
   getModelSelectionBooleanOptionValue,
   getModelSelectionStringOptionValue,
   getProviderOptionDescriptors,
@@ -18,6 +20,25 @@ import {
   normalizeModelSlug,
   modelSelectionsEqual,
 } from "./model.ts";
+
+it("keeps the Codex catalog display formatting", () => {
+  expect(formatCodexModelName("gpt-5.3-codex-spark")).toBe("GPT-5.3-Codex-Spark");
+  expect(formatCodexModelName("GPT Test")).toBe("GPT Test");
+});
+
+it.each([
+  ["gpt-5.4", "GPT-5.4"],
+  ["claude-opus-4-6", "Claude Opus 4.6"],
+  ["claude-sonnet-4-20250514", "Claude Sonnet 4 20250514"],
+  ["claude-opus-4-6[1m]", "Claude Opus 4.6[1m]"],
+  ["openai/gpt-5.4-mini", "openai/GPT-5.4-Mini"],
+  ["gemini-2.5-pro-preview-06-05", "Gemini 2.5 Pro Preview 06 05"],
+  ["custom/model-v2", "custom/model-v2"],
+  ["gpt-proxy", "gpt-proxy"],
+  ["My Custom Model", "My Custom Model"],
+])("formats a known model ID without losing its qualifiers: %s", (slug, expected) => {
+  expect(formatModelSlugName(slug)).toBe(expected);
+});
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [
