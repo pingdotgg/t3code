@@ -465,7 +465,7 @@ describe("when: ref has diverged from upstream", () => {
   it("resolveQuickAction returns a disabled sync hint", () => {
     const quick = resolveQuickAction(status({ aheadCount: 2, behindCount: 1 }), false);
     assert.deepEqual(quick, {
-      label: "Sync ref",
+      label: "Sync branch",
       disabled: true,
       kind: "show_hint",
       hint: "Branch has diverged from upstream. Rebase/merge first.",
@@ -816,7 +816,26 @@ describe("when: ref has no upstream configured", () => {
     });
   });
 
-  it("resolveQuickAction publishes when no origin remote exists", () => {
+  it("resolveQuickAction publishes when no origin remote exists and the surface can publish", () => {
+    const quick = resolveQuickAction(
+      status({
+        hasUpstream: false,
+        aheadCount: 2,
+        pr: null,
+      }),
+      false,
+      false,
+      false,
+      true,
+    );
+    assert.deepEqual(quick, {
+      kind: "open_publish",
+      label: "Publish repository",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction never publishes on a surface without the flow", () => {
     const quick = resolveQuickAction(
       status({
         hasUpstream: false,
@@ -827,11 +846,8 @@ describe("when: ref has no upstream configured", () => {
       false,
       false,
     );
-    assert.deepEqual(quick, {
-      kind: "open_publish",
-      label: "Publish repository",
-      disabled: false,
-    });
+    assert.equal(quick.kind, "show_hint");
+    assert.isTrue(quick.disabled);
   });
 
   it("buildMenuItems enables create PR when no upstream and commits are ahead", () => {
@@ -980,9 +996,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Push to default ref?",
+      title: "Push to default branch?",
       description:
-        'This action will push local commits on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will push local commits on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Push to main",
     });
   });
@@ -995,9 +1011,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Push & create PR from default ref?",
+      title: "Push & create PR from default branch?",
       description:
-        'This action will push local commits and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will push local commits and create a pull request on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Push & create PR",
     });
   });
@@ -1010,9 +1026,9 @@ describe("resolveDefaultBranchActionDialogCopy", () => {
     });
 
     assert.deepEqual(copy, {
-      title: "Commit, push & create PR from default ref?",
+      title: "Commit, push & create PR from default branch?",
       description:
-        'This action will commit, push, and create a pull request on "main". You can continue on this ref or create a feature ref and run the same action there.',
+        'This action will commit, push, and create a pull request on "main". You can continue on this branch or create a feature branch and run the same action there.',
       continueLabel: "Commit, push & create PR",
     });
   });
@@ -1087,6 +1103,16 @@ describe("buildGitActionProgressStages", () => {
       "Generating PR content...",
       "Creating pull request...",
     ]);
+  });
+
+  it("names the feature ref with Git nouns when no VCS terminology is supplied", () => {
+    const stages = buildGitActionProgressStages({
+      action: "commit",
+      hasCustomCommitMessage: true,
+      hasWorkingTreeChanges: true,
+      featureBranch: true,
+    });
+    assert.deepEqual(stages, ["Preparing feature branch...", "Committing..."]);
   });
 });
 

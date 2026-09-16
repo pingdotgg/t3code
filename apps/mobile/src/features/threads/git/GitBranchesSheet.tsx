@@ -1,4 +1,5 @@
 import { sanitizeFeatureBranchName } from "@t3tools/shared/git";
+import { resolveVcsTerminology } from "@t3tools/shared/vcs";
 import { useNavigation, type StaticScreenProps } from "@react-navigation/native";
 import { useState } from "react";
 import { Platform, Pressable, ScrollView, View } from "react-native";
@@ -37,7 +38,9 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       : null,
   );
 
-  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? "Detached HEAD";
+  const vcsTerminology = resolveVcsTerminology(gitStatus.data);
+  const noRefLabel = `No ${vcsTerminology.refNoun}`;
+  const currentBranchLabel = gitStatus.data?.refName ?? selectedThread?.branch ?? noRefLabel;
   const currentWorktreePath = selectedThreadWorktreePath;
   const availableBranches = gitState.selectedThreadBranches;
   const branchesLoading = gitState.selectedThreadBranchesLoading;
@@ -45,7 +48,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
   const [newBranchName, setNewBranchName] = useState("");
   const [worktreeBaseBranch, setWorktreeBaseBranch] = useState(
-    currentBranchLabel === "Detached HEAD" ? "main" : currentBranchLabel,
+    currentBranchLabel === noRefLabel ? "main" : currentBranchLabel,
   );
   const [worktreeBranchName, setWorktreeBranchName] = useState("");
 
@@ -60,7 +63,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
   return (
     <View collapsable={false} className="flex-1 bg-sheet">
       {Platform.OS === "android" ? (
-        <AndroidSheetHeader title="Branches & worktrees" onBack={() => navigation.goBack()} />
+        <AndroidSheetHeader
+          title={`${vcsTerminology.refNounPlural} & ${vcsTerminology.workspaceNounPlural}`}
+          onBack={() => navigation.goBack()}
+        />
       ) : null}
       <ScrollView
         className="flex-1"
@@ -70,7 +76,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
       >
         <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
           <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
-            New branch
+            {`New ${vcsTerminology.refNoun}`}
           </Text>
           <TextInput
             value={newBranchName}
@@ -96,7 +102,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
 
         <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
           <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
-            New worktree
+            {`New ${vcsTerminology.workspaceNoun}`}
           </Text>
           <TextInput
             value={worktreeBaseBranch}
@@ -112,7 +118,7 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           />
           <SheetActionButton
             icon="square.split.2x1"
-            label="Create worktree"
+            label={`Create ${vcsTerminology.workspaceNoun}`}
             tone="primary"
             disabled={
               busy ||
@@ -131,18 +137,39 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
           />
         </View>
 
+        {currentWorktreePath ? (
+          <View className="gap-2 rounded-[18px] border border-border bg-card px-4 py-4">
+            <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
+              {`This ${vcsTerminology.workspaceNoun}`}
+            </Text>
+            <Text className="text-foreground-secondary text-sm font-medium">
+              {currentWorktreePath}
+            </Text>
+            <SheetActionButton
+              icon="trash"
+              label={`Remove ${vcsTerminology.workspaceNoun}`}
+              disabled={busy}
+              onPress={() => {
+                void gitActions.onRemoveSelectedThreadWorkspace().then(() => {
+                  navigation.goBack();
+                });
+              }}
+            />
+          </View>
+        ) : null}
+
         <View className="gap-2">
           <Text className="text-foreground-secondary text-2xs font-t3-bold tracking-[1px] uppercase">
-            Existing branches
+            {`Existing ${vcsTerminology.refNounPlural}`}
           </Text>
           {branchesLoading ? (
             <Text className="text-foreground-secondary text-sm font-medium">
-              Loading branches...
+              {`Loading ${vcsTerminology.refNounPlural}...`}
             </Text>
           ) : null}
           {!branchesLoading && availableBranches.length === 0 ? (
             <Text className="text-foreground-secondary text-sm font-medium">
-              No local branches found.
+              {`No local ${vcsTerminology.refNounPlural} found.`}
             </Text>
           ) : null}
           {availableBranches.map((branch) => {
@@ -150,10 +177,10 @@ export function GitBranchesSheet(_props: GitBranchesSheetProps) {
             const subtitle = branch.worktreePath
               ? branch.worktreePath === currentWorktreePath
                 ? "Checked out in this thread"
-                : "Checked out in another worktree"
+                : `Checked out in another ${vcsTerminology.workspaceNoun}`
               : branch.isDefault
-                ? "Default branch"
-                : "Local branch";
+                ? `Default ${vcsTerminology.refNoun}`
+                : `Local ${vcsTerminology.refNoun}`;
 
             return (
               <Pressable
