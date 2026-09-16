@@ -1987,12 +1987,28 @@ const make = Effect.gen(function* () {
     const recoverQueue = Effect.gen(function* () {
       for (const thread of startupQueueSnapshot.threads) {
         if (!thread.queuedMessageCount) continue;
-        yield* orchestrationEngine.dispatch({
-          type: "thread.queue.recover",
-          commandId: yield* serverCommandId("queue-recover"),
-          threadId: thread.id,
-        });
-        yield* advanceQueue(thread.id);
+        yield* Effect.gen(function* () {
+          for (const type of ["thread.queue.recover", "thread.queue.advance"] as const) {
+            const command = {
+              type,
+              commandId: yield* serverCommandId(type),
+              threadId: thread.id,
+            };
+            // Retry the same command so an uncertain receipt cannot repeat a completed handoff.
+            yield* Effect.suspend(() => orchestrationEngine.dispatch(command)).pipe(
+              Effect.retry({ times: 2 }),
+            );
+          }
+        }).pipe(
+          Effect.catchCause((cause) =>
+            Cause.hasInterruptsOnly(cause)
+              ? Effect.interrupt
+              : Effect.logWarning("failed to recover queued messages", {
+                  threadId: thread.id,
+                  cause: Cause.pretty(cause),
+                }),
+          ),
+        );
       }
     });
     yield* forkParked(recoverQueue);

@@ -177,6 +177,8 @@ describe("ProviderCommandReactor", () => {
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
     readonly queueCompletionFailures?: number;
+    readonly queueStartupFailures?: Map<string, number>;
+
     readonly afterQueueCompletion?: () => Effect.Effect<void>;
     readonly beforeTurnStartRead?: () => Effect.Effect<void>;
 
@@ -437,6 +439,8 @@ describe("ProviderCommandReactor", () => {
     ).pipe(Layer.provide(projectionSnapshotLayer));
     let titleRegenerationCompletionDispatchAttempts = 0;
     const queueCompletions: boolean[] = [];
+    const queueStartupAttempts: Array<{ type: string; threadId: ThreadId; commandId: CommandId }> =
+      [];
 
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
@@ -447,6 +451,23 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (
+              command.type === "thread.queue.recover" ||
+              command.type === "thread.queue.advance"
+            ) {
+              queueStartupAttempts.push(command);
+              const key = `${command.type}:${command.threadId}`;
+              const failures = input?.queueStartupFailures?.get(key) ?? 0;
+              const attempts = queueStartupAttempts.filter(
+                (attempt) => attempt.commandId === command.commandId,
+              ).length;
+              if (attempts <= failures) {
+                return Effect.fail(
+                  new PersistenceSqlError({ operation: "startup queue recovery test" }),
+                );
+              }
+            }
+
             if (command.type === "thread.queue.complete") {
               queueCompletions.push(command.failed);
               if (queueCompletions.length <= (input?.queueCompletionFailures ?? 0)) {
@@ -642,6 +663,7 @@ describe("ProviderCommandReactor", () => {
             `;
           }),
         ),
+      queueStartupAttempts,
       queueCompletions,
       tryHandlePromptCommand,
       startSession,
@@ -740,6 +762,91 @@ describe("ProviderCommandReactor", () => {
         expect(harness.sendTurn).toHaveBeenCalledTimes(1);
         expect(harness.sendTurn).toHaveBeenCalledWith(
           expect.objectContaining({ input: "Run after the tool" }),
+        );
+      }),
+  );
+
+  effectIt.effect.each([
+    { command: "thread.queue.recover", failures: 1 },
+    { command: "thread.queue.recover", failures: Infinity },
+    { command: "thread.queue.advance", failures: 1 },
+    { command: "thread.queue.advance", failures: Infinity },
+  ] as const)(
+    "recovers later threads when $command fails $failures times",
+    ({ command, failures }) =>
+      Effect.gen(function* () {
+        const queueStartupFailures = new Map<string, number>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({ deferReactorStart: true, queueStartupFailures }),
+        );
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make("second-queued-thread"),
+          threadId: ThreadId.make("thread-2"),
+          projectId: asProjectId("project-1"),
+          title: "Another queue",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdAt,
+        });
+        const snapshot = yield* harness.snapshotQuery.getShellSnapshot();
+        const [first, second] = snapshot.threads;
+        if (!first || !second) throw new Error("Expected two threads");
+        for (const thread of [first, second]) {
+          yield* harness.engine.dispatch({
+            type: "thread.turn.start",
+            commandId: CommandId.make(`enqueue:${thread.id}`),
+            threadId: thread.id,
+            message: {
+              messageId: asMessageId(`message:${thread.id}`),
+              role: "user",
+              text: thread.id,
+              attachments: [],
+            },
+            deliveryMode: "queue",
+            runtimeMode: "approval-required",
+            interactionMode: "default",
+            createdAt,
+          });
+        }
+        yield* harness.engine.dispatch({
+          type: "thread.queue.send",
+          commandId: CommandId.make("ambiguous-handoff-before-restart"),
+          threadId: first.id,
+          messageId: asMessageId(`message:${first.id}`),
+        });
+        queueStartupFailures.set(`${command}:${first.id}`, failures);
+        const secondSent = yield* Deferred.make<void>();
+        harness.sendTurn.mockImplementation(() =>
+          Deferred.succeed(secondSent, undefined).pipe(
+            Effect.as({ threadId: second.id, turnId: asTurnId("recovered-turn") }),
+          ),
+        );
+        yield* Effect.promise(harness.startReactor);
+        yield* Deferred.await(secondSent);
+        const attempts = harness.queueStartupAttempts.filter(
+          (attempt) => attempt.type === command && attempt.threadId === first.id,
+        );
+        const attemptsPerCommand = new Map<CommandId, number>();
+        for (const attempt of attempts) {
+          attemptsPerCommand.set(
+            attempt.commandId,
+            (attemptsPerCommand.get(attempt.commandId) ?? 0) + 1,
+          );
+        }
+        expect(Math.max(...attemptsPerCommand.values())).toBe(failures === 1 ? 2 : 3);
+        const firstDetail = Option.getOrThrow(
+          yield* harness.snapshotQuery.getThreadDetailById(first.id),
+        );
+        expect(firstDetail.queuedMessages?.[0]?.status).toBe(
+          command === "thread.queue.recover" && failures === Infinity ? "sending" : "held",
+        );
+        expect(harness.sendTurn).toHaveBeenCalledExactlyOnceWith(
+          expect.objectContaining({ threadId: second.id }),
         );
       }),
   );
