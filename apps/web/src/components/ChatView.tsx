@@ -3588,6 +3588,13 @@ export default function ChatView(props: ChatViewProps) {
         worktreePath: activeThread?.worktreePath ?? null,
       })
     : null;
+  const timelineSkills = useMemo(
+    () =>
+      activeProviderStatus
+        ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
+        : EMPTY_PROVIDER_SKILLS,
+    [activeProviderStatus, gitCwd],
+  );
   const gitStatusCwd = activeThread?.worktreePath ?? gitCwd;
   const gitStatusQuery = useEnvironmentQuery(
     gitStatusCwd === null
@@ -3677,8 +3684,16 @@ export default function ChatView(props: ChatViewProps) {
       entries: timelineEntries,
       markdownCwd: gitCwd,
       workspaceRoot: activeWorkspaceRoot ?? null,
+      skills: timelineSkills,
     });
-  }, [activeThreadKey, activeWorkspaceRoot, gitCwd, threadDetailLoading, timelineEntries]);
+  }, [
+    activeThreadKey,
+    activeWorkspaceRoot,
+    gitCwd,
+    threadDetailLoading,
+    timelineEntries,
+    timelineSkills,
+  ]);
   const heldPaintContext = paintOnlyDisplayedTimeline
     ? peekHeldThreadTimeline<typeof timelineEntries>()
     : null;
@@ -9498,9 +9513,9 @@ export default function ChatView(props: ChatViewProps) {
                     : activeWorkspaceRoot
                 }
                 skills={
-                  activeProviderStatus
-                    ? resolveProviderSkillsForCwd(activeProviderStatus, gitCwd)
-                    : EMPTY_PROVIDER_SKILLS
+                  paintOnlyDisplayedTimeline
+                    ? (heldPaintContext?.skills ?? EMPTY_PROVIDER_SKILLS)
+                    : timelineSkills
                 }
                 anchorMessageId={paintOnlyDisplayedTimeline ? null : timelineAnchorMessageId}
                 onAnchorReady={onTimelineAnchorReady}
