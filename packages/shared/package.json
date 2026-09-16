@@ -43,6 +43,10 @@
       "types": "./src/git.ts",
       "import": "./src/git.ts"
     },
+    "./githubMedia": {
+      "types": "./src/githubMedia.ts",
+      "import": "./src/githubMedia.ts"
+    },
     "./sourceControl": {
       "types": "./src/sourceControl.ts",
       "import": "./src/sourceControl.ts"
