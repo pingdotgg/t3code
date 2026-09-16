@@ -113,6 +113,50 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(makeServerSettingsLayer())),
   );
 
+  it.effect("does not persist a GitHub token after the account is deleted", () =>
+    Effect.gen(function* () {
+      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const accountId = GitHubAccountId.make("race");
+      const initial = yield* serverSettings.updateSettings({
+        githubAccounts: {
+          [accountId]: {
+            label: "Race",
+            login: "race-user",
+            host: "github.com",
+            token: "old-token",
+          },
+        },
+      });
+      const expectedAccount = initial.githubAccounts[accountId];
+      assert.isDefined(expectedAccount);
+
+      yield* serverSettings.updateSettings({ githubAccounts: {} });
+      const persisted = yield* serverSettings.persistGitHubAccountTokenIfCurrent({
+        accountId,
+        expectedAccount,
+        account: { label: "Race", login: "race-user", host: "github.com" },
+        token: "must-not-be-stored",
+      });
+
+      assert.isNull(persisted);
+      assert.isUndefined((yield* serverSettings.getSettings).githubAccounts[accountId]);
+      assert.deepEqual(yield* serverSettings.getGitHubAccountEnvironment(accountId), {
+        configured: false,
+      });
+      assert.isFalse(
+        yield* fileSystem.exists(
+          path.join(
+            serverConfig.secretsDir,
+            `github-account-token-${Buffer.from(accountId, "utf8").toString("base64url")}.bin`,
+          ),
+        ),
+      );
+    }).pipe(Effect.provide(makeServerSettingsLayer())),
+  );
+
   it.effect("preserves context when reading a provider environment secret fails", () => {
     const platformCause = PlatformError.systemError({
       _tag: "PermissionDenied",

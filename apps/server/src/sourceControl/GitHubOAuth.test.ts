@@ -377,4 +377,205 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("does not recreate an account when deletion races credential persistence", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const persistenceEntered = yield* Deferred.make<void>();
+      const allowPersistence = yield* Deferred.make<void>();
+      const accountId = GitHubAccountId.make("delete-race");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(6),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: DELETE-RACE\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args[0] === "api" ? "octocat\n" : "oauth-secret\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const baseSettingsLayer = ServerSettings.ServerSettingsService.layerTest({
+        githubAccounts: {
+          [accountId]: { label: "Delete race", host: "github.com", tokenConfigured: false },
+        },
+      });
+      const settingsLayer = Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const base = yield* ServerSettings.ServerSettingsService;
+          let settingsReads = 0;
+          return ServerSettings.ServerSettingsService.of({
+            ...base,
+            getSettings: Effect.gen(function* () {
+              const settings = yield* base.getSettings;
+              settingsReads += 1;
+              if (settingsReads === 2) {
+                yield* Deferred.succeed(persistenceEntered, undefined);
+                yield* Deferred.await(allowPersistence);
+              }
+              return settings;
+            }),
+            persistGitHubAccountTokenIfCurrent: (input) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(persistenceEntered, undefined);
+                yield* Deferred.await(allowPersistence);
+                return yield* base.persistGitHubAccountTokenIfCurrent(input);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(baseSettingsLayer));
+      const oauthLayer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)),
+        Layer.provide(settingsLayer),
+      );
+      const layer = Layer.merge(oauthLayer, settingsLayer);
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        yield* oauth.start({ accountId, label: "Delete race", host: "github.com" });
+        yield* Deferred.await(waiting.reached);
+
+        yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+        yield* Deferred.await(persistenceEntered);
+        yield* settings.updateSettings({ githubAccounts: {} });
+        yield* Deferred.succeed(allowPersistence, undefined);
+
+        const terminal = yield* oauth.subscribe(accountId).pipe(
+          Stream.filter((state) => state.phase === "succeeded" || state.phase === "failed"),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(terminal));
+        assert.equal(Option.getOrThrow(terminal).phase, "failed");
+        assert.isUndefined((yield* settings.getSettings).githubAccounts[accountId]);
+        yield* Fiber.interrupt(waiting.fiber);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("serializes cancellation with a credential commit", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const persistenceEntered = yield* Deferred.make<void>();
+      const allowPersistence = yield* Deferred.make<void>();
+      const cancelFinished = yield* Deferred.make<GitHubOAuthState>();
+      const accountId = GitHubAccountId.make("cancel-race");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(7),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: CANCEL-RACE\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args[0] === "api" ? "octocat\n" : "oauth-secret\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const baseSettingsLayer = ServerSettings.ServerSettingsService.layerTest({
+        githubAccounts: {
+          [accountId]: { label: "Cancel race", host: "github.com", tokenConfigured: false },
+        },
+      });
+      const settingsLayer = Layer.effect(
+        ServerSettings.ServerSettingsService,
+        Effect.gen(function* () {
+          const base = yield* ServerSettings.ServerSettingsService;
+          let settingsReads = 0;
+          return ServerSettings.ServerSettingsService.of({
+            ...base,
+            getSettings: Effect.gen(function* () {
+              const settings = yield* base.getSettings;
+              settingsReads += 1;
+              if (settingsReads === 2) {
+                yield* Deferred.succeed(persistenceEntered, undefined);
+                yield* Deferred.await(allowPersistence);
+              }
+              return settings;
+            }),
+            persistGitHubAccountTokenIfCurrent: (input) =>
+              Effect.gen(function* () {
+                yield* Deferred.succeed(persistenceEntered, undefined);
+                yield* Deferred.await(allowPersistence);
+                return yield* base.persistGitHubAccountTokenIfCurrent(input);
+              }),
+          });
+        }),
+      ).pipe(Layer.provide(baseSettingsLayer));
+      const oauthLayer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)),
+        Layer.provide(settingsLayer),
+      );
+      const layer = Layer.merge(oauthLayer, settingsLayer);
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        const started = yield* oauth.start({
+          accountId,
+          label: "Cancel race",
+          host: "github.com",
+        });
+        yield* Deferred.await(waiting.reached);
+
+        yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+        yield* Deferred.await(persistenceEntered);
+        const cancelFiber = yield* Effect.gen(function* () {
+          const cancelled = yield* oauth.cancel(accountId, started.flowId!);
+          yield* Deferred.succeed(cancelFinished, cancelled);
+        }).pipe(Effect.forkScoped);
+        yield* Effect.yieldNow;
+        assert.isTrue(Option.isNone(yield* Deferred.poll(cancelFinished)));
+
+        yield* Deferred.succeed(allowPersistence, undefined);
+        const cancelled = yield* Deferred.await(cancelFinished);
+        assert.equal(cancelled.phase, "succeeded");
+        assert.isTrue((yield* settings.getSettings).githubAccounts[accountId]?.tokenConfigured);
+        yield* Fiber.interrupt(cancelFiber);
+        yield* Fiber.interrupt(waiting.fiber);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 });

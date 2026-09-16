@@ -300,6 +300,7 @@ describe("makeManagedServerProvider", () => {
             ready: Effect.void,
             getSettings: Ref.get(serverSettingsRef),
             updateSettings: () => Effect.die(new Error("unused in this test")),
+            persistGitHubAccountTokenIfCurrent: () => Effect.succeed(null),
             getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
             getGitHubAccountEnvironmentForWorkspaceRoot: () =>
               Effect.succeed({ configured: false }),

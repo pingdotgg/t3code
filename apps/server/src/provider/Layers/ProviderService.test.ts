@@ -490,6 +490,7 @@ const githubAccountRouting = makeProviderServiceLayer({
       ready: Effect.void,
       getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
       updateSettings: () => Effect.succeed(DEFAULT_SERVER_SETTINGS),
+      persistGitHubAccountTokenIfCurrent: () => Effect.succeed(null),
       getGitHubAccountEnvironment: () =>
         Effect.succeed({
           configured: true,

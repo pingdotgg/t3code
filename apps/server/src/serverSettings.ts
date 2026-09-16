@@ -21,6 +21,8 @@ import {
   type ProviderInstanceConfig,
   type ProviderInstanceEnvironmentVariable,
   type UsageLimitSourceConfig,
+  type GitHubAccount,
+  type GitHubAccountPatch,
   ProviderDriverKind,
   ProviderInstanceId,
   type GitHubAccountId,
@@ -243,6 +245,22 @@ export interface GitHubAccountEnvironment {
   readonly environment?: NodeJS.ProcessEnv;
 }
 
+export interface GitHubAccountTokenUpdate {
+  readonly accountId: GitHubAccountId;
+  readonly expectedAccount: GitHubAccount | undefined;
+  readonly account: GitHubAccountPatch;
+  readonly token: string;
+}
+
+const sameGitHubAccount = (
+  left: GitHubAccount | undefined,
+  right: GitHubAccount | undefined,
+): boolean =>
+  left?.label === right?.label &&
+  left?.login === right?.login &&
+  left?.host === right?.host &&
+  left?.tokenConfigured === right?.tokenConfigured;
+
 export class ServerSettingsService extends Context.Service<
   ServerSettingsService,
   {
@@ -259,6 +277,11 @@ export class ServerSettingsService extends Context.Service<
     readonly updateSettings: (
       patch: ServerSettingsPatch,
     ) => Effect.Effect<ServerSettings, ServerSettingsError>;
+
+    /** Persist an OAuth token only if the account still matches its flow snapshot. */
+    readonly persistGitHubAccountTokenIfCurrent: (
+      input: GitHubAccountTokenUpdate,
+    ) => Effect.Effect<ServerSettings | null, ServerSettingsError>;
 
     /** Resolve a configured account's PAT into a child-process environment. */
     readonly getGitHubAccountEnvironment: (
@@ -317,6 +340,22 @@ const makeTest = (overrides: DeepPartial<ServerSettings> = {}) =>
           Effect.tap((nextSettings) => Ref.set(currentSettingsRef, nextSettings)),
           Effect.map(resolveTextGenerationProvider),
         ),
+      persistGitHubAccountTokenIfCurrent: (input) =>
+        Ref.modify(currentSettingsRef, (currentSettings) => {
+          const currentAccount = currentSettings.githubAccounts[input.accountId];
+          if (!sameGitHubAccount(currentAccount, input.expectedAccount)) {
+            return [null, currentSettings];
+          }
+          const nextSettings = applyServerSettingsPatch(
+            currentSettings,
+            prepareGitHubAccountsPatch(currentSettings, {
+              githubAccounts: {
+                [input.accountId]: { ...input.account, token: input.token },
+              },
+            }).patch,
+          );
+          return [resolveTextGenerationProvider(nextSettings), nextSettings];
+        }),
       getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
       getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
       streamChanges: Stream.empty,
@@ -1042,6 +1081,24 @@ const make = Effect.gen(function* () {
       } satisfies GitHubAccountEnvironment;
     });
 
+  const persistSettings = Effect.fn("ServerSettings.persistSettings")(function* (
+    current: ServerSettings,
+    patch: ServerSettingsPatch,
+  ) {
+    const prepared = prepareGitHubAccountsPatch(current, patch);
+    const nextPersisted = yield* persistProviderEnvironmentSecrets(
+      current,
+      applyServerSettingsPatch(current, prepared.patch),
+    );
+    yield* persistGitHubAccountTokens(current, nextPersisted, prepared.tokenUpdates);
+    const next = yield* normalizeServerSettings(nextPersisted);
+    yield* writeSettingsAtomically(next);
+    yield* Cache.set(settingsCache, cacheKey, next);
+    yield* emitChange(next);
+    const materialized = yield* materializeProviderEnvironmentSecrets(next);
+    return resolveTextGenerationProvider(materialized);
+  });
+
   const startWatcher = Effect.gen(function* () {
     const settingsDir = pathService.dirname(settingsPath);
     const settingsFile = pathService.basename(settingsPath);
@@ -1138,18 +1195,21 @@ const make = Effect.gen(function* () {
       writeSemaphore.withPermits(1)(
         Effect.gen(function* () {
           const current = yield* getSettingsFromCache;
-          const prepared = prepareGitHubAccountsPatch(current, patch);
-          const nextPersisted = yield* persistProviderEnvironmentSecrets(
-            current,
-            applyServerSettingsPatch(current, prepared.patch),
-          );
-          yield* persistGitHubAccountTokens(current, nextPersisted, prepared.tokenUpdates);
-          const next = yield* normalizeServerSettings(nextPersisted);
-          yield* writeSettingsAtomically(next);
-          yield* Cache.set(settingsCache, cacheKey, next);
-          yield* emitChange(next);
-          const materialized = yield* materializeProviderEnvironmentSecrets(next);
-          return resolveTextGenerationProvider(materialized);
+          return yield* persistSettings(current, patch);
+        }),
+      ),
+    persistGitHubAccountTokenIfCurrent: (input) =>
+      writeSemaphore.withPermits(1)(
+        Effect.gen(function* () {
+          const current = yield* getSettingsFromCache;
+          if (!sameGitHubAccount(current.githubAccounts[input.accountId], input.expectedAccount)) {
+            return null;
+          }
+          return yield* persistSettings(current, {
+            githubAccounts: {
+              [input.accountId]: { ...input.account, token: input.token },
+            },
+          });
         }),
       ),
     get streamChanges() {

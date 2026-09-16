@@ -2019,6 +2019,7 @@ it.layer(
         ready: Effect.void,
         getSettings: Effect.fail(settingsError),
         updateSettings: () => Effect.fail(settingsError),
+        persistGitHubAccountTokenIfCurrent: () => Effect.fail(settingsError),
         getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
         getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
         streamChanges: Stream.empty,

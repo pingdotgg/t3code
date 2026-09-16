@@ -126,6 +126,7 @@ const fixture = Effect.fn("fixture")(function* (
             deviceOnboardingCompleted:
               patch.deviceOnboardingCompleted ?? current.deviceOnboardingCompleted,
           })),
+        persistGitHubAccountTokenIfCurrent: () => Effect.succeed(null),
         getGitHubAccountEnvironment: () => Effect.succeed({ configured: false }),
         getGitHubAccountEnvironmentForWorkspaceRoot: () => Effect.succeed({ configured: false }),
         streamChanges: Stream.empty,
