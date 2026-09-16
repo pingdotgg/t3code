@@ -83,10 +83,10 @@ describe("buildCursorAcpSpawnInput", () => {
     });
   });
 
-  it("uses Cursor auto-review in auto mode", () => {
+  it("uses Cursor auto-review with sandbox in auto mode", () => {
     expect(buildCursorAcpSpawnInput(undefined, "/tmp/project", undefined, "auto")).toEqual({
       command: "cursor-agent",
-      args: ["--auto-review", "acp"],
+      args: ["--auto-review", "--sandbox", "enabled", "acp"],
       cwd: "/tmp/project",
     });
   });
