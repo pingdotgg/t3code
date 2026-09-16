@@ -1194,6 +1194,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           <LegendList<MessagesTimelineRow>
             ref={listRef}
             data={rows}
+            // Replacing a thread must reset scroll geometry, even when both have rows.
+            dataKey={listIdentityKey}
             extraData={`${listIdentityKey}:${rows.length}`}
             keyExtractor={keyExtractor}
             getItemType={getItemType}
