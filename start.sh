@@ -5,7 +5,7 @@ set -Eeuo pipefail
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 server_dist="$repo_root/apps/server/dist"
 port="${PORT:-3773}"
-host="${HOST:-127.0.0.1}"
+host="${HOST:-0.0.0.0}"
 base_dir="${T3CODE_HOME:-${HOME}/.t3}"
 rebuild=false
 server_args=()
@@ -20,7 +20,7 @@ installed by t3@latest.
 
 Options:
   --port PORT       Server port (default: $PORT or 3773)
-  --host HOST       Bind address (default: $HOST or 127.0.0.1)
+  --host HOST       Bind address (default: $HOST or 0.0.0.0)
   --base-dir PATH   T3 home (default: $T3CODE_HOME or ~/.t3)
   --rebuild         Rebuild the production bundle inside Docker
   -h, --help        Show this help
@@ -143,6 +143,7 @@ t3_bin="$(npm exec --yes --package=t3@latest -- sh -c 'command -v t3')"
 
 runtime_info="$({ node - "$t3_bin" <<'NODE'
 const fs = require("node:fs");
+const { createRequire } = require("node:module");
 const path = require("node:path");
 
 const binPath = fs.realpathSync(process.argv[2]);
@@ -153,8 +154,23 @@ while (packageDir !== path.dirname(packageDir)) {
   if (fs.existsSync(packageJsonPath)) {
     const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, "utf8"));
     if (packageJson.name === "t3") {
-      const nodeModules = path.dirname(packageDir);
       const requiredNativePackages = ["node-pty", "msgpackr-extract", "@ff-labs/fff-node"];
+      let nodeModules = path.dirname(packageDir);
+
+      if (requiredNativePackages.some((packageName) => !fs.existsSync(path.join(nodeModules, packageName, "package.json")))) {
+        const platformPackageName = `@t3code/t3-${process.platform}-${process.arch}`;
+        const requireFromT3 = createRequire(packageJsonPath);
+        let platformPackageJsonPath;
+
+        try {
+          platformPackageJsonPath = requireFromT3.resolve(`${platformPackageName}/package.json`);
+        } catch {
+          throw new Error(`t3@latest is missing its native runtime package ${platformPackageName}`);
+        }
+
+        nodeModules = path.join(path.dirname(platformPackageJsonPath), "node_modules");
+      }
+
       for (const packageName of requiredNativePackages) {
         if (!fs.existsSync(path.join(nodeModules, packageName, "package.json"))) {
           throw new Error(`t3@latest is missing native runtime package ${packageName}`);
