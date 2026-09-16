@@ -97,6 +97,15 @@ function dispatchLocalStorageChange(key: string) {
   }
 }
 
+export const setLocalStorageItemAndNotify = <T, E>(
+  key: string,
+  value: T,
+  schema: Schema.Codec<T, E>,
+) => {
+  setLocalStorageItem(key, value, schema);
+  dispatchLocalStorageChange(key);
+};
+
 export function useLocalStorage<T, E>(
   key: string,
   initialValue: T,

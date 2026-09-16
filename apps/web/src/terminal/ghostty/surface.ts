@@ -262,6 +262,15 @@ function isSameTerminalLink(
   );
 }
 
+function mapTerminalLinkRange(
+  link: TerminalLinkWithRange,
+  mapPoint: (point: GhosttyCellRange["start"]) => GhosttyCellRange["start"] | null,
+): TerminalLinkWithRange | null {
+  const start = mapPoint(link.range.start);
+  const end = mapPoint(link.range.end);
+  return start && end ? { text: link.text, range: { start, end } } : null;
+}
+
 function terminalColumnAtOffset(row: GhosttySnapshot["rowData"][number], offset: number): number {
   for (let column = 0; column < row.cells.length; column += 1) {
     const nextOffset = terminalColumnOffset(row, column + 1);
@@ -489,6 +498,24 @@ export function terminalWheelArrowData(rows: number, applicationCursorKeys: bool
   return sequence.repeat(Math.abs(rows));
 }
 
+export async function runTerminalLinkContextMenu({
+  link,
+  setContextMenuLink,
+  showContextMenu,
+  isCurrent = () => true,
+}: {
+  readonly link: TerminalLinkWithRange | null;
+  readonly setContextMenuLink: (link: TerminalLinkWithRange | null) => void;
+  readonly showContextMenu: (linkText: string | null) => void | Promise<void>;
+  readonly isCurrent?: () => boolean;
+}): Promise<void> {
+  setContextMenuLink(link);
+  try {
+    await showContextMenu(link?.text ?? null);
+  } finally {
+    if (isCurrent()) setContextMenuLink(null);
+  }
+}
 export function ghosttyMouseButton(button: number): number | null {
   switch (button) {
     case 0:
@@ -552,7 +579,7 @@ export interface GhosttyTerminalSurfaceOptions {
    * reporting. The host owns the menu, so it also owns preventing the browser
    * default — whose Paste entry can never reach a canvas terminal.
    */
-  readonly onContextMenu?: (event: MouseEvent) => void;
+  readonly onContextMenu?: (event: MouseEvent, linkText: string | null) => void | Promise<void>;
 }
 
 export class GhosttyTerminalSurface {
@@ -615,6 +642,8 @@ export class GhosttyTerminalSurface {
     clickCount: number;
   } | null = null;
   private hoveredLink: TerminalLinkWithRange | null = null;
+  private contextMenuLink: TerminalLinkWithRange | null = null;
+  private contextMenuRequest = 0;
   private hoverPointer: { x: number; y: number } | null = null;
   private selectionClickSequence: TerminalSelectionClickSequence | null = null;
   private selectionMoved = false;
@@ -1398,8 +1427,8 @@ export class GhosttyTerminalSurface {
       this.hoverPointer = { x: event.clientX, y: event.clientY };
       // A drag whose press was already sent to the terminal application cannot
       // turn into link activation midway through, so link feedback would lie.
-      this.setHoveredLink(null);
-      this.canvas.style.cursor = "default";
+      this.setHoveredLink(this.contextMenuLinkInViewport());
+      if (this.contextMenuLink === null) this.canvas.style.cursor = "default";
       this.sendMouse("motion", this.buttonFromButtons(event.buttons), event);
       return;
     }
@@ -1480,14 +1509,35 @@ export class GhosttyTerminalSurface {
 
   private clearHoveredLink(cursor = ""): void {
     this.hoverPointer = null;
-    this.setHoveredLink(null);
-    this.canvas.style.cursor = cursor;
+    this.setHoveredLink(this.contextMenuLinkInViewport());
+    if (this.contextMenuLink === null) this.canvas.style.cursor = cursor;
   }
 
   private refreshHoveredLink(): void {
     const pointer = this.hoverPointer;
-    const link = pointer ? this.linkAt(pointer.x, pointer.y) : null;
+    const link =
+      this.contextMenuLink !== null
+        ? this.contextMenuLinkInViewport()
+        : pointer
+          ? this.linkAt(pointer.x, pointer.y)
+          : null;
     this.setHoveredLink(link);
+  }
+
+  private setContextMenuLink(link: TerminalLinkWithRange | null): void {
+    if (this.disposed) return;
+    this.contextMenuLink = link
+      ? mapTerminalLinkRange(link, ({ x, y }) => this.core.viewportPointToScreen(x, y))
+      : null;
+    this.refreshHoveredLink();
+  }
+
+  private contextMenuLinkInViewport(): TerminalLinkWithRange | null {
+    return this.contextMenuLink
+      ? mapTerminalLinkRange(this.contextMenuLink, ({ x, y }) =>
+          this.core.screenPointToViewport(x, y),
+        )
+      : null;
   }
 
   private setHoveredLink(link: TerminalLinkWithRange | null): void {
@@ -1606,7 +1656,16 @@ export class GhosttyTerminalSurface {
       event.preventDefault();
       return;
     }
-    this.options.onContextMenu?.(event);
+    const showContextMenu = this.options.onContextMenu;
+    if (!showContextMenu) return;
+    const link = this.linkAt(event.clientX, event.clientY);
+    const request = ++this.contextMenuRequest;
+    void runTerminalLinkContextMenu({
+      link,
+      setContextMenuLink: (nextLink) => this.setContextMenuLink(nextLink),
+      showContextMenu: (linkText) => showContextMenu(event, linkText),
+      isCurrent: () => request === this.contextMenuRequest,
+    });
   };
 
   private readonly onScrollbarPointerDown = (event: PointerEvent) => {

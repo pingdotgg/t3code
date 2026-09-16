@@ -69,6 +69,7 @@ const LANGUAGE_EXTENSION_ALIASES: Record<string, string> = {
 };
 
 export function basenameOfPath(pathValue: string): string {
+  if (pathValue === "/") return "/";
   const slashIndex = pathValue.lastIndexOf("/");
   return slashIndex === -1 ? pathValue : pathValue.slice(slashIndex + 1);
 }
