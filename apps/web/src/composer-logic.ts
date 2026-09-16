@@ -24,6 +24,16 @@ export function formatAssistantCitationForComposer(citation: AssistantCitation, 
   return `${serializeAssistantCitation(withAssistantCitationComment(citation, comment))} `;
 }
 
+export function composerRequiresModifier(
+  sendShortcut: ClientSettings["sendShortcut"] | undefined,
+  prompt: string,
+) {
+  return (
+    sendShortcut === "mod-enter" ||
+    (sendShortcut === "mod-enter-multiline" && /[\r\n]/.test(prompt))
+  );
+}
+
 export function composerSubmissionIntentForEnter(input: {
   isMobileViewport: boolean;
   shiftKey: boolean;
@@ -33,9 +43,7 @@ export function composerSubmissionIntentForEnter(input: {
   sendShortcut?: ClientSettings["sendShortcut"];
   prompt?: string;
 }): ComposerSubmissionIntent | null {
-  const requiresModifier =
-    input.sendShortcut === "mod-enter" ||
-    (input.sendShortcut === "mod-enter-multiline" && /[\r\n]/.test(input.prompt ?? ""));
+  const requiresModifier = composerRequiresModifier(input.sendShortcut, input.prompt ?? "");
   if (input.isMobileViewport || (requiresModifier && !input.modifierKey)) return null;
   if (input.shiftKey && !(requiresModifier && input.modifierKey && input.isRunning)) return null;
   if (input.isRunning && input.modifierKey && (!requiresModifier || input.shiftKey)) {

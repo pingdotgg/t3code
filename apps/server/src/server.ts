@@ -502,7 +502,8 @@ const RuntimeCoreDependenciesBaseLive = Layer.mergeAll(
   // canonical project/thread snapshots while mutations flow through v2.
   Layer.provideMerge(OrchestrationInfrastructureLayerLive),
   Layer.provideMerge(ServerSettingsLayerLive),
-  Layer.provideMerge(SourceControlProviderRegistryLayerLive),
+  // The asset route uses the registry's GitHub credential for private PR media.
+  Layer.provideMerge(Layer.mergeAll(SourceControlProviderRegistryLayerLive, GitHubCli.layer)),
   Layer.provideMerge(GitLayerLive),
   Layer.provideMerge(VcsLayerLive),
   Layer.provideMerge(Layer.mergeAll(TerminalLayerLive, PreviewLayerLive, DeviceLayerLive)),
