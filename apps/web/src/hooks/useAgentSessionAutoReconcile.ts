@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   isAtomCommandInterrupted,
@@ -41,7 +41,6 @@ const EXPECTED_FAILURE_TAGS = new Set([
   "AgentSessionImportProjectNotFoundError",
   "AgentSessionImportProjectChangedError",
   "AgentSessionScanError",
-  "EnvironmentRpcUnavailableError",
   "EnvironmentAuthorizationError",
 ]);
 
@@ -63,7 +62,15 @@ export function classifyImportFailure(
 
   const squashed = squashAtomCommandFailure(result);
 
-  if (isRpcClientError(squashed)) return "unsupported-server";
+  // Effect's server emits this exact defect for an unregistered RPC tag.
+  // Transport and decoding defects do not imply missing server support.
+  const defect = isRpcClientError(squashed)
+    ? squashed.reason._tag === "RpcClientDefect"
+      ? squashed.reason.cause
+      : undefined
+    : squashed;
+  const message = defect instanceof Error ? defect.message : defect;
+  if (message === "Unknown request tag: agentSessions.import") return "unsupported-server";
 
   if (
     squashed != null &&
@@ -87,10 +94,14 @@ export function isDefinitiveOutcome(kind: ReturnType<typeof classifyImportFailur
   return kind === "expected";
 }
 
+const MAX_IMPORT_ATTEMPTS = 3;
+const IMPORT_RETRY_DELAY_MS = 5_000;
+
 /**
  * Automatically imports external agent sessions (Claude Code, Codex) for every
  * known project once the environment shells are bootstrapped. Runs once per
- * project per mount cycle for successful imports; retries on transient failures.
+ * project per mount cycle for successful imports; allows at most three attempts
+ * per project, with five seconds between attempts on transient failures.
  *
  * Reuses the existing `agentSessions.import` RPC, which is idempotent: threads
  * whose `import:` id already exists are skipped by the server, and the
@@ -107,13 +118,31 @@ export function useAgentSessionAutoReconcile(): void {
   const reconciledRef = useRef(new Set<string>());
   const unsupportedServersRef = useRef(new Set<string>());
 
+  const attemptsRef = useRef(new Map<string, { count: number; retryAt: number }>());
+  const inFlightRef = useRef(new Set<string>());
+  const [retryVersion, retry] = useState(0);
+
   useEffect(() => {
-    if (!bootstrapped) return;
+    if (!bootstrapped) {
+      unsupportedServersRef.current.clear();
+      return;
+    }
 
     const pending = selectUnreconciledProjects(projects, reconciledRef.current);
     if (pending.length === 0) return;
 
     let cancelled = false;
+    let retryTimer: ReturnType<typeof setTimeout> | undefined;
+    let nextRetryAt = Infinity;
+    const scheduleRetry = (retryAt: number) => {
+      if (retryAt >= nextRetryAt) return;
+      nextRetryAt = retryAt;
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(
+        () => retry((version) => version + 1),
+        Math.max(0, retryAt - Date.now()),
+      );
+    };
     const run = async () => {
       for (const project of pending) {
         if (cancelled) return;
@@ -122,6 +151,18 @@ export function useAgentSessionAutoReconcile(): void {
 
         if (unsupportedServersRef.current.has(project.environmentId)) continue;
 
+        if (inFlightRef.current.has(key)) continue;
+        const previous = attemptsRef.current.get(key);
+        if (previous && previous.count >= MAX_IMPORT_ATTEMPTS) continue;
+        if (previous && previous.retryAt > Date.now()) {
+          scheduleRetry(previous.retryAt);
+          continue;
+        }
+
+        // Reserve the attempt before awaiting so project updates cannot bypass the limit.
+        const attempt = { count: (previous?.count ?? 0) + 1, retryAt: Infinity };
+        attemptsRef.current.set(key, attempt);
+        inFlightRef.current.add(key);
         const result = await importSessions({
           environmentId: project.environmentId,
           input: {
@@ -130,7 +171,16 @@ export function useAgentSessionAutoReconcile(): void {
           },
         });
 
-        if (cancelled) return;
+        inFlightRef.current.delete(key);
+        attempt.retryAt = Date.now() + IMPORT_RETRY_DELAY_MS;
+        if (cancelled) {
+          if (result._tag === "Success" || isDefinitiveOutcome(classifyImportFailure(result))) {
+            reconciledRef.current.add(key);
+          }
+          // A replacement effect may have skipped this project's in-flight request.
+          retry((version) => version + 1);
+          return;
+        }
 
         if (result._tag === "Success") {
           reconciledRef.current.add(key);
@@ -143,10 +193,17 @@ export function useAgentSessionAutoReconcile(): void {
 
         const kind = classifyImportFailure(result);
 
+        if (
+          (kind === "unexpected" || kind === "interrupted") &&
+          attempt.count < MAX_IMPORT_ATTEMPTS
+        ) {
+          scheduleRetry(attempt.retryAt);
+        }
         if (kind === "interrupted") continue;
 
         if (kind === "unsupported-server") {
           unsupportedServersRef.current.add(project.environmentId);
+          attemptsRef.current.delete(key);
           for (const key of reconciledRef.current) {
             if (key.startsWith(`${project.environmentId}\0`)) {
               reconciledRef.current.delete(key);
@@ -185,6 +242,9 @@ export function useAgentSessionAutoReconcile(): void {
 
     return () => {
       cancelled = true;
+      clearTimeout(retryTimer);
     };
-  }, [bootstrapped, importSessions, projects]);
+    // The timer increments retryVersion to rerun this effect when a retry becomes due.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [bootstrapped, importSessions, projects, retryVersion]);
 }
