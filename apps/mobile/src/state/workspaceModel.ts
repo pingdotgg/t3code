@@ -2,22 +2,14 @@ import { type EnvironmentShellSummary } from "@t3tools/client-runtime/state/shel
 import type { EnvironmentId, ServerConfig } from "@t3tools/contracts";
 
 import {
-  connectionCatalogDisplayUrl,
-  type EnvironmentPresentation,
   type EnvironmentConnectionPhase,
   type NetworkStatus,
 } from "@t3tools/client-runtime/connection";
 
-export interface WorkspaceEnvironment {
-  readonly environmentId: EnvironmentId;
-  readonly environmentLabel: string;
-  readonly displayUrl: string;
-  readonly isRelayManaged: boolean;
-  readonly isEnabled: boolean;
-  readonly connectionState: EnvironmentConnectionPhase;
-  readonly connectionError: string | null;
-  readonly connectionErrorTraceId: string | null;
-}
+import type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
+
+export { projectEnvironmentConnectionSummary as projectWorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
+export type { EnvironmentConnectionSummary as WorkspaceEnvironment } from "@t3tools/client-runtime/state/presentation";
 
 export interface WorkspaceConnectionState {
   readonly isLoadingConnections: boolean;
@@ -35,22 +27,6 @@ export interface WorkspaceState extends WorkspaceConnectionState {
   readonly hasPendingShellSnapshot: boolean;
   readonly shellSnapshotError: string | null;
   readonly latestCachedSnapshotReceivedAt: string | null;
-}
-
-export function projectWorkspaceEnvironment(
-  environmentId: EnvironmentId,
-  environment: EnvironmentPresentation,
-): WorkspaceEnvironment {
-  return {
-    environmentId,
-    environmentLabel: environment.entry.target.label,
-    displayUrl: connectionCatalogDisplayUrl(environment.entry) ?? "",
-    isRelayManaged: environment.entry.target._tag === "RelayConnectionTarget",
-    isEnabled: environment.entry.enabled,
-    connectionState: environment.connection.phase,
-    connectionError: environment.connection.error,
-    connectionErrorTraceId: environment.connection.traceId,
-  };
 }
 
 function overallConnectionState(
