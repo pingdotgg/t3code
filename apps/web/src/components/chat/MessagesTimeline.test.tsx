@@ -285,6 +285,64 @@ function buildSnapShotTimelineEntry(previewUrl?: string) {
 }
 
 describe("MessagesTimeline", () => {
+  it("opens late interrupted work once and respects a subsequent manual collapse", () => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    const turnId = TurnId.make("delayed-interrupt");
+    const entries = [
+      {
+        id: "late-work",
+        kind: "work" as const,
+        createdAt: MESSAGE_CREATED_AT,
+        entry: {
+          id: "late-work",
+          turnId,
+          createdAt: MESSAGE_CREATED_AT,
+          label: "Inspected synthetic-file.ts",
+          tone: "info" as const,
+        },
+      },
+    ];
+    const timeline = (state: "running" | "interrupted", feed = entries) => (
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={feed}
+        latestTurn={{
+          turnId,
+          state,
+          startedAt: MESSAGE_CREATED_AT,
+          completedAt: state === "running" ? null : MESSAGE_CREATED_AT,
+        }}
+        isWorking={state === "running"}
+      />
+    );
+    let renderer: ReactTestRenderer | undefined;
+    const content = () => JSON.stringify(renderer?.toJSON());
+    try {
+      act(() => {
+        renderer = create(timeline("running", []));
+      });
+      act(() => renderer!.update(timeline("interrupted", [])));
+      act(() => renderer!.update(timeline("interrupted")));
+      expect(content()).toContain("Inspected synthetic-file.ts");
+
+      act(() => renderer!.root.findByProps({ "aria-expanded": true }).props.onClick());
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+      act(() => renderer!.update(timeline("interrupted", [...entries])));
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+
+      act(() => renderer!.unmount());
+      act(() => {
+        renderer = create(timeline("interrupted"));
+      });
+      expect(content()).not.toContain("Inspected synthetic-file.ts");
+    } finally {
+      act(() => renderer?.unmount());
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("renders previous and next controls with the minimap", () => {
     const first = buildUserTimelineEntry("First turn");
     const secondBase = buildUserTimelineEntry("Second turn");
