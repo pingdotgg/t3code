@@ -15,6 +15,7 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
+import { resolveComposerDispatchMode } from "./composerDispatch";
 
 interface PendingActionState {
   questionIndex: number;
@@ -93,9 +94,17 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const environmentIdentificationMode = useEnvironmentIdentificationMode();
   const shortcutModifiers = useShortcutModifierState();
   const isQueuing =
-    isRunning &&
     !isEditingQueuedMessage &&
-    (followUpBehavior === "queue" || shortcutModifiers.metaKey || shortcutModifiers.ctrlKey);
+    resolveComposerDispatchMode({
+      phase: isRunning ? "running" : "ready",
+      activeTurnDefault: followUpBehavior,
+      alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
+    }) === "queue";
+  const alternateAction = resolveComposerDispatchMode({
+    phase: "running",
+    activeTurnDefault: followUpBehavior,
+    alternateModifier: true,
+  });
   const isSendDisabled = sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",
@@ -263,7 +272,7 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const submitTooltip =
     submitStatus ??
     (isRunning && !isEditingQueuedMessage
-      ? `Enter to ${followUpBehavior}, Mod+Enter to queue`
+      ? `Enter to ${followUpBehavior}, Mod+Enter to ${alternateAction}`
       : submitLabel);
 
   const sendButton = (
