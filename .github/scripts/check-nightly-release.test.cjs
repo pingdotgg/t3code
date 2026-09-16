@@ -1,6 +1,10 @@
 const assert = require("node:assert/strict");
 const test = require("node:test");
-const { shouldReleaseNightly } = require("./check-nightly-release.cjs");
+const {
+  assertCommitOnDefaultBranch,
+  assertReleaseSource,
+  shouldReleaseNightly,
+} = require("./check-nightly-release.cjs");
 
 const now = Date.parse("2026-09-05T12:00:00Z");
 const hour = 60 * 60 * 1000;
@@ -9,6 +13,77 @@ const nightly = (hoursAgo, overrides = {}) => ({
   draft: false,
   published_at: new Date(now - hoursAgo * hour).toISOString(),
   ...overrides,
+});
+
+function releaseSourceFixture({
+  comparisonStatus = "ahead",
+  eventName = "workflow_dispatch",
+  ref = "refs/heads/main",
+  sha = "candidate",
+} = {}) {
+  const calls = [];
+  return {
+    calls,
+    options: {
+      context: {
+        eventName,
+        payload: { repository: { default_branch: "main" } },
+        ref,
+        repo: { owner: "example", repo: "app" },
+        sha,
+      },
+      github: {
+        rest: {
+          repos: {
+            async compareCommitsWithBasehead(params) {
+              calls.push(params);
+              return { data: { status: comparisonStatus } };
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+test("allows preview releases from any branch without consulting main", async () => {
+  const { options, calls } = releaseSourceFixture({ ref: "refs/heads/feature" });
+  await assertReleaseSource({ ...options, releaseChannel: "preview" });
+  assert.equal(calls.length, 0);
+});
+
+for (const releaseChannel of ["stable", "nightly"]) {
+  test(`rejects a manual ${releaseChannel} release from a feature branch`, async () => {
+    const { options, calls } = releaseSourceFixture({ ref: "refs/heads/feature" });
+    await assert.rejects(
+      assertReleaseSource({ ...options, releaseChannel }),
+      new RegExp(`${releaseChannel} releases must be dispatched from main`),
+    );
+    assert.equal(calls.length, 0);
+  });
+
+  test(`allows a manual ${releaseChannel} release from main`, async () => {
+    const { options, calls } = releaseSourceFixture();
+    await assertReleaseSource({ ...options, releaseChannel });
+    assert.equal(calls[0].basehead, "candidate...main");
+  });
+}
+
+for (const comparisonStatus of ["behind", "diverged"]) {
+  test(`rejects a release commit that is ${comparisonStatus} from main`, async () => {
+    const { options } = releaseSourceFixture({ comparisonStatus, eventName: "push" });
+    await assert.rejects(
+      assertCommitOnDefaultBranch({ ...options, sha: "release-commit" }),
+      new RegExp(`not contained in main \\(${comparisonStatus}\\)`),
+    );
+  });
+}
+
+test("accepts a release commit already contained in main", async () => {
+  for (const comparisonStatus of ["ahead", "identical"]) {
+    const { options } = releaseSourceFixture({ comparisonStatus, eventName: "push" });
+    await assertCommitOnDefaultBranch({ ...options, sha: "release-commit" });
+  }
 });
 
 function fixture({ releases = [nightly(7)], comparisonStatus = "ahead" } = {}) {
