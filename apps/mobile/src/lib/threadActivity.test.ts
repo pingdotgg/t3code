@@ -18,6 +18,7 @@ import {
   buildPendingUserInputAnswers,
   buildThreadFeed,
   deriveThreadFeedPresentation,
+  isThinkingTraceMessage,
   isPendingUserInputOptionSelected,
   setPendingUserInputCustomAnswer,
   togglePendingUserInputOptionSelection,
@@ -2489,6 +2490,44 @@ describe("buildThreadFeed", () => {
     );
     expect(afterStrandedTool).toMatchObject([
       { type: "work-toggle", id: "live-activity-row", summary: toolFirst.summary, hiddenCount: 6 },
+    ]);
+  });
+
+  it("treats compatibility system-role traces as thinking, not regular messages", () => {
+    const turnId = TurnId.make("system-compat");
+    const messages: OrchestrationThread["messages"] = [1, 2].map((second) => ({
+      id: MessageId.make(`reasoning:${second}`),
+      role: "system",
+      text: `Checking step ${second}.`,
+      turnId,
+      streaming: false,
+      createdAt: `2026-04-01T00:00:0${second}.000Z`,
+      updatedAt: `2026-04-01T00:00:0${second}.000Z`,
+    }));
+    const answer: OrchestrationThread["messages"][number] = {
+      id: MessageId.make("assistant-answer"),
+      role: "assistant",
+      text: "Here is the answer.",
+      turnId,
+      streaming: false,
+      createdAt: "2026-04-01T00:00:03.000Z",
+      updatedAt: "2026-04-01T00:00:03.000Z",
+    };
+    expect(messages.every(isThinkingTraceMessage)).toBe(true);
+    expect(isThinkingTraceMessage(answer)).toBe(false);
+    const thread = makeThread({
+      id: ThreadId.make("system-compat"),
+      projectId: ProjectId.make("project-1"),
+      title: "Compatibility",
+      messages: [...messages, answer],
+    });
+    const rows = deriveThreadFeedPresentation(buildThreadFeed(thread), null, new Set([turnId]));
+    expect(rows.some((entry) => entry.type === "message" && entry.message.role === "system")).toBe(
+      false,
+    );
+    expect(rows).toMatchObject([
+      { type: "work-toggle", summary: "Thought (×2)", hiddenCount: 2 },
+      { type: "message", message: { role: "assistant", text: "Here is the answer." } },
     ]);
   });
 
