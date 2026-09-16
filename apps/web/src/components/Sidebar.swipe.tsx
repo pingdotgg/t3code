@@ -62,6 +62,7 @@ export function resolveThreadSwipeActions(input: {
   };
 }
 
+// Gesture math in px; the button itself sizes with w-18 (same 72px).
 const ACTION_WIDTH = 72;
 /** Drag distance that snaps the row open instead of springing back. */
 const OPEN_THRESHOLD = 32;
@@ -244,6 +245,9 @@ export function ThreadSwipeable(props: {
       // Keep dnd-kit's pointer sensor from turning a touch drag into a
       // pinned-row reorder; mouse drags never reach here.
       event.stopPropagation();
+      // A press on another row dismisses whichever row is open, like the
+      // mobile list — open() alone would leave it up until release.
+      activeSwipeableClose?.();
       gestureRef.current = {
         pointerId: event.pointerId,
         startX: event.clientX,
@@ -384,10 +388,9 @@ export function ThreadSwipeable(props: {
       aria-label={action.label}
       onClick={handleActionPress(action)}
       className={cn(
-        "flex h-full shrink-0 cursor-pointer flex-col items-center justify-center gap-1 text-[11px] font-medium text-white outline-none",
+        "flex h-full w-18 shrink-0 cursor-pointer flex-col items-center justify-center gap-1 text-[11px] font-medium text-white outline-none",
         action.className,
       )}
-      style={{ width: ACTION_WIDTH }}
     >
       {action.icon}
       <span>{action.label}</span>
@@ -396,8 +399,7 @@ export function ThreadSwipeable(props: {
 
   return (
     <div
-      className="relative overflow-hidden rounded-md"
-      style={{ touchAction: "pan-y" }}
+      className="relative touch-pan-y overflow-hidden rounded-md"
       onPointerDownCapture={handlePointerDownCapture}
       onClickCapture={handleClickCapture}
     >
