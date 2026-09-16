@@ -103,6 +103,30 @@ const classifyNonZeroExit = (command: string, stderr: string): VcsProcessExitFai
   return "command-failed";
 };
 
+/**
+ * Fixed, secret-free hints for common failure modes. stderr is matched but never echoed, since
+ * VCS CLIs may print credentials. Order matters: more specific patterns come first.
+ */
+const COMMAND_FAILURE_HINTS: ReadonlyArray<readonly [RegExp, string]> = [
+  [
+    /permission denied \((?:publickey|password|keyboard-interactive)\)/,
+    "SSH authentication failed. Check that your SSH key is set up for this host, or use an HTTPS URL.",
+  ],
+  [
+    /detected dubious ownership in repository/,
+    "The directory is owned by a different user, which git refuses to trust. Fix the directory ownership or add it to git's safe.directory list.",
+  ],
+  [
+    /permission denied/,
+    "Permission denied. Check that the directory is owned by your user account and writable.",
+  ],
+  [/not a git repository/, "The directory is not a git repository."],
+];
+
+/** Resolves a sanitized failure hint from stderr without retaining any of its content. */
+export const resolveCommandFailureHint = (stderr: string): string | undefined =>
+  COMMAND_FAILURE_HINTS.find(([pattern]) => pattern.test(stderr.toLowerCase()))?.[1];
+
 export const make = Effect.gen(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const vcsProcesses = yield* Semaphore.make(VCS_PROCESS_CONCURRENCY);
@@ -165,14 +189,18 @@ export const make = Effect.gen(function* () {
     }
 
     if (!input.allowNonZeroExit && result.code !== 0) {
+      const failureKind = classifyNonZeroExit(input.command, result.stderr);
+      const failureDetail =
+        failureKind === "command-failed" ? resolveCommandFailureHint(result.stderr) : undefined;
       return yield* VcsProcessExitError.fromProcessExit(
         baseError,
         {
           exitCode: result.code,
           stderr: result.stderr,
           stderrTruncated: result.stderrTruncated,
+          ...(failureDetail !== undefined ? { failureDetail } : {}),
         },
-        classifyNonZeroExit(input.command, result.stderr),
+        failureKind,
       );
     }
 

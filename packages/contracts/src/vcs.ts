@@ -85,6 +85,8 @@ export interface VcsProcessExitFailure {
   readonly exitCode: number;
   readonly stderr: string;
   readonly stderrTruncated: boolean;
+  /** Server-derived, secret-free detail describing the failure, when known. Never raw stderr. */
+  readonly failureDetail?: string;
 }
 
 export class VcsProcessSpawnError extends Schema.TaggedError<VcsProcessSpawnError>()(
@@ -143,7 +145,7 @@ export class VcsProcessExitError extends Schema.TaggedError<VcsProcessExitError>
               : context.command === "gh" || context.command === "az"
                 ? "Pull request not found."
                 : "VCS resource not found."
-            : "Process exited with a non-zero status.";
+            : (error.failureDetail ?? "Process exited with a non-zero status.");
 
     return new VcsProcessExitError({
       ...context,

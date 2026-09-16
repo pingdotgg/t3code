@@ -123,6 +123,64 @@ describe("VcsProcess.run", () => {
     }).pipe(provideLive),
   );
 
+  it.effect("includes a sanitized hint for permission-denied failures", () =>
+    Effect.gen(function* () {
+      const rawStderr = "fatal: cannot mkdir .git: Permission denied";
+      const error = yield* run({
+        operation: "test.permission",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(128)", rawStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toBeInstanceOf(VcsProcessExitError);
+      expect(error).toMatchObject({
+        detail:
+          "Permission denied. Check that the directory is owned by your user account and writable.",
+        failureKind: "command-failed",
+      });
+      expect(error.message).not.toContain("cannot mkdir");
+      expect(error.message).not.toContain(rawStderr);
+    }).pipe(provideLive),
+  );
+
+  it.effect("includes a sanitized hint for dubious-ownership failures", () =>
+    Effect.gen(function* () {
+      const rawStderr = "fatal: detected dubious ownership in repository at '/workspace'";
+      const error = yield* run({
+        operation: "test.dubious-ownership",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(128)", rawStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        detail:
+          "The directory is owned by a different user, which git refuses to trust. Fix the directory ownership or add it to git's safe.directory list.",
+      });
+      expect(error.message).not.toContain(rawStderr);
+    }).pipe(provideLive),
+  );
+
+  it.effect("includes a sanitized hint for SSH authentication failures", () =>
+    Effect.gen(function* () {
+      const rawStderr = "git@github.com: Permission denied (publickey).";
+      const error = yield* run({
+        operation: "test.ssh-auth",
+        command: "node",
+        args: ["-e", "process.stderr.write(process.argv[1]); process.exit(128)", rawStderr],
+        cwd: process.cwd(),
+      }).pipe(Effect.flip);
+
+      expect(error).toMatchObject({
+        detail:
+          "SSH authentication failed. Check that your SSH key is set up for this host, or use an HTTPS URL.",
+        failureKind: "command-failed",
+      });
+      expect(error.message).not.toContain("publickey");
+    }).pipe(provideLive),
+  );
+
   it.effect("writes stdin before waiting for exit", () =>
     Effect.gen(function* () {
       const result = yield* run({
