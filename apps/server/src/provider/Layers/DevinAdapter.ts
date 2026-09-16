@@ -817,7 +817,18 @@ export const makeDevinAdapter = Effect.fn("makeDevinAdapter")(function* (
     return yield* Effect.gen(function* () {
       const launch = yield* context.promptLock.withPermit(
         Effect.gen(function* () {
-          yield* requireSession(input.threadId);
+          // Attachments were read before the lock was acquired; if the session
+          // was stopped and restarted meanwhile, `context` names a closed
+          // runtime and this send must not proceed on it.
+          const current = yield* requireSession(input.threadId);
+          if (current !== context) {
+            return yield* new ProviderAdapterRequestError({
+              provider: PROVIDER,
+              method: "session/prompt",
+              detail:
+                "The Devin session was restarted while the turn was being prepared. Send again.",
+            });
+          }
           const requestedModel = input.modelSelection?.model ?? context.session.model;
           const requested = resolveDevinModelId(requestedModel);
           const modelOption = findDevinModelConfigOption(yield* context.runtime.getConfigOptions);

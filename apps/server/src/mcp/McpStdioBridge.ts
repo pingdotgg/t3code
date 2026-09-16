@@ -144,6 +144,10 @@ main();
 
 export const MCP_STDIO_BRIDGE_FILE_NAME = "mcp-stdio-bridge.mjs";
 
+// Concurrent writers in one process share the pid, so a counter keeps each
+// temporary file unique.
+let bridgeWriteCounter = 0;
+
 /**
  * Ensures the bridge script exists under `stateDir` and returns its absolute
  * path. Reuses an up-to-date copy so warm restarts do not rewrite the file.
@@ -160,7 +164,7 @@ export const ensureMcpStdioBridge = (
       return bridgePath;
     }
     yield* fileSystem.makeDirectory(stateDir, { recursive: true });
-    const tempPath = `${bridgePath}.${process.pid}.tmp`;
+    const tempPath = `${bridgePath}.${process.pid}.${bridgeWriteCounter++}.tmp`;
     yield* fileSystem.writeFileString(tempPath, MCP_STDIO_BRIDGE_SOURCE);
     yield* fileSystem.rename(tempPath, bridgePath);
     return bridgePath;

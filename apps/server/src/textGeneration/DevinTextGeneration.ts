@@ -75,6 +75,23 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
         Effect.provideService(FileSystem.FileSystem, fileSystem),
       );
 
+      // Text generation has no interactive user and no workspace tools: any
+      // permission, elicitation, or extension request is declined so the turn
+      // cannot stall waiting for input that will never arrive.
+      yield* runtime.handleRequestPermission(() =>
+        Effect.succeed({ outcome: { outcome: "cancelled" as const } }),
+      );
+      yield* runtime.handleElicitation(() =>
+        Effect.succeed({ action: { action: "decline" as const } }),
+      );
+      yield* runtime.handleUnknownExtRequest((method) =>
+        Effect.fail(
+          new EffectAcpErrors.AcpRequestError({
+            code: -32601,
+            errorMessage: `Extension request '${method}' is disabled for text generation.`,
+          }),
+        ),
+      );
       yield* runtime.handleSessionUpdate((notification) => {
         const update = notification.update;
         if (update.sessionUpdate !== "agent_message_chunk") {
@@ -256,6 +273,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
       const { prompt, outputSchema } = buildThreadTitlePrompt({
         message: input.message,
         previousTitle: input.previousTitle,
+        linkedContext: input.linkedContext,
         attachments: input.attachments,
       });
 
@@ -269,6 +287,7 @@ export const makeDevinTextGeneration = Effect.fn("makeDevinTextGeneration")(func
 
       return {
         title: sanitizeThreadTitle(generated.title),
+        ...(generated.needsRefinement ? { needsRefinement: true } : {}),
       } satisfies TextGeneration.ThreadTitleGenerationResult;
     });
 
