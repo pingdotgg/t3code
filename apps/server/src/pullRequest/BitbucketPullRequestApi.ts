@@ -636,7 +636,7 @@ export const make = Effect.gen(function* () {
                     lines_removed: Schema.Number,
                   }),
                 ),
-                next: Schema.optional(Schema.String),
+                next: Schema.optional(Schema.NullOr(Schema.String)),
               }),
             ),
           });

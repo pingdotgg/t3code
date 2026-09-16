@@ -22,7 +22,7 @@ function response(body: string) {
   return { body, truncated: false };
 }
 
-function page(count: number, firstNumber: number, next?: string): string {
+function page(count: number, firstNumber: number, next?: string | null): string {
   return JSON.stringify({
     pagelen: 50,
     size: count,
@@ -40,7 +40,7 @@ function page(count: number, firstNumber: number, next?: string): string {
   });
 }
 
-function valuePage(values: ReadonlyArray<unknown>, next?: string): string {
+function valuePage(values: ReadonlyArray<unknown>, next?: string | null): string {
   return JSON.stringify({ values, ...(next === undefined ? {} : { next }) });
 }
 
@@ -362,7 +362,10 @@ layer("BitbucketPullRequestApi.layer", (it) => {
       mockedRequest.mockReturnValueOnce(
         Effect.succeed(
           response(
-            valuePage([{ old: null, new: { path: "last.ts" }, lines_added: 1, lines_removed: 0 }]),
+            valuePage(
+              [{ old: null, new: { path: "last.ts" }, lines_added: 1, lines_removed: 0 }],
+              null,
+            ),
           ),
         ),
       );

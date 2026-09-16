@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Result from "effect/Result";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
-import { VcsProcess } from "../vcs/VcsProcess.ts";
+import * as VcsProcess from "../vcs/VcsProcess.ts";
 import type { PullRequestCapabilities, PullRequestViewerPermissions } from "@t3tools/contracts";
 import { decodeJsonResult } from "@t3tools/shared/schemaJson";
 import { ForgejoCli, type ForgejoApiInput } from "../sourceControl/ForgejoCli.ts";
@@ -72,7 +72,7 @@ export const make = Effect.gen(function* () {
   const cli = yield* ForgejoCli;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const process = yield* VcsProcess;
+  const process = yield* VcsProcess.VcsProcess;
   const failure = (operation: string, detail: string, cause?: unknown) =>
     new PullRequestProviderError({
       provider: "forgejo",
@@ -282,12 +282,14 @@ export const make = Effect.gen(function* () {
     }
     if (!entry) return yield* failure("getDiff", "Missing file path.");
     if (entry.mode === "160000")
-      return { mode: entry.mode, contents: `Subproject commit ${entry.sha}\n` };
+      return { mode: entry.mode, contents: `Subproject commit ${entry.sha}\n`, binary: false };
     const blob = yield* read(
       { ...input, path: `${repoPath(input)}/git/blobs/${encodeURIComponent(entry.sha)}` },
       Schema.Struct({ content: Schema.String, encoding: Schema.Literal("base64") }),
     );
-    return { mode: entry.mode, contents: Buffer.from(blob.content, "base64").toString("utf8") };
+    const bytes = Buffer.from(blob.content, "base64");
+    const contents = bytes.toString("utf8");
+    return { mode: entry.mode, contents, binary: !bytes.equals(Buffer.from(contents, "utf8")) };
   });
   const provider: PullRequestProviderApi = {
     kind: "forgejo",
@@ -521,6 +523,8 @@ export const make = Effect.gen(function* () {
             ).pipe(Effect.catchIf(isOversizedResponse, () => Effect.succeed(null)));
             if (
               contents === null ||
+              contents[0]?.binary ||
+              contents[1]?.binary ||
               contents[0]?.contents.includes("\0") ||
               contents[1]?.contents.includes("\0")
             )

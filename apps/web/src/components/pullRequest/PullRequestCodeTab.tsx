@@ -657,7 +657,7 @@ function PullRequestCodeTab({
     // Held as an override of the default rather than as the file keys on screen: a diff that is
     // still paging would otherwise bring its next slice in folded, moments after the reader
     // asked for everything to be open.
-    setFoldOverride(areAllDiffFilesCollapsed(fileKeys, collapsedFileKeys) ? "expanded" : "folded");
+    setFoldOverride(allFilesCollapsed ? "expanded" : "folded");
     setToggledFiles(new Set());
   };
 

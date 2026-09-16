@@ -42,6 +42,38 @@ const runtime = Layer.mergeAll(Layer.mock(ForgejoCli)({ api }), VcsProcess.layer
 
 afterEach(() => api.mockReset());
 
+it.effect("marks non-UTF-8 blobs as omitted instead of losing byte-only changes", () =>
+  Effect.gen(function* () {
+    api.mockImplementation((request) => {
+      if (request.path.endsWith("/pulls/1")) return json(pull);
+      if (request.path.includes("/files?"))
+        return json([{ filename: "legacy.txt", status: "modified", additions: 1, deletions: 1 }]);
+      if (request.path.includes("/git/trees/"))
+        return json({
+          truncated: false,
+          tree: [
+            {
+              path: "legacy.txt",
+              mode: "100644",
+              sha: request.path.includes("/head?") ? "new" : "old",
+            },
+          ],
+        });
+      if (request.path.includes("/git/blobs/"))
+        return json({
+          encoding: "base64",
+          content: Buffer.from([request.path.endsWith("/new") ? 0x81 : 0x80]).toString("base64"),
+        });
+      return Effect.die(`Unexpected API path: ${request.path}`);
+    });
+    const provider = yield* Provider.make;
+    const result = yield* provider.getDiff({ ...input, cursor: "1" });
+    expect(result.truncated).toBe(true);
+    expect(result.patch).toContain('diff --git "a/legacy.txt" "b/legacy.txt"\nBinary files differ');
+    expect(result.omittedFileStats).toEqual([{ path: "legacy.txt", additions: 1, deletions: 1 }]);
+  }).pipe(Effect.provide(runtime)),
+);
+
 it.effect("keeps small Forgejo patches on the direct path", () =>
   Effect.gen(function* () {
     api.mockReturnValueOnce(Effect.succeed(output("whole patch")));
