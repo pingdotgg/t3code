@@ -938,10 +938,6 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             )
             AND projects.deleted_at IS NULL
             AND messages.is_streaming = 0
-            -- Only these two roles are searchable, and the CASE above depends
-            -- on it: reasoning is deliberately excluded so a thinking trace
-            -- cannot surface in the command palette, and widening this filter
-            -- would label it 'assistant' rather than adding a source.
             AND (
               messages.role = 'user'
               OR (

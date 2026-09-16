@@ -978,7 +978,7 @@ export function ProviderInstanceCard({
               inert={readOnly}
               aria-disabled={readOnly || undefined}
               className={cn(
-                "flex w-full items-center justify-end gap-2 sm:w-auto",
+                "flex w-full min-w-0 items-center justify-end gap-2 @min-[32rem]/settings-row:w-auto",
                 readOnly && "opacity-50 select-none",
               )}
             >
@@ -992,7 +992,7 @@ export function ProviderInstanceCard({
               <DraftInput
                 id={`provider-instance-${instanceId}-display-name`}
                 size="sm"
-                className="min-w-0 flex-1 sm:w-56 sm:flex-none"
+                className="min-w-0 flex-1 @min-[32rem]/settings-row:w-56"
                 value={instance.displayName ?? ""}
                 onCommit={updateDisplayName}
                 placeholder={driverOption?.label ?? "Instance label"}
