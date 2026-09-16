@@ -79,10 +79,12 @@ function decodeGrokInspectSkills(stdout: string): ReadonlyArray<ServerProviderSk
     }
     const scope = typeof source?.type === "string" ? source.type.trim() : "";
     const description = typeof record.description === "string" ? record.description.trim() : "";
+    const enabled = record.userInvocable !== false;
     skillsByName.set(name, {
       name,
       path,
-      enabled: record.userInvocable !== false,
+      enabled,
+      ...(enabled ? {} : { disabledBy: "provider" as const }),
       ...(scope ? { scope } : {}),
       ...(description ? { description } : {}),
     });

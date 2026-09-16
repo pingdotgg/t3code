@@ -364,10 +364,12 @@ export const discoverClaudeSkills = Effect.fn("discoverClaudeSkills")(function* 
       const userInvocationOnly =
         (frontmatter.kind === "parsed" && frontmatter.userInvocationOnly === true) ||
         override?.userInvocationOnly === true;
+      const enabled = override?.enabled ?? true;
       skillsByName.set(name, {
         name,
         path: skillPath,
-        enabled: override?.enabled ?? true,
+        enabled,
+        ...(enabled ? {} : { disabledBy: "provider" as const }),
         scope: root.scope,
         ...(frontmatter.kind === "parsed" && frontmatter.description
           ? { description: frontmatter.description }

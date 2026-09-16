@@ -303,6 +303,7 @@ function parseCodexSkillsListResponse(
       name: skill.name,
       path: skill.path,
       enabled: skill.enabled,
+      ...(skill.enabled ? {} : { disabledBy: "provider" as const }),
     };
 
     if (skill.description) {

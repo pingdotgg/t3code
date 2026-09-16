@@ -85,6 +85,7 @@ describe("discoverGrokSkills", () => {
           path: "/opt/grok/bundled/skills/internal-helper/SKILL.md",
           scope: "bundled",
           enabled: false,
+          disabledBy: "provider",
         },
       ]);
     }).pipe(
