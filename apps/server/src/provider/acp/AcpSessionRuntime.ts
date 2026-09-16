@@ -104,6 +104,8 @@ export interface AcpSessionRuntimeOptions {
   ) => EffectAcpSchema.SessionNotification;
   /** Receives bounded stderr chunks. Redact secrets before logging. A failure closes the runtime. */
   readonly onStderr?: (text: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
+  /** Flushes diagnostics when stderr ends. Failed initialization drains an exited child's stderr first. */
+  readonly onStderrEnd?: Effect.Effect<void>;
   readonly requestLogger?: (event: AcpSessionRequestLogEvent) => Effect.Effect<void, never>;
   readonly protocolLogging?: {
     readonly logIncoming?: boolean;
@@ -449,13 +451,16 @@ export const make = (
         ),
       );
 
-    yield* child.stderr.pipe(
+    const stderrFiber = yield* child.stderr.pipe(
       Stream.decodeText(),
-      Stream.runForEach((chunk) =>
-        (options.onStderr
-          ? options.onStderr(chunk.slice(-maxStderrChunkLength))
-          : Effect.void
-        ).pipe(
+      Stream.runForEach(
+        Effect.fn("AcpSessionRuntime.handleStderr")(
+          function* (chunk: string) {
+            if (!options.onStderr) return;
+            for (let offset = 0; offset < chunk.length; offset += maxStderrChunkLength) {
+              yield* options.onStderr(chunk.slice(offset, offset + maxStderrChunkLength));
+            }
+          },
           Effect.catch((error) =>
             Effect.gen(function* () {
               yield* Deferred.fail(stderrFailure, error);
@@ -465,6 +470,7 @@ export const make = (
           ),
         ),
       ),
+      Effect.ensuring(options.onStderrEnd ?? Effect.void),
       Effect.ignore,
       Effect.forkIn(runtimeScope),
     );
@@ -971,7 +977,20 @@ export const make = (
       handleUnknownExtNotification: acp.handleUnknownExtNotification,
       handleExtRequest: acp.handleExtRequest,
       handleExtNotification: acp.handleExtNotification,
-      initialize: () => ensureConnected.pipe(Effect.andThen(sendInitialize)),
+      initialize: () =>
+        ensureConnected.pipe(
+          Effect.andThen(sendInitialize),
+          Effect.onError(() =>
+            Effect.gen(function* () {
+              if (!options.onStderrEnd) return;
+              const running = yield* child.isRunning.pipe(Effect.orElseSucceed(() => true));
+              if (running) return;
+              // A descendant may inherit stderr, so a closed process cannot wait forever for EOF.
+              yield* Fiber.await(stderrFiber).pipe(Effect.timeoutOption("1 second"));
+              yield* options.onStderrEnd;
+            }),
+          ),
+        ),
       start: () => start,
       getEvents: () => Stream.fromQueue(eventQueue),
       drainEvents,
