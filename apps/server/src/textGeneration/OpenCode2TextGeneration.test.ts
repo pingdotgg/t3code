@@ -7,7 +7,7 @@ import * as Schema from "effect/Schema";
 import { createModelSelection } from "@t3tools/shared/model";
 
 import { OpenCode2Settings, ProviderInstanceId } from "@t3tools/contracts";
-import { OpenCode2Runtime, type OpenCode2RuntimeShape } from "../provider/opencode2Runtime.ts";
+import { OpenCode2Runtime } from "../provider/opencode2Runtime.ts";
 import { makeOpenCode2TextGeneration } from "./OpenCode2TextGeneration.ts";
 
 const decodeSettings = Schema.decodeSync(OpenCode2Settings);
@@ -23,7 +23,7 @@ const INSTANCE = ProviderInstanceId.make("opencode2");
 const runtimeReturning = (
   text: () => string,
   requestedModels?: Array<Record<string, unknown>>,
-): OpenCode2RuntimeShape => ({
+): OpenCode2Runtime["Service"] => ({
   connect: () =>
     Effect.succeed({
       client: {

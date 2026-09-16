@@ -42,6 +42,9 @@ export class OpenCode2RuntimeError extends Data.TaggedError(OPENCODE2_RUNTIME_ER
 
 const OPENCODE2_CONNECT_TIMEOUT = "10 seconds";
 
+/** Only 2.x servers speak the v2 API; the same gate drives service discovery. */
+const isOpenCode2Version = (version: string): boolean => version.startsWith("2.");
+
 /**
  * v2 session rules for a T3 runtime mode. Session rules are evaluated after
  * agent rules with last-match-wins, server-enforced, so they cannot be
@@ -135,14 +138,18 @@ export function openCode2McpServerName(baseName: string | undefined, threadId: s
   if (name.length <= OPENCODE2_MCP_NAME_MAX_LENGTH) {
     return name;
   }
-  // FNV-1a of the full thread id keeps the name stable across restarts. The
-  // hash is hex, so the already-sanitized base keeps the result a valid name.
+  // FNV-1a over base and thread id keeps the name stable across restarts and
+  // distinct when a long configured base is truncated. The hash is hex, so the
+  // already-sanitized base keeps the result a valid name.
+  const hashInput = `${base}-${threadId}`;
   let hash = 0x811c9dc5;
-  for (let index = 0; index < threadId.length; index += 1) {
-    hash ^= threadId.charCodeAt(index);
+  for (let index = 0; index < hashInput.length; index += 1) {
+    hash ^= hashInput.charCodeAt(index);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
-  return `${base}-${hash.toString(16).padStart(8, "0")}`;
+  const suffix = hash.toString(16).padStart(8, "0");
+  const prefixLength = OPENCODE2_MCP_NAME_MAX_LENGTH - suffix.length - 1;
+  return `${base.slice(0, prefixLength)}-${suffix}`;
 }
 
 export interface OpenCode2Inventory {
@@ -162,29 +169,28 @@ export interface OpenCode2Inventory {
   }>;
 }
 
-export interface OpenCode2RuntimeShape {
-  /**
-   * Connect to the OpenCode server used by this provider instance: the
-   * explicitly configured external `serverUrl`, or the machine's background
-   * service (discovered, or started when absent). Connections are plain HTTP
-   * against an externally-owned server; nothing is held open by T3.
-   */
-  readonly connect: (input: {
-    readonly serverUrl?: string | null;
-    readonly serverPassword?: string;
-    /** Path to the v2 binary used to start the background service when none is registered. */
-    readonly binaryPath?: string;
-  }) => Effect.Effect<OpenCode2Connection, OpenCode2RuntimeError>;
-  /** Load model/agent/skill inventory from the same connection chat uses. */
-  readonly loadInventory: (input: {
-    readonly client: OpenCodeClient;
-    readonly directory: string;
-  }) => Effect.Effect<OpenCode2Inventory, OpenCode2RuntimeError>;
-}
-
-export class OpenCode2Runtime extends Context.Service<OpenCode2Runtime, OpenCode2RuntimeShape>()(
-  "t3/provider/opencode2Runtime",
-) {}
+export class OpenCode2Runtime extends Context.Service<
+  OpenCode2Runtime,
+  {
+    /**
+     * Connect to the OpenCode server used by this provider instance: the
+     * explicitly configured external `serverUrl`, or the machine's background
+     * service (discovered, or started when absent). Connections are plain HTTP
+     * against an externally-owned server; nothing is held open by T3.
+     */
+    readonly connect: (input: {
+      readonly serverUrl?: string | null;
+      readonly serverPassword?: string;
+      /** Path to the v2 binary used to start the background service when none is registered. */
+      readonly binaryPath?: string;
+    }) => Effect.Effect<OpenCode2Connection, OpenCode2RuntimeError>;
+    /** Load model/agent/skill inventory from the same connection chat uses. */
+    readonly loadInventory: (input: {
+      readonly client: OpenCodeClient;
+      readonly directory: string;
+    }) => Effect.Effect<OpenCode2Inventory, OpenCode2RuntimeError>;
+  }
+>()("t3/provider/opencode2Runtime") {}
 
 function ensureRuntimeError(
   operation: OpenCode2RuntimeError["operation"],
@@ -220,17 +226,30 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
       ),
     );
 
-  /** `health.get` is the connection's liveness + version probe in v2. */
+  /**
+   * `health.get` is the connection's liveness + version probe in v2. A healthy
+   * v1 server answers it too, so the version is gated here: adopting one would
+   * only fail later, on the first v2-only call.
+   */
   const probeConnection = (client: OpenCodeClient) =>
     client.health.get().pipe(
       Effect.timeout(OPENCODE2_CONNECT_TIMEOUT),
-      Effect.map((health) => health.version),
       Effect.mapError((cause) =>
         ensureRuntimeError(
           "connect",
           "The OpenCode server did not respond to a health probe.",
           cause,
         ),
+      ),
+      Effect.flatMap((health) =>
+        isOpenCode2Version(health.version)
+          ? Effect.succeed(health.version)
+          : Effect.fail(
+              new OpenCode2RuntimeError({
+                operation: "connect",
+                detail: `The OpenCode server reports version ${health.version}, but OpenCode 2 requires a 2.x server.`,
+              }),
+            ),
       ),
     );
 
@@ -244,7 +263,11 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
 
   const connectBackgroundService = (binaryPath: string | undefined) =>
     Effect.gen(function* () {
-      const discovered = yield* OpenCodeLocalService.discover().pipe(
+      // A registered v1 service is skipped here so `ensure` below replaces it
+      // with a v2 one instead of this adapter adopting it.
+      const discovered = yield* OpenCodeLocalService.discover({
+        version: isOpenCode2Version,
+      }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
         Effect.mapError((cause) =>
           ensureRuntimeError("connect", "Failed to read the local service registration.", cause),
@@ -265,7 +288,7 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
       }
       const command = openCode2ServiceCommand(binaryPath);
       const endpoint = yield* OpenCodeLocalService.ensure({
-        version: (version) => version.startsWith("2."),
+        version: isOpenCode2Version,
         ...(command ? { command } : {}),
       }).pipe(
         Effect.provideService(FileSystem.FileSystem, fileSystem),
@@ -288,7 +311,7 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
       } satisfies OpenCode2Connection;
     });
 
-  const connect: OpenCode2RuntimeShape["connect"] = (input) =>
+  const connect: OpenCode2Runtime["Service"]["connect"] = (input) =>
     Effect.gen(function* () {
       const serverUrl = input.serverUrl?.trim();
       if (serverUrl && serverUrl.length > 0) {
@@ -302,7 +325,7 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
       return yield* connectBackgroundService(input.binaryPath);
     }).pipe(Effect.provideService(HttpClient.HttpClient, httpClient));
 
-  const loadInventory: OpenCode2RuntimeShape["loadInventory"] = (input) =>
+  const loadInventory: OpenCode2Runtime["Service"]["loadInventory"] = (input) =>
     Effect.gen(function* () {
       const { client, directory } = input;
       const location = { directory };

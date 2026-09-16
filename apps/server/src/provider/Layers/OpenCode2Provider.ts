@@ -214,8 +214,9 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
   }
   const inventory = inventoryResult.success;
 
+  const serverModels = flattenOpenCode2Models(inventory);
   const models = providerModelsFromSettings(
-    flattenOpenCode2Models(inventory),
+    serverModels,
     customModels,
     DEFAULT_OPENCODE2_MODEL_CAPABILITIES,
   );
@@ -235,9 +236,11 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
         status: models.length > 0 ? "authenticated" : "unknown",
         type: "opencode",
       },
+      // Readiness counts custom models too; the message reports only what
+      // the server itself advertises.
       message:
-        models.length > 0
-          ? `${models.length} model${models.length === 1 ? "" : "s"} available on ${isExternalServer ? "the configured OpenCode 2 server" : "the OpenCode 2 background service"}.`
+        serverModels.length > 0
+          ? `${serverModels.length} model${serverModels.length === 1 ? "" : "s"} available on ${isExternalServer ? "the configured OpenCode 2 server" : "the OpenCode 2 background service"}.`
           : isExternalServer
             ? "Connected to the configured OpenCode 2 server, but it reported no models."
             : "OpenCode 2 is running, but it reported no models.",

@@ -343,6 +343,12 @@ interface OpenCode2SessionContext {
   /** Runtime mode whose ruleset was last written to the session. */
   appliedRulesMode: RuntimeMode | undefined;
   readonly mcpServerName: string;
+  /**
+   * Set once this context's `mcp.add` landed. The name is deterministic per
+   * thread, so a context that never registered (a lost startup race) must not
+   * remove the registration a concurrent winner relies on.
+   */
+  mcpRegistered: boolean;
   cancellationTurnId: TurnId | undefined;
   interruptedTurnId: TurnId | undefined;
   reconcileIdleStatus: boolean;
@@ -1322,12 +1328,15 @@ export function makeOpenCode2Adapter(
       }
       // Best-effort deregistration of this thread's MCP server; concurrent
       // threads keep their own uniquely named registrations.
-      yield* context.client.mcp
-        .remove({
-          server: context.mcpServerName,
-          location: { directory: toDirectory(context.directory) },
-        })
-        .pipe(Effect.ignore);
+      if (context.mcpRegistered) {
+        context.mcpRegistered = false;
+        yield* context.client.mcp
+          .remove({
+            server: context.mcpServerName,
+            location: { directory: toDirectory(context.directory) },
+          })
+          .pipe(Effect.ignore);
+      }
       yield* Scope.close(context.sessionScope, Exit.void).pipe(Effect.ignore);
     });
 
@@ -1533,14 +1542,28 @@ export function makeOpenCode2Adapter(
             break;
           }
           case "session.deleted": {
+            if (event.data.sessionID === context.openCodeSessionId) {
+              // The root session is gone from the shared server, so no later
+              // event or turn can reach it; tear down like a server exit.
+              yield* emitUnexpectedExit(
+                context,
+                "The OpenCode 2 session was deleted on the server.",
+              );
+              return;
+            }
             context.relatedSessionIds.delete(event.data.sessionID);
             break;
           }
           case "session.renamed": {
             const title = trimText(event.data.title);
-            // Mirror user renames, but not OpenCode's auto-generated
-            // placeholders — those would lock the thread onto them.
-            if (title && !isOpenCode2DefaultTitle(title)) {
+            // Mirror user renames of the root session, but not subagent child
+            // sessions or OpenCode's auto-generated placeholders — either
+            // would overwrite the thread name.
+            if (
+              event.data.sessionID === context.openCodeSessionId &&
+              title &&
+              !isOpenCode2DefaultTitle(title)
+            ) {
               yield* emit({
                 ...(yield* buildEventBase({
                   threadId: context.session.threadId,
@@ -2169,6 +2192,7 @@ export function makeOpenCode2Adapter(
               toRequestError("mcp.add", "Failed to register the T3 Code MCP server."),
             ),
           );
+        context.mcpRegistered = true;
       });
 
     // ── message listing ───────────────────────────────────────────
@@ -2431,6 +2455,7 @@ export function makeOpenCode2Adapter(
           activeTurnId: undefined,
           appliedRulesMode: input.runtimeMode,
           mcpServerName,
+          mcpRegistered: false,
           cancellationTurnId: undefined,
           interruptedTurnId: undefined,
           reconcileIdleStatus: false,

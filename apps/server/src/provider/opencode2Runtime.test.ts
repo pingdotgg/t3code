@@ -2,6 +2,7 @@ import * as NodeAssert from "node:assert/strict";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Ref from "effect/Ref";
@@ -9,6 +10,7 @@ import { HttpClient, HttpClientResponse } from "effect/unstable/http";
 
 import {
   OpenCode2Runtime,
+  OpenCode2RuntimeError,
   OpenCode2RuntimeLive,
   OPENCODE2_MCP_NAMESPACE,
   openCode2McpServerBase,
@@ -28,14 +30,17 @@ const HEALTH_BODY = { healthy: true, version: "2.0.3", pid: 1234 };
  * and every external server looked unreachable. Asserting on the runtime's own
  * arguments would not have caught that.
  */
-const makeTestLayer = (requestedUrls: Ref.Ref<ReadonlyArray<string>>) =>
+const makeTestLayer = (
+  requestedUrls: Ref.Ref<ReadonlyArray<string>>,
+  healthBody: Record<string, unknown> = HEALTH_BODY,
+) =>
   OpenCode2RuntimeLive.pipe(
     Layer.provide(
       Layer.succeed(
         HttpClient.HttpClient,
         HttpClient.make((request) =>
           Ref.update(requestedUrls, (urls) => [...urls, String(request.url)]).pipe(
-            Effect.as(HttpClientResponse.fromWeb(request, Response.json(HEALTH_BODY))),
+            Effect.as(HttpClientResponse.fromWeb(request, Response.json(healthBody))),
           ),
         ),
       ),
@@ -43,12 +48,12 @@ const makeTestLayer = (requestedUrls: Ref.Ref<ReadonlyArray<string>>) =>
     Layer.provideMerge(NodeServices.layer),
   );
 
-const connectWithRequestLog = (serverUrl: string) =>
+const connectWithRequestLog = (serverUrl: string, healthBody?: Record<string, unknown>) =>
   Effect.gen(function* () {
     const requestedUrls = yield* Ref.make<ReadonlyArray<string>>([]);
     const exit = yield* OpenCode2Runtime.pipe(
       Effect.flatMap((runtime) => Effect.exit(runtime.connect({ serverUrl }))),
-      Effect.provide(makeTestLayer(requestedUrls)),
+      Effect.provide(makeTestLayer(requestedUrls, healthBody)),
     );
     return { exit, requestedUrls: yield* Ref.get(requestedUrls) };
   });
@@ -72,6 +77,24 @@ it.effect("keeps a trailing slash from corrupting the probe URL", () =>
     NodeAssert.equal(requestedUrls.length, 1);
     NodeAssert.ok(requestedUrls[0]?.includes("127.0.0.1:49374/api/health"));
     NodeAssert.ok(!requestedUrls[0]?.includes("[object Object]"));
+  }),
+);
+
+it.effect("rejects a healthy external server that is not a 2.x release", () =>
+  Effect.gen(function* () {
+    // A v1 server answers the health probe too; adopting it would only fail
+    // later on the first v2-only call, with no hint about the version.
+    const { exit } = yield* connectWithRequestLog("http://127.0.0.1:49374", {
+      ...HEALTH_BODY,
+      version: "1.12.4",
+    });
+
+    NodeAssert.equal(exit._tag, "Failure");
+    if (exit._tag !== "Failure") return;
+    const failure = Cause.squash(exit.cause);
+    NodeAssert.ok(OpenCode2RuntimeError.is(failure));
+    NodeAssert.match(failure.detail, /version 1\.12\.4/);
+    NodeAssert.match(failure.detail, /2\.x/);
   }),
 );
 
@@ -151,4 +174,14 @@ it("keeps per-thread names valid and predictable, including the hashed path", ()
     long.startsWith(`${OPENCODE2_MCP_NAMESPACE}-corp_io-`),
     `expected reserved namespace, got: ${long}`,
   );
+
+  // A long configured base is capped too, and the hash still tells two
+  // instances apart whose names only differ beyond the cut.
+  const threadIdShort = "thread";
+  const longBaseA = openCode2McpServerName(`${"a".repeat(120)}-one`, threadIdShort);
+  const longBaseB = openCode2McpServerName(`${"a".repeat(120)}-two`, threadIdShort);
+  NodeAssert.ok(longBaseA.length <= 96, `expected <= 96 chars, got ${longBaseA.length}`);
+  NodeAssert.ok(longBaseA.startsWith(`${OPENCODE2_MCP_NAMESPACE}-aaa`));
+  NodeAssert.notEqual(longBaseA, longBaseB);
+  NodeAssert.equal(longBaseA, openCode2McpServerName(`${"a".repeat(120)}-one`, threadIdShort));
 });
