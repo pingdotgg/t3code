@@ -24,6 +24,8 @@ name: Mobile EAS Production
 #      into the void.
 # workflow_dispatch remains as a manual override for both modes (e.g. to
 # retry an errored build or force an OTA).
+# Manual v2-preview builds keep the production app identity and disable OTA.
+# Select the v2 branch when dispatching a preview build.
 on:
   workflow_dispatch:
     inputs:
@@ -35,6 +37,14 @@ on:
         options:
           - build
           - update
+      profile:
+        description: "Store build profile (v2-preview supports build mode only)"
+        required: true
+        type: choice
+        default: production
+        options:
+          - production
+          - v2-preview
       platform:
         description: "Target platform"
         required: true
@@ -75,7 +85,7 @@ concurrency:
 
 jobs:
   production:
-    name: EAS Production ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
+    name: EAS ${{ inputs.profile || 'production' }} ${{ github.event_name == 'push' && 'auto' || inputs.mode }}
     runs-on: blacksmith-8vcpu-ubuntu-2404
     permissions:
       contents: read
@@ -83,6 +93,12 @@ jobs:
       APP_VARIANT: production
       NODE_OPTIONS: --max-old-space-size=8192
     steps:
+      - name: Reject preview OTA updates
+        if: github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview' && inputs.mode == 'update'
+        run: |
+          echo "::error::V2 previews use store builds only. Select mode=build."
+          exit 1
+
       - id: expo-token
         name: Check for EXPO_TOKEN
         env:
@@ -124,6 +140,16 @@ jobs:
           run-install: |
             args:
               - --filter=@t3tools/mobile...
+
+      - name: Verify v2 preview source
+        if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.profile == 'v2-preview'
+        run: |
+          node --input-type=module -e '
+            import * as environment from "./packages/contracts/src/environment.ts";
+            if (environment.ORCHESTRATION_PROTOCOL_VERSION !== 2) {
+              throw new Error("V2 previews require a v2 source branch. Select the v2 branch when running this workflow.");
+            }
+          '
 
       - name: Expose pnpm
         if: steps.expo-token.outputs.present == 'true'
@@ -199,10 +225,12 @@ jobs:
       - name: Summarize manual build version
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'build'
         working-directory: apps/mobile
+        env:
+          MOBILE_BUILD_PROFILE: ${{ inputs.profile || 'production' }}
         run: |
           version="$(npx expo config --json --type public | jq -r '.version')"
           {
-            echo "## Manual production build"
+            echo "## Manual $MOBILE_BUILD_PROFILE build"
             echo
             echo "- App version: \`$version\`"
             echo "- Platform: \`${{ inputs.platform }}\`"
@@ -215,7 +243,8 @@ jobs:
         working-directory: apps/mobile
         env:
           EXPO_TOKEN: ${{ secrets.EXPO_TOKEN }}
-        run: eas build --platform ${{ inputs.platform }} --profile production --auto-submit --non-interactive --no-wait
+          MOBILE_BUILD_PROFILE: ${{ inputs.profile || 'production' }}
+        run: eas build --platform ${{ inputs.platform }} --profile "$MOBILE_BUILD_PROFILE" --auto-submit --non-interactive --no-wait
 
       - name: Publish OTA update (manual)
         if: steps.expo-token.outputs.present == 'true' && github.event_name == 'workflow_dispatch' && inputs.mode == 'update'
