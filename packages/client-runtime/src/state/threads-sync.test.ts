@@ -1595,19 +1595,33 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
-  it.effect("removes cached data when the thread is deleted", () =>
+  it.effect("does not recreate a deleted cache from a queued save or finalizer", () =>
     Effect.gen(function* () {
-      const harness = yield* makeHarness({ cached: BASE_PROJECTION });
+      const scope = yield* Scope.make();
+      const harness = yield* makeHarness().pipe(Effect.provideService(Scope.Scope, scope));
       yield* Queue.offer(harness.inputs, snapshot(BASE_PROJECTION));
-      yield* Queue.offer(harness.inputs, deleted());
+      yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+      yield* TestClock.adjust("500 millis");
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
 
+      yield* Queue.offer(harness.inputs, titleUpdated("Queued before deletion"));
+      yield* awaitThreadState(
+        harness.observed,
+        (value) =>
+          Option.isSome(value.data) && value.data.value.thread.title === "Queued before deletion",
+      );
+      yield* Queue.offer(harness.inputs, deleted());
       const state = yield* awaitThreadState(
         harness.observed,
         (value) => value.status === "deleted",
       );
-
       expect(Option.isNone(state.data)).toBe(true);
       expect(yield* Ref.get(harness.removedThreads)).toEqual([THREAD_ID]);
+
+      yield* TestClock.adjust("10 seconds");
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
+      yield* Scope.close(scope, Exit.void);
+      expect(yield* Ref.get(harness.savedThreads)).toHaveLength(1);
     }),
   );
 

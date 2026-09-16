@@ -253,6 +253,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     snapshot: OrchestrationV2ThreadDetailSnapshot,
   ) {
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+    // A deletion can arrive while an older snapshot waits in the persistence queue.
+    if (committed.state.status === "deleted") return;
     if (
       committed.persisted &&
       matchesThreadSnapshot(
