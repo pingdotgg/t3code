@@ -566,6 +566,100 @@ describe("OrchestrationEngine", () => {
     }).pipe(Effect.provide(makeOrchestrationLayer())),
   );
 
+  effectIt.effect("idle-only stops preserve background work until it finishes", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(now()));
+      const engine = yield* OrchestrationEngineService;
+      const backgroundLiveness = yield* ThreadBackgroundLiveness.ThreadBackgroundLivenessService;
+      const projectId = ProjectId.make("project-reconnect");
+      const threadId = ThreadId.make("thread-reconnect");
+      const unrelatedThreadId = ThreadId.make("thread-unrelated");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("create-reconnect-project"),
+        projectId,
+        title: "Project",
+        workspaceRoot: "/tmp/project-reconnect",
+        createdAt: now(),
+      });
+      for (const id of [threadId, unrelatedThreadId]) {
+        yield* engine.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`create-${id}`),
+          threadId: id,
+          projectId,
+          title: "Thread",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5-codex" },
+          interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
+          runtimeMode: "full-access",
+          branch: null,
+          worktreePath: null,
+          createdAt: now(),
+        });
+      }
+      yield* engine.dispatch({
+        type: "thread.session.set",
+        commandId: CommandId.make("ready-reconnect-session"),
+        threadId,
+        session: {
+          threadId,
+          status: "ready",
+          providerName: "codex",
+          runtimeMode: "full-access",
+          activeTurnId: null,
+          lastError: null,
+          updatedAt: now(),
+        },
+        createdAt: now(),
+      });
+      for (const taskType of ["subagent", "local_bash"]) {
+        backgroundLiveness.recordTaskLiveness({
+          threadId,
+          taskId: taskType,
+          taskType,
+          kind: "started",
+          status: "running",
+        });
+        const sequence = yield* engine.latestSequence;
+        const error = yield* engine
+          .dispatch({
+            type: "thread.session.stop",
+            commandId: CommandId.make(`reject-reconnect-${taskType}`),
+            threadId,
+            onlyIfIdle: true,
+            createdAt: now(),
+          })
+          .pipe(Effect.flip);
+        expect(error).toMatchObject({
+          _tag: "OrchestrationCommandInvariantError",
+          detail: `thread ${threadId} has live background work`,
+        });
+        expect(yield* engine.latestSequence).toBe(sequence);
+        yield* engine.dispatch({
+          type: "thread.session.stop",
+          commandId: CommandId.make(`stop-unrelated-${taskType}`),
+          threadId: unrelatedThreadId,
+          onlyIfIdle: true,
+          createdAt: now(),
+        });
+        backgroundLiveness.recordTaskLiveness({
+          threadId,
+          taskId: taskType,
+          taskType,
+          kind: "completed",
+          status: "completed",
+        });
+      }
+      yield* engine.dispatch({
+        type: "thread.session.stop",
+        commandId: CommandId.make("reconnect-after-background-finished"),
+        threadId,
+        onlyIfIdle: true,
+        createdAt: now(),
+      });
+    }).pipe(Effect.provide(makeOrchestrationLayer())),
+  );
+
   effectIt.effect(
     "rejects persisted changes and live background work without blocking unrelated threads",
     () =>

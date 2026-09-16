@@ -1825,6 +1825,20 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
         command,
         threadId: command.threadId,
       });
+      if (command.onlyIfIdle === true) {
+        const sessionIsActive =
+          thread.session?.status === "starting" || thread.session?.status === "running";
+        if (
+          sessionIsActive ||
+          openRequests(thread).size > 0 ||
+          hasQueuedTurnStartForThread(thread, command.createdAt)
+        ) {
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} is active and its session cannot be restarted`,
+          });
+        }
+      }
       // Settle-cleanup stops are conditional: between the settle landing and
       // this command, another client may have re-engaged the thread (a turn
       // start unsettles it and brings the session alive). Commands are

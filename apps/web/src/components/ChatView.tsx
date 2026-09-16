@@ -52,6 +52,7 @@ import { isPasteAsTextShortcut } from "@t3tools/client-runtime/text-paste";
 import { type CodexArtifactTemplate } from "@t3tools/client-runtime/codex-artifact-templates";
 import { effectiveSnoozed, threadWokeAt } from "@t3tools/client-runtime/state/thread-settled";
 import {
+  isReconnectMcpCommand,
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -1489,6 +1490,9 @@ export default function ChatView(props: ChatViewProps) {
     reportFailure: false,
   });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
+    reportFailure: false,
+  });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
     refresh: true,
@@ -7338,6 +7342,85 @@ export default function ChatView(props: ChatViewProps) {
       terminalContexts: composerTerminalContexts,
       elementContextCount: composerPreviewAnnotations.length + composerReviewComments.length,
     });
+    const reconnectMcpCommand =
+      ctxSelectedProvider === "codex" &&
+      composerImages.length === 0 &&
+      composerFiles.length === 0 &&
+      sendableComposerTerminalContexts.length === 0 &&
+      composerPreviewAnnotations.length === 0 &&
+      composerReviewComments.length === 0 &&
+      isReconnectMcpCommand(trimmed);
+    if (reconnectMcpCommand) {
+      if (
+        !isServerThread ||
+        activeThread.session === null ||
+        activeThread.session.providerName !== "codex"
+      ) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Start a Codex thread first",
+            description: "Send a message before reconnecting its MCP servers.",
+          }),
+        );
+        return;
+      }
+      if (activeThread.session.status === "starting" || activeThread.session.status === "running") {
+        toastManager.add(
+          stackedThreadToast({
+            type: "warning",
+            title: "Codex is still working",
+            description: "Wait for the current turn to finish, then reconnect MCP servers.",
+          }),
+        );
+        return;
+      }
+      sendInFlightRef.current = true;
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState();
+      const result = await stopThreadSession({
+        environmentId,
+        input: { threadId: activeThread.id, onlyIfIdle: true },
+      }).finally(() => {
+        sendInFlightRef.current = false;
+      });
+      if (result._tag === "Failure") {
+        if (
+          promptRef.current.length === 0 &&
+          composerImagesRef.current.length === 0 &&
+          composerFilesRef.current.length === 0 &&
+          composerTerminalContextsRef.current.length === 0
+        ) {
+          promptRef.current = promptForSend;
+          setComposerDraftPrompt(composerDraftTarget, promptForSend);
+          composerRef.current?.resetCursorState({
+            cursor: collapseExpandedComposerCursor(promptForSend, promptForSend.length),
+            prompt: promptForSend,
+            detectTrigger: true,
+          });
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not reconnect MCP servers",
+              description: chatActionErrorMessage(squashAtomCommandFailure(result)),
+            }),
+          );
+        }
+        return;
+      }
+      toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "MCP reconnect requested",
+          description:
+            "Wait for the session to stop, then send a message to reconnect with fresh tool schemas. Any stop failure appears in the thread.",
+        }),
+      );
+      return;
+    }
     const feedbackCommand =
       ctxSelectedProvider === "codex" &&
       composerImages.length === 0 &&

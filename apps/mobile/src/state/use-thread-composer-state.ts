@@ -2,6 +2,7 @@ import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Alert } from "react-native";
+import * as Cause from "effect/Cause";
 
 import {
   CommandId,
@@ -16,9 +17,11 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import { safeErrorLogAttributes } from "@t3tools/client-runtime/errors";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { clampFileAttachmentUploadBytes } from "@t3tools/client-runtime/state/attachments";
 import { nextPastedTextFileName, pastedTextDisposition } from "@t3tools/client-runtime/text-paste";
 import {
+  isReconnectMcpCommand,
   parseCodexFeedbackCommand,
   submitCodexFeedback,
   type CodexFeedbackSubmission,
@@ -138,6 +141,9 @@ export function useThreadComposerState() {
     Record<string, ReadonlyArray<CodexFeedbackSubmission>>
   >({});
   const uploadThreadFeedback = useAtomCommand(threadEnvironment.uploadFeedback, {
+    reportFailure: false,
+  });
+  const stopThreadSession = useAtomCommand(threadEnvironment.stopSession, {
     reportFailure: false,
   });
   const pastedTextFileNamesRef = useRef<{ threadKey: string | null; names: Set<string> }>({
@@ -387,6 +393,55 @@ export function useThreadComposerState() {
     const provider = serverConfig?.providers.find(
       (entry) => entry.instanceId === modelSelection.instanceId,
     );
+    const reconnectMcpCommand =
+      attachments.length === 0 &&
+      (draft.context?.records.length ?? 0) === 0 &&
+      (provider?.driver === "codex" || thread.session?.providerName === "codex") &&
+      isReconnectMcpCommand(text);
+    if (reconnectMcpCommand) {
+      if (thread.session === null || thread.session.providerName !== "codex") {
+        Alert.alert(
+          "Start a Codex thread first",
+          "Send a message before reconnecting its MCP servers.",
+        );
+        return null;
+      }
+      if (thread.session.status === "starting" || thread.session.status === "running") {
+        Alert.alert(
+          "Codex is still working",
+          "Wait for the current turn to finish, then reconnect MCP servers.",
+        );
+        return null;
+      }
+      clearComposerDraftContent(threadKey);
+      const result = await stopThreadSession({
+        environmentId: selectedThreadShell.environmentId,
+        input: { threadId: selectedThreadShell.id, onlyIfIdle: true },
+      });
+      if (result._tag === "Failure") {
+        const currentDraft = getComposerDraftSnapshot(threadKey);
+        if (
+          currentDraft.text.length === 0 &&
+          currentDraft.attachments.length === 0 &&
+          (currentDraft.context?.records.length ?? 0) === 0
+        ) {
+          setComposerDraftText(threadKey, text);
+        }
+        if (!isAtomCommandInterrupted(result)) {
+          const error = Cause.squash(result.cause);
+          Alert.alert(
+            "Could not reconnect MCP servers",
+            error instanceof Error ? error.message : "An error occurred.",
+          );
+        }
+        return null;
+      }
+      Alert.alert(
+        "MCP reconnect requested",
+        "Wait for the session to stop, then send a message to reconnect with fresh tool schemas. Any stop failure appears in the thread.",
+      );
+      return null;
+    }
     const feedbackCommand =
       attachments.length === 0 &&
       (provider?.driver === "codex" || thread.session?.providerName === "codex")
@@ -483,6 +538,7 @@ export function useThreadComposerState() {
     selectedThreadCreation,
     selectedThreadDetail,
     selectedThreadShell,
+    stopThreadSession,
     uploadThreadFeedback,
   ]);
 
