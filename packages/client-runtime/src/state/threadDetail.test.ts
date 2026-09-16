@@ -1,6 +1,7 @@
 import {
   EnvironmentId,
   NodeId,
+  ProviderDriverKind,
   RuntimeRequestId,
   TurnItemId,
   type OrchestrationV2ThreadProjection,
@@ -166,6 +167,77 @@ it("does not notify queue consumers for streaming text or execution nodes", () =
   expect(registry.get(details.queueWorkflowAtom(ref))).toBeNull();
   expect(registry.get(details.queuedCountAtom(ref))).toBe(0);
   disposeCount();
+  dispose();
+  registry.dispose();
+});
+
+it("does not notify the agents pill for unrelated projection updates", () => {
+  const projection: OrchestrationV2ThreadProjection = {
+    ...v2Projection,
+    runs: [
+      {
+        id: RunId.make("active-run"),
+        threadId: v2Projection.thread.id,
+        ordinal: 1,
+        providerInstanceId: v2Projection.thread.providerInstanceId,
+        modelSelection: v2Projection.thread.modelSelection,
+        providerThreadId: null,
+        userMessageId: MessageId.make("message"),
+        rootNodeId: null,
+        activeAttemptId: null,
+        status: "running" as const,
+        requestedAt: v2Now,
+        startedAt: v2Now,
+        completedAt: null,
+        checkpointId: null,
+        contextHandoffId: null,
+      },
+    ],
+    subagents: [
+      {
+        id: NodeId.make("subagent-1"),
+        threadId: v2Projection.thread.id,
+        runId: RunId.make("active-run"),
+        parentNodeId: NodeId.make("root"),
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: v2Projection.thread.providerInstanceId,
+        providerThreadId: null,
+        childThreadId: ThreadId.make("thread-child"),
+        nativeTaskRef: null,
+        prompt: "Do the thing",
+        title: "Worker",
+        model: null,
+        status: "running",
+        result: null,
+        startedAt: v2Now,
+        completedAt: null,
+        updatedAt: v2Now,
+      },
+    ],
+  };
+  const source = Atom.make(
+    AsyncResult.success(
+      threadState({ data: Option.some(projection), status: "live", error: Option.none() }),
+    ),
+  );
+  const details = createEnvironmentThreadDetailAtoms(() => source);
+  const registry = AtomRegistry.make();
+  const dispose = registry.mount(details.turnSubagentsAtom(ref));
+  const before = registry.get(details.turnSubagentsAtom(ref));
+  expect(before?.liveCount).toBe(1);
+  registry.set(
+    source,
+    AsyncResult.success(
+      threadState({
+        data: Option.some({ ...projection, turnItems: [...v2Projection.turnItems] }),
+        status: "live",
+        error: Option.none(),
+      }),
+    ),
+  );
+  expect(registry.get(details.turnSubagentsAtom(ref))).toBe(before);
   dispose();
   registry.dispose();
 });

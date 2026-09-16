@@ -1,32 +1,31 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { resolveComposerDispatchMode } from "./composerDispatch";
+import {
+  alternateComposerDispatchAction,
+  resolveComposerDispatchMode,
+} from "./composerDispatch.ts";
 
 describe("resolveComposerDispatchMode", () => {
   it("starts an ordinary turn while idle", () => {
-    expect(resolveComposerDispatchMode({ phase: "ready", alternateModifier: false })).toBe("auto");
+    expect(resolveComposerDispatchMode({ running: false, alternateModifier: false })).toBe("auto");
   });
 
   it("steers by default and reserves Mod+Enter for queueing while running", () => {
-    expect(resolveComposerDispatchMode({ phase: "running", alternateModifier: false })).toBe(
-      "steer",
-    );
-    expect(resolveComposerDispatchMode({ phase: "running", alternateModifier: true })).toBe(
-      "queue",
-    );
+    expect(resolveComposerDispatchMode({ running: true, alternateModifier: false })).toBe("steer");
+    expect(resolveComposerDispatchMode({ running: true, alternateModifier: true })).toBe("queue");
   });
 
   it("queues as the alternate action when restarting is the default", () => {
     expect(
       resolveComposerDispatchMode({
-        phase: "running",
+        running: true,
         alternateModifier: false,
         activeTurnDefault: "restart",
       }),
     ).toBe("restart");
     expect(
       resolveComposerDispatchMode({
-        phase: "running",
+        running: true,
         alternateModifier: true,
         activeTurnDefault: "restart",
       }),
@@ -40,28 +39,34 @@ describe("resolveComposerDispatchMode", () => {
     (activeTurnDefault, alternateAction) => {
       expect(
         resolveComposerDispatchMode({
-          phase: "running",
+          running: true,
           alternateModifier: false,
           activeTurnDefault,
         }),
       ).toBe(activeTurnDefault);
       expect(
         resolveComposerDispatchMode({
-          phase: "running",
+          running: true,
           alternateModifier: true,
           activeTurnDefault,
         }),
       ).toBe(alternateAction);
       expect(
         resolveComposerDispatchMode({
-          phase: "ready",
+          running: false,
           alternateModifier: false,
           activeTurnDefault,
         }),
       ).toBe("auto");
       expect(
-        resolveComposerDispatchMode({ phase: "ready", alternateModifier: true, activeTurnDefault }),
+        resolveComposerDispatchMode({ running: false, alternateModifier: true, activeTurnDefault }),
       ).toBe("auto");
     },
   );
+
+  it("names the alternate action so the affordance can be labelled", () => {
+    expect(alternateComposerDispatchAction("queue")).toBe("steer");
+    expect(alternateComposerDispatchAction("steer")).toBe("queue");
+    expect(alternateComposerDispatchAction()).toBe("queue");
+  });
 });
