@@ -176,6 +176,7 @@ import {
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadLaunchError,
 } from "./orchestrationV2.ts";
@@ -1444,7 +1445,11 @@ const WsOrchestrationV2GetThreadHistoryPageRpc = Rpc.make(
   {
     payload: OrchestrationV2RpcSchemas.getThreadHistoryPage.input,
     success: OrchestrationV2RpcSchemas.getThreadHistoryPage.output,
-    error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
+    error: Schema.Union([
+      OrchestrationV2GetThreadProjectionError,
+      OrchestrationV2InvalidHistoryCursorError,
+      EnvironmentAuthorizationError,
+    ]),
   },
 );
 

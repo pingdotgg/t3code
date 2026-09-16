@@ -54,6 +54,7 @@ import {
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetShellSnapshotError,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2ThreadLaunchError,
   type OrchestrationProjectShell,
   type OrchestrationV2ShellSnapshot,
@@ -1867,10 +1868,9 @@ const makeWsRpcLayer = (
                 decodedCursor = decodeThreadHistoryCursor(input.historyCursor);
               } catch (cause) {
                 if (cause instanceof InvalidThreadHistoryCursorError) {
-                  return yield* new OrchestrationV2GetThreadProjectionError({
+                  return yield* new OrchestrationV2InvalidHistoryCursorError({
                     threadId: input.threadId,
                     message: "Invalid thread history cursor.",
-                    reason: "invalid_history_cursor",
                     cause,
                   });
                 }
@@ -1915,10 +1915,9 @@ const makeWsRpcLayer = (
                 hasOlderHistory: snapshot.hasOlderHistory,
               });
               if (pageOrError._tag === "invalid_cursor") {
-                return yield* new OrchestrationV2GetThreadProjectionError({
+                return yield* new OrchestrationV2InvalidHistoryCursorError({
                   threadId: input.threadId,
                   message: "Invalid thread history cursor.",
-                  reason: "invalid_history_cursor",
                 });
               }
               if (pageOrError._tag === "error") {

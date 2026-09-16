@@ -26,6 +26,7 @@ import {
   OrchestrationV2Command,
   OrchestrationV2DomainEvent,
   OrchestrationV2GetThreadProjectionError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2ProviderCapabilities,
   OrchestrationV2ProviderThread,
   OrchestrationV2ProviderThreadJson,
@@ -98,6 +99,9 @@ const decodeGetThreadHistoryPageOutput = Schema.decodeUnknownSync(
 );
 const decodeGetThreadProjectionError = Schema.decodeUnknownSync(
   OrchestrationV2GetThreadProjectionError,
+);
+const decodeInvalidHistoryCursorError = Schema.decodeUnknownSync(
+  OrchestrationV2InvalidHistoryCursorError,
 );
 
 describe("orchestration V2 contracts", () => {
@@ -928,20 +932,19 @@ describe("orchestration V2 contracts", () => {
     expect(page.nextCursor).toBeNull();
   });
 
-  it("decodes typed history-cursor failures on the projection RPC error", () => {
-    const withReason = decodeGetThreadProjectionError({
-      _tag: "OrchestrationV2GetThreadProjectionError",
+  it("decodes typed history-cursor failures as a dedicated tagged error", () => {
+    const invalid = decodeInvalidHistoryCursorError({
+      _tag: "OrchestrationV2InvalidHistoryCursorError",
       threadId: "thread-1",
       message: "Invalid thread history cursor.",
-      reason: "invalid_history_cursor",
     });
-    expect(withReason.reason).toBe("invalid_history_cursor");
-    const withoutReason = decodeGetThreadProjectionError({
+    expect(invalid._tag).toBe("OrchestrationV2InvalidHistoryCursorError");
+    const projectionFailure = decodeGetThreadProjectionError({
       _tag: "OrchestrationV2GetThreadProjectionError",
       threadId: "thread-1",
       message: "Failed to load orchestration V2 thread thread-1",
     });
-    expect(withoutReason.reason).toBeUndefined();
+    expect(projectionFailure._tag).toBe("OrchestrationV2GetThreadProjectionError");
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {
