@@ -3,6 +3,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   dedupeRemoteBranchesWithLocalMatches,
   deriveLocalBranchNameFromRemoteRef,
+  nativePressDetail,
   resolveEnvironmentOptionLabel,
   resolveBranchSelectionTarget,
   resolveCurrentWorkspaceLabel,
@@ -14,12 +15,14 @@ import {
   resolveBranchToolbarValue,
   resolveLockedWorkspaceLabel,
   resolveLocalCheckoutBranchMismatch,
+  resolveNextBranchMenuToggleAt,
   resolvePreviousWorktreeLabel,
   resolvePreviousWorktreeSeed,
   sanitizeNewRefName,
   shouldIncludeBranchPickerItem,
   shouldShowComposerContextStrip,
   shouldShowEnvironmentIndicator,
+  shouldSuppressRapidBranchMenuToggle,
 } from "./BranchToolbar.logic";
 
 const localEnvironmentId = EnvironmentId.make("environment-local");
@@ -832,5 +835,125 @@ describe("sanitizeNewRefName", () => {
   it("does not collapse dashes the user typed", () => {
     expect(sanitizeNewRefName("new - branch")).toBe("new---branch");
     expect(sanitizeNewRefName("foo--bar")).toBe("foo--bar");
+  });
+});
+
+// The trailing press of a double-click must not toggle a just-opened menu
+// back shut: that is the open-flash-close in the bug report.
+describe("shouldSuppressRapidBranchMenuToggle", () => {
+  it("suppresses the trailing press of a double-click", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 2,
+        lastToggleAt: 1000,
+        now: 1200,
+      }),
+    ).toBe(true);
+  });
+
+  it("suppresses a rapid second press inside the double-click window", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 1,
+        lastToggleAt: 1000,
+        now: 1100,
+      }),
+    ).toBe(true);
+  });
+
+  it("lets a deliberate press through after the window", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 1,
+        lastToggleAt: 1000,
+        now: 2000,
+      }),
+    ).toBe(false);
+  });
+
+  it("ignores closes that are not trigger presses", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "item-press",
+        nativeDetail: 2,
+        lastToggleAt: 1000,
+        now: 1050,
+      }),
+    ).toBe(false);
+  });
+
+  it("lets keyboard presses through inside the window", () => {
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 0,
+        lastToggleAt: 1000,
+        now: 1100,
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("nativePressDetail", () => {
+  it("reads the click count off the native event", () => {
+    expect(nativePressDetail({ detail: 2 })).toBe(2);
+  });
+
+  it("falls back to zero when there is no usable detail", () => {
+    expect(nativePressDetail(null)).toBe(0);
+    expect(nativePressDetail({})).toBe(0);
+  });
+});
+
+describe("resolveNextBranchMenuToggleAt", () => {
+  it("arms the suppress window on trigger presses", () => {
+    expect(
+      resolveNextBranchMenuToggleAt({
+        reason: "trigger-press",
+        open: true,
+        lastToggleAt: 0,
+        now: 1000,
+      }),
+    ).toBe(1000);
+  });
+
+  it("disarms the suppress window on item-press closes", () => {
+    expect(
+      resolveNextBranchMenuToggleAt({
+        reason: "item-press",
+        open: false,
+        lastToggleAt: 1000,
+        now: 1050,
+      }),
+    ).toBe(0);
+  });
+
+  // Open -> pick an item -> immediately reopen: the pick must not eat the
+  // deliberate reopen that follows inside the double-click window.
+  it("lets an immediate reopen through after an item-press close", () => {
+    let lastToggleAt = resolveNextBranchMenuToggleAt({
+      reason: "trigger-press",
+      open: true,
+      lastToggleAt: 0,
+      now: 1000,
+    });
+    lastToggleAt = resolveNextBranchMenuToggleAt({
+      reason: "item-press",
+      open: false,
+      lastToggleAt,
+      now: 1050,
+    });
+    expect(lastToggleAt).toBe(0);
+    expect(
+      shouldSuppressRapidBranchMenuToggle({
+        reason: "trigger-press",
+        nativeDetail: 1,
+        lastToggleAt,
+        now: 1100,
+      }),
+    ).toBe(false);
   });
 });
