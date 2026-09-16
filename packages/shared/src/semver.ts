@@ -7,8 +7,37 @@ interface ParsedSemver {
 
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
+// Build metadata ("+...") never affects precedence. Strip it when it is a
+// nonempty dot-separated sequence of valid identifiers; a malformed suffix
+// keeps the version unparseable downstream, as before.
+const SEMVER_BUILD_IDENTIFIER = /^[0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*$/;
+
+function splitMainPrerelease(version: string): [main: string, prerelease: string | undefined] {
+  const plus = version.indexOf("+");
+  if (plus >= 0 && !SEMVER_BUILD_IDENTIFIER.test(version.slice(plus + 1))) {
+    return [version, undefined];
+  }
+  const core = plus < 0 ? version : version.slice(0, plus);
+  const dash = core.indexOf("-");
+  if (dash < 0) {
+    return [core, undefined];
+  }
+  if (dash === core.length - 1) {
+    // An empty prerelease ("1.2.3-...") is invalid: keep the version
+    // unparseable instead of normalizing into the core version.
+    return [version, undefined];
+  }
+  return [core.slice(0, dash), core.slice(dash + 1)];
+}
+
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const trimmed = version.trim();
+  const [main, prerelease] = splitMainPrerelease(trimmed);
+  // A malformed build suffix stays unparseable: pass it through untouched so
+  // empty-segment filtering below cannot repair it into a valid suffix.
+  if (main.includes("+")) {
+    return trimmed;
+  }
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();
@@ -31,7 +60,7 @@ export function normalizeSemverVersion(version: string): string {
 
 export function parseSemver(value: string): ParsedSemver | null {
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const [main = "", prerelease] = splitMainPrerelease(normalized);
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;
@@ -91,7 +120,9 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   if (rightNumeric) {
     return 1;
   }
-  return left.localeCompare(right);
+  // Semver identifiers compare lexically in ASCII order, not locale
+  // collation: "Z" precedes "a". Matches compareExactServiceVersions.
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function compareSemverVersions(left: string, right: string): number {
