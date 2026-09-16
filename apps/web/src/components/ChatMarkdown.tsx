@@ -1,3 +1,4 @@
+import { CHAT_BACKGROUND_GLASS_SURFACE_CLASSES } from "./chat/ChatTimelineBackground";
 import { usePullRequestLinking } from "~/hooks/usePullRequestLinking";
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -196,6 +197,8 @@ import { resolveLinkTarget } from "../browser/browserLinkTarget";
 import { PullRequestLinkPreview } from "./pullRequest/PullRequestLinkPreview";
 
 interface ChatMarkdownProps {
+  /** Enable translucent containers only when rendering over a timeline wallpaper. */
+  glassSurfaces?: boolean;
   text: string;
   cwd: string | undefined;
   threadRef?: ScopedThreadRef | undefined;
@@ -287,6 +290,7 @@ function CodexArtifactTemplateCard(props: {
   readonly template: CodexArtifactTemplate;
   readonly onUse?: ((template: CodexArtifactTemplate) => void) | undefined;
 }) {
+  const { glassSurfaces } = use(ChatMarkdownRendererContext);
   const Icon = ARTIFACT_TEMPLATE_ICON_BY_KIND[props.template.artifactKind];
   const presentationLabel = codexArtifactTemplatePresentationLabel(props.template.artifactKind);
 
@@ -294,7 +298,10 @@ function CodexArtifactTemplateCard(props: {
     <div
       role="group"
       aria-label={`${props.template.displayName} template`}
-      className="chat-markdown-artifact-template my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 bg-card/60 px-3 py-2.5 text-foreground shadow-xs"
+      className={cn(
+        "chat-markdown-artifact-template my-[0.65rem] flex w-full min-w-0 items-center gap-3 rounded-xl border border-border/70 px-3 py-2.5 text-foreground shadow-xs",
+        glassSurfaces ? CHAT_BACKGROUND_GLASS_SURFACE_CLASSES : "bg-card/60",
+      )}
       data-artifact-kind={props.template.artifactKind}
       data-markdown-copy={`${props.template.displayName} (${presentationLabel})\n\n`}
       data-skill-name={props.template.skillName}
@@ -694,6 +701,7 @@ function readInitialWordWrapSetting(): boolean {
 }
 
 function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
+  const { glassSurfaces } = use(ChatMarkdownRendererContext);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const tableRef = useRef<HTMLTableElement | null>(null);
   const [expanded, setExpanded] = useState(readInitialWordWrapSetting);
@@ -765,7 +773,13 @@ function MarkdownTable({ children, ...props }: React.ComponentProps<"table">) {
   return (
     <div
       ref={containerRef}
-      className="chat-markdown-table-container"
+      className={cn(
+        "chat-markdown-table-container",
+        glassSurfaces && [
+          CHAT_BACKGROUND_GLASS_SURFACE_CLASSES,
+          "overflow-hidden rounded-[var(--radius)]",
+        ],
+      )}
       data-expanded={expanded ? "true" : "false"}
     >
       <ScrollArea chainVerticalScroll scrollFade className="w-full max-w-full rounded-none">
@@ -827,6 +841,7 @@ function MarkdownDetails({
   children,
   open = false,
 }: Pick<React.ComponentProps<"details">, "children" | "open">) {
+  const { glassSurfaces } = use(ChatMarkdownRendererContext);
   const [isOpen, setIsOpen] = useState(open);
   const childNodes = Children.toArray(children);
   const summaryIndex = childNodes.findIndex(
@@ -843,7 +858,10 @@ function MarkdownDetails({
     <Collapsible
       defaultOpen={open}
       onOpenChange={setIsOpen}
-      className="chat-markdown-details my-2 border-y border-border/60"
+      className={cn(
+        "chat-markdown-details my-2 border-y border-border/60",
+        glassSurfaces && [CHAT_BACKGROUND_GLASS_SURFACE_CLASSES, "rounded-[var(--radius)] px-3"],
+      )}
       data-markdown-details=""
       data-markdown-details-open={isOpen ? "true" : "false"}
     >
@@ -921,6 +939,7 @@ function MarkdownCodeBlock({
   children: ReactNode;
 }) {
   const [copied, setCopied] = useState(false);
+  const { glassSurfaces } = use(ChatMarkdownRendererContext);
   const [wrapped, setWrapped] = useState(readInitialWordWrapSetting);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const wrapLabel = wrapped ? "Disable line wrap" : "Wrap lines";
@@ -966,7 +985,10 @@ function MarkdownCodeBlock({
 
   return (
     <div
-      className="chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 bg-secondary leading-snug dark:border-transparent dark:bg-input/32"
+      className={cn(
+        "chat-markdown-codeblock my-[0.65rem] overflow-hidden rounded-[var(--radius)] border border-border/70 leading-snug dark:border-transparent",
+        glassSurfaces ? CHAT_BACKGROUND_GLASS_SURFACE_CLASSES : "bg-secondary dark:bg-input/32",
+      )}
       data-language={language}
       data-wrap={wrapped ? "true" : "false"}
     >
@@ -1282,7 +1304,7 @@ const CHAT_MARKDOWN_MEDIA_BOUNDS_CLASS_NAME = cn(
   "max-h-[30rem]",
   CHAT_MARKDOWN_MEDIA_MAX_WIDTH_CLASS_NAME,
 );
-const CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME = "inline-block!";
+const CHAT_MARKDOWN_MEDIA_LAYOUT_CLASS_NAME = "inline-block! [text-shadow:none]";
 const CHAT_MARKDOWN_MEDIA_FRAME_CLASS_NAME = "rounded-lg border border-border/40";
 const CHAT_MARKDOWN_IMAGE_SIZE_CLASS_NAME = cn(
   "h-auto w-auto object-contain",
@@ -2226,6 +2248,7 @@ function useChatMarkdownState({
   onImageExpand,
   renderContextReference,
   headingLevelOffset = 0,
+  glassSurfaces = false,
 }: ChatMarkdownProps) {
   const { resolvedTheme } = useTheme();
   const [localMediaPreview, setLocalMediaPreview] = useState<ExpandedImagePreview | null>(null);
@@ -2625,6 +2648,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       headingLevelOffset,
+      glassSurfaces,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
@@ -2654,6 +2678,7 @@ function useChatMarkdownState({
       fileLinkChip,
       renderContextReference,
       headingLevelOffset,
+      glassSurfaces,
       imageBaseDir,
       inlineCodeFileLinkMetaByText,
       isStreaming,
