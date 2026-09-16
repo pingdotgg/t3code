@@ -1667,6 +1667,269 @@ it.layer(OpenCodeAdapterTestLayer)("OpenCodeAdapterLive", (it) => {
     }),
   );
 
+  it.effect("opens a new turn when the follow-up arrives before the idle event is processed", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-stale-active-turn");
+      const sessionID = "http://127.0.0.1:9999/session";
+      let nativeIdle = false;
+      const busyEvent = promiseWithResolvers<unknown>();
+      const retryEvent = promiseWithResolvers<unknown>();
+      const heldIdleEvent = promiseWithResolvers<unknown>();
+      const retryAfterIdle = promiseWithResolvers<unknown>();
+      runtimeMock.state.subscribedEvents = [
+        busyEvent.promise,
+        retryEvent.promise,
+        heldIdleEvent.promise,
+        retryAfterIdle.promise,
+      ];
+      runtimeMock.state.sessionStatusImplementation = async () => ({
+        data: nativeIdle ? {} : { [sessionID]: { type: "busy" as const } },
+      });
+
+      // `streamEvents` is a shared queue, so subscribers compete for events. Take
+      // one phase at a time; anything emitted between phases waits in the queue.
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "runtime.warning"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "First task",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      busyEvent.resolve({
+        id: "evt-busy",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+      // The retry event sits behind the busy event in the same queue, so observing
+      // its warning proves the busy status was already applied to the turn.
+      retryEvent.resolve({
+        id: "evt-retry",
+        type: "session.status",
+        properties: { sessionID, status: { type: "retry", attempt: 1, message: "transient" } },
+      });
+      const started = yield* Fiber.join(startedFiber).pipe(Effect.timeout("5 seconds"));
+      NodeAssert.deepEqual(
+        started.map((event) => event.type),
+        ["turn.started", "runtime.warning"],
+      );
+
+      const followUpFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "turn.completed"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      // OpenCode has finished the turn, but its idle event is still queued behind
+      // the pump, so `activeTurnId` still names the finished turn.
+      nativeIdle = true;
+      const secondTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "Second task",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      // OpenCode picks the follow-up up and runs again.
+      nativeIdle = false;
+
+      NodeAssert.notEqual(String(secondTurn.turnId), String(firstTurn.turnId));
+      const followUp = yield* Fiber.join(followUpFiber).pipe(Effect.timeout("5 seconds"));
+      NodeAssert.deepEqual(
+        followUp.map((event) => [event.type, String(event.turnId)]),
+        [
+          ["turn.completed", String(firstTurn.turnId)],
+          ["turn.started", String(secondTurn.turnId)],
+        ],
+      );
+
+      // Draining the now-stale idle must not retire the turn it raced. The retry
+      // behind it warns only after the idle was handled, so a completion for the
+      // second turn would have to arrive first.
+      const drainedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.completed" || event.type === "runtime.warning"),
+        ),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      heldIdleEvent.resolve({
+        id: "evt-idle-held",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      retryAfterIdle.resolve({
+        id: "evt-retry-after-idle",
+        type: "session.status",
+        properties: { sessionID, status: { type: "retry", attempt: 2, message: "transient" } },
+      });
+      const drained = Option.getOrUndefined(
+        yield* Fiber.join(drainedFiber).pipe(Effect.timeout("5 seconds")),
+      );
+      NodeAssert.equal(drained?.type, "runtime.warning");
+
+      const sessions = yield* adapter.listSessions();
+      const session = sessions.find((candidate) => candidate.threadId === threadId);
+      NodeAssert.equal(session?.status, "running");
+      NodeAssert.equal(String(session?.activeTurnId), String(secondTurn.turnId));
+
+      // The second turn is intentionally left running; stop the session so its
+      // admission recovery loop cannot poll status into the next test.
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
+  it.effect("opens a new turn when the idle event lands during the status preflight", () =>
+    Effect.gen(function* () {
+      const adapter = yield* OpenCodeAdapter;
+      const threadId = asThreadId("thread-idle-during-preflight");
+      const sessionID = "http://127.0.0.1:9999/session";
+      const busyEvent = promiseWithResolvers<unknown>();
+      const retryEvent = promiseWithResolvers<unknown>();
+      const idleEvent = promiseWithResolvers<unknown>();
+      const openEvent = promiseWithResolvers<unknown>();
+      const statusStarted = promiseWithResolvers<void>();
+      const statusRelease = promiseWithResolvers<void>();
+      let statusPhase: "busy" | "preflight" | "done" = "busy";
+      runtimeMock.state.subscribedEvents = [
+        busyEvent.promise,
+        retryEvent.promise,
+        idleEvent.promise,
+        // Never resolves; keeps the native event stream open until stopSession.
+        openEvent.promise,
+      ];
+      // Exactly one status call, the follow-up's preflight, is suspended and
+      // answers idle. Every other call reports the session busy.
+      runtimeMock.state.sessionStatusImplementation = async () => {
+        if (statusPhase !== "preflight") {
+          return { data: { [sessionID]: { type: "busy" as const } } };
+        }
+        statusPhase = "done";
+        statusStarted.resolve(undefined);
+        await statusRelease.promise;
+        return { data: {} };
+      };
+
+      // `streamEvents` is a shared queue, so subscribers compete for events. Take
+      // one phase at a time; anything emitted between phases waits in the queue.
+      const startedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter(
+          (event) =>
+            event.threadId === threadId &&
+            (event.type === "turn.started" || event.type === "runtime.warning"),
+        ),
+        Stream.take(2),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+      yield* adapter.startSession({
+        provider: ProviderDriverKind.make("opencode"),
+        threadId,
+        runtimeMode: "full-access",
+      });
+      const firstTurn = yield* adapter.sendTurn({
+        threadId,
+        input: "First task",
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("opencode"),
+          "opencode/kimi-k3",
+        ),
+      });
+      busyEvent.resolve({
+        id: "evt-busy",
+        type: "session.status",
+        properties: { sessionID, status: { type: "busy" } },
+      });
+      // The retry event sits behind the busy event in the same queue, so observing
+      // its warning proves the busy status was already applied to the turn.
+      retryEvent.resolve({
+        id: "evt-retry",
+        type: "session.status",
+        properties: { sessionID, status: { type: "retry", attempt: 1, message: "transient" } },
+      });
+      const started = yield* Fiber.join(startedFiber).pipe(Effect.timeout("5 seconds"));
+      NodeAssert.deepEqual(
+        started.map((event) => event.type),
+        ["turn.started", "runtime.warning"],
+      );
+
+      // Suspend the follow-up inside its preflight, then let the real idle event
+      // retire the first turn while that status request is still in flight.
+      const completedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.completed"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      statusPhase = "preflight";
+      const followUpFiber = yield* adapter
+        .sendTurn({
+          threadId,
+          input: "Second task",
+          modelSelection: createModelSelection(
+            ProviderInstanceId.make("opencode"),
+            "opencode/kimi-k3",
+          ),
+        })
+        .pipe(Effect.forkChild);
+      yield* Effect.promise(() => statusStarted.promise);
+      idleEvent.resolve({
+        id: "evt-idle-during-preflight",
+        type: "session.status",
+        properties: { sessionID, status: { type: "idle" } },
+      });
+      const completed = Option.getOrUndefined(
+        yield* Fiber.join(completedFiber).pipe(Effect.timeout("5 seconds")),
+      );
+      NodeAssert.equal(String(completed?.turnId), String(firstTurn.turnId));
+
+      // The turn the follow-up captured before the preflight is gone, so resuming
+      // it must open a new one rather than steer into the finished turn.
+      const secondStartedFiber = yield* adapter.streamEvents.pipe(
+        Stream.filter((event) => event.threadId === threadId && event.type === "turn.started"),
+        Stream.runHead,
+        Effect.forkChild,
+      );
+      statusRelease.resolve(undefined);
+      const secondTurn = yield* Fiber.join(followUpFiber).pipe(Effect.timeout("5 seconds"));
+      NodeAssert.notEqual(String(secondTurn.turnId), String(firstTurn.turnId));
+      const secondStarted = Option.getOrUndefined(
+        yield* Fiber.join(secondStartedFiber).pipe(Effect.timeout("5 seconds")),
+      );
+      NodeAssert.equal(String(secondStarted?.turnId), String(secondTurn.turnId));
+
+      const sessions = yield* adapter.listSessions();
+      const session = sessions.find((candidate) => candidate.threadId === threadId);
+      NodeAssert.equal(String(session?.activeTurnId), String(secondTurn.turnId));
+
+      // The second turn is intentionally left running; stop the session so its
+      // admission recovery loop cannot poll status into the next test.
+      yield* adapter.stopSession(threadId);
+    }),
+  );
+
   it.effect("waits for steer admission before accepting the only idle event", () =>
     Effect.gen(function* () {
       const adapter = yield* OpenCodeAdapter;
