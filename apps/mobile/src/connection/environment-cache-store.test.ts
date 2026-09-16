@@ -1,4 +1,7 @@
-import { ORCHESTRATION_CACHE_SCHEMA_VERSION } from "@t3tools/client-runtime/platform";
+import {
+  ORCHESTRATION_CACHE_SCHEMA_VERSION,
+  StoredOrchestrationShellSnapshot,
+} from "@t3tools/client-runtime/platform";
 import {
   CommandId,
   EnvironmentId,
@@ -12,10 +15,15 @@ import {
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
+import * as Schema from "effect/Schema";
+import { vi } from "vite-plus/test";
+import * as Deferred from "effect/Deferred";
 import * as Option from "effect/Option";
 
 import { type ClientCacheKind, MobileDatabase } from "../persistence/mobile-database";
 import { make } from "./environment-cache-store";
+import { encodeStoredShellSnapshot } from "./shell-cache-encoding";
 
 const ENVIRONMENT_ID = EnvironmentId.make("environment-1");
 const PROJECT_ID = ProjectId.make("project-1");
@@ -305,6 +313,103 @@ describe("mobile SQLite environment cache store", () => {
 
       expect(yield* store.loadVcsRefs(ENVIRONMENT_ID, "/repo")).toEqual(Option.none());
       expect(yield* store.loadVcsRefs(otherEnvironmentId, "/repo")).toEqual(Option.some(REFS));
+    }),
+  );
+});
+
+describe("cooperative shell cache encoding", () => {
+  const encodeOriginal = Schema.encodeEffect(
+    Schema.fromJsonString(StoredOrchestrationShellSnapshot),
+  );
+  const stored = {
+    schemaVersion: ORCHESTRATION_CACHE_SCHEMA_VERSION,
+    environmentId: ENVIRONMENT_ID,
+    snapshot: {
+      ...SHELL_SNAPSHOT,
+      projects: SHELL_SNAPSHOT.projects.map((project) => ({
+        ...project,
+        title: "  Project  ",
+        unexpected: "drop this field",
+      })),
+      threads: Array.from({ length: 64 }, (_, index) => ({
+        ...SHELL_SNAPSHOT.threads[0]!,
+        id: ThreadId.make(`thread-${index}`),
+        branch: "  main  ",
+        activityRunStartedAt: index % 2 === 0 ? NOW : null,
+        unsettledAt: index % 2 === 0 ? NOW : null,
+        modelSelection: {
+          instanceId: PROVIDER_INSTANCE_ID,
+          model: "  gpt-5.4  ",
+          unexpected: "drop this field",
+        },
+        unexpected: "drop this field",
+      })),
+      archivedThreads: [{ ...SHELL_SNAPSHOT.threads[0]!, archivedAt: NOW }],
+      unexpected: "drop this field",
+    },
+    unexpected: "drop this field",
+  };
+
+  it.effect("preserves exact JSON, transforms, nulls, dates, and unknown-field stripping", () =>
+    Effect.gen(function* () {
+      const expected = yield* encodeOriginal(stored);
+      const actual = yield* encodeStoredShellSnapshot(stored);
+      expect(actual).toBe(expected);
+      const parsed = JSON.parse(actual);
+      expect(parsed).not.toHaveProperty("unexpected");
+      expect(parsed.snapshot).not.toHaveProperty("unexpected");
+      expect(parsed.snapshot.projects[0]).not.toHaveProperty("unexpected");
+      expect(parsed.snapshot.projects[0].title).toBe("Project");
+      expect(parsed.snapshot.threads[0]).not.toHaveProperty("unexpected");
+      expect(parsed.snapshot.threads[0].branch).toBe("main");
+      expect(parsed.snapshot.threads[0].modelSelection).toEqual({
+        instanceId: "codex",
+        model: "gpt-5.4",
+      });
+      expect(parsed.snapshot.threads[0].activityRunStartedAt).toBe(DateTime.formatIso(NOW));
+      expect(parsed.snapshot.threads[1].activityRunStartedAt).toBeNull();
+      expect(parsed.snapshot.archivedThreads[0].archivedAt).toBe(DateTime.formatIso(NOW));
+    }),
+  );
+
+  it.effect("still rejects invalid rows after an encoding batch yields", () =>
+    Effect.gen(function* () {
+      const invalid = {
+        ...stored,
+        snapshot: {
+          ...stored.snapshot,
+          threads: [...stored.snapshot.threads, { ...stored.snapshot.threads[0]!, itemCount: -1 }],
+        },
+      };
+      expect(yield* Effect.isFailure(encodeStoredShellSnapshot(invalid))).toBe(true);
+    }),
+  );
+
+  it.effect("cancels the pending host timer when encoding is interrupted", () =>
+    Effect.gen(function* () {
+      vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+      const fakeSetTimeout = globalThis.setTimeout;
+      const scheduled = yield* Deferred.make<ReturnType<typeof setTimeout>>();
+      vi.spyOn(globalThis, "setTimeout").mockImplementation((...args) => {
+        const timer = fakeSetTimeout(...args);
+        Deferred.doneUnsafe(scheduled, Effect.succeed(timer));
+        return timer;
+      });
+      const clearTimer = vi.spyOn(globalThis, "clearTimeout");
+      const fiber = yield* Effect.forkScoped(
+        Effect.suspend(() => encodeStoredShellSnapshot(stored)),
+      );
+      try {
+        const pendingTimer = yield* Deferred.await(scheduled);
+        expect(vi.getTimerCount()).toBe(1);
+        yield* Fiber.interrupt(fiber);
+        expect(clearTimer).toHaveBeenCalledWith(pendingTimer);
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        yield* Fiber.interrupt(fiber);
+        vi.restoreAllMocks();
+        vi.useRealTimers();
+      }
     }),
   );
 });
