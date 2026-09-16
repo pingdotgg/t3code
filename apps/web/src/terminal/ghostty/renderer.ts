@@ -122,6 +122,9 @@ export function renderGhosttySnapshot(options: {
   const selectionBackground = options.selectionBackground ?? DEFAULT_SELECTION_BACKGROUND;
   const hoveredLinkRange = options.hoveredLinkRange ?? null;
   const originY = options.originY ?? padding;
+  const scaleY = context.getTransform().d;
+  // Shared device-pixel edges let a dirty row erase its cursor without touching its neighbors.
+  const rowTop = (row: number) => Math.round((originY + row * metrics.height) * scaleY) / scaleY;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
     : [...snapshot.dirtyRows];
@@ -149,10 +152,11 @@ export function renderGhosttySnapshot(options: {
   for (const rowIndex of rowsToDraw) {
     const row = snapshot.rowData[rowIndex];
     if (!row) continue;
-    const top = originY + rowIndex * metrics.height;
+    const top = rowTop(rowIndex);
+    const height = rowTop(rowIndex + 1) - top;
 
     context.fillStyle = cssColor(snapshot.background);
-    context.fillRect(padding, top, snapshot.cols * metrics.width, metrics.height);
+    context.fillRect(padding, top, snapshot.cols * metrics.width, height);
 
     let backgroundStart = 0;
     while (backgroundStart < row.cells.length) {
@@ -175,11 +179,11 @@ export function renderGhosttySnapshot(options: {
         const width = (backgroundEnd - backgroundStart) * metrics.width;
         if (!ghosttyColorsEqual(first.background, snapshot.background)) {
           context.fillStyle = cssColor(first.background);
-          context.fillRect(left, top, width, metrics.height);
+          context.fillRect(left, top, width, height);
         }
         if (first.selected) {
           context.fillStyle = selectionBackground;
-          context.fillRect(left, top, width, metrics.height);
+          context.fillRect(left, top, width, height);
         }
       }
       backgroundStart = backgroundEnd;
@@ -205,7 +209,7 @@ export function renderGhosttySnapshot(options: {
           padding + runStart * metrics.width,
           top,
           (runEnd - runStart) * metrics.width,
-          metrics.height,
+          height,
         );
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
@@ -235,10 +239,10 @@ export function renderGhosttySnapshot(options: {
       context.fillStyle = cssColor(cell.foreground);
       const left = padding + column * metrics.width;
       if (cell.underline || hoveredLink) {
-        context.fillRect(left, top + metrics.height - 2, metrics.width, 1);
+        context.fillRect(left, top + height - 2, metrics.width, 1);
       }
       if (cell.strikethrough) {
-        context.fillRect(left, top + Math.floor(metrics.height * 0.55), metrics.width, 1);
+        context.fillRect(left, top + Math.floor(height * 0.55), metrics.width, 1);
       }
       if (cell.overline) context.fillRect(left, top + 1, metrics.width, 1);
     }
@@ -246,21 +250,22 @@ export function renderGhosttySnapshot(options: {
 
   if (cursorOn && snapshot.cursorVisible && snapshot.cursorX >= 0 && snapshot.cursorY >= 0) {
     const left = padding + snapshot.cursorX * metrics.width;
-    const top = originY + snapshot.cursorY * metrics.height;
+    const top = rowTop(snapshot.cursorY);
+    const height = rowTop(snapshot.cursorY + 1) - top;
     context.fillStyle = cssColor(snapshot.cursor);
     if (!focused) {
       // An unfocused terminal draws a hollow cursor so the active pane is obvious.
       context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, height - 1);
     } else if (snapshot.cursorStyle === 0) {
-      context.fillRect(left, top, 2, metrics.height);
+      context.fillRect(left, top, 2, height);
     } else if (snapshot.cursorStyle === 2) {
-      context.fillRect(left, top + metrics.height - 2, metrics.width, 2);
+      context.fillRect(left, top + height - 2, metrics.width, 2);
     } else if (snapshot.cursorStyle === 3) {
       context.strokeStyle = cssColor(snapshot.cursor);
-      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, metrics.height - 1);
+      context.strokeRect(left + 0.5, top + 0.5, metrics.width - 1, height - 1);
     } else {
-      context.fillRect(left, top, metrics.width, metrics.height);
+      context.fillRect(left, top, metrics.width, height);
       const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
       if (cell?.text) {
         context.font = fontForCell(cell, fontSize, fontFamily);
