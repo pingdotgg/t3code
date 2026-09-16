@@ -8,7 +8,8 @@
  *
  * @module ThreadsSurface
  */
-import { Effect, Schema } from "effect";
+import * as Effect from "effect/Effect";
+import * as Schema from "effect/Schema";
 import {
   IsoDateTime,
   PositiveInt,
@@ -17,8 +18,7 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-export const THREADS_SURFACE_TOOL_NAMES = ["threads_list", "threads_create"] as const;
-export type ThreadsSurfaceToolName = (typeof THREADS_SURFACE_TOOL_NAMES)[number];
+export type ThreadsSurfaceToolName = "threads_list" | "threads_create";
 
 /**
  * Adapters surface toolkit tools under different names: Codex keeps the bare
@@ -28,9 +28,20 @@ export type ThreadsSurfaceToolName = (typeof THREADS_SURFACE_TOOL_NAMES)[number]
  */
 const THREADS_SURFACE_QUALIFIED_NAME =
   /^(?:(?:mcp__)?t3[-_]?code_{1,2})?(threads_list|threads_create)$/;
+const THREADS_SURFACE_SERVER_NAME = /^t3[-_]?code$/;
 
-export function matchThreadsSurfaceToolName(name: unknown): ThreadsSurfaceToolName | undefined {
+export function matchThreadsSurfaceToolName(
+  name: unknown,
+  server?: unknown,
+): ThreadsSurfaceToolName | undefined {
   if (typeof name !== "string") {
+    return undefined;
+  }
+  // Adapters that split server and tool into separate fields (Codex
+  // `item.server` + `item.tool`) carry bare tool names; an explicit foreign
+  // server must not match, while a missing server stays permissive for
+  // adapters that only report the tool name.
+  if (typeof server === "string" && !THREADS_SURFACE_SERVER_NAME.test(server)) {
     return undefined;
   }
   return THREADS_SURFACE_QUALIFIED_NAME.exec(name)?.[1] as ThreadsSurfaceToolName | undefined;
@@ -77,8 +88,15 @@ export const ThreadsCreateResult = Schema.Struct({
 });
 export type ThreadsCreateResult = typeof ThreadsCreateResult.Type;
 
-export const ThreadsSurfaceError = Schema.Struct({
-  _tag: Schema.Literals(["ThreadsSurfaceError"]),
-  detail: Schema.String,
-});
-export type ThreadsSurfaceError = typeof ThreadsSurfaceError.Type;
+export class ThreadsSurfaceError extends Schema.TaggedError<ThreadsSurfaceError>()(
+  "ThreadsSurfaceError",
+  {
+    operation: Schema.Literals(["threads_list", "threads_create"]),
+    detail: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    return this.detail;
+  }
+}

@@ -399,6 +399,26 @@ describe("projectActivityPayload", () => {
     expect(data.structuredResult).toEqual(result);
   });
 
+  it("does not treat a bare threads_list from a foreign MCP server as threads-surface", () => {
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "mcp_tool_call",
+        data: {
+          item: {
+            type: "mcpToolCall",
+            id: "item-3",
+            tool: "threads_list",
+            server: "github",
+            status: "completed",
+            result: { content: [{ type: "text", text: '{"threads":[]}' }] },
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toBeUndefined();
+  });
+
   it("keeps structuredResult when an already-projected activity is projected again", () => {
     const result = { threadId: "thrd_4", title: "Reprojected" };
     const once = projectActivityPayload(

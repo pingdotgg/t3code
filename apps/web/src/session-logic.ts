@@ -722,9 +722,10 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
   // `mcp__t3-code__*` at `data.toolName`, Codex keeps `item.tool`, and some
   // adapters classify the create call as a generic change item.
   const threadsToolData = asRecord(payload?.data);
+  const threadsToolItem = asRecord(threadsToolData?.item);
   const threadsToolName =
-    matchThreadsSurfaceToolName(threadsToolData?.toolName) ??
-    matchThreadsSurfaceToolName(asRecord(threadsToolData?.item)?.tool);
+    matchThreadsSurfaceToolName(threadsToolData?.toolName, threadsToolData?.server) ??
+    matchThreadsSurfaceToolName(threadsToolItem?.tool, threadsToolItem?.server);
   if (threadsToolName === "threads_list") {
     const threadsList = extractThreadsListResult(threadsToolData?.structuredResult);
     if (threadsList) {

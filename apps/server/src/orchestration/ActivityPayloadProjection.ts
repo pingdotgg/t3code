@@ -309,8 +309,9 @@ function projectPreviewToolMetadata(data: Record<string, unknown>, status: unkno
 
 /** True when the tool belongs to the server's own threads surface toolkit. */
 function isThreadsSurfaceTool(data: Record<string, unknown>, item: Record<string, unknown> | null) {
-  return [data.toolName, item?.tool].some(
-    (candidate) => matchThreadsSurfaceToolName(candidate) !== undefined,
+  return (
+    matchThreadsSurfaceToolName(data.toolName, data.server) !== undefined ||
+    matchThreadsSurfaceToolName(item?.tool, item?.server) !== undefined
   );
 }
 

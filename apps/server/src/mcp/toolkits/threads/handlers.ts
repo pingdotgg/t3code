@@ -6,7 +6,7 @@ import {
   type ThreadsCreateResult,
   type ThreadsListInput,
   type ThreadsListResult,
-  type ThreadsSurfaceError,
+  ThreadsSurfaceError,
   type ThreadsListItem,
   THREADS_SURFACE_LIST_DEFAULT_LIMIT,
   THREADS_SURFACE_LIST_MAX_LIMIT,
@@ -20,10 +20,11 @@ import * as OrchestrationEngine from "../../../orchestration/Services/Orchestrat
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadsToolkit } from "./tools.ts";
 
-const fail = (detail: string) =>
-  Effect.fail<ThreadsSurfaceError>({ _tag: "ThreadsSurfaceError", detail });
+const fail = (operation: ThreadsSurfaceError["operation"], detail: string) =>
+  Effect.fail(new ThreadsSurfaceError({ operation, detail }));
 
-const failFrom = (error: { readonly message: string }) => fail(error.message);
+const failFrom = (operation: ThreadsSurfaceError["operation"], detail: string) =>
+  Effect.mapError((cause: unknown) => new ThreadsSurfaceError({ operation, detail, cause }));
 
 const isThreadSettled = (thread: OrchestrationReadModel["threads"][number]): boolean =>
   thread.settledOverride === "settled" ||
@@ -35,7 +36,9 @@ const liveThreads = (readModel: OrchestrationReadModel) =>
 const threadsList = (input: ThreadsListInput) =>
   Effect.gen(function* () {
     const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const readModel = yield* query.getCommandReadModel().pipe(Effect.catch(failFrom));
+    const readModel = yield* query
+      .getCommandReadModel()
+      .pipe(failFrom("threads_list", "Failed to load the environment's threads."));
 
     const threads = liveThreads(readModel)
       .filter((thread) => input.projectId === undefined || thread.projectId === input.projectId)
@@ -64,15 +67,23 @@ const threadsCreate = (input: ThreadsCreateInput) =>
   Effect.gen(function* () {
     const scope = yield* McpInvocationContext.McpInvocationContext;
     const query = yield* ProjectionSnapshotQuery.ProjectionSnapshotQuery;
-    const readModel = yield* query.getCommandReadModel().pipe(Effect.catch(failFrom));
+    const readModel = yield* query
+      .getCommandReadModel()
+      .pipe(failFrom("threads_create", "Failed to load the environment's threads."));
 
     const callingThread = readModel.threads.find((thread) => thread.id === scope.threadId);
     if (!callingThread) {
-      return yield* fail("Calling thread no longer exists; cannot derive the target project.");
+      return yield* fail(
+        "threads_create",
+        "Calling thread no longer exists; cannot derive the target project.",
+      );
     }
     const projectId = input.projectId ?? callingThread.projectId;
     if (!readModel.projects.some((project) => project.id === projectId)) {
-      return yield* fail(`Project ${projectId} does not exist in this environment.`);
+      return yield* fail(
+        "threads_create",
+        `Project ${projectId} does not exist in this environment.`,
+      );
     }
 
     const crypto = yield* Crypto.Crypto;
@@ -94,7 +105,7 @@ const threadsCreate = (input: ThreadsCreateInput) =>
         source: "agent",
         createdAt,
       })
-      .pipe(Effect.catch(failFrom));
+      .pipe(failFrom("threads_create", "Failed to create the thread."));
 
     return { threadId: ThreadId.make(uuid), title: input.title } satisfies ThreadsCreateResult;
   });
