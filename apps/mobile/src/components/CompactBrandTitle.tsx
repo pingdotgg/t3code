@@ -40,6 +40,7 @@ export function CompactBrandTitle(
       <Text
         allowFontScaling={props.allowFontScaling}
         className="font-t3-medium text-[21px] tracking-[-0.5px] text-foreground-muted"
+        style={Platform.OS === "android" ? { includeFontPadding: false } : undefined}
       >
         Code
       </Text>
@@ -47,6 +48,7 @@ export function CompactBrandTitle(
         <Text
           allowFontScaling={props.allowFontScaling}
           className="font-t3-bold text-[9px] tracking-[0.9px] text-foreground-muted uppercase"
+          style={Platform.OS === "android" ? { includeFontPadding: false } : undefined}
         >
           {stageLabel}
         </Text>
