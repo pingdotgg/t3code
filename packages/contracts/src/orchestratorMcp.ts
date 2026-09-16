@@ -586,5 +586,6 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "orchestration_error",
     ]),
     message: Schema.String,
+    cause: Schema.optional(Schema.Defect()),
   },
 ) {}
