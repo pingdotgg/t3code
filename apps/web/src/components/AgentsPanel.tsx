@@ -84,7 +84,7 @@ function elapsedBetween(startedAt: string, endIso: string | null): string {
  * Elapsed time for the current activation. Live agents self-tick via DOM
  * writes (zero React commits per tick); settled agents freeze at completedAt.
  */
-function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
+export function AgentElapsed({ agent }: { agent: RuntimeSubagent }) {
   const textRef = useRef<HTMLSpanElement>(null);
   const live = agent.status === "running" || agent.status === "waiting";
   const startedAt = agent.startedAt;
