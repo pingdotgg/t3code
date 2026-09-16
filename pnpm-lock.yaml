@@ -67,6 +67,7 @@ overrides:
   '@expo/dom-webview': 57.0.1
   '@expo/metro-config': 57.0.12
   expo-constants: 57.0.16
+  expo-modules-core: 57.0.14
   '@pierre/diffs>@shikijs/transformers': ^4.2.0
   '@tailwindcss/node': 4.3.3
   '@tailwindcss/oxide': 4.3.3
