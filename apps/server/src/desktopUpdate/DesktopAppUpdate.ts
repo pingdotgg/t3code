@@ -9,8 +9,10 @@ import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as HashMap from "effect/HashMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -72,27 +74,18 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const crypto = yield* Crypto.Crypto;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
+  const scope = yield* Effect.scope;
   // The RPC can disappear before shutdown cleanup runs. Retain accepted
   // handoffs across that interruption, but bound them by the install deadline.
   const pendingRestarts = yield* Ref.make(HashMap.empty<string, number>());
 
-  const isRestartPending = Effect.scoped(
-    Effect.gen(function* () {
-      const now = yield* Clock.currentTimeMillis;
-      const { latest } = yield* receiver.desktopUpdates;
-      const failedRequestId =
-        Option.isSome(latest) && latest.value.outcome === "failed"
-          ? latest.value.requestId
-          : undefined;
-      const pending = yield* Ref.updateAndGet(pendingRestarts, (requests) =>
-        HashMap.filter(
-          requests,
-          (deadline, requestId) => deadline > now && requestId !== failedRequestId,
-        ),
-      );
-      return HashMap.size(pending) > 0;
-    }),
-  );
+  const isRestartPending = Effect.gen(function* () {
+    const now = yield* Clock.currentTimeMillis;
+    const pending = yield* Ref.updateAndGet(pendingRestarts, (requests) =>
+      HashMap.filter(requests, (deadline) => deadline > now),
+    );
+    return HashMap.size(pending) > 0;
+  });
 
   const available = config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined;
   const failWith = (reason: string, cause?: unknown) =>
@@ -218,7 +211,8 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       return yield* failWith("This server cannot commit a desktop app update.");
     }
     let handoffAccepted = false;
-    return yield* Effect.gen(function* () {
+    const handoff = yield* Deferred.make<void>();
+    const install = Effect.gen(function* () {
       const terminal = yield* Effect.scoped(
         Effect.gen(function* () {
           const { latest, changes } = yield* receiver.desktopUpdates;
@@ -235,11 +229,17 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
               );
               yield* receiver.commitDesktopUpdate(requestId);
               handoffAccepted = true;
+              const acceptedAt = yield* Clock.currentTimeMillis;
+              yield* Ref.update(
+                pendingRestarts,
+                HashMap.set(requestId, acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
+              );
             }).pipe(
               Effect.mapError((error) =>
                 failWith("Could not reach the T3 Code desktop app.", error),
               ),
               Effect.tap(() => onHandoffAccepted()),
+              Effect.tap(() => Deferred.succeed(handoff, undefined)),
             ),
           );
           return yield* reports.pipe(
@@ -269,6 +269,17 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
           ? Effect.void
           : Ref.update(pendingRestarts, HashMap.remove(requestId)),
       ),
+      Effect.ensuring(Deferred.succeed(handoff, undefined)),
+    );
+    return yield* Effect.uninterruptibleMask((restore) =>
+      Effect.gen(function* () {
+        // Keep consuming this request's failure report if its caller disconnects.
+        // A later request can replace the receiver's latest report.
+        const worker = yield* install.pipe(Effect.interruptible, Effect.forkIn(scope));
+        // Preserve the caller's handoff callback before allowing cancellation.
+        yield* Deferred.await(handoff);
+        return yield* restore(Fiber.join(worker));
+      }),
     );
   });
 

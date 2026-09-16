@@ -7,6 +7,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -214,7 +215,17 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
   it.effect("retains the tunnel handoff after transport loss, then expires it", () =>
     Effect.gen(function* () {
       const accepted = yield* Deferred.make<void>();
-      const { service } = yield* makeHarness({ keepOpen: true });
+      const workerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      const { service } = yield* makeHarness({
+        keepOpen: true,
+        receiver: {
+          commitDesktopUpdate: () =>
+            Effect.fiber.pipe(
+              Effect.flatMap((fiber) => Deferred.succeed(workerStarted, fiber)),
+              Effect.asVoid,
+            ),
+        },
+      });
       const commit = yield* service
         .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
         .pipe(Effect.forkChild);
@@ -222,6 +233,9 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       expect(yield* service.isRestartPending).toBe(true);
 
       yield* Fiber.interrupt(commit);
+      expect(yield* service.isRestartPending).toBe(true);
+      // Server shutdown also interrupts the service-owned report consumer.
+      yield* Fiber.interrupt(yield* Deferred.await(workerStarted));
       expect(yield* service.isRestartPending).toBe(true);
 
       yield* TestClock.adjust("2 minutes");
@@ -229,21 +243,58 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
     }),
   );
 
-  it.effect("clears a failed install even after its remote caller disconnects", () =>
+  it.effect("finishes a delayed handoff before honoring caller cancellation", () =>
     Effect.gen(function* () {
+      const writing = yield* Deferred.make<void>();
+      const finishWrite = yield* Deferred.make<void>();
       const accepted = yield* Deferred.make<void>();
-      let latest = Option.none<DesktopUpdateStatusReport>();
       const { service } = yield* makeHarness({
+        keepOpen: true,
         receiver: {
-          desktopUpdates: Effect.sync(() => ({ latest, changes: Stream.never })),
+          commitDesktopUpdate: () =>
+            Deferred.succeed(writing, undefined).pipe(Effect.andThen(Deferred.await(finishWrite))),
         },
       });
       const commit = yield* service
         .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
         .pipe(Effect.forkChild);
+      yield* Deferred.await(writing);
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* service.isRestartPending).toBe(false);
+
+      const cancellation = yield* Fiber.interrupt(commit).pipe(
+        Effect.forkChild({ startImmediately: true }),
+      );
+      yield* Deferred.succeed(finishWrite, undefined);
       yield* Deferred.await(accepted);
+      yield* Fiber.join(cancellation);
+      expect(yield* service.isRestartPending).toBe(true);
+    }),
+  );
+
+  it.effect("consumes a disconnected caller's failure before later reports overwrite it", () =>
+    Effect.gen(function* () {
+      const workerStarted = yield* Deferred.make<Fiber.Fiber<unknown, unknown>>();
+      const reports = yield* Queue.unbounded<DesktopUpdateStatusReport>();
+      let latest = Option.none<DesktopUpdateStatusReport>();
+      const { service } = yield* makeHarness({
+        receiver: {
+          commitDesktopUpdate: () =>
+            Effect.fiber.pipe(
+              Effect.flatMap((fiber) => Deferred.succeed(workerStarted, fiber)),
+              Effect.asVoid,
+            ),
+          desktopUpdates: Effect.sync(() => ({ latest, changes: Stream.fromQueue(reports) })),
+        },
+      });
+      const commit = yield* service.commit("update-1").pipe(Effect.forkChild);
+      const worker = yield* Deferred.await(workerStarted);
       yield* Fiber.interrupt(commit);
-      latest = Option.some(report("update-1", makeState(), { outcome: "failed" }));
+      const failure = report("update-1", makeState(), { outcome: "failed" });
+      const later = report("update-2", makeState({ status: "checking" }));
+      latest = Option.some(later);
+      yield* Queue.offerAll(reports, [failure, later]);
+      yield* Fiber.await(worker);
 
       expect(yield* service.isRestartPending).toBe(false);
     }),
