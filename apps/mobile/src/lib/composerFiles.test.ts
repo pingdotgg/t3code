@@ -106,7 +106,8 @@ import { isForegroundHandoffActive } from "./foreground-handoff";
 import { retainComposerAttachmentFile } from "./composerAttachmentFiles";
 
 describe("composer file attachments", () => {
-  beforeEach(() => {
+  /** Restores the file and native-picker mocks shared by every attachment test. */
+  function resetAttachmentMocks() {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
@@ -118,7 +119,9 @@ describe("composer file attachments", () => {
     mocks.size.mockReset();
     mocks.readBase64.mockReset();
     mocks.size.mockImplementation((uri: string) => (uri.startsWith("content:") ? null : 42));
-  });
+  }
+
+  beforeEach(resetAttachmentMocks);
 
   describe("photo library image conversion", () => {
     const rendered = { uri: "file:///cache/ImageManipulator/photo.jpg", base64: "/9j/2Q==" };
@@ -141,7 +144,8 @@ describe("composer file attachments", () => {
       saved: rendered as { uri: string; base64?: string },
     };
 
-    beforeEach(() => {
+    /** Restores the simulated native image pipeline and grants camera access by default. */
+    function resetNativeImageMocks() {
       native.size = { width: 1, height: 1 };
       native.resizes = [];
       native.saved = rendered;
@@ -162,9 +166,12 @@ describe("composer file attachments", () => {
         return context;
       });
       mocks.requestCameraPermission.mockResolvedValue({ granted: true });
-    });
+    }
 
-    it("requests camera access and attaches a captured photo", async () => {
+    beforeEach(resetNativeImageMocks);
+
+    /** Verifies that an authorized camera capture is normalized into a composer image. */
+    async function attachCapturedPhoto() {
       mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
 
       const result = await takeComposerPhoto({ existingCount: 0 });
@@ -187,9 +194,12 @@ describe("composer file attachments", () => {
         ],
         error: null,
       });
-    });
+    }
 
-    it("does not open the camera when access is denied", async () => {
+    it("requests camera access and attaches a captured photo", attachCapturedPhoto);
+
+    /** Verifies that denied camera permission stops capture and closes the handoff. */
+    async function rejectDeniedCameraAccess() {
       mocks.requestCameraPermission.mockResolvedValue({ granted: false });
 
       await expect(takeComposerPhoto({ existingCount: 0 })).resolves.toEqual({
@@ -199,9 +209,12 @@ describe("composer file attachments", () => {
 
       expect(mocks.takePhoto).not.toHaveBeenCalled();
       expect(isForegroundHandoffActive()).toBe(false);
-    });
+    }
 
-    it("does not request camera access when the draft is already full", async () => {
+    it("does not open the camera when access is denied", rejectDeniedCameraAccess);
+
+    /** Verifies that attachment limits short-circuit before permission or capture prompts. */
+    async function rejectCameraCaptureForFullDraft() {
       await expect(takeComposerPhoto({ existingCount: 8 })).resolves.toEqual({
         attachments: [],
         error: "You can attach up to 8 attachments per message.",
@@ -209,7 +222,12 @@ describe("composer file attachments", () => {
 
       expect(mocks.requestCameraPermission).not.toHaveBeenCalled();
       expect(mocks.takePhoto).not.toHaveBeenCalled();
-    });
+    }
+
+    it(
+      "does not request camera access when the draft is already full",
+      rejectCameraCaptureForFullDraft,
+    );
 
     it.each(["image/heic", "image/heif", undefined])(
       "renders a %s photo to JPEG natively and previews the rendered file",

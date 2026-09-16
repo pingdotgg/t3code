@@ -382,6 +382,7 @@ async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: st
   }
 }
 
+/** Lazily loads the native picker so missing native modules produce source-specific guidance. */
 async function loadImagePicker(unavailableMessage: string) {
   try {
     return await import("expo-image-picker");
