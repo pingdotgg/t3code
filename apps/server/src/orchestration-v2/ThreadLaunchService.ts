@@ -70,6 +70,7 @@ export type ThreadLaunchWorkspaceStrategy =
       readonly baseRef: string;
       readonly branch?: string | undefined;
       readonly worktreeName?: string | undefined;
+      readonly reuseBaseBranchIfAvailable?: boolean | undefined;
       readonly startFromOrigin?: boolean | undefined;
     };
 

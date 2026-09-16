@@ -162,6 +162,7 @@ interface StartThreadBootstrap {
     readonly baseBranch: string;
     readonly branch?: string;
     readonly worktreeName?: string;
+    readonly reuseBaseBranchIfAvailable?: boolean;
     readonly startFromOrigin?: boolean;
   };
   readonly runSetupScript?: boolean;
@@ -699,6 +700,9 @@ export const startThreadTurn = Effect.fn("EnvironmentCommands.startThreadTurn")(
         ? {
             type: "worktree" as const,
             baseRef: prepareWorktree.baseBranch,
+            ...(prepareWorktree.reuseBaseBranchIfAvailable === undefined
+              ? {}
+              : { reuseBaseBranchIfAvailable: prepareWorktree.reuseBaseBranchIfAvailable }),
             ...(prepareWorktree.branch === undefined ? {} : { branch: prepareWorktree.branch }),
             ...(prepareWorktree.worktreeName === undefined
               ? {}
