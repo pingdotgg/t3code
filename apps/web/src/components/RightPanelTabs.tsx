@@ -24,6 +24,7 @@ import {
   GitPullRequest,
   GitPullRequestArrow,
   Globe2,
+  PenTool,
   Plus,
   TerminalSquare,
   Volume2,
@@ -104,6 +105,8 @@ interface RightPanelTabsProps {
   onCloseSurfacesToRight: (surface: RightPanelSurface) => void;
   onCloseAllSurfaces: () => void;
   onCopyFilePath: (relativePath: string) => void;
+  onAddDesign?: (() => void) | undefined;
+  designAvailable?: boolean | undefined;
   onAddBrowser: () => void;
   /**
    * Separate from `onAddBrowser` on purpose: that one is passed directly as a
@@ -311,6 +314,8 @@ function SurfaceMenuItem(props: {
  * surfaces stay visible with a one-line reason.
  */
 function RightPanelEmptyState(props: {
+  onAddDesign?: (() => void) | undefined;
+  designAvailable?: boolean | undefined;
   onAddBrowser: () => void;
   onAddBrowserInProfile: (profileId: string) => void;
   browserProfiles: ReadonlyArray<{ readonly id: string; readonly name: string }>;
@@ -335,6 +340,15 @@ function RightPanelEmptyState(props: {
   const [highlight, setHighlight] = useState(-1);
 
   const actions = [
+    {
+      label: "Design",
+      icon: PenTool,
+      shortcut: "C",
+      available: props.designAvailable ?? false,
+      disabledReason: "Create a design in this thread first.",
+      onClick: props.onAddDesign ?? (() => {}),
+      badgeCount: 0,
+    },
     {
       label: "Browser",
       icon: Globe2,
@@ -611,6 +625,8 @@ function surfaceTitle(
   terminalLabelsById: ReadonlyMap<string, string>,
 ): string {
   switch (surface.kind) {
+    case "design":
+      return "Design";
     case "diff":
       return "Diff";
     case "files":
@@ -688,6 +704,8 @@ function SurfaceIcon({
         favicon && url && sameOrigin(favicon.pageUrl, url) ? favicon.dataUrl : null;
       return <PreviewFavicon capturedUrl={capturedUrl} url={url} />;
     }
+    case "design":
+      return <PenTool className="size-3 shrink-0" />;
     case "diff":
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
@@ -861,6 +879,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   }, []);
 
   const addSurfaceActions = [
+    {
+      label: "Design",
+      icon: PenTool,
+      shortcut: "C",
+      available: props.designAvailable ?? false,
+      disabledReason: "Create a design in this thread first.",
+      onClick: props.onAddDesign ?? (() => {}),
+    },
     {
       label: "Browser",
       icon: Globe2,
@@ -1387,6 +1413,8 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
+            onAddDesign={props.onAddDesign}
+            designAvailable={props.designAvailable}
             onAddBrowser={props.onAddBrowser}
             onAddBrowserInProfile={props.onAddBrowserInProfile}
             browserProfiles={browserProfiles}

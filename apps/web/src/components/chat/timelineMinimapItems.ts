@@ -1,3 +1,4 @@
+import { visibleDesignCommand } from "@t3tools/shared/designPrompt";
 import type { MessagesTimelineRow } from "./MessagesTimeline.logic";
 
 export interface TimelineMinimapItem {
@@ -60,7 +61,9 @@ export function resolveTimelineMinimapPreview(
     ? null
     : {
         ...item,
-        userText: compactMinimapPreview(item.userText),
+        userText: compactMinimapPreview(
+          item.userText ? visibleDesignCommand(item.userText) : item.userText,
+        ),
         assistantText: compactMinimapPreview(item.assistantText),
       };
 }

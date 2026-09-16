@@ -1,3 +1,4 @@
+import { visibleDesignCommand } from "@t3tools/shared/designPrompt";
 import {
   COMPOSER_CONTEXT_REVIEW_DIFF_MAX_CHARS,
   COMPOSER_CONTEXT_REVIEW_TEXT_MAX_CHARS,
@@ -384,7 +385,7 @@ export function resolveUserMessageContext(message: {
     ? { text: message.text, records: message.context.records }
     : upgradeLegacyContextMessage(message.text);
   return {
-    text: resolved.text,
+    text: visibleDesignCommand(resolved.text),
     records: resolved.records,
     recordsById: new Map(resolved.records.map((record) => [record.contextId, record])),
   };

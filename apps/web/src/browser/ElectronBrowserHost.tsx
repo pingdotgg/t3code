@@ -1,5 +1,11 @@
 "use client";
 
+import { designPathFromUrl } from "@t3tools/shared/designPrompt";
+import { environmentSession } from "~/state/session";
+import { useAtomValue } from "@effect/atom-react";
+import * as Option from "effect/Option";
+import { Atom } from "effect/unstable/reactivity";
+
 import { parseScopedThreadKey } from "@t3tools/client-runtime/environment";
 import { FILL_PREVIEW_VIEWPORT } from "@t3tools/contracts";
 import { useEffect, useMemo } from "react";
@@ -16,26 +22,41 @@ import { previewRuntimeTabId } from "./previewRuntimeTabId";
 export function ElectronBrowserHost() {
   const { resolvedTheme } = useTheme();
   const previewByThreadKey = useActivePreviewSessions();
-  const sessions = useMemo(
-    () =>
-      Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
-        const threadRef = parseScopedThreadKey(threadKey);
-        return threadRef
-          ? Object.values(previewState.sessions).map((snapshot) => ({
-              threadRef,
-              snapshot,
-              runtimeTabId: previewRuntimeTabId(
+  const sessions = useAtomValue(
+    useMemo(
+      () =>
+        Atom.make((get) =>
+          Object.entries(previewByThreadKey).flatMap(([threadKey, previewState]) => {
+            const threadRef = parseScopedThreadKey(threadKey);
+            if (!threadRef) return [];
+            const connection = Option.getOrNull(
+              get(environmentSession.preparedConnectionValueAtom(threadRef.environmentId)),
+            );
+            return Object.values(previewState.sessions)
+              .filter(
+                (snapshot) =>
+                  snapshot.navStatus._tag === "Idle" ||
+                  !designPathFromUrl(
+                    snapshot.navStatus.url,
+                    connection?.httpBaseUrl ?? snapshot.navStatus.url,
+                  ),
+              )
+              .map((snapshot) => ({
                 threadRef,
-                previewState.serverEpoch,
-                snapshot.tabId,
-              ),
-              pictureInPicture:
-                previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
-              zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
-            }))
-          : [];
-      }),
-    [previewByThreadKey],
+                snapshot,
+                runtimeTabId: previewRuntimeTabId(
+                  threadRef,
+                  previewState.serverEpoch,
+                  snapshot.tabId,
+                ),
+                pictureInPicture:
+                  previewState.desktopByTabId[snapshot.tabId]?.pictureInPicture ?? false,
+                zoomFactor: previewState.desktopByTabId[snapshot.tabId]?.zoomFactor ?? 1,
+              }));
+          }),
+        ),
+      [previewByThreadKey],
+    ),
   );
 
   useEffect(() => {

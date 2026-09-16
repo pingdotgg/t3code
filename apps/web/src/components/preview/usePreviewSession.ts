@@ -60,8 +60,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
       disposed = true;
     });
     const initialEvent = get.once(eventsAtom);
-    get.subscribe(sessionsAtom, (result) => {
-      reconcileSessions(result);
+    get.subscribe(sessionsAtom, reconcileSessions, {
+      immediate: Object.keys(readThreadPreviewState(threadRef).sessions).length === 0,
     });
     get.subscribe(eventsAtom, (result) => {
       eventsVersion += 1;
@@ -78,6 +78,8 @@ const previewSessionSyncAtom = Atom.family((threadKey: string) => {
   }).pipe(Atom.setIdleTTL(1_000), Atom.withLabel(`preview:session-sync:${threadKey}`));
 });
 
-export function usePreviewSession(threadRef: ScopedThreadRef): void {
-  useAtomValue(previewSessionSyncAtom(scopedThreadKey(threadRef)));
+const emptySessionAtom = Atom.make(undefined);
+
+export function usePreviewSession(threadRef: ScopedThreadRef | null): void {
+  useAtomValue(threadRef ? previewSessionSyncAtom(scopedThreadKey(threadRef)) : emptySessionAtom);
 }

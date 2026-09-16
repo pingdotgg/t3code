@@ -390,6 +390,7 @@ const finalizeWorkspaceFileAsset = Effect.fn("AssetAccess.finalizeWorkspaceFileA
             baseRelativePath: path.dirname(resolved.relativePath),
             expiresAt: input.expiresAt,
           },
+      sourcePath: resolved.relativePath,
       fileName: path.basename(resolved.relativePath),
       imageDimensions,
     };
@@ -459,6 +460,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         expiresAt,
       });
       claims = finalized.claims;
+      sourcePath = finalized.sourcePath;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
       break;
@@ -495,6 +497,7 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
         expiresAt,
       });
       claims = finalized.claims;
+      sourcePath = finalized.sourcePath;
       fileName = finalized.fileName;
       imageDimensions = finalized.imageDimensions;
       break;

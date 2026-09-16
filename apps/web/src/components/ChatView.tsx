@@ -1,3 +1,5 @@
+import { usePreviewSession } from "./preview/usePreviewSession";
+import { designPathFromUrl } from "@t3tools/shared/designPrompt";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -208,6 +210,8 @@ import { PullRequestDetailPanel } from "./pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "./pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "./pullRequest/PullRequestsUnavailableState";
 import { RightPanelTabs } from "./RightPanelTabs";
+import { DesignPanel } from "./preview/DesignPanel";
+import { threadDesigns } from "./preview/threadDesigns";
 import { AgentsPanel } from "./AgentsPanel";
 import { LinkPullRequestDialogHost } from "./pullRequest/LinkPullRequestDialog";
 import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
@@ -341,7 +345,11 @@ import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@t3tools/contracts";
-import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
+import {
+  useEnvironmentHttpBaseUrl,
+  useEnvironments,
+  usePrimaryEnvironment,
+} from "../state/environments";
 import {
   useProject,
   useProjects,
@@ -437,6 +445,7 @@ import {
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
+  resolveProviderPromptForSend,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -1968,6 +1977,32 @@ export default function ChatView(props: ChatViewProps) {
     selectActiveRightPanelSurface(state.byThreadKey, activeThreadRef),
   );
   const activePreviewState = useThreadPreviewState(activeThreadRef);
+  usePreviewSession(activeThreadRef);
+  const designHttpBaseUrl = useEnvironmentHttpBaseUrl(activeThreadRef?.environmentId ?? null);
+  const designs = useMemo(
+    () => threadDesigns(activePreviewState.sessions, designHttpBaseUrl),
+    [activePreviewState.sessions, designHttpBaseUrl],
+  );
+  const browserTabIds = useMemo(
+    () =>
+      Object.values(activePreviewState.sessions)
+        .filter(
+          (session) =>
+            !(
+              designHttpBaseUrl &&
+              session.navStatus._tag !== "Idle" &&
+              designPathFromUrl(session.navStatus.url, designHttpBaseUrl)
+            ),
+        )
+        .map((session) => session.tabId),
+    [activePreviewState.sessions, designHttpBaseUrl],
+  );
+  const addDesignSurface = useCallback(() => {
+    if (activeThreadRef && designs.length)
+      useRightPanelStore
+        .getState()
+        .openDesign(activeThreadRef, designs.length === 1 ? designs[0]!.tabId : null);
+  }, [activeThreadRef, designs]);
   const activePreviewServerEpoch = activePreviewState.serverEpoch;
   const resolvePreviewRuntimeTabId = useMemo(
     () =>
@@ -2033,10 +2068,12 @@ export default function ChatView(props: ChatViewProps) {
 
   useEffect(() => {
     if (!activeThreadRef) return;
-    useRightPanelStore
-      .getState()
-      .reconcileBrowserSurfaces(activeThreadRef, Object.keys(activePreviewState.sessions));
-  }, [activePreviewState.sessions, activeThreadRef]);
+    useRightPanelStore.getState().reconcileBrowserSurfaces(
+      activeThreadRef,
+      activePreviewState.serverEpoch === null ? null : browserTabIds,
+      designs.map((design) => design.tabId),
+    );
+  }, [activeThreadRef, activePreviewState.serverEpoch, browserTabIds, designs]);
 
   useEffect(() => {
     if (!activeThreadRef || activePreviewMiniPlayer?.source.kind !== "browser") return;
@@ -4610,9 +4647,11 @@ export default function ChatView(props: ChatViewProps) {
   const openFileSurface = useCallback(
     (relativePath: string) => {
       if (!activeThreadRef || !activeProject) return;
-      useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
+      const design = designs.find((entry) => entry.path === relativePath);
+      if (design) useRightPanelStore.getState().openDesign(activeThreadRef, design.tabId);
+      else useRightPanelStore.getState().openFile(activeThreadRef, relativePath);
     },
-    [activeProject, activeThreadRef],
+    [activeProject, activeThreadRef, designs],
   );
   // The shell carries server PR updates even while thread detail is still loading.
   const activeThreadMetadata = activeThreadShell ?? activeThread;
@@ -4786,7 +4825,10 @@ export default function ChatView(props: ChatViewProps) {
       closePreviewPanel();
       return;
     }
-    const activeTabId = activePreviewState.activeTabId;
+    const activeTabId =
+      activePreviewState.activeTabId && browserTabIds.includes(activePreviewState.activeTabId)
+        ? activePreviewState.activeTabId
+        : browserTabIds[0];
     if (activeTabId) {
       useRightPanelStore.getState().openBrowser(activeThreadRef, activeTabId);
     } else {
@@ -4794,6 +4836,7 @@ export default function ChatView(props: ChatViewProps) {
     }
   }, [
     activePreviewState.activeTabId,
+    browserTabIds,
     activeThreadRef,
     closePreviewPanel,
     createBrowserSurface,
@@ -4918,6 +4961,10 @@ export default function ChatView(props: ChatViewProps) {
   const activateRightPanelSurface = useCallback(
     (surface: RightPanelSurface) => {
       if (!activeThreadRef) return;
+      if (surface.kind === "design") {
+        addDesignSurface();
+        return;
+      }
       useRightPanelStore.getState().activateSurface(activeThreadRef, surface.id);
       if (surface.kind === "preview" && surface.resourceId) {
         setActivePreviewTab(activeThreadRef, surface.resourceId);
@@ -4929,7 +4976,7 @@ export default function ChatView(props: ChatViewProps) {
         onDiffPanelOpen?.();
       }
     },
-    [activeThreadRef, diffOpen, onDiffPanelOpen],
+    [activeThreadRef, addDesignSurface, diffOpen, onDiffPanelOpen],
   );
   const toggleRightPanel = useCallback(() => {
     if (!activeThreadRef) return;
@@ -7565,13 +7612,19 @@ export default function ChatView(props: ChatViewProps) {
     const composerTerminalContextsSnapshot = [...sendableComposerTerminalContexts];
     const composerPreviewAnnotationsSnapshot = [...composerPreviewAnnotations];
     const composerReviewCommentsSnapshot: ReviewCommentContext[] = [...composerReviewComments];
+    const providerPrompt = resolveProviderPromptForSend({
+      prompt: promptForSend,
+      trimmedPrompt: trimmed,
+      threadId: threadIdForSend,
+      designs,
+    });
     // Expired terminal excerpts are not sent; their chips leave the text with them.
     const messageTextForSend = composerTerminalContexts
       .filter((context) => !composerTerminalContextsSnapshot.includes(context))
       .reduce(
         (text, context) =>
           removeInlineContextReference(text, terminalContextReference(context).contextId).prompt,
-        promptForSend,
+        providerPrompt,
       )
       .trim();
     // Records bind attachments by the id each side knows: the local id for the optimistic
@@ -9144,7 +9197,14 @@ export default function ChatView(props: ChatViewProps) {
     </div>
   );
   const rightPanelContent = activeThreadRef ? (
-    renderedRightPanelSurface?.kind === "preview" ? (
+    renderedRightPanelSurface?.kind === "design" ? (
+      <DesignPanel
+        threadRef={activeThreadRef}
+        designs={designs}
+        tabId={renderedRightPanelSurface.resourceId}
+        visible={rightPanelOpen}
+      />
+    ) : renderedRightPanelSurface?.kind === "preview" ? (
       <Suspense fallback={null}>
         <PreviewPanel
           mode="embedded"
@@ -9892,6 +9952,8 @@ export default function ChatView(props: ChatViewProps) {
           onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
           onCloseAllSurfaces={closeAllRightPanelSurfaces}
           onCopyFilePath={copyRightPanelFilePath}
+          onAddDesign={addDesignSurface}
+          designAvailable={designs.length > 0}
           onAddBrowser={() => createBrowserSurface()}
           onAddBrowserInProfile={createBrowserSurface}
           onAddTerminal={addTerminalSurface}
@@ -9950,6 +10012,8 @@ export default function ChatView(props: ChatViewProps) {
             onCloseSurfacesToRight={closeRightPanelSurfacesToRight}
             onCloseAllSurfaces={closeAllRightPanelSurfaces}
             onCopyFilePath={copyRightPanelFilePath}
+            onAddDesign={addDesignSurface}
+            designAvailable={designs.length > 0}
             onAddBrowser={() => createBrowserSurface()}
             onAddBrowserInProfile={createBrowserSurface}
             onAddTerminal={addTerminalSurface}

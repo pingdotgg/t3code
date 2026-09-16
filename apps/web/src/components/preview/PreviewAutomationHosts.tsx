@@ -1,12 +1,16 @@
 "use client";
 
+import { designPathFromUrl } from "@t3tools/shared/designPrompt";
+
 import { RegistryContext, useAtomSet, useAtomValue } from "@effect/atom-react";
+import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
 import {
   FILL_PREVIEW_VIEWPORT,
   PREVIEW_AUTOMATION_OPERATIONS,
   type EnvironmentId,
   type PreviewAutomationNavigateInput,
+  type PreviewAutomationOpenFileInput,
   type PreviewAutomationOpenInput,
   type PreviewAutomationResizeInput,
   type PreviewAutomationResizeResult,
@@ -44,6 +48,7 @@ import {
 import { resolveBrowserRecordingStopTarget } from "~/browser/browserRecordingScope";
 import { uploadBrowserRecording } from "~/browser/browserRecordingUpload";
 import {
+  waitForBrowserSurfaceReady,
   acquireBrowserSurfaceActivity,
   useBrowserSurfaceStore,
 } from "~/browser/browserSurfaceStore";
@@ -54,14 +59,17 @@ import {
 } from "~/browser/browserDefaults";
 import { runBrowserViewportMutation } from "~/browser/browserViewportActions";
 import { previewRuntimeTabId } from "~/browser/previewRuntimeTabId";
-import { isElectron } from "~/env";
+import { useRightPanelStore } from "~/rightPanelStore";
+import { assetEnvironment } from "~/state/assets";
 import { useEnvironments } from "~/state/environments";
 import { previewEnvironment } from "~/state/preview";
+import { readPreparedConnection } from "~/state/session";
 import { useAtomQueryRunner } from "~/state/use-atom-query-runner";
 import { useAtomCommand } from "~/state/use-atom-command";
 
 import { previewBridge } from "./previewBridge";
 import {
+  PreviewAutomationAssetUrlInvalidError,
   PreviewAutomationOperationError,
   PreviewAutomationOverlayTimeoutError,
   PreviewAutomationRecordingNotActiveError,
@@ -89,16 +97,6 @@ import {
 import { resolveHostWaitBudgetMs, waitForHostReadiness } from "./previewAutomationHostBudget";
 import { isPreviewViewportReady } from "./previewViewportReadiness";
 import { shouldRollbackPreviewViewport } from "./previewViewportRollback";
-
-const PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS = 500;
-
-const waitForPreviewPresentation = async (runtimeTabId: string): Promise<void> => {
-  const deadline = Date.now() + PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS;
-  while (Date.now() <= deadline) {
-    if (useBrowserSurfaceStore.getState().byTabId[runtimeTabId]?.visible) return;
-    await new Promise<void>((resolve) => window.setTimeout(resolve, 16));
-  }
-};
 
 const waitForDesktopOverlay = async (
   threadRef: ScopedThreadRef,
@@ -128,6 +126,8 @@ const waitForDesktopOverlay = async (
     timeoutMs: waitBudgetMs,
   });
 };
+
+const PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS = 500;
 
 interface ExecutablePreviewWebview extends Element {
   readonly executeJavaScript: (code: string, userGesture?: boolean) => Promise<unknown>;
@@ -270,9 +270,12 @@ const raisePreviewAutomationHostError = (
   throw error;
 };
 
-export function PreviewAutomationHosts() {
+export function PreviewAutomationHosts({
+  getActiveThreadRef,
+}: {
+  readonly getActiveThreadRef: () => ScopedThreadRef | null;
+}) {
   const { environments } = useEnvironments();
-  if (!isElectron || !previewBridge?.automation) return null;
   return (
     <>
       {/*
@@ -284,21 +287,27 @@ export function PreviewAutomationHosts() {
         <PreviewAutomationHost
           key={environment.environmentId}
           environmentId={environment.environmentId}
+          getActiveThreadRef={getActiveThreadRef}
         />
       ))}
     </>
   );
 }
 
-function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId }) {
-  const { environmentId } = props;
+function PreviewAutomationHost(props: {
+  readonly environmentId: EnvironmentId;
+  readonly getActiveThreadRef: () => ScopedThreadRef | null;
+}) {
+  const { environmentId, getActiveThreadRef } = props;
   const registry = useContext(RegistryContext);
   const [automationClientId] = useState(createPreviewAutomationClientId);
   const initialAutomationHost = useMemo<PreviewAutomationHostState>(
     () => ({
       clientId: automationClientId,
       environmentId,
-      supportedOperations: [...PREVIEW_AUTOMATION_OPERATIONS],
+      supportedOperations: previewBridge?.automation
+        ? [...PREVIEW_AUTOMATION_OPERATIONS]
+        : ["openFile"],
     }),
     [automationClientId, environmentId],
   );
@@ -306,12 +315,16 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
     environmentId,
     input: initialAutomationHost,
   });
+  const createAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
+    reportFailure: false,
+  });
   const listPreviews = useAtomQueryRunner(previewEnvironment.list, {
     reportFailure: false,
   });
   const open = useAtomCommand(previewEnvironment.open, {
     reportFailure: false,
   });
+  const navigate = useAtomCommand(previewEnvironment.navigate, { reportFailure: false });
   const resize = useAtomCommand(previewEnvironment.resize, {
     reportFailure: false,
   });
@@ -405,8 +418,77 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         switch (request.operation) {
           case "status":
             return await currentStatus(threadRef, tabId);
+          case "openFile":
           case "open": {
-            const input = request.input as PreviewAutomationOpenInput;
+            let input: PreviewAutomationOpenInput;
+            if (request.operation === "openFile") {
+              const fileInput = request.input as PreviewAutomationOpenFileInput;
+              const connection = readPreparedConnection(environmentId);
+              if (!connection) {
+                throw new PreviewAutomationTargetUnavailableError(unavailableTarget);
+              }
+              const assetResult = await createAssetUrl({
+                environmentId,
+                input: {
+                  resource: {
+                    _tag: "workspace-file",
+                    threadId: request.threadId,
+                    path: fileInput.path,
+                  },
+                },
+              });
+              if (assetResult._tag === "Failure") return raiseAtomCommandFailure(assetResult);
+              const assetUrl = resolveAssetUrl(
+                connection.httpBaseUrl,
+                assetResult.value.relativeUrl,
+              );
+              if (!assetUrl) {
+                throw new PreviewAutomationAssetUrlInvalidError({
+                  requestId: request.requestId,
+                  operation: request.operation,
+                  environmentId,
+                  threadId: request.threadId,
+                  path: fileInput.path,
+                });
+              }
+              const url = new URL(assetUrl);
+              url.searchParams.set("t3-design", request.requestId);
+              url.searchParams.set("t3-design-path", fileInput.path);
+              const existing = Object.values(state.sessions).find(
+                (session) =>
+                  session.navStatus._tag !== "Idle" &&
+                  designPathFromUrl(session.navStatus.url, connection.httpBaseUrl) ===
+                    fileInput.path,
+              );
+              const result = existing
+                ? await navigate({
+                    environmentId,
+                    input: {
+                      threadId: request.threadId,
+                      tabId: existing.tabId,
+                      url: url.toString(),
+                    },
+                  })
+                : await open({
+                    environmentId,
+                    input: { threadId: request.threadId, url: url.toString() },
+                  });
+              if (result._tag === "Failure") return raiseAtomCommandFailure(result);
+              applyPreviewServerSnapshot(threadRef, result.value);
+              useRightPanelStore.getState().openDesign(threadRef, result.value.tabId);
+              const active = getActiveThreadRef();
+              return {
+                available: true,
+                visible:
+                  active?.environmentId === environmentId && active.threadId === request.threadId,
+                tabId: result.value.tabId,
+                url: url.toString(),
+                title: fileInput.path.split("/").at(-1) ?? "Design",
+                loading: true,
+              };
+            } else {
+              input = request.input as PreviewAutomationOpenInput;
+            }
             const resolvedInputUrl = input.url
               ? resolveBrowserNavigationTarget(environmentId, {
                   kind: "url",
@@ -452,6 +534,7 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             );
             if (activeSnapshot) {
               const defaultViewport = previewAutomationDefaultViewport(
+                request.operation,
                 reusedExistingTab,
                 activeSnapshot,
               );
@@ -520,12 +603,17 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
             if (activeSnapshot && previewAutomationOpenNeedsOverlay(input, activeSnapshot)) {
               await requireReadyTab();
             }
-            if (shouldPresentPreview) {
-              // React commits the thread-bound surface asynchronously. Settle
-              // briefly so active-thread opens report visible=true, without
-              // turning a background thread's offscreen mini player into an
-              // operation failure.
-              await waitForPreviewPresentation(activeRuntimeTabId);
+            const activeThreadRef = getActiveThreadRef();
+            if (
+              shouldPresentPreview &&
+              activeThreadRef?.environmentId === environmentId &&
+              activeThreadRef.threadId === request.threadId
+            ) {
+              await waitForBrowserSurfaceReady(
+                activeRuntimeTabId,
+                Math.min(request.timeoutMs, PREVIEW_PRESENTATION_SETTLE_TIMEOUT_MS),
+                "mini-player",
+              );
             }
             if (reusedExistingTab && resolvedInputUrl && previewBridge) {
               assertPreviewRuntimeCurrent(threadRef, activeTabId, activeRuntimeTabId, request);
@@ -767,7 +855,16 @@ function PreviewAutomationHost(props: { readonly environmentId: EnvironmentId })
         browserActivity.release?.();
       }
     },
-    [environmentId, listPreviews, open, registry, resize],
+    [
+      createAssetUrl,
+      environmentId,
+      listPreviews,
+      navigate,
+      open,
+      registry,
+      resize,
+      getActiveThreadRef,
+    ],
   );
   const [requestHandlerAtom] = useState(() => Atom.make({ handle: handleRequest }));
   const setRequestHandler = useAtomSet(requestHandlerAtom);

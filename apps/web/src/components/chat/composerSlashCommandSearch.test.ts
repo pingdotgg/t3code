@@ -180,6 +180,13 @@ describe("searchSlashCommandItems", () => {
   it("hides provider commands from slash completion after the first message line", () => {
     const items = [
       {
+        id: "slash:design",
+        type: "slash-command",
+        command: "design",
+        label: "/design",
+        description: "Create a design",
+      },
+      {
         id: "slash:model",
         type: "slash-command",
         command: "model",
@@ -215,6 +222,7 @@ describe("searchSlashCommandItems", () => {
       "skill:claudeAgent:unslop",
     ]);
     expect(slashCommandItemsForPromptPosition(items, true).map((item) => item.id)).toEqual([
+      "slash:design",
       "slash:model",
       "provider-slash-command:claudeAgent:compact",
       "skill:claudeAgent:unslop",

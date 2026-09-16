@@ -17,9 +17,17 @@ import { __resetClientSettingsPersistenceForTests } from "~/hooks/useSettings";
 import { readThreadPreviewState, resetPreviewStateForTests } from "~/previewStateStore";
 import { appAtomRegistry, AppAtomRegistryProvider } from "~/rpc/atomRegistry";
 
+import { useRightPanelStore } from "~/rightPanelStore";
+
 import { PreviewAutomationHosts } from "./PreviewAutomationHosts";
 
 const mocks = vi.hoisted(() => ({
+  bridgeEnabled: true,
+  host: vi.fn(),
+  asset: vi.fn(async () =>
+    AsyncResult.success({ relativeUrl: "/api/assets/design/test.html", expiresAt: 1 }),
+  ),
+  navigate: vi.fn(async () => AsyncResult.success(snapshot)),
   getClientSettings: vi.fn<() => Promise<ClientSettings | null>>(),
   setClientSettings: vi.fn(),
   open: vi.fn(async (_target: { environmentId: EnvironmentId; input: PreviewOpenInput }) =>
@@ -43,7 +51,11 @@ vi.mock("~/state/environments", () => ({
 }));
 vi.mock("~/state/preview", () => ({
   previewEnvironment: {
-    automationRequests: () => requestsAtom,
+    automationRequests: (target: unknown) => {
+      mocks.host(target);
+      return requestsAtom;
+    },
+    navigate: mocks.navigate,
     list: () => listAtom,
     open: mocks.open,
     resize: mocks.resize,
@@ -55,9 +67,18 @@ vi.mock("~/state/use-atom-command", () => ({
   useAtomCommand: (command: unknown) => command,
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({
-  useAtomQueryRunner: () => mocks.list,
+  useAtomQueryRunner: (command: unknown) => (command === mocks.asset ? mocks.asset : mocks.list),
 }));
-vi.mock("./previewBridge", () => ({ previewBridge: { automation: {} } }));
+vi.mock("./previewBridge", () => ({
+  get previewBridge() {
+    return mocks.bridgeEnabled ? { automation: {} } : null;
+  },
+}));
+vi.mock("~/state/assets", () => ({ assetEnvironment: { createUrl: mocks.asset } }));
+vi.mock("~/state/session", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("~/state/session")>()),
+  readPreparedConnection: () => ({ httpBaseUrl: "http://localhost:3773" }),
+}));
 
 const environmentId = EnvironmentId.make("automation-environment");
 const threadId = ThreadId.make("automation-thread");
@@ -108,6 +129,8 @@ let renderer: ReactTestRenderer | null = null;
 
 beforeEach(async () => {
   vi.clearAllMocks();
+  mocks.bridgeEnabled = true;
+  useRightPanelStore.setState({ byThreadKey: {} });
   mocks.getClientSettings.mockReset().mockResolvedValue(savedSettings);
   mocks.respond.mockReset();
   __resetClientSettingsPersistenceForTests();
@@ -119,7 +142,7 @@ beforeEach(async () => {
   await act(() => {
     renderer = create(
       <AppAtomRegistryProvider>
-        <PreviewAutomationHosts />
+        <PreviewAutomationHosts getActiveThreadRef={() => null} />
       </AppAtomRegistryProvider>,
     );
   });
@@ -186,5 +209,56 @@ describe("PreviewAutomationHosts open", () => {
     expect(mocks.open).not.toHaveBeenCalled();
     expect(readThreadPreviewState(threadRef).snapshot).toBeNull();
     expect(mocks.setClientSettings).not.toHaveBeenCalled();
+  });
+});
+
+describe("design automation", () => {
+  it("opens and refreshes the design tab without a desktop browser", async () => {
+    await act(() => renderer?.unmount());
+    mocks.bridgeEnabled = false;
+    await act(() => {
+      renderer = create(
+        <AppAtomRegistryProvider>
+          <PreviewAutomationHosts getActiveThreadRef={() => threadRef} />
+        </AppAtomRegistryProvider>,
+      );
+    });
+    expect(mocks.host).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        input: expect.objectContaining({ supportedOperations: ["openFile"] }),
+      }),
+    );
+    const path = ".t3/designs/thread.html";
+    const url =
+      "http://localhost:3773/api/assets/design/test.html?t3-design=design-request&t3-design-path=.t3%2Fdesigns%2Fthread.html";
+    mocks.open.mockResolvedValueOnce(
+      AsyncResult.success({ ...snapshot, navStatus: { _tag: "Loading", url, title: "Design" } }),
+    );
+    for (const requestId of ["design-request", "refresh-request"]) {
+      const response = deferred<PreviewAutomationResponse>();
+      mocks.respond.mockImplementationOnce(async ({ input }) => response.resolve(input));
+      await act(async () => {
+        appAtomRegistry.set(
+          requestsAtom,
+          AsyncResult.success({
+            ...requestEvent,
+            request: {
+              ...requestEvent.request,
+              requestId,
+              ...(requestId === "refresh-request" ? { tabId: snapshot.tabId } : {}),
+              operation: "openFile",
+              input: { path },
+            },
+          }),
+        );
+        await response.promise;
+      });
+      await expect(response.promise).resolves.toMatchObject({ requestId, ok: true });
+    }
+    expect(mocks.open).toHaveBeenCalledOnce();
+    expect(mocks.navigate).toHaveBeenCalledOnce();
+    expect(Object.values(useRightPanelStore.getState().byThreadKey)[0]?.activeSurfaceId).toBe(
+      "design",
+    );
   });
 });

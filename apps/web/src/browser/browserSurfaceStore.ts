@@ -7,6 +7,8 @@ export interface BrowserSurfaceRect {
   readonly height: number;
 }
 
+export type BrowserSurfacePlacement = "right-panel" | "mini-player";
+
 export interface BrowserSurfacePresentation {
   readonly rect: BrowserSurfaceRect | null;
   readonly visible: boolean;
@@ -17,6 +19,7 @@ export interface BrowserSurfacePresentation {
   readonly cornerRadius: number;
   readonly updatedAt: number;
   readonly owner: symbol | null;
+  readonly surface: BrowserSurfacePlacement | null;
 }
 
 export interface BrowserSurfaceContentPresentation {
@@ -33,7 +36,12 @@ interface BrowserSurfaceStoreState {
   readonly activityByTabId: Record<string, number>;
   readonly byTabId: Record<string, BrowserSurfacePresentation>;
   readonly acquireActivity: (tabId: string) => () => void;
-  readonly claim: (tabId: string, owner: symbol, fitSourceContent: boolean) => void;
+  readonly claim: (
+    tabId: string,
+    owner: symbol,
+    fitSourceContent: boolean,
+    surface: BrowserSurfacePlacement,
+  ) => void;
   readonly present: (
     tabId: string,
     owner: symbol,
@@ -54,6 +62,12 @@ export interface BrowserSurfaceLease {
     zIndex?: number,
   ) => boolean;
   readonly release: () => void;
+}
+
+export interface BrowserSurfaceReadyReceipt {
+  readonly tabId: string;
+  readonly rect: BrowserSurfaceRect;
+  readonly surface: BrowserSurfacePlacement;
 }
 
 export function resolveBrowserSurfacePanelRect(
@@ -94,7 +108,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
       });
     };
   },
-  claim: (tabId, owner, fitSourceContent) =>
+  claim: (tabId, owner, fitSourceContent, surface) =>
     set((state) => {
       const current = state.byTabId[tabId];
       if (current?.owner === owner) return state;
@@ -111,6 +125,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             cornerRadius: current?.cornerRadius ?? 0,
             updatedAt: Date.now(),
             owner,
+            surface,
           },
         },
       };
@@ -152,6 +167,7 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
               cornerRadius: 0,
               updatedAt: Date.now(),
               owner: null,
+              surface: null,
             },
           },
         };
@@ -198,22 +214,58 @@ export const useBrowserSurfaceStore = create<BrowserSurfaceStoreState>()((set) =
             fitSourceContent: false,
             updatedAt: Date.now(),
             owner: null,
+            surface: null,
           },
         },
       };
     }),
 }));
 
+const browserSurfaceReadyReceipt = (
+  tabId: string,
+  placement: BrowserSurfacePlacement,
+): BrowserSurfaceReadyReceipt | null => {
+  const surface = useBrowserSurfaceStore.getState().byTabId[tabId];
+  return surface?.visible && surface.rect && surface.surface === placement
+    ? { tabId, rect: surface.rect, surface: placement }
+    : null;
+};
+
+export function waitForBrowserSurfaceReady(
+  tabId: string,
+  timeoutMs: number,
+  surface: BrowserSurfacePlacement = "right-panel",
+): Promise<BrowserSurfaceReadyReceipt | null> {
+  const current = browserSurfaceReadyReceipt(tabId, surface);
+  if (current) return Promise.resolve(current);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    let unsubscribe = (): void => {};
+    const finish = (receipt: BrowserSurfaceReadyReceipt | null): void => {
+      if (timer !== null) clearTimeout(timer);
+      unsubscribe();
+      resolve(receipt);
+    };
+    unsubscribe = useBrowserSurfaceStore.subscribe(() => {
+      const receipt = browserSurfaceReadyReceipt(tabId, surface);
+      if (receipt) finish(receipt);
+    });
+    timer = setTimeout(() => finish(null), timeoutMs);
+    const receipt = browserSurfaceReadyReceipt(tabId, surface);
+    if (receipt) finish(receipt);
+  });
+}
 export const acquireBrowserSurfaceActivity = (tabId: string): (() => void) =>
   useBrowserSurfaceStore.getState().acquireActivity(tabId);
 
 export function acquireBrowserSurface(
   tabId: string,
   fitSourceContent = false,
+  surface: BrowserSurfacePlacement = "right-panel",
 ): BrowserSurfaceLease {
-  const owner = Symbol(`browser-surface:${tabId}`);
+  const owner = Symbol(`browser-surface:${surface}:${tabId}`);
   let released = false;
-  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent);
+  useBrowserSurfaceStore.getState().claim(tabId, owner, fitSourceContent, surface);
 
   return {
     present: (rect, visible, cornerRadius = 0, zIndex = 30) => {

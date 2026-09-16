@@ -5,6 +5,7 @@ import { PreviewAutomationHosts } from "./components/preview/PreviewAutomationHo
 import { QuitHoldOverlay } from "./components/QuitHoldOverlay";
 import { AppAtomRegistryProvider } from "./rpc/atomRegistry";
 import type { AppRouter } from "./router";
+import { resolveThreadRouteRef } from "./threadRoutes";
 
 /**
  * Owns renderer-wide providers. The Electron browser host intentionally sits
@@ -15,7 +16,9 @@ export function AppRoot({ router }: { readonly router: AppRouter }) {
   return (
     <AppAtomRegistryProvider>
       <RouterProvider router={router} />
-      <PreviewAutomationHosts />
+      <PreviewAutomationHosts
+        getActiveThreadRef={() => resolveThreadRouteRef(router.state.matches.at(-1)?.params ?? {})}
+      />
       <ElectronBrowserHost />
       <QuitHoldOverlay />
     </AppAtomRegistryProvider>

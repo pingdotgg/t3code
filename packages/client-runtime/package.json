@@ -254,6 +254,18 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./design/editor": {
+      "types": "./src/design/editor.ts",
+      "default": "./src/design/editor.ts"
+    },
+    "./design/document": {
+      "types": "./src/design/document.ts",
+      "default": "./src/design/document.ts"
+    },
+    "./design/theme": {
+      "types": "./src/design/theme.ts",
+      "default": "./src/design/theme.ts"
     }
   },
   "scripts": {
@@ -263,6 +275,7 @@
   "dependencies": {
     "@t3tools/contracts": "workspace:*",
     "@t3tools/shared": "workspace:*",
+    "culori": "^4.0.2",
     "effect": "catalog:",
     "mdast-util-directive": "^3.1.0",
     "micromark-extension-directive": "^4.0.0",
@@ -272,6 +285,7 @@
   },
   "devDependencies": {
     "@effect/vitest": "catalog:",
+    "@types/culori": "^4.0.1",
     "micromark-util-types": "^2.0.2",
     "vite-plus": "catalog:"
   }

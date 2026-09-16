@@ -834,6 +834,9 @@ importers:
       '@t3tools/shared':
         specifier: workspace:*
         version: link:../shared
+      culori:
+        specifier: ^4.0.2
+        version: 4.0.2
       effect:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
@@ -856,6 +859,9 @@ importers:
       '@effect/vitest':
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=a16b1e870d8c29e4a98b17cc4c638a4ff471753d8ca3487f78a22b759caf951b)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
+      '@types/culori':
+        specifier: ^4.0.1
+        version: 4.0.1
       micromark-util-types:
         specifier: ^2.0.2
         version: 2.0.2

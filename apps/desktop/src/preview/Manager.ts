@@ -11,6 +11,7 @@ import type {
   DesktopPreviewAnnotationTheme,
   DesktopPreviewAutomationStatus,
   DesktopPreviewColorScheme,
+  DesktopPreviewDesignChange,
   DesktopPreviewFavicon,
   DesktopPreviewPointerEvent,
   PreviewAnnotationPayload,
@@ -31,6 +32,7 @@ import type {
   PreviewAutomationTypeInput,
   PreviewAutomationWaitForInput,
 } from "@t3tools/contracts";
+import { DesktopPreviewDesignChangePayloadSchema } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import { normalizePreviewUrl } from "@t3tools/shared/preview";
 import {
@@ -68,6 +70,8 @@ import {
   ANNOTATION_CAPTURED_CHANNEL,
   ANNOTATION_THEME_CHANNEL,
   CANCEL_PICK_CHANNEL,
+  DESIGN_CHANGED_CHANNEL,
+  DESIGN_EDITING_CHANNEL,
   ELEMENT_PICKED_CHANNEL,
   HUMAN_INPUT_CHANNEL,
   MOUSE_NAVIGATE_CHANNEL,
@@ -421,6 +425,8 @@ const nextZoomLevel = (current: number, direction: "in" | "out"): number => {
 };
 
 type Listener = (tabId: string, state: PreviewTabState) => Effect.Effect<void>;
+type DesignChangeListener = (event: DesktopPreviewDesignChange) => Effect.Effect<void>;
+const isDesignChangePayload = Schema.is(DesktopPreviewDesignChangePayloadSchema);
 type RecordingFrameListener = (frame: DesktopPreviewRecordingFrame) => Effect.Effect<void>;
 
 type PreviewInputSignal =
@@ -636,6 +642,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const attachedRef = yield* Ref.make<ReadonlyMap<number, ManagedListeners>>(new Map());
   const listenersRef = yield* Ref.make<ReadonlySet<Listener>>(new Set());
   const pointerEventListenersRef = yield* Ref.make<ReadonlySet<PointerEventListener>>(new Set());
+  const designChangeListenersRef = yield* Ref.make<ReadonlySet<DesignChangeListener>>(new Set());
   const recordingFrameListenersRef = yield* Ref.make<ReadonlySet<RecordingFrameListener>>(
     new Set(),
   );
@@ -896,7 +903,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   });
 
   const deliverEvent = (
-    eventKind: "state-change" | "recording-frame" | "pointer-event",
+    eventKind: "design-change" | "state-change" | "recording-frame" | "pointer-event",
     tabId: string,
     delivery: () => Effect.Effect<void>,
   ) =>
@@ -1870,6 +1877,22 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     const humanInput = (_event: unknown, rawSignal?: unknown): void => {
       runFork(handleHumanInput(rawSignal));
     };
+    const designChanged = (_event: unknown, payload?: unknown): void => {
+      if (!isDesignChangePayload(payload)) return;
+      runFork(
+        Effect.gen(function* () {
+          const current = (yield* SynchronizedRef.get(tabsRef)).get(tabId);
+          if (current?.webContentsId !== wc.id || webContents.fromId(wc.id) !== wc) return;
+          const event: DesktopPreviewDesignChange = { ...payload, tabId };
+          const listeners = yield* Ref.get(designChangeListenersRef);
+          yield* Effect.forEach(
+            listeners,
+            (listener) => deliverEvent("design-change", tabId, () => listener(event)),
+            { discard: true },
+          );
+        }),
+      );
+    };
     const mouseNavigate = (_event: unknown, payload?: unknown): void => {
       const direction =
         typeof payload === "object" && payload !== null && "direction" in payload
@@ -1933,6 +1956,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.off("did-create-window", windowCreated);
         wc.off("before-input-event", beforeInput);
         wc.ipc.off(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.off(DESIGN_CHANGED_CHANNEL, designChanged);
         wc.ipc.off(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
       }).pipe(Effect.ignore),
     );
@@ -1951,6 +1975,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.on("did-fail-load", failed as never);
         wc.on("audio-state-changed", audioStateChanged);
         wc.ipc.on(HUMAN_INPUT_CHANNEL, humanInput);
+        wc.ipc.on(DESIGN_CHANGED_CHANNEL, designChanged);
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler((details) => {
           if (previewWindowOpenAction(details) === "popup") {
@@ -2412,6 +2437,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
   const refresh = (tabId: string) => withWebContents("refresh", tabId, (wc) => wc.reload());
   const hardReload = (tabId: string) =>
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
+  const setDesignEditing = (tabId: string, editing: boolean) =>
+    withWebContents("setDesignEditing", tabId, (wc) => wc.send(DESIGN_EDITING_CHANNEL, editing));
 
   const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
     const wc = yield* requireWebContents(tabId);
@@ -4471,6 +4498,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       [
         Ref.set(listenersRef, new Set()),
         Ref.set(expectedAgentInputsRef, new Map()),
+        Ref.set(designChangeListenersRef, new Set()),
         Ref.set(pointerEventListenersRef, new Set()),
         Ref.set(recordingFrameListenersRef, new Set()),
       ],
@@ -4510,10 +4538,13 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     setAnnotationTheme,
     setAudioMuted,
     setColorScheme,
+    setDesignEditing,
     setMainWindow,
     startRecording,
     closePictureInPicture,
     stopRecording,
+    subscribeDesignChanges: (listener: DesignChangeListener) =>
+      subscribe(designChangeListenersRef, listener),
     subscribePointerEvents: (listener: PointerEventListener) =>
       subscribe(pointerEventListenersRef, listener),
     subscribeRecordingFrames: (listener: RecordingFrameListener) =>
@@ -4850,6 +4881,10 @@ export class PreviewManager extends Context.Service<
       tabId: string,
       colorScheme: DesktopPreviewColorScheme,
     ) => Effect.Effect<void, PreviewManagerError>;
+    readonly setDesignEditing: (
+      tabId: string,
+      editing: boolean,
+    ) => Effect.Effect<void, PreviewManagerError>;
     readonly setAudioMuted: (
       tabId: string,
       audioMuted: boolean,
@@ -4918,6 +4953,9 @@ export class PreviewManager extends Context.Service<
       input: PreviewAutomationWaitForInput,
     ) => Effect.Effect<void, PreviewManagerError>;
     readonly subscribeStateChanges: (listener: Listener) => Effect.Effect<void, never, Scope.Scope>;
+    readonly subscribeDesignChanges: (
+      listener: DesignChangeListener,
+    ) => Effect.Effect<void, never, Scope.Scope>;
     readonly subscribePointerEvents: (
       listener: PointerEventListener,
     ) => Effect.Effect<void, never, Scope.Scope>;
@@ -4963,6 +5001,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     reapplyZoom: operations.reapplyZoom,
     hardReload: operations.hardReload,
     setColorScheme: operations.setColorScheme,
+    setDesignEditing: operations.setDesignEditing,
     setAudioMuted: operations.setAudioMuted,
     openDevTools: operations.openDevTools,
     clearCookies: Effect.fn("PreviewManager.clearCookies")(function* (partitions) {
@@ -5012,6 +5051,7 @@ export const make = Effect.gen(function* PreviewManagerMake() {
     automationEvaluate: operations.automationEvaluate,
     automationWaitFor: operations.automationWaitFor,
     subscribeStateChanges: operations.subscribeStateChanges,
+    subscribeDesignChanges: operations.subscribeDesignChanges,
     subscribePointerEvents: operations.subscribePointerEvents,
     subscribeRecordingFrames: operations.subscribeRecordingFrames,
   });

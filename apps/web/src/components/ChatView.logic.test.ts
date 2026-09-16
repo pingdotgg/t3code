@@ -53,6 +53,7 @@ import {
   isBranchMismatchDismissedForSession,
   reconcileMountedTerminalThreadIds,
   reconcileRetainedMountedThreadIds,
+  resolveProviderPromptForSend,
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
   resolveBackgroundDraftWorkspaceOptions,
@@ -1665,6 +1666,62 @@ describe("deriveComposerSendState", () => {
         elementContextCount: 0,
       }).hasSendableContent,
     ).toBe(false);
+  });
+});
+
+describe("resolveProviderPromptForSend", () => {
+  it("expands design commands after composer placeholders are removed", () => {
+    const prompt = `/design a billing dashboard \uFFFC`;
+    const { trimmedPrompt } = deriveComposerSendState({
+      prompt,
+      imageCount: 0,
+      terminalContexts: [],
+    });
+
+    expect(
+      resolveProviderPromptForSend({
+        prompt,
+        trimmedPrompt,
+        threadId,
+        designs: [],
+      }),
+    ).toMatch(/^<t3_design_request>/);
+  });
+
+  it("preserves placeholders for normal prompts", () => {
+    const prompt = `inspect \uFFFC now`;
+
+    expect(
+      resolveProviderPromptForSend({
+        prompt,
+        trimmedPrompt: "inspect  now",
+        threadId,
+        designs: [],
+      }),
+    ).toBe(prompt);
+  });
+
+  it("appends the thread's design paths to follow-up prompts", () => {
+    const result = resolveProviderPromptForSend({
+      prompt: "let's go with direction D",
+      trimmedPrompt: "let's go with direction D",
+      threadId,
+      designs: [{ path: `.t3/designs/${threadId}.html` }],
+    });
+
+    expect(result.startsWith("let's go with direction D")).toBe(true);
+    expect(result).toContain(`<paths>\n.t3/designs/${threadId}.html\n</paths>`);
+  });
+
+  it("does not append design context to the design request itself", () => {
+    const result = resolveProviderPromptForSend({
+      prompt: "/design a billing dashboard",
+      trimmedPrompt: "/design a billing dashboard",
+      threadId,
+      designs: [{ path: `.t3/designs/${threadId}.html` }],
+    });
+
+    expect(result).not.toContain("<t3_design_context>");
   });
 });
 

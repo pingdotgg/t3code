@@ -24,6 +24,7 @@ const RIGHT_PANEL_KINDS = [
   "files",
   "file",
   "preview",
+  "design",
   "device",
   "terminal",
   "pull-request",
@@ -40,6 +41,7 @@ export interface DeviceTabTarget {
 }
 
 export type RightPanelSurface =
+  | { id: "design"; kind: "design"; resourceId: string | null }
   | { id: `browser:${string}`; kind: "preview"; resourceId: string }
   | { id: "browser:new"; kind: "preview"; resourceId: null }
   | { id: "device" | `device:${string}`; kind: "device"; target?: DeviceTabTarget; title?: string }
@@ -133,6 +135,7 @@ interface RightPanelStoreState {
   ) => void;
   openDevice: (ref: ScopedThreadRef, target: DeviceTabTarget, automatic?: boolean) => void;
   renameDevice: (ref: ScopedThreadRef, surfaceId: string, title: string) => void;
+  openDesign: (ref: ScopedThreadRef, tabId: string | null) => void;
   openBrowser: (ref: ScopedThreadRef, tabId: string | null) => void;
   openFile: (ref: ScopedThreadRef, relativePath: string, line?: number) => void;
   openAttachment: (ref: ScopedThreadRef, attachment: ChatFileAttachment) => void;
@@ -161,7 +164,11 @@ interface RightPanelStoreState {
   closeOtherSurfaces: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeSurfacesToRight: (ref: ScopedThreadRef, surfaceId: string) => void;
   closeAllSurfaces: (ref: ScopedThreadRef) => void;
-  reconcileBrowserSurfaces: (ref: ScopedThreadRef, tabIds: readonly string[]) => void;
+  reconcileBrowserSurfaces: (
+    ref: ScopedThreadRef,
+    tabIds: readonly string[] | null,
+    designTabIds?: readonly string[],
+  ) => void;
   reconcileFileSurfaces: (ref: ScopedThreadRef, workspaceAvailable: boolean) => void;
   show: (ref: ScopedThreadRef) => void;
   close: (ref: ScopedThreadRef) => void;
@@ -183,6 +190,8 @@ const singletonSurface = (
   kind: Exclude<RightPanelKind, "file" | "preview" | "terminal" | "pull-request">,
 ): RightPanelSurface => {
   switch (kind) {
+    case "design":
+      return { id: "design", kind, resourceId: null };
     case "diff":
       return { id: "diff", kind };
     case "files":
@@ -574,6 +583,19 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : next;
           }),
         ),
+      openDesign: (ref, tabId) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface: RightPanelSurface = { id: "design", kind: "design", resourceId: tabId };
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces
+                .filter((entry) => entry.id !== `browser:${tabId}`)
+                .map((entry) => (entry.id === "design" ? surface : entry)),
+            };
+          }),
+        ),
       openFile: (ref, relativePath, line) =>
         set((state) =>
           userAction(state, scopedThreadKey(ref), (current) => {
@@ -755,34 +777,50 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
               : { ...current, isOpen: false, surfaces: [], activeSurfaceId: null },
           ),
         ),
-      reconcileBrowserSurfaces: (ref, tabIds) =>
+      reconcileBrowserSurfaces: (ref, tabIds, designTabIds = []) =>
         set((state) =>
-          automaticUpdate(state, scopedThreadKey(ref), (current) => {
-            const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
-            const nonBrowser = current.surfaces.filter((surface) => surface.kind !== "preview");
-            const existingBrowser = current.surfaces.filter(
-              (surface): surface is Extract<RightPanelSurface, { kind: "preview" }> =>
-                surface.kind === "preview" &&
-                surface.id !== "browser:new" &&
-                validIds.has(surface.id),
-            );
-            const knownIds = new Set(existingBrowser.map((surface) => surface.id));
-            const added = tabIds
-              .filter((tabId) => !knownIds.has(`browser:${tabId}`))
-              .map((tabId) => browserSurface(tabId));
-            const surfaces = [...nonBrowser, ...existingBrowser, ...added];
-            const activeStillExists = surfaces.some(
-              (surface) => surface.id === current.activeSurfaceId,
-            );
-            const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
-            return {
-              ...current,
-              surfaces,
-              activeSurfaceId: activeStillExists
-                ? current.activeSurfaceId
-                : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
-            };
-          }),
+          tabIds === null
+            ? state
+            : automaticUpdate(state, scopedThreadKey(ref), (current) => {
+                const validIds = new Set(tabIds.map((tabId) => `browser:${tabId}`));
+                const nonBrowser = current.surfaces.filter(
+                  (surface) =>
+                    surface.kind !== "preview" &&
+                    (surface.kind !== "design" || designTabIds.length > 0),
+                );
+                if (
+                  designTabIds.length &&
+                  !nonBrowser.some((surface) => surface.kind === "design")
+                ) {
+                  nonBrowser.push({
+                    id: "design",
+                    kind: "design",
+                    resourceId: designTabIds.length === 1 ? designTabIds[0]! : null,
+                  });
+                }
+                const existingBrowser = current.surfaces.filter(
+                  (surface): surface is Extract<RightPanelSurface, { kind: "preview" }> =>
+                    surface.kind === "preview" &&
+                    surface.id !== "browser:new" &&
+                    validIds.has(surface.id),
+                );
+                const knownIds = new Set(existingBrowser.map((surface) => surface.id));
+                const added = tabIds
+                  .filter((tabId) => !knownIds.has(`browser:${tabId}`))
+                  .map((tabId) => browserSurface(tabId));
+                const surfaces = [...nonBrowser, ...existingBrowser, ...added];
+                const activeStillExists = surfaces.some(
+                  (surface) => surface.id === current.activeSurfaceId,
+                );
+                const fallbackBrowser = surfaces.find((surface) => surface.kind === "preview");
+                return {
+                  ...current,
+                  surfaces,
+                  activeSurfaceId: activeStillExists
+                    ? current.activeSurfaceId
+                    : (fallbackBrowser?.id ?? surfaces[0]?.id ?? null),
+                };
+              }),
         ),
       reconcileFileSurfaces: (ref, workspaceAvailable) =>
         set((state) =>

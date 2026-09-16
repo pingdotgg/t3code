@@ -9,6 +9,7 @@
     "start": "node scripts/start-electron.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vp test run --passWithNoTests",
+    "test:design-canvas": "node scripts/test-design-canvas.mjs",
     "smoke-test": "node scripts/smoke-test.mjs"
   },
   "dependencies": {

@@ -230,6 +230,7 @@ function BrowserMiniPlayer({
       {(frame) => (
         <>
           <BrowserSurfaceSlot
+            surface="mini-player"
             tabId={runtimeTabId}
             visible={Boolean(desktopOverlay?.hasWebContents)}
             cornerRadius={PREVIEW_MINI_PLAYER_CORNER_RADIUS}

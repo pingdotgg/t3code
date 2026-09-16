@@ -12,6 +12,7 @@ import type {
   TurnId,
 } from "@t3tools/contracts";
 import { renderAssistantCitationsAsText } from "@t3tools/shared/assistantCitations";
+import { visibleDesignCommand } from "@t3tools/shared/designPrompt";
 import { encodeComposerContextFragment } from "@t3tools/shared/composerContextClipboard";
 import {
   parseComposerContextHref,
@@ -1468,11 +1469,12 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     const isUser = message.role === "user";
-    const renderedText = renderAssistantCitationsAsText(message.text);
+    const visibleText = isUser ? visibleDesignCommand(message.text) : message.text;
+    const renderedText = renderAssistantCitationsAsText(visibleText);
     const styles = isUser ? markdownStyles.user : markdownStyles.assistant;
     const timestampLabel = formatMessageTime(isUser ? message.createdAt : message.updatedAt);
     const attachments = message.attachments ?? [];
-    const hasReviewCommentContext = message.text.includes("<review_comment");
+    const hasReviewCommentContext = renderedText.includes("<review_comment");
     // A bubble that sizes itself from its content cannot lay out a block whose
     // intrinsic width overflows `maxWidth`: Android positions the bubble's
     // children during the unclamped pass and never moves them once the width
@@ -1608,14 +1610,14 @@ function renderFeedEntry(
                 <SymbolView name="pencil" size={14} tintColor={iconSubtleColor} />
               </Pressable>
             ) : null}
-            {message.text.trim().length > 0 ? (
+            {renderedText.trim().length > 0 ? (
               <CopyTextButton
                 accessibilityLabel="Copy message"
-                text={message.text}
+                text={visibleText}
                 onCopy={
                   message.context
                     ? () =>
-                        writeComposerContextClipboard(message.text, {
+                        writeComposerContextClipboard(visibleText, {
                           version: 1,
                           source: { environmentId: props.environmentId, messageId: message.id },
                           records: message.context!.records,

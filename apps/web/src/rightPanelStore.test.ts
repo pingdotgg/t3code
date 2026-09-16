@@ -21,6 +21,52 @@ beforeEach(() => {
 });
 
 describe("rightPanelStore", () => {
+  it("keeps the selected design while restored sessions are loading", () => {
+    const store = useRightPanelStore.getState();
+    store.openDesign(refA, "design-two");
+    store.reconcileBrowserSurfaces(refA, null);
+    store.reconcileBrowserSurfaces(refA, [], ["design-one", "design-two"]);
+    expect(
+      selectSelectedRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
+    ).toEqual({ id: "design", kind: "design", resourceId: "design-two" });
+  });
+
+  it("reconciles designs separately from browser tabs and removes the tab when none remain", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "old-design");
+    store.reconcileBrowserSurfaces(refA, ["website"], ["old-design", "new-design"]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([
+      { id: "design", kind: "design", resourceId: null },
+      { id: "browser:website", kind: "preview", resourceId: "website" },
+    ]);
+    store.reconcileBrowserSurfaces(refA, ["website"]);
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA).surfaces,
+    ).toEqual([{ id: "browser:website", kind: "preview", resourceId: "website" }]);
+  });
+
+  it("keeps designs in one thread-local tab and lets the picker reopen after closing", () => {
+    const store = useRightPanelStore.getState();
+    store.openBrowser(refA, "design-one");
+    store.open(refA, "files");
+    store.openDesign(refA, "design-one");
+    store.openDesign(refA, "design-two");
+    let state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces).toEqual([
+      { id: "files", kind: "files" },
+      { id: "design", kind: "design", resourceId: "design-two" },
+    ]);
+    expect(state.activeSurfaceId).toBe("design");
+    expect(
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refB).surfaces,
+    ).toEqual([]);
+    store.closeSurface(refA, "design");
+    store.openDesign(refA, null);
+    state = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA);
+    expect(state.surfaces.at(-1)).toEqual({ id: "design", kind: "design", resourceId: null });
+  });
   it("gives each host/device its own tab and preserves renamed tabs", () => {
     const store = useRightPanelStore.getState();
     const android = {

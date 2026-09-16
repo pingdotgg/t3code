@@ -1,10 +1,11 @@
-import type {
-  AssetCreateUrlResult,
-  AssetResource,
-  EnvironmentId,
-  PreviewOpenInput,
-  PreviewSessionSnapshot,
-  ScopedThreadRef,
+import {
+  type AssetCreateUrlResult,
+  type AssetResource,
+  type EnvironmentId,
+  isWorkspaceHtmlPath,
+  type PreviewOpenInput,
+  type PreviewSessionSnapshot,
+  type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { mediaFileReference } from "@t3tools/client-runtime/media-reference";
 import {
@@ -54,6 +55,8 @@ export type OpenPreviewMutation<E = unknown> = (input: {
 export async function openUrlInPreview<E>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly url: string;
+  readonly designPath?: string;
+  readonly signal?: AbortSignal | undefined;
   readonly openPreview: OpenPreviewMutation<E>;
 }): Promise<AtomCommandResult<void, E | BrowserSettingsReadError>> {
   const defaults = await resolveBrowserDefaults().catch(
@@ -62,6 +65,7 @@ export async function openUrlInPreview<E>(input: {
   if (defaults instanceof BrowserSettingsReadError) {
     return AsyncResult.failure(Cause.fail(defaults));
   }
+  if (input.signal?.aborted) return AsyncResult.success(undefined);
   const result = await input.openPreview({
     environmentId: input.threadRef.environmentId,
     input: {
@@ -75,9 +79,14 @@ export async function openUrlInPreview<E>(input: {
     },
   });
   return mapAtomCommandResult(result, (snapshot) => {
+    if (input.signal?.aborted) return;
     applyPreviewServerSnapshot(input.threadRef, snapshot);
     rememberPreviewUrl(input.threadRef, input.url);
-    useRightPanelStore.getState().openBrowser(input.threadRef, snapshot.tabId);
+    const panel = useRightPanelStore.getState();
+    if (input.designPath) {
+      panel.openDesign(input.threadRef, snapshot.tabId);
+      panel.closeSurface(input.threadRef, `file:${input.designPath}`);
+    } else panel.openBrowser(input.threadRef, snapshot.tabId);
   });
 }
 
@@ -88,6 +97,7 @@ export async function openUrlInPreview<E>(input: {
 export async function openFileInPreview<AssetError, PreviewError>(input: {
   readonly threadRef: ScopedThreadRef;
   readonly filePath: string;
+  readonly signal?: AbortSignal | undefined;
   readonly workspaceRoot: string | undefined;
   readonly httpBaseUrl: string;
   readonly createAssetUrl: (input: {
@@ -101,7 +111,10 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
     AssetError | PreviewError | BrowserPreviewUnavailableError | BrowserSettingsReadError
   >
 > {
-  if (!isPreviewSupportedInRuntime()) {
+  if (
+    !isPreviewSupportedInRuntime() &&
+    !isWorkspaceHtmlPath(mediaFileReference(input.filePath, input.workspaceRoot).relativePath ?? "")
+  ) {
     return AsyncResult.failure(
       Cause.fail(
         new BrowserPreviewUnavailableError({
@@ -122,6 +135,7 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       },
     },
   });
+  if (input.signal?.aborted) return AsyncResult.success(undefined);
   if (assetResult._tag === "Failure") {
     return AsyncResult.failure(assetResult.cause);
   }
@@ -131,9 +145,19 @@ export async function openFileInPreview<AssetError, PreviewError>(input: {
       Cause.die(new Error("The environment returned an invalid asset URL.")),
     );
   }
+  let previewUrl = assetUrl;
+  const designPath = assetResult.value.sourcePath;
+  if (designPath && isWorkspaceHtmlPath(designPath)) {
+    const designUrl = new URL(assetUrl);
+    designUrl.searchParams.set("t3-design", "1");
+    designUrl.searchParams.set("t3-design-path", designPath);
+    previewUrl = designUrl.toString();
+  }
   return openUrlInPreview({
     threadRef: input.threadRef,
-    url: assetUrl,
+    url: previewUrl,
+    signal: input.signal,
+    ...(previewUrl !== assetUrl && designPath ? { designPath } : {}),
     openPreview: input.openPreview,
   });
 }
