@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./repair-markdown-file-links": {
+      "types": "./src/repairMarkdownFileLinks.ts",
+      "default": "./src/repairMarkdownFileLinks.ts"
+    },
     "./load-balancing": {
       "types": "./src/load-balancing.ts",
       "default": "./src/load-balancing.ts"
