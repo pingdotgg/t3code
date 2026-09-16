@@ -39,8 +39,14 @@ and removal must respect those leases instead of replacing executables under a r
 
 Opening a provider session can start MCP servers, run hooks, or launch a login browser.
 [Grok probes](../../apps/server/src/provider/Layers/GrokProvider.ts) avoid authentication and
-session creation for this reason. Antigravity likewise reserves authenticated catalog sessions for
-explicit setup or model refresh; background checks use initialization only.
+session creation for this reason. Auggie makes that constraint expensive: it advertises its model
+catalog only on session setup, never on `initialize`, and a new session indexes the workspace. Its
+[probe](../../apps/server/src/provider/Layers/AuggieProvider.ts) therefore publishes a sentinel
+model, and the adapter reports the real catalog from sessions the user actually started. A CLI
+model listing is not a substitute; those ids are display aliases that ACP rejects.
+
+Antigravity likewise reserves authenticated catalog sessions for explicit setup or model refresh;
+background checks use initialization only.
 
 [Antigravity sign-in](../../apps/server/src/provider/AntigravityAuth.ts) belongs to the initiating
 T3 auth session. The client carries the return URL back to the environment because the provider's
@@ -83,6 +89,11 @@ no pending RPC response to send. Blocking questions still use the request/respon
 [adapter](../../apps/server/src/provider/Layers/CodexAdapter.ts) distinguishes them; the
 [decider](../../apps/server/src/orchestration/decider.ts) records an async answer and its user
 message together.
+
+Auggie persists a session only after a turn completes, so a thread interrupted before its first
+reply has a resume cursor that `session/load` rejects. The
+[adapter](../../apps/server/src/provider/Layers/AuggieAdapter.ts) treats that specific failure as a
+fresh start rather than a broken thread.
 
 An async question can outlive the turn or a server restart. The engine reads that request's
 durable activity before resolving it because the in-memory command snapshot omits old activities.
