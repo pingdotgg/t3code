@@ -426,9 +426,9 @@ const registerPreviewSnapshot = Effect.fn("McpHttpServer.registerPreviewSnapshot
                           text: `Snapshot text was bounded. Omitted: ${bounded.omitted.join("; ")}.`,
                         },
                       ]),
-                  ...(payload?.includeImage === false
-                    ? []
-                    : [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]),
+                  ...(payload?.includeImage === true
+                    ? [{ type: "image" as const, data: png, mimeType: screenshot.mimeType }]
+                    : []),
                 ],
               });
             }),
