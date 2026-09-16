@@ -11,6 +11,7 @@ import {
   outcomeToStep,
   refreshedSourceProfileDirectory,
   refreshedSourceStep,
+  resolveSourceProfile,
   resolveWizardTarget,
 } from "./browserImportWizard.logic";
 
@@ -181,6 +182,26 @@ describe("refreshedSourceProfileDirectory", () => {
   it("falls back only when the old profile vanished and clears an empty result", () => {
     expect(refreshedSourceProfileDirectory("Removed", refreshed)).toBe("Default");
     expect(refreshedSourceProfileDirectory("Removed", source({ profiles: [] }))).toBe("");
+  });
+});
+
+describe("resolveSourceProfile", () => {
+  const refreshed = source({
+    profiles: [
+      { directory: "Default", name: "Personal" },
+      { directory: "Profile 2", name: "Work" },
+    ],
+  });
+
+  it("resolves the selected non-first source profile from the current source", () => {
+    expect(resolveSourceProfile("Profile 2", refreshed)).toEqual({
+      directory: "Profile 2",
+      name: "Work",
+    });
+  });
+
+  it("does not reuse a profile name after the selected directory vanishes", () => {
+    expect(resolveSourceProfile("Removed", refreshed)).toBeUndefined();
   });
 });
 
