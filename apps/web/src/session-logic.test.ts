@@ -1173,6 +1173,26 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.threadsList).toEqual({ threads: [] });
   });
 
+  it("detects threads_create when the adapter files the call as a change item", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-create-filechange",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "file_change",
+          data: {
+            toolName: "mcp__t3-code__threads_create",
+            structuredResult: { threadId: "thread-new", title: "Fresh thread" },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.threadsCreated).toEqual({ threadId: "thread-new", title: "Fresh thread" });
+  });
+
   it("leaves threadsList undefined when the structured result shape is wrong", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

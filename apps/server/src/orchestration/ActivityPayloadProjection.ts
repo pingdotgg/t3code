@@ -528,6 +528,15 @@ export function projectActivityPayload(
     projectedData.toolName = data.toolName;
   }
 
+  // Some adapters classify toolkit calls as generic change items rather than
+  // mcp_tool_call; the structured result matters the same either way.
+  if (isThreadsSurfaceTool(data, asRecord(data.item))) {
+    const structuredResult = extractThreadsSurfaceStructuredResult(data, asRecord(data.item));
+    if (structuredResult) {
+      projectedData.structuredResult = structuredResult;
+    }
+  }
+
   const rawOutput =
     projectRawOutput(data.rawOutput) ??
     projectAcpContent(data.content) ??

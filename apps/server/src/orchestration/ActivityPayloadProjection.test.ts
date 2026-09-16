@@ -379,6 +379,26 @@ describe("projectActivityPayload", () => {
     expect(data.structuredResult).toEqual(result);
   });
 
+  it("keeps threads-surface results when the adapter files the call as a change item", () => {
+    const result = { threadId: "thrd_3", title: "Second demo thread" };
+    const projected = projectActivityPayload(
+      activity({
+        itemType: "file_change",
+        data: {
+          toolName: "mcp__t3-code__threads_create",
+          input: { title: "Second demo thread" },
+          result: {
+            type: "tool_result",
+            tool_use_id: "call_1",
+            content: JSON.stringify(result),
+          },
+        },
+      }),
+    );
+    const data = (projected.payload as Record<string, unknown>).data as Record<string, unknown>;
+    expect(data.structuredResult).toEqual(result);
+  });
+
   it("does not fabricate structuredResult when a threads-surface result is unparseable", () => {
     const projected = projectActivityPayload(
       activity({

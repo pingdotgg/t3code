@@ -716,22 +716,25 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     if (toolData !== undefined) {
       entry.toolData = toolData;
     }
-    // Tool-name detection mirrors the server's ActivityPayloadProjection:
-    // Claude/OpenCode put it at `data.toolName`, Codex at `data.item.tool`.
-    const item = asRecord(data?.item);
-    const toolName =
-      matchThreadsSurfaceToolName(data?.toolName) ?? matchThreadsSurfaceToolName(item?.tool);
-    if (toolName === "threads_list") {
-      const threadsList = extractThreadsListResult(data?.structuredResult);
-      if (threadsList) {
-        entry.threadsList = threadsList;
-      }
+  }
+  // Threads-surface detection mirrors the server's ActivityPayloadProjection
+  // and is not gated on itemType: Claude/OpenCode name the tool
+  // `mcp__t3-code__*` at `data.toolName`, Codex keeps `item.tool`, and some
+  // adapters classify the create call as a generic change item.
+  const threadsToolData = asRecord(payload?.data);
+  const threadsToolName =
+    matchThreadsSurfaceToolName(threadsToolData?.toolName) ??
+    matchThreadsSurfaceToolName(asRecord(threadsToolData?.item)?.tool);
+  if (threadsToolName === "threads_list") {
+    const threadsList = extractThreadsListResult(threadsToolData?.structuredResult);
+    if (threadsList) {
+      entry.threadsList = threadsList;
     }
-    if (toolName === "threads_create") {
-      const threadsCreated = extractThreadsCreateResult(data?.structuredResult);
-      if (threadsCreated) {
-        entry.threadsCreated = threadsCreated;
-      }
+  }
+  if (threadsToolName === "threads_create") {
+    const threadsCreated = extractThreadsCreateResult(threadsToolData?.structuredResult);
+    if (threadsCreated) {
+      entry.threadsCreated = threadsCreated;
     }
   }
   if (itemType) {
