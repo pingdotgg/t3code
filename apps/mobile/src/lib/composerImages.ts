@@ -409,6 +409,7 @@ export async function pickComposerImages(input: { readonly existingCount: number
   };
 }
 
+/** Captures one camera image and returns the same normalized attachment shape as library media. */
 export async function takeComposerPhoto(input: { readonly existingCount: number }): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
@@ -427,6 +428,7 @@ export async function pickComposerMedia(input: {
   return pickComposerMediaFrom("library", input);
 }
 
+/** Shares source-specific permission and picker behavior with the common media normalization path. */
 async function pickComposerMediaFrom(
   source: "camera" | "library",
   input: {

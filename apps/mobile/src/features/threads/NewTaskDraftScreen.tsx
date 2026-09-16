@@ -167,6 +167,7 @@ function NewTaskWorkspaceIcon(props: {
   );
 }
 
+/** Renders and owns the draft composer used before a new task has created its thread. */
 export function NewTaskDraftScreen(props: {
   readonly initialProjectRef?: {
     readonly environmentId?: string;
@@ -991,6 +992,7 @@ export function NewTaskDraftScreen(props: {
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
+  /** Opens the requested image source and appends normalized media at the current draft position. */
   async function handlePickMedia(source: "camera" | "library"): Promise<void> {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;

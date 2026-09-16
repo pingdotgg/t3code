@@ -124,6 +124,7 @@ export function useThreadDraftForThread(input: {
   };
 }
 
+/** Owns live-thread composer state, including source-aware media and file attachment actions. */
 export function useThreadComposerState() {
   const {
     selectedThread: selectedThreadShell,
@@ -499,6 +500,7 @@ export function useThreadComposerState() {
     [selectedThreadShell],
   );
 
+  /** Inserts normalized camera or library media at the selection captured before the picker opens. */
   const onPickDraftMedia = useCallback(
     async (source: "camera" | "library") => {
       if (!selectedThreadShell) {

@@ -139,6 +139,7 @@ export interface ThreadComposerProps {
   readonly sendBlockedReason?: string | null;
   readonly editorRef?: RefObject<ComposerEditorHandle | null>;
   readonly onChangeDraftMessage: (value: string) => void;
+  /** Adds normalized media from the requested native source to the current draft. */
   readonly onPickDraftMedia: (source: "camera" | "library") => Promise<void>;
   readonly onPickDraftFiles: () => Promise<void>;
   readonly onNativePasteImages: (uris: ReadonlyArray<string>) => Promise<void>;
@@ -275,6 +276,7 @@ export function ComposerSurface(props: {
   );
 }
 
+/** Renders the live thread composer and its source-aware attachment controls. */
 export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposerProps) {
   const project = useProject(scopeProjectRef(props.environmentId, props.selectedThread.projectId));
   const { materialYouStyleLayoutActive, themeVariables: materialTheme } =

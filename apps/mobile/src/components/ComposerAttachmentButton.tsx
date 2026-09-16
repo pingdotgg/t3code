@@ -14,6 +14,7 @@ const MEDIA_ATTACHMENT_MENU_ACTIONS = ATTACHMENT_MENU_ACTIONS.filter(
   (action) => action.id !== "files",
 );
 
+/** Renders the shared camera, library, and optional file actions for a composer. */
 export function ComposerAttachmentButton(props: {
   readonly disabled?: boolean;
   readonly supportsFiles: boolean;

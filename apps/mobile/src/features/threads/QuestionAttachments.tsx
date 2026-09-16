@@ -31,6 +31,7 @@ import {
   questionAttachmentPreparationAtom,
 } from "../../state/question-attachments";
 
+/** Manages attachments and custom-answer text for one pending agent question. */
 export function QuestionAttachments(props: {
   requestId: ApprovalRequestId;
   question: UserInputQuestion;
@@ -123,6 +124,7 @@ export function QuestionAttachments(props: {
     props.question.id,
   );
   const attachments = drafts[key]?.attachments ?? [];
+  /** Runs one system picker while preserving the question's cross-client attachment reservation. */
   const pick = async (kind: "camera" | "media" | "files") => {
     const scope = pickerScope.current;
     const failureTitle = kind === "camera" ? "Could not take photo" : "Could not attach file";
