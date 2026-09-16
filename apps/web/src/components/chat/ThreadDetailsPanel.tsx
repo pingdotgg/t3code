@@ -5,7 +5,6 @@ import type {
   ResolvedKeybindingsConfig,
   ThreadId,
 } from "@t3tools/contracts";
-import type { EnvironmentConnectionPresentation } from "@t3tools/client-runtime/connection";
 import { AlertTriangleIcon, XIcon } from "lucide-react";
 
 import type { DraftId } from "../../composerDraftStore";
@@ -35,7 +34,6 @@ export interface ThreadDetailsPanelProps {
   mode: "inline" | "popover";
   onClose?: () => void;
   environmentId: EnvironmentId;
-  environmentConnection: EnvironmentConnectionPresentation | null;
   threadId: ThreadId;
   draftId?: DraftId;
   activeProjectName: string | undefined;
@@ -58,8 +56,6 @@ export interface ThreadDetailsPanelProps {
   onCheckoutPullRequestRequest?: (reference: string) => void;
   onComposerFocusRequest: () => void;
   onOpenChanges?: () => void;
-  onReconnectEnvironment: () => void;
-  onOpenConnectionSettings: () => void;
   versionMismatch: VersionMismatchIssue | null;
   onDismissVersionMismatch: () => void;
   onRunProjectScript: (script: ProjectScript) => void;
@@ -76,13 +72,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
     props.environmentId,
     props.activeProjectScripts ? props.gitCwd : null,
   );
-  const connectionIssue =
-    props.environmentConnection !== null &&
-    props.environmentConnection.phase !== "connected" &&
-    props.environmentConnection.phase !== "available";
-  const isReconnecting =
-    props.environmentConnection?.phase === "connecting" ||
-    props.environmentConnection?.phase === "reconnecting";
   const branchToolbarProps = {
     showGitControls: props.isGitRepo,
     environmentId: props.environmentId,
@@ -135,33 +124,6 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
               Workspace
             </h3>
           </div>
-
-          {connectionIssue ? (
-            <div className="mx-3 mb-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
-              <div className="flex gap-2">
-                <AlertTriangleIcon className="mt-0.5 size-3.5 shrink-0 text-warning" />
-                <div className="min-w-0 flex-1">
-                  <p className="text-xs font-medium">Environment unavailable</p>
-                  <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
-                    {props.environmentConnection?.error ??
-                      "Reconnect this environment before sending messages or running actions."}
-                  </p>
-                  <div className="mt-2 flex items-center gap-1.5">
-                    <Button
-                      size="xs"
-                      disabled={isReconnecting}
-                      onClick={props.onReconnectEnvironment}
-                    >
-                      {isReconnecting ? "Reconnecting..." : "Reconnect"}
-                    </Button>
-                    <Button size="xs" variant="ghost" onClick={props.onOpenConnectionSettings}>
-                      Connections
-                    </Button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : null}
 
           {props.versionMismatch ? (
             <div className="mx-3 mb-2 flex gap-2 rounded-xl border border-warning/30 bg-warning/6 p-3">
