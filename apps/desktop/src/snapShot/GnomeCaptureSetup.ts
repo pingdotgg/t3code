@@ -232,6 +232,7 @@ export class GnomeCaptureSetup {
       // GNOME discovers a newly installed local extension at the next login.
       return;
     }
+    if (action === "enable-extension" && state.status === "enabled") return;
     if (action === "enable-extension" && state.status !== "disabled")
       throw new Error(state.message);
     const result = await this.call({
