@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo } from "react";
+import * as DateTime from "effect/DateTime";
 
 import type { EnvironmentId, OrchestrationCheckpointSummary, ThreadId } from "@t3tools/contracts";
 
@@ -66,13 +67,14 @@ export function useReviewSections(input: {
     () =>
       buildReviewSectionItems({
         checkpoints: readyCheckpoints,
-        gitSections: reviewCache.gitSections,
+        gitSections: diffPreview.data?.sources ?? reviewCache.gitSections,
         turnDiffById: reviewCache.turnDiffById,
         loadingTurnIds,
         loadingGitSections: diffPreview.isPending,
       }),
     [
       diffPreview.isPending,
+      diffPreview.data?.sources,
       loadingTurnIds,
       readyCheckpoints,
       reviewCache.gitSections,
@@ -176,6 +178,9 @@ export function useReviewSections(input: {
     isSelectedSectionPending:
       selectedSection?.kind === "turn" ? activeTurnDiff.isPending : diffPreview.isPending,
     loadingGitDiffs: diffPreview.isPending,
+    diffPreviewRevision: diffPreview.data
+      ? DateTime.formatIso(diffPreview.data.generatedAt)
+      : undefined,
     loadingTurnIds,
     reviewSections,
     selectedSection,

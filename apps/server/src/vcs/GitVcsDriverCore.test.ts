@@ -1183,6 +1183,20 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
 
         assert.include(diff, "+literal pathspec contents");
         assert.include(diff, "+ordinary contents");
+        const scoped = yield* driver.getReviewDiffPreview({
+          cwd,
+          file: {
+            path: ":(exclude)after.ts",
+            previousPath: null,
+            sourceKind: "working-tree",
+          },
+        });
+        const scopedSource = scoped.sources.find((source) => source.kind === "working-tree")!;
+        assert.deepStrictEqual(scopedSource.files, [
+          { path: ":(exclude)after.ts", previousPath: null, additions: 1, deletions: 0 },
+        ]);
+        assert.include(scopedSource.diff, "+literal pathspec contents");
+        assert.notInclude(scopedSource.diff, "ordinary.ts");
         assert.strictEqual(yield* git(cwd, ["ls-files", "--stage"]), indexBefore);
       }),
     );
@@ -1356,11 +1370,14 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("preserves rename paths, unusual filenames, and binary statistics", () =>
+    it.effect("preserves renames, unusual paths, modes, and binary statistics", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         const { initialBranch } = yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
+        yield* writeTextFile(cwd, "mode-only.sh", "echo unchanged\n");
+        yield* git(cwd, ["add", "mode-only.sh"]);
+        yield* git(cwd, ["commit", "-m", "add executable candidate"]);
         yield* git(cwd, ["checkout", "-b", "feature/paths"]);
         yield* git(cwd, ["mv", "README.md", "renamed.md"]);
         yield* writeTextFile(cwd, "[literal].txt", "literal\n");
@@ -1371,13 +1388,14 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           yield* writeTextFile(cwd, "tab\tand\nnewline.txt", "unusual path\n");
         }
         yield* git(cwd, ["add", "."]);
+        yield* git(cwd, ["update-index", "--chmod=+x", "mode-only.sh"]);
         yield* git(cwd, ["commit", "-m", "rename and add files"]);
         const preview = yield* driver.getReviewDiffPreview({
           cwd,
           baseRef: initialBranch,
         });
         const branch = preview.sources.find((source) => source.kind === "branch-range")!;
-        for (const path of ["renamed.md", "[literal].txt", " leading.txt"]) {
+        for (const path of ["renamed.md", "[literal].txt", " leading.txt", "mode-only.sh"]) {
           const stat = branch.files!.find((file) => file.path === path)!;
           const request = yield* Schema.decodeEffect(ReviewDiffPreviewInput)({
             cwd,
@@ -1389,6 +1407,10 @@ it.layer(TestLayer)("GitVcsDriver core integration", (it) => {
           assert.deepStrictEqual(scoped.files, [stat]);
           assert.notInclude(scoped.diff, "b/l.txt");
           if (path === "renamed.md") assert.include(scoped.diff, "rename from README.md");
+          if (path === "mode-only.sh") {
+            assert.include(scoped.diff, "old mode 100644");
+            assert.include(scoped.diff, "new mode 100755");
+          }
         }
         assert.include(branch.diff, "rename from README.md");
         assert.include(branch.diff, "rename to renamed.md");

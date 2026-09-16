@@ -389,6 +389,7 @@ export function ReviewSheet(props: ReviewSheetProps) {
     refreshSelectedSection,
     selectSection,
     isSelectedSectionPending,
+    diffPreviewRevision,
   } = useReviewSections({
     enabled: isEnvironmentReady,
     environmentId,
@@ -406,13 +407,13 @@ export function ReviewSheet(props: ReviewSheetProps) {
     parsedDiff,
     pendingReviewCommentCount,
     loadVisibleFile,
-    refreshFilePatches,
     isPending: areFilePatchesPending,
   } = useReviewDiffData({
     threadKey: reviewCache.threadKey,
     environmentId,
     cwd: selectedThreadCwd,
     selectedSection,
+    revision: diffPreviewRevision,
     draftMessage,
   });
   // Resolution returns null while Expo registers the native view (or forever
@@ -427,12 +428,11 @@ export function ReviewSheet(props: ReviewSheetProps) {
   const handlePullToRefresh = useCallback(async () => {
     setIsPullRefreshing(true);
     try {
-      refreshFilePatches();
       await refreshSelectedSection();
     } finally {
       setIsPullRefreshing(false);
     }
-  }, [refreshSelectedSection, refreshFilePatches]);
+  }, [refreshSelectedSection]);
   const reviewFileNavigatorRef = useRef<ReviewFileNavigatorHandle>(null);
   const reviewFiles = parsedDiff.kind === "files" ? parsedDiff.files : [];
   const fileVisibility = useReviewFileVisibility({

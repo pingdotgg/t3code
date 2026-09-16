@@ -22,7 +22,7 @@ export function useReviewFilePatches({
   baseRef: string | null;
   ignoreWhitespace: boolean;
   theme: "light" | "dark";
-  revision: number;
+  revision: string | undefined;
   preview: RenderablePatch | null;
 }) {
   const registry = useContext(RegistryContext);
@@ -126,9 +126,6 @@ export function useReviewFilePatches({
     [requestFiles, settledFileCount],
   );
   const requestFile = useCallback((index: number) => requestFiles([index]), [requestFiles]);
-  const refresh = useCallback(() => {
-    for (const { query } of queries) registry.refresh(query);
-  }, [queries, registry]);
   const retry = useCallback(
     (path: string) => {
       const query = queries.find(({ index }) => files[index]?.path === path)?.query;
@@ -186,21 +183,25 @@ export function useReviewFilePatches({
       ] as const;
     }),
   );
+  const readyFilePaths = useMemo(
+    () =>
+      new Set(
+        files
+          .filter((_, index) => {
+            const patch = patches.get(index);
+            return patch && patch._tag !== "Initial";
+          })
+          .map((file) => file.path),
+      ),
+    [files, patches],
+  );
   return {
     scope,
-    refresh,
     fileStates,
     isPending: [...patches.values()].some((patch) => patch._tag === "Initial" || patch.waiting),
     retry,
     requestFile,
-    readyFilePaths: new Set(
-      files
-        .filter((_, index) => {
-          const patch = patches.get(index);
-          return patch && patch._tag !== "Initial";
-        })
-        .map((file) => file.path),
-    ),
+    readyFilePaths,
     renderableFiles,
     settledFileCount,
     loadNextFiles,

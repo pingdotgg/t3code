@@ -2427,6 +2427,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     ) {
       if (ref === null) return { stdout: "", stdoutTruncated: false, files: [] };
       const stat = yield* readStats(ref, env);
+      if (stat.files.length === 0) return { stdout: "", stdoutTruncated: false, files: [] };
       const patch = yield* executeGit(
         "GitVcsDriver.getReviewDiffPreview.patch",
         cwd,
@@ -2440,7 +2441,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       const untracked = yield* executeGit(
         "GitVcsDriver.review.listUntracked",
         cwd,
-        ["ls-files", "--others", "--exclude-standard", "-z"],
+        ["ls-files", "--others", "--exclude-standard", "-z", "--", ...pathArgs],
         { maxOutputBytes: REVIEW_METADATA_MAX_OUTPUT_BYTES },
       ).pipe(
         Effect.catchIf(
