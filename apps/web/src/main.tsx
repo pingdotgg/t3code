@@ -5,7 +5,7 @@ import { createHashHistory, createBrowserHistory } from "@tanstack/react-router"
 import "./index.css";
 
 import { isElectron } from "./env";
-import { hasCloudPublicConfig } from "./cloud/publicConfig";
+import { canUseCloudAuth } from "./cloud/publicConfig";
 import { getRouter } from "./router";
 import {
   syncDocumentElectronPlatformClasses,
@@ -45,7 +45,7 @@ const app = <AppRoot router={router} />;
 // every Clerk byte out of the startup graph for local-mode users, and keeps
 // the bundled clerk-js out of the browser build entirely.
 const managedAuthShellModule =
-  clerkPublishableKey && hasCloudPublicConfig()
+  clerkPublishableKey && canUseCloudAuth()
     ? isElectron
       ? import("./components/clerk/ElectronManagedAuthShell")
       : import("./components/clerk/BrowserManagedAuthShell")

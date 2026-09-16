@@ -29,7 +29,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { TYPOGRAPHY_ADVANCED_STORAGE_KEY } from "../../appearanceFonts";
 import { useLocalStorage } from "../../hooks/useLocalStorage";
-import { hasCloudPublicConfig } from "../../cloud/publicConfig";
+import { canUseCloudAuth } from "../../cloud/publicConfig";
 import { useT3ConnectAuthPrompt } from "../clerk/useT3ConnectAuthPrompt";
 import { useCompleteOnboarding } from "../../onboarding/firstRun";
 import {
@@ -213,7 +213,7 @@ export function WelcomeWizard({
         <WizardPanel holdHeight={isLoadingProjects}>
           {step === "connection" ? (
             <ConnectionStep
-              expandPairingInitially={!localAvailable && !hasCloudPublicConfig()}
+              expandPairingInitially={!localAvailable && !canUseCloudAuth()}
               selectedIds={selectedIds}
               autoSelectedComputers={autoSelectedComputers.current}
               onSelectionChange={setSelection}
@@ -272,7 +272,7 @@ function ConnectionStep({
   readonly onPaired: (environmentId: EnvironmentId) => void;
 }) {
   const { environments } = useEnvironments();
-  const cloudEnabled = hasCloudPublicConfig();
+  const cloudEnabled = canUseCloudAuth();
   const directEnvironments = environments.filter(
     (environment) => !cloudEnabled || !isOnboardingRelayEnvironment(environment),
   );
