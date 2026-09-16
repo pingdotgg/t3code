@@ -8,6 +8,7 @@ import {
   normalizeClaudeCatalogEffort,
   resolveClaudeCatalogApiModelId,
   resolveClaudeCatalogEffort,
+  resolveClaudeModelAvailability,
   resolveClaudeModelCatalog,
   resolveClaudeModelsForVersion,
   resolveClaudeModelSlug,
@@ -113,6 +114,74 @@ describe("Claude model catalog", () => {
         model: "synthetic",
       }),
       "claude-synthetic-next[large]",
+    );
+  });
+
+  it("uses runtime availability while preserving manifest metadata and legacy models", () => {
+    const base = manifest();
+    const input: ModelManifestData = {
+      ...base,
+      providers: {
+        ...base.providers,
+        claudeAgent: {
+          ...base.providers!.claudeAgent!,
+          models: [
+            ...base.providers!.claudeAgent!.models,
+            {
+              slug: "claude-synthetic-hidden",
+              name: "Claude Synthetic Hidden",
+              status: "current",
+              profile: "synthetic",
+            },
+            {
+              slug: "claude-synthetic-legacy",
+              name: "Claude Synthetic Legacy",
+              status: "legacy",
+              profile: "synthetic",
+            },
+          ],
+        },
+      },
+    };
+    const catalog = resolveClaudeModelCatalog(input);
+    const availability = resolveClaudeModelAvailability(catalog, "3.1.9", [
+      { value: "default", displayName: "Default" },
+      { value: "synthetic[large]", displayName: "Synthetic" },
+      { value: "  claude-runtime-only  ", displayName: "  Claude Runtime Only  " },
+      { value: "claude-runtime-only", displayName: "Duplicate Runtime Model" },
+      { value: " ", displayName: "Empty Model" },
+      { value: "synthetic", displayName: "Duplicate Synthetic" },
+    ]);
+
+    assert.strictEqual(availability.source, "runtime");
+    assert.deepStrictEqual(
+      availability.models.map((model) => model.slug),
+      ["claude-synthetic-next", "claude-runtime-only", "claude-synthetic-legacy"],
+    );
+    assert.deepStrictEqual(
+      availability.models[0]?.capabilities,
+      catalog.models[0]?.model.capabilities,
+    );
+    assert.deepStrictEqual(availability.models[1], {
+      slug: "claude-runtime-only",
+      name: "Claude Runtime Only",
+      isCustom: false,
+      capabilities: { optionDescriptors: [] },
+    });
+  });
+
+  it("falls back to version-compatible manifest models without a concrete runtime inventory", () => {
+    const catalog = resolveClaudeModelCatalog(manifest());
+
+    assert.deepStrictEqual(resolveClaudeModelAvailability(catalog, "3.1.9", []).models, []);
+    assert.deepStrictEqual(
+      resolveClaudeModelAvailability(catalog, "3.2.0", [
+        { value: "default", displayName: "Default" },
+      ]),
+      {
+        models: [catalog.models[0]!.model],
+        source: "manifest",
+      },
     );
   });
 

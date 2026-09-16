@@ -39,6 +39,16 @@ export interface ClaudeModelCatalog {
   readonly models: ReadonlyArray<ClaudeCatalogModel>;
 }
 
+export interface ClaudeRuntimeModel {
+  readonly value: string;
+  readonly displayName: string;
+}
+
+export interface ClaudeModelAvailability {
+  readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly source: "runtime" | "manifest";
+}
+
 function tryResolveClaudeModelCatalog(manifest: ModelManifestData): ClaudeModelCatalog | null {
   const resolved = resolveProviderCatalog(manifest, CLAUDE);
   if (!resolved) return null;
@@ -76,12 +86,14 @@ export const BUNDLED_CLAUDE_MODEL_CATALOG = resolveClaudeModelCatalog(BUNDLED_MO
  * (a built-in alias they shadow is dropped, canonical slugs and capabilities
  * are preserved), and custom entries that declare their own capabilities are
  * appended so the adapter resolves effort / fast mode / thinking against the
- * user's descriptors instead of the empty default. Custom entries carry no
+ * user's descriptors instead of the empty default. A supplied fallback includes
+ * bare custom entries when building a provider snapshot. Custom entries carry no
  * runtime profile, so option values pass through to Claude Code verbatim.
  */
 export function scopeClaudeModelCatalog(
   catalog: ClaudeModelCatalog,
   customModels: ReadonlyArray<CustomModelSetting>,
+  defaultCustomCapabilities?: ModelCapabilities,
 ): ClaudeModelCatalog {
   const customEntries = readCustomModelEntries(customModels);
   if (customEntries.length === 0) return catalog;
@@ -102,13 +114,14 @@ export function scopeClaudeModelCatalog(
   const builtInSlugs = new Set(builtInModels.map((entry) => entry.model.slug));
   const customCatalogModels: Array<ClaudeCatalogModel> = [];
   for (const entry of customEntries) {
-    if (!entry.capabilities || builtInSlugs.has(entry.slug)) continue;
+    const capabilities = entry.capabilities ?? defaultCustomCapabilities;
+    if (!capabilities || builtInSlugs.has(entry.slug)) continue;
     customCatalogModels.push({
       model: {
         slug: entry.slug,
         name: entry.name,
         isCustom: true,
-        capabilities: entry.capabilities,
+        capabilities,
       },
       runtime: {},
       compatibility: {},
@@ -165,6 +178,80 @@ export function resolveClaudeModelsForVersion(
   return catalog.models
     .filter((entry) => isVersionSupported(entry.compatibility, version))
     .map((entry) => entry.model);
+}
+
+function resolveClaudeCatalogModelFromRuntimeValue(
+  catalog: ClaudeModelCatalog,
+  value: string,
+): ClaudeCatalogModel | undefined {
+  const direct = resolveClaudeCatalogModel(catalog, value);
+  if (direct) return direct;
+
+  const suffixes = new Set(
+    catalog.models.flatMap((entry) =>
+      Object.values(entry.runtime.modelSuffixes ?? {}).flatMap((mapping) => Object.values(mapping)),
+    ),
+  );
+  for (const suffix of suffixes) {
+    if (!value.endsWith(suffix)) continue;
+    const resolved = resolveClaudeCatalogModel(catalog, value.slice(0, -suffix.length));
+    if (resolved) return resolved;
+  }
+  return undefined;
+}
+
+/**
+ * Uses Claude Code's session inventory to decide which current models are
+ * selectable. The manifest still owns metadata and the legacy escape hatch.
+ */
+export function resolveClaudeModelAvailability(
+  catalog: ClaudeModelCatalog,
+  version: string | null | undefined,
+  runtimeModels: ReadonlyArray<ClaudeRuntimeModel> | null | undefined,
+): ClaudeModelAvailability {
+  const compatibleModels = resolveClaudeModelsForVersion(catalog, version);
+  if (!runtimeModels || runtimeModels.length === 0) {
+    return { models: compatibleModels, source: "manifest" };
+  }
+
+  const availableCatalogSlugs = new Set<string>();
+  const runtimeOnlyModels: ServerProviderModel[] = [];
+  const seenRuntimeOnlySlugs = new Set<string>();
+  for (const runtimeModel of runtimeModels) {
+    const value = runtimeModel.value.trim();
+    if (!value || value.toLowerCase() === "default") continue;
+
+    const catalogEntry = resolveClaudeCatalogModelFromRuntimeValue(catalog, value);
+    if (catalogEntry) {
+      availableCatalogSlugs.add(catalogEntry.model.slug);
+      continue;
+    }
+    if (seenRuntimeOnlySlugs.has(value)) continue;
+    seenRuntimeOnlySlugs.add(value);
+    runtimeOnlyModels.push({
+      slug: value,
+      name: runtimeModel.displayName.trim() || value,
+      isCustom: false,
+      capabilities: EMPTY_CAPABILITIES,
+    });
+  }
+
+  if (availableCatalogSlugs.size === 0 && runtimeOnlyModels.length === 0) {
+    return { models: compatibleModels, source: "manifest" };
+  }
+
+  const compatibleSlugs = new Set(compatibleModels.map((model) => model.slug));
+  const selectedCatalogModels = catalog.models.flatMap(({ model }) =>
+    availableCatalogSlugs.has(model.slug) || (model.isLegacy && compatibleSlugs.has(model.slug))
+      ? [model]
+      : [],
+  );
+  const currentModels = selectedCatalogModels.filter((model) => !model.isLegacy);
+  const legacyModels = selectedCatalogModels.filter((model) => model.isLegacy);
+  return {
+    models: [...currentModels, ...runtimeOnlyModels, ...legacyModels],
+    source: "runtime",
+  };
 }
 
 export function formatClaudeVersionUpgradeMessage(
