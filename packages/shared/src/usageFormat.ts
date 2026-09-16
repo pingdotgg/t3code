@@ -187,6 +187,55 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
+/** Current local calendar day, from midnight through the current minute. */
+export function makeTodayWindow(now = new Date()): UsageSummaryInput {
+  let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  let dayFormat: Intl.DateTimeFormat;
+  try {
+    dayFormat = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  } catch {
+    timeZone = "UTC";
+    dayFormat = new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+    });
+  }
+  const day = dayFormat.format(now);
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  const offsetFormat = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    timeZoneName: "longOffset",
+  });
+  let midnightMs = Date.UTC(year, month - 1, date);
+  for (let index = 0; index < 2; index += 1) {
+    const value = offsetFormat
+      .formatToParts(new Date(midnightMs))
+      .find((part) => part.type === "timeZoneName")?.value;
+    const match = value?.match(/^GMT([+-])(\d{2}):(\d{2})$/);
+    if (!match) break;
+    const minutes = Number(match[2]) * 60 + Number(match[3]);
+    midnightMs =
+      Date.UTC(year, month - 1, date) + (match[1] === "+" ? -minutes : minutes) * 60_000;
+  }
+  const sinceTime = new Date(midnightMs);
+  const untilTime = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+  return {
+    sinceDay: UsageDay.make(dayFormat.format(sinceTime)),
+    untilDay: UsageDay.make(dayFormat.format(untilTime)),
+    timeZone,
+    resolution: "hour",
+    sinceTime: sinceTime.toISOString(),
+    untilTime: untilTime.toISOString(),
+  };
+}
+
 /**
  * The window the page requests, expressed in the viewer's own time zone so days
  * line up with what they actually experienced.
