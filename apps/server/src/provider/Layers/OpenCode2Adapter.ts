@@ -1026,7 +1026,10 @@ export function makeOpenCode2Adapter(
       if (!replied) {
         // Fall back to the dialog. The id stays resolved so a recovered copy
         // of this ask cannot reopen after the user answers;
-        // `pendingPermissions` gates re-asks while the dialog is open.
+        // `pendingPermissions` gates re-asks while the dialog is open. The
+        // auto-reply marker must go, or the user's answer would be swallowed
+        // as the terminal event of a reply that never landed.
+        context.autoRepliedRequestIds.delete(ask.id);
         yield* openPermissionRequest(context, ask, raw);
       }
     });
@@ -1697,10 +1700,12 @@ export function makeOpenCode2Adapter(
               break;
             }
             // idle: reconciliation only — the explicit execution events own
-            // turn completion, this covers a missed terminal event.
+            // turn completion, this covers a missed terminal event. An
+            // admitted prompt falls through: its run may have ended without
+            // a terminal event (e.g. a non-user interruption).
             if (turnId !== undefined) {
               const admission = context.promptAdmission;
-              if (admission?.turnId === turnId) {
+              if (admission?.turnId === turnId && !admission.accepted) {
                 yield* schedulePromptAdmissionRecovery(context, admission);
                 break;
               }
@@ -1720,7 +1725,7 @@ export function makeOpenCode2Adapter(
           case "session.idle": {
             if (turnId !== undefined) {
               const admission = context.promptAdmission;
-              if (admission?.turnId === turnId) {
+              if (admission?.turnId === turnId && !admission.accepted) {
                 yield* schedulePromptAdmissionRecovery(context, admission);
                 break;
               }
@@ -2038,6 +2043,9 @@ export function makeOpenCode2Adapter(
           })
           .pipe(Effect.timeout("5 seconds"), Effect.ignoreCause);
       }
+      // A restarted server has forgotten the thread's MCP registration too;
+      // `mcp.add` is a plain upsert, so re-sending it is safe when it has not.
+      yield* registerThreadMcp(context).pipe(Effect.ignoreCause);
       yield* recoverPendingRequests(context);
       if (context.activeTurnId !== undefined) {
         const turnId = context.activeTurnId;
