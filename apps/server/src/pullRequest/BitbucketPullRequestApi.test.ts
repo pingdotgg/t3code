@@ -376,6 +376,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
         cursor: first.nextCursor!,
       });
       expect(last.patch).toBe("last file\n");
+      expect(last.omittedFileStats).toBeUndefined();
       expect(last.nextCursor).toBeNull();
       expect(callAt(3).url).toBe("/repositories/acme/web/pullrequests/7/diffstat?pagelen=4&page=2");
     }),

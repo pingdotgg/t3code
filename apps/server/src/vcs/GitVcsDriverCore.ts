@@ -2530,7 +2530,9 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         const tracked = yield* readTrackedDiff("HEAD");
         return { ...tracked, stdoutTruncated: true };
       }
-      const paths = splitNullSeparatedGitStdoutPaths(untracked.value);
+      const paths = splitNullSeparatedGitStdoutPaths(untracked.value).filter(
+        (candidate) => !input.file || candidate === input.file.path,
+      );
       if (paths.length === 0) return yield* readTrackedDiff("HEAD");
       const index = yield* prepareReviewIndex(cwd, paths).pipe(Effect.option);
       if (index._tag === "Some") return yield* readTrackedDiff("HEAD", index.value);

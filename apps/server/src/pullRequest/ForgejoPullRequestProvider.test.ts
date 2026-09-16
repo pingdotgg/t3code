@@ -42,6 +42,42 @@ const runtime = Layer.mergeAll(Layer.mock(ForgejoCli)({ api }), VcsProcess.layer
 
 afterEach(() => api.mockReset());
 
+it.effect("emits ordinary rename paths without literal quotes", () =>
+  Effect.gen(function* () {
+    api.mockImplementation((request) => {
+      if (request.path.endsWith("/pulls/1")) return json(pull);
+      if (request.path.includes("/files?"))
+        return json([
+          {
+            filename: "new.ts",
+            previous_filename: "old.ts",
+            status: "renamed",
+            additions: 0,
+            deletions: 0,
+          },
+        ]);
+      if (request.path.includes("/git/trees/"))
+        return json({
+          truncated: false,
+          tree: [
+            {
+              path: request.path.includes("/head?") ? "new.ts" : "old.ts",
+              mode: "100644",
+              sha: "blob",
+            },
+          ],
+        });
+      return json({ encoding: "base64", content: Buffer.from("unchanged\n").toString("base64") });
+    });
+    const provider = yield* Provider.make;
+    const result = yield* provider.getDiff({ ...input, cursor: "1" });
+    expect(result.patch).toBe(
+      "diff --git a/old.ts b/new.ts\nrename from old.ts\nrename to new.ts\n--- a/old.ts\n+++ b/new.ts\n",
+    );
+    expect(result.omittedFileStats).toBeUndefined();
+  }).pipe(Effect.provide(runtime)),
+);
+
 it.effect("marks non-UTF-8 blobs as omitted instead of losing byte-only changes", () =>
   Effect.gen(function* () {
     api.mockImplementation((request) => {
@@ -69,7 +105,7 @@ it.effect("marks non-UTF-8 blobs as omitted instead of losing byte-only changes"
     const provider = yield* Provider.make;
     const result = yield* provider.getDiff({ ...input, cursor: "1" });
     expect(result.truncated).toBe(true);
-    expect(result.patch).toContain('diff --git "a/legacy.txt" "b/legacy.txt"\nBinary files differ');
+    expect(result.patch).toContain("diff --git a/legacy.txt b/legacy.txt\nBinary files differ");
     expect(result.omittedFileStats).toEqual([{ path: "legacy.txt", additions: 1, deletions: 1 }]);
   }).pipe(Effect.provide(runtime)),
 );
@@ -144,13 +180,9 @@ it.effect(
       expect(first.patch).toContain('rename to " new.ts"');
       expect(first.patch).toContain("-before\n+after\n");
       expect(first.patch).toContain("new file mode 100644\n--- /dev/null");
-      expect(first.patch).toContain('deleted file mode 100644\n--- "a/deleted.ts"\n+++ /dev/null');
+      expect(first.patch).toContain("deleted file mode 100644\n--- a/deleted.ts\n+++ /dev/null");
       expect(first.patch).toContain("Binary files differ");
-      expect(first.omittedFileStats).toContainEqual({
-        path: " new.ts",
-        additions: 1,
-        deletions: 1,
-      });
+      expect(first.omittedFileStats).toEqual([{ path: "binary.bin", additions: 0, deletions: 0 }]);
       const last = yield* provider.getDiff({ ...input, cursor: "2" });
       expect(last.nextCursor).toBeNull();
       expect(last.patch).toBe("");
@@ -180,7 +212,7 @@ it.effect("keeps later files reachable when tea truncates a file-content respons
     const provider = yield* Provider.make;
     const first = yield* provider.getDiff(input);
     expect(first.truncated).toBe(true);
-    expect(first.patch).toContain('"b/large.ts"');
+    expect(first.patch).toContain("b/large.ts");
     expect(first.omittedFileStats).toEqual([
       { path: "large.ts", additions: 100000, deletions: 10 },
     ]);
@@ -252,7 +284,7 @@ it.effect("preserves executable, symlink, and submodule changes in rebuilt previ
     expect(result.patch).toContain("old mode 100644\nnew mode 100755");
     expect(result.patch).toContain("old mode 100644\nnew mode 120000");
     expect(result.patch).toContain("-Subproject commit old-commit\n+Subproject commit new-commit");
-    expect(result.omittedFileStats).toHaveLength(3);
+    expect(result.omittedFileStats).toBeUndefined();
   }).pipe(Effect.provide(runtime)),
 );
 

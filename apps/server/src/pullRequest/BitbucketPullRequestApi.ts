@@ -654,16 +654,17 @@ export const make = Effect.gen(function* () {
             },
             { concurrency: 4 },
           );
+          const omittedFileStats = files.values.flatMap((file, index) => {
+            const path = file.new?.path ?? file.old?.path;
+            return path === undefined || !patches[index]?.truncated
+              ? []
+              : [{ path, additions: file.lines_added, deletions: file.lines_removed }];
+          });
           return {
             patch: patches.map((patch) => patch.body.replace(/\n?$/, "\n")).join(""),
             truncated: patches.some((patch) => patch.truncated),
             nextCursor: files.next ? String(page + 1) : null,
-            omittedFileStats: files.values.flatMap((file) => {
-              const path = file.new?.path ?? file.old?.path;
-              return path === undefined
-                ? []
-                : [{ path, additions: file.lines_added, deletions: file.lines_removed }];
-            }),
+            ...(omittedFileStats.length > 0 ? { omittedFileStats } : {}),
           };
         }),
       );

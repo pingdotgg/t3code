@@ -35,7 +35,9 @@ import {
   forgejoReactions,
 } from "./forgejoPullRequestJson.ts";
 
-const quotePath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const encodeQuotedPath = Schema.encodeEffect(Schema.fromJsonString(Schema.String));
+const quotePath = (path: string) =>
+  /[\s"\\]/.test(path) ? encodeQuotedPath(path) : Effect.succeed(path);
 const isOversizedResponse = (error: PullRequestProviderError) =>
   error.detail.includes("oversized") || error.detail.includes("exceeded the output limit");
 
@@ -580,15 +582,16 @@ export const make = Effect.gen(function* () {
           ),
         { concurrency: 4 },
       );
+      const omittedFileStats = files.flatMap((file, index) =>
+        patches[index]?.truncated
+          ? [{ path: file.filename, additions: file.additions, deletions: file.deletions }]
+          : [],
+      );
       return {
         patch: patches.map((patch) => patch.patch).join(""),
         truncated: patches.some((patch) => patch.truncated),
         nextCursor: filePage.more ? String(page + 1) : null,
-        omittedFileStats: files.map((file) => ({
-          path: file.filename,
-          additions: file.additions,
-          deletions: file.deletions,
-        })),
+        ...(omittedFileStats.length > 0 ? { omittedFileStats } : {}),
       };
     }),
     getDiffFileContents,
