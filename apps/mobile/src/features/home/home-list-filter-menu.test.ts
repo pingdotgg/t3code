@@ -8,8 +8,8 @@ describe("buildHomeListFilterMenu", () => {
     const menu = buildHomeListFilterMenu({
       environments: [],
       projects: [
-        { key: "environment-1:project-1", label: "Codething" },
-        { key: "environment-1:project-2", label: "Website" },
+        { key: "environment-1:project-1", label: "Codething", faviconUrl: "https://x.test/f.png" },
+        { key: "environment-1:project-2", label: "Website", faviconUrl: null },
       ],
       selectedEnvironmentId: null,
       selectedProjectKey: "environment-1:project-1",
@@ -29,11 +29,12 @@ describe("buildHomeListFilterMenu", () => {
       type: "submenu",
       items: [
         { title: "All projects", state: "off" },
-        { title: "Codething", state: "on" },
+        { title: "Codething", state: "on", imageUri: "https://x.test/f.png" },
         { title: "Website", state: "off" },
       ],
     });
     if (projectMenu?.type !== "submenu") throw new Error("Expected project submenu");
+    expect(projectMenu.items[2]).not.toHaveProperty("imageUri");
 
     projectMenu.items[0]?.onPress();
     projectMenu.items[2]?.onPress();

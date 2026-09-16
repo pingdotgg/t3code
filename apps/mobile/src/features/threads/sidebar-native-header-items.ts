@@ -3,6 +3,7 @@ import type {
   NativeStackHeaderItemMenu,
 } from "@react-navigation/native-stack";
 
+import { menuIconImageSource } from "../../native/menu-icon";
 import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 import { withNativeGlassHeaderItem } from "../layout/native-glass-header-items";
 
@@ -20,6 +21,9 @@ function toNativeHeaderMenuItems(items: HomeListFilterMenu["items"]): NativeHead
           type: "action" as const,
           label: item.title,
           description: item.subtitle,
+          icon: item.imageUri
+            ? { type: "image" as const, source: menuIconImageSource(item.imageUri), tinted: false }
+            : undefined,
           onPress: item.onPress,
           state: item.state === "on" ? ("on" as const) : undefined,
         }

@@ -19,6 +19,7 @@ import { HomeHeader } from "./HomeHeader";
 import { useHomeListOptions } from "./home-list-options";
 import { useHomeThreadSelection } from "./home-thread-navigation";
 import { buildHomeProjectScopes } from "./homeThreadList";
+import { useProjectScopeFaviconUrls } from "./use-project-scope-favicon-urls";
 import { usePendingTaskListActions } from "./usePendingTaskListActions";
 import { useThreadListActions } from "./useThreadListActions";
 import { getConnectionAwareBrandHeaderOptions } from "./WorkspaceConnectionTitle";
@@ -84,17 +85,25 @@ export function HomeRouteScreen() {
   } = useHomeListOptions(availableEnvironmentIds);
   const selectedEnvironmentId = listOptions.selectedEnvironmentId;
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
-  const projectFilterOptions = useMemo(
+  const projectScopes = useMemo(
     () =>
       buildHomeProjectScopes({
         projects,
         environmentId: selectedEnvironmentId,
         projectGroupingMode: listOptions.projectGroupingMode,
-      }).map((scope) => ({
+      }),
+    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+  );
+  const projectFaviconUrls = useProjectScopeFaviconUrls(projectScopes);
+  const projectFilterOptions = useMemo(
+    () =>
+      projectScopes.map((scope, index) => ({
         key: scope.key,
         label: scope.title,
+        representative: scope.representative,
+        faviconUrl: projectFaviconUrls[index] ?? null,
       })),
-    [listOptions.projectGroupingMode, projects, selectedEnvironmentId],
+    [projectFaviconUrls, projectScopes],
   );
   useEffect(() => {
     if (

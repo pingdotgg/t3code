@@ -1,6 +1,11 @@
-import type { HeaderBarButtonMailSearchToolbarItem } from "react-native-screens";
+import type {
+  HeaderBarButtonItemWithMenu,
+  HeaderBarButtonMailSearchToolbarItem,
+} from "react-native-screens";
 
+import { menuIconImageSource } from "../../native/menu-icon";
 import { NATIVE_LIQUID_GLASS_SUPPORTED } from "../../native/native-glass";
+import type { HomeListFilterMenu } from "../home/home-list-filter-menu";
 
 /**
  * The patched mail-style toolbar is built natively from iOS 26 Liquid Glass
@@ -36,4 +41,40 @@ export function createNativeMailSearchToolbarItem(
     type: "mailSearchToolbar",
     useFallbackSearchField: true,
   };
+}
+
+type NativeMailSearchToolbarMenu = NonNullable<HeaderBarButtonItemWithMenu["menu"]>;
+
+/**
+ * Maps the app's filter menu model onto the toolbar's raw react-native-screens
+ * menu. This item bypasses React Navigation's icon conversion, so bitmap icons
+ * must already be in the `imageSource` form the native side reads.
+ */
+export function toNativeMailSearchToolbarMenu(
+  menu: HomeListFilterMenu,
+): NativeMailSearchToolbarMenu {
+  return { title: menu.title, items: toNativeMailSearchToolbarMenuItems(menu.items) };
+}
+
+function toNativeMailSearchToolbarMenuItems(
+  items: HomeListFilterMenu["items"],
+): NativeMailSearchToolbarMenu["items"] {
+  return items.map((item) =>
+    item.type === "action"
+      ? {
+          type: "action" as const,
+          title: item.title,
+          subtitle: item.subtitle,
+          icon: item.imageUri
+            ? { type: "imageSource" as const, imageSource: menuIconImageSource(item.imageUri) }
+            : undefined,
+          onPress: item.onPress,
+          state: item.state,
+        }
+      : {
+          type: "submenu" as const,
+          title: item.title,
+          items: toNativeMailSearchToolbarMenuItems(item.items),
+        },
+  );
 }
