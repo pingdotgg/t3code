@@ -298,6 +298,10 @@
     "./file-preview": {
       "types": "./src/filePreview.ts",
       "default": "./src/filePreview.ts"
+    },
+    "./state/worktrees": {
+      "types": "./src/state/worktrees.ts",
+      "default": "./src/state/worktrees.ts"
     }
   },
   "scripts": {

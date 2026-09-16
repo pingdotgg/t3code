@@ -66,6 +66,7 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+    expect(searchSettings("worktrees")[0]?.id).toBe("worktrees");
   });
 
   it("keeps catalog order for multiple title matches", () => {

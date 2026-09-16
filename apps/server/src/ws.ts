@@ -187,6 +187,8 @@ import { readWorkflowScript } from "./orchestration/workflowScriptQuery.ts";
 import * as WorkspacePaths from "./workspace/WorkspacePaths.ts";
 import * as VcsStatusBroadcaster from "./vcs/VcsStatusBroadcaster.ts";
 import * as VcsProvisioningService from "./vcs/VcsProvisioningService.ts";
+import * as WorktreeLifecycle from "./vcs/WorktreeLifecycle.ts";
+import * as WorktreeService from "./vcs/WorktreeService.ts";
 import * as GitWorkflowService from "./git/GitWorkflowService.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
@@ -710,6 +712,8 @@ const makeWsRpcLayer = (
       const externalLauncher = yield* ExternalLauncher.ExternalLauncher;
       const remoteOpenTargets = yield* RemoteOpenTargets.RemoteOpenTargets;
       const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
+      const worktreeLifecycle = yield* WorktreeLifecycle.WorktreeLifecycle;
+      const worktrees = yield* WorktreeService.WorktreeService;
       const review = yield* ReviewService.ReviewService;
       const vcsProvisioning = yield* VcsProvisioningService.VcsProvisioningService;
       const vcsStatusBroadcaster = yield* VcsStatusBroadcaster.VcsStatusBroadcaster;
@@ -3091,6 +3095,18 @@ const makeWsRpcLayer = (
           ),
         [WS_METHODS.vcsListRefs]: (input) =>
           observeRpcEffect(WS_METHODS.vcsListRefs, gitWorkflow.listRefs(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsListWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsListWorktrees, worktrees.listWorktrees(input), {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.subscribeWorktreeInventory]: () =>
+          observeRpcStream(WS_METHODS.subscribeWorktreeInventory, worktreeLifecycle.changes, {
+            "rpc.aggregate": "vcs",
+          }),
+        [WS_METHODS.vcsPruneWorktrees]: (input) =>
+          observeRpcEffect(WS_METHODS.vcsPruneWorktrees, worktrees.pruneWorktrees(input), {
             "rpc.aggregate": "vcs",
           }),
         [WS_METHODS.vcsCreateWorktree]: (input) =>

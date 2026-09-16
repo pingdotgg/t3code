@@ -706,6 +706,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "worktrees",
+    title: "Worktrees",
+    to: "/settings/source-control",
+  },
+  {
     id: "remote-environments",
     title: "Environments",
     to: "/settings/connections",

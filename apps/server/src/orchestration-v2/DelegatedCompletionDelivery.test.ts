@@ -31,12 +31,12 @@ import { ProviderInstanceRegistry } from "../provider/Services/ProviderInstanceR
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../vcs/WorktreeRevivalService.testkit.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import { EventSinkV2 } from "./EventSink.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { OrchestrationV2EventSinkLayerLive, OrchestrationV2LayerLive } from "./runtimeLayer.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 
 const PlatformTestLayer = Layer.merge(
   NodeServices.layer,
@@ -98,7 +98,7 @@ const TestLayer = Layer.mergeAll(
   OrchestrationV2LayerLive,
   OrchestrationV2EventSinkLayerLive,
 ).pipe(
-  Layer.provide(worktreeRepairDependenciesTestLayer),
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(
     Layer.succeed(ProjectEnrichmentService, {
       peek: () =>

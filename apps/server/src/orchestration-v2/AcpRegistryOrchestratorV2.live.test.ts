@@ -33,8 +33,8 @@ import { OpenCodeRuntimeLive } from "../provider/opencodeRuntime.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
+import { layerNoop as worktreeRevivalTestLayer } from "../vcs/WorktreeRevivalService.testkit.ts";
 import { OrchestratorV2 } from "./Orchestrator.ts";
-import { worktreeRepairDependenciesTestLayer } from "./ProviderTurnStartService.testkit.ts";
 import { OrchestrationV2LayerLive } from "./runtimeLayer.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../mcp/McpSessionRegistry.testkit.ts";
 
@@ -109,6 +109,7 @@ const providerInstanceRegistryLayer = ProviderInstanceRegistryHydrationLive.pipe
 );
 
 const liveLayer = OrchestrationV2LayerLive.pipe(
+  Layer.provide(worktreeRevivalTestLayer),
   Layer.provide(mcpSessionRegistryTestLayer),
   Layer.provide(SqlitePersistenceMemory),
   Layer.provide(checkpointStoreLayer),
@@ -117,7 +118,6 @@ const liveLayer = OrchestrationV2LayerLive.pipe(
   Layer.provide(providerInstanceRegistryLayer),
   Layer.provide(CodexResetCredit.layer),
   Layer.provide(backgroundPolicyLayer),
-  Layer.provide(worktreeRepairDependenciesTestLayer),
   Layer.provide(PlatformTestLayer),
 );
 
