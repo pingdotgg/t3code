@@ -8,7 +8,7 @@
  * @module ClaudeAdapterLive
  */
 
-import { isDeepStrictEqual } from "node:util";
+import * as NodeUtil from "node:util";
 import {
   type CanUseTool,
   query,
@@ -202,7 +202,7 @@ const remapClaudeForkTurnBoundaries = (
       return (
         forkMessage === undefined ||
         forkMessage.type !== message.type ||
-        !isDeepStrictEqual(forkMessage.message, message.message)
+        !NodeUtil.isDeepStrictEqual(forkMessage.message, message.message)
       );
     })
   ) {
