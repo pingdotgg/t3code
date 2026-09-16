@@ -11,6 +11,9 @@ the workflow can also be run manually for a specific tag. It selects the stable 
 package, then updates its version and checksums, builds it, regenerates `.SRCINFO`, and pushes it
 to the AUR.
 
+`release.sh` prefers `T3-Code-x86_64.AppImage`. For older tags that lack this asset, it uses the
+versioned AppImage.
+
 To validate a release on Arch Linux:
 
 ```bash
