@@ -134,6 +134,7 @@ export function SettingsOpenSourceLicensesRouteScreen() {
                   allowToolbarIntegration: true,
                   autoCapitalize: "none",
                   hideNavigationBar: false,
+                  hideWhenScrolling: false,
                   obscureBackground: false,
                   onCancelButtonPress: () => setQuery(""),
                   onChangeText: (event) => setQuery(event.nativeEvent.text),
