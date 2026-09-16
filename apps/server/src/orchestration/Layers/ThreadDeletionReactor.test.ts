@@ -20,6 +20,7 @@ import {
   ProviderService,
   type ProviderServiceShape,
 } from "../../provider/Services/ProviderService.ts";
+import { ProviderSessionDirectory } from "../../provider/Services/ProviderSessionDirectory.ts";
 import * as TerminalManager from "../../terminal/Manager.ts";
 import {
   OrchestrationEngineService,
@@ -108,8 +109,12 @@ describe("ThreadDeletionReactor drain", () => {
       const terminalManager = {
         close: () => Effect.void,
       } as unknown as TerminalManager.TerminalManager["Service"];
+      const directory = {
+        remove: () => Effect.void,
+      } as unknown as ProviderSessionDirectory["Service"];
       const layer = ThreadDeletionReactorLive.pipe(
         Layer.provide(Layer.succeed(ProviderService, providerService)),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory, directory)),
         Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
         Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
       );
@@ -132,6 +137,49 @@ describe("ThreadDeletionReactor drain", () => {
           yield* Deferred.succeed(releaseSecondEvent, undefined);
           yield* Fiber.join(drained);
           expect(stops).toEqual([1, 2]);
+        }),
+      ).pipe(Effect.provide(layer));
+    }),
+  );
+
+  effectIt.effect("forgets the provider binding after stopping the session", () =>
+    Effect.gen(function* () {
+      // Stopping a session ends in a directory upsert, so removing the binding
+      // first would let the stop re-insert the row this cleanup exists to drop.
+      const cleanups: Array<string> = [];
+      const engine = {
+        latestSequence: Effect.succeed(0),
+        streamDomainEvents: Stream.make(deletedEvent(1)),
+      } as unknown as OrchestrationEngineShape;
+      const providerService = {
+        stopSession: (input: { readonly threadId: ThreadId }) =>
+          Effect.sync(() => {
+            cleanups.push(`stop:${input.threadId}`);
+          }),
+      } as unknown as ProviderServiceShape;
+      const terminalManager = {
+        close: () => Effect.void,
+      } as unknown as TerminalManager.TerminalManager["Service"];
+      const directory = {
+        remove: (removedThreadId: ThreadId) =>
+          Effect.sync(() => {
+            cleanups.push(`remove:${removedThreadId}`);
+          }),
+      } as unknown as ProviderSessionDirectory["Service"];
+      const layer = ThreadDeletionReactorLive.pipe(
+        Layer.provide(Layer.succeed(ProviderService, providerService)),
+        Layer.provide(Layer.succeed(ProviderSessionDirectory, directory)),
+        Layer.provide(Layer.succeed(TerminalManager.TerminalManager, terminalManager)),
+        Layer.provide(Layer.succeed(OrchestrationEngineService, engine)),
+      );
+
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const reactor = yield* ThreadDeletionReactor;
+          yield* reactor.start();
+          yield* reactor.drainThrough(1);
+
+          expect(cleanups).toEqual([`stop:${threadId}`, `remove:${threadId}`]);
         }),
       ).pipe(Effect.provide(layer));
     }),
