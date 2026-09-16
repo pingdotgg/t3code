@@ -82,7 +82,7 @@ function nativeSnapshot(input: {
     }),
   ];
   return {
-    version: 3,
+    version: 4,
     type: "snapshot",
     sequence: input.sequence,
     sampledAtUnixMs: input.sampledAtUnixMs,
@@ -497,7 +497,7 @@ describe("ResourceTelemetry", () => {
       const nativeHealth = yield* Ref.make<NativeTelemetryClient.NativeTelemetryClientHealth>({
         status: "healthy",
         hello: Option.some({
-          version: 3,
+          version: 4,
           type: "hello",
           sidecarVersion: "0.1.0",
           sidecarPid: 9_000,

@@ -1203,6 +1203,8 @@ it.layer(
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1), 2_000);
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 2), 4_000);
     assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 30), 60_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1, 3_000), 12_000);
+    assert.equal(TerminalManager.subprocessSnapshotPollDelayMs(1_000, 1, 30_000), 60_000);
   });
 
   it.effect("uses process snapshots from the resource monitor", () =>
