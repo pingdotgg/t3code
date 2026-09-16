@@ -10090,7 +10090,9 @@ export default function ChatView(props: ChatViewProps) {
                             }
                             // The meter reads the selected instance's own
                             // snapshot; the panel also merges hub-reported accounts.
-                            usageLimits={activeProviderStatus?.usageLimits}
+                            usageLimits={
+                              usageLimitsOffered ? activeProviderStatus?.usageLimits : undefined
+                            }
                             usageLimitsProviderLabel={
                               activeProviderStatus?.displayName?.trim() ||
                               (activeProviderStatus ? String(activeProviderStatus.driver) : "")
