@@ -1301,6 +1301,8 @@ ${associatedDomains}
     <true/>
     <key>com.apple.security.cs.disable-library-validation</key>
     <true/>
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
   </dict>
 </plist>
 `;
@@ -2692,6 +2694,9 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       extendInfo: {
         NSScreenCaptureUsageDescription:
           "T3 Code captures the active window when you use the window capture shortcut.",
+        // Agent tools such as Computer Use send Apple Events from child processes, which macOS
+        // attributes to T3 Code. Without this string, macOS denies them without prompting.
+        NSAppleEventsUsageDescription: "Agents running in T3 Code can control other apps for you.",
       },
       protocols: [
         {
