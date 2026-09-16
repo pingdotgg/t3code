@@ -79,10 +79,11 @@ export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooz
  */
 export function resolveThreadListV2SnoozePresets(input: {
   readonly secondary: "snooze" | null;
+  readonly snoozed: boolean;
   readonly now: string;
   readonly presets: ReadonlyArray<SnoozePresetSetting> | undefined;
 }): ReadonlyArray<SnoozePreset> {
-  return input.secondary === "snooze"
+  return input.secondary === "snooze" || input.snoozed
     ? resolveSnoozePresets(new Date(input.now), presetOptions(input.presets))
     : [];
 }

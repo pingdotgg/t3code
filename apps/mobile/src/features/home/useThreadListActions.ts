@@ -2,7 +2,7 @@ import type { ThreadMoveDestination } from "../threads/threadOrder";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { showThreadUndoNotice } from "./thread-undo-notice";
-import { canSnooze } from "@t3tools/client-runtime/state/thread-settled";
+import { canSnooze, effectiveSnoozed } from "@t3tools/client-runtime/state/thread-settled";
 import { AuthOrchestrationOperateScope } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
 import * as Haptics from "expo-haptics";
@@ -226,7 +226,7 @@ export function useThreadListActions(): {
   const archiveThread = (thread: EnvironmentThreadShell) => executeAction("archive", thread);
   const offerUndo = (
     thread: EnvironmentThreadShell,
-    action: "Settled" | "Snoozed" | "Unpinned",
+    action: "Settled" | "Snoozed" | "Rescheduled" | "Unpinned",
     claim: ReturnType<typeof ThreadUndo.begin>,
     plan: ThreadUndo.ThreadUndoPlan,
   ) =>
@@ -246,8 +246,12 @@ export function useThreadListActions(): {
                 case "pin":
                   return pinThread(thread, step.orderKey);
                 case "snooze": {
-                  const failureTitle =
-                    action === "Unpinned" ? "Could not undo unpin" : "Could not undo settle";
+                  const failureTitle = {
+                    Settled: "Could not undo settle",
+                    Snoozed: "Could not undo snooze",
+                    Rescheduled: "Could not undo reschedule",
+                    Unpinned: "Could not undo unpin",
+                  }[action];
                   if (!checkThreadOperationPermission(thread, failureTitle)) return false;
                   const result = await snoozeMutation({
                     environmentId: thread.environmentId,
@@ -319,30 +323,37 @@ export function useThreadListActions(): {
 
       selectionHaptic();
       const claim = ThreadUndo.begin("snooze", key);
-      const result = await withThreadDismissal(
-        key,
-        () =>
-          snoozeMutation({
-            environmentId: thread.environmentId,
-            input: {
-              threadId: thread.id,
-              snoozedUntil,
-            },
-          }),
-        (result) => result._tag === "Success",
-      );
+      const snooze = () =>
+        snoozeMutation({
+          environmentId: thread.environmentId,
+          input: {
+            threadId: thread.id,
+            snoozedUntil,
+          },
+        });
+      // A reschedule keeps the row on the snoozed shelf, so it must not
+      // play the exit animation that a fresh snooze uses.
+      const rescheduling = effectiveSnoozed(thread, { now: new Date().toISOString() });
+      const result = rescheduling
+        ? await snooze()
+        : await withThreadDismissal(key, snooze, (result) => result._tag === "Success");
       if (result._tag === "Failure") {
         claim.finish();
         const error = Cause.squash(result.cause);
         Dialog.alert(
-          "Could not snooze thread",
+          rescheduling ? "Could not reschedule thread" : "Could not snooze thread",
           error instanceof Error && error.message.trim().length > 0
             ? error.message
             : "The thread could not be snoozed.",
         );
         return false;
       }
-      offerUndo(thread, "Snoozed", claim, ThreadUndo.planThreadUndo("snooze"));
+      offerUndo(
+        thread,
+        rescheduling ? "Rescheduled" : "Snoozed",
+        claim,
+        ThreadUndo.planThreadUndo("snooze", rescheduling ? thread : null),
+      );
       return true;
     })();
     snoozeInFlightThreadKeys.current.delete(key);

@@ -92,6 +92,9 @@ const target = {
   environmentId: EnvironmentId.make("undo-env"),
   threadId: ThreadId.make("thread"),
 };
+const RESCHEDULE_NOW_MS = Date.parse("2026-04-08T10:00:00.000Z");
+const wakeIn = (offsetMs: number) => new Date(RESCHEDULE_NOW_MS + offsetMs).toISOString();
+
 function currentUndo() {
   const notice = useThreadUndoNotice.getState().notice;
   expect(notice).not.toBeNull();
@@ -302,6 +305,46 @@ describe("settle and snooze Undo", () => {
     expect(commands.unsnooze).toHaveBeenCalledExactlyOnceWith({
       environmentId: target.environmentId,
       input: { threadId: target.threadId, reason: "user" },
+    });
+  });
+
+  it("restores the previous wake time when undoing a reschedule", async () => {
+    vi.setSystemTime(RESCHEDULE_NOW_MS);
+    const previousWake = wakeIn(60_000);
+    const nextWake = wakeIn(120_000);
+    threadShell.snoozedUntil = previousWake;
+    const actions = useThreadActions();
+    await actions.snoozeThread(target, nextWake);
+    expect(useThreadUndoNotice.getState().notice).toMatchObject({
+      action: "Rescheduled",
+      count: 1,
+    });
+    await currentUndo()();
+    expect(commands.unsnooze).not.toHaveBeenCalled();
+    expect(commands.snooze).toHaveBeenLastCalledWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, snoozedUntil: previousWake },
+    });
+  });
+
+  it("ignores an older reschedule Undo once a newer wake time was chosen", async () => {
+    vi.setSystemTime(RESCHEDULE_NOW_MS);
+    const firstWake = wakeIn(60_000);
+    const secondWake = wakeIn(120_000);
+    const thirdWake = wakeIn(180_000);
+    threadShell.snoozedUntil = firstWake;
+    const actions = useThreadActions();
+    await actions.snoozeThread(target, secondWake);
+    const staleUndo = currentUndo();
+    threadShell.snoozedUntil = secondWake;
+    await actions.snoozeThread(target, thirdWake);
+    commands.snooze.mockClear();
+    await staleUndo();
+    expect(commands.snooze).not.toHaveBeenCalled();
+    await currentUndo()();
+    expect(commands.snooze).toHaveBeenCalledExactlyOnceWith({
+      environmentId: target.environmentId,
+      input: { threadId: target.threadId, snoozedUntil: secondWake },
     });
   });
 });

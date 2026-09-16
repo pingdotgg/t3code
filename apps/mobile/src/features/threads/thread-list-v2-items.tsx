@@ -770,8 +770,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     snoozable: canSnooze(thread, { now: snoozeGateNow }),
     snoozed: snoozedRow,
   });
+  // Snoozed rows keep the presets too: their menu offers Reschedule.
   const snoozePresets = resolveThreadListV2SnoozePresets({
     secondary: swipeActions.secondary,
+    snoozed: snoozedRow,
     now: props.snoozePresetMinute || snoozeGateNow,
     presets: props.snoozePresets,
   });
@@ -911,12 +913,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const snoozedMenuActions = useMemo<MenuAction[]>(
     () => [
       SNOOZED_MENU_ACTIONS[0]!,
+      { id: "snooze", title: "Reschedule", image: "clock", subactions: snoozePresetActions },
       ...titleMenuItems,
       ...autoSettleMenuItems,
       LEGACY_MENU_ACTIONS[0]!,
       SNOOZED_MENU_ACTIONS[1]!,
     ],
-    [autoSettleMenuItems, titleMenuItems],
+    [autoSettleMenuItems, snoozePresetActions, titleMenuItems],
   );
   const legacyMenuActions = useMemo<MenuAction[]>(
     () => [

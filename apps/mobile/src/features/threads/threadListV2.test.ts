@@ -87,6 +87,7 @@ describe("resolveThreadListV2SnoozePresets", () => {
 
     const presets = resolveThreadListV2SnoozePresets({
       secondary: "snooze",
+      snoozed: false,
       now: laterMinute,
       presets: undefined,
     });
