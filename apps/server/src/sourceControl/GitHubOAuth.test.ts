@@ -133,4 +133,78 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
       }).pipe(Effect.provide(layer));
     }),
   );
+
+  it.effect("does not restore an account removed while sign-in is active", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const accountId = GitHubAccountId.make("removed");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(3),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: REMOVE-ME\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args[0] === "api" ? "octocat\n" : "oauth-secret\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const settingsLayer = ServerSettings.ServerSettingsService.layerTest({
+        githubAccounts: {
+          [accountId]: { label: "Removed later", host: "github.com", tokenConfigured: false },
+        },
+      });
+      const oauthLayer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)),
+        Layer.provide(settingsLayer),
+      );
+      const layer = Layer.merge(oauthLayer, settingsLayer);
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        yield* oauth.start({ accountId, label: "Removed later", host: "github.com" });
+        const waiting = yield* oauth.subscribe(accountId).pipe(
+          Stream.filter((state) => state.phase === "waiting"),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(waiting));
+
+        yield* settings.updateSettings({ githubAccounts: {} });
+        assert.isUndefined((yield* settings.getSettings).githubAccounts[accountId]);
+
+        yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+        const failed = yield* oauth.subscribe(accountId).pipe(
+          Stream.filter((state) => state.phase === "failed"),
+          Stream.runHead,
+        );
+        assert.isTrue(Option.isSome(failed));
+        assert.equal(
+          Option.getOrThrow(failed).message,
+          "The GitHub account was removed before sign-in completed.",
+        );
+        assert.isUndefined((yield* settings.getSettings).githubAccounts[accountId]);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
 });

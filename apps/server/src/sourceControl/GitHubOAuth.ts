@@ -25,6 +25,8 @@ import * as ServerSettings from "../serverSettings.ts";
 interface ActiveFlow {
   readonly flowId: string;
   readonly state: SubscriptionRef.SubscriptionRef<GitHubOAuthState>;
+  /** A flow that started without an account may create its account on success. */
+  readonly accountExistedAtStart: boolean;
   fiber?: Fiber.Fiber<void, unknown>;
 }
 
@@ -90,14 +92,24 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
 
   const persistCredential = Effect.fn("GitHubOAuth.persistCredential")(function* (
     input: GitHubOAuthStartInput,
+    flow: ActiveFlow,
     token: string,
     login: string,
   ) {
+    if (active.get(input.accountId) !== flow) return null;
     const current = yield* serverSettings.getSettings.pipe(
       Effect.mapError((cause) =>
         fail(input.accountId, "save", "Could not read GitHub account settings.", cause),
       ),
     );
+    if (active.get(input.accountId) !== flow) return null;
+    if (flow.accountExistedAtStart && current.githubAccounts[input.accountId] === undefined) {
+      return yield* fail(
+        input.accountId,
+        "save",
+        "The GitHub account was removed before sign-in completed.",
+      );
+    }
     const githubAccounts = Object.fromEntries(
       Object.entries(current.githubAccounts).map(([id, account]) => [id, accountPatch(account)]),
     );
@@ -113,7 +125,7 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
           fail(input.accountId, "save", "Could not save the GitHub OAuth credential.", cause),
         ),
       );
-    return updated.githubAccounts[input.accountId]!;
+    return updated.githubAccounts[input.accountId] ?? null;
   });
 
   const runFlow = Effect.fn("GitHubOAuth.runFlow")(function* (
@@ -224,8 +236,9 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
     if (credential.code !== 0 || token.length === 0) {
       return yield* fail(input.accountId, "verify", "Could not read the GitHub OAuth credential.");
     }
-    const account = yield* persistCredential(input, token, login);
     if (active.get(input.accountId) !== flow) return;
+    const account = yield* persistCredential(input, flow, token, login);
+    if (account === null || active.get(input.accountId) !== flow) return;
     active.delete(input.accountId);
     yield* SubscriptionRef.set(flow.state, {
       accountId: input.accountId,
@@ -241,6 +254,12 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
   const start: GitHubOAuth["Service"]["start"] = Effect.fn("GitHubOAuth.start")(function* (input) {
     const previous = active.get(input.accountId);
     if (previous?.fiber) yield* Fiber.interrupt(previous.fiber);
+    const accountExistedAtStart = yield* serverSettings.getSettings.pipe(
+      Effect.mapError((cause) =>
+        fail(input.accountId, "start", "Could not read GitHub account settings.", cause),
+      ),
+      Effect.map((settings) => settings.githubAccounts[input.accountId] !== undefined),
+    );
     const state = yield* getState(input.accountId);
     const flowId = Encoding.encodeBase64Url(
       yield* crypto
@@ -251,7 +270,7 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
           ),
         ),
     );
-    const flow: ActiveFlow = { flowId, state };
+    const flow: ActiveFlow = { flowId, state, accountExistedAtStart };
     active.set(input.accountId, flow);
     const starting: GitHubOAuthState = {
       accountId: input.accountId,

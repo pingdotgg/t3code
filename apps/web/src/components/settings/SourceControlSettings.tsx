@@ -1,5 +1,5 @@
 import { RefreshIcon } from "~/components/ui/refresh-icon";
-import { ChevronDownIcon, GitPullRequestIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ChevronDownIcon, GitPullRequestIcon, Trash2Icon } from "lucide-react";
 import * as Duration from "effect/Duration";
 import * as Option from "effect/Option";
 import { useEffect, useState, type ReactNode } from "react";
@@ -14,6 +14,7 @@ import type {
   GitHubAccount,
   GitHubAccountPatch,
   GitHubAccountId,
+  EnvironmentId,
 } from "@t3tools/contracts";
 import {
   getBackgroundActivityBaseProfile,
@@ -29,6 +30,9 @@ import { cn } from "../../lib/utils";
 import { useEnvironmentQuery } from "../../state/query";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { sourceControlEnvironment } from "../../state/sourceControl";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { ensureLocalApi } from "../../localApi";
+import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
 import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -505,10 +509,30 @@ function EmptySourceControlDiscovery({
   );
 }
 
-function GitHubAccountSettings() {
+function GitHubAccountSettings(props: { readonly environmentId: EnvironmentId }) {
   const settings = usePrimarySettings();
   const updateSettings = useUpdatePrimarySettings();
   const accounts = Object.entries(settings.githubAccounts);
+  const [oauthAccountId, setOAuthAccountId] = useState<GitHubAccountId | null>(null);
+  const [oauthError, setOAuthError] = useState<string | null>(null);
+  const [copiedCode, setCopiedCode] = useState(false);
+  const oauthQuery = useEnvironmentQuery(
+    oauthAccountId === null
+      ? null
+      : sourceControlEnvironment.githubOAuthState({
+          environmentId: props.environmentId,
+          input: { accountId: oauthAccountId },
+        }),
+  );
+  const startOAuth = useAtomCommand(sourceControlEnvironment.startGitHubOAuth, {
+    reportFailure: false,
+  });
+  const cancelOAuth = useAtomCommand(sourceControlEnvironment.cancelGitHubOAuth, {
+    reportFailure: false,
+  });
+  const oauth = oauthQuery.data;
+  const oauthActive =
+    oauth?.phase === "starting" || oauth?.phase === "waiting" || oauth?.phase === "verifying";
 
   const persist = (next: Record<string, GitHubAccountPatch>) => {
     updateSettings({ githubAccounts: next });
@@ -523,9 +547,9 @@ function GitHubAccountSettings() {
     <SettingsSection title="GitHub accounts">
       <div className="space-y-3 px-3 py-1 sm:px-4">
         <p className="max-w-2xl text-xs leading-relaxed text-muted-foreground">
-          Add identities here, then choose one in a project’s settings. A configured PAT is kept in
-          the server secret store and is passed to GitHub operations and every agent session for
-          that project.
+          Sign in with each GitHub identity you use, then choose one in a project’s settings. OAuth
+          credentials stay in the server secret store and are passed only to GitHub operations and
+          agent sessions for that project.
         </p>
         {accounts.length === 0 ? (
           <p className="text-xs text-muted-foreground">No additional GitHub accounts configured.</p>
@@ -535,6 +559,21 @@ function GitHubAccountSettings() {
             key={id}
             id={id}
             account={account}
+            onSignIn={() => {
+              setOAuthAccountId(id as GitHubAccountId);
+              setOAuthError(null);
+              setCopiedCode(false);
+              void startOAuth({
+                environmentId: props.environmentId,
+                input: {
+                  accountId: id as GitHubAccountId,
+                  label: account.label,
+                  host: account.host,
+                },
+              }).then((result) => {
+                if (result._tag === "Failure") setOAuthError("Could not start GitHub sign-in.");
+              });
+            }}
             onSave={(next) =>
               persist({
                 ...Object.fromEntries(
@@ -551,27 +590,107 @@ function GitHubAccountSettings() {
                   .filter(([accountId]) => accountId !== id)
                   .map(([accountId, existing]) => [accountId, toPatch(existing)]),
               );
-              persist(next);
+              const finishRemoval = () => {
+                if (oauthAccountId === id) setOAuthAccountId(null);
+                persist(next);
+              };
+              const flowId = oauthAccountId === id && oauthActive ? oauth?.flowId : null;
+              if (flowId) {
+                void cancelOAuth({
+                  environmentId: props.environmentId,
+                  input: { accountId: id as GitHubAccountId, flowId },
+                }).then(finishRemoval, finishRemoval);
+              } else {
+                finishRemoval();
+              }
             }}
           />
         ))}
+        {oauthAccountId !== null && oauth ? (
+          <div className="grid gap-2 rounded-xl border border-border/60 p-3 text-xs">
+            <p role="status" className="text-muted-foreground">
+              {oauth.message ?? "Preparing GitHub sign-in."}
+            </p>
+            {oauth.phase === "waiting" && oauth.verificationUrl && oauth.userCode ? (
+              <>
+                <div className="rounded-md bg-muted px-3 py-2 font-mono text-base tracking-wider">
+                  {oauth.userCode}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    size="xs"
+                    variant="outline"
+                    onClick={() => void ensureLocalApi().shell.openExternal(oauth.verificationUrl!)}
+                  >
+                    Open GitHub
+                  </Button>
+                  <Button
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => {
+                      void writeTextToClipboard(oauth.userCode!, "GitHub one-time code").then(() =>
+                        setCopiedCode(true),
+                      );
+                    }}
+                  >
+                    {copiedCode ? "Code copied" : "Copy code"}
+                  </Button>
+                </div>
+              </>
+            ) : null}
+            {oauthActive && oauth.flowId ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="w-fit"
+                onClick={() =>
+                  void cancelOAuth({
+                    environmentId: props.environmentId,
+                    input: { accountId: oauth.accountId, flowId: oauth.flowId! },
+                  })
+                }
+              >
+                Cancel sign-in
+              </Button>
+            ) : null}
+            {oauth.phase === "succeeded" ? (
+              <Button
+                size="xs"
+                variant="ghost"
+                className="w-fit"
+                onClick={() => setOAuthAccountId(null)}
+              >
+                Done
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
+        {oauthError ? <p className="text-xs text-destructive">{oauthError}</p> : null}
         <Button
           size="sm"
           variant="outline"
+          disabled={oauthActive}
           onClick={() => {
             const base = "github-account";
             let id = base;
             let suffix = 2;
             while (settings.githubAccounts[id as GitHubAccountId]) id = `${base}-${suffix++}`;
-            persist({
-              ...Object.fromEntries(
-                accounts.map(([accountId, existing]) => [accountId, toPatch(existing)]),
-              ),
-              [id]: { label: "New GitHub account", host: "github.com" },
-            } as Record<string, GitHubAccountPatch>);
+            setOAuthAccountId(id as GitHubAccountId);
+            setOAuthError(null);
+            setCopiedCode(false);
+            void startOAuth({
+              environmentId: props.environmentId,
+              input: {
+                accountId: id as GitHubAccountId,
+                label: "GitHub account",
+                host: "github.com",
+              },
+            }).then((result) => {
+              if (result._tag === "Failure") setOAuthError("Could not start GitHub sign-in.");
+            });
           }}
         >
-          Add GitHub account
+          Sign in with GitHub
         </Button>
       </div>
     </SettingsSection>
@@ -583,12 +702,11 @@ function GitHubAccountRow(props: {
   readonly account: GitHubAccount;
   readonly onSave: (account: GitHubAccountPatch) => void;
   readonly onDelete: () => void;
+  readonly onSignIn: () => void;
 }) {
   const [label, setLabel] = useState(props.account.label);
   const [login, setLogin] = useState(props.account.login ?? "");
   const [host, setHost] = useState(props.account.host);
-  const [token, setToken] = useState("");
-  const [tokenDirty, setTokenDirty] = useState(false);
 
   return (
     <div className="rounded-xl border border-border/60 p-3">
@@ -609,22 +727,14 @@ function GitHubAccountRow(props: {
           value={host}
           onChange={(e) => setHost(e.target.value)}
         />
-        <Input
-          type="password"
-          aria-label={`${props.id} personal access token`}
-          placeholder={
-            props.account.tokenConfigured
-              ? "PAT configured (leave blank to keep)"
-              : "Personal access token"
-          }
-          value={token}
-          onChange={(e) => {
-            setTokenDirty(true);
-            setToken(e.target.value);
-          }}
-        />
+        <div className="flex items-center px-1 text-xs text-muted-foreground">
+          {props.account.tokenConfigured ? "GitHub credential configured" : "Sign in required"}
+        </div>
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
+        <Button size="xs" variant="outline" onClick={props.onSignIn}>
+          {props.account.tokenConfigured ? "Sign in again" : "Sign in with GitHub"}
+        </Button>
         <Button
           size="xs"
           variant="ghost-muted"
@@ -642,7 +752,6 @@ function GitHubAccountRow(props: {
               label: label.trim() || props.account.label,
               ...(login.trim() ? { login: login.trim() } : {}),
               host: host.trim() || "github.com",
-              ...(tokenDirty ? { token } : {}),
             })
           }
         >
@@ -701,7 +810,9 @@ export function SourceControlSettingsPanel() {
   return (
     <SettingsPageContainer>
       <ProjectDefaultsSettings category="source-control" />
-      {isPrimaryEnvironment ? <GitHubAccountSettings /> : null}
+      {isPrimaryEnvironment && environmentId !== null ? (
+        <GitHubAccountSettings environmentId={environmentId} />
+      ) : null}
       {environmentId === null ? (
         <SettingsSection id={searchableSetting("source-control").id} title="Server environment">
           <p className="px-4 py-3 text-sm text-muted-foreground">
