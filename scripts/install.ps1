@@ -28,6 +28,12 @@ function Fail([string] $message) {
 
 $terminal = -not [Console]::IsErrorRedirected -and $env:TERM -ne "dumb"
 $interactive = $terminal -and $Host.UI.SupportsVirtualTerminal
+if ($interactive) {
+  # Legacy code pages may support ANSI escapes but not the logo or bar glyphs.
+  $glyphs = -join [char[]](0x2588, 0x2580, 0x2584, 0x25A0, 0x00B7)
+  $encoding = [Console]::Error.Encoding
+  $interactive = $encoding.GetString($encoding.GetBytes($glyphs)) -eq $glyphs
+}
 $esc = [char]27
 $reset = $bold = $muted = $accent = $green = ""
 if ($interactive -and -not $env:NO_COLOR) {

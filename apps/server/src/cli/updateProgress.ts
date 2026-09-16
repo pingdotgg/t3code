@@ -17,8 +17,9 @@ export function createUpdateProgress(
   };
   const status = (message: string) => {
     finish();
-    if (interactive) message = message.slice(0, Math.max(0, (output.columns || 80) - 3));
-    output.write(interactive ? `\r\x1b[2K  ${style(2, message)}` : `  ${message}\n`);
+    let line = `  ${message}`;
+    if (interactive) line = line.slice(0, Math.max(0, (output.columns || 80) - 1));
+    output.write(interactive ? `\r\x1b[2K${style(2, line)}` : `${line}\n`);
     lineOpen = Boolean(interactive);
     downloadLine = false;
   };
@@ -56,7 +57,7 @@ export function createUpdateProgress(
         columns >= 32
           ? `  ${style(2, "Downloading")}  ${mb(received)} MB`
           : `  ${mb(received)} MB`.slice(0, Math.max(0, columns - 1));
-      if (total !== undefined && total > 0) {
+      if (total !== undefined && total > 0 && columns >= 9) {
         const percent = Math.min(100, Math.floor((received / total) * 100));
         const width = Math.max(1, Math.min(32, columns - 10));
         const filled = Math.floor((percent * width) / 100);

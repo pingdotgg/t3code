@@ -63,11 +63,12 @@ it("shows bytes for an unknown size and leaves a clean line on interruption", ()
   expect(output.text()).not.toContain("%");
 });
 
-it("fits a narrow terminal without wrapping", () => {
-  const output = terminal(true, 30);
+it.each([1, 2, 7, 8, 9, 30])("fits a %i-column terminal without wrapping", (columns) => {
+  const output = terminal(true, columns);
   output.report({ stage: "download", received: 50, total: 100 });
-  const line = output.text().split("\x1b[2K").at(-1)!;
-  expect(line.length).toBeLessThan(30);
+  for (const line of output.text().split("\r\x1b[2K")) {
+    expect(line.length).toBeLessThan(columns);
+  }
 });
 
 it("draws the final size of a fast chunked download even inside the throttle window", () => {
