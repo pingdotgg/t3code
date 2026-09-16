@@ -59,6 +59,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
@@ -686,15 +687,16 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
     return false;
   }
   // A shutdown that hands off to a pending remote update is not the
-  // environment going offline: the launcher immediately brings a server back
-  // (the new version, or the old one after a rollback). Deleting the tunnel
-  // here forces that server to provision a replacement UUID, and the public
-  // hostname's route to the new tunnel takes 1-2 minutes to propagate — the
-  // dominant cost of an update restart. Keep the tunnel instead: the next
+  // environment going offline: the service launcher or desktop app brings a
+  // server back. Desktop installs do not write the launcher's state file.
+  // Deleting the tunnel forces that server to provision a replacement UUID.
+  // The hostname's route to the new tunnel takes 1-2 minutes to propagate.
+  // Keep the tunnel instead: the next
   // boot respawns the connector from the stored config and is reachable as
   // soon as it connects, and the reconcile confirms the still-live tunnel
   // without replacing it.
-  if (yield* pendingUpdateHandoffExists) {
+  const desktopUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
+  if ((yield* desktopUpdate.isRestartPending) || (yield* pendingUpdateHandoffExists)) {
     yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }
