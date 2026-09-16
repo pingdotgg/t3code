@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
+import * as Stream from "effect/Stream";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/unstable/http";
 
@@ -98,6 +99,10 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
   }
 }
 
+export type PinnedRuntimeProgress =
+  | { readonly stage: "download"; readonly received: number; readonly total: number | undefined }
+  | { readonly stage: "verify" | "extract" | "validate" | "cached" };
+
 /**
  * Installs the t3 release archive for `version` into the pinned runtime
  * directory unless a complete install is already there, and returns its
@@ -106,6 +111,7 @@ export class PinnedRuntimePreflightBlockedError extends Schema.TaggedError<Pinne
  * executable before the last native package and a killed install leaves a
  * plausible-looking but broken tree behind.
  */
+
 interface PinnedRuntimeInstallInput {
   readonly baseDir: string;
   readonly version: string;
@@ -119,19 +125,48 @@ interface PinnedRuntimeInstallInput {
   readonly arch: string;
   readonly httpClient: HttpClient.HttpClient;
   readonly releaseBaseUrl?: string | undefined;
+  readonly onProgress?: (progress: PinnedRuntimeProgress) => void;
 }
 
 const fetchReleaseAsset = Effect.fn("cloud.pinned_runtime.fetch_release_asset")(function* (
   httpClient: HttpClient.HttpClient,
   url: string,
   step: string,
+  onProgress?: (progress: PinnedRuntimeProgress) => void,
 ) {
   // The install lock is held for the whole transaction, so a stalled download
   // must fail rather than block every other caller.
   return yield* httpClient.execute(HttpClientRequest.get(url)).pipe(
     Effect.flatMap(HttpClientResponse.filterStatusOk),
-    Effect.flatMap((response) => response.arrayBuffer),
-    Effect.map((buffer) => new Uint8Array(buffer)),
+    Effect.flatMap(
+      Effect.fn(function* (response) {
+        if (onProgress === undefined) return new Uint8Array(yield* response.arrayBuffer);
+        const length = Number(response.headers["content-length"]);
+        const total = Number.isFinite(length) && length > 0 ? length : undefined;
+        let received = 0;
+        onProgress({ stage: "download", received, total });
+        const chunks = yield* response.stream.pipe(
+          Stream.tap((chunk) =>
+            Effect.sync(() => {
+              received += chunk.byteLength;
+              onProgress({ stage: "download", received, total });
+            }),
+          ),
+          Stream.runCollect,
+        );
+        // A completed chunked response finally gives us its total size.
+        if (total === undefined && received > 0) {
+          onProgress({ stage: "download", received, total: received });
+        }
+        const bytes = new Uint8Array(received);
+        let offset = 0;
+        for (const chunk of chunks) {
+          bytes.set(chunk, offset);
+          offset += chunk.byteLength;
+        }
+        return bytes;
+      }),
+    ),
     Effect.mapError((cause) => new PinnedRuntimeInstallError({ step, cause })),
     Effect.timeoutOrElse({
       duration: PINNED_RUNTIME_INSTALL_TIMEOUT,
@@ -161,6 +196,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
   const baseUrl = cliReleaseDownloadBaseUrl(input.version, input.releaseBaseUrl);
   const fileName = cliArchiveFileName(input.version, platformKey);
 
+  input.onProgress?.({ stage: "download", received: 0, total: undefined });
   const checksums = parseChecksums(
     new TextDecoder().decode(
       yield* fetchReleaseAsset(
@@ -180,7 +216,9 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
     httpClient,
     `${baseUrl}/${fileName}`,
     "downloading the t3 release archive",
+    input.onProgress,
   );
+  input.onProgress?.({ stage: "verify" });
   const digest = yield* Effect.tryPromise({
     try: () => crypto.subtle.digest("SHA-256", archive),
     catch: (cause) =>
@@ -200,6 +238,7 @@ const installFromArchive = Effect.fn("cloud.pinned_runtime.install_archive")(fun
         (cause) => new PinnedRuntimeInstallError({ step: "writing the t3 release archive", cause }),
       ),
     );
+  input.onProgress?.({ stage: "extract" });
   const extractStep = "extracting the t3 release archive";
   // The archive wraps everything in one directory named after its stem;
   // strip it so the executable lands at <versionDir>/t3.
@@ -242,6 +281,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   const alreadyPinned =
     entryExists && Option.isSome(sentinel) && sentinel.value.trim() === input.version;
   if (alreadyPinned) {
+    input.onProgress?.({ stage: "cached" });
     yield* input.validate(paths);
     return paths;
   }
@@ -290,6 +330,7 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
   return yield* Effect.gen(function* () {
     yield* installFromArchive(input, stagingDir);
 
+    input.onProgress?.({ stage: "validate" });
     yield* input.validate(stagingPaths);
     yield* fs
       .writeFileString(stagingPaths.sentinelPath, `${input.version}\n`)
