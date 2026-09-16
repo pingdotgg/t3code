@@ -1815,8 +1815,12 @@ const make = Effect.gen(function* () {
 
           // Arming is the user's call (the composer card toggles it); the
           // ingestion only drops a stale arm when the thread recovers to
-          // ready, so the sweep never resurrects a thread that got better.
-          if (status === "ready" && thread.usageLimitResumeAt != null) {
+          // ready or interrupted, so the sweep never resurrects a thread
+          // that got better.
+          if (
+            (status === "ready" || status === "interrupted") &&
+            thread.usageLimitResumeAt != null
+          ) {
             yield* orchestrationEngine.dispatch({
               type: "thread.usage-resume.disarm",
               commandId: yield* providerCommandId(event, "thread-usage-resume-disarm"),

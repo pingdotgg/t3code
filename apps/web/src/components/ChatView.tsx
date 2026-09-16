@@ -6304,15 +6304,20 @@ export default function ChatView(props: ChatViewProps) {
     if (!activeThreadRef || !isUsageLimitFailed) return;
     const resetsAt = usageLimitFailure.lastErrorResetsAt;
     if (typeof resetsAt !== "string") return;
-    void (usageLimitResumeArmed
-      ? disarmUsageResumeMutation({
-          environmentId: activeThreadRef.environmentId,
-          input: { threadId: activeThreadRef.threadId },
-        })
-      : armUsageResumeMutation({
-          environmentId: activeThreadRef.environmentId,
-          input: { threadId: activeThreadRef.threadId, resumeAt: resetsAt },
-        }));
+    if (usageLimitResumeArmed) {
+      void disarmUsageResumeMutation({
+        environmentId: activeThreadRef.environmentId,
+        input: { threadId: activeThreadRef.threadId },
+      });
+      return;
+    }
+    // The server rejects an arm whose window already ended; skip the dispatch
+    // for the click that lands between expiry and the card's next refresh.
+    if (Date.now() >= Date.parse(resetsAt)) return;
+    void armUsageResumeMutation({
+      environmentId: activeThreadRef.environmentId,
+      input: { threadId: activeThreadRef.threadId, resumeAt: resetsAt },
+    });
   }, [
     activeThreadRef,
     armUsageResumeMutation,
