@@ -1,4 +1,5 @@
 import * as NodeCrypto from "node:crypto";
+import * as NodeBuffer from "node:buffer";
 
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -784,7 +785,16 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["config", "--bool", "core.sparseCheckout"],
           allowNonZeroExit: true,
         });
-        const sparseCheckout = sparseConfig.stdout.trim() === "true";
+        let sparseCheckout = sparseConfig.stdout.trim() === "true";
+        if (sparseCheckout) {
+          const help = yield* execute({
+            operation,
+            cwd: input.cwd,
+            args: ["add", "-h"],
+            allowNonZeroExit: true,
+          });
+          sparseCheckout = /--(?:\[no-\])?sparse\b/.test(`${help.stdout}${help.stderr}`);
+        }
         if (headExists) {
           const reusedIndex = yield* Effect.gen(function* () {
             const indexPath = yield* execute({
@@ -809,17 +819,32 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
             let specialFlags = false;
             let recordStart = true;
+            let skipped = false;
+            let skippedRecord: number[] = [];
+            const skippedPaths: string[] = [];
             yield* vcsProcess.run({
               operation,
               command: "git",
               cwd: input.cwd,
-              args: [...indexConfig, "ls-files", "--sparse", "-v", "-z"],
+              args: [...indexConfig, "ls-files", "--full-name", "--sparse", "-v", "-z"],
               env: commitEnv,
               maxOutputBytes: 4_096,
               outputMode: "truncate",
-              // Inspect every tag without retaining paths or stopping at the output cap.
+              // Inspect every tag; retain only skipped file paths for checking sparse rules.
               onStdoutChunk: (chunk) => {
                 for (const byte of chunk) {
+                  if (recordStart) skipped = byte === 83;
+                  if (skipped && sparseCheckout) {
+                    if (byte !== 0) skippedRecord.push(byte);
+                    else {
+                      if (skippedRecord.at(-1) !== 47) {
+                        const name = Buffer.from(skippedRecord).subarray(2);
+                        if (!NodeBuffer.isUtf8(name)) specialFlags = true;
+                        else skippedPaths.push(name.toString("utf8"));
+                      }
+                      skippedRecord = [];
+                    }
+                  }
                   if (
                     recordStart &&
                     ((byte >= 97 && byte <= 122) || (!sparseCheckout && byte === 83))
@@ -830,6 +855,19 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
                 }
               },
             });
+            if (skippedPaths.length > 0 && !specialFlags) {
+              const selected = yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: [...indexConfig, "sparse-checkout", "check-rules", "-z"],
+                stdin: skippedPaths.join("\0") + "\0",
+                env: commitEnv,
+                maxOutputBytes: 1,
+                outputMode: "truncate",
+              });
+              // Any selected skipped file has a manual flag, not a sparse exclusion.
+              specialFlags = selected.stdout.length > 0 || selected.stdoutTruncated;
+            }
             // Sparse Git clears skip-worktree for present files. Manual flags still need a reset.
             return !specialFlags;
           }).pipe(Effect.orElseSucceed(() => false));
@@ -857,7 +895,9 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
               operation,
               cwd: input.cwd,
               // A fresh sparse index represents excluded directories without marking them deleted.
-              args: [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"],
+              args: sparseCheckout
+                ? [...indexConfig, "-c", "index.sparse=true", "read-tree", "--reset", "HEAD"]
+                : ["read-tree", "HEAD"],
               env: commitEnv,
             });
           }

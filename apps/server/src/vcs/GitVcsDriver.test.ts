@@ -120,7 +120,13 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
 );
 
 for (const nested of [false, true]) {
-  for (const indexState of ["sparse", "flags", "missing", "non-cone-missing"] as const) {
+  for (const indexState of [
+    "sparse",
+    "flags",
+    "manual-skip",
+    "missing",
+    "non-cone-missing",
+  ] as const) {
     it.effect(
       `sparse checkpoint preserves two captures (nested=${nested}, index=${indexState})`,
       () =>
@@ -137,7 +143,7 @@ for (const nested of [false, true]) {
           for (const name of [
             "scope/in/edit",
             "scope/in/delete",
-            "scope/out/absent",
+            "scope/out/deep/absent",
             "scope/out/present",
             "elsewhere/file",
           ]) {
@@ -160,6 +166,8 @@ for (const nested of [false, true]) {
           yield* git(["add", "."]);
           if (indexState === "flags")
             yield* git(["update-index", "--assume-unchanged", "scope/in/delete"]);
+          if (indexState === "manual-skip")
+            yield* git(["update-index", "--skip-worktree", "scope/in/delete"]);
           yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
           yield* write("scope/in/edit", "working\n");
           yield* write("scope/out/present", "modified skipped\n");
@@ -193,7 +201,7 @@ for (const nested of [false, true]) {
             }
             yield* capture;
             for (const [name, content] of [
-              ["scope/out/absent", "original\n"],
+              ["scope/out/deep/absent", "original\n"],
               ["scope/out/present", "modified skipped\n"],
               ["scope/in/edit", turn === 1 ? "working\n" : "second\n"],
               ["elsewhere/file", nested ? "original\n" : "working outside\n"],
@@ -211,7 +219,7 @@ for (const nested of [false, true]) {
               yield* fs.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),
               originalIndex,
             );
-            assert.isFalse(yield* fs.exists(path.join(cwd, "scope/out/absent")));
+            assert.isFalse(yield* fs.exists(path.join(cwd, "scope/out/deep/absent")));
             assert.strictEqual(
               yield* fs.readFileString(path.join(cwd, "elsewhere/file")),
               "working outside\n",
@@ -221,6 +229,46 @@ for (const nested of [false, true]) {
     );
   }
 }
+
+it.effect("checkpoint capture keeps the legacy path when Git lacks add --sparse", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const liveProcess = yield* VcsProcess.VcsProcess;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-legacy-" });
+    const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
+    yield* git(["sparse-checkout", "set", "--cone", "included"]);
+    const originalIndex = yield* fs.readFile(path.join(cwd, ".git/index"));
+    const captureDriver = yield* GitVcsDriver.makeVcsDriverShape().pipe(
+      Effect.provideService(VcsProcess.VcsProcess, {
+        run: (input) => {
+          if (input.args.includes("-h"))
+            return Effect.succeed({
+              exitCode: ChildProcessSpawner.ExitCode(129),
+              stdout: "usage: git add",
+              stderr: "",
+              stdoutTruncated: false,
+              stderrTruncated: false,
+            });
+          return liveProcess.run(
+            input.args.includes("--sparse")
+              ? {
+                  ...input,
+                  args: input.args.map((arg) =>
+                    arg === "--sparse" ? "--unsupported-sparse" : arg,
+                  ),
+                }
+              : input,
+          );
+        },
+      }),
+    );
+    yield* captureDriver.checkpoints.captureCheckpoint({ cwd, checkpointRef });
+    assert.strictEqual((yield* git(["show", `${checkpointRef}:file.txt`])).stdout, "unstaged\n");
+    assert.deepEqual(yield* fs.readFile(path.join(cwd, ".git/index")), originalIndex);
+  }).pipe(Effect.scoped, Effect.provide(GitContractLayer)),
+);
 
 for (const indexMode of ["normal", "flags", "sparse"] as const) {
   it.effect(
