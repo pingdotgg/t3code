@@ -263,7 +263,13 @@ export const make = Effect.gen(function* () {
         }
         if (event.type === "output") {
           lineBuffer += event.data;
-          const lines = lineBuffer.split(/\r?\n/);
+          // A bare carriage return is how installers redraw a progress line in
+          // place; each redraw becomes a short line of its own instead of
+          // being glued into one long one. The wrapper echo is filtered per
+          // segment too, which is why `echoedWrapperLines` is split on the
+          // same `\r`: a line editor repainting the typed command yields the
+          // same segments.
+          const lines = lineBuffer.split(/\r\n|\r|\n/);
           lineBuffer = lines.pop() ?? "";
           // A script that never prints a newline must not grow this forever.
           // The sentinel is always on its own line, so keeping the tail is safe.

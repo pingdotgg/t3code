@@ -28,6 +28,13 @@ it.effect("resolves setup scripts through the standalone project service", () =>
   const write = vi.fn(
     (_input: Parameters<TerminalManager.TerminalManager["Service"]["write"]>[0]) => Effect.void,
   );
+  const listeners: Array<Parameters<TerminalManager.TerminalManager["Service"]["subscribe"]>[0]> =
+    [];
+  const subscribe: TerminalManager.TerminalManager["Service"]["subscribe"] = (listener) =>
+    Effect.sync(() => {
+      listeners.push(listener);
+      return () => undefined;
+    });
   const projectId = ProjectId.make("project:setup-runner-v2");
   const project = {
     id: projectId,
@@ -55,7 +62,7 @@ it.effect("resolves setup scripts through the standalone project service", () =>
         Layer.mock(ProjectService.ProjectService)({
           getById: () => Effect.succeed(Option.some(project)),
         }),
-        Layer.mock(TerminalManager.TerminalManager)({ open, write }),
+        Layer.mock(TerminalManager.TerminalManager)({ open, write, subscribe }),
         ServerSettings.layerTest(),
       ),
     ),
@@ -86,5 +93,27 @@ it.effect("resolves setup scripts through the standalone project service", () =>
       FORCE_COLOR: "0",
     });
     assert.equal(write.mock.calls[0]?.[0].data, "vp install\r");
+    const lines: string[] = [];
+    const observed = yield* runner.runForThread({
+      threadId: "thread-1",
+      projectId,
+      worktreePath: "/repo-worktree",
+      observeCompletion: {
+        onOutputLine: (line) =>
+          Effect.sync(() => {
+            lines.push(line);
+          }),
+      },
+    });
+    assert.equal(observed.status, "started");
+    const listener = listeners[0]!;
+    yield* listener({
+      type: "output",
+      threadId: "thread-1",
+      terminalId: "setup-setup",
+      data: "Downloading 10%\rDownloading 20%\r\nDone\n",
+    });
+    assert.deepEqual(lines, ["Downloading 10%", "Downloading 20%", "Done"]);
+    yield* listener({ type: "closed", threadId: "thread-1", terminalId: "setup-setup" });
   }).pipe(Effect.provide(layer));
 });
