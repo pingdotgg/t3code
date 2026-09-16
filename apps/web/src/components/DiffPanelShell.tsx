@@ -46,7 +46,7 @@ export function DiffPanelShell(props: {
   );
 }
 
-function DiffFileHeaderSkeleton({ titleClassName }: { titleClassName: string }) {
+export function DiffFileHeaderSkeleton({ titleClassName }: { titleClassName: string }) {
   return (
     <div className="flex h-8 items-center gap-2 px-2 pr-3">
       <div className="flex size-5 shrink-0 items-center justify-center">
