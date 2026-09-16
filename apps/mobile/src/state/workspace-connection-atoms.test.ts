@@ -55,7 +55,6 @@ describe("workspace connection subscriptions", () => {
       hasCachedShell: false,
       hasLiveShell: true,
       firstError: null,
-      latestSnapshotUpdatedAt: null,
     });
     const broadState = Atom.make((get) =>
       projectWorkspaceState({
@@ -75,7 +74,7 @@ describe("workspace connection subscriptions", () => {
       for (let index = 0; index < 20; index++) {
         h.registry.set(shell, {
           ...h.registry.get(shell),
-          latestSnapshotUpdatedAt: new Date(index * 1000).toISOString(),
+          hasSynchronizingShell: index % 2 === 0,
         });
         h.registry.get(broadState);
         h.registry.get(h.stateAtom);
