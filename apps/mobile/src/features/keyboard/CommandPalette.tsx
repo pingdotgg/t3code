@@ -8,6 +8,7 @@ import {
   KeyboardAvoidingView,
   Modal,
   Pressable,
+  Text as NativeText,
   TextInput,
   useWindowDimensions,
   View,
@@ -15,10 +16,10 @@ import {
 
 import { GestureHandlerRootView } from "react-native-gesture-handler";
 
+import { GlassSurface } from "../../components/GlassSurface";
 import { RowPressable } from "../../components/RowPressable";
 import { AppText as Text } from "../../components/AppText";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
-import { GlassSurface } from "../../components/GlassSurface";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { T3KeyboardCommands } from "../../native/T3KeyboardCommands";
 import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
@@ -101,7 +102,9 @@ function PaletteRow(props: {
         ) : null}
       </View>
       {props.index < 9 ? (
-        <Text className="text-sm text-foreground-muted">⌘{props.index + 1}</Text>
+        <NativeText className="w-8 shrink-0 text-right text-sm tabular-nums text-foreground-muted">
+          ⌘{props.index + 1}
+        </NativeText>
       ) : null}
     </RowPressable>
   );
@@ -395,6 +398,8 @@ export function CommandPalette(props: {
             />
             <GlassSurface
               accessibilityViewIsModal
+              className="bg-sheet/70"
+              tintColorClassName="accent-sheet/20"
               style={{
                 width: Math.min(600, width - 32),
                 height: Math.min(520, height - 80),

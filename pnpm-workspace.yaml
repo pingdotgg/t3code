@@ -23,13 +23,13 @@ allowBuilds:
   workerd: false
 
 catalog:
-  "@clerk/backend": 3.17.2
-  "@clerk/clerk-js": 6.31.1
-  "@clerk/electron": 0.0.42
+  "@clerk/backend": 3.18.1
+  "@clerk/clerk-js": 6.32.1
+  "@clerk/electron": 0.0.44
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.6.6
-  "@clerk/react": 6.15.2
-  "@clerk/shared": 4.31.1
+  "@clerk/expo": 4.6.8
+  "@clerk/react": 6.16.1
+  "@clerk/shared": 4.33.0
   "@effect/atom-react": 4.0.0-rc.112
   "@effect/openapi-generator": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
@@ -55,12 +55,12 @@ catalog:
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
-  - "@clerk/backend@3.17.2"
-  - "@clerk/clerk-js@6.31.1"
-  - "@clerk/electron@0.0.42"
-  - "@clerk/expo@4.6.6"
-  - "@clerk/react@6.15.2"
-  - "@clerk/shared@4.31.1"
+  - "@clerk/backend@3.18.1"
+  - "@clerk/clerk-js@6.32.1"
+  - "@clerk/electron@0.0.44"
+  - "@clerk/expo@4.6.8"
+  - "@clerk/react@6.16.1"
+  - "@clerk/shared@4.33.0"
   - "@distilled.cloud/aws@0.30.2"
   - "@distilled.cloud/axiom@0.30.2"
   - "@distilled.cloud/cloudflare@0.30.2"
@@ -157,7 +157,7 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
-  "@clerk/expo@4.6.6": patches/@clerk__expo@4.6.6.patch
+  "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
@@ -175,7 +175,7 @@ patchedDependencies:
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
-  react-native-reanimated@4.5.1: patches/react-native-reanimated@4.5.1.patch
+  react-native-reanimated@4.5.5: patches/react-native-reanimated@4.5.5.patch
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
 

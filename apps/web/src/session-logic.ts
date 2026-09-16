@@ -1613,11 +1613,13 @@ export function createMessageAttachmentPreviewProjector() {
   };
 }
 
-/** Text and update time do not change a streaming assistant message's timeline structure. */
+const streamsText = (role: ChatMessage["role"]) => role === "assistant" || role === "reasoning";
+
+/** Text and update time do not change a streaming message's timeline structure. */
 export function isStreamingMessageTextUpdate(previous: ChatMessage, next: ChatMessage): boolean {
   if (
-    previous.role !== "assistant" ||
-    next.role !== "assistant" ||
+    !streamsText(previous.role) ||
+    previous.role !== next.role ||
     !previous.streaming ||
     !next.streaming
   ) {
