@@ -421,6 +421,11 @@ function buildBrowserLaunch(
   };
 }
 
+/**
+ * Discover installed editors while sharing PATH listings across command probes.
+ * Return completed probes after four seconds so the caller can cache partial
+ * results before server.getConfig's five-second deadline.
+ */
 const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors")(function* (
   platform: NodeJS.Platform,
   env: NodeJS.ProcessEnv,
@@ -431,8 +436,6 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
 > {
   const available: EditorId[] = [];
 
-  // Return completed probes before server.getConfig's five-second deadline
-  // would discard the entire list. The existing discovery cache keeps this result.
   yield* Effect.gen(function* () {
     for (const editor of EDITORS) {
       if (editor.commands === null) {

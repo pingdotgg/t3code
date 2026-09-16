@@ -516,7 +516,13 @@ const CommandDirectoryCache = Context.Reference<
   Map<string, ReadonlySet<string> | null> | undefined
 >("@t3tools/shared/shell/CommandDirectoryCache", { defaultValue: () => undefined });
 
-/** Reuse PATH listings for one batch of lookups without retaining stale directory contents. */
+/**
+ * Run a batch of command lookups with a shared PATH directory listing cache.
+ * Each execution creates a fresh cache so later batches see directory changes.
+ *
+ * @param effect - The command lookups that should share directory listings.
+ * @returns The effect with a fresh directory cache provided for its execution.
+ */
 export const withCommandDirectoryCache = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
   Effect.suspend(() => effect.pipe(Effect.provideService(CommandDirectoryCache, new Map())));
 
@@ -558,6 +564,11 @@ const isExecutableFile = Effect.fnUntraced(function* (
   return canExecuteFile(filePath);
 });
 
+/**
+ * Resolve an executable using the supplied platform and PATH in search order.
+ * When a directory cache is provided, use its listings to skip absent candidates;
+ * probe candidates directly when a directory cannot be listed.
+ */
 const resolveCommandPathForPlatform = Effect.fn("shell.resolveCommandPathForPlatform")(function* (
   command: string,
   options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
