@@ -1,6 +1,6 @@
 import type { Discovery } from "@t3tools/client-runtime/relay";
 import type { AtomCommandResult } from "@t3tools/client-runtime/state/runtime";
-import { EnvironmentId } from "@t3tools/contracts";
+import { EnvironmentId, ORCHESTRATION_PROTOCOL_VERSION } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import { AsyncResult } from "effect/unstable/reactivity";
 import { act, useState, type ButtonHTMLAttributes, type ReactNode } from "react";
@@ -176,6 +176,84 @@ describe("cloud onboarding discovery", () => {
     });
     expect(onDiscoveryReady).toHaveBeenCalledTimes(1);
     expect(renderer!.root.findByType("button").children).toEqual(["Add"]);
+  });
+
+  it("keeps incompatible discoveries unselected until the user enables a compatible server", async () => {
+    const base = linkedMachines.get(newMachineId)!;
+    const entry = (protocolVersion: number) => ({
+      ...base,
+      status: Option.some({
+        environmentId: newMachineId,
+        endpoint: base.environment.endpoint,
+        status: "online" as const,
+        checkedAt: "2026-09-15T00:00:00Z",
+        descriptor: {
+          environmentId: newMachineId,
+          label: base.environment.label,
+          platform: { os: "linux" as const, arch: "x64" as const },
+          serverVersion: "1.0.0",
+          orchestrationProtocolVersion: protocolVersion,
+          capabilities: { repositoryIdentity: true },
+        },
+      }),
+    });
+    discovery.listEnvironments.mockResolvedValue(
+      new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION + 1)]]),
+    );
+    const onSelectionChange = vi.fn();
+    const autoSelectedComputers = new Set<EnvironmentId>();
+    function Setup() {
+      const [selectedIds, setSelectedIds] = useState<ReadonlySet<EnvironmentId>>(
+        new Set([newMachineId]),
+      );
+      return (
+        <CloudEnvironmentConnectRows
+          primaryEnvironmentId={null}
+          savedEnvironments={[]}
+          showSavedEnvironments
+          selection={{
+            autoSelectedComputers,
+            selectedIds,
+            onChange: (id, checked) => {
+              onSelectionChange(id, checked);
+              setSelectedIds((current) => {
+                const next = new Set(current);
+                if (checked) next.add(id);
+                else next.delete(id);
+                return next;
+              });
+            },
+          }}
+        />
+      );
+    }
+    await act(async () => {
+      renderer = create(<Setup />);
+    });
+    expect(discovery.register).not.toHaveBeenCalled();
+    expect(onSelectionChange).toHaveBeenCalledWith(newMachineId, false);
+    expect(renderer!.root.findByType("input").props.checked).toBe(false);
+    expect(renderer!.root.findByType("input").props.disabled).toBe(true);
+    expect(renderer!.root.findAllByType("span").flatMap((span) => span.children)).toContain(
+      "Client not supported",
+    );
+    await act(async () => {
+      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
+    });
+    expect(discovery.register).not.toHaveBeenCalled();
+    await act(async () =>
+      publish({
+        ...discovery.state!,
+        environments: new Map([[newMachineId, entry(ORCHESTRATION_PROTOCOL_VERSION)]]),
+      }),
+    );
+    expect(discovery.register).not.toHaveBeenCalled();
+    expect(renderer!.root.findByType("input").props.checked).toBe(false);
+    expect(renderer!.root.findByType("input").props.disabled).toBe(false);
+    await act(async () => {
+      await renderer!.root.findByType("input").props.onChange({ target: { checked: true } });
+    });
+    expect(discovery.register).toHaveBeenCalledTimes(1);
   });
 
   it("connects and selects discovered computers by default without overwriting deselection", async () => {

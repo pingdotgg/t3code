@@ -3,13 +3,17 @@ import {
   type EnvironmentConnectionPresentation,
   RelayConnectionRegistration,
   RelayConnectionTarget,
+  orchestrationProtocolCompatibilityError,
 } from "@t3tools/client-runtime/connection";
 import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
 import type { EnvironmentId } from "@t3tools/contracts";
-import type { RelayClientEnvironmentRecord } from "@t3tools/contracts/relay";
+import type {
+  RelayClientEnvironmentRecord,
+  RelayEnvironmentStatusResponse,
+} from "@t3tools/contracts/relay";
 import * as Option from "effect/Option";
 import { type ReactNode, useCallback, useEffect, useEffectEvent, useState } from "react";
 
@@ -28,6 +32,13 @@ import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import { presentSavedCloudEnvironmentConnection } from "./cloudEnvironmentConnectionPresentation";
 
 const EMPTY_DISCOVERY_REFRESH_INTERVAL_MS = 5_000;
+
+function discoveredCompatibilityError(
+  status: Option.Option<RelayEnvironmentStatusResponse> | undefined,
+) {
+  const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
+  return descriptor === undefined ? null : orchestrationProtocolCompatibilityError(descriptor);
+}
 
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
@@ -119,6 +130,12 @@ export function CloudEnvironmentConnectRows({
   }, [refreshRelayEnvironments, refreshWhileEmpty, onDiscoveryReady]);
 
   const connectEnvironment = async (environment: RelayClientEnvironmentRecord) => {
+    if (
+      discoveredCompatibilityError(
+        environmentsState.environments.get(environment.environmentId)?.status,
+      ) !== null
+    )
+      return false;
     setConnectingEnvironmentIds((current) => new Set([...current, environment.environmentId]));
     const result = await connectRelayEnvironment(environment);
     setConnectingEnvironmentIds((current) => {
@@ -166,8 +183,17 @@ export function CloudEnvironmentConnectRows({
   const selectNewComputers = useEffectEvent(() => {
     const seen = selection?.autoSelectedComputers;
     if (!selection || !seen) return;
-    for (const { environment } of visibleEnvironments) {
+    for (const { environment, status, availability } of visibleEnvironments) {
       const id = environment.environmentId;
+      if (availability === "checking") continue;
+      if (
+        discoveredCompatibilityError(status) !== null ||
+        savedById.get(id)?.connection.phase === "unsupported"
+      ) {
+        seen.add(id);
+        if (selection.selectedIds.has(id)) selection.onChange(id, false);
+        continue;
+      }
       if (seen.has(id)) continue;
       seen.add(id);
       selection.onChange(id, true);
@@ -265,11 +291,20 @@ export function CloudEnvironmentConnectRows({
     return empty;
   }
 
-  return visibleEnvironments.map(({ environment, availability, error }) => {
+  return visibleEnvironments.map(({ environment, availability, error, status }) => {
     const savedEnvironment = savedById.get(environment.environmentId);
-    const savedConnection = savedEnvironment
-      ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
-      : null;
+    const compatibilityError = discoveredCompatibilityError(status);
+    const unsupported =
+      compatibilityError !== null || savedEnvironment?.connection.phase === "unsupported";
+    const savedConnection = unsupported
+      ? presentSavedCloudEnvironmentConnection({
+          phase: "unsupported",
+          error: compatibilityError?.message ?? savedEnvironment?.connection.error ?? null,
+          traceId: null,
+        })
+      : savedEnvironment
+        ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
+        : null;
     const dotClassName = savedConnection
       ? savedConnection.tone === "connected"
         ? "bg-success"
@@ -302,9 +337,10 @@ export function CloudEnvironmentConnectRows({
           className="flex cursor-pointer items-center gap-3 rounded-lg border border-border bg-background px-3 py-2.5 has-disabled:cursor-default"
         >
           <Checkbox
-            checked={selection.selectedIds.has(environment.environmentId)}
-            disabled={connectingEnvironmentIds.has(environment.environmentId)}
+            checked={!unsupported && selection.selectedIds.has(environment.environmentId)}
+            disabled={unsupported || connectingEnvironmentIds.has(environment.environmentId)}
             onCheckedChange={async (checked) => {
+              if (unsupported) return;
               selection.onChange(environment.environmentId, checked);
               if (checked && !savedEnvironment) {
                 const connected = await connectEnvironment(environment);

@@ -41,6 +41,8 @@ export interface ConnectionCatalogEntry {
   readonly profile: Option.Option<ConnectionProfile>;
   /** False when the user switched the environment off: saved, but never connects. */
   readonly enabled: boolean;
+  /** Discovery rejection stays visible while the saved connection is switched off. */
+  readonly unsupportedReason?: string;
 }
 
 export class BearerConnectionCredential extends Schema.TaggedClass<BearerConnectionCredential>()(
