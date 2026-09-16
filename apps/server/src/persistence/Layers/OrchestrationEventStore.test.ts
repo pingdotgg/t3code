@@ -11,6 +11,7 @@ import {
 import { assert, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
@@ -315,7 +316,112 @@ layer("OrchestrationEventStore", (it) => {
       assert.deepEqual(yield* Stream.runCollect(store.readFromSequence(0, -1)), []);
     }),
   );
+
+  it.effect("reads only the requested event types through the captured head", () =>
+    Effect.gen(function* () {
+      const store = yield* OrchestrationEventStore;
+      const sql = yield* SqlClient.SqlClient;
+      const now = "2026-01-01T00:00:00.000Z";
+      const deletedThreadId = ThreadId.make("typed-deleted");
+      const revertedThreadId = ThreadId.make("typed-reverted");
+      const base = {
+        aggregateKind: "thread" as const,
+        occurredAt: now,
+        commandId: null,
+        causationEventId: null,
+        correlationId: null,
+        metadata: {},
+      };
+      const before = yield* store.append(messageEvent(deletedThreadId, "typed-before"));
+      const deleted = yield* store.append({
+        ...base,
+        type: "thread.deleted",
+        eventId: EventId.make("typed-deleted-1"),
+        aggregateId: deletedThreadId,
+        payload: { threadId: deletedThreadId, deletedAt: now },
+      });
+      // An undecodable payload of another type must never be touched by a typed read.
+      yield* sql`
+        INSERT INTO orchestration_events (
+          event_id, aggregate_kind, stream_id, stream_version, event_type, occurred_at,
+          actor_kind, payload_json, metadata_json
+        ) VALUES (
+          'typed-broken', 'thread', 'typed-broken-thread', 0, 'thread.message-sent',
+          ${now}, 'provider', '{', '{}'
+        )
+      `;
+      const reverted = yield* store.append({
+        ...base,
+        type: "thread.reverted",
+        eventId: EventId.make("typed-reverted-1"),
+        aggregateId: revertedThreadId,
+        payload: { threadId: revertedThreadId, turnCount: 1 },
+      });
+      const headAt = "2026-01-01T00:00:01.000Z";
+      const afterHead = yield* store.append({
+        ...base,
+        type: "thread.deleted",
+        eventId: EventId.make("typed-deleted-2"),
+        aggregateId: revertedThreadId,
+        occurredAt: headAt,
+        payload: { threadId: revertedThreadId, deletedAt: headAt },
+      });
+
+      assert.deepEqual(
+        yield* store.getHead(),
+        Option.some({ sequence: afterHead.sequence, occurredAt: headAt }),
+      );
+
+      const types = ["thread.deleted", "thread.reverted"] as const;
+      const replayed = yield* Stream.runCollect(
+        store.readEventsOfTypes({
+          types,
+          fromSequenceExclusive: before.sequence,
+          toSequenceInclusive: reverted.sequence,
+        }),
+      );
+      assert.deepEqual(
+        replayed.map((event) => [event.sequence, event.type]),
+        [
+          [deleted.sequence, "thread.deleted"],
+          [reverted.sequence, "thread.reverted"],
+        ],
+      );
+      assert.deepEqual(
+        yield* Stream.runCollect(
+          store.readEventsOfTypes({
+            types,
+            fromSequenceExclusive: reverted.sequence,
+            toSequenceInclusive: reverted.sequence,
+          }),
+        ),
+        [],
+      );
+      assert.deepEqual(
+        yield* Stream.runCollect(
+          store.readEventsOfTypes({
+            types: [],
+            fromSequenceExclusive: 0,
+            toSequenceInclusive: afterHead.sequence,
+          }),
+        ),
+        [],
+      );
+      // The broken row is still there for a full replay to trip over.
+      const fullReplay = yield* Stream.runCollect(store.readFromSequence(before.sequence)).pipe(
+        Effect.flip,
+      );
+      assert.isTrue(isPersistenceDecodeError(fullReplay));
+    }),
+  );
 });
+
+it.effect("getHead is none for an empty store", () =>
+  Effect.gen(function* () {
+    const store = yield* OrchestrationEventStore;
+    assert.deepEqual(yield* store.getHead(), Option.none());
+  }).pipe(Effect.provide(OrchestrationEventStoreLive.pipe(Layer.provide(SqlitePersistenceMemory)))),
+);
 
 for (const reader of ["all", "aggregate"] as const) {
   it.effect(`releases consumed pages during ${reader} replay`, () =>
