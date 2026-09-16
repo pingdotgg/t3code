@@ -50,6 +50,35 @@ This document covers the unified release workflow for stable and nightly desktop
   - nightly releases are aliased to the `nightly` hosted app channel
 - Signing is optional and auto-detected per platform from secrets.
 
+## Pull request macOS previews
+
+Labeling a PR `preview:mac` publishes a signed, notarized Apple Silicon DMG with T3 Connect enabled
+to the rolling `desktop-preview` prerelease, and works for fork PRs. The label is a one-shot request
+for the commit it is applied to: the trusted workflow removes it once the build is in hand, and later
+pushes do not build until a maintainer applies it again. Every signed preview is therefore a
+per-commit maintainer decision, which matters because the result carries the Developer ID signature.
+Vouching a contributor lets their labeled commits be signed; it is not a standing grant. The build is
+split so the Developer ID certificate never shares a job with PR code:
+
+- `.github/workflows/desktop-macos-preview.yml` runs on `pull_request` with no secrets and builds
+  only the JS bundle from the PR (the same `js-bundle` artifact `release.yml` produces).
+- `.github/workflows/desktop-macos-preview-publish.yml` runs on `workflow_run` from `main`. It
+  refuses unless the PR is open, still labeled, its head is the built commit, and the author is a
+  bot, a collaborator, or listed in `.github/VOUCHED.td` (read from the default branch, so a PR cannot vouch
+  for itself). It then packages and signs the bundle through `release-desktop.yml` checked out at
+  `main`, so packaging, native helpers, and the Electron/desktop dependencies come from `main`, not
+  the PR. Only the version and the public T3 Connect identifiers in `.env.example` are read from the
+  PR commit, as data, so the signed app's passkey entitlement matches the bundle. A PR that changes
+  packaging must use the `channel=preview` release train above instead.
+
+Before handing the bundle to the signing runner, the trusted workflow validates its ZIP entries
+and accepts only regular files under `server/dist` and `desktop/dist-electron`, plus the directory
+entries that lead to those roots. The artifact cannot
+overwrite packaging code or installed dependencies. The bundle is copied into the app, never executed,
+on the signing runner. The
+`pull_request_target` cleanup job in the publish workflow removes the download when the PR closes, or
+when the label is removed by hand before a build consumed it, and never checks out PR code.
+
 ## Required release credentials
 
 Stable releases require these GitHub Actions secrets in addition to the platform and deployment

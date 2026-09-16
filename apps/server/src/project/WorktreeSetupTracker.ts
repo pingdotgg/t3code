@@ -63,11 +63,12 @@ export class WorktreeSetupTracker extends Context.Service<
       stageId: WorktreeSetupStageId,
       line: string,
     ) => Effect.Effect<void>;
+    /** Returns the settled snapshot, or null when nothing was tracked. */
     readonly finish: (
       threadId: ThreadId,
       phase: "done" | "failed" | "cancelled",
       error?: string | null,
-    ) => Effect.Effect<void>;
+    ) => Effect.Effect<WorktreeSetupSnapshot | null>;
     /**
      * Drops the cancel handle. Called right before the turn is dispatched so a
      * late cancel cannot roll back a thread whose agent has already started.
@@ -279,7 +280,7 @@ export const make = Effect.gen(function* () {
           ),
         },
       }));
-      if (!snapshot) return;
+      if (!snapshot) return null;
       yield* clearRetention(threadId);
       const fiber = yield* remove(threadId).pipe(
         Effect.delay(FINISHED_RETENTION),
@@ -292,6 +293,7 @@ export const make = Effect.gen(function* () {
         Effect.forkDetach,
       );
       retentionFibers.set(threadId, fiber);
+      return snapshot;
     });
 
   const markUncancellable: WorktreeSetupTracker["Service"]["markUncancellable"] = (threadId) =>

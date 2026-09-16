@@ -25,8 +25,21 @@ in Settings.
 
 With a PR open in the right panel or on the Pull Requests page, use `mod+shift+c`
 to copy its URL and `mod+shift+k` to copy its number with a `#` prefix.
-Both shortcuts can be changed in Settings. Search for “Copy PR URL or Thread ID”
+Both shortcuts can be changed in Settings. Search for “Copy Link or Thread ID”
 or “Copy Number”. They copy the selected PR and leave terminal input alone.
+
+## iPad
+
+With a hardware keyboard, use `Cmd+1` through `Cmd+9` to open the first nine
+displayed threads. The shortcuts follow the current list filters and order.
+`Cmd+K` opens the command palette to search commands, projects, and threads.
+Use the arrow keys and Return to choose a result, or `Cmd+1` through `Cmd+9` to
+choose directly. Escape or `Cmd+K` closes the palette. Start a search with `>`
+to show only actions.
+
+In the composer, Return sends and `Shift+Return` inserts a new line. `Cmd+Return`
+also sends. To make Return insert a new line instead, change the Return key
+behavior in Settings → Keyboard.
 
 ## Edit the configuration file
 

@@ -4353,6 +4353,45 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 
+  it.effect("persists and clears a project monogram", () =>
+    Effect.gen(function* () {
+      const engine = yield* OrchestrationEngineService;
+      const sql = yield* SqlClient.SqlClient;
+      const projectId = ProjectId.make("project-monogram");
+      yield* engine.dispatch({
+        type: "project.create",
+        commandId: CommandId.make("cmd-monogram-create"),
+        projectId,
+        title: "Monogram",
+        workspaceRoot: "/tmp/project-monogram",
+        defaultModelSelection: null,
+        createdAt: "2026-01-01T00:00:00.000Z",
+      });
+      yield* engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-monogram-save"),
+        projectId,
+        projectIcon: { kind: "lucide", name: "folder-code", color: "violet", monogram: "T3" },
+      });
+      const saved = yield* sql<{
+        readonly icon: string | null;
+      }>`SELECT project_icon_json AS icon FROM projection_projects WHERE project_id = ${projectId}`;
+      assert.deepEqual(saved, [
+        { icon: '{"kind":"lucide","name":"folder-code","color":"violet","monogram":"T3"}' },
+      ]);
+      yield* engine.dispatch({
+        type: "project.meta.update",
+        commandId: CommandId.make("cmd-monogram-clear"),
+        projectId,
+        projectIcon: null,
+      });
+      const cleared = yield* sql<{
+        readonly icon: string | null;
+      }>`SELECT project_icon_json AS icon FROM projection_projects WHERE project_id = ${projectId}`;
+      assert.deepEqual(cleared, [{ icon: null }]);
+    }),
+  );
+
   it.effect("re-creating a deleted thread id starts from an empty projection", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

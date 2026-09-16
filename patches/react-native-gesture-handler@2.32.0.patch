@@ -1,3 +1,19 @@
+diff --git a/apple/Handlers/RNHoverHandler.m b/apple/Handlers/RNHoverHandler.m
+index 320cb8cb2652bfcfe1ecc65ebd81a8d208e4260f..a88ac5f04a9663fd7a62ee89e42d85ec41dcaf55 100644
+--- a/apple/Handlers/RNHoverHandler.m
++++ b/apple/Handlers/RNHoverHandler.m
+@@ -132,8 +132,10 @@ - (void)unbindFromView
+ {
+ #if CHECK_TARGET(13_4)
+   if (@available(iOS 13.4, *)) {
++    // The superclass detaches the recognizer, clearing recognizer.view. Remove
++    // the interaction from its own view before it can be recycled by Fabric.
++    [_pointerInteraction.view removeInteraction:_pointerInteraction];
+     [super unbindFromView];
+-    [self.recognizer.view removeInteraction:_pointerInteraction];
+   }
+ #endif
+ }
 diff --git a/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js b/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js
 index 551ab92bf58db0b79d428dcd2f2df898ef686493..13db26d88bff975bc5d46bb6432cbf9fda3d489a 100644
 --- a/lib/commonjs/components/ReanimatedSwipeable/ReanimatedSwipeable.js
@@ -97,7 +113,7 @@ index a2835d5416ffd5cf9a04e98774516b9e6569691e..055afce410d6eb655532e7a09371dfc2
    const animatedStyle = useAnimatedStyle(() => ({
      transform: [{
 diff --git a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
-index ac8b76830d468edfbc29052b452a36221323c3de..6985d54d9d359e825a5a0e6078bb113204e2807b 100644
+index ac8b76830d468edfbc29052b452a36221323c3de..cac72ebaafaf746af7640783a16e99c93ecad2a4 100644
 --- a/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
 +++ b/lib/typescript/components/ReanimatedSwipeable/ReanimatedSwipeableProps.d.ts
 @@ -64,6 +64,13 @@ export interface SwipeableProps {

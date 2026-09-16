@@ -29,6 +29,7 @@ const makeProject = (scripts: OrchestrationProject["scripts"]): OrchestrationPro
 const makeProjectionSnapshotQueryLayer = (project: OrchestrationProject) =>
   Layer.succeed(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {
     getUserInputActivity: () => Effect.die("unused"),
+    listActivitiesByKind: () => Effect.die("unused"),
     getCommandReadModel: () => Effect.die("unused"),
     getSnapshot: () => Effect.die("unused"),
     getShellSnapshot: () => Effect.die("unused"),
@@ -112,7 +113,12 @@ describe("ProjectSetupScriptRunner", () => {
         terminalId: "setup-default-setup",
         cwd: "/repo/worktrees/a",
         worktreePath: "/repo/worktrees/a",
-        env: { T3CODE_PROJECT_ROOT: "/repo/project", T3CODE_WORKTREE_PATH: "/repo/worktrees/a" },
+        env: {
+          T3CODE_PROJECT_ROOT: "/repo/project",
+          T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
+          NO_COLOR: "1",
+          FORCE_COLOR: "0",
+        },
       });
       expect(write).toHaveBeenCalledWith({
         threadId: "thread-1",
@@ -203,6 +209,7 @@ describe("ProjectSetupScriptRunner", () => {
           scriptCommand: "bun install",
           terminalId: "setup-setup",
           cwd: "/repo/worktrees/a",
+          async: true,
         });
         expect(open).toHaveBeenCalledWith({
           threadId: "thread-1",
@@ -210,6 +217,8 @@ describe("ProjectSetupScriptRunner", () => {
           cwd: "/repo/worktrees/a",
           worktreePath: "/repo/worktrees/a",
           env: {
+            NO_COLOR: "1",
+            FORCE_COLOR: "0",
             T3CODE_PROJECT_ROOT: "/repo/project",
             T3CODE_WORKTREE_PATH: "/repo/worktrees/a",
           },
