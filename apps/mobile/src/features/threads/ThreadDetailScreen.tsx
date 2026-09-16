@@ -27,6 +27,9 @@ import {
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
 import type { ThreadUserInputQuestion } from "@t3tools/client-runtime/state/thread-requests";
+import { resolveSubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
+import type { QueuedRunEdit } from "../../state/queued-run-edit";
+import type { FollowUpBehavior } from "../../lib/followUpBehavior";
 import * as Haptics from "expo-haptics";
 import { BlurTargetView } from "expo-blur";
 import { GlassBlurTargetContext } from "../../lib/glassBlurTarget";
@@ -108,7 +111,8 @@ import {
   ThreadComposer,
 } from "./ThreadComposer";
 import { ThreadFeed, type ThreadFeedHistoryControls } from "./ThreadFeed";
-import { ThreadRelationshipsBanner } from "./ThreadRelationshipsBanner";
+import { useThreadTurnSubagents } from "./ThreadAgentsSheet";
+import { ComposerQueuedEditBanner } from "./ComposerQueuedEdit";
 import { useThreadQueuedCount } from "./ThreadQueueControl";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
@@ -149,6 +153,14 @@ export interface ThreadDetailScreenProps {
   readonly historyControls?: ThreadFeedHistoryControls;
   readonly activeThreadBusy: boolean;
   readonly canStopThread: boolean;
+  /** Set while a queued message is open in the composer for editing. */
+  readonly queuedRunEdit: QueuedRunEdit | null;
+  readonly composerDraftKey: string | null;
+  readonly followUpBehavior: FollowUpBehavior;
+  readonly canSteerActiveTurn: boolean;
+  readonly isSavingQueuedEdit: boolean;
+  readonly onCancelQueuedRunEdit: () => void;
+  readonly onRemoveQueuedEditAttachment: (attachmentId: string) => void;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -310,7 +322,20 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     environmentId: props.environmentId,
     threadId: props.selectedThread.id,
   });
+  const turnSubagents = useThreadTurnSubagents({
+    environmentId: props.environmentId,
+    threadId: props.selectedThread.id,
+  });
+  const agentsSegment = resolveSubagentPillSegment(turnSubagents);
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
+  // Entering edit mode from the queue sheet should land in a ready composer,
+  // not require a second tap on a composer already holding the message.
+  const editingRunId = props.queuedRunEdit?.runId ?? null;
+  useEffect(() => {
+    if (editingRunId === null) return;
+    const frame = requestAnimationFrame(() => composerEditorRef.current?.focus());
+    return () => cancelAnimationFrame(frame);
+  }, [editingRunId]);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
   const composerOverlayRef = useRef<View>(null);
@@ -402,6 +427,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const showFloatingStatus =
     showWorkingControl ||
     queuedCount > 0 ||
+    agentsSegment !== null ||
     props.connectionStateLabel !== "connected" ||
     props.queuedMessages.length > 0 ||
     props.selectedThreadFeed.some(
@@ -966,12 +992,6 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             }
             contentMaxWidth={contentMaxWidth}
             historyControls={props.historyControls}
-            topAccessory={
-              <ThreadRelationshipsBanner
-                environmentId={props.environmentId}
-                threadId={props.selectedThread.id}
-              />
-            }
             layoutVariant={layoutVariant}
             usesAutomaticContentInsets={props.usesAutomaticContentInsets}
             onHeaderMaterialVisibilityChange={props.onHeaderMaterialVisibilityChange}
@@ -1012,6 +1032,14 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 status={floatingStatus}
                 showScrollToEnd={showScrollToEndButton}
                 onScrollToEnd={handleScrollToEnd}
+                agents={agentsSegment}
+                onOpenAgents={() => {
+                  Keyboard.dismiss();
+                  navigation.navigate("ThreadAgents", {
+                    environmentId: props.environmentId,
+                    threadId: props.selectedThread.id,
+                  });
+                }}
                 queuedCount={queuedCount}
                 onOpenQueue={() => {
                   Keyboard.dismiss();
@@ -1022,6 +1050,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                 }}
               />
               <View className="w-full self-center" style={{ maxWidth: contentMaxWidth }}>
+                {props.queuedRunEdit !== null ? (
+                  <Animated.View
+                    className="shrink-0"
+                    entering={FadeInDown.duration(180)}
+                    exiting={FadeOut.duration(120)}
+                  >
+                    <ComposerQueuedEditBanner
+                      saving={props.isSavingQueuedEdit}
+                      onCancel={props.onCancelQueuedRunEdit}
+                    />
+                  </Animated.View>
+                ) : null}
                 {props.feedbackSubmissions.map((submission) => (
                   <ComposerFeedback
                     key={submission.id}
@@ -1131,6 +1171,18 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
                     // would strand them in the outbox.
                     sendBlockedReason={
                       props.creationState?.kind === "preparing" ? "Starting the task…" : null
+                    }
+                    draftKey={props.composerDraftKey ?? undefined}
+                    followUpBehavior={props.followUpBehavior}
+                    canSteerActiveTurn={props.canSteerActiveTurn}
+                    queuedEdit={
+                      props.queuedRunEdit === null
+                        ? null
+                        : {
+                            existingAttachments: props.queuedRunEdit.existingAttachments,
+                            saving: props.isSavingQueuedEdit,
+                            onRemoveExistingAttachment: props.onRemoveQueuedEditAttachment,
+                          }
                     }
                     bottomInset={composerBottomInset}
                     onChangeDraftMessage={props.onChangeDraftMessage}
