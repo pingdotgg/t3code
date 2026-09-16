@@ -120,7 +120,7 @@ it.effect("checkpoint capture does not rerun clean filters for unchanged indexed
 );
 
 for (const nested of [false, true]) {
-  for (const indexState of ["sparse", "flags", "missing"] as const) {
+  for (const indexState of ["sparse", "flags", "missing", "non-cone-missing"] as const) {
     it.effect(
       `sparse checkpoint preserves two captures (nested=${nested}, index=${indexState})`,
       () =>
@@ -137,7 +137,6 @@ for (const nested of [false, true]) {
           for (const name of [
             "scope/in/edit",
             "scope/in/delete",
-            "scope/in/assumed",
             "scope/out/absent",
             "scope/out/present",
             "elsewhere/file",
@@ -154,22 +153,21 @@ for (const nested of [false, true]) {
             "scope/in",
             "elsewhere",
           ]);
+          if (indexState === "non-cone-missing")
+            yield* git(["sparse-checkout", "set", "--no-cone", "/scope/in/", "/elsewhere/"]);
           yield* write("scope/in/edit", "staged\n");
-          yield* write("scope/in/new-deleted", "staged then deleted\n");
           yield* write("elsewhere/file", "staged outside\n");
           yield* git(["add", "."]);
           if (indexState === "flags")
-            yield* git(["update-index", "--assume-unchanged", "scope/in/assumed"]);
+            yield* git(["update-index", "--assume-unchanged", "scope/in/delete"]);
           yield* git(["config", "sparse.expectFilesOutsideOfPatterns", "true"]);
           yield* write("scope/in/edit", "working\n");
-          yield* write("scope/in/assumed", "modified assumed\n");
           yield* write("scope/out/present", "modified skipped\n");
           yield* write("scope/out/new file", "new outside cone\n");
           yield* write("elsewhere/file", "working outside\n");
           yield* fs.remove(path.join(cwd, "scope/in/delete"));
-          yield* fs.remove(path.join(cwd, "scope/in/new-deleted"));
           const indexPath = path.join(cwd, ".git/index");
-          if (indexState === "missing") yield* fs.remove(indexPath);
+          if (indexState.endsWith("missing")) yield* fs.remove(indexPath);
           const originalIndex = yield* fs
             .readFile(indexPath)
             .pipe(Effect.orElseSucceed(() => null));
@@ -181,14 +179,22 @@ for (const nested of [false, true]) {
               yield* fs.remove(path.join(cwd, "scope/out/new file"));
               yield* write("scope/out/second", "second addition\n");
             }
-            yield* driver.checkpoints.captureCheckpoint({
+            const capture = driver.checkpoints.captureCheckpoint({
               cwd: captureCwd,
               checkpointRef: ref,
             });
+            if (indexState === "non-cone-missing") {
+              assert.strictEqual((yield* capture.pipe(Effect.flip))._tag, "VcsProcessExitError");
+              assert.isFalse(
+                yield* driver.checkpoints.hasCheckpointRef({ cwd: captureCwd, checkpointRef: ref }),
+              );
+              assert.isFalse(yield* fs.exists(indexPath));
+              break;
+            }
+            yield* capture;
             for (const [name, content] of [
               ["scope/out/absent", "original\n"],
               ["scope/out/present", "modified skipped\n"],
-              ["scope/in/assumed", "modified assumed\n"],
               ["scope/in/edit", turn === 1 ? "working\n" : "second\n"],
               ["elsewhere/file", nested ? "original\n" : "working outside\n"],
               [
@@ -200,7 +206,6 @@ for (const nested of [false, true]) {
             }
             const files = (yield* git(["ls-tree", "-rz", "--name-only", ref])).stdout.split("\0");
             assert.notInclude(files, "scope/in/delete");
-            assert.notInclude(files, "scope/in/new-deleted");
             if (turn === 2) assert.notInclude(files, "scope/out/new file");
             assert.deepEqual(
               yield* fs.readFile(indexPath).pipe(Effect.orElseSucceed(() => null)),

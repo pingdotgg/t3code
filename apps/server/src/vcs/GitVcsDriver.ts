@@ -834,6 +834,24 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             return !specialFlags;
           }).pipe(Effect.orElseSucceed(() => false));
           if (!reusedIndex) {
+            if (sparseCheckout) {
+              const cone = yield* execute({
+                operation,
+                cwd: input.cwd,
+                args: ["config", "--bool", "core.sparseCheckoutCone"],
+                allowNonZeroExit: true,
+              });
+              // Rebuilding a non-cone index loses exclusions; do not publish false deletions.
+              if (cone.stdout.trim() !== "true") {
+                return yield* new VcsProcessExitError({
+                  operation,
+                  command: "git read-tree",
+                  cwd: input.cwd,
+                  exitCode: 1,
+                  detail: "Cannot rebuild a checkpoint index for non-cone sparse checkout.",
+                });
+              }
+            }
             yield* cleanupTempIndex;
             yield* execute({
               operation,
