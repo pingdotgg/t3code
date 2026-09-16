@@ -33,6 +33,7 @@ import {
 import { MarkdownTextPrimitive } from "@t3tools/mobile-markdown-text/primitive";
 
 import { boundedSelectableSourceTokens, prepareSourceFileDocument } from "./source-file-document";
+import { createSourceFileScrollRequest } from "./source-file-scroll";
 import { sourceHighlightAtom } from "./sourceHighlightingState";
 
 interface SourceFileSurfaceProps {
@@ -57,7 +58,7 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
 }) {
   return (
     <View
-      className={cn("flex-row", props.highlighted && "bg-primary/10")}
+      className={cn("flex-row items-start", props.highlighted && "bg-primary/10")}
       style={{ minHeight: props.codeSurface.rowHeight }}
     >
       <NativeText
@@ -71,51 +72,55 @@ const HighlightedSourceLine = memo(function HighlightedSourceLine(props: {
       >
         {props.index + 1}
       </NativeText>
-      <NativeText
-        selectable
-        numberOfLines={props.wordBreak ? undefined : 1}
-        className="flex-1 font-normal text-foreground"
-        style={{
-          fontFamily: REVIEW_MONO_FONT_FAMILY,
-          fontSize: props.codeSurface.fontSize,
-          lineHeight: props.codeSurface.rowHeight,
-          minWidth: props.wordBreak ? undefined : 320,
-        }}
+      <View
+        className={props.wordBreak ? "min-w-0 flex-1" : undefined}
+        style={props.wordBreak ? undefined : { minWidth: 320 }}
       >
-        {props.tokens && props.tokens.length > 0
-          ? (() => {
-              let offset = 0;
-              return props.tokens.map((token) => {
-                const start = offset;
-                offset += token.content.length;
+        <NativeText
+          selectable
+          numberOfLines={props.wordBreak ? undefined : 1}
+          className="font-normal text-foreground"
+          style={{
+            fontFamily: REVIEW_MONO_FONT_FAMILY,
+            fontSize: props.codeSurface.fontSize,
+            lineHeight: props.codeSurface.rowHeight,
+          }}
+        >
+          {props.tokens && props.tokens.length > 0
+            ? (() => {
+                let offset = 0;
+                return props.tokens.map((token) => {
+                  const start = offset;
+                  offset += token.content.length;
 
-                const fontWeight =
-                  token.fontStyle !== null && (token.fontStyle & 2) === 2
-                    ? ("700" as const)
-                    : ("400" as const);
-                const fontStyle =
-                  token.fontStyle !== null && (token.fontStyle & 1) === 1
-                    ? ("italic" as const)
-                    : ("normal" as const);
+                  const fontWeight =
+                    token.fontStyle !== null && (token.fontStyle & 2) === 2
+                      ? ("700" as const)
+                      : ("400" as const);
+                  const fontStyle =
+                    token.fontStyle !== null && (token.fontStyle & 1) === 1
+                      ? ("italic" as const)
+                      : ("normal" as const);
 
-                return (
-                  <NativeText
-                    key={`${start}:${token.content.length}:${token.color ?? ""}`}
-                    selectable
-                    style={{
-                      color: token.color ?? undefined,
-                      fontFamily: REVIEW_MONO_FONT_FAMILY,
-                      fontWeight,
-                      fontStyle,
-                    }}
-                  >
-                    {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
-                  </NativeText>
-                );
-              });
-            })()
-          : renderVisibleWhitespace(props.line || " ")}
-      </NativeText>
+                  return (
+                    <NativeText
+                      key={`${start}:${token.content.length}:${token.color ?? ""}`}
+                      selectable
+                      style={{
+                        color: token.color ?? undefined,
+                        fontFamily: REVIEW_MONO_FONT_FAMILY,
+                        fontWeight,
+                        fontStyle,
+                      }}
+                    >
+                      {token.content.length > 0 ? renderVisibleWhitespace(token.content) : " "}
+                    </NativeText>
+                  );
+                });
+              })()
+            : renderVisibleWhitespace(props.line || " ")}
+        </NativeText>
+      </View>
     </View>
   );
 });
@@ -236,20 +241,30 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
     [props.selectable, tokens],
   );
   const listRef = useRef<FlatList<string>>(null);
+  const scrollRequestRef = useRef<ReturnType<typeof createSourceFileScrollRequest> | null>(null);
   const { isPullRefreshing, handlePullToRefresh } = useSourceFileRefresh(props.onRefresh);
   const refreshControl = props.onRefresh ? (
     <RefreshControl refreshing={isPullRefreshing} onRefresh={() => void handlePullToRefresh()} />
   ) : undefined;
 
   useEffect(() => {
-    if (targetIndex === null) {
+    if (targetIndex === null || listRef.current === null) {
       return;
     }
-    const frame = requestAnimationFrame(() => {
-      listRef.current?.scrollToIndex({ index: targetIndex, animated: false, viewPosition: 0.3 });
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [props.path, targetIndex]);
+    const request = createSourceFileScrollRequest(listRef.current, targetIndex);
+    scrollRequestRef.current = request;
+    return () => {
+      scrollRequestRef.current = null;
+      request.dispose();
+    };
+  }, [codeWordBreak, props.path, props.selectable, targetIndex]);
+
+  const handleScrollToIndexFailed = useCallback(
+    (info: { index: number; averageItemLength: number }) => {
+      scrollRequestRef.current?.retry(info, codeSurface.rowHeight);
+    },
+    [codeSurface.rowHeight],
+  );
 
   const renderLine = useCallback(
     ({ item, index }: { item: string; index: number }) => (
@@ -338,6 +353,7 @@ function JavaScriptSourceFileSurface(props: SourceFileSurfaceProps) {
         paddingTop: 8,
       }}
       renderItem={renderLine}
+      onScrollToIndexFailed={handleScrollToIndexFailed}
     />
   );
 
