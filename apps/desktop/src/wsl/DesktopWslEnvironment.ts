@@ -305,7 +305,7 @@ export const buildWslRuntimeInstallScript = (
     // use: the file is executable and `t3 --version` exits 0. That covers the
     // truncated-binary and wrong-arch cases without a separate native probe.
     "runtime_entry_runs() {",
-    '  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null 2>&1',
+    '  [ -x "$1/t3" ] && "$1/t3" --version >/dev/null',
     "}",
     // Hashing the entry is what tells a working cache from one whose `t3` was
     // swapped or half-written after install: the file is still there and may
@@ -318,7 +318,7 @@ export const buildWslRuntimeInstallScript = (
     "}",
     "runtime_is_ready() {",
     '  [ -f "$ready_marker" ] &&',
-    '    runtime_entry_runs "$runtime_root" &&',
+    '    runtime_entry_runs "$runtime_root" 2>/dev/null &&',
     // An empty or unreadable marker is a miss, not a pass: that is what a
     // runtime installed before the marker carried a digest looks like, and one
     // reinstall is the cheapest way to make it verifiable from then on.
