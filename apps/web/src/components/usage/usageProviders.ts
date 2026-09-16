@@ -1,4 +1,4 @@
-import type { UsageProviderKind } from "@t3tools/contracts";
+import type { ServerProvider, UsageProviderKind } from "@t3tools/contracts";
 
 import { ClaudeAI, GrokIcon, type Icon, OpenAI } from "../Icons";
 
@@ -31,6 +31,13 @@ export const PROVIDER_PRESENTATION = {
     mark: GrokIcon,
   },
 } satisfies Record<UsageProviderKind, UsageProviderPresentation>;
+
+/** The series colour the cost chart uses for this driver, so the two views read as one. */
+export function barColor(driver: ServerProvider["driver"]): string {
+  const kind: UsageProviderKind | undefined =
+    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
+  return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
+}
 
 /** Stable provider reading order across charts, summaries, tables, and hover rows. */
 export const PROVIDER_ORDER = Object.keys(PROVIDER_PRESENTATION) as UsageProviderKind[];
