@@ -146,7 +146,10 @@ describe("buildFileContextMenuItems", () => {
     expect(openWith.children?.[0]).toMatchObject({ label: "Default Application" });
   });
 
-  it("keeps the top-level open when no submenu exists to fold it into", () => {
+  it("drops the default-app open entirely when the caller's row already covers it", () => {
+    // With no editors detected, the caller's "Open in editor" opens the
+    // default app through preferred-editor resolution, so a shared Open row
+    // would be a duplicate.
     const items = buildFileContextMenuItems({
       hasAbsolutePath: true,
       hasPrimaryOpenItem: true,
@@ -157,7 +160,7 @@ describe("buildFileContextMenuItems", () => {
       },
     });
 
-    expect(items.map((item) => item.id)).toEqual(["open", "reveal-in-folder"]);
+    expect(items.map((item) => item.id)).toEqual(["reveal-in-folder"]);
   });
 
   it("offers nothing when the path cannot be resolved", () => {

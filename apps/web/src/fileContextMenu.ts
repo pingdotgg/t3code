@@ -96,9 +96,12 @@ export function buildFileContextMenuItems(input: {
   if (!input.hasAbsolutePath) return [];
   const items: ContextMenuItem<FileContextMenuAction>[] = [];
   const editorIds = input.capabilities.editorIds.filter((id) => id !== "file-manager");
-  const nestDefaultOpen =
-    input.capabilities.canOpenDefault && input.hasPrimaryOpenItem === true && editorIds.length > 0;
-  if (input.capabilities.canOpenDefault && !nestDefaultOpen) {
+  // With no submenu to fold into, the caller's own open row already reaches
+  // the default app through preferred-editor resolution — a second Open row
+  // would do the same thing.
+  const hasOwnOpen = input.hasPrimaryOpenItem === true;
+  const nestDefaultOpen = hasOwnOpen && input.capabilities.canOpenDefault && editorIds.length > 0;
+  if (input.capabilities.canOpenDefault && !hasOwnOpen) {
     items.push({ id: "open", label: "Open", icon: "pencil" });
   }
   if (input.capabilities.revealLabel !== undefined) {
