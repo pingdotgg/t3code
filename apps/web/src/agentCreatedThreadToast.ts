@@ -1,9 +1,8 @@
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
-import type { EnvironmentId, ScopedThreadRef, ThreadsCreateResult } from "@t3tools/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@t3tools/contracts";
 
 import { stackedThreadToast, toastManager } from "./components/ui/toast";
-
-export type AgentCreatedThread = ThreadsCreateResult;
+import type { AgentCreatedThread } from "./session-logic";
 
 export type ThreadRouteNavigator = (threadRef: ScopedThreadRef) => void;
 

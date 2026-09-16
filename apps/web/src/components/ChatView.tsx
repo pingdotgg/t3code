@@ -130,7 +130,9 @@ import {
   deriveWorkLogEntries,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  observeAgentCreatedThreads,
   selectHandoffImageResources,
+  type AgentCreatedThreadsBaseline,
   type TimelineEntriesProjection,
 } from "../session-logic";
 import { notifyAgentCreatedThreads } from "../agentCreatedThreadToast";
@@ -2870,13 +2872,25 @@ export default function ChatView(props: ChatViewProps) {
     () => deriveAgentCreatedThreads(workLogEntries),
     [workLogEntries],
   );
+  const agentCreatedBaselinesRef = useRef(new Map<string, AgentCreatedThreadsBaseline>());
   useEffect(() => {
-    if (agentCreatedThreads.length === 0) {
+    // Baseline once the thread is live: creates already in the work log —
+    // including anything replayed while it synced — are history, not toasts.
+    if (threadSyncPhase !== null) {
+      return;
+    }
+    const { baseline, fresh } = observeAgentCreatedThreads({
+      baseline: agentCreatedBaselinesRef.current.get(routeThreadKey),
+      entries: workLogEntries,
+      threads: agentCreatedThreads,
+    });
+    agentCreatedBaselinesRef.current.set(routeThreadKey, baseline);
+    if (fresh.length === 0) {
       return;
     }
     notifyAgentCreatedThreads({
       environmentId,
-      threads: agentCreatedThreads,
+      threads: fresh,
       navigate: (threadRef) => {
         void navigate({
           to: "/$environmentId/$threadId",
@@ -2884,7 +2898,14 @@ export default function ChatView(props: ChatViewProps) {
         });
       },
     });
-  }, [agentCreatedThreads, environmentId, navigate]);
+  }, [
+    agentCreatedThreads,
+    environmentId,
+    navigate,
+    routeThreadKey,
+    threadSyncPhase,
+    workLogEntries,
+  ]);
   // Native subagent fold: memoized by activity-list identity, shared by the
   // Agents surface, live strip, and workflow cards. v2Projection is null
   // until orchestration-v2 lands (source precedence lives in the derive).

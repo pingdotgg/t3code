@@ -532,14 +532,19 @@ function isNoContentRuntimeWarning(activity: OrchestrationThreadActivity): boole
   );
 }
 
+export interface AgentCreatedThread extends ThreadsCreateResult {
+  /** Time of the work-log entry that carried the create result. */
+  createdAt: string;
+}
+
 /**
  * Threads the agent created via `threads_create`, one per thread id, in work-log
  * order. Failed or declined calls are excluded.
  */
 export function deriveAgentCreatedThreads(
   entries: ReadonlyArray<WorkLogEntry>,
-): ThreadsCreateResult[] {
-  const byThreadId = new Map<string, ThreadsCreateResult>();
+): AgentCreatedThread[] {
+  const byThreadId = new Map<string, AgentCreatedThread>();
   for (const entry of entries) {
     const created = entry.threadsCreated;
     if (
@@ -551,10 +556,50 @@ export function deriveAgentCreatedThreads(
       continue;
     }
     if (!byThreadId.has(created.threadId)) {
-      byThreadId.set(created.threadId, created);
+      byThreadId.set(created.threadId, { ...created, createdAt: entry.createdAt });
     }
   }
   return [...byThreadId.values()];
+}
+
+/**
+ * Per-view baseline for the "new thread" toast: the first observation of a
+ * thread's work log is history — every create already persisted or replayed
+ * while the thread synced. `watermark` is the newest entry timestamp seen, so
+ * creates backfilled by "load earlier turns" stay silent too.
+ */
+export interface AgentCreatedThreadsBaseline {
+  readonly ids: ReadonlySet<string>;
+  readonly watermark: string;
+}
+
+export function observeAgentCreatedThreads(input: {
+  baseline: AgentCreatedThreadsBaseline | undefined;
+  entries: ReadonlyArray<WorkLogEntry>;
+  threads: ReadonlyArray<AgentCreatedThread>;
+}): { baseline: AgentCreatedThreadsBaseline; fresh: AgentCreatedThread[] } {
+  const watermark = input.entries.reduce(
+    (latest, entry) => (entry.createdAt > latest ? entry.createdAt : latest),
+    input.baseline?.watermark ?? "",
+  );
+  const baseline = input.baseline;
+  if (baseline === undefined) {
+    // First live observation: everything already in the work log is history.
+    return {
+      baseline: { ids: new Set(input.threads.map((thread) => thread.threadId)), watermark },
+      fresh: [],
+    };
+  }
+  const fresh = input.threads.filter(
+    (thread) => !baseline.ids.has(thread.threadId) && thread.createdAt >= baseline.watermark,
+  );
+  return {
+    baseline: {
+      ids: new Set([...baseline.ids, ...fresh.map((thread) => thread.threadId)]),
+      watermark,
+    },
+    fresh,
+  };
 }
 
 function isPlanBoundaryToolActivity(activity: OrchestrationThreadActivity): boolean {

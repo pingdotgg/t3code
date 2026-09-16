@@ -20,6 +20,7 @@ import {
   findLatestProposedPlan,
   hasActionableProposedPlan,
   isLatestTurnSettled,
+  observeAgentCreatedThreads,
   selectHandoffImageResources,
   selectMessageImageResources,
   workEntryIndicatesToolNeutralStatus,
@@ -1191,7 +1192,7 @@ describe("deriveWorkLogEntries", () => {
     const entries = deriveWorkLogEntries(activities);
     expect(entries[0]?.threadsCreated).toEqual({ threadId: "thread-new", title: "Fresh thread" });
     expect(deriveAgentCreatedThreads(entries)).toEqual([
-      { threadId: "thread-new", title: "Fresh thread" },
+      { threadId: "thread-new", title: "Fresh thread", createdAt: "2026-02-23T00:00:00.000Z" },
     ]);
   });
 
@@ -1239,8 +1240,141 @@ describe("deriveWorkLogEntries", () => {
 
     const entries = deriveWorkLogEntries(activities);
     expect(deriveAgentCreatedThreads(entries)).toEqual([
-      { threadId: "thread-new", title: "Fresh thread" },
+      { threadId: "thread-new", title: "Fresh thread", createdAt: "2026-02-23T00:00:00.000Z" },
     ]);
+  });
+
+  it("baselines historical creates and only surfaces ones that arrive later", () => {
+    const historical = deriveWorkLogEntries([
+      makeActivity({
+        id: "threads-create-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-old", title: "Old thread" },
+          },
+        },
+      }),
+    ]);
+
+    // First observation is history only: nothing is fresh.
+    const first = observeAgentCreatedThreads({
+      baseline: undefined,
+      entries: historical,
+      threads: deriveAgentCreatedThreads(historical),
+    });
+    expect(first.fresh).toEqual([]);
+
+    // A create landing while the thread is open is fresh.
+    const withLive = deriveWorkLogEntries([
+      makeActivity({
+        id: "threads-create-old",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-old", title: "Old thread" },
+          },
+        },
+      }),
+      makeActivity({
+        id: "threads-create-live",
+        createdAt: "2026-02-23T00:00:09.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-live", title: "Live thread" },
+          },
+        },
+      }),
+    ]);
+    const second = observeAgentCreatedThreads({
+      baseline: first.baseline,
+      entries: withLive,
+      threads: deriveAgentCreatedThreads(withLive),
+    });
+    expect(second.fresh).toEqual([
+      { threadId: "thread-live", title: "Live thread", createdAt: "2026-02-23T00:00:09.000Z" },
+    ]);
+
+    // The same list re-derived does not repeat the toast.
+    const third = observeAgentCreatedThreads({
+      baseline: second.baseline,
+      entries: withLive,
+      threads: deriveAgentCreatedThreads(withLive),
+    });
+    expect(third.fresh).toEqual([]);
+  });
+
+  it("keeps backfilled older creates silent after the baseline exists", () => {
+    const recent = deriveWorkLogEntries([
+      makeActivity({
+        id: "threads-create-recent",
+        createdAt: "2026-02-23T00:00:09.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-recent", title: "Recent thread" },
+          },
+        },
+      }),
+    ]);
+    const first = observeAgentCreatedThreads({
+      baseline: undefined,
+      entries: recent,
+      threads: deriveAgentCreatedThreads(recent),
+    });
+    expect(first.fresh).toEqual([]);
+
+    // "Load earlier turns" prepends an older create: it predates the baseline
+    // watermark, so it must not toast even though its id is new.
+    const backfilled = deriveWorkLogEntries([
+      makeActivity({
+        id: "threads-create-ancient",
+        createdAt: "2026-02-23T00:00:01.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-ancient", title: "Ancient thread" },
+          },
+        },
+      }),
+      makeActivity({
+        id: "threads-create-recent",
+        createdAt: "2026-02-23T00:00:09.000Z",
+        kind: "tool.completed",
+        summary: "t3-code · threads_create",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "threads_create",
+            structuredResult: { threadId: "thread-recent", title: "Recent thread" },
+          },
+        },
+      }),
+    ]);
+    const second = observeAgentCreatedThreads({
+      baseline: first.baseline,
+      entries: backfilled,
+      threads: deriveAgentCreatedThreads(backfilled),
+    });
+    expect(second.fresh).toEqual([]);
   });
 
   it("unwraps PowerShell command wrappers for displayed command text", () => {
