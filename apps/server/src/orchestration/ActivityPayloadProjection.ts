@@ -1,4 +1,5 @@
 import { projectQuestionToolInput } from "@t3tools/shared/toolActivity";
+import { matchThreadsSurfaceToolName } from "@t3tools/contracts";
 import type {
   OrchestrationEvent,
   OrchestrationThreadActivity,
@@ -6,7 +7,6 @@ import type {
 } from "@t3tools/contracts";
 import { isWorkspaceImagePreviewPath } from "@t3tools/shared/filePreview";
 import { extractJsonObject } from "@t3tools/shared/schemaJson";
-import { THREADS_SURFACE_TOOL_NAMES } from "@t3tools/contracts";
 
 function asRecord(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
@@ -309,11 +309,8 @@ function projectPreviewToolMetadata(data: Record<string, unknown>, status: unkno
 
 /** True when the tool belongs to the server's own threads surface toolkit. */
 function isThreadsSurfaceTool(data: Record<string, unknown>, item: Record<string, unknown> | null) {
-  const candidates = [data.toolName, item?.tool];
-  return candidates.some(
-    (candidate) =>
-      typeof candidate === "string" &&
-      (THREADS_SURFACE_TOOL_NAMES as readonly string[]).includes(candidate),
+  return [data.toolName, item?.tool].some(
+    (candidate) => matchThreadsSurfaceToolName(candidate) !== undefined,
   );
 }
 

@@ -20,6 +20,22 @@ import {
 export const THREADS_SURFACE_TOOL_NAMES = ["threads_list", "threads_create"] as const;
 export type ThreadsSurfaceToolName = (typeof THREADS_SURFACE_TOOL_NAMES)[number];
 
+/**
+ * Adapters surface toolkit tools under different names: Codex keeps the bare
+ * tool name (`item.tool`), while Claude/OpenCode wrap it as
+ * `mcp__<server>__<tool>`. Matches both forms for the `t3-code` server only,
+ * using the same server-name aliases as the preview tool matcher.
+ */
+const THREADS_SURFACE_QUALIFIED_NAME =
+  /^(?:(?:mcp__)?t3[-_]?code_{1,2})?(threads_list|threads_create)$/;
+
+export function matchThreadsSurfaceToolName(name: unknown): ThreadsSurfaceToolName | undefined {
+  if (typeof name !== "string") {
+    return undefined;
+  }
+  return THREADS_SURFACE_QUALIFIED_NAME.exec(name)?.[1] as ThreadsSurfaceToolName | undefined;
+}
+
 export const THREADS_SURFACE_LIST_DEFAULT_LIMIT = 8;
 export const THREADS_SURFACE_LIST_MAX_LIMIT = 25;
 

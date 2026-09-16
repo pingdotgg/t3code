@@ -365,12 +365,12 @@ describe("projectActivityPayload", () => {
       activity({
         itemType: "mcp_tool_call",
         data: {
-          toolName: "threads_create",
+          toolName: "mcp__t3-code__threads_create",
           input: { title: "Explore canvas" },
           result: {
             type: "tool_result",
             tool_use_id: "toolu_2",
-            content: [{ type: "text", text: JSON.stringify(result) }],
+            content: JSON.stringify(result),
           },
         },
       }),

@@ -1153,6 +1153,26 @@ describe("deriveWorkLogEntries", () => {
     expect(entry?.threadsList).toEqual({ threads: [] });
   });
 
+  it("detects the threads_list tool name on Claude-shaped qualified payloads", () => {
+    const activities: OrchestrationThreadActivity[] = [
+      makeActivity({
+        id: "threads-list-claude",
+        kind: "tool.completed",
+        summary: "t3-code · threads_list",
+        payload: {
+          itemType: "mcp_tool_call",
+          data: {
+            toolName: "mcp__t3-code__threads_list",
+            structuredResult: { threads: [] },
+          },
+        },
+      }),
+    ];
+
+    const [entry] = deriveWorkLogEntries(activities);
+    expect(entry?.threadsList).toEqual({ threads: [] });
+  });
+
   it("leaves threadsList undefined when the structured result shape is wrong", () => {
     const activities: OrchestrationThreadActivity[] = [
       makeActivity({

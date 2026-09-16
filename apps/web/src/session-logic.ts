@@ -31,6 +31,7 @@ import {
   type ToolLifecycleItemType,
   ProjectId,
   ThreadId,
+  matchThreadsSurfaceToolName,
   type TurnId,
 } from "@t3tools/contracts";
 
@@ -718,7 +719,8 @@ function toDerivedWorkLogEntry(activity: OrchestrationThreadActivity): DerivedWo
     // Tool-name detection mirrors the server's ActivityPayloadProjection:
     // Claude/OpenCode put it at `data.toolName`, Codex at `data.item.tool`.
     const item = asRecord(data?.item);
-    const toolName = asTrimmedString(data?.toolName) ?? (item ? asTrimmedString(item.tool) : null);
+    const toolName =
+      matchThreadsSurfaceToolName(data?.toolName) ?? matchThreadsSurfaceToolName(item?.tool);
     if (toolName === "threads_list") {
       const threadsList = extractThreadsListResult(data?.structuredResult);
       if (threadsList) {
