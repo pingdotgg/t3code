@@ -47,7 +47,6 @@ import {
   FileSearchIcon,
   FolderIcon,
   FolderPlusIcon,
-  GitPullRequestIcon,
   LinkIcon,
   MessageSquareIcon,
   MonitorIcon,
@@ -2073,7 +2072,7 @@ function OpenCommandPaletteDialog(props: {
       value: "action:pull-requests",
       searchTerms: ["pull requests", "prs", "reviews"],
       title: "Open pull requests",
-      icon: <GitPullRequestIcon className={ITEM_ICON_CLASS} />,
+      icon: <PullRequestGlyph.pullRequest className={ITEM_ICON_CLASS} />,
       run: async () => {
         await navigate({
           to: "/pull-requests",
