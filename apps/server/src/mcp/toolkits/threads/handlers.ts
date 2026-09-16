@@ -20,9 +20,6 @@ import * as OrchestrationEngine from "../../../orchestration/Services/Orchestrat
 import * as ProjectionSnapshotQuery from "../../../orchestration/Services/ProjectionSnapshotQuery.ts";
 import { ThreadsToolkit } from "./tools.ts";
 
-const fail = (operation: ThreadsSurfaceError["operation"], detail: string) =>
-  Effect.fail(new ThreadsSurfaceError({ operation, detail }));
-
 const failFrom = (operation: ThreadsSurfaceError["operation"], detail: string) =>
   Effect.mapError((cause: unknown) => new ThreadsSurfaceError({ operation, detail, cause }));
 
@@ -73,16 +70,20 @@ const threadsCreate = (input: ThreadsCreateInput) =>
 
     const callingThread = readModel.threads.find((thread) => thread.id === scope.threadId);
     if (!callingThread) {
-      return yield* fail(
-        "threads_create",
-        "Calling thread no longer exists; cannot derive the target project.",
+      return yield* Effect.fail(
+        new ThreadsSurfaceError({
+          operation: "threads_create",
+          detail: "Calling thread no longer exists; cannot derive the target project.",
+        }),
       );
     }
     const projectId = input.projectId ?? callingThread.projectId;
     if (!readModel.projects.some((project) => project.id === projectId)) {
-      return yield* fail(
-        "threads_create",
-        `Project ${projectId} does not exist in this environment.`,
+      return yield* Effect.fail(
+        new ThreadsSurfaceError({
+          operation: "threads_create",
+          detail: `Project ${projectId} does not exist in this environment.`,
+        }),
       );
     }
 
