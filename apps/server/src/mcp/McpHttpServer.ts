@@ -41,6 +41,13 @@ import {
   DeviceStandardToolkit,
 } from "./toolkits/device/tools.ts";
 
+import { MonitorToolkit } from "./toolkits/monitor/tools.ts";
+import { MonitorToolkitHandlersLive } from "./toolkits/monitor/handlers.ts";
+
+export const MonitorToolkitRegistrationLive = McpServer.toolkit(MonitorToolkit).pipe(
+  Layer.provide(MonitorToolkitHandlersLive),
+);
+
 const unauthorized = HttpServerResponse.jsonUnsafe(
   {
     error: "invalid_mcp_credential",
@@ -632,4 +639,5 @@ export const layer = Layer.mergeAll(
   PreviewToolkitRegistrationLive,
   PullRequestsToolkitRegistrationLive,
   DeviceToolkitRegistrationLive,
+  MonitorToolkitRegistrationLive,
 ).pipe(Layer.provideMerge(McpTransportLive));
