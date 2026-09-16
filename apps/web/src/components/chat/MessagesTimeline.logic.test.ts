@@ -1357,6 +1357,67 @@ describe("deriveMessagesTimelineRows", () => {
     ]);
   });
 
+  it("appends the context offer as the last row while the thread is idle", () => {
+    const offer = { usedTokens: 178_000, updatedAt: "2026-01-01T00:10:00Z" };
+    const entries = [
+      {
+        id: "assistant-entry",
+        kind: "message",
+        createdAt: "2026-01-01T00:00:00Z",
+        message: {
+          id: "assistant-1" as never,
+          role: "assistant",
+          text: "Done.",
+          turnId: null,
+          createdAt: "2026-01-01T00:00:00Z",
+          updatedAt: "2026-01-01T00:00:00Z",
+          streaming: false,
+        },
+      },
+    ] as const;
+    const base = {
+      timelineEntries: entries,
+      activeTurnStartedAt: null,
+      turnDiffSummaries: [],
+      supportsConversationRollback: false,
+      contextOffer: offer,
+    };
+
+    const idle = deriveMessagesTimelineRows({ ...base, isWorking: false });
+    expect(idle.at(-1)).toEqual({
+      kind: "context-offer",
+      id: "context-offer-row",
+      createdAt: offer.updatedAt,
+      usedTokens: offer.usedTokens,
+    });
+
+    // A running turn takes the slot back: the offer is for the next send, not this one.
+    const working = deriveMessagesTimelineRows({ ...base, isWorking: true });
+    expect(working.some((row) => row.kind === "context-offer")).toBe(false);
+
+    // A queued message has already decided the next send, so the offer is stale.
+    const queued = deriveMessagesTimelineRows({
+      ...base,
+      isWorking: false,
+      queuedMessages: [
+        {
+          id: "q1",
+          prompt: "next",
+          images: [],
+          files: [],
+          terminalContexts: [],
+          previewAnnotations: [],
+          reviewComments: [],
+          submissionIntent: "foreground",
+          queuedAfterToolActivityId: null,
+          createdAt: "2026-01-01T00:11:00Z",
+        },
+      ],
+    });
+    expect(queued.some((row) => row.kind === "context-offer")).toBe(false);
+    expect(queued.at(-1)?.kind).toBe("queued-message");
+  });
+
   it("keeps subagent spawn rows outside turn folds even after they settle", () => {
     const firstMessage: ChatMessage = {
       id: MessageId.make("assistant-first-entry"),

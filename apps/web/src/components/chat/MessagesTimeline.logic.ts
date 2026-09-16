@@ -361,6 +361,12 @@ export type MessagesTimelineRow =
       label: string;
     }
   | {
+      kind: "context-offer";
+      id: string;
+      createdAt: string;
+      usedTokens: number;
+    }
+  | {
       kind: "message";
       id: string;
       createdAt: string;
@@ -925,6 +931,12 @@ export function deriveMessagesTimelineRows(input: {
   worktreeSetup?: WorktreeSetupSnapshot | null;
   /** Messages sent during the running turn, rendered after the live rows. */
   queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
+  /**
+   * A resumable context window worth compacting before the next turn. Renders
+   * as the last row, in the same slot the compaction separator takes once the
+   * user compacts. Null when there is nothing to offer.
+   */
+  contextOffer?: { readonly usedTokens: number; readonly updatedAt: string } | null;
 }): MessagesTimelineRow[] {
   const turnDiffSummaryByAssistantMessageId = new Map<MessageId, TurnDiffSummary>();
   for (const summary of input.turnDiffSummaries) {
@@ -1393,6 +1405,17 @@ export function deriveMessagesTimelineRows(input: {
       createdAt: input.activeTurnStartedAt,
     });
   }
+  // The offer is for the next send. A running turn or a queued message means
+  // that send is already decided, so the row would only be stale.
+  const hasQueuedMessages = (input.queuedMessages?.length ?? 0) > 0;
+  if (input.contextOffer && !input.isWorking && !hasQueuedMessages) {
+    nextRows.push({
+      kind: "context-offer",
+      id: CONTEXT_OFFER_ROW_ID,
+      createdAt: input.contextOffer.updatedAt,
+      usedTokens: input.contextOffer.usedTokens,
+    });
+  }
   const rows = attachTrailingToolGroupsToAssistant(nextRows);
   input.queuedMessages?.forEach((queuedMessage, index) => {
     rows.push({
@@ -1405,6 +1428,8 @@ export function deriveMessagesTimelineRows(input: {
   });
   return rows;
 }
+
+const CONTEXT_OFFER_ROW_ID = "context-offer-row";
 
 export const WORKTREE_SETUP_ROW_ID = "worktree-setup-row";
 
@@ -1517,6 +1542,10 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
       return a.createdAt === (b as typeof a).createdAt;
     case "worktree-setup":
       return a.snapshot === (b as typeof a).snapshot;
+    case "context-offer": {
+      const bo = b as typeof a;
+      return a.createdAt === bo.createdAt && a.usedTokens === bo.usedTokens;
+    }
 
     case "assistant-meta": {
       const bm = b as typeof a;

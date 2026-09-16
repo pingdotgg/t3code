@@ -413,6 +413,16 @@ describe("shouldShowEnvironmentIndicator", () => {
     ).toBe(false);
   });
 
+  it("names a sole primary environment when its server has an update waiting", () => {
+    expect(
+      shouldShowEnvironmentIndicator({
+        activeEnvironment: { isPrimary: true },
+        canPickEnvironment: false,
+        serverUpdateAvailable: true,
+      }),
+    ).toBe(true);
+  });
+
   it("hides the indicator when the active environment is unknown", () => {
     expect(
       shouldShowEnvironmentIndicator({

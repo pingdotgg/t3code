@@ -35,6 +35,65 @@ function updateFailureMessage(error: unknown): string {
   return error instanceof Error ? error.message : "Server update failed.";
 }
 
+/**
+ * The update click as a callback, for hosts that cannot render a Button, such
+ * as a row inside a Select. Carries the same confirm dialog and copy fallback
+ * as the component, and the same label rule.
+ */
+export function useServerUpdateTrigger(
+  target: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate">,
+) {
+  const continueThreadsAfterServerUpdate = useEnvironmentSettings(
+    target.environmentId,
+    (settings) => settings.continueThreadsAfterServerUpdate,
+  );
+  const update = useServerUpdate();
+  const { copyToClipboard } = useCopyToClipboard<{ command: string }>({
+    target: "update command",
+    onCopy: ({ command }) => {
+      toastManager.add({
+        type: "success",
+        title: "Update command copied",
+        description: `Run \`${command}\` on ${target.serverLabel} to update it.`,
+      });
+    },
+    onError: (error) => {
+      toastManager.add({
+        type: "error",
+        title: "Could not copy update command",
+        description: error.message,
+      });
+    },
+  });
+  const manualCommand =
+    target.selfUpdate === null ? manualServerUpdateCommand(target.targetVersion) : null;
+  // An old desktop-managed server cannot be told to update over RPC. The
+  // component shows an instruction for that case; the hook reports it and does
+  // nothing on trigger.
+  const actionable = !(target.selfUpdate === "desktop-managed" && !target.desktopAppUpdate);
+  const trigger = async () => {
+    if (!actionable) return;
+    if (manualCommand !== null) {
+      copyToClipboard(manualCommand, { command: manualCommand });
+      return;
+    }
+    if (pendingUpdateEnvironmentIds.has(target.environmentId)) return;
+    if (target.selfUpdate === "desktop-managed") {
+      const confirmed =
+        (await requestConfirmDialog(
+          `Update the T3 Code desktop app that runs the ${target.serverLabel}? It will close and relaunch on that machine.`,
+        )) ?? true;
+      if (!confirmed) return;
+    }
+    await update({ ...target, continueThreadsAfterServerUpdate });
+  };
+  return {
+    actionable,
+    label: manualCommand !== null ? "Copy update command" : "Update",
+    trigger,
+  };
+}
+
 export interface ServerUpdateTarget {
   readonly environmentId: EnvironmentId;
   readonly serverLabel: string;
@@ -45,7 +104,10 @@ export interface ServerUpdateTarget {
   readonly continueThreadsAfterServerUpdate?: boolean;
 }
 
-type UpdateButtonProps = Pick<ComponentProps<typeof Button>, "variant" | "size" | "className"> & {
+type UpdateButtonProps = Pick<
+  ComponentProps<typeof Button>,
+  "variant" | "size" | "className" | "aria-label" | "children"
+> & {
   readonly label?: string;
   /** "icon" renders a compact icon button with the label in a tooltip. */
   readonly appearance?: "button" | "icon";
@@ -198,6 +260,8 @@ export function ServerUpdateAction({
   size = "xs",
   className,
   appearance = "button",
+  "aria-label": ariaLabel,
+  children,
 }: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const continueThreadsAfterServerUpdate = useEnvironmentSettings(
@@ -286,9 +350,17 @@ export function ServerUpdateAction({
     );
   }
 
+  // Children replace the label when the caller supplies the body, such as the
+  // context strip's server chip. The manual-copy case keeps its own name.
   return (
-    <Button size={size} variant={variant} className={className} onClick={onClick}>
-      {actionLabel}
+    <Button
+      size={size}
+      variant={variant}
+      className={className}
+      aria-label={ariaLabel ?? (children ? actionLabel : undefined)}
+      onClick={onClick}
+    >
+      {children ?? actionLabel}
     </Button>
   );
 }

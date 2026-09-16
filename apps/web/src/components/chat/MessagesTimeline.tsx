@@ -56,6 +56,7 @@ import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { getProjectFaviconCacheKey } from "@t3tools/shared/projectFavicon";
 import { observeVisibleAnimation } from "../../lib/visibleAnimation";
 import {
+  type ComponentProps,
   createContext,
   memo,
   use,
@@ -132,7 +133,7 @@ import type {
   ComposerContextRecord,
   KnownComposerContextRecord,
 } from "@t3tools/contracts";
-import { Button } from "../ui/button";
+import { Button, InlineButton } from "../ui/button";
 import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -237,6 +238,7 @@ import { createContextPresentationRegistry } from "../contextPresentationRegistr
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { formatContextWindowTokens } from "~/lib/contextWindow";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -293,6 +295,7 @@ interface TimelineRowSharedState {
   onSteerQueuedMessage: (id: string) => void;
   steerQueuedMessageShortcutLabel: string | null;
   onRemoveQueuedMessage: (id: string) => void;
+  onCompactContext: (() => void) | null;
 }
 
 interface TimelineRowActivityState {
@@ -401,6 +404,9 @@ interface MessagesTimelineProps {
   activeTurnStartedAt: string | null;
   /** Live bootstrap progress for this thread, or null when none is tracked. */
   worktreeSetup?: WorktreeSetupSnapshot | null;
+  /** Context worth compacting before the next turn, or null. Rendered as the last row. */
+  contextOffer?: { readonly usedTokens: number; readonly updatedAt: string } | null;
+  onCompactContext?: () => void;
   onCancelWorktreeSetup?: () => void;
   onWorktreeSetupWorkLocally?: () => void;
   onOpenWorktreeSetupTerminal?: (terminalId: string) => void;
@@ -469,6 +475,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onCiteAssistantText,
   isWorking,
   worktreeSetup = null,
+  contextOffer = null,
+  onCompactContext,
   onCancelWorktreeSetup,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
@@ -758,6 +766,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
         liveAgentTaskIds,
         worktreeSetup,
         queuedMessages,
+        contextOffer,
       },
       previous?.threadKey === listIdentityKey && previous.workspaceRoot === workspaceRoot
         ? previous.projection
@@ -781,6 +790,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     liveAgentTaskIds,
     worktreeSetup,
     queuedMessages,
+    contextOffer,
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
@@ -981,6 +991,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      onCompactContext: onCompactContext ?? null,
     }),
     [
       readyCitationRequest,
@@ -1016,6 +1027,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onSteerQueuedMessage,
       steerQueuedMessageShortcutLabel,
       onRemoveQueuedMessage,
+      onCompactContext,
     ],
   );
   const backgroundWorktreeSetup =
@@ -1522,6 +1534,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "work-toggle" ? <WorkGroupToggleTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "context-compaction" ? <ContextCompactionTimelineRow row={row} /> : null}
+      {row.kind === "context-offer" ? <ContextOfferTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
@@ -1666,24 +1679,63 @@ function QueuedMessageTimelineRow({
   );
 }
 
+/** A hairline row with centered content: the two context rows share this shell. */
+function TimelineSeparatorRow({ children, ...props }: ComponentProps<"div">) {
+  return (
+    <div
+      {...props}
+      className="mx-auto flex w-full max-w-3xl items-center gap-3 py-1 text-muted-foreground text-xs"
+    >
+      <span className="h-px flex-1 bg-border/70" />
+      <span className="flex shrink-0 items-center gap-1.5">
+        <Minimize2Icon aria-hidden="true" className="size-3" />
+        {children}
+      </span>
+      <span className="h-px flex-1 bg-border/70" />
+    </div>
+  );
+}
+
 function ContextCompactionTimelineRow({
   row,
 }: {
   row: Extract<TimelineRow, { kind: "context-compaction" }>;
 }) {
   return (
-    <div
-      role="separator"
-      aria-label={row.label}
-      className="mx-auto flex w-full max-w-3xl items-center gap-3 py-1 text-muted-foreground text-xs"
-    >
-      <span className="h-px flex-1 bg-border/70" />
-      <span className="flex shrink-0 items-center gap-1.5">
-        <Minimize2Icon aria-hidden="true" className="size-3" />
-        {row.label}
-      </span>
-      <span className="h-px flex-1 bg-border/70" />
-    </div>
+    <TimelineSeparatorRow role="separator" aria-label={row.label}>
+      {row.label}
+    </TimelineSeparatorRow>
+  );
+}
+
+/**
+ * The compaction offer sits where the compaction separator will appear once
+ * the user takes it: a hairline row at the end of the thread. Nothing to
+ * dismiss. Sending a message without compacting scrolls it into history.
+ */
+function ContextOfferTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "context-offer" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  return (
+    <TimelineSeparatorRow role="note">
+      {formatContextWindowTokens(row.usedTokens)} tokens in context
+      {ctx.onCompactContext ? (
+        <>
+          <span aria-hidden="true" className="text-muted-foreground/40">
+            ·
+          </span>
+          <InlineButton
+            className="text-foreground/85 hover:text-foreground"
+            onClick={ctx.onCompactContext}
+          >
+            Compact
+          </InlineButton>
+        </>
+      ) : null}
+    </TimelineSeparatorRow>
   );
 }
 
