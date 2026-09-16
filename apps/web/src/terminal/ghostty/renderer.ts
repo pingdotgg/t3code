@@ -19,6 +19,100 @@ export interface GhosttyCellRange {
 
 const DEFAULT_SELECTION_BACKGROUND = "rgba(72, 122, 191, 0.35)";
 
+const BLOCK_ELEMENT_FIRST = 0x2580;
+const BLOCK_ELEMENT_LAST = 0x259f;
+
+type CellFraction = readonly [x: number, y: number, width: number, height: number];
+
+// U+2596..U+259F quadrant blocks, merged into the fewest rectangles so adjacent
+// quadrants share no seam.
+const QUADRANT_BLOCKS: readonly (readonly CellFraction[])[] = [
+  [[0, 0.5, 0.5, 0.5]],
+  [[0.5, 0.5, 0.5, 0.5]],
+  [[0, 0, 0.5, 0.5]],
+  [
+    [0, 0, 0.5, 1],
+    [0.5, 0.5, 0.5, 0.5],
+  ],
+  [
+    [0, 0, 0.5, 0.5],
+    [0.5, 0.5, 0.5, 0.5],
+  ],
+  [
+    [0, 0, 1, 0.5],
+    [0, 0.5, 0.5, 0.5],
+  ],
+  [
+    [0, 0, 1, 0.5],
+    [0.5, 0.5, 0.5, 0.5],
+  ],
+  [[0.5, 0, 0.5, 0.5]],
+  [
+    [0.5, 0, 0.5, 0.5],
+    [0, 0.5, 0.5, 0.5],
+  ],
+  [
+    [0.5, 0, 0.5, 0.5],
+    [0, 0.5, 1, 0.5],
+  ],
+];
+
+function blockElementCodepoint(text: string): number | null {
+  if (text.length !== 1) return null;
+  const codepoint = text.charCodeAt(0);
+  return codepoint >= BLOCK_ELEMENT_FIRST && codepoint <= BLOCK_ELEMENT_LAST ? codepoint : null;
+}
+
+function blockElementRects(codepoint: number): readonly CellFraction[] {
+  if (codepoint === 0x2580) return [[0, 0, 1, 0.5]];
+  if (codepoint <= 0x2588) {
+    const height = (codepoint - 0x2580) / 8;
+    return [[0, 1 - height, 1, height]];
+  }
+  if (codepoint <= 0x258f) return [[0, 0, (0x2590 - codepoint) / 8, 1]];
+  if (codepoint === 0x2590) return [[0.5, 0, 0.5, 1]];
+  if (codepoint <= 0x2593) return [[0, 0, 1, 1]];
+  if (codepoint === 0x2594) return [[0, 0, 1, 1 / 8]];
+  if (codepoint === 0x2595) return [[7 / 8, 0, 1 / 8, 1]];
+  return QUADRANT_BLOCKS[codepoint - 0x2596] ?? [];
+}
+
+/**
+ * Block Elements (U+2580..U+259F) carry meaning through their exact coverage:
+ * QR codes and progress bars are rows of them. A font glyph only spans the
+ * face's own em box, which is shorter than the padded cell, so stacked rows
+ * would show a background stripe between them. Fill the cell geometry directly
+ * instead, snapping edges so neighbouring blocks meet without a seam. An
+ * eighth block thinner than a pixel still gets one pixel, kept inside its cell.
+ */
+function drawBlockElement(
+  context: CanvasRenderingContext2D,
+  text: string,
+  left: number,
+  top: number,
+  width: number,
+  height: number,
+): boolean {
+  const codepoint = blockElementCodepoint(text);
+  if (codepoint === null) return false;
+  const shaded = codepoint >= 0x2591 && codepoint <= 0x2593;
+  if (shaded) {
+    context.save();
+    context.globalAlpha = (codepoint - 0x2590) / 4;
+  }
+  const right = Math.round(left + width);
+  const bottom = Math.round(top + height);
+  for (const [x, y, w, h] of blockElementRects(codepoint)) {
+    const x0 = Math.round(left + x * width);
+    const y0 = Math.round(top + y * height);
+    const w0 = Math.max(1, Math.round(left + (x + w) * width) - x0);
+    const h0 = Math.max(1, Math.round(top + (y + h) * height) - y0);
+    context.fillRect(Math.min(x0, right - w0), Math.min(y0, bottom - h0), w0, h0);
+  }
+  if (shaded) context.restore();
+  return true;
+}
+
 function cssColor(color: GhosttyColor): string {
   return `rgb(${color.r}, ${color.g}, ${color.b})`;
 }
@@ -48,7 +142,9 @@ export function ghosttyTextRunEnd(
       end += 1;
       continue;
     }
-    if (next.text.length === 0 || !sameStyle(next)) break;
+    if (next.text.length === 0 || blockElementCodepoint(next.text) !== null || !sameStyle(next)) {
+      break;
+    }
     end += 1;
   }
   return end;
@@ -193,6 +289,21 @@ export function renderGhosttySnapshot(options: {
         runStart += 1;
         continue;
       }
+      if (blockElementCodepoint(first.text) !== null) {
+        if (!first.invisible) {
+          context.fillStyle = cssColor(first.foreground);
+          drawBlockElement(
+            context,
+            first.text,
+            padding + runStart * metrics.width,
+            top,
+            metrics.width,
+            metrics.height,
+          );
+        }
+        runStart += 1;
+        continue;
+      }
       const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
       const text = row.cells
         .slice(runStart, runEnd)
@@ -265,7 +376,9 @@ export function renderGhosttySnapshot(options: {
       if (cell?.text) {
         context.font = fontForCell(cell, fontSize, fontFamily);
         context.fillStyle = cssColor(snapshot.background);
-        context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+        if (!drawBlockElement(context, cell.text, left, top, metrics.width, metrics.height)) {
+          context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+        }
       }
     }
   }
