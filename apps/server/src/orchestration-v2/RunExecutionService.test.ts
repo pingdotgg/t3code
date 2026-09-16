@@ -2937,10 +2937,10 @@ function captureRootRunTermination(input: {
           ServerSettingsService.layerTest(),
           Layer.succeed(RunFinalizationObserver, {
             refresh: () => Effect.void,
-            refreshAfterTurn: Ref.update(observed, (current) => [
-              ...current,
-              "pull-requests-refreshed",
-            ]).pipe(Effect.andThen(input.refreshAfterTurn ?? Effect.void)),
+            refreshAfterTurn: () =>
+              Ref.update(observed, (current) => [...current, "pull-requests-refreshed"]).pipe(
+                Effect.andThen(input.refreshAfterTurn ?? Effect.void),
+              ),
           }),
         ),
       ),
