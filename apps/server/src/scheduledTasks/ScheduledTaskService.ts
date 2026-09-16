@@ -33,7 +33,7 @@ import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import * as SqlClient from "effect/unstable/sql/SqlClient";
-import { isSqlError } from "effect/unstable/sql/SqlError";
+import * as SqlError from "effect/unstable/sql/SqlError";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
@@ -176,7 +176,7 @@ function errorMessage(error: unknown): string {
 // that wrap SqlError inside the transaction before the retry policy sees it.
 const isContendedWriteError = (cause: unknown): boolean => {
   if (isScheduledTaskError(cause)) return isContendedWriteError(cause.cause);
-  if (!isSqlError(cause)) return false;
+  if (!SqlError.isSqlError(cause)) return false;
   if (cause.reason.isRetryable) return true;
   const native = cause.reason.cause;
   for (const key of ["errcode", "errno", "code"] as const) {

@@ -158,8 +158,12 @@ export class OrchestratorMcpService extends Context.Service<
 
 const isThreadManagementError = Schema.is(ThreadManagementError);
 
-function failure(code: OrchestratorMcpFailure["code"], message: string): OrchestratorMcpFailure {
-  return new OrchestratorMcpFailure({ code, message });
+function failure(
+  code: OrchestratorMcpFailure["code"],
+  message: string,
+  cause?: unknown,
+): OrchestratorMcpFailure {
+  return new OrchestratorMcpFailure({ code, message, ...(cause === undefined ? {} : { cause }) });
 }
 
 function threadManagementFailure(error: ThreadManagementError): OrchestratorMcpFailure {
@@ -1164,10 +1168,7 @@ const make = Effect.gen(function* () {
         .getThreadShell(destinationId)
         .pipe(
           Effect.mapError((error) =>
-            failure(
-              "orchestration_error",
-              `Unable to read thread ${destinationId}: ${errorMessage(error)}`,
-            ),
+            failure("orchestration_error", `Unable to read thread ${destinationId}.`, error),
           ),
         );
       // A missing or cross-project shell can never accept the run, so the
