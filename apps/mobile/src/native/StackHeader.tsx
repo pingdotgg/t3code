@@ -17,6 +17,8 @@ import {
 } from "react";
 import type { ColorValue } from "react-native";
 
+import { menuIconImageSource } from "./menu-icon";
+
 export {
   nativeHeaderScrollEdgeEffects,
   nativeTopScrollEdgeEffect,
@@ -244,7 +246,10 @@ function convertMenuAction(
       label,
       description: typeof element.props.subtitle === "string" ? element.props.subtitle : undefined,
       disabled: Boolean(element.props.disabled),
-      icon: iconFromProp(element.props.icon),
+      icon:
+        typeof element.props.imageUri === "string"
+          ? { type: "image", source: menuIconImageSource(element.props.imageUri), tinted: false }
+          : iconFromProp(element.props.icon),
       onPress:
         typeof element.props.onPress === "function"
           ? (element.props.onPress as () => void)
@@ -432,7 +437,10 @@ function NativeHeaderToolbarMenuAction(_props: {
   readonly destructive?: boolean;
   readonly disabled?: boolean;
   readonly discoverabilityLabel?: string;
+  /** SF Symbol name. */
   readonly icon?: string;
+  /** Bitmap icon URL, shown untinted; wins over `icon`. */
+  readonly imageUri?: string;
   readonly isOn?: boolean;
   readonly onPress?: () => void;
   readonly subtitle?: string;
