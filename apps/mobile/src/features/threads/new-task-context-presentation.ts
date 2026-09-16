@@ -81,3 +81,11 @@ export function shouldCheckoutNewTaskBranch(input: {
 }): boolean {
   return input.workspaceMode === "local" && !input.branchIsCurrent && !input.branchWorktreePath;
 }
+
+export function resolveNewTaskBranchAfterModeChange(
+  previousMode: WorkspaceMode,
+  nextMode: WorkspaceMode,
+  branch: string | null,
+): string | null {
+  return previousMode === "local" && nextMode === "worktree" ? null : branch;
+}
