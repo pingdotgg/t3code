@@ -1,6 +1,8 @@
 import {
   DesktopServerExposureModeSchema,
+  DesktopBackendModeSchema,
   DesktopUpdateChannelSchema,
+  type DesktopBackendMode,
   type DesktopServerExposureMode,
   type DesktopUpdateChannel,
 } from "@t3tools/contracts";
@@ -26,6 +28,7 @@ import { isValidDistroName } from "../wsl/wslPathParsing.ts";
 
 export interface DesktopSettings {
   readonly localEnvironmentEnabled: boolean;
+  readonly backendMode: DesktopBackendMode;
   readonly linuxPasswordStore: LinuxPasswordStorePreference;
   readonly mainWindowBounds: DesktopWindowBounds | null;
   readonly mainWindowMaximized: boolean;
@@ -75,6 +78,7 @@ export const DEFAULT_MAIN_WINDOW_SIZE = {
 
 export const DEFAULT_DESKTOP_SETTINGS: DesktopSettings = {
   localEnvironmentEnabled: true,
+  backendMode: "managed",
   linuxPasswordStore: DEFAULT_LINUX_PASSWORD_STORE,
   mainWindowBounds: null,
   mainWindowMaximized: false,
@@ -97,6 +101,7 @@ const DesktopWindowBoundsDocument = Schema.Struct({
 
 const DesktopSettingsDocument = Schema.Struct({
   localEnvironmentEnabled: Schema.optionalKey(Schema.Boolean),
+  backendMode: Schema.optionalKey(DesktopBackendModeSchema),
   linuxPasswordStore: Schema.optionalKey(Schema.Unknown),
   mainWindowBounds: Schema.optionalKey(Schema.NullOr(DesktopWindowBoundsDocument)),
   mainWindowMaximized: Schema.optionalKey(Schema.Boolean),
@@ -161,6 +166,9 @@ export class DesktopAppSettings extends Context.Service<
     readonly setMainWindowBounds: (
       bounds: DesktopWindowBounds,
       isMaximized: boolean,
+    ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
+    readonly setBackendMode: (
+      mode: DesktopBackendMode,
     ) => Effect.Effect<DesktopSettingsChange, DesktopSettingsWriteError>;
     readonly setServerExposureMode: (
       mode: DesktopServerExposureMode,
@@ -231,6 +239,7 @@ function normalizeDesktopSettingsDocument(
 
   return {
     localEnvironmentEnabled: parsed.localEnvironmentEnabled !== false,
+    backendMode: parsed.backendMode === "client-only" ? "client-only" : "managed",
     linuxPasswordStore: normalizeLinuxPasswordStorePreference(parsed.linuxPasswordStore),
     mainWindowBounds,
     mainWindowMaximized: mainWindowBounds !== null && parsed.mainWindowMaximized === true,
@@ -258,6 +267,9 @@ function toDesktopSettingsDocument(
     document.localEnvironmentEnabled = settings.localEnvironmentEnabled;
   }
 
+  if (settings.backendMode !== defaults.backendMode) {
+    document.backendMode = settings.backendMode;
+  }
   if (settings.linuxPasswordStore !== defaults.linuxPasswordStore) {
     document.linuxPasswordStore = settings.linuxPasswordStore;
   }
@@ -304,6 +316,18 @@ function setServerExposureMode(
     : {
         ...settings,
         serverExposureMode: requestedMode,
+      };
+}
+
+function setBackendMode(
+  settings: DesktopSettings,
+  requestedMode: DesktopBackendMode,
+): DesktopSettings {
+  return settings.backendMode === requestedMode
+    ? settings
+    : {
+        ...settings,
+        backendMode: requestedMode,
       };
 }
 
@@ -536,6 +560,10 @@ export const make = Effect.gen(function* () {
           },
         }),
       ),
+    setBackendMode: (mode) =>
+      persist((settings) => setBackendMode(settings, mode)).pipe(
+        Effect.withSpan("desktop.settings.setBackendMode", { attributes: { mode } }),
+      ),
     setServerExposureMode: (mode) =>
       persist((settings) => setServerExposureMode(settings, mode)).pipe(
         Effect.withSpan("desktop.settings.setServerExposureMode", { attributes: { mode } }),
@@ -599,6 +627,7 @@ export const layerTest = (initialSettings: DesktopSettings = DEFAULT_DESKTOP_SET
         load: SynchronizedRef.get(settingsRef),
         setMainWindowBounds: (bounds, isMaximized) =>
           update((settings) => setMainWindowBounds(settings, bounds, isMaximized)),
+        setBackendMode: (mode) => update((settings) => setBackendMode(settings, mode)),
         setServerExposureMode: (mode) =>
           update((settings) => setServerExposureMode(settings, mode)),
         setTailscaleServe: (input) => update((settings) => setTailscaleServe(settings, input)),

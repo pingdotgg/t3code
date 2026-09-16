@@ -116,6 +116,32 @@ describe("environment grouping", () => {
     expect(projectGroupsSpanEnvironments(build([separateRemote]))).toBe(false);
   });
 
+  it("marks every project remote for an app with no local backend of its own", () => {
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+    });
+
+    const [clientOnly] = buildSidebarProjectSnapshots({
+      projects: [remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId: null,
+      ownsLocalEnvironment: false,
+      resolveEnvironmentLabel: () => "remote",
+    });
+
+    expect(clientOnly?.environmentPresence).toBe("remote-only");
+    expect(clientOnly?.remoteEnvironmentLabels).toEqual(["remote"]);
+
+    const [managed] = buildSidebarProjectSnapshots({
+      projects: [remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId: null,
+      resolveEnvironmentLabel: () => "remote",
+    });
+
+    expect(managed?.environmentPresence).toBe("local-only");
+  });
   it("keeps projects without repository identity physically scoped", () => {
     const primary = makeProject();
     const remote = makeProject({
@@ -319,6 +345,24 @@ describe("environment grouping", () => {
     expect(
       deriveLogicalProjectKeyFromSettings(staleWithoutRepositoryIdentity, defaultGroupingSettings),
     ).not.toBe(repositoryIdentity.canonicalKey);
+  });
+
+  it("reports the remote environments backing a group's remote labels", () => {
+    const primary = makeProject({ repositoryIdentity });
+    const remote = makeProject({
+      id: ProjectId.make("project-remote"),
+      environmentId: remoteEnvironmentId,
+      repositoryIdentity,
+    });
+    const [group] = buildSidebarProjectSnapshots({
+      projects: [primary, remote],
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: (environmentId) =>
+        environmentId === remoteEnvironmentId ? "ryzen-shine" : null,
+    });
+
+    expect(group?.remoteEnvironmentLabels).toEqual(["ryzen-shine"]);
   });
 
   it("builds one picker entry per logical project and targets the preferred environment", () => {

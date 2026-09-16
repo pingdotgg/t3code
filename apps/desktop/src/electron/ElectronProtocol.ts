@@ -1,4 +1,5 @@
 import Mime from "@effect/platform-node/Mime";
+// @effect-diagnostics nodeBuiltinImport:off - Electron static protocol handlers require synchronous platform path validation.
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -8,6 +9,8 @@ import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
+import * as NodePath from "node:path";
+import * as NodeURL from "node:url";
 
 import * as Electron from "electron";
 
@@ -52,11 +55,22 @@ export class ElectronProtocolUnregistrationError extends Schema.TaggedError<Elec
 }
 
 // The scheme either proxies to a dev server (`targetOrigin`) or serves the
-// built client from disk (`assetDirectory`).
+// built client from disk (`assetDirectory` / `staticRoot`).
 export type DesktopProtocolRegistrationInput = {
   readonly scheme: string;
   readonly clerkFrontendApiHostname: string | undefined;
-} & ({ readonly targetOrigin: URL } | { readonly assetDirectory: string });
+} & (
+  | { readonly targetOrigin: URL }
+  | { readonly assetDirectory: string }
+  | {
+      readonly source: "proxy";
+      readonly targetOrigin: URL;
+    }
+  | {
+      readonly source: "static";
+      readonly staticRoot: string;
+    }
+);
 
 export class ElectronProtocol extends Context.Service<
   ElectronProtocol,
@@ -144,6 +158,143 @@ const registerDesktopSchemePrivileges = Effect.sync(registerDesktopSchemePrivile
 );
 
 export const layerSchemePrivileges = Layer.effectDiscard(registerDesktopSchemePrivileges);
+
+const STATIC_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".gif": "image/gif",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".mjs": "text/javascript; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
+
+type StaticPathResolution =
+  | { readonly _tag: "Invalid"; readonly status: 400 | 403 }
+  | { readonly _tag: "Resolved"; readonly path: string; readonly relativePath: string };
+
+export function resolveDesktopStaticPath(
+  staticRoot: string,
+  encodedPathname: string,
+): StaticPathResolution {
+  let decodedPathname: string;
+  try {
+    decodedPathname = decodeURIComponent(encodedPathname);
+  } catch {
+    return { _tag: "Invalid", status: 400 };
+  }
+
+  if (
+    decodedPathname.includes("\0") ||
+    decodedPathname.includes("\\") ||
+    /^[a-zA-Z]:/u.test(decodedPathname.replace(/^\/+/u, ""))
+  ) {
+    return { _tag: "Invalid", status: 403 };
+  }
+
+  const segments = decodedPathname.split("/").filter((segment) => segment.length > 0);
+  if (segments.some((segment) => segment === "." || segment === "..")) {
+    return { _tag: "Invalid", status: 403 };
+  }
+
+  const relativePath = segments.length === 0 ? "index.html" : segments.join("/");
+  const normalizedRoot = NodePath.resolve(staticRoot);
+  const resolvedPath = NodePath.resolve(normalizedRoot, relativePath);
+  const relativeToRoot = NodePath.relative(normalizedRoot, resolvedPath);
+  if (
+    relativeToRoot === ".." ||
+    relativeToRoot.startsWith(`..${NodePath.sep}`) ||
+    NodePath.isAbsolute(relativeToRoot)
+  ) {
+    return { _tag: "Invalid", status: 403 };
+  }
+
+  return {
+    _tag: "Resolved",
+    path: resolvedPath,
+    relativePath,
+  };
+}
+
+function shouldUseSpaFallback(request: Request, relativePath: string): boolean {
+  if (NodePath.extname(relativePath) !== "") {
+    return false;
+  }
+  const accept = request.headers.get("accept") ?? "";
+  const mode = request.headers.get("sec-fetch-mode") ?? "";
+  return mode === "navigate" || accept.includes("text/html");
+}
+
+async function fetchStaticFile(path: string): Promise<Response> {
+  try {
+    return await Electron.net.fetch(NodeURL.pathToFileURL(path).href, { method: "GET" });
+  } catch {
+    return new Response(null, { status: 404 });
+  }
+}
+
+function withStaticResponseHeaders(response: Response, path: string, headOnly: boolean): Response {
+  const headers = new Headers(response.headers);
+  const contentType = STATIC_CONTENT_TYPES[NodePath.extname(path).toLowerCase()];
+  if (contentType !== undefined) {
+    headers.set("Content-Type", contentType);
+  }
+  return new Response(headOnly ? null : response.body, {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
+}
+
+export async function serveDesktopStaticRequest(
+  request: Request,
+  staticRoot: string,
+  contentSecurityPolicy: string,
+): Promise<Response> {
+  const requestUrl = new URL(request.url);
+  if (requestUrl.host !== DESKTOP_HOST) {
+    return withContentSecurityPolicy(new Response(null, { status: 404 }), contentSecurityPolicy);
+  }
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return withContentSecurityPolicy(
+      new Response(null, {
+        status: 405,
+        headers: { Allow: "GET, HEAD" },
+      }),
+      contentSecurityPolicy,
+    );
+  }
+
+  const resolution = resolveDesktopStaticPath(staticRoot, requestUrl.pathname);
+  if (resolution._tag === "Invalid") {
+    return withContentSecurityPolicy(
+      new Response(null, { status: resolution.status }),
+      contentSecurityPolicy,
+    );
+  }
+
+  let response = await fetchStaticFile(resolution.path);
+  let responsePath = resolution.path;
+  if (response.status === 404 && shouldUseSpaFallback(request, resolution.relativePath)) {
+    // Resolve the shell through the same normalization as asset paths so a
+    // relative or non-normalized staticRoot still falls back correctly.
+    responsePath = NodePath.resolve(staticRoot, "index.html");
+    response = await fetchStaticFile(responsePath);
+  }
+
+  return withContentSecurityPolicy(
+    withStaticResponseHeaders(response, responsePath, request.method === "HEAD"),
+    contentSecurityPolicy,
+  );
+}
 
 async function proxyRequest(
   request: Request,
@@ -265,6 +416,9 @@ export const make = Effect.gen(function* () {
         Effect.try({
           try: () => {
             Electron.protocol.handle(input.scheme, async (request) => {
+              if ("source" in input && input.source === "static") {
+                return serveDesktopStaticRequest(request, input.staticRoot, contentSecurityPolicy);
+              }
               if ("assetDirectory" in input) {
                 return withContentSecurityPolicy(
                   await runPromise(serveDesktopAsset(request, input.assetDirectory)),

@@ -8,10 +8,10 @@ import {
 } from "@tanstack/react-router";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { RotateCcwIcon } from "lucide-react";
-import { Button } from "../components/ui/button";
-import { useSettingsRestore } from "../components/settings/SettingsPanels";
 
+import { type SettingsOwnership, useSettingsRestore } from "../components/settings/SettingsPanels";
 import { SettingsBreadcrumb } from "../components/settings/SettingsBreadcrumb";
+import { Button } from "../components/ui/button";
 import { SidebarInset } from "../components/ui/sidebar";
 import { WorkspacePageHeader } from "../components/WorkspacePageHeader";
 import { isElectron } from "../env";
@@ -32,19 +32,33 @@ import {
   isSettingsSearchScopeAvailable,
 } from "../components/settings/settingsSearch";
 
-function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
-  const { changedSettingLabels, restoreDefaults } = useSettingsRestore(onRestored);
+function RestoreDefaultsButton({
+  ownership,
+  onRestored,
+}: {
+  ownership: SettingsOwnership;
+  onRestored: () => void;
+}) {
+  const { canRestoreDefaults, changedSettingLabels, restoreDefaults } = useSettingsRestore(
+    ownership,
+    onRestored,
+  );
   return (
     <Button
       size="xs"
       variant="ghost"
-      disabled={changedSettingLabels.length === 0}
+      disabled={!canRestoreDefaults || changedSettingLabels.length === 0}
       onClick={() => void restoreDefaults()}
     >
       <RotateCcwIcon className="mx-1 size-3.5" />
       Restore device defaults
     </Button>
   );
+}
+
+/** Base name preserved for callers expecting the device-defaults button. */
+function RestoreDeviceDefaultsButton({ onRestored }: { onRestored: () => void }) {
+  return <RestoreDefaultsButton ownership="client" onRestored={onRestored} />;
 }
 
 /** Pages whose every row is saved on this client; the scope selects are hidden there. */
@@ -123,6 +137,13 @@ function SettingsContentLayout() {
   const { environments } = useEnvironments();
   const [restoreSignal, setRestoreSignal] = useState(0);
   const showScope = !DEVICE_ONLY_PATHS.has(location.pathname);
+  const restoreOwnership: SettingsOwnership | null =
+    location.pathname === "/settings/general"
+      ? "client"
+      : location.pathname === "/settings/environment"
+        ? "environment"
+        : null;
+  const handleRestored = () => setRestoreSignal((value) => value + 1);
   const navigateBackWithinApp = useCallback(() => {
     if (canGoBack) {
       window.history.back();
@@ -165,11 +186,11 @@ function SettingsContentLayout() {
                   : undefined
               }
             />
-            {location.pathname === "/settings/general" ? (
-              <div className="ms-auto flex shrink-0 items-center">
-                <RestoreDeviceDefaultsButton
-                  onRestored={() => setRestoreSignal((value) => value + 1)}
-                />
+            {restoreOwnership ? (
+              <div className="ms-auto flex shrink-0 items-center gap-2">
+                <RestoreDefaultsButton ownership={restoreOwnership} onRestored={handleRestored} />
+              </div>
+            ) : null}
               </div>
             ) : null}
           </div>

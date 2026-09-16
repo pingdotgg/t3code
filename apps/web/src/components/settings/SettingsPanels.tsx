@@ -7,9 +7,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   type BackgroundActivityProfile,
   type DesktopUpdateChannel,
+  type EnvironmentId,
   ProviderDriverKind,
   type ProviderInstanceId,
   type ScopedThreadRef,
+  type ServerConfig,
   type SidebarProjectGroupingMode,
 } from "@t3tools/contracts";
 import { scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -80,6 +82,13 @@ import {
 import { useScopedModelDisabledReason } from "./useScopedModelAvailability";
 import { useSettingsScope } from "./SettingsScopeContext";
 import { ProjectDefaultsSettings } from "./ProjectDefaultsSettings";
+import {
+  useEnvironmentSettings,
+  usePrimarySettings,
+  useUpdateEnvironmentSettings,
+  useUpdatePrimarySettings,
+} from "../../hooks/useSettings";
+import { useSettingsEnvironment } from "../../hooks/useSettingsEnvironment";
 import { useThreadActions } from "../../hooks/useThreadActions";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
 import {
@@ -94,6 +103,8 @@ import {
 import { ensureLocalApi, readLocalApi } from "../../localApi";
 import { isMacPlatform } from "../../lib/utils";
 import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
+import type { EnvironmentPresentation } from "../../state/environments";
+import { useProjects } from "../../state/entities";
 import { useArchivedThreadSnapshots } from "../../lib/archivedThreadsState";
 import { formatRelativeTimeLabel } from "../../timestampFormat";
 import { Button } from "../ui/button";
@@ -163,6 +174,7 @@ import {
 import { searchableSetting } from "./settingsSearch";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { PanelAnimationsPreview } from "./PanelAnimationsPreview";
+import { SettingsEnvironmentScope } from "./SettingsEnvironmentSelector";
 
 const ENVIRONMENT_IDENTIFICATION_LABELS: Record<EnvironmentIdentificationMode, string> = {
   artwork: "Artwork",
@@ -490,7 +502,15 @@ function AboutVersionSection() {
   );
 }
 
-export function useSettingsRestore(onRestored?: () => void) {
+export type SettingsOwnership = "client" | "environment";
+
+export interface SettingsRestore {
+  readonly canRestoreDefaults: boolean;
+  readonly changedSettingLabels: ReadonlyArray<string>;
+  readonly restoreDefaults: () => Promise<void>;
+}
+
+function useClientSettingsRestore(onRestored?: () => void): SettingsRestore {
   const {
     theme,
     setTheme,
@@ -502,12 +522,6 @@ export function useSettingsRestore(onRestored?: () => void) {
   } = useTheme();
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
-
-  const isTextGenerationModelDirty = !Equal.equals(
-    settings.textGenerationModelSelection ?? null,
-    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
-  );
-  const isBackgroundActivityDirty = hasChangedBackgroundActivitySettings(settings);
 
   const changedSettingLabels = useMemo(
     () => [
@@ -543,13 +557,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       ...(settings.sidebarProjectGroupingMode !==
       DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode
         ? ["Project Grouping"]
-        : []),
-      ...(settings.sidebarAutoSettleAfterDays !==
-      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
-        ? ["Auto-settle inactive threads"]
-        : []),
-      ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
-        ? ["Auto-settle merged threads"]
         : []),
       ...(settings.wordWrap !== DEFAULT_UNIFIED_SETTINGS.wordWrap ? ["Word wrap"] : []),
       ...getChangedTypographySettingLabels(settings),
@@ -608,18 +615,14 @@ export function useSettingsRestore(onRestored?: () => void) {
         ? ["Delete confirmation"]
         : []),
       ...(settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? ["Quit shortcut"] : []),
-      ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
       ...getChangedBrowserSettingLabels(settings),
-      ...(settings.enableAgentBrowserAccess !== DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess
-        ? ["Agent browser access"]
-        : []),
     ],
     [
-      isTextGenerationModelDirty,
-      isBackgroundActivityDirty,
+      settings.appearanceContrast,
+      settings.browserAutoShowFloatingPreview,
+      settings.browserDefaultAppearance,
       settings.browserDefaultViewport,
       settings.browserDefaultZoomFactor,
-      settings.browserDefaultAppearance,
       settings.browserRecordingFrameRate,
       settings.browserLinkTarget,
       settings.browserAutoShowFloatingPreview,
@@ -637,11 +640,11 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.defaultThreadEnvMode,
       settings.newWorktreesStartFromOrigin,
       settings.diffFilesCollapsed,
+      settings.contextWindowMeterEnabled,
       settings.diffIgnoreWhitespace,
       settings.diffLayout,
       settings.proactivePanelsEnabled,
       settings.environmentIdentificationMode,
-      settings.contextWindowMeterEnabled,
       settings.fontFamilyCode,
       settings.fontFamilyComposer,
       settings.fontFamilySans,
@@ -654,13 +657,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       settings.panelAnimationDurationMs,
       settings.responseStreamingMode,
       settings.persistComposerContextStrip,
-      settings.enableProviderUpdateChecks,
-      settings.continueThreadsAfterServerUpdate,
-      settings.sidebarAutoSettleAfterDays,
-      settings.sidebarAutoSettleOnMerge,
+      settings.showSkillsInSlashMenu,
       settings.sidebarProjectGroupingMode,
       settings.sidebarThreadPreviewCount,
-      settings.showSkillsInSlashMenu,
       settings.timestampFormat,
       settings.notificationMode,
       settings.inAppNotificationsEnabled,
@@ -771,7 +770,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
       confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
       confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit,
-      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
       fontFamilySans: DEFAULT_UNIFIED_SETTINGS.fontFamilySans,
       fontFamilyComposer: DEFAULT_UNIFIED_SETTINGS.fontFamilyComposer,
       fontFamilyCode: DEFAULT_UNIFIED_SETTINGS.fontFamilyCode,
@@ -786,10 +784,6 @@ export function useSettingsRestore(onRestored?: () => void) {
       browserRecordingFrameRate: DEFAULT_UNIFIED_SETTINGS.browserRecordingFrameRate,
       browserLinkTarget: DEFAULT_UNIFIED_SETTINGS.browserLinkTarget,
       browserAutoShowFloatingPreview: DEFAULT_UNIFIED_SETTINGS.browserAutoShowFloatingPreview,
-      // Re-granted like any other default. The confirmation dialog lists it by
-      // name, so a user restoring defaults is told the agent regains access
-      // rather than discovering it later.
-      enableAgentBrowserAccess: DEFAULT_UNIFIED_SETTINGS.enableAgentBrowserAccess,
     });
     onRestored?.();
   }, [
@@ -805,18 +799,118 @@ export function useSettingsRestore(onRestored?: () => void) {
   ]);
 
   return {
+    canRestoreDefaults: true,
     changedSettingLabels,
     restoreDefaults,
   };
 }
 
+function useEnvironmentSettingsRestore(onRestored?: () => void): SettingsRestore {
+  const { environmentId, environment } = useSettingsEnvironment();
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const isTextGenerationModelDirty = !Equal.equals(
+    settings.textGenerationModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+
+  const changedSettingLabels = useMemo(
+    () => [
+      ...(settings.sidebarAutoSettleAfterDays !==
+      DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
+        ? ["Auto-settle inactive threads"]
+        : []),
+      ...(settings.sidebarAutoSettleOnMerge !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge
+        ? ["Auto-settle merged threads"]
+        : []),
+      ...(settings.enableLegacyTokenStreaming !==
+      DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming
+        ? ["Stream token by token"]
+        : []),
+      ...(settings.enableProviderUpdateChecks !==
+      DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks
+        ? ["Provider update checks"]
+        : []),
+      ...(settings.continueThreadsAfterServerUpdate !==
+      DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate
+        ? ["Continue threads after restarts"]
+        : []),
+      ...(hasChangedBackgroundActivitySettings(settings) ? ["Background activity"] : []),
+      ...(settings.newWorktreesStartFromOrigin !==
+      DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin
+        ? ["New worktrees start from origin"]
+        : []),
+      ...(settings.addProjectBaseDirectory !== DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory
+        ? ["Add project base directory"]
+        : []),
+      ...(isTextGenerationModelDirty ? ["Text generation model"] : []),
+    ],
+    [isTextGenerationModelDirty, settings],
+  );
+
+  const restoreDefaults = useCallback(async () => {
+    if (changedSettingLabels.length === 0) return;
+    const api = readLocalApi();
+    const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
+      ["Restore default settings?", `This will reset: ${changedSettingLabels.join(", ")}.`].join(
+        "\n",
+      ),
+      { variant: "destructive" },
+    );
+    if (!confirmed) return;
+
+    updateSettings({
+      sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+      sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+      enableLegacyTokenStreaming: DEFAULT_UNIFIED_SETTINGS.enableLegacyTokenStreaming,
+      enableProviderUpdateChecks: DEFAULT_UNIFIED_SETTINGS.enableProviderUpdateChecks,
+      continueThreadsAfterServerUpdate: DEFAULT_UNIFIED_SETTINGS.continueThreadsAfterServerUpdate,
+      backgroundActivity: DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+      backgroundActivityProfile: DEFAULT_UNIFIED_SETTINGS.backgroundActivityProfile,
+      automaticGitFetchInterval: DEFAULT_UNIFIED_SETTINGS.automaticGitFetchInterval,
+      providerHealthRefreshInterval: DEFAULT_UNIFIED_SETTINGS.providerHealthRefreshInterval,
+      newWorktreesStartFromOrigin: DEFAULT_UNIFIED_SETTINGS.newWorktreesStartFromOrigin,
+      addProjectBaseDirectory: DEFAULT_UNIFIED_SETTINGS.addProjectBaseDirectory,
+      textGenerationModelSelection: DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection,
+    });
+    onRestored?.();
+  }, [changedSettingLabels, onRestored, updateSettings]);
+
+  return {
+    // Writes go to a server, so there is nothing to restore while the settings
+    // environment is unreachable.
+    canRestoreDefaults: environment?.connection.phase === "connected",
+    changedSettingLabels,
+    restoreDefaults,
+  };
+}
+
+/**
+ * Restore-to-defaults for one settings page. Client and environment settings
+ * live in separate stores, so a page only resets the keys it owns.
+ */
+export function useSettingsRestore(
+  ownership: SettingsOwnership,
+  onRestored?: () => void,
+): SettingsRestore {
+  const client = useClientSettingsRestore(onRestored);
+  const environment = useEnvironmentSettingsRestore(onRestored);
+  return ownership === "client" ? client : environment;
+}
+
 function BackgroundActivityAdvancedDialog({
+  environmentId,
   open,
   onOpenChange,
 }: {
+  readonly environmentId: EnvironmentId;
   readonly open: boolean;
   readonly onOpenChange: (open: boolean) => void;
 }) {
+  // Scoped settings resolve through SettingsScopeContext, which selects
+  // this environment whenever the dialog can open. environmentId stays on
+  // the props so environment-scoped call sites pass their target explicitly.
+  void environmentId;
   const settings = useScopedSettings();
   const updateSettings = useUpdateScopedSettings();
   const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
@@ -2587,6 +2681,304 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+      </SettingsSection>
+
+      <SettingsSection id="confirmations" title="Confirmations">
+        <SettingsRow
+          {...searchableSetting("unpin-confirmation")}
+          description="Ask before unpinning a thread from the pinned section."
+          resetAction={
+            settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
+              <SettingResetButton
+                label="unpin confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmThreadUnpin}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmThreadUnpin: Boolean(checked) })
+              }
+              aria-label="Confirm thread unpinning"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("archive-confirmation")}
+          description="Require a second click on the inline archive action before a thread is archived."
+          resetAction={
+            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
+              <SettingResetButton
+                label="archive confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmThreadArchive}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmThreadArchive: Boolean(checked) })
+              }
+              aria-label="Confirm thread archiving"
+            />
+          }
+        />
+
+        <SettingsRow
+          {...searchableSetting("delete-confirmation")}
+          description="Ask before deleting a thread and its chat history."
+          resetAction={
+            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
+              <SettingResetButton
+                label="delete confirmation"
+                onClick={() =>
+                  updateSettings({
+                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
+                  })
+                }
+              />
+            ) : null
+          }
+          control={
+            <Switch
+              checked={settings.confirmThreadDelete}
+              onCheckedChange={(checked) =>
+                updateSettings({ confirmThreadDelete: Boolean(checked) })
+              }
+              aria-label="Confirm thread deletion"
+            />
+          }
+        />
+
+        {isElectron ? (
+          <SettingsRow
+            {...searchableSetting("quit-confirmation")}
+            description="Choose whether the desktop app quits immediately, after a hold, or after two quick presses."
+            resetAction={
+              settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
+                <SettingResetButton
+                  label="quit shortcut behavior"
+                  onClick={() =>
+                    updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
+                  }
+                />
+              ) : null
+            }
+            control={
+              <Select
+                value={settings.confirmQuit}
+                onValueChange={(value) => {
+                  if (value === "direct" || value === "hold" || value === "double-click") {
+                    updateSettings({ confirmQuit: value });
+                  }
+                }}
+              >
+                <SelectTrigger
+                  size="sm"
+                  className="w-full sm:w-40"
+                  aria-label="Quit shortcut behavior"
+                >
+                  <SelectValue>{QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit]}</SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
+                    <SelectItem hideIndicator key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        ) : null}
+      </SettingsSection>
+
+      <SettingsSection id="about" title="About">
+        {isElectron || HOSTED_APP_CHANNEL ? (
+          <AboutVersionSection />
+        ) : (
+          <SettingsRow
+            title={<AboutVersionTitle />}
+            description="Current version of the application."
+          />
+        )}
+      </SettingsSection>
+
+      <LegacyFeaturesSection />
+    </SettingsPageContainer>
+  );
+}
+
+export function EnvironmentSettingsPanel() {
+  return (
+    <SettingsPageContainer>
+      <SharedSettingsMismatchAlert />
+      <SettingsEnvironmentScope description="Workspace defaults and background behavior are stored on the environment's own server.">
+        {(environment, serverConfig) => (
+          <EnvironmentSettingsSections environment={environment} serverConfig={serverConfig} />
+        )}
+      </SettingsEnvironmentScope>
+    </SettingsPageContainer>
+  );
+}
+
+function EnvironmentSettingsSections({
+  environment,
+  serverConfig,
+}: {
+  readonly environment: EnvironmentPresentation;
+  readonly serverConfig: ServerConfig;
+}) {
+  const navigate = useNavigate();
+  const environmentId = environment.environmentId;
+  const settings = useEnvironmentSettings(environmentId);
+  const updateSettings = useUpdateEnvironmentSettings(environmentId);
+  const [backgroundActivityDialogOpen, setBackgroundActivityDialogOpen] = useState(false);
+  const observability = serverConfig.observability;
+  const textGenerationProviders = serverConfig.providers.filter(
+    (provider) => provider.supportsTextGeneration !== false,
+  );
+  const supportsAutoSettlement = serverConfig.environment.capabilities.threadAutoSettlement;
+  const diagnosticsDescription = formatDiagnosticsDescription({
+    localTracingEnabled: observability?.localTracingEnabled ?? false,
+    otlpTracesEnabled: observability?.otlpTracesEnabled ?? false,
+    otlpTracesUrl: observability?.otlpTracesUrl,
+    otlpMetricsEnabled: observability?.otlpMetricsEnabled ?? false,
+    otlpMetricsUrl: observability?.otlpMetricsUrl,
+  });
+
+  const textGenerationModelSelection = resolveAppModelSelectionState(
+    settings,
+    textGenerationProviders,
+  );
+  const textGenInstanceId = textGenerationModelSelection.instanceId;
+  const textGenModel = textGenerationModelSelection.model;
+  const textGenModelOptions = textGenerationModelSelection.options;
+  const textGenerationModelInstanceEntries = sortProviderInstanceEntries(
+    applyProviderInstanceSettings(deriveProviderInstanceEntries(textGenerationProviders), settings),
+  );
+  const hasTextGenerationProvider = textGenerationModelInstanceEntries.some(
+    (entry) => entry.enabled && entry.isAvailable,
+  );
+  const textGenInstanceEntry = textGenerationModelInstanceEntries.find(
+    (entry) => entry.instanceId === textGenInstanceId,
+  );
+  const textGenProvider: ProviderDriverKind =
+    textGenInstanceEntry?.driverKind ?? DEFAULT_DRIVER_KIND;
+  const textGenerationModelOptionsByInstance = getCustomModelOptionsByInstance(
+    settings,
+    textGenerationProviders,
+    textGenInstanceId,
+    textGenModel,
+  );
+  const isTextGenerationModelDirty = !Equal.equals(
+    settings.textGenerationModelSelection ?? null,
+    DEFAULT_UNIFIED_SETTINGS.textGenerationModelSelection ?? null,
+  );
+  const resolvedBackgroundActivity = resolveServerBackgroundActivitySettings(settings);
+  const activeBackgroundActivityProfile = resolvedBackgroundActivity.profile;
+  const backgroundActivityProfileOption = resolveBackgroundActivityProfileOption(settings);
+  const backgroundActivityDescription =
+    backgroundActivityProfileOption === "advanced"
+      ? `${ADVANCED_BACKGROUND_ACTIVITY_DESCRIPTION} Current shared policy: ${
+          BACKGROUND_ACTIVITY_PROFILE_LABELS[activeBackgroundActivityProfile]
+        }.`
+      : BACKGROUND_ACTIVITY_PROFILE_DESCRIPTIONS[resolvedBackgroundActivity.profile];
+  const canResetBackgroundActivity = !Equal.equals(
+    settings.backgroundActivity,
+    DEFAULT_UNIFIED_SETTINGS.backgroundActivity,
+  );
+
+  return (
+    <>
+      <SettingsSection id="environment-workspace" title="Workspace">
+        {supportsAutoSettlement ? (
+          <>
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("auto-settle-merged-threads")}
+              description="Settle a thread when its pull request merges. Closed pull requests still settle automatically."
+              resetAction={
+                settings.sidebarAutoSettleOnMerge !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (
+                  <SettingResetButton
+                    label="auto-settle on merge"
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={settings.sidebarAutoSettleOnMerge}
+                  onCheckedChange={(checked) =>
+                    updateSettings({ sidebarAutoSettleOnMerge: Boolean(checked) })
+                  }
+                  aria-label="Auto-settle merged threads"
+                />
+              }
+            />
+
+            <SettingsRow
+              serverScoped
+              {...searchableSetting("auto-settle-inactive-threads")}
+              description="Sidebar threads with no activity for this long settle automatically."
+              resetAction={
+                settings.sidebarAutoSettleAfterDays !==
+                DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays ? (
+                  <SettingResetButton
+                    label="auto-settle"
+                    onClick={() =>
+                      updateSettings({
+                        sidebarAutoSettleAfterDays:
+                          DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
+                      })
+                    }
+                  />
+                ) : null
+              }
+              control={
+                <Switch
+                  checked={settings.sidebarAutoSettleAfterDays !== null}
+                  onCheckedChange={(checked) =>
+                    updateSettings({
+                      sidebarAutoSettleAfterDays: checked ? AUTO_SETTLE_DEFAULT_DAYS : null,
+                    })
+                  }
+                  aria-label="Auto-settle inactive threads"
+                />
+              }
+            />
+            {settings.sidebarAutoSettleAfterDays !== null ? (
+              <SettingsRow
+                serverScoped
+                title={searchableSetting("days-before-auto-settle").title}
+                description="Any new activity un-settles a thread automatically."
+                control={
+                  <AutoSettleDaysInput
+                    value={settings.sidebarAutoSettleAfterDays}
+                    onCommit={(days) => updateSettings({ sidebarAutoSettleAfterDays: days })}
+                  />
+                }
+              />
+            ) : null}
+          </>
+        ) : null}
 
         <SettingsRow
           {...searchableSetting("send-shortcut")}
@@ -2747,6 +3139,34 @@ export function GeneralSettingsPanel() {
         <SettingsRow
           serverScoped
           settingKeys={["backgroundActivity"]}
+          {...searchableSetting("legacy-token-streaming")}
+          description="Stream output token by token. This legacy mode is slower and harder to follow."
+          control={
+            <Switch
+              checked={settings.enableLegacyTokenStreaming}
+              onCheckedChange={(checked) => {
+                if (!checked) {
+                  updateSettings({ enableLegacyTokenStreaming: false });
+                  return;
+                }
+                void (async () => {
+                  const api = readLocalApi();
+                  const confirmed = await (api ?? ensureLocalApi()).dialogs.confirm(
+                    [
+                      "Turn on token-by-token output?",
+                      "It is significantly slower than the default buffered output and hurts the reading experience. This switch exists only for backwards compatibility.",
+                    ].join("\n"),
+                  );
+                  if (confirmed) updateSettings({ enableLegacyTokenStreaming: true });
+                })();
+              }}
+              aria-label="Stream token by token (legacy)"
+            />
+          }
+        />
+
+        <SettingsRow
+          serverScoped
           id={searchableSetting("background-activity").id}
           title={
             <span className="inline-flex items-center gap-1.5">
@@ -2830,7 +3250,8 @@ export function GeneralSettingsPanel() {
                 </Tooltip>
               ) : null}
               <BackgroundActivityAdvancedDialog
-                open={backgroundActivityDialogOpen && isEnvironmentScope}
+                environmentId={environmentId}
+                open={backgroundActivityDialogOpen}
                 onOpenChange={setBackgroundActivityDialogOpen}
               />
             </>
@@ -2899,128 +3320,6 @@ export function GeneralSettingsPanel() {
             />
           }
         />
-      </SettingsSection>
-
-      <SettingsSection id="confirmations" title="Confirmations">
-        <SettingsRow
-          {...searchableSetting("unpin-confirmation")}
-          description="Ask before unpinning a thread from the pinned section."
-          resetAction={
-            settings.confirmThreadUnpin !== DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin ? (
-              <SettingResetButton
-                label="unpin confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadUnpin: DEFAULT_UNIFIED_SETTINGS.confirmThreadUnpin,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadUnpin}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadUnpin: Boolean(checked) })
-              }
-              aria-label="Confirm thread unpinning"
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("archive-confirmation")}
-          description="Require a second click on the inline archive action before a thread is archived."
-          resetAction={
-            settings.confirmThreadArchive !== DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive ? (
-              <SettingResetButton
-                label="archive confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadArchive: DEFAULT_UNIFIED_SETTINGS.confirmThreadArchive,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadArchive}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadArchive: Boolean(checked) })
-              }
-              aria-label="Confirm thread archiving"
-            />
-          }
-        />
-
-        <SettingsRow
-          {...searchableSetting("delete-confirmation")}
-          description="Ask before deleting a thread and its chat history."
-          resetAction={
-            settings.confirmThreadDelete !== DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete ? (
-              <SettingResetButton
-                label="delete confirmation"
-                onClick={() =>
-                  updateSettings({
-                    confirmThreadDelete: DEFAULT_UNIFIED_SETTINGS.confirmThreadDelete,
-                  })
-                }
-              />
-            ) : null
-          }
-          control={
-            <Switch
-              checked={settings.confirmThreadDelete}
-              onCheckedChange={(checked) =>
-                updateSettings({ confirmThreadDelete: Boolean(checked) })
-              }
-              aria-label="Confirm thread deletion"
-            />
-          }
-        />
-
-        {isElectron ? (
-          <SettingsRow
-            {...searchableSetting("quit-confirmation")}
-            description="Hold mode also quits on two quick presses."
-            resetAction={
-              settings.confirmQuit !== DEFAULT_UNIFIED_SETTINGS.confirmQuit ? (
-                <SettingResetButton
-                  label="quit shortcut behavior"
-                  onClick={() =>
-                    updateSettings({ confirmQuit: DEFAULT_UNIFIED_SETTINGS.confirmQuit })
-                  }
-                />
-              ) : null
-            }
-            control={
-              <Select
-                value={settings.confirmQuit}
-                onValueChange={(value) => {
-                  if (value === "direct" || value === "hold" || value === "double-click") {
-                    updateSettings({ confirmQuit: value });
-                  }
-                }}
-              >
-                <SelectTrigger
-                  size="sm"
-                  className="w-full sm:w-40"
-                  aria-label="Quit shortcut behavior"
-                >
-                  <SelectValue>{QUIT_CONFIRMATION_MODE_LABELS[settings.confirmQuit]}</SelectValue>
-                </SelectTrigger>
-                <SelectPopup align="end" alignItemWithTrigger={false}>
-                  {Object.entries(QUIT_CONFIRMATION_MODE_LABELS).map(([value, label]) => (
-                    <SelectItem hideIndicator key={value} value={value}>
-                      {label}
-                    </SelectItem>
-                  ))}
-                </SelectPopup>
-              </Select>
-            }
-          />
-        ) : null}
       </SettingsSection>
 
       <SettingsSection id="text-generation" title="Text generation">
@@ -3145,7 +3444,7 @@ export function GeneralSettingsPanel() {
           />
         )}
       </SettingsSection>
-      <SettingsSection title="Diagnostics">
+      <SettingsSection id="environment-diagnostics" title="Diagnostics">
         <SettingsRow
           {...searchableSetting("diagnostics")}
           description={
@@ -3179,9 +3478,7 @@ export function GeneralSettingsPanel() {
           }
         />
       </SettingsSection>
-
-      <LegacyFeaturesSection />
-    </SettingsPageContainer>
+    </>
   );
 }
 

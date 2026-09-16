@@ -358,6 +358,10 @@
     "./cliRelease": {
       "types": "./src/cliRelease.ts",
       "import": "./src/cliRelease.ts"
+    },
+    "./serverRuntimeState": {
+      "types": "./src/serverRuntimeState.ts",
+      "import": "./src/serverRuntimeState.ts"
     }
   },
   "scripts": {

@@ -17,6 +17,7 @@ vi.mock("electron", () => ({
 
 import * as DesktopBackendManager from "../../backend/DesktopBackendManager.ts";
 import * as DesktopBackendPool from "../../backend/DesktopBackendPool.ts";
+import * as DesktopBackendMode from "../../app/DesktopBackendMode.ts";
 import * as ElectronDialog from "../../electron/ElectronDialog.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
@@ -82,7 +83,14 @@ describe("getLocalEnvironmentBootstraps", () => {
           bootstrapToken: "bootstrap-token",
         },
       ]);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([defaultWslInstance]))),
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([defaultWslInstance]),
+          DesktopBackendMode.layerTest(),
+        ),
+      ),
+    ),
   );
 
   it.effect("publishes a pending bootstrap only while a transient retry is scheduled", () => {
@@ -117,7 +125,14 @@ describe("getLocalEnvironmentBootstraps", () => {
           wsBaseUrl: null,
         },
       ]);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([retryingInstance])));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([retryingInstance]),
+          DesktopBackendMode.layerTest(),
+        ),
+      ),
+    );
   });
 
   it.effect("omits a bounded transient bootstrap after retries stop", () => {
@@ -145,8 +160,30 @@ describe("getLocalEnvironmentBootstraps", () => {
     return Effect.gen(function* () {
       const result = yield* getLocalEnvironmentBootstraps.handler();
       assert.deepEqual(result, []);
-    }).pipe(Effect.provide(DesktopBackendPool.layerTest([stoppedInstance])));
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([stoppedInstance]),
+          DesktopBackendMode.layerTest(),
+        ),
+      ),
+    );
   });
+
+  it.effect("returns no local bootstraps in client-only mode", () =>
+    Effect.gen(function* () {
+      const mode = yield* DesktopBackendMode.DesktopBackendMode;
+      yield* mode.latch("client-only");
+      assert.deepEqual(yield* getLocalEnvironmentBootstraps.handler(), []);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          DesktopBackendPool.layerTest([defaultWslInstance]),
+          DesktopBackendMode.layerTest(),
+        ),
+      ),
+    ),
+  );
 });
 
 describe("getWindowFullscreenState", () => {

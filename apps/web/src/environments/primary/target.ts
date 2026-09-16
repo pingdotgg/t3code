@@ -84,6 +84,11 @@ export interface PrimaryEnvironmentTarget {
   };
 }
 
+export function isDesktopClientOnlyMode(): boolean {
+  const bridge = window.desktopBridge;
+  return bridge?.getBackendModeState?.().effectiveMode === "client-only";
+}
+
 const LOOPBACK_HOSTNAMES = new Set(["127.0.0.1", "::1", "localhost"]);
 
 function getDesktopLocalEnvironmentBootstrap(): DesktopEnvironmentBootstrap | null {
@@ -314,4 +319,8 @@ export function readPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget | null 
     resolveConfiguredPrimaryTarget() ??
     resolveWindowOriginPrimaryTarget()
   );
+}
+
+export function readOptionalPrimaryEnvironmentTarget(): PrimaryEnvironmentTarget | null {
+  return isDesktopClientOnlyMode() ? null : readPrimaryEnvironmentTarget();
 }

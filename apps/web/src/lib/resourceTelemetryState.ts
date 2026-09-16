@@ -50,14 +50,24 @@ export function useResourceTelemetry(
 }
 
 export function useResourceTelemetryHistory(
-  input: ResourceTelemetryHistoryInput,
-  targetEnvironmentId?: EnvironmentId | null,
+  inputOrEnvironmentId: ResourceTelemetryHistoryInput | EnvironmentId | null,
+  targetEnvironmentIdOrInput?: EnvironmentId | null | ResourceTelemetryHistoryInput,
 ) {
   const primaryEnvironment = usePrimaryEnvironment();
-  const environmentId =
-    targetEnvironmentId === undefined
-      ? (primaryEnvironment?.environmentId ?? null)
-      : targetEnvironmentId;
+  // UNION: base calls as (input, targetEnvironmentId?) while the feature
+  // calls as (environmentId, input). Support both orders.
+  const isBaseOrder =
+    typeof inputOrEnvironmentId === "object" &&
+    inputOrEnvironmentId !== null &&
+    "windowMs" in (inputOrEnvironmentId as Record<string, unknown>);
+  const environmentId: EnvironmentId | null = isBaseOrder
+    ? ((targetEnvironmentIdOrInput as EnvironmentId | null | undefined) === undefined
+        ? (primaryEnvironment?.environmentId ?? null)
+        : (targetEnvironmentIdOrInput as EnvironmentId | null))
+    : (inputOrEnvironmentId as EnvironmentId | null);
+  const input = (isBaseOrder
+    ? (inputOrEnvironmentId as ResourceTelemetryHistoryInput)
+    : (targetEnvironmentIdOrInput as ResourceTelemetryHistoryInput));
   return useEnvironmentQuery(
     environmentId === null
       ? null

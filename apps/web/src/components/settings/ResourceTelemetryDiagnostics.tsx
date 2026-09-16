@@ -834,7 +834,7 @@ function AttributionTable({ entries }: { entries: ReadonlyArray<ResourceAttribut
 export function ResourceTelemetryDiagnostics({
   environmentId,
 }: {
-  environmentId: EnvironmentId | null;
+  readonly environmentId: EnvironmentId | null;
 }) {
   const [windowMs, setWindowMs] = useState(15 * 60_000);
   const selectedWindow =
@@ -860,6 +860,7 @@ export function ResourceTelemetryDiagnostics({
       environmentIdRef.current = null;
     };
   }, [environmentId]);
+  signalingKeysRef.current = signalingKeys;
   const [isRetrying, setIsRetrying] = useState(false);
   const snapshot = telemetry.data;
   const allT3 = snapshot?.groups.allT3;
@@ -939,7 +940,7 @@ export function ResourceTelemetryDiagnostics({
           clearSignaling();
         });
     },
-    [signalServerProcess],
+    [environmentId, signalServerProcess],
   );
 
   const retryCollector = useCallback(() => {

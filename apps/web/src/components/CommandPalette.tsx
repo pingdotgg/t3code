@@ -3,7 +3,11 @@
 import { threadPullRequestLinkMode } from "@t3tools/client-runtime/thread-pull-request-compatibility";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopedThreadKey,
+  scopeProjectRef,
+  scopeThreadRef,
+} from "@t3tools/client-runtime/environment";
 import {
   canCreateProjectInEnvironment,
   getCloneDestinationBrowsePath,
@@ -80,11 +84,23 @@ import { filesystemEnvironment } from "../state/filesystem";
 import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { sourceControlEnvironment } from "../state/sourceControl";
+import { vcsEnvironment } from "../state/vcs";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useAtomQueryRunner } from "../state/use-atom-query-runner";
-import { useEnvironments, usePrimaryEnvironmentId } from "../state/environments";
-import { useProjects, useServerConfigs, useThreadShells, waitForProject } from "../state/entities";
+import {
+  useAppOwnsLocalEnvironment,
+  useEnvironments,
+  usePrimaryEnvironmentId,
+} from "../state/environments";
+import {
+  useProject,
+  useProjects,
+  useServerConfigs,
+  useThreadShells,
+  waitForProject,
+} from "../state/entities";
 import { useThreadSearch } from "../state/queries";
+import * as ThreadPr from "./ThreadStatusIndicators";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import {
   appendBrowsePathSegment,
@@ -304,7 +320,16 @@ function remoteProjectSourceIcon(source: AddProjectRemoteSource, className: stri
 }
 
 function projectFaviconIcon(project: Project): ReactNode {
-  return <ProjectFavicon project={project} className={ITEM_ICON_CLASS} />;
+  return (
+    <ProjectFavicon
+      environmentId={project.environmentId}
+      cwd={project.workspaceRoot}
+      projectName={project.title}
+      faviconPath={project.faviconPath}
+      projectIcon={project.projectIcon}
+      className={ITEM_ICON_CLASS}
+    />
+  );
 }
 
 function remoteProjectInputPlaceholder(flow: AddProjectCloneFlow | null): string | null {
@@ -622,6 +647,7 @@ function OpenCommandPaletteDialog(props: {
   const desktopLocalBootstraps = useDesktopLocalBootstraps();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const availableSettingsSearchItems = useAvailableSettingsSearchItems();
+  const ownsLocalEnvironment = useAppOwnsLocalEnvironment();
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
@@ -635,6 +661,35 @@ function OpenCommandPaletteDialog(props: {
       : activeThread
         ? scopeThreadRef(activeThread.environmentId, activeThread.id)
         : null;
+  const changeRequestSnapshotByKey = useAtomValue(ThreadPr.threadChangeRequestSnapshotsAtom);
+  const activeThreadProject = useProject(
+    activeThread === null
+      ? null
+      : scopeProjectRef(activeThread.environmentId, activeThread.projectId),
+  );
+  const activeThreadCwd = activeThread?.worktreePath ?? activeThreadProject?.workspaceRoot ?? null;
+  const activeThreadGitStatus = useEnvironmentQuery(
+    activeThread != null &&
+      activeThread.linkedPullRequest == null &&
+      activeThread.branch !== null &&
+      activeThreadCwd !== null
+      ? vcsEnvironment.status({
+          environmentId: activeThread.environmentId,
+          input: { cwd: activeThreadCwd },
+        })
+      : null,
+  ).data;
+  const detectedPullRequestUrl =
+    activeThread == null || activeThread.linkedPullRequest != null
+      ? null
+      : (ThreadPr.resolveDisplayedThreadPr({
+          threadBranch: activeThread.branch,
+          gitStatus: activeThreadGitStatus ?? null,
+          snapshot: changeRequestSnapshotByKey.get(
+            scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id)),
+          ),
+          retainTerminalOnBranchMismatch: activeThread.worktreePath === null,
+        })?.url ?? null);
   const openPanelPullRequestUrl = useOpenPanelPullRequestUrl(referenceThreadRef);
   const activeThreadServerConfig = useServerConfigs().get(
     activeThread?.environmentId ?? ("" as EnvironmentId),
@@ -647,7 +702,10 @@ function OpenCommandPaletteDialog(props: {
           openPanelPullRequestUrl,
           pullRequests: activeThread?.pullRequests,
           linkedPullRequestUrl:
-            activeThread?.linkedPullRequest?.url ?? activeThread?.branchPullRequest?.url ?? null,
+            activeThread?.linkedPullRequest?.url ??
+            activeThread?.branchPullRequest?.url ??
+            detectedPullRequestUrl ??
+            null,
         });
   const copyActiveThreadReference = useCallback(async () => {
     const target = activeThreadReferenceCopyTarget;
@@ -786,12 +844,14 @@ function OpenCommandPaletteDialog(props: {
         projects: clientSettings.sidebarProjectSortOrder === "manual" ? orderedProjects : projects,
         settings: projectGroupingSettings,
         primaryEnvironmentId,
+        ownsLocalEnvironment,
         resolveEnvironmentLabel: (environmentId) => environmentLabelById.get(environmentId) ?? null,
       }),
     [
       clientSettings.sidebarProjectSortOrder,
       environmentLabelById,
       orderedProjects,
+      ownsLocalEnvironment,
       primaryEnvironmentId,
       projectGroupingSettings,
       projects,
@@ -828,7 +888,7 @@ function OpenCommandPaletteDialog(props: {
     () =>
       projectPickerEntries.map(({ group, targetProject }) => ({
         ...targetProject,
-        displayName: group.displayName,
+        title: group.displayName,
       })),
     [projectPickerEntries],
   );
@@ -964,6 +1024,20 @@ function OpenCommandPaletteDialog(props: {
   const projectCwdById = useMemo(
     () =>
       new Map<ProjectId, string>(projects.map((project) => [project.id, project.workspaceRoot])),
+    [projects],
+  );
+  const projectFaviconPathById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project.faviconPath ?? null] as const)),
+    [projects],
+  );
+  const projectIconByKey = useMemo(
+    () =>
+      new Map(
+        projects.map(
+          (project) =>
+            [`${project.environmentId}:${project.id}`, project.projectIcon ?? null] as const,
+        ),
+      ),
     [projects],
   );
   const projectByKey = useMemo(
@@ -1220,7 +1294,14 @@ function OpenCommandPaletteDialog(props: {
         projectTitleById,
         sortOrder: clientSettings.sidebarThreadSortOrder,
         icon: <MessageSquareIcon className={ITEM_ICON_CLASS} />,
-        renderLeadingContent: (thread) => <ThreadRowLeadingStatus thread={thread} />,
+        renderLeadingContent: (thread) => (
+          <ThreadRowLeadingStatus
+            thread={thread}
+            snapshot={changeRequestSnapshotByKey.get(
+              scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
+            )}
+          />
+        ),
         renderTrailingContent: (thread) => <ThreadRowTrailingStatus thread={thread} />,
         renderDescription: (thread, { projectTitle }) => {
           const modelInstanceId =
@@ -1272,11 +1353,14 @@ function OpenCommandPaletteDialog(props: {
       }),
     [
       activeThreadId,
+      changeRequestSnapshotByKey,
       clientSettings.sidebarThreadSortOrder,
       navigate,
       projectCwdById,
       projectByKey,
       projectEnvironmentLocationById,
+      projectFaviconPathById,
+      projectIconByKey,
       projectTitleById,
       providerEntryByEnvironmentAndInstanceId,
       threadContentMatchByKey,

@@ -233,7 +233,6 @@ export const authHttpApiLayer = HttpApiBuilder.group(
   Effect.fnUntraced(function* (handlers) {
     const serverAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const sessions = yield* SessionStore.SessionStore;
-
     return handlers
       .handle(
         "session",
