@@ -98,15 +98,14 @@ export const makeOpenCode2TextGeneration = (openCode2Settings: OpenCode2Settings
         // object rather than to a string (mirrors the other providers).
         const decodeOutput = Schema.decodeEffect(Schema.fromJsonString(input.outputSchema));
         return yield* decodeOutput(extractJsonObject(rawText)).pipe(
-          Effect.catchTag(
-            "SchemaError",
-            (cause) =>
+          Effect.catchTags({
+            SchemaError: (cause) =>
               new TextGenerationError({
                 operation: input.operation,
                 detail: "OpenCode 2 returned invalid structured output.",
                 cause,
               }),
-          ),
+          }),
         );
       }).pipe(
         Effect.catchTags({
