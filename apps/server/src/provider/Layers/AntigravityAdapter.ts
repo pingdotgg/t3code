@@ -213,6 +213,7 @@ interface SessionContext {
   stopped: boolean;
   closed: boolean;
   disconnected: boolean;
+  interruptedDisconnect: boolean;
 }
 
 const CLIENT_FILE_MAX_BYTES = 8 * 1024 * 1024;
@@ -241,9 +242,7 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
     const allRoots = [...input.allowedRoots, ...roots];
-    if (
-      !allRoots.some((root) => isInsideRoot(path, root, real) || isInsideRoot(path, root, resolved))
-    ) {
+    if (!allRoots.some((root) => isInsideRoot(path, root, real))) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Path '${input.requestPath}' is outside the session workspace.`,
       );
@@ -441,14 +440,21 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           context.closed = true;
           if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
           yield* finishBackgroundCommands(context);
-          const wasInterrupted = context.interruptedTurnIds.size > 0;
-          yield* finishSubagents(
-            context,
-            context.disconnected && !wasInterrupted ? "failed" : "cancelled",
-            context.disconnected && !wasInterrupted ? "Antigravity process stopped." : undefined,
+          const wasInterrupted =
+            context.interruptedDisconnect || context.interruptedTurnIds.size > 0;
+          yield* context.promptLock.withPermit(
+            Effect.gen(function* () {
+              yield* finishSubagents(
+                context,
+                context.disconnected && !wasInterrupted ? "failed" : "cancelled",
+                context.disconnected && !wasInterrupted
+                  ? "Antigravity process stopped."
+                  : undefined,
+              );
+              context.subagents.clear();
+              context.interruptedTurnIds.clear();
+            }),
           );
-          context.subagents.clear();
-          context.interruptedTurnIds.clear();
           yield* emit({
             type: "session.exited",
             ...(yield* stamp),
@@ -580,6 +586,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
       case "ConnectionTerminated":
         context.stopped = true;
         context.disconnected = true;
+        context.interruptedDisconnect = context.interruptedTurnIds.size > 0;
         yield* stopContext(context).pipe(Effect.forkIn(ownerScope));
         return;
       case "AssistantItemStarted":
@@ -893,6 +900,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 stopped: false,
                 closed: false,
                 disconnected: false,
+                interruptedDisconnect: false,
               };
               const running = context;
               sessions.set(input.threadId, running);
@@ -1017,6 +1025,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
         context.activeTurnId = undefined;
         context.promptFiber = undefined;
+        context.interruptedTurnIds.delete(turn.turnId);
         if (!context.stopped) {
           context.session = {
             ...context.session,
