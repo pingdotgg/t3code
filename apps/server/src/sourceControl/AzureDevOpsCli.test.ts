@@ -290,6 +290,7 @@ describe("AzureDevOpsCli.layer", () => {
         headSelector: "feature/provider",
         title: "Provider PR",
         bodyFile,
+        draft: false,
       });
 
       expect(mockRun).toHaveBeenCalledWith(
@@ -300,6 +301,33 @@ describe("AzureDevOpsCli.layer", () => {
         }),
       );
       expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--output");
+    }).pipe(Effect.provide(layer)),
+  );
+
+  it.effect("marks pull requests as drafts when requested", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const bodyFile = `/tmp/t3code-azure-devops-cli-.md`;
+      yield* fileSystem.writeFileString(bodyFile, "Generated body");
+      mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
+
+      const az = yield* AzureDevOpsCli.AzureDevOpsCli;
+      yield* az.createPullRequest({
+        cwd: "/repo",
+        baseBranch: "main",
+        headSelector: "feature/provider",
+        title: "Provider PR",
+        bodyFile,
+        draft: true,
+      });
+
+      expect(mockRun).toHaveBeenCalledWith(
+        expect.objectContaining({
+          command: "az",
+          cwd: "/repo",
+          args: expect.arrayContaining(["--draft", "true"]),
+        }),
+      );
     }).pipe(Effect.provide(layer)),
   );
 

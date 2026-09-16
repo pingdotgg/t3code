@@ -465,6 +465,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
       headSelector: "owner:feature/provider",
       title: "Provider PR",
       bodyFile,
+      draft: false,
     });
 
     const request = execute.mock.calls[0]?.[0];
@@ -480,6 +481,7 @@ it.effect("creates pull requests using the official REST payload shape", () => {
     assert.deepStrictEqual(JSON.parse(new TextDecoder().decode(rawBody)), {
       title: "Provider PR",
       description: "PR body",
+      draft: false,
       source: {
         branch: { name: "feature/provider" },
         repository: { full_name: "owner/t3code" },
@@ -488,6 +490,35 @@ it.effect("creates pull requests using the official REST payload shape", () => {
         branch: { name: "main" },
       },
     });
+  }).pipe(Effect.provide(layer), Effect.scoped);
+});
+
+it.effect("marks Bitbucket pull requests as drafts when requested", () => {
+  const { execute, layer } = makeLayer({
+    response: () => Response.json(bitbucketPullRequest),
+  });
+
+  return Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const bodyFile = yield* fileSystem.makeTempFileScoped({ prefix: "bitbucket-pr-body-" });
+    yield* fileSystem.writeFileString(bodyFile, "PR body");
+
+    const bitbucket = yield* BitbucketApi.BitbucketApi;
+    yield* bitbucket.createPullRequest({
+      cwd: "/repo",
+      baseBranch: "main",
+      headSelector: "owner:feature/provider",
+      title: "Provider PR",
+      bodyFile,
+      draft: true,
+    });
+
+    const request = execute.mock.calls[0]?.[0];
+    const rawBody = (request?.body as { readonly body?: Uint8Array } | undefined)?.body;
+    assert.ok(rawBody);
+    // @effect-diagnostics-next-line preferSchemaOverJson:off
+    const body = JSON.parse(new TextDecoder().decode(rawBody)) as { readonly draft?: boolean };
+    assert.strictEqual(body.draft, true);
   }).pipe(Effect.provide(layer), Effect.scoped);
 });
 

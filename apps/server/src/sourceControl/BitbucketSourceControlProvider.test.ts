@@ -134,6 +134,7 @@ it.effect("creates Bitbucket PRs through provider-neutral input names", () =>
       headSelector: "owner:feature/provider",
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
+      draft: false,
     });
 
     assert.deepStrictEqual(createInput, {
@@ -146,6 +147,7 @@ it.effect("creates Bitbucket PRs through provider-neutral input names", () =>
       },
       title: "Provider PR",
       bodyFile: "/tmp/body.md",
+      draft: false,
     });
   }),
 );
