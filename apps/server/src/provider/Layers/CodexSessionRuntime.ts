@@ -2495,6 +2495,22 @@ export const makeCodexSessionRuntime = (
         Effect.gen(function* () {
           const providerThreadId = yield* readProviderThreadId;
           const session = yield* Ref.get(sessionRef);
+          // An interrupted goal turn must not leave its persisted goal active,
+          // or Codex can schedule another continuation immediately after Stop.
+          // Keep this best-effort and bounded so goal-control failures cannot
+          // prevent the turn and its child fleet from being interrupted.
+          yield* Effect.gen(function* () {
+            const { goal } = yield* client.request("thread/goal/get", {
+              threadId: providerThreadId,
+            });
+            if (goal?.status !== "active") {
+              return;
+            }
+            yield* client.request("thread/goal/set", {
+              threadId: providerThreadId,
+              status: "paused",
+            });
+          }).pipe(Effect.timeoutOption("1 second"), Effect.ignore);
           // Stop-everything: children are full threads with their own turns;
           // interrupting only the parent leaves the fleet running. Interrupt
           // each live child turn first, best-effort per child, BOUNDED: the
