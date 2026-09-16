@@ -85,6 +85,7 @@ function hasImportBlockingActivity(
     thread.checkpoints.length > 0 ||
     thread.snoozedUntil != null ||
     thread.snoozedAt != null ||
+    thread.snoozedThroughTurnId != null ||
     thread.pinnedAt != null ||
     thread.pinOrderKey != null ||
     thread.titleRegeneration != null ||

@@ -649,6 +649,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           }),
         );
       }
+      if (
+        command.snoozedThroughTurnId !== undefined &&
+        thread.session?.activeTurnId !== command.snoozedThroughTurnId
+      ) {
+        return yield* Effect.fail(
+          new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: `thread ${command.threadId} active turn does not match ${command.snoozedThroughTurnId}`,
+          }),
+        );
+      }
       // Blocked-on-you work must not be snoozed away: a pending approval or
       // user-input request is the agent waiting on the user, and hiding it
       // defeats the request. (A running session IS snoozable — snooze only
@@ -678,7 +689,9 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       // timestamps so the projection is a no-op. A different wake time is a
       // real change and stamps fresh.
       const existingSnoozedAt =
-        thread.snoozedUntil === command.snoozedUntil && thread.snoozedAt != null
+        thread.snoozedUntil === command.snoozedUntil &&
+        (thread.snoozedThroughTurnId ?? null) === (command.snoozedThroughTurnId ?? null) &&
+        thread.snoozedAt != null
           ? thread.snoozedAt
           : null;
       return {
@@ -693,6 +706,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           threadId: command.threadId,
           snoozedUntil: command.snoozedUntil,
           snoozedAt: existingSnoozedAt ?? occurredAt,
+          snoozedThroughTurnId: command.snoozedThroughTurnId ?? null,
           updatedAt: existingSnoozedAt !== null ? thread.updatedAt : occurredAt,
         },
       };

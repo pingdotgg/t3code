@@ -27,14 +27,18 @@ function localDate(year: number, month: number, day: number, hour: number, minut
 function makeShell(input: {
   readonly snoozedUntil?: string | null;
   readonly snoozedAt?: string | null;
+  readonly snoozedThroughTurnId?: string | null;
   readonly sessionStatus?: "starting" | "running" | "ready" | "error";
   readonly pending?: "approval" | "user-input";
   readonly turnCompletedAt?: string | null;
+  readonly turnId?: string;
 }): ThreadSnoozeShell {
   const threadId = ThreadId.make("thread-1");
   return {
     snoozedUntil: input.snoozedUntil ?? null,
     snoozedAt: input.snoozedAt ?? (input.snoozedUntil != null ? SNOOZED_AT : null),
+    snoozedThroughTurnId:
+      input.snoozedThroughTurnId == null ? null : TurnId.make(input.snoozedThroughTurnId),
     hasPendingApprovals: input.pending === "approval",
     hasPendingUserInput: input.pending === "user-input",
     session:
@@ -53,7 +57,7 @@ function makeShell(input: {
       input.turnCompletedAt === undefined
         ? null
         : {
-            turnId: TurnId.make("turn-1"),
+            turnId: TurnId.make(input.turnId ?? "turn-1"),
             state: "completed",
             requestedAt: SNOOZED_AT,
             startedAt: null,
@@ -137,6 +141,33 @@ describe("effectiveSnoozed", () => {
     expect(
       effectiveSnoozed(
         makeShell({ snoozedUntil: FUTURE_WAKE, turnCompletedAt: "2026-04-10T10:30:00.000Z" }),
+        { now: NOW },
+      ),
+    ).toBe(false);
+  });
+
+  it("stays snoozed through the completion of the turn that requested it", () => {
+    expect(
+      effectiveSnoozed(
+        makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          snoozedThroughTurnId: "turn-1",
+          turnCompletedAt: "2026-04-10T10:30:00.000Z",
+        }),
+        { now: NOW },
+      ),
+    ).toBe(true);
+  });
+
+  it("still wakes when a later turn completes", () => {
+    expect(
+      effectiveSnoozed(
+        makeShell({
+          snoozedUntil: FUTURE_WAKE,
+          snoozedThroughTurnId: "turn-1",
+          turnId: "turn-2",
+          turnCompletedAt: "2026-04-10T10:30:00.000Z",
+        }),
         { now: NOW },
       ),
     ).toBe(false);

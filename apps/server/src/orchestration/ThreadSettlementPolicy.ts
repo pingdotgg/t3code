@@ -131,6 +131,7 @@ export function isAutoSettlementCandidate(thread: OrchestrationThreadShell, now:
     thread.snoozedAt != null &&
     thread.latestTurn?.state === "completed" &&
     thread.latestTurn.completedAt != null &&
+    thread.latestTurn.turnId !== thread.snoozedThroughTurnId &&
     Date.parse(thread.latestTurn.completedAt) > Date.parse(thread.snoozedAt);
   return wokeOnError || wokeOnCompletion;
 }

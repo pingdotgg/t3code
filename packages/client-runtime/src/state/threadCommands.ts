@@ -277,6 +277,7 @@ export function createThreadEnvironmentAtoms<R, E>(
             pinOrderKey: null,
             snoozedAt: null,
             snoozedUntil: null,
+            snoozedThroughTurnId: null,
           },
     ),
     unsettle: optimistic.wrap(commands.unsettle, (thread, input, now) => ({
@@ -294,13 +295,19 @@ export function createThreadEnvironmentAtoms<R, E>(
             hasPendingApprovals: false,
             hasPendingUserInput: false,
             snoozedUntil: input.snoozedUntil,
-            snoozedAt: thread.snoozedUntil === input.snoozedUntil ? (thread.snoozedAt ?? now) : now,
+            snoozedAt:
+              thread.snoozedUntil === input.snoozedUntil &&
+              (thread.snoozedThroughTurnId ?? null) === (input.snoozedThroughTurnId ?? null)
+                ? (thread.snoozedAt ?? now)
+                : now,
+            snoozedThroughTurnId: input.snoozedThroughTurnId ?? null,
           },
     ),
     unsnooze: optimistic.wrap(commands.unsnooze, (thread) => ({
       ...thread,
       snoozedUntil: null,
       snoozedAt: null,
+      snoozedThroughTurnId: null,
     })),
     pin: optimistic.wrap(commands.pin, (thread, input, now) => ({
       ...thread,
@@ -315,6 +322,7 @@ export function createThreadEnvironmentAtoms<R, E>(
         : {}),
       snoozedUntil: null,
       snoozedAt: null,
+      snoozedThroughTurnId: null,
     })),
     unpin: optimistic.wrap(commands.unpin, (thread) => ({
       ...thread,

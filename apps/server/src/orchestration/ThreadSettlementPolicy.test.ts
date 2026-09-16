@@ -214,6 +214,27 @@ describe("resolveAutoSettlementAt", () => {
       ),
     ).toBe(true);
   });
+
+  it("keeps snooze through the completion of its protected turn", () => {
+    const protectedTurnId = TurnId.make("turn-protected");
+    expect(
+      decide(
+        makeThread({
+          snoozedAt: "2026-08-19T00:00:00.000Z",
+          snoozedUntil: "2026-08-29T00:00:00.000Z",
+          snoozedThroughTurnId: protectedTurnId,
+          latestTurn: {
+            turnId: protectedTurnId,
+            state: "completed",
+            requestedAt: "2026-08-18T00:00:00.000Z",
+            startedAt: "2026-08-18T00:01:00.000Z",
+            completedAt: "2026-08-20T00:00:00.000Z",
+            assistantMessageId: null,
+          },
+        }),
+      ),
+    ).toBe(false);
+  });
 });
 
 function linkedRequest(
