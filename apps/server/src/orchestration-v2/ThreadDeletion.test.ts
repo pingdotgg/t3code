@@ -1,5 +1,6 @@
 import { assert, it } from "@effect/vitest";
 import {
+  CheckpointScopeId,
   CommandId,
   EventId,
   MessageId,
@@ -18,10 +19,14 @@ import {
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
+import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
+import { CheckpointServiceV2 } from "./CheckpointService.ts";
+import { EventSinkV2 } from "./EventSink.ts";
 import { IdAllocatorV2, layer as idAllocatorLayer } from "./IdAllocator.ts";
-import { applyToProjection, emptyProjection } from "./ProjectionStore.ts";
+import { applyToProjection, emptyProjection, ProjectionStoreV2 } from "./ProjectionStore.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 
 const threadId = ThreadId.make("thread:delete-plan");
@@ -291,4 +296,92 @@ it.effect("queues provider and resource cleanup and preserves an earlier deletio
       ],
     );
   }).pipe(Effect.provide(idAllocatorLayer)),
+);
+
+it.effect(
+  "enqueues baseline cleanup for a cancelled run whose pending capture can no longer reclaim it",
+  () =>
+    Effect.gen(function* () {
+      const scopeId = CheckpointScopeId.make("scope:delete-plan");
+      const waitingRunId = RunId.make("run:delete-plan:waiting");
+      const waitingNodeId = NodeId.make("node:delete-plan:waiting");
+      const base = makeProjection();
+      const projection: OrchestrationV2ThreadProjection = {
+        ...base,
+        nodes: base.nodes.map((node) =>
+          node.runId === waitingRunId ? { ...node, checkpointScopeId: scopeId } : node,
+        ),
+        checkpointScopes: [
+          {
+            id: scopeId,
+            threadId,
+            runId: waitingRunId,
+            nodeId: waitingNodeId,
+            parentScopeId: null,
+            providerThreadId,
+            kind: "root_run" as const,
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/workspace/feature",
+            createdAt,
+          },
+        ],
+      };
+      const plan = yield* planThreadDeletion({
+        command,
+        projection,
+        now: deletedAt,
+        idAllocator: yield* IdAllocatorV2,
+      });
+      const cleanups = plan.effects.filter(
+        (effect) => effect.request.type === "checkpoint.baseline.cleanup",
+      );
+      assert.deepEqual(
+        cleanups.map((effect) => effect.request),
+        [
+          {
+            type: "checkpoint.baseline.cleanup" as const,
+            runId: waitingRunId,
+            scopeId,
+          },
+        ],
+      );
+
+      // Drain the enqueued cleanup against the post-deletion projection. The
+      // pending checkpoint.capture would now reject (the run is cancelled, not
+      // waiting), so this effect is what reclaims the abandoned start ref.
+      const deleted = plan.events.reduce(applyToProjection, projection);
+      assert.equal(deleted.runs.find((run) => run.id === waitingRunId)?.status, "cancelled");
+      const discarded: number[] = [];
+      const captureLayer = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ProjectionStoreV2)({
+              getThreadProjection: () => Effect.succeed(deleted),
+            }),
+            Layer.mock(CheckpointServiceV2)({
+              discardBaseline: (input) =>
+                Effect.sync(() => {
+                  discarded.push(input.ordinalWithinScope);
+                }),
+            }),
+            Layer.mock(EventSinkV2)({}),
+            idAllocatorLayer,
+          ),
+        ),
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* CheckpointCaptureService.CheckpointCaptureServiceV2;
+        for (const effect of cleanups) {
+          if (effect.request.type === "checkpoint.baseline.cleanup") {
+            yield* service.cleanupBaseline({
+              threadId,
+              runId: effect.request.runId,
+              scopeId: effect.request.scopeId,
+            });
+          }
+        }
+      }).pipe(Effect.provide(captureLayer));
+      assert.deepEqual(discarded, [5]);
+    }).pipe(Effect.provide(idAllocatorLayer)),
 );

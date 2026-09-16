@@ -418,6 +418,7 @@ export function runOrchestratorV2Scenario(
         threadId: ThreadId,
         runId: OrchestrationV2Run["id"],
         attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+        deadlineAt = scenarioWaitDeadline(),
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -437,7 +438,7 @@ export function runOrchestratorV2Scenario(
             yield* waitForProviderBackgroundTasksCleared(threadId, providerThread.id);
             return;
           }
-          if (attemptsRemaining <= 0) {
+          if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             options.replayGate?.release(label);
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
@@ -450,6 +451,7 @@ export function runOrchestratorV2Scenario(
             threadId,
             runId,
             attemptsRemaining - 1,
+            deadlineAt,
           );
         });
 
@@ -457,6 +459,7 @@ export function runOrchestratorV2Scenario(
         threadId: ThreadId,
         providerThreadId: NonNullable<OrchestrationV2Run["providerThreadId"]>,
         attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+        deadlineAt = scenarioWaitDeadline(),
       ): Effect.Effect<void, OrchestratorV2Error | OrchestratorV2ScenarioStepError, never> =>
         Effect.gen(function* () {
           const projection = yield* orchestrator.getThreadProjection(threadId);
@@ -467,7 +470,7 @@ export function runOrchestratorV2Scenario(
           if (!hasPendingTasks && providerThread?.status === "idle") {
             return;
           }
-          if (attemptsRemaining <= 0) {
+          if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             const providerState = projection.providerThreads
               .map(
                 (candidate) =>
@@ -484,19 +487,21 @@ export function runOrchestratorV2Scenario(
             threadId,
             providerThreadId,
             attemptsRemaining - 1,
+            deadlineAt,
           );
         });
 
       const releaseReplayGate = (
         label: string,
         attemptsRemaining = SCENARIO_WAIT_ATTEMPTS,
+        deadlineAt = scenarioWaitDeadline(),
       ): Effect.Effect<void, OrchestratorV2ScenarioStepError> =>
         Effect.gen(function* () {
           if (options.replayGate?.hasReached(label) ?? false) {
             options.replayGate?.release(label);
             return;
           }
-          if (attemptsRemaining <= 0) {
+          if (scenarioWaitExhausted(attemptsRemaining, deadlineAt)) {
             options.replayGate?.release(label);
             return yield* new OrchestratorV2ScenarioStepError({
               scenario: scenario.name,
@@ -504,7 +509,7 @@ export function runOrchestratorV2Scenario(
             });
           }
           yield* yieldToRuntime;
-          return yield* releaseReplayGate(label, attemptsRemaining - 1);
+          return yield* releaseReplayGate(label, attemptsRemaining - 1, deadlineAt);
         });
 
       for (const step of scenarioSteps(scenario)) {

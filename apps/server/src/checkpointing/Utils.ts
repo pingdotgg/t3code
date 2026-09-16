@@ -26,3 +26,8 @@ function resolveThreadWorkspaceCwd(input: {
 
   return input.projects.find((project) => project.id === input.thread.projectId)?.workspaceRoot;
 }
+
+/** A separate starting snapshot keeps turn diffs independent of edits made while idle. */
+export function checkpointStartRef(checkpointRef: CheckpointRef): CheckpointRef {
+  return CheckpointRef.make(`${checkpointRef}-start`);
+}
