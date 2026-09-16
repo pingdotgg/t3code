@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off
+import * as NodeOS from "node:os";
+
 import { GrokSettings, ProviderDriverKind } from "@t3tools/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
@@ -18,6 +21,7 @@ import {
   checkGrokProviderStatus,
   enrichGrokSnapshot,
 } from "../Layers/GrokProvider.ts";
+import { fetchGrokUsageLimits } from "../Layers/grokUsageLimits.ts";
 import { ProviderEventLoggers } from "../Layers/ProviderEventLoggers.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
 import {
@@ -82,14 +86,22 @@ export const GrokDriver: ProviderDriver<GrokSettings, GrokDriverEnv> = {
         continuationGroupKey: continuationIdentity.continuationKey,
       });
       const effectiveConfig = { ...config, enabled } satisfies GrokSettings;
+      const grokHomeDir = processEnv.HOME?.trim() || NodeOS.homedir();
+      const fetchUsageLimits = (input: {
+        readonly checkedAt: string;
+        readonly cliVersion: string | null;
+      }) => fetchGrokUsageLimits({ ...input, homeDir: grokHomeDir });
       const adapter = yield* makeGrokAdapter(effectiveConfig, {
         environment: processEnv,
         ...(eventLoggers.native ? { nativeEventLogger: eventLoggers.native } : {}),
         instanceId,
+        fetchUsageLimits,
       });
       const textGeneration = yield* makeGrokTextGeneration(effectiveConfig, processEnv);
 
-      const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd).pipe(
+      const checkProvider = checkGrokProviderStatus(effectiveConfig, processEnv, cwd, {
+        fetchUsageLimits,
+      }).pipe(
         Effect.map(stampIdentity),
         Effect.provideService(Crypto.Crypto, crypto),
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),

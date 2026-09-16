@@ -6,6 +6,7 @@ import {
   type ProviderRuntimeEvent,
   type ProviderSession,
   type ProviderUserInputAnswers,
+  type ServerProviderUsageLimits,
   ProviderDriverKind,
   ProviderInstanceId,
   RuntimeRequestId,
@@ -114,6 +115,15 @@ export interface GrokAdapterLiveOptions {
   readonly turnInactivityTimeoutMs?: number;
   /** Override the longer active-tool liveness timeout in focused tests. */
   readonly activeToolInactivityTimeoutMs?: number;
+  /**
+   * HTTP billing fallback used when the live `grok agent stdio` child does not
+   * answer `x.ai/billing`. Production wires this; tests omit it so they never
+   * read `~/.grok/auth.json` or call the billing proxy.
+   */
+  readonly fetchUsageLimits?: (input: {
+    readonly checkedAt: string;
+    readonly cliVersion: string | null;
+  }) => Promise<ServerProviderUsageLimits>;
 }
 
 interface PendingApproval {
@@ -412,6 +422,32 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
 
     const offerRuntimeEvent = (event: ProviderRuntimeEvent) =>
       PubSub.publish(runtimeEventPubSub, event).pipe(Effect.asVoid);
+
+    const publishGrokUsageLimits = (threadId: ThreadId) =>
+      Effect.gen(function* () {
+        if (!options?.fetchUsageLimits) {
+          return;
+        }
+        const checkedAt = yield* nowIso;
+        const snapshot = yield* Effect.tryPromise(() =>
+          options.fetchUsageLimits!({
+            checkedAt,
+            cliVersion: null,
+          }),
+        ).pipe(Effect.orElseSucceed(() => undefined));
+        const windows = snapshot?.windows;
+        if (!windows || windows.length === 0) {
+          return;
+        }
+        yield* offerRuntimeEvent({
+          type: "account.rate-limits.updated",
+          ...(yield* makeEventStamp()),
+          provider: PROVIDER,
+          providerInstanceId: boundInstanceId,
+          threadId,
+          payload: { limits: { windows } },
+        });
+      });
 
     const getThreadSemaphore = (threadId: string) =>
       SynchronizedRef.modifyEffect(threadLocksRef, (current) => {
@@ -1498,6 +1534,8 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
             threadId: input.threadId,
             payload: { providerThreadId: started.sessionId },
           });
+
+          yield* publishGrokUsageLimits(input.threadId).pipe(Effect.ignoreCause({ log: true }));
 
           return session;
         }).pipe(Effect.scoped),

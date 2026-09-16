@@ -2537,4 +2537,54 @@ it.layer(grokAdapterTestLayer)("GrokAdapterLive", (it) => {
       // hang until the suite timeout instead of failing here.
     }).pipe(TestClock.withLive),
   );
+
+  it.effect("emits weekly usage limits after starting a session", () =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("grok-usage-limits");
+      const wrapperPath = yield* Effect.promise(() => makeMockGrokWrapper());
+      const weeklyWindow = {
+        id: "weekly",
+        kind: "weekly" as const,
+        label: "Weekly",
+        usedPercent: 37.5,
+        windowDurationMins: 10_080,
+        resetsAt: "2026-09-17T00:00:00.000Z",
+      };
+      const adapter = yield* makeTestAdapter(wrapperPath, {
+        fetchUsageLimits: async ({ checkedAt }) => ({
+          checkedAt,
+          windows: [weeklyWindow],
+        }),
+      });
+      const seen = yield* Deferred.make<void>();
+      const events: ProviderRuntimeEvent[] = [];
+      const eventsFiber = yield* Stream.runForEach(adapter.streamEvents, (event) =>
+        Effect.sync(() => {
+          events.push(event);
+        }).pipe(
+          Effect.andThen(
+            event.type === "account.rate-limits.updated"
+              ? Deferred.succeed(seen, undefined).pipe(Effect.asVoid)
+              : Effect.void,
+          ),
+        ),
+      ).pipe(Effect.forkChild);
+
+      yield* adapter.startSession({
+        threadId,
+        cwd: process.cwd(),
+        runtimeMode: "full-access",
+      });
+      yield* Deferred.await(seen).pipe(Effect.timeout("10 seconds"));
+
+      const update = events.find((event) => event.type === "account.rate-limits.updated");
+      assert.isDefined(update);
+      if (update?.type === "account.rate-limits.updated") {
+        assert.deepEqual(update.payload.limits.windows, [weeklyWindow]);
+      }
+
+      yield* Fiber.interrupt(eventsFiber);
+      yield* adapter.stopSession(threadId);
+    }).pipe(TestClock.withLive),
+  );
 });

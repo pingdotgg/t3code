@@ -5,6 +5,7 @@ import {
   type ServerProvider,
   type ServerProviderAuth,
   type ServerProviderModel,
+  type ServerProviderUsageLimits,
 } from "@t3tools/contracts";
 import type * as EffectAcpSchema from "effect-acp/schema";
 import { causeErrorTag } from "@t3tools/shared/observability";
@@ -41,6 +42,7 @@ import {
 } from "../acp/GrokAcpSupport.ts";
 import { sessionModelStateFromInitialize } from "../acp/AcpRuntimeModel.ts";
 import { discoverGrokSkills } from "../Drivers/GrokSkills.ts";
+import { makeUnavailableUsageLimits } from "../providerUsageLimits.ts";
 
 const GROK_PRESENTATION = {
   displayName: "Grok",
@@ -328,10 +330,18 @@ const discoverGrokModelsViaAcpInitialize = (
     return buildGrokModelsFromSessionModelState(sessionModelStateFromInitialize(initialized));
   }).pipe(Effect.scoped);
 
+export interface GrokUsageLimitsProbe {
+  readonly fetchUsageLimits?: (input: {
+    readonly checkedAt: string;
+    readonly cliVersion: string | null;
+  }) => Promise<ServerProviderUsageLimits>;
+}
+
 export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(function* (
   grokSettings: GrokSettings,
   environment: NodeJS.ProcessEnv = process.env,
   cwd?: string,
+  usageLimitsProbe?: GrokUsageLimitsProbe,
 ): Effect.fn.Return<
   ServerProviderDraft,
   never,
@@ -496,6 +506,22 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
     });
   }
 
+  const usageLimits =
+    auth.status === "authenticated" && usageLimitsProbe?.fetchUsageLimits
+      ? auth.type === "api_key"
+        ? makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" })
+        : yield* Effect.tryPromise(() =>
+            usageLimitsProbe.fetchUsageLimits!({
+              checkedAt,
+              cliVersion: version,
+            }),
+          ).pipe(
+            Effect.orElseSucceed(() =>
+              makeUnavailableUsageLimits({ checkedAt, reason: "probeFailed" }),
+            ),
+          )
+      : undefined;
+
   return buildServerProvider({
     presentation: GROK_PRESENTATION,
     enabled: grokSettings.enabled,
@@ -515,6 +541,7 @@ export const checkGrokProviderStatus = Effect.fn("checkGrokProviderStatus")(func
               "Grok CLI is installed but ACP initialize failed. Model options may be incomplete.",
           }
         : {}),
+      ...(usageLimits ? { usageLimits } : {}),
     },
   });
 });

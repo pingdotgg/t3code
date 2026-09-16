@@ -47,7 +47,13 @@ const PACE: Record<LimitPace, { readonly label: string; readonly icon: typeof Ga
 /** The series colour the cost chart uses for this driver, so the two views read as one. */
 export function barColor(driver: ServerProvider["driver"]): string {
   const kind: UsageProviderKind | undefined =
-    driver === "codex" ? "codex" : driver === "claudeAgent" ? "claude" : undefined;
+    driver === "codex"
+      ? "codex"
+      : driver === "claudeAgent"
+        ? "claude"
+        : driver === "grok"
+          ? "grok"
+          : undefined;
   return kind ? PROVIDER_PRESENTATION[kind].color : "var(--foreground)";
 }
 
