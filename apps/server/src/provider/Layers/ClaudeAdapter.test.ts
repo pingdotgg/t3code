@@ -2383,12 +2383,20 @@ describe("ClaudeAdapterLive", () => {
           uuid: "result-auth",
         } as unknown as SDKMessage);
 
-        const payload = completedTurn(Array.from(yield* Fiber.join(runtimeEventsFiber)));
+        const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+        const payload = completedTurn(events);
         assert.equal(payload.state, state);
         if (errorMessage === undefined) {
           assert.equal(payload.errorMessage, undefined);
         } else {
           assert.match(payload.errorMessage ?? "", errorMessage);
+        }
+        // Only a usage limit is classed as one; every other failure stays a
+        // provider error so clients keep reading it as Failed.
+        for (const event of events) {
+          if (event.type === "runtime.error") {
+            assert.equal(event.payload.class, "provider_error");
+          }
         }
       }).pipe(
         Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -2436,12 +2444,16 @@ describe("ClaudeAdapterLive", () => {
         uuid: "result-limit",
       } as unknown as SDKMessage);
 
-      const payload = completedTurn(Array.from(yield* Fiber.join(runtimeEventsFiber)));
+      const events = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const payload = completedTurn(events);
       assert.equal(payload.state, "failed");
       assert.equal(
         payload.errorMessage,
         "Claude usage limit reached. Send the message again once the limit resets.",
       );
+      const runtimeError = events.find((event) => event.type === "runtime.error");
+      assert(runtimeError?.type === "runtime.error");
+      assert.equal(runtimeError.payload.class, "usage_limit");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -2477,21 +2489,25 @@ describe("ClaudeAdapterLive", () => {
       name: "an assistant-only rate limit",
       messages: [rateLimitAssistant],
       expected: usageLimitMessage,
+      expectedClass: "usage_limit",
     },
     {
       name: "a normal parent response after a rate limit",
       messages: [rateLimitAssistant, { ...rateLimitAssistant, error: undefined }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a server error after a rate limit",
       messages: [rateLimitAssistant, { ...rateLimitAssistant, error: "server_error" }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a subagent rate limit",
       messages: [{ ...rateLimitAssistant, parent_tool_use_id: "nested-tool" }],
       expected: genericApiErrorMessage,
+      expectedClass: "provider_error",
     },
     {
       name: "a subagent response after a parent rate limit",
@@ -2500,8 +2516,9 @@ describe("ClaudeAdapterLive", () => {
         { ...rateLimitAssistant, error: undefined, parent_tool_use_id: "nested-tool" },
       ],
       expected: usageLimitMessage,
+      expectedClass: "usage_limit",
     },
-  ])("classifies the terminal API failure after $name", ({ messages, expected }) => {
+  ])("classifies the terminal API failure after $name", ({ messages, expected, expectedClass }) => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -2525,6 +2542,7 @@ describe("ClaudeAdapterLive", () => {
       const errors = events.filter((event) => event.type === "runtime.error");
       assert.equal(errors.length, 1);
       assert.equal(errors[0]?.payload.message, expected);
+      assert.equal(errors[0]?.payload.class, expectedClass);
       assert.equal(completedTurn(events).state, "failed");
       assert.equal(completedTurn(events).errorMessage, expected);
     }).pipe(

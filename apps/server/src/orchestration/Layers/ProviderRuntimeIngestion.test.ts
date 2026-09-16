@@ -3585,6 +3585,152 @@ describe("ProviderRuntimeIngestion", () => {
     );
     expect(thread.session?.status).toBe("error");
     expect(thread.session?.lastError).toBe("runtime exploded");
+    expect(thread.session?.lastErrorClass ?? null).toBeNull();
+  });
+
+  it("carries a usage-limit class from runtime.error through the failed turn", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "turn.started",
+      eventId: asEventId("evt-limit-turn-started"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-limit"),
+    });
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-limit-runtime-error"),
+      provider: ProviderDriverKind.make("claude"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-limit"),
+      payload: {
+        message: "Claude usage limit reached.",
+        class: "usage_limit",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) =>
+        entry.session?.status === "error" && entry.session?.lastErrorClass === "usage_limit",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-limit-turn-completed"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-limit"),
+      payload: {
+        state: "failed",
+        errorMessage: "Claude usage limit reached.",
+      },
+    });
+
+    const failed = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "error" && entry.session?.activeTurnId === null,
+    );
+    expect(failed.session?.lastErrorClass).toBe("usage_limit");
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-limit-session-ready"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: { state: "ready" },
+    });
+
+    const ready = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.status === "ready",
+    );
+    expect(ready.session?.lastErrorClass ?? null).toBeNull();
+  });
+
+  it("drops the usage-limit class when a session error replaces the classified one", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-limit-before-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replace"),
+      payload: {
+        message: "Claude usage limit reached.",
+        class: "usage_limit",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastErrorClass === "usage_limit",
+    );
+
+    harness.emit({
+      type: "session.state.changed",
+      eventId: asEventId("evt-session-error-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      payload: { state: "error", reason: "Socket closed" },
+    });
+
+    const replaced = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError === "Socket closed",
+    );
+    expect(replaced.session?.status).toBe("error");
+    expect(replaced.session?.lastErrorClass ?? null).toBeNull();
+  });
+
+  it("drops the usage-limit class when a failed turn replaces the error", async () => {
+    const harness = await createHarness();
+    const now = "2026-01-01T00:00:00.000Z";
+
+    harness.emit({
+      type: "runtime.error",
+      eventId: asEventId("evt-limit-before-turn-fail"),
+      provider: ProviderDriverKind.make("claude"),
+      createdAt: now,
+      threadId: asThreadId("thread-1"),
+      turnId: asTurnId("turn-replace"),
+      payload: {
+        message: "Claude usage limit reached.",
+        class: "usage_limit",
+      },
+    });
+
+    await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastErrorClass === "usage_limit",
+    );
+
+    harness.emit({
+      type: "turn.completed",
+      eventId: asEventId("evt-turn-fail-replace"),
+      provider: ProviderDriverKind.make("claude"),
+      threadId: asThreadId("thread-1"),
+      createdAt: now,
+      turnId: asTurnId("turn-replace"),
+      payload: { state: "failed", errorMessage: "Transport closed" },
+    });
+
+    const replaced = await waitForThread(
+      harness.readModel,
+      (entry) => entry.session?.lastError === "Transport closed",
+    );
+    expect(replaced.session?.lastErrorClass ?? null).toBeNull();
   });
 
   it("records runtime.error activities from the typed payload message", async () => {

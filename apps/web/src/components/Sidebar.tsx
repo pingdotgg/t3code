@@ -417,9 +417,18 @@ function SidebarThreadTooltip({
             </div>
           ) : null}
           {thread.session?.lastError ? (
-            <div className="flex min-w-0 items-center gap-2 text-red-600 dark:text-red-400">
+            <div
+              className={cn(
+                "flex min-w-0 items-center gap-2",
+                thread.session.lastErrorClass === "usage_limit"
+                  ? "text-amber-700 dark:text-amber-300"
+                  : "text-red-600 dark:text-red-400",
+              )}
+            >
               <CircleAlertIcon className="size-3 shrink-0 stroke-current" />
-              <div className="min-w-0 truncate">Error occurred</div>
+              <div className="min-w-0 truncate">
+                {thread.session.lastErrorClass === "usage_limit" ? "Limited" : "Error occurred"}
+              </div>
             </div>
           ) : null}
         </div>
@@ -1168,19 +1177,27 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                   icon: "failed" as const,
                   className: "text-red-700 dark:text-red-300",
                 }
-              : isWoke
+              : status === "limited"
                 ? {
-                    label: "Woke",
-                    icon: "woke" as const,
+                    // A usage limit is a wait, not a break: it takes the
+                    // waiting tone Approval uses, not the failure red.
+                    label: "Limited",
+                    icon: null,
                     className: "text-amber-700 dark:text-amber-300",
                   }
-                : isUnread
+                : isWoke
                   ? {
-                      label: "Done",
-                      icon: "done" as const,
-                      className: "text-emerald-700 dark:text-emerald-300",
+                      label: "Woke",
+                      icon: "woke" as const,
+                      className: "text-amber-700 dark:text-amber-300",
                     }
-                  : null;
+                  : isUnread
+                    ? {
+                        label: "Done",
+                        icon: "done" as const,
+                        className: "text-emerald-700 dark:text-emerald-300",
+                      }
+                    : null;
   const isWokeStatus = topStatus?.icon === "woke";
 
   const branchMismatch = resolveLocalCheckoutBranchMismatch({
@@ -1474,7 +1491,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                 ? "text-secondary-label"
                 : isUnread || isWoke || status === "input"
                   ? "text-foreground"
-                  : status === "failed"
+                  : status === "failed" || status === "limited"
                     ? "text-foreground/95"
                     : "text-foreground/90",
             )
