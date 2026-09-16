@@ -19,7 +19,11 @@ import {
   type LaunchEditorInput,
 } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { isCommandAvailable, resolveSpawnCommand } from "@t3tools/shared/shell";
+import {
+  isCommandAvailable,
+  resolveEditorCommand,
+  resolveSpawnCommand,
+} from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Config from "effect/Config";
 import * as Context from "effect/Context";
@@ -109,6 +113,8 @@ const CommandLookupEnvConfig = Config.all({
   Path: Config.string("Path").pipe(Config.option),
   path: Config.string("path").pipe(Config.option),
   PATHEXT: Config.string("PATHEXT").pipe(Config.option),
+  // macOS editor lookup also checks the bundled CLI under ~/Applications.
+  HOME: Config.string("HOME").pipe(Config.option),
 }).pipe(Config.map(compactEnv));
 
 const readBrowserLaunchEnv = BrowserLaunchEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
@@ -161,18 +167,6 @@ function resolveEditorArgs(
   const baseArgs = "baseArgs" in editor ? editor.baseArgs : [];
   return [...baseArgs, ...resolveCommandEditorArgs(editor, target)];
 }
-
-const resolveAvailableCommand = Effect.fn("externalLauncher.resolveAvailableCommand")(function* (
-  commands: ReadonlyArray<string>,
-  env: NodeJS.ProcessEnv,
-): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
-  for (const command of commands) {
-    if (yield* isCommandAvailable(command, { env })) {
-      return Option.some(command);
-    }
-  }
-  return Option.none();
-});
 
 function encodeUtf16LeBase64(input: string): string {
   const bytes = new Uint8Array(input.length * 2);
@@ -435,8 +429,7 @@ const buildAvailableEditors = Effect.fn("externalLauncher.buildAvailableEditors"
       continue;
     }
 
-    const command = yield* resolveAvailableCommand(editor.commands, env);
-    if (Option.isSome(command)) {
+    if (Option.isSome(yield* resolveEditorCommand(editor, { platform, env }))) {
       available.push(editor.id);
     }
   }
@@ -539,7 +532,7 @@ const resolveEditorLaunch = Effect.fn("resolveEditorLaunch")(function* (
 
   if (editorDef.commands) {
     const command = Option.getOrElse(
-      yield* resolveAvailableCommand(editorDef.commands, env),
+      yield* resolveEditorCommand(editorDef, { platform, env }),
       () => editorDef.commands[0],
     );
     return {

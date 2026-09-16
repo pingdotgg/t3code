@@ -7,6 +7,7 @@ import * as Clock from "effect/Clock";
 import * as Data from "effect/Data";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
@@ -665,6 +666,42 @@ export const isCommandAvailable = Effect.fn("shell.isCommandAvailable")(function
     Effect.as(true),
     Effect.catchTag("CommandResolutionError", () => Effect.succeed(false)),
   );
+});
+
+export interface EditorCommandSource {
+  readonly commands: ReadonlyArray<string>;
+  /** CLI path inside the macOS app bundle, relative to an Applications folder. */
+  readonly macAppCommand?: string;
+}
+
+const MAC_APPLICATIONS_DIR = "/Applications";
+
+/**
+ * First command that can launch an editor: a PATH command, or on macOS the
+ * CLI bundled inside an app installed in `/Applications` or `~/Applications`.
+ * macOS editors ship their CLI inside the bundle and putting a shim on PATH
+ * is an optional extra step, so a PATH scan alone misses installed apps. The
+ * bundled CLI takes the same arguments as the shim.
+ */
+export const resolveEditorCommand = Effect.fn("shell.resolveEditorCommand")(function* (
+  editor: EditorCommandSource,
+  options: CommandAvailabilityOptions & { readonly platform: NodeJS.Platform },
+): Effect.fn.Return<Option.Option<string>, never, FileSystem.FileSystem | Path.Path> {
+  for (const command of editor.commands) {
+    if (yield* isCommandAvailable(command, options)) return Option.some(command);
+  }
+  if (options.platform !== "darwin" || editor.macAppCommand === undefined) return Option.none();
+
+  const path = yield* Path.Path;
+  const home = (options.env ?? (yield* HostProcessEnvironment)).HOME?.trim();
+  const applicationDirs = home
+    ? [MAC_APPLICATIONS_DIR, path.join(home, "Applications")]
+    : [MAC_APPLICATIONS_DIR];
+  for (const dir of applicationDirs) {
+    const command = path.join(dir, editor.macAppCommand);
+    if (yield* isCommandAvailable(command, options)) return Option.some(command);
+  }
+  return Option.none();
 });
 
 export function resolveKnownWindowsCliDirs(env: NodeJS.ProcessEnv): ReadonlyArray<string> {

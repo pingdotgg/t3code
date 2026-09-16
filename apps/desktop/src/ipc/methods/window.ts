@@ -14,7 +14,7 @@ import {
   type PickedThemeFile,
 } from "@t3tools/contracts";
 import { WORKSPACE_IMAGE_PREVIEW_EXTENSIONS } from "@t3tools/shared/filePreview";
-import { isCommandAvailable } from "@t3tools/shared/shell";
+import { resolveEditorCommand } from "@t3tools/shared/shell";
 import * as NodeOS from "node:os";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -338,16 +338,16 @@ export const probeRemoteEditors = DesktopIpc.makeIpcMethod({
   // A Finder-launched app can miss PATH entries; an empty result makes the
   // renderer fall back to VS Code only, so that fails soft.
   handler: Effect.fn("desktop.ipc.window.probeRemoteEditors")(function* () {
+    const environment = yield* DesktopEnvironment.DesktopEnvironment;
     const available: Array<EditorId> = [];
     for (const editorId of REMOTE_CAPABLE_EDITOR_IDS) {
-      const commands = EDITORS.find((editor) => editor.id === editorId)?.commands;
-      if (!commands) continue;
-      for (const command of commands) {
-        if (yield* isCommandAvailable(command, { env: process.env })) {
-          available.push(editorId);
-          break;
-        }
-      }
+      const editor = EDITORS.find((candidate) => candidate.id === editorId);
+      if (!editor?.commands) continue;
+      const command = yield* resolveEditorCommand(editor, {
+        platform: environment.platform,
+        env: process.env,
+      });
+      if (Option.isSome(command)) available.push(editorId);
     }
     return available;
   }),
