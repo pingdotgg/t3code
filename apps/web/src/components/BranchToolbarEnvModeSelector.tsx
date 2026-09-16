@@ -17,6 +17,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "./ui/select";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 const PREVIOUS_WORKTREE_SELECT_VALUE = "previous-worktree";
 
@@ -52,27 +53,31 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
 
   if (envLocked) {
     return (
-      <span
-        className="inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
-        data-composer-context-control
-      >
-        {activeWorktreePath ? (
-          <FolderGitIcon className="size-3 shrink-0" />
-        ) : (
-          <FolderIcon className="size-3 shrink-0" />
-        )}
-        <span
-          data-composer-label
-          className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+      <Tooltip>
+        <TooltipTrigger
+          render={<span />}
+          className="inline-flex h-7 min-w-0 items-center gap-1 border border-transparent px-[calc(--spacing(2)-1px)] font-normal text-muted-foreground/70 text-xs sm:h-6"
+          data-composer-context-control
         >
+          {activeWorktreePath ? (
+            <FolderGitIcon className="size-3 shrink-0" />
+          ) : (
+            <FolderIcon className="size-3 shrink-0" />
+          )}
           <span
-            data-composer-label-motion
-            className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            data-composer-label
+            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
           >
-            {resolveLockedWorkspaceLabel(activeWorktreePath)}
+            <span
+              data-composer-label-motion
+              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            >
+              {resolveLockedWorkspaceLabel(activeWorktreePath)}
+            </span>
           </span>
-        </span>
-      </span>
+        </TooltipTrigger>
+        <TooltipPopup>{resolveLockedWorkspaceLabel(activeWorktreePath)}</TooltipPopup>
+      </Tooltip>
     );
   }
 
@@ -89,33 +94,44 @@ export const BranchToolbarEnvModeSelector = memo(function BranchToolbarEnvModeSe
       }}
       items={envModeItems}
     >
-      <SelectTrigger
-        variant="ghost"
-        size="xs"
-        className="min-w-0 shrink font-normal text-xs!"
-        aria-label="Workspace"
-        data-composer-shortcut="composer.workspace"
-        data-composer-context-control
-      >
-        {effectiveEnvMode === "worktree" ? (
-          <FolderGit2Icon className="size-3" />
-        ) : activeWorktreePath ? (
-          <FolderGitIcon className="size-3" />
-        ) : (
-          <FolderIcon className="size-3" />
-        )}
-        <span
-          data-composer-label
-          className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <SelectTrigger
+              variant="ghost"
+              size="xs"
+              className="min-w-0 shrink font-normal text-xs!"
+              aria-label="Workspace"
+              data-composer-shortcut="composer.workspace"
+              data-composer-context-control
+            />
+          }
         >
+          {effectiveEnvMode === "worktree" ? (
+            <FolderGit2Icon className="size-3" />
+          ) : activeWorktreePath ? (
+            <FolderGitIcon className="size-3" />
+          ) : (
+            <FolderIcon className="size-3" />
+          )}
           <span
-            data-composer-label-motion
-            className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            data-composer-label
+            className="min-w-0 max-w-[240px] group-data-[compact]/composer-context:max-w-0"
           >
-            <SelectValue />
+            <span
+              data-composer-label-motion
+              className="block w-full min-w-0 max-w-[240px] truncate transition-opacity duration-180 ease-[cubic-bezier(0.32,0.72,0,1)] group-data-[compact]/composer-context:opacity-0 motion-reduce:transition-none"
+            >
+              <SelectValue />
+            </span>
           </span>
-        </span>
-      </SelectTrigger>
+        </TooltipTrigger>
+        <TooltipPopup>
+          {effectiveEnvMode === "worktree"
+            ? resolveEnvModeLabel("worktree")
+            : resolveCurrentWorkspaceLabel(activeWorktreePath)}
+        </TooltipPopup>
+      </Tooltip>
       <SelectPopup alignItemWithTrigger={false} {...composerFloatingLayerProps}>
         <SelectGroup>
           <SelectGroupLabel>Workspace</SelectGroupLabel>
