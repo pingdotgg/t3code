@@ -60,6 +60,21 @@ export function projectThreadAwareness(
   }
 
   const detail = detailForPhase(phase, thread);
+  // Thread metadata can change after work finishes. Keep notification freshness
+  // tied to the terminal turn or session transition instead.
+  const terminalSessionAt =
+    (phase === "completed" &&
+      (thread.session?.status === "ready" || thread.session?.status === "idle")) ||
+    (phase === "failed" && thread.session?.status === "error")
+      ? thread.session?.updatedAt
+      : null;
+  const updatedAt =
+    phase === "completed" || phase === "failed"
+      ? (terminalSessionAt ??
+        thread.latestTurn?.completedAt ??
+        thread.session?.updatedAt ??
+        thread.updatedAt)
+      : thread.updatedAt;
   return {
     environmentId,
     threadId: thread.id,
@@ -69,7 +84,7 @@ export function projectThreadAwareness(
     headline: headlineForPhase(phase),
     ...(detail === undefined ? {} : { detail }),
     modelTitle: thread.modelSelection.model,
-    updatedAt: thread.updatedAt,
+    updatedAt,
     deepLink: buildAgentAwarenessDeepLink({ environmentId, threadId: thread.id }),
   };
 }
