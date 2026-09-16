@@ -1,5 +1,6 @@
 import {
   EventId,
+  type MessageId,
   type OpenCodeSettings,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -352,6 +353,7 @@ interface OpenCodeSessionContext {
   readonly textPartsByMessageId: Map<string, Map<string, OpenCodeTextPartState>>;
   turnTokenUsage: OpenCodeTurnTokenUsageAccumulator | undefined;
   activeTurnId: TurnId | undefined;
+  activeTurnStartMessageId: MessageId | undefined;
   activeAgent: string | undefined;
   activeVariant: string | undefined;
   cancellation: OpenCodeCancellation | undefined;
@@ -724,6 +726,7 @@ function updateProviderSession(
   patch: Partial<ProviderSession>,
   options?: {
     readonly clearActiveTurnId?: boolean;
+    readonly clearActiveTurnStartMessageId?: boolean;
     readonly clearLastError?: boolean;
   },
 ): Effect.Effect<ProviderSession> {
@@ -738,6 +741,7 @@ function applyProviderSessionUpdate(
   options:
     | {
         readonly clearActiveTurnId?: boolean;
+        readonly clearActiveTurnStartMessageId?: boolean;
         readonly clearLastError?: boolean;
       }
     | undefined,
@@ -751,6 +755,22 @@ function applyProviderSessionUpdate(
   const mutableSession = nextSession as Record<string, unknown>;
   if (options?.clearActiveTurnId) {
     delete mutableSession.activeTurnId;
+  }
+  if (options?.clearActiveTurnStartMessageId) {
+    delete mutableSession.activeTurnStartMessageId;
+  }
+  if (patch.activeTurnId !== undefined) {
+    delete mutableSession.lastAbortedTurnId;
+    delete mutableSession.lastAbortedMessageId;
+    delete mutableSession.activeTurnStartMessageId;
+    if (patch.activeTurnStartMessageId !== undefined) {
+      mutableSession.activeTurnStartMessageId = patch.activeTurnStartMessageId;
+    }
+  }
+  if (patch.lastAbortedTurnId !== undefined) {
+    if (patch.lastAbortedMessageId === undefined) {
+      delete mutableSession.lastAbortedMessageId;
+    }
   }
   if (options?.clearLastError) {
     delete mutableSession.lastError;
@@ -1130,6 +1150,7 @@ export function makeOpenCodeAdapter(
       }
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, true);
       context.activeTurnId = undefined;
+      context.activeTurnStartMessageId = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.interruptedTurnId = undefined;
@@ -1142,7 +1163,7 @@ export function makeOpenCodeAdapter(
       applyProviderSessionUpdate(
         context,
         { status: "ready" },
-        { clearActiveTurnId: true },
+        { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },
         updatedAt,
       );
       if (pendingIdleReconciliation?.fiber) {
@@ -1299,6 +1320,7 @@ export function makeOpenCodeAdapter(
       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
       context.promptAdmission = undefined;
       context.activeTurnId = undefined;
+      context.activeTurnStartMessageId = undefined;
       context.activeAgent = undefined;
       context.activeVariant = undefined;
       context.awaitingBusyAfterInterruption = false;
@@ -1306,7 +1328,7 @@ export function makeOpenCodeAdapter(
       yield* updateProviderSession(
         context,
         { status: "error", lastError: detail },
-        { clearActiveTurnId: true },
+        { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },
       );
       yield* emit({
         ...(yield* buildEventBase({
@@ -1504,13 +1526,25 @@ export function makeOpenCodeAdapter(
       };
       if (context.activeTurnId === turnId) {
         tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
+        const turnStartMessageId = context.activeTurnStartMessageId;
         context.activeTurnId = undefined;
+        context.activeTurnStartMessageId = undefined;
         context.activeAgent = undefined;
         context.activeVariant = undefined;
         yield* updateProviderSession(
           context,
-          { status: "ready" },
-          { clearActiveTurnId: true, clearLastError: true },
+          {
+            status: "ready",
+            lastAbortedTurnId: turnId,
+            ...(turnStartMessageId !== undefined
+              ? { lastAbortedMessageId: turnStartMessageId }
+              : {}),
+          },
+          {
+            clearActiveTurnId: true,
+            clearActiveTurnStartMessageId: true,
+            clearLastError: true,
+          },
         );
       }
       yield* clearPendingOpenCodeRequests(context, { type: "session.abort" });
@@ -2577,6 +2611,7 @@ export function makeOpenCodeAdapter(
             yield* updateProviderSession(context, {
               status: "running",
               activeTurnId: turnId,
+              activeTurnStartMessageId: context.activeTurnStartMessageId,
             });
           }
 
@@ -2650,6 +2685,7 @@ export function makeOpenCodeAdapter(
           }
           const tokenUsage = activeTurnId ? takeOpenCodeTurnTokenUsage(context, false) : undefined;
           context.activeTurnId = undefined;
+          context.activeTurnStartMessageId = undefined;
           context.activeAgent = undefined;
           context.activeVariant = undefined;
           context.reconcileIdleStatus = false;
@@ -2660,7 +2696,7 @@ export function makeOpenCodeAdapter(
               status: "error",
               lastError: message,
             },
-            { clearActiveTurnId: true },
+            { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },
           );
           if (activeTurnId) {
             yield* emit({
@@ -2996,6 +3032,7 @@ export function makeOpenCodeAdapter(
           messageRoleById: new Map(),
           turnTokenUsage: undefined,
           activeTurnId: undefined,
+          activeTurnStartMessageId: undefined,
           activeAgent: undefined,
           activeVariant: undefined,
           cancellation: undefined,
@@ -3133,6 +3170,10 @@ export function makeOpenCodeAdapter(
           // A sendTurn while a turn is active is a steer. OpenCode queues the
           // prompt into the running session, so the active turn id is reused.
           const steeringTurnId = context.activeTurnId;
+          const turnStartMessageId =
+            steeringTurnId === undefined
+              ? input.turnStartMessageId
+              : (input.turnStartMessageId ?? context.activeTurnStartMessageId);
           const turnId = steeringTurnId ?? freshTurnId;
           const agent = getModelSelectionStringOptionValue(modelSelection, "agent");
           const variant = getModelSelectionStringOptionValue(modelSelection, "variant");
@@ -3171,6 +3212,7 @@ export function makeOpenCodeAdapter(
             context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
           }
           context.turnTokenUsage?.promptMessageIds.add(messageId);
+          context.activeTurnStartMessageId = turnStartMessageId;
           context.activeAgent = agent ?? (input.interactionMode === "plan" ? "plan" : undefined);
           context.activeVariant = variant;
           if (steeringTurnId === undefined) {
@@ -3184,6 +3226,7 @@ export function makeOpenCodeAdapter(
             {
               status: "running",
               activeTurnId: turnId,
+              activeTurnStartMessageId: turnStartMessageId,
               model: modelSelection?.model ?? context.session.model,
             },
             { clearLastError: true },
@@ -3262,6 +3305,7 @@ export function makeOpenCodeAdapter(
                       const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                       context.promptAdmission = undefined;
                       context.activeTurnId = undefined;
+                      context.activeTurnStartMessageId = undefined;
                       context.activeAgent = undefined;
                       context.activeVariant = undefined;
                       yield* updateProviderSession(
@@ -3270,8 +3314,12 @@ export function makeOpenCodeAdapter(
                           status: "ready",
                           model: modelSelection?.model ?? context.session.model,
                           lastError: requestError.detail,
+                          lastAbortedTurnId: turnId,
+                          ...(turnStartMessageId !== undefined
+                            ? { lastAbortedMessageId: turnStartMessageId }
+                            : {}),
                         },
-                        { clearActiveTurnId: true },
+                        { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },
                       );
                       yield* emit({
                         ...(yield* buildEventBase({ threadId: input.threadId, turnId })),
@@ -3310,6 +3358,7 @@ export function makeOpenCodeAdapter(
                     const tokenUsage = takeOpenCodeTurnTokenUsage(context, false);
                     context.promptAdmission = undefined;
                     context.activeTurnId = undefined;
+                    context.activeTurnStartMessageId = undefined;
                     context.activeAgent = undefined;
                     context.activeVariant = undefined;
                     context.awaitingBusyAfterInterruption = false;
@@ -3320,8 +3369,12 @@ export function makeOpenCodeAdapter(
                         status: "ready",
                         model: modelSelection?.model ?? context.session.model,
                         lastError: requestError.detail,
+                        lastAbortedTurnId: turnId,
+                        ...(turnStartMessageId !== undefined
+                          ? { lastAbortedMessageId: turnStartMessageId }
+                          : {}),
                       },
-                      { clearActiveTurnId: true },
+                      { clearActiveTurnId: true, clearActiveTurnStartMessageId: true },
                     );
                     yield* emit({
                       ...(yield* buildEventBase({
