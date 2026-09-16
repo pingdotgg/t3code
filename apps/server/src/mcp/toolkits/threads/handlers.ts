@@ -44,7 +44,7 @@ const threadsList = (input: ThreadsListInput) =>
         if (input.filter === "active") return !isThreadSettled(thread);
         return true;
       })
-      .sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : a.updatedAt > b.updatedAt ? -1 : 0))
+      .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
       .slice(
         0,
         Math.min(input.limit ?? THREADS_SURFACE_LIST_DEFAULT_LIMIT, THREADS_SURFACE_LIST_MAX_LIMIT),
