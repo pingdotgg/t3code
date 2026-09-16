@@ -3,6 +3,7 @@ import { Command, GlobalFlag } from "effect/unstable/cli";
 
 import { ServerConfig, type StartupPresentation } from "../config.ts";
 import { runServer } from "../server.ts";
+import { waitForDesktopLifetimeEnd } from "../bootstrap.ts";
 import { type CliServerFlags, resolveServerConfig, sharedServerCommandFlags } from "./config.ts";
 
 export const runServerCommand = (
@@ -15,7 +16,17 @@ export const runServerCommand = (
   Effect.gen(function* () {
     const logLevel = yield* GlobalFlag.LogLevel;
     const config = yield* resolveServerConfig(flags, logLevel, options);
-    return yield* runServer.pipe(Effect.provideService(ServerConfig, config));
+    const server = runServer.pipe(Effect.provideService(ServerConfig, config));
+    if (config.desktopLifetimeFd === undefined) {
+      return yield* server;
+    }
+
+    return yield* Effect.raceFirst(
+      server,
+      waitForDesktopLifetimeEnd(config.desktopLifetimeFd).pipe(
+        Effect.andThen(Effect.logInfo("Desktop owner exited; shutting down embedded server")),
+      ),
+    );
   });
 
 export const startCommand = Command.make("start", { ...sharedServerCommandFlags }).pipe(
