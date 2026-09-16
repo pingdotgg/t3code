@@ -167,6 +167,7 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  deriveUnsettledTurnId,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
@@ -280,6 +281,8 @@ interface TimelineRowSharedState {
   onToggleWorkGroup: (groupId: string, anchorKey: string) => void;
   onToggleWorkEntry: (anchorKey: string, collapsed: boolean) => void;
   onToggleSpawnRow: (entryId: string, expanded: boolean) => void;
+  onToggleReasoning: (messageId: string, expanded: boolean) => void;
+  expandedReasoningMessageIds: ReadonlySet<string>;
   workGroupViewState: WorkGroupViewState;
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
@@ -298,6 +301,7 @@ interface TimelineRowActivityState {
   isCompacting: boolean;
   isRevertingCheckpoint: boolean;
   latestTurnId: TurnId | null;
+  unsettledTurnId: TurnId | null;
   /**
    * A worktree setup whose script is still running after the agent took
    * over. The working header shows it as a chip with a popover; the stage
@@ -516,6 +520,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   const [expandedSpawnEntryIds, setExpandedSpawnEntryIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [expandedReasoningMessageIds, setExpandedReasoningMessageIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
   const listIdentityKey = displayThreadKey ?? routeThreadKey;
   const prefersReducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)");
   const listIdentityRef = useRef(listIdentityKey);
@@ -526,6 +533,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   let paintedExpandedTurnIds = expandedTurnIds;
   let paintedExpandedWorkGroupIds = expandedWorkGroupIds;
   let paintedExpandedSpawnEntryIds = expandedSpawnEntryIds;
+  let paintedExpandedReasoningMessageIds = expandedReasoningMessageIds;
   if (listIdentityRef.current !== listIdentityKey) {
     listIdentityRef.current = listIdentityKey;
     previousLatestTurnRef.current = latestTurn;
@@ -533,9 +541,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     paintedExpandedTurnIds = new Set();
     paintedExpandedWorkGroupIds = new Set();
     paintedExpandedSpawnEntryIds = new Set();
+    paintedExpandedReasoningMessageIds = new Set();
     setExpandedTurnIds(paintedExpandedTurnIds);
     setExpandedWorkGroupIds(paintedExpandedWorkGroupIds);
     setExpandedSpawnEntryIds(paintedExpandedSpawnEntryIds);
+    setExpandedReasoningMessageIds(paintedExpandedReasoningMessageIds);
   }
   const onToggleSpawnRow = useCallback((entryId: string, expanded: boolean) => {
     setExpandedSpawnEntryIds((current) => {
@@ -659,6 +669,21 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       });
     },
     [expandedWorkGroupIds, suspendEndScrollMaintenanceForDisclosure],
+  );
+  const onToggleReasoning = useCallback(
+    (messageId: string, expanded: boolean) => {
+      // The anchor must be the timeline row id, which for a message row is the
+      // message id, or position restoration is skipped for every row.
+      suspendEndScrollMaintenanceForDisclosure(messageId, !expanded);
+      setExpandedReasoningMessageIds((current) => {
+        if (current.has(messageId) === expanded) return current;
+        const next = new Set(current);
+        if (expanded) next.add(messageId);
+        else next.delete(messageId);
+        return next;
+      });
+    },
+    [suspendEndScrollMaintenanceForDisclosure],
   );
 
   // An in-session interrupt leaves its turn expanded so the user keeps their
@@ -944,6 +969,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       onToggleWorkEntry: suspendEndScrollMaintenanceForDisclosure,
       onToggleSpawnRow,
+      onToggleReasoning,
+      expandedReasoningMessageIds: paintedExpandedReasoningMessageIds,
       workGroupViewState,
       agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
@@ -977,6 +1004,8 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onToggleWorkGroup,
       suspendEndScrollMaintenanceForDisclosure,
       onToggleSpawnRow,
+      onToggleReasoning,
+      paintedExpandedReasoningMessageIds,
       workGroupViewState,
       agentPanelModel,
       paintedExpandedSpawnEntryIds,
@@ -1003,6 +1032,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isCompacting,
       isRevertingCheckpoint,
       latestTurnId: latestTurn?.turnId ?? null,
+      // The same value the row-derivation uses, so a block and the placeholder
+      // beside it can never disagree about whether a turn is still live.
+      unsettledTurnId: deriveUnsettledTurnId(latestTurn ?? null, runningTurnId),
       backgroundWorktreeSetup,
     }),
     [
@@ -1011,7 +1043,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isRevertingCheckpoint,
       isWorking,
       isPreparingWorktree,
+      // Deliberately the fields `deriveUnsettledTurnId` reads, not the object:
+      // its identity changes on every thread-shell patch.
       latestTurn?.turnId,
+      latestTurn?.state,
+      latestTurn?.completedAt,
+      runningTurnId,
     ],
   );
 
@@ -1453,6 +1490,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
               : (row.kind === "message" &&
                     row.message.role === "assistant" &&
                     !row.showAssistantMeta) ||
+                  (row.kind === "message" && row.message.role === "reasoning") ||
                   row.kind === "work" ||
                   row.kind === "work-live" ||
                   row.kind === "work-toggle" ||
@@ -1487,6 +1525,9 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
       {row.kind === "message" && row.message.role === "user" ? <UserTimelineRow row={row} /> : null}
       {row.kind === "message" && row.message.role === "assistant" ? (
         <AssistantTimelineRow row={row} />
+      ) : null}
+      {row.kind === "message" && row.message.role === "reasoning" ? (
+        <ReasoningTimelineRow row={row} />
       ) : null}
       {row.kind === "assistant-meta" ? <AssistantMetaTimelineRow row={row} /> : null}
       {row.kind === "proposed-plan" ? <ProposedPlanTimelineRow row={row} /> : null}
@@ -2362,6 +2403,86 @@ function ThinkingTimelineRow() {
     </div>
   );
 }
+
+/**
+ * A provider's thinking trace. Collapsed by default: reasoning is context for
+ * the answer, not the answer. The open/closed flag lives on the list so it
+ * survives row recycling in the virtualizer.
+ */
+const ReasoningTimelineRow = memo(function ReasoningTimelineRow({
+  row,
+}: {
+  row: Extract<TimelineRow, { kind: "message" }>;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const { isWorking, unsettledTurnId } = use(TimelineRowActivityCtx);
+  const { message } = row;
+  // A block left open by a crashed provider or a restarted server never gets
+  // its completion. Only the live turn may claim to still be thinking, so a
+  // settled turn cannot shimmer "Thinking" at the user forever.
+  const streaming =
+    Boolean(message.streaming) &&
+    isWorking &&
+    message.turnId !== null &&
+    message.turnId === unsettledTurnId;
+  const expanded = ctx.expandedReasoningMessageIds.has(message.id);
+  const { onToggleReasoning } = ctx;
+  const toggle = useCallback(() => {
+    onToggleReasoning(message.id, !expanded);
+  }, [expanded, message.id, onToggleReasoning]);
+  const label = streaming ? "Thinking" : "Thought";
+
+  if (message.text.trim().length === 0 && !streaming) {
+    return null;
+  }
+
+  return (
+    <div className={cn("flex flex-col", expanded && "mb-1")}>
+      <button
+        type="button"
+        aria-expanded={expanded}
+        onClick={toggle}
+        className="flex cursor-pointer select-none items-center gap-1.5 rounded-md px-0.5 py-0.5 text-start transition-colors hover:bg-accent/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      >
+        <span className="flex size-6 shrink-0 items-center justify-center text-icon-muted">
+          <BrainIcon aria-hidden className="block size-4 shrink-0 stroke-[1.8] opacity-70" />
+        </span>
+        <span className="flex min-w-0 flex-1 items-center gap-1.5">
+          <span
+            ref={streaming ? observeVisibleAnimation : undefined}
+            className="relative min-w-0 flex-1 truncate text-secondary-label text-sm leading-relaxed"
+          >
+            {label}
+            {streaming ? <ActivityShimmerOverlay>{label}</ActivityShimmerOverlay> : null}
+          </span>
+          <span className="flex size-4 shrink-0 items-center justify-center" aria-hidden>
+            <ChevronRightIcon
+              className={cn(
+                "size-3 shrink-0 text-icon-muted opacity-70 transition-transform duration-200",
+                expanded && "rotate-90",
+              )}
+            />
+          </span>
+        </span>
+      </button>
+      {expanded ? (
+        <div className="mt-1 ms-7 max-h-96 overflow-auto rounded-md bg-muted/40 px-3 py-2 text-secondary-label select-text">
+          <ChatMarkdown
+            text={message.text}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef ?? undefined}
+            isStreaming={streaming}
+            lineBreaks
+            skills={ctx.skills}
+            headingLevelOffset={MESSAGE_HEADING_LEVEL}
+            onUseArtifactTemplate={ctx.onUseArtifactTemplate}
+            onImageExpand={ctx.onImageExpand}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+});
 
 function CompactingLabel() {
   return (

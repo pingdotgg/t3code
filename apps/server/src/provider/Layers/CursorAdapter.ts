@@ -877,6 +877,27 @@ export function makeCursorAdapter(
                       }),
                     );
                     return;
+                  case "ThoughtDelta":
+                    // Thoughts are narration, not the reply: they stay out of
+                    // `assistantReply` so a resumed turn replays only answers.
+                    yield* logNative(
+                      ctx.threadId,
+                      "session/update",
+                      event.rawPayload,
+                      "acp.jsonrpc",
+                    );
+                    yield* offerRuntimeEvent(
+                      makeAcpContentDeltaEvent({
+                        stamp: yield* makeEventStamp(),
+                        provider: PROVIDER,
+                        threadId: ctx.threadId,
+                        turnId: ctx.activeTurnId,
+                        streamKind: "reasoning_text",
+                        text: event.text,
+                        rawPayload: event.rawPayload,
+                      }),
+                    );
+                    return;
                   case "ContentDelta":
                     ctx.assistantReply.push(event.text);
                     yield* logNative(

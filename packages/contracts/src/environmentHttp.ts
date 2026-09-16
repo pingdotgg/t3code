@@ -498,6 +498,7 @@ const EnvironmentOrchestrationThreadSnapshotParams = Schema.Struct({
 // to strings). Both fields optional: omitting them keeps the full-snapshot
 // behavior, so pagination stays opt-in per request.
 const EnvironmentOrchestrationThreadSnapshotQuery = {
+  reasoningMessages: Schema.optional(Schema.Literal("true")),
   turnLimit: Schema.optional(
     Schema.FiniteFromString.check(Schema.isInt(), Schema.isGreaterThanOrEqualTo(1)),
   ),

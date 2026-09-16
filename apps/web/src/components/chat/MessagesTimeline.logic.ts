@@ -299,7 +299,7 @@ function maxIsoTimestamp(a: string | null, b: string | null): string | null {
 
 export interface TimelineDurationMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: ChatMessage["role"];
   createdAt: string;
   updatedAt: string;
   streaming: boolean;
@@ -524,7 +524,7 @@ interface TurnFold {
  * user sends a message, the previous turn is still the "active" one until the
  * server creates the new turn, and folding must not flicker through that window.
  */
-function deriveUnsettledTurnId(
+export function deriveUnsettledTurnId(
   latestTurn: TimelineLatestTurn | null,
   runningTurnId: TurnId | null,
 ): TurnId | null {
@@ -546,7 +546,9 @@ function lastUserMessageIndex(timelineEntries: ReadonlyArray<TimelineEntry>): nu
 
 function timelineEntryTurnId(entry: TimelineEntry): TurnId | null {
   if (entry.kind === "message") {
-    return entry.message.role === "assistant" ? (entry.message.turnId ?? null) : null;
+    return entry.message.role === "assistant" || entry.message.role === "reasoning"
+      ? (entry.message.turnId ?? null)
+      : null;
   }
   if (entry.kind === "proposed-plan") {
     return entry.proposedPlan.turnId;
@@ -624,8 +626,13 @@ function deriveTurnFolds(input: {
       pendingUserBoundary = entry.message.createdAt;
       continue;
     }
+    // Thinking is work, so it folds with the rest of it. A provider that
+    // interleaves a block with every tool call would otherwise leave dozens of
+    // "Thought" rows standing beside the "Worked for ..." summary.
+    // Nothing folds while the turn is live, which is when traces are watched.
     const turnId =
-      entry.kind === "message" && entry.message.role === "assistant"
+      entry.kind === "message" &&
+      (entry.message.role === "assistant" || entry.message.role === "reasoning")
         ? (entry.message.turnId ?? null)
         : entry.kind === "work"
           ? (entry.entry.turnId ?? null)
@@ -652,7 +659,10 @@ function deriveTurnFolds(input: {
       if (input.terminalAssistantMessageIds.has(entry.message.id)) {
         group.terminalEntry = entry;
       }
-      if (entry.message.streaming) {
+      // A live turn is already excluded above, so only an answer still being
+      // written may hold a fold open. A thinking block stranded by a crashed
+      // provider keeps its streaming flag forever and must not.
+      if (entry.message.streaming && entry.message.role !== "reasoning") {
         group.hasStreamingMessage = true;
       }
     }
@@ -670,6 +680,15 @@ function deriveTurnFolds(input: {
     const terminalEntryIndex = group.terminalEntry
       ? group.entries.findIndex((entry) => entry.id === group.terminalEntry?.id)
       : group.entries.length;
+    // Thinking blocks do not count toward "one trailing activity": a block can
+    // follow the answer, and it must not stop that lone tool call from folding
+    // the way it did before traces existed. Loop-invariant, so it is counted
+    // once: a long turn re-derives these rows on every work-log change.
+    const trailingEntryCount = group.entries.filter(
+      (candidate, candidateIndex) =>
+        candidateIndex > terminalEntryIndex &&
+        !(candidate.kind === "message" && candidate.message.role === "reasoning"),
+    ).length;
     for (const [index, entry] of group.entries.entries()) {
       if (entry.id === group.terminalEntry?.id) {
         continue;
@@ -677,10 +696,18 @@ function deriveTurnFolds(input: {
       const isCompaction =
         entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction";
       const isSingleTrailingActivity =
-        group.entries.length === terminalEntryIndex + 2 &&
+        trailingEntryCount === 1 &&
         entry.kind === "work" &&
         !workEntryDisplayIndicatesToolFailure(entry.entry);
-      if (!isCompaction && index > terminalEntryIndex && !isSingleTrailingActivity) {
+      // A thinking block after the answer folds with its turn rather than
+      // trailing under it, which is what mobile already does.
+      const isReasoning = entry.kind === "message" && entry.message.role === "reasoning";
+      if (
+        !isCompaction &&
+        !isReasoning &&
+        index > terminalEntryIndex &&
+        !isSingleTrailingActivity
+      ) {
         continue;
       }
       // User input and subagent batches stay visible after their turn settles.
@@ -696,13 +723,16 @@ function deriveTurnFolds(input: {
       continue;
     }
     // A lone compaction row stays visible on its own; it only folds away as
-    // part of a turn that already folds other work.
-    const hidesNonCompactionWork = group.entries.some(
+    // part of a turn that already folds other work. Thinking is the same: a
+    // question answered by thought alone keeps its "Thought" row
+    // rather than collapsing behind a "Worked for ..." that hides nothing else.
+    const hidesFoldableWork = group.entries.some(
       (entry) =>
         hiddenEntryIds.has(entry.id) &&
-        !(entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction"),
+        !(entry.kind === "work" && entry.entry.sourceActivityKind === "context-compaction") &&
+        !(entry.kind === "message" && entry.message.role === "reasoning"),
     );
-    if (!hidesNonCompactionWork) {
+    if (!hidesFoldableWork) {
       continue;
     }
 
@@ -778,7 +808,15 @@ function attachTrailingToolGroupsToAssistant(
     let hasTrailingToolGroup = false;
     for (let index = messageIndex + 1; index < rows.length; index += 1) {
       const candidate = rows[index];
-      if (!candidate || candidate.kind === "message") {
+      if (!candidate) {
+        break;
+      }
+      // A thinking block can follow the answer (the next one starts before its
+      // tool call); it is not another message in the conversation.
+      if (candidate.kind === "message" && candidate.message.role === "reasoning") {
+        continue;
+      }
+      if (candidate.kind === "message") {
         break;
       }
       if (candidate.kind === "work-toggle" && candidate.turnId === turnId) {
@@ -1326,6 +1364,16 @@ export function deriveMessagesTimelineRows(input: {
       );
     }
   }
+  // A live thinking block is the real version of the placeholder below, so it
+  // suppresses it rather than sitting under a second "Thinking" row.
+  const hasStreamingReasoningRow = nextRows.some(
+    (row) =>
+      row.kind === "message" &&
+      row.message.role === "reasoning" &&
+      row.message.streaming &&
+      row.message.turnId !== null &&
+      row.message.turnId === unsettledTurnId,
+  );
 
   // A running setup owns the working slot above its card and shows no
   // activity row of its own; every other state gets the usual tail.
@@ -1333,7 +1381,12 @@ export function deriveMessagesTimelineRows(input: {
   if (input.isWorking && !hasWorkingRow && activeTurnHeaderIndex === input.timelineEntries.length) {
     appendWorkingRow();
   }
-  if (input.isWorking && !setupRunning && (!hasActivityRow || latestToolFailed)) {
+  if (
+    input.isWorking &&
+    !setupRunning &&
+    !hasStreamingReasoningRow &&
+    (!hasActivityRow || latestToolFailed)
+  ) {
     nextRows.push({
       kind: "thinking",
       id: LIVE_ACTIVITY_ROW_ID,

@@ -87,7 +87,10 @@ export const orchestrationHttpApiLayer = HttpApiBuilder.group(
           if (Option.isNone(snapshot)) {
             return yield* failEnvironmentNotFound("thread_not_found");
           }
-          return projectThreadDetailSnapshot(snapshot.value);
+          return projectThreadDetailSnapshot(
+            snapshot.value,
+            args.payload.reasoningMessages === "true",
+          );
         }),
       )
       .handle(

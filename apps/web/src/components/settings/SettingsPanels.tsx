@@ -187,7 +187,8 @@ const RESPONSE_STREAMING_MODE_LABELS: Record<ResponseStreamingMode, string> = {
 const RESPONSE_STREAMING_MODE_DESCRIPTIONS: Record<ResponseStreamingMode, string> = {
   turn: "Text appears once the agent finishes its turn.",
   paragraph: "Each paragraph or code block appears as soon as it is complete.",
-  token: "Every token repaints the message as it arrives. Slower and harder to read.",
+  token:
+    "Every token repaints the answer as it arrives. Slower and harder to read. Thinking traces still arrive a paragraph at a time.",
 };
 
 const TIMESTAMP_FORMAT_LABELS = {

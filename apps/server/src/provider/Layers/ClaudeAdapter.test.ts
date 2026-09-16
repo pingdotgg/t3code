@@ -496,7 +496,10 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(createInput?.options.permissionMode, "bypassPermissions");
       assert.equal(createInput?.options.allowDangerouslySkipPermissions, true);
       // The honored flag is dropped from extraArgs so the CLI sees it once.
-      assert.deepEqual(createInput?.options.extraArgs, { verbose: null });
+      assert.deepEqual(createInput?.options.extraArgs, {
+        verbose: null,
+        "thinking-display": "summarized",
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -553,7 +556,10 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const options = harness.getLastCreateQueryInput()?.options;
-      assert.deepEqual(options?.settings, { autoCompactWindow: 300000 });
+      assert.deepEqual(options?.settings, {
+        showThinkingSummaries: true,
+        autoCompactWindow: 300000,
+      });
       assert.deepEqual(options?.supportedDialogKinds, ["resume_return"]);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
@@ -628,6 +634,61 @@ describe("ClaudeAdapterLive", () => {
       assert.deepEqual(createInput?.options.settings, {
         alwaysThinkingEnabled: false,
       });
+      assert.equal(createInput?.options.thinking, undefined);
+      assert.equal(createInput?.options.extraArgs?.["thinking-display"], undefined);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("requests Claude thinking summaries unless thinking is off", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        modelSelection: createModelSelection(
+          ProviderInstanceId.make("claudeAgent"),
+          SYNTHETIC_CLAUDE_THINKING_MODEL,
+          [{ id: "thinking", value: true }],
+        ),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.deepEqual(createInput?.options.settings, {
+        alwaysThinkingEnabled: true,
+        showThinkingSummaries: true,
+      });
+      assert.deepEqual(createInput?.options.thinking, {
+        type: "adaptive",
+        display: "summarized",
+      });
+      assert.equal(createInput?.options.extraArgs?.["thinking-display"], "summarized");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("honors a launch-arg that omits Claude thinking display", () => {
+    const harness = makeHarness({
+      claudeConfig: { launchArgs: "--thinking-display omitted" },
+    });
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+      yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const createInput = harness.getLastCreateQueryInput();
+      assert.equal(createInput?.options.settings, undefined);
+      assert.equal(createInput?.options.thinking, undefined);
+      assert.equal(createInput?.options.extraArgs?.["thinking-display"], "omitted");
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -650,7 +711,13 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        showThinkingSummaries: true,
+      });
+      assert.deepEqual(createInput?.options.thinking, {
+        type: "adaptive",
+        display: "summarized",
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -674,6 +741,7 @@ describe("ClaudeAdapterLive", () => {
 
       const createInput = harness.getLastCreateQueryInput();
       assert.deepEqual(createInput?.options.settings, {
+        showThinkingSummaries: true,
         fastMode: true,
       });
     }).pipe(
@@ -698,7 +766,9 @@ describe("ClaudeAdapterLive", () => {
       });
 
       const createInput = harness.getLastCreateQueryInput();
-      assert.equal(createInput?.options.settings, undefined);
+      assert.deepEqual(createInput?.options.settings, {
+        showThinkingSummaries: true,
+      });
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
@@ -781,7 +851,7 @@ describe("ClaudeAdapterLive", () => {
         const { options: customOptions, prompt: customPrompt } = yield* runCustomFlow;
         assert.equal(customOptions.model, SYNTHETIC_CLAUDE_COLLIDING_ALIAS);
         assert.equal(customOptions.effort, undefined);
-        assert.equal(customOptions.settings, undefined);
+        assert.deepEqual(customOptions.settings, { showThinkingSummaries: true });
         assert.deepEqual(customHarness.query.setModelCalls, [
           `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`,
           SYNTHETIC_CLAUDE_COLLIDING_ALIAS,
@@ -791,7 +861,10 @@ describe("ClaudeAdapterLive", () => {
         const builtInOptions = yield* start(builtInHarness, SYNTHETIC_CLAUDE_CAPABLE_MODEL);
         assert.equal(builtInOptions.model, `${SYNTHETIC_CLAUDE_CAPABLE_MODEL}[expanded]`);
         assert.equal(builtInOptions.effort, "max");
-        assert.deepEqual(builtInOptions.settings, { fastMode: true });
+        assert.deepEqual(builtInOptions.settings, {
+          showThinkingSummaries: true,
+          fastMode: true,
+        });
       });
     },
   );
@@ -1673,7 +1746,8 @@ describe("ClaudeAdapterLive", () => {
       );
 
       const reasoningDelta = runtimeEvents.find(
-        (event) => event.type === "content.delta" && event.payload.streamKind === "reasoning_text",
+        (event) =>
+          event.type === "content.delta" && event.payload.streamKind === "reasoning_summary_text",
       );
       assert.equal(reasoningDelta?.type, "content.delta");
       if (reasoningDelta?.type === "content.delta") {
@@ -1721,6 +1795,87 @@ describe("ClaudeAdapterLive", () => {
           "src/example.ts:1:foo",
         );
       }
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("backfills Claude thinking summaries from assistant snapshots", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* Stream.takeUntil(
+        adapter.streamEvents,
+        (event) => event.type === "turn.completed",
+      ).pipe(Stream.runCollect, Effect.forkChild);
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+
+      const turn = yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "hello",
+        attachments: [],
+      });
+
+      const thinkingSnapshot = {
+        type: "assistant",
+        session_id: "sdk-session-thinking-snapshot",
+        uuid: "assistant-thinking-snapshot",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-thinking",
+          content: [
+            { type: "thinking", thinking: "Use Euclidean algorithm." },
+            { type: "text", text: "The gcd is 21." },
+          ],
+        },
+      } as unknown as SDKMessage;
+      harness.query.emit(thinkingSnapshot);
+      harness.query.emit(thinkingSnapshot);
+      harness.query.emit({
+        type: "assistant",
+        session_id: "sdk-session-thinking-snapshot",
+        uuid: "assistant-thinking-snapshot-2",
+        parent_tool_use_id: null,
+        message: {
+          id: "assistant-message-thinking-2",
+          content: [{ type: "thinking", thinking: "Verify the result." }],
+        },
+      } as unknown as SDKMessage);
+
+      harness.query.emit({
+        type: "result",
+        subtype: "success",
+        is_error: false,
+        errors: [],
+        session_id: "sdk-session-thinking-snapshot",
+        uuid: "result-thinking-snapshot",
+      } as unknown as SDKMessage);
+
+      const runtimeEvents = Array.from(yield* Fiber.join(runtimeEventsFiber));
+      const reasoningDeltas = runtimeEvents.filter(
+        (event) =>
+          event.type === "content.delta" && event.payload.streamKind === "reasoning_summary_text",
+      );
+      assert.equal(reasoningDeltas.length, 2);
+      const reasoningDelta = reasoningDeltas[0];
+      assert.equal(reasoningDelta?.type, "content.delta");
+      if (reasoningDelta?.type === "content.delta") {
+        assert.equal(reasoningDelta.payload.delta, "Use Euclidean algorithm.");
+        assert.equal(String(reasoningDelta.turnId), String(turn.turnId));
+      }
+      assert.deepEqual(
+        runtimeEvents.flatMap((event) =>
+          event.type === "content.delta" ? [event.payload.delta] : [],
+        ),
+        ["Use Euclidean algorithm.", "The gcd is 21.", "Verify the result."],
+      );
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),
