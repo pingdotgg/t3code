@@ -1,4 +1,5 @@
 import {
+  formatProviderSkillSourceLabel,
   resolveProviderSkillSourceKind,
   type ProviderSkillSourceKind,
 } from "@t3tools/client-runtime/providerSkills";
@@ -173,6 +174,11 @@ const CommandRow = memo(function CommandRow(props: {
       {props.item.description ? (
         <Text className="min-w-0 flex-1 text-xs text-foreground-muted" numberOfLines={1}>
           {props.item.description}
+        </Text>
+      ) : null}
+      {props.item.type === "skill" ? (
+        <Text className="ml-auto shrink-0 text-xs text-foreground-tertiary" numberOfLines={1}>
+          {formatProviderSkillSourceLabel(resolveProviderSkillSourceKind(props.item.skill))}
         </Text>
       ) : null}
     </Pressable>

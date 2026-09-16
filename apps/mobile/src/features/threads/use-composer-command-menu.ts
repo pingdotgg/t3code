@@ -27,10 +27,9 @@ import {
   scoreQueryMatch,
 } from "@t3tools/shared/searchRanking";
 import {
-  dedupeProviderSkillsByName,
   getProviderSkillsForSlashMenu,
   getProviderSlashCommandsForSlashMenu,
-  isProviderSkillUserInvocable,
+  getVisibleProviderSkills,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
 } from "@t3tools/client-runtime/providerSkills";
@@ -364,7 +363,7 @@ export function useComposerCommandMenu({
     }
 
     if (trigger.kind === "skill") {
-      const enabledSkills = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+      const enabledSkills = getVisibleProviderSkills(skills);
       const normalizedQuery = normalizeSearchQuery(trigger.query, {
         trimLeadingPattern: /^\$+/,
       });
