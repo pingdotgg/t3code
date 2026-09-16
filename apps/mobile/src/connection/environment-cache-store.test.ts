@@ -1,4 +1,11 @@
-import { EnvironmentId, type VcsListRefsResult } from "@t3tools/contracts";
+import {
+  EnvironmentId,
+  ThreadId,
+  ProjectId,
+  ProviderInstanceId,
+  type OrchestrationThreadDetailSnapshot,
+  type VcsListRefsResult,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
@@ -69,6 +76,49 @@ function makeDatabase() {
 }
 
 describe("mobile SQLite environment cache store", () => {
+  it.effect("reloads old thread snapshots instead of resuming without command metadata", () =>
+    Effect.gen(function* () {
+      const memory = makeDatabase();
+      const store = yield* make().pipe(Effect.provideService(MobileDatabase, memory.database));
+      const threadId = ThreadId.make("thread-1");
+      const snapshot: OrchestrationThreadDetailSnapshot = {
+        snapshotSequence: 21,
+        thread: {
+          id: threadId,
+          projectId: ProjectId.make("project-1"),
+          title: "Cached command",
+          modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          latestTurn: null,
+          createdAt: "2026-04-01T00:00:00.000Z",
+          updatedAt: "2026-04-01T00:00:00.000Z",
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          deletedAt: null,
+          pullRequests: [],
+          messages: [],
+          proposedPlans: [],
+          activities: [],
+          checkpoints: [],
+          session: null,
+        },
+      };
+      yield* store.saveThread(ENVIRONMENT_ID, snapshot);
+      expect(yield* store.loadThread(ENVIRONMENT_ID, threadId)).toEqual(Option.some(snapshot));
+      const id = cacheId(ENVIRONMENT_ID, "thread", threadId);
+      const stored = JSON.parse(memory.values.get(id)!);
+      expect(stored.schemaVersion).toBe(4);
+      memory.values.set(id, JSON.stringify({ ...stored, schemaVersion: 3 }));
+      expect(yield* store.loadThread(ENVIRONMENT_ID, threadId)).toEqual(Option.none());
+      yield* store.saveThread(ENVIRONMENT_ID, snapshot);
+      expect(yield* store.loadThread(ENVIRONMENT_ID, threadId)).toEqual(Option.some(snapshot));
+    }),
+  );
+
   it.effect("round-trips schema-validated VCS refs", () =>
     Effect.gen(function* () {
       const memory = makeDatabase();

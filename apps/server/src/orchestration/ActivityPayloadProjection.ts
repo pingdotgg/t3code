@@ -94,6 +94,12 @@ function projectCommandData(data: Record<string, unknown>): Record<string, unkno
     projectedItem.command = item.command;
   }
 
+  const actions = item.commandActions;
+  const action = Array.isArray(actions) && actions.length === 1 ? asRecord(actions[0]) : undefined;
+  if (action?.type === "unknown" && asTrimmedString(action.command)) {
+    projectedItem.commandActions = [{ type: "unknown", command: action.command }];
+  }
+
   const aggregatedOutput = asTrimmedString(item.aggregatedOutput);
   if (aggregatedOutput) {
     const summary = summarizeToolTextOutput(aggregatedOutput);
