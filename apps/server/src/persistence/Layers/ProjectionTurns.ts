@@ -208,6 +208,26 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
       `,
   });
 
+  // A re-dispatched or retried send of the same message reuses its pending
+  // placeholder; the row then answers the newest request generation so a clear
+  // bounded to an older one cannot retire it. An acknowledged ('submitted')
+  // row never blocks the insert — it records a generation the provider already
+  // answered, not the still-outstanding send.
+  const touchPendingProjectionTurnRequest = SqlSchema.void({
+    Request: ProjectionPendingTurnStart,
+    execute: (row) =>
+      sql`
+        UPDATE projection_turns
+        SET request_sequence = ${row.requestSequence ?? null}
+        WHERE thread_id = ${row.threadId}
+          AND turn_id IS NULL
+          AND state = 'pending'
+          AND pending_message_id = ${row.messageId}
+          AND checkpoint_turn_count IS NULL
+          AND (request_sequence IS NULL OR request_sequence < ${row.requestSequence ?? 0})
+      `,
+  });
+
   const insertPendingProjectionTurn = SqlSchema.void({
     Request: ProjectionPendingTurnStart,
     execute: (row) =>
@@ -253,7 +273,7 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
           WHERE thread_id = ${row.threadId}
             AND turn_id IS NULL
             AND pending_message_id = ${row.messageId}
-            AND state IN ('pending', 'submitted')
+            AND state = 'pending'
             AND checkpoint_turn_count IS NULL
         )
       `,
@@ -547,7 +567,8 @@ const makeProjectionTurnRepository = Effect.gen(function* () {
     );
 
   const insertPendingTurnStart: ProjectionTurnRepositoryShape["insertPendingTurnStart"] = (row) =>
-    insertPendingProjectionTurn(row).pipe(
+    touchPendingProjectionTurnRequest(row).pipe(
+      Effect.flatMap(() => insertPendingProjectionTurn(row)),
       Effect.mapError(
         toPersistenceSqlOrDecodeError(
           "ProjectionTurnRepository.insertPendingTurnStart:query",

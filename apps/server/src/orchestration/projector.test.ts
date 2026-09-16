@@ -1830,7 +1830,6 @@ describe("orchestration projector", () => {
         );
         expect(model.threads[0]?.submittedTurnStarts).toEqual([
           { messageId: "request-a", turnId: "turn-new", requestSequence: 6 },
-          { messageId: "request-a", turnId: "turn-old" },
         ]);
         // The newer turn's lifecycle still retires only its own entry and
         // clears the marker.
@@ -1849,9 +1848,7 @@ describe("orchestration projector", () => {
           }),
         );
         expect(model.threads[0]?.pendingTurnStartMessageId).toBeNull();
-        expect(model.threads[0]?.submittedTurnStarts).toEqual([
-          { messageId: "request-a", turnId: "turn-old" },
-        ]);
+        expect(model.threads[0]?.submittedTurnStarts).toEqual([]);
       }),
   );
 

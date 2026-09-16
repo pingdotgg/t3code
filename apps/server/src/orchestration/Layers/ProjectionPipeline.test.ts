@@ -4292,6 +4292,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
                 threadId,
                 messageId,
                 runtimeMode: "approval-required",
+                expectsTurnStartAcknowledgement: true,
                 createdAt,
               },
             });
@@ -4780,7 +4781,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
       }),
     );
 
-    it.effect("marks only the oldest pending generation for an unsequenced acknowledgement", () =>
+    it.effect("re-stamps a deduped pending row to the newest request and marks it once", () =>
       Effect.gen(function* () {
         const projectionPipeline = yield* OrchestrationProjectionPipeline;
         const eventStore = yield* OrchestrationEventStore;
@@ -4790,8 +4791,9 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
         const turnId = TurnId.make("turn-legacy-ack");
         const createdAt = "2026-02-26T13:50:00.000Z";
 
+        let latestRequestSequence = 0;
         for (const index of [0, 1]) {
-          yield* eventStore.append({
+          const request = yield* eventStore.append({
             type: "thread.turn-start-requested",
             eventId: EventId.make(`evt-legacy-ack-requested-${index}`),
             aggregateKind: "thread",
@@ -4805,12 +4807,14 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
               threadId,
               messageId,
               runtimeMode: "approval-required",
+              expectsTurnStartAcknowledgement: true,
               createdAt,
             },
           });
+          latestRequestSequence = request.sequence;
         }
-        // A legacy acknowledgement carries no request sequence; it answers the
-        // oldest pending generation rather than every same-message row.
+        // A legacy acknowledgement carries no request sequence; it answers
+        // the single outstanding pending row the re-request re-stamped.
         yield* eventStore.append({
           type: "thread.meta-updated",
           eventId: EventId.make("evt-legacy-ack-acknowledged"),
@@ -4834,25 +4838,23 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
           readonly messageId: string;
           readonly state: string;
           readonly submittedTurnId: string | null;
+          readonly requestSequence: number | null;
         }>`
-          SELECT
-            pending_message_id AS "messageId",
-            state,
-            submitted_turn_id AS "submittedTurnId"
-          FROM projection_turns
-          WHERE thread_id = ${threadId}
-          ORDER BY row_id ASC
-        `;
+            SELECT
+              pending_message_id AS "messageId",
+              state,
+              submitted_turn_id AS "submittedTurnId",
+              request_sequence AS "requestSequence"
+            FROM projection_turns
+            WHERE thread_id = ${threadId}
+            ORDER BY row_id ASC
+          `;
         assert.deepEqual(rows, [
           {
             messageId: "message-legacy-ack",
             state: "submitted",
             submittedTurnId: "turn-legacy-ack",
-          },
-          {
-            messageId: "message-legacy-ack",
-            state: "pending",
-            submittedTurnId: null,
+            requestSequence: latestRequestSequence,
           },
         ]);
       }),
@@ -4883,6 +4885,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
               threadId,
               messageId,
               runtimeMode: "approval-required",
+              expectsTurnStartAcknowledgement: true,
               createdAt,
             },
           });
@@ -4979,12 +4982,13 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
               threadId,
               messageId,
               runtimeMode: "approval-required",
+              expectsTurnStartAcknowledgement: true,
               createdAt,
             },
           });
         const firstRequest = yield* appendRequest("first");
-        const secondRequest = yield* appendRequest("second");
-        // Only the newer generation is acknowledged onto turn's provider id.
+        // Only the first generation is acknowledged onto the turn's provider
+        // id; the re-request below opens a second, still-pending generation.
         yield* eventStore.append({
           type: "thread.meta-updated",
           eventId: EventId.make("evt-unadopted-acknowledged"),
@@ -5000,11 +5004,12 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             turnStartAcknowledged: {
               messageId,
               turnId,
-              requestSequence: secondRequest.sequence,
+              requestSequence: firstRequest.sequence,
             },
             updatedAt: createdAt,
           },
         });
+        const secondRequest = yield* appendRequest("second");
         yield* eventStore.append({
           type: "thread.session-set",
           eventId: EventId.make("evt-unadopted-running"),
@@ -5043,9 +5048,10 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
             AND turn_id IS NULL
           ORDER BY row_id ASC
         `;
-        // The running turn adopted only the acknowledged generation; the
-        // older unacknowledged request's pending row keeps its identity.
-        assert.deepEqual(rows, [{ state: "pending", requestSequence: firstRequest.sequence }]);
+        // The running turn retires the acknowledged generation's submitted
+        // row; the newer unacknowledged request's pending row keeps its
+        // identity.
+        assert.deepEqual(rows, [{ state: "pending", requestSequence: secondRequest.sequence }]);
       }),
     );
 
@@ -5077,6 +5083,7 @@ it.layer(makeProjectionPipelinePrefixedTestLayer("t3-pending-turn-terminal-test-
                 threadId,
                 messageId,
                 runtimeMode: "approval-required",
+                expectsTurnStartAcknowledgement: true,
                 createdAt,
               },
             });
