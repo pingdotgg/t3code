@@ -109,22 +109,27 @@ describe("rightPanelStore", () => {
     number: 42,
   });
 
-  it.each(["diff-first", "pull-request-first"])(
-    "prioritizes the linked pull request over browser and diff with %s delivery",
-    (order) => {
+  it.each([
+    { order: "diff-first", surface: linkedPullRequest },
+    { order: "pull-request-first", surface: linkedPullRequest },
+    { order: "diff-first", surface: { id: "pull-requests", kind: "pull-requests" } as const },
+    {
+      order: "pull-request-first",
+      surface: { id: "pull-requests", kind: "pull-requests" } as const,
+    },
+  ])(
+    "prioritizes $surface.kind over browser and diff with $order delivery",
+    ({ order, surface }) => {
       const store = useRightPanelStore.getState();
       store.openBrowser(refA, "existing-browser");
       const revision = store.getUserActionRevision(refA);
-      const requests =
-        order === "diff-first"
-          ? [completedDiff, linkedPullRequest]
-          : [linkedPullRequest, completedDiff];
+      const requests = order === "diff-first" ? [completedDiff, surface] : [surface, completedDiff];
       for (const surface of requests) store.openProactive(refA, surface, revision);
       store.reconcileBrowserSurfaces(refA, ["existing-browser", "agent-browser"]);
 
       expect(
         selectActiveRightPanelSurface(useRightPanelStore.getState().byThreadKey, refA),
-      ).toEqual(linkedPullRequest);
+      ).toEqual(surface);
 
       store.open(refA, "diff");
       expect(selectActiveRightPanel(useRightPanelStore.getState().byThreadKey, refA)).toBe("diff");
@@ -167,6 +172,9 @@ describe("rightPanelStore", () => {
 
     expect(store.openProactive(refA, completedDiff, revision)).toBe(false);
     expect(store.openProactive(refA, linkedPullRequest, revision)).toBe(false);
+    expect(
+      store.openProactive(refA, { id: "pull-requests", kind: "pull-requests" }, revision),
+    ).toBe(false);
     expect(selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, refA)).toBe(
       chosen,
     );
