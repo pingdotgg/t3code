@@ -281,9 +281,18 @@ const withManager = <A>(
   }).pipe(Effect.provide(layer), Effect.scoped);
 
 interface TestCapturedPreviewImage {
+  readonly toPNG?: () => Buffer;
   readonly toJPEG: () => Buffer;
   readonly getSize: () => { readonly width: number; readonly height: number };
 }
+
+const screenshotCommand = async (method: string, capture: () => Promise<Buffer>) => {
+  if (method === "Page.getLayoutMetrics") {
+    return { cssVisualViewport: { pageX: 0, pageY: 0, clientWidth: 1920, clientHeight: 1080 } };
+  }
+  if (method === "Page.captureScreenshot") return { data: (await capture()).toString("base64") };
+  return undefined;
+};
 
 type TestDisplayMediaHandler = (
   request: { readonly frame: { readonly frameTreeNodeId: number } | null },
@@ -333,6 +342,7 @@ const makeTestPreviewWebContents = (
     hostWebContents,
     executeJavaScript: vi.fn(async () => ({ width: 1280, height: 720 })),
     isDestroyed: () => false,
+    isDevToolsOpened: () => false,
     getType: () => "webview",
     getURL: () => "https://example.com",
     getTitle: () => "Example",
@@ -352,7 +362,12 @@ const makeTestPreviewWebContents = (
     debugger: {
       isAttached: () => false,
       attach: vi.fn(),
-      sendCommand: vi.fn(async () => undefined),
+      sendCommand: vi.fn((method: string) =>
+        screenshotCommand(method, async () => {
+          const image = await capturePage();
+          return image.toPNG?.() ?? image.toJPEG();
+        }),
+      ),
       on: vi.fn(),
       off: vi.fn(),
     },
@@ -2131,6 +2146,7 @@ describe("PreviewManager", () => {
         fromId.mockReturnValue({
           id: 42,
           isDestroyed: () => false,
+          isDevToolsOpened: () => true,
           getType: () => "webview",
           getURL: () => "https://example.com:8443/path?query=value",
           getTitle: () => "Example",
@@ -2151,7 +2167,9 @@ describe("PreviewManager", () => {
           debugger: {
             isAttached: () => false,
             attach: vi.fn(),
-            sendCommand: vi.fn(async () => undefined),
+            sendCommand: vi.fn((method: string) =>
+              screenshotCommand(method, async () => (await capturePage()).toPNG()),
+            ),
             on: vi.fn(),
             off: vi.fn(),
           },
@@ -2626,7 +2644,9 @@ describe("PreviewManager", () => {
                 },
               };
             }
-            return method === "Accessibility.getFullAXTree" ? { nodes: [] } : undefined;
+            return method === "Accessibility.getFullAXTree"
+              ? { nodes: [] }
+              : screenshotCommand(method, async () => (await capturePage()).toJPEG());
           }),
         });
         fromId.mockReturnValue(wc);
