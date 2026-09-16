@@ -51,6 +51,10 @@ export type DeleteProjectionPendingApprovalInput = typeof DeleteProjectionPendin
  * ProjectionPendingApprovalRepositoryShape - Service API for pending approvals.
  */
 export interface ProjectionPendingApprovalRepositoryShape {
+  readonly listPending: (input: {
+    readonly threadId?: ThreadId;
+  }) => Effect.Effect<ReadonlyArray<ProjectionPendingApproval>, ProjectionRepositoryError>;
+
   /**
    * Insert or replace a projected pending approval row.
    *
