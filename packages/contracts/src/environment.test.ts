@@ -14,6 +14,19 @@ const descriptor = {
 } as const;
 
 describe("ExecutionEnvironmentDescriptor", () => {
+  it("treats missing hosting CLI path support as unsupported on older servers", () => {
+    expect(decodeDescriptor(descriptor).capabilities.sourceControlCliPaths).toBeUndefined();
+  });
+
+  it.each([true, false])("preserves hosting CLI path support advertised as %s", (supported) => {
+    expect(
+      decodeDescriptor({
+        ...descriptor,
+        capabilities: { ...descriptor.capabilities, sourceControlCliPaths: supported },
+      }).capabilities.sourceControlCliPaths,
+    ).toBe(supported);
+  });
+
   it("treats a missing pull-request capability as unsupported under version skew", () => {
     expect(decodeDescriptor(descriptor).capabilities.pullRequests).toBeUndefined();
   });

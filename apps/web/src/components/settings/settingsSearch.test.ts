@@ -160,6 +160,7 @@ describe("searchSettings", () => {
     });
 
     const gatedIds = new Set<string>([
+      "hosting-cli-path",
       "follow-change-request-templates",
       "git-fetch-interval",
       "network-access",
@@ -261,6 +262,54 @@ describe("searchSettings", () => {
       ["snap-shot-flash", "snap-shot-enabled"],
       ["snap-shot-animations", "snap-shot-enabled"],
     ]);
+  });
+
+  it("anchors the hosting CLI path to its own id so provider rows can expand", () => {
+    // The field renders once per provider inside a collapsed row. The section
+    // owns the anchor, and the rows expand off this same id, so routing it to
+    // another target would land on the page with every field still hidden.
+    const result = searchSettings("hosting cli path")[0];
+    expect(result).toMatchObject({
+      id: "hosting-cli-path",
+      to: "/settings/source-control",
+    });
+    expect(result).not.toHaveProperty("targetId");
+  });
+
+  it.each(["hosting cli path", "gh", "glab", "az"])(
+    "finds hosting CLI paths by %s with a connected environment",
+    (query) => {
+      const available = filterAvailableSettingsSearchItems({
+        hasCloudPublicConfig: false,
+        hasEnvironment: true,
+        hasProviderSettingsEnvironment: true,
+        canManageLocalBackend: false,
+        isWslSettingsRowVisible: false,
+        hasThreadAutoSettlement: false,
+      });
+
+      const result = searchSettings(query, available).find(
+        (item) => item.id === "hosting-cli-path",
+      );
+      expect(result).toMatchObject({
+        id: "hosting-cli-path",
+        to: "/settings/source-control",
+      });
+      expect(result).not.toHaveProperty("targetId");
+    },
+  );
+
+  it("hides hosting CLI paths when only disconnected environments have server config", () => {
+    const available = filterAvailableSettingsSearchItems({
+      hasCloudPublicConfig: false,
+      hasEnvironment: true,
+      hasProviderSettingsEnvironment: false,
+      canManageLocalBackend: false,
+      isWslSettingsRowVisible: false,
+      hasThreadAutoSettlement: false,
+    });
+
+    expect(available.some((item) => item.id === "hosting-cli-path")).toBe(false);
   });
 
   it("routes browser recording quality to integrations", () => {
