@@ -60,10 +60,19 @@ export class DesktopShellEnvironmentCommandTimeoutError extends Schema.TaggedErr
   }
 }
 
+export class DesktopShellEnvironmentCaptureError extends Schema.TaggedErrorClass<DesktopShellEnvironmentCaptureError>()(
+  "DesktopShellEnvironmentCaptureError",
+  {},
+) {
+  override get message(): string {
+    return "The shell environment could not be captured.";
+  }
+}
+
 export class DesktopShellEnvironment extends Context.Service<
   DesktopShellEnvironment,
   {
-    readonly installIntoProcess: Effect.Effect<void>;
+    readonly installIntoProcess: Effect.Effect<void, DesktopShellEnvironmentCaptureError>;
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
@@ -342,7 +351,10 @@ const readLoginShellEnvironment = (
         command: shell,
         args: ["-ilc", capturePosixEnvironmentCommand(names)],
         timeout: LOGIN_SHELL_TIMEOUT,
-      }).pipe(Effect.map((output) => extractEnvironment(output, names)));
+      }).pipe(
+        Effect.map((output) => extractEnvironment(output, names)),
+        Effect.repeat({ times: 1, while: (environment) => !environment.PATH?.trim() }),
+      );
 
 const readLaunchctlPath = runCommandOutput({
   probe: "launchctl-path",
@@ -423,7 +435,7 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     config: ShellEnvironmentConfig,
   ): Effect.fn.Return<
     void,
-    never,
+    DesktopShellEnvironmentCaptureError,
     ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
   > {
     const fileSystem = yield* FileSystem.FileSystem;
@@ -434,17 +446,17 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         shellEnvironment,
         yield* readLoginShellEnvironment(shell, LOGIN_SHELL_ENV_NAMES),
       );
-      if (shellEnvironment.PATH) break;
+      if (shellEnvironment.PATH?.trim()) break;
     }
 
     const launchctlPath =
-      config.platform === "darwin" && !shellEnvironment.PATH
+      config.platform === "darwin" && !shellEnvironment.PATH?.trim()
         ? yield* readLaunchctlPath
         : Option.none<string>();
-    const mergedPath = mergePaths(config.platform, [
-      trimNonEmpty(shellEnvironment.PATH).pipe(Option.orElse(() => launchctlPath)),
-      readEnvPath(config.env),
-    ]);
+    const capturedPath = trimNonEmpty(shellEnvironment.PATH).pipe(
+      Option.orElse(() => launchctlPath),
+    );
+    const mergedPath = mergePaths(config.platform, [capturedPath, readEnvPath(config.env)]);
 
     if (Option.isSome(mergedPath)) {
       config.env.PATH = mergedPath.value;
@@ -518,12 +530,19 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
         }
       }
     }
+    if (Option.isNone(capturedPath)) {
+      return yield* new DesktopShellEnvironmentCaptureError();
+    }
   },
 );
 
 const installShellEnvironment = (
   config: ShellEnvironmentConfig,
-): Effect.Effect<void, never, ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem> => {
+): Effect.Effect<
+  void,
+  DesktopShellEnvironmentCaptureError,
+  ChildProcessSpawner.ChildProcessSpawner | FileSystem.FileSystem
+> => {
   if (config.platform === "win32") {
     return installWindowsEnvironment(config);
   }
@@ -547,6 +566,7 @@ export const make = Effect.gen(function* () {
       Effect.provideService(FileSystem.FileSystem, fileSystem),
       Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
       Effect.withSpan("desktop.shellEnvironment.installIntoProcess"),
+      Effect.tapError(Effect.logWarning),
     );
 
   return DesktopShellEnvironment.of({ installIntoProcess });
