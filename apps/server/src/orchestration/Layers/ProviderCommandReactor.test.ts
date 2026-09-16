@@ -1613,7 +1613,7 @@ describe("ProviderCommandReactor", () => {
               }),
               expect.objectContaining({
                 payload: {
-                  requestId: "user-message-blocked-compact",
+                  requestId: "user-message-during-compact-recovery",
                   detail: expect.any(String),
                   throughRequestSequence: expect.any(Number),
                 },
