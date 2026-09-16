@@ -1150,6 +1150,85 @@ export function ThreadThinkingRow(props: {
   );
 }
 
+/**
+ * A provider's thinking trace. Collapsed by default: reasoning is context for
+ * the answer, not the answer. `expanded` lives on the feed so it survives row
+ * recycling; `children` is the trace body and only mounts while open.
+ */
+export function ThreadReasoningRow(props: {
+  readonly rowSizing: ReturnType<typeof deriveThreadWorkLogSizing>;
+  readonly iconSubtleColor: ColorValue;
+  readonly expanded: boolean;
+  readonly label: string;
+  readonly streaming: boolean;
+  readonly onToggle: () => void;
+  readonly children: ReactNode;
+}) {
+  return (
+    <View className={cn("-mx-1 px-1 py-0", props.expanded && "pb-1.5")}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: props.expanded }}
+        accessibilityLabel={props.label}
+        accessibilityHint={`Double tap to ${props.expanded ? "hide" : "show"} the thinking trace.`}
+        hitSlop={4}
+        onPress={() => {
+          void Haptics.selectionAsync();
+          props.onToggle();
+        }}
+        className="min-h-8 flex-row items-center gap-1.5 rounded-md px-0.5 py-0 active:bg-subtle"
+        style={{ minHeight: props.rowSizing.estimatedRowHeight }}
+      >
+        {props.streaming ? (
+          <ShimmeringWorkContent
+            key={props.rowSizing.textSizeKey}
+            icon="brain"
+            iconSubtleColor={props.iconSubtleColor}
+            label={props.label}
+            showIcon
+          />
+        ) : (
+          <>
+            <View className="h-6 w-6 shrink-0 items-center justify-center">
+              <WorkLogIcon icon="brain" color={props.iconSubtleColor} />
+            </View>
+            <Text
+              key={props.rowSizing.textSizeKey}
+              className="min-w-0 flex-1 text-sm text-foreground-muted"
+              numberOfLines={1}
+            >
+              {props.label}
+            </Text>
+          </>
+        )}
+        <ThreadDisclosureChevron
+          expanded={props.expanded}
+          collapsedDirection="right"
+          size={11}
+          tintColor={props.iconSubtleColor}
+        />
+      </Pressable>
+      {props.expanded ? (
+        <Animated.View
+          entering={WORK_LOG_DETAIL_ENTER_TRANSITION}
+          exiting={WORK_LOG_DETAIL_EXIT_TRANSITION}
+          layout={WORK_LOG_LAYOUT_TRANSITION}
+          className="ml-7 mt-1 rounded-xl bg-subtle px-3 py-2"
+        >
+          <ScrollView
+            nestedScrollEnabled
+            directionalLockEnabled
+            showsVerticalScrollIndicator
+            className="max-h-80"
+          >
+            {props.children}
+          </ScrollView>
+        </Animated.View>
+      ) : null}
+    </View>
+  );
+}
+
 function ToolActivityIconView(props: {
   readonly environmentId: EnvironmentId;
   readonly icon?: ToolActivityIcon;
