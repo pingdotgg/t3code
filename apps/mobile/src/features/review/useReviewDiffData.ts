@@ -1,4 +1,4 @@
-import { useCallback, useContext, useEffect, useMemo, useState } from "react";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 
 import { countReviewCommentContexts, parseReviewInlineComments } from "./reviewCommentSelection";
 import { getCachedNativeReviewDiffData } from "./nativeReviewDiffAdapter";
@@ -18,7 +18,8 @@ import type {
   ReviewDiffPreviewSource,
 } from "@t3tools/contracts";
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/unstable/reactivity/Atom";
 import { reviewEnvironment } from "../../state/review";
 
 const EMPTY_INLINE_REVIEW_COMMENTS = Object.freeze([]);
@@ -39,8 +40,16 @@ function getCachedReviewFile(
   const cached = patch && normalizedFiles.get(patch);
   if (cached && cached.stat === stat && cached.diffHash === diffHash) return cached.file;
   const parsed = patch?._tag === "Success" ? patch.value.parsed : null;
+  const sourceFiles = patch?._tag === "Success" ? patch.value.source.files : undefined;
   const loaded =
-    parsed?.kind === "files" ? parsed.files.find((file) => file.path === stat.path) : undefined;
+    parsed?.kind === "files"
+      ? (parsed.files.find((file) => file.path === stat.path) ??
+        (parsed.files.length === 1 &&
+        sourceFiles?.length === 1 &&
+        sourceFiles[0]?.path === stat.path
+          ? parsed.files[0]
+          : undefined))
+      : undefined;
   const file: ReviewRenderableFile = {
     ...(loaded ?? {
       path: stat.path,
@@ -53,6 +62,8 @@ function getCachedReviewFile(
       cacheKey: `${diffHash}:${stat.path}`,
     }),
     id: stat.path,
+    path: stat.path,
+    previousPath: stat.previousPath,
     additions: stat.additions,
     deletions: stat.deletions,
     ...(patch?._tag === "Success"
@@ -139,7 +150,6 @@ export function useReviewDiffData(input: {
     source?.kind,
     source?.baseRef,
     source?.diffHash,
-    input.revision,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2] });
   const indices = useMemo(
@@ -189,6 +199,24 @@ export function useReviewDiffData(input: {
       [queries, parsedQuery],
     ),
   );
+  const previousPreview = useRef({
+    scope,
+    revision: input.revision,
+    queries: [] as typeof queries,
+  });
+  useEffect(() => {
+    const previous = previousPreview.current;
+    previousPreview.current = { scope, revision: input.revision, queries };
+    for (const query of queries) {
+      if (!query) continue;
+      const changed = previous.scope === scope && previous.revision !== input.revision;
+      const cached =
+        !previous.queries.includes(query) &&
+        registry.get(query)._tag !== "Initial" &&
+        !registry.get(query).waiting;
+      if (changed || cached) registry.refresh(query);
+    }
+  }, [input.revision, queries, registry, scope]);
   const loadVisibleFile = useCallback(
     (fileId: string | null, retry = false) => {
       const index =

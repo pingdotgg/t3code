@@ -1,8 +1,9 @@
 import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import type { FileDiffMetadata } from "@pierre/diffs";
 import type { EnvironmentId, ReviewDiffPreviewSource } from "@t3tools/contracts";
-import { AsyncResult, Atom } from "effect/unstable/reactivity";
-import { useCallback, useContext, useMemo, useState } from "react";
+import * as AsyncResult from "effect/unstable/reactivity/AsyncResult";
+import * as Atom from "effect/unstable/reactivity/Atom";
+import { useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { getRenderablePatch, resolveFileDiffPath, type RenderablePatch } from "~/lib/diffRendering";
 import { reviewEnvironment } from "~/state/review";
 
@@ -33,7 +34,6 @@ export function useReviewFilePatches({
     source?.diffHash,
     baseRef,
     ignoreWhitespace,
-    revision,
   ]);
   const [requested, setRequested] = useState({ scope, indices: [0, 1, 2, 3] });
   const indices = useMemo(
@@ -77,17 +77,37 @@ export function useReviewFilePatches({
             }),
     [environmentId, cwd, source, files, indices, scope, baseRef, ignoreWhitespace],
   );
+  const previousPreview = useRef({ scope, revision, queries: [] as typeof queries });
+  useEffect(() => {
+    const previous = previousPreview.current;
+    previousPreview.current = { scope, revision, queries };
+    for (const { query } of queries) {
+      const changed = previous.scope === scope && previous.revision !== revision;
+      const cached =
+        !previous.queries.some((entry) => entry.query === query) &&
+        registry.get(query)._tag !== "Initial" &&
+        !registry.get(query).waiting;
+      if (changed || cached) registry.refresh(query);
+    }
+  }, [scope, revision, queries, registry]);
   // Derived atoms parse each query result once, even when another file finishes loading.
   const parsedQuery = useMemo(
     () =>
       Atom.family((query: ReturnType<typeof reviewEnvironment.diffFilePatch>) =>
         Atom.map(query, (result) =>
-          AsyncResult.map(result, (source) => ({
-            source,
-            patch: getRenderablePatch(source.diff, `diff-panel:${theme}`, {
+          AsyncResult.map(result, (source) => {
+            let patch = getRenderablePatch(source.diff, `diff-panel:${theme}`, {
               compactPartialHunkOffsets: true,
-            }),
-          })),
+            });
+            if (patch?.kind === "files" && patch.files.length === 1 && source.files?.length === 1) {
+              const stat = source.files[0]!;
+              const file = { ...patch.files[0]!, name: stat.path };
+              if (stat.previousPath !== null) file.prevName = stat.previousPath;
+              else delete file.prevName;
+              patch = { ...patch, files: [file] };
+            }
+            return { source, patch };
+          }),
         ),
       ),
     [theme],

@@ -130,16 +130,6 @@ function gitSubtitle(section: ReviewDiffPreviewSource): string | null {
   return "Base branch unavailable";
 }
 
-function stripGitPrefix(pathValue: string | undefined): string | null {
-  if (!pathValue) {
-    return null;
-  }
-  if (pathValue.startsWith("a/") || pathValue.startsWith("b/")) {
-    return pathValue.slice(2);
-  }
-  return pathValue;
-}
-
 function stripTrailingNewline(value: string): string {
   return value.endsWith("\n") ? value.slice(0, -1) : value;
 }
@@ -382,8 +372,8 @@ function buildRenderableRows(file: FileDiffMetadata): ReadonlyArray<ReviewRender
 }
 
 function mapRenderableFile(file: FileDiffMetadata): ReviewRenderableFile {
-  const path = stripGitPrefix(file.name) ?? stripGitPrefix(file.prevName) ?? file.name;
-  const previousPath = stripGitPrefix(file.prevName);
+  const path = file.name || file.prevName || "";
+  const previousPath = file.prevName || null;
   const additions = file.hunks.reduce((total, hunk) => total + hunk.additionLines, 0);
   const deletions = file.hunks.reduce((total, hunk) => total + hunk.deletionLines, 0);
   const cacheKey = file.cacheKey ?? `${previousPath ?? "none"}:${path}:${file.type}`;

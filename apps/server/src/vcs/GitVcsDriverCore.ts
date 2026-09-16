@@ -2458,17 +2458,18 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       );
       if (paths.length === 0) return yield* readTrackedDiff("HEAD");
       const env = yield* prepareReviewIndex(cwd, paths).pipe(
-        Effect.catchTag("PlatformError", (cause) =>
-          Effect.fail(
-            new GitCommandError({
-              operation: "GitVcsDriver.prepareReviewIndex",
-              cwd,
-              command: "git diff",
-              detail: "Could not prepare the review index.",
-              cause,
-            }),
-          ),
-        ),
+        Effect.catchTags({
+          PlatformError: (cause) =>
+            Effect.fail(
+              new GitCommandError({
+                operation: "GitVcsDriver.prepareReviewIndex",
+                cwd,
+                command: "git diff",
+                detail: "Could not prepare the review index.",
+                cause,
+              }),
+            ),
+        }),
       );
       return yield* readTrackedDiff("HEAD", env);
     }).pipe(Effect.scoped);
