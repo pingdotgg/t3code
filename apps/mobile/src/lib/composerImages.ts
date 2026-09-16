@@ -384,6 +384,15 @@ async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: st
       ) {
         return { base64: saved.base64, uri: saved.uri };
       }
+      try {
+        const { File } = await import("expo-file-system");
+        const rejectedRender = new File(saved.uri);
+        if (rejectedRender.exists) {
+          rejectedRender.delete();
+        }
+      } catch (cleanupError) {
+        console.warn("[composer-attachments] could not remove an oversized render", cleanupError);
+      }
     }
     throw new Error("The photo renderer has no output configuration.");
   } finally {

@@ -223,6 +223,8 @@ describe("composer file attachments", () => {
         compress: 0.72,
         base64: true,
       });
+      expect(mocks.delete).toHaveBeenCalledOnce();
+      expect(mocks.delete).toHaveBeenCalledWith(rendered.uri);
       expect(result).toEqual({
         attachments: [
           expect.objectContaining({
