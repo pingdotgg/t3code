@@ -1476,33 +1476,31 @@ function renderFeedEntry(
   if (entry.type === "message") {
     const { message } = entry;
     if (message.role === "reasoning") {
-      // Only the live turn may claim to still be thinking, and only while the
-      // thread is actually working: a block left open by a crashed provider
-      // must not shimmer on a turn that settled long ago. Same test as web.
-      const liveReasoning =
-        Boolean(message.streaming) &&
-        props.isWorking &&
-        message.turnId !== null &&
-        message.turnId === props.unsettledTurnId;
+      const messages = entry.reasoningMessages ?? [message];
       return (
         <ThreadReasoningRow
           rowSizing={props.workRowSizing}
           iconSubtleColor={iconSubtleColor}
-          expanded={props.expandedReasoningMessageIds.has(message.id)}
-          label={liveReasoning ? "Thinking" : "Thought"}
-          streaming={liveReasoning}
-          onToggle={() => props.onToggleReasoning(message.id)}
+          expanded={props.expandedReasoningMessageIds.has(entry.id)}
+          label={`Thought${messages.length > 1 ? ` (×${messages.length})` : ""}`}
+          streaming={false}
+          onToggle={() => props.onToggleReasoning(entry.id)}
         >
           <MarkdownImageAvailableWidthContext
             value={props.markdownContentWidth - REASONING_CONTENT_INSET}
           >
-            <AssistantMarkdownContent
-              markdown={message.text}
-              markdownStyles={markdownStyles.assistant}
-              linkHandlers={props.markdownLinkHandlers}
-              renderImage={props.renderMarkdownImage}
-              skills={props.skills}
-            />
+            <View className="gap-3">
+              {messages.map((reasoningMessage) => (
+                <AssistantMarkdownContent
+                  key={reasoningMessage.id}
+                  markdown={reasoningMessage.text}
+                  markdownStyles={markdownStyles.assistant}
+                  linkHandlers={props.markdownLinkHandlers}
+                  renderImage={props.renderMarkdownImage}
+                  skills={props.skills}
+                />
+              ))}
+            </View>
           </MarkdownImageAvailableWidthContext>
         </ThreadReasoningRow>
       );
@@ -2656,8 +2654,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
 
   const onToggleReasoning = useCallback(
     (messageId: string) => {
-      // The anchor must be the feed row id, which for a message row is the
-      // message id, or position restoration is skipped for every row.
+      // Reasoning details use their own row within the expanded activity history.
       suspendEndScrollMaintenanceForDisclosure(messageId);
       setInteractionState((current) => {
         const next = new Set(current.expandedReasoningMessageIds);
@@ -2700,8 +2697,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
       switch (entry.type) {
         case "message":
           // A collapsed reasoning row is the same chrome as a work toggle.
-          return entry.message.role === "reasoning" &&
-            !expandedReasoningMessageIds.has(entry.message.id)
+          return entry.message.role === "reasoning" && !expandedReasoningMessageIds.has(entry.id)
             ? WORK_GROUP_TOGGLE_HEIGHT
             : undefined;
         case "turn-fold":
