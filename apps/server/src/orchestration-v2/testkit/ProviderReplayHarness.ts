@@ -19,7 +19,7 @@ import { ThreadManagementService } from "../ThreadManagementService.ts";
 import { layer as mcpSessionRegistryTestLayer } from "../../mcp/McpSessionRegistry.testkit.ts";
 import * as VcsDriverRegistry from "../../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../../vcs/VcsProcess.ts";
-import { layer as checkpointCaptureServiceLayer } from "../CheckpointCaptureService.ts";
+import * as CheckpointCapture from "../CheckpointCaptureService.ts";
 import { layer as checkpointServiceLayer } from "../CheckpointService.ts";
 import { layer as checkpointRollbackServiceLayer } from "../CheckpointRollbackService.ts";
 import { layer as commandPolicyLayer } from "../CommandPolicy.ts";
@@ -377,7 +377,7 @@ export function makeOrchestratorV2ReplayLayerWithRegistry<Error>(
       ),
     ),
   );
-  const checkpointCaptureServiceProvided = checkpointCaptureServiceLayer.pipe(
+  const checkpointCaptureServiceProvided = CheckpointCapture.layer.pipe(
     Layer.provide(
       Layer.mergeAll(checkpointServiceProvided, eventSinkProvided, idAllocatorLayer, storesLayer),
     ),
