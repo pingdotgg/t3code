@@ -97,6 +97,12 @@ interface CollapsedDiffFilesState {
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
 
+// Pierre remounts (and resets to the top) whenever the review scope changes, so remember where
+// each thread's scope was left and jump back to it when that scope mounts again.
+const diffScrollTopByScopeKey = new Map<string, number>();
+// Last file reveal applied per scope, so a remount does not repeat it over the saved offset.
+const handledDiffRevealByScopeKey = new Map<string, string>();
+
 interface DiffPanelProps {
   mode?: DiffPanelMode;
   composerDraftTarget: ScopedThreadRef | DraftId;
@@ -453,10 +459,48 @@ export default function DiffPanel({
     ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
     : null;
 
+  const firstDiffFileKey = codeViewFiles[0]?.fileKey ?? null;
+  const rememberDiffScrollTop = useCallback(
+    (scrollTop: number) => {
+      if (collapseScopeKey) diffScrollTopByScopeKey.set(collapseScopeKey, scrollTop);
+    },
+    [collapseScopeKey],
+  );
+
+  useEffect(() => {
+    const scrollTop = collapseScopeKey ? diffScrollTopByScopeKey.get(collapseScopeKey) : undefined;
+    if (!scrollTop || !firstDiffFileKey || !codeView?.getInstance()) return;
+    // Position targets subtract the sticky header, so anchor to the first file instead.
+    codeView.scrollTo({
+      type: "item",
+      id: firstDiffFileKey,
+      align: "start",
+      offset: -scrollTop,
+      behavior: "instant",
+    });
+  }, [codeView, collapseScopeKey, firstDiffFileKey]);
+
   useEffect(() => {
     if (!selectedDiffFileKey || !codeView?.getInstance()) return;
+    const revealKey = `${selectedDiffFileKey}:${selectedFileRevealRequestId}`;
+    // Remounting with the same reveal keeps the saved position; only fresh requests jump to the file.
+    if (collapseScopeKey) {
+      if (
+        handledDiffRevealByScopeKey.get(collapseScopeKey) === revealKey &&
+        diffScrollTopByScopeKey.has(collapseScopeKey)
+      ) {
+        return;
+      }
+      handledDiffRevealByScopeKey.set(collapseScopeKey, revealKey);
+    }
     codeView.scrollTo({ type: "item", id: selectedDiffFileKey, align: "start" });
-  }, [codeView, codeViewMountKey, selectedDiffFileKey, selectedFileRevealRequestId]);
+  }, [
+    codeView,
+    codeViewMountKey,
+    collapseScopeKey,
+    selectedDiffFileKey,
+    selectedFileRevealRequestId,
+  ]);
 
   const treeRevealScope = useMemo(
     () => ({ collapseScopeKey, diffSelection }),
@@ -980,6 +1024,7 @@ export default function DiffPanel({
                   <AnnotatableCodeView
                     key={collapseScopeKey ?? reviewSectionId}
                     viewerRef={setCodeView}
+                    onScroll={rememberDiffScrollTop}
                     codeViewKey={codeViewMountKey}
                     className="h-full min-h-0 overflow-auto"
                     files={codeViewFiles}
