@@ -3,11 +3,7 @@ import { Clock3Icon, PencilIcon, PlayIcon, PlusIcon, Trash2Icon } from "lucide-r
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import type {
   EnvironmentId,
-  ModelSelection,
-  OrchestrationV2ThreadLaunchWorkspaceStrategy,
   ProjectId,
-  ProviderInteractionMode,
-  RuntimeMode,
   ScheduledTask,
   ScheduledTaskId,
   ScheduledTaskSchedule,
@@ -53,67 +49,29 @@ import { Switch } from "../ui/switch";
 import { Textarea } from "../ui/textarea";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import {
+  buildScheduledTaskUpdateInput,
+  type DraftState,
+  EMPTY_DRAFT,
+  moveDetachesThreadBinding,
+  scheduleFromDraft,
+  splitModelKey,
+  taskToDraft,
+  type WorkspaceMode,
+  workspaceStrategyFromDraft,
+  workspaceStrategyReady,
+} from "./scheduledTasks.logic";
 import { SettingsPageContainer, SettingsSection, useRelativeTimeTick } from "./settingsLayout";
-
-type ScheduleMode = "fixed" | "interval";
-type WorkspaceMode = "root" | "worktree" | "existing_worktree";
-
-interface DraftState {
-  readonly editingId: string | null;
-  readonly title: string;
-  readonly prompt: string;
-  readonly enabled: boolean;
-  readonly scheduleMode: ScheduleMode;
-  readonly intervalMinutes: string;
-  readonly timeOfDay: string;
-  readonly weekdays: ReadonlySet<number>;
-  readonly projectId: string;
-  readonly threadId: string;
-  readonly workspaceMode: WorkspaceMode;
-  readonly baseRef: string;
-  readonly existingWorktreePath: string;
-  readonly modelKey: string;
-  /** Not editable in the dialog, but preserved so editing an agent-created task keeps its modes. */
-  readonly runtimeMode: RuntimeMode;
-  readonly interactionMode: ProviderInteractionMode;
-  /**
-   * The task's original model selection. The picker only edits
-   * `instanceId:model`; keeping the source object preserves provider options
-   * (reasoning, temperature, …) when the model itself is left unchanged.
-   */
-  readonly baseModelSelection: ModelSelection | null;
-}
 
 /** JS day-of-week (0 = Sunday) rendered Monday-first, matching how people read a week. */
 const WEEKDAY_ORDER = [1, 2, 3, 4, 5, 6, 0] as const;
 const WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 const WEEKDAY_SHORT = ["Su", "Mo", "Tu", "We", "Th", "Fr", "Sa"] as const;
-const ALL_WEEKDAYS: ReadonlySet<number> = new Set([0, 1, 2, 3, 4, 5, 6]);
 
 const WORKSPACE_MODE_LABELS: Record<WorkspaceMode, string> = {
   worktree: "Create a new worktree",
   root: "Use the project checkout",
   existing_worktree: "Use a specific checkout",
-};
-
-const EMPTY_DRAFT: DraftState = {
-  editingId: null,
-  title: "",
-  prompt: "",
-  enabled: true,
-  scheduleMode: "fixed",
-  intervalMinutes: "15",
-  timeOfDay: "09:00",
-  weekdays: new Set([1, 2, 3, 4, 5]),
-  projectId: "",
-  threadId: "",
-  workspaceMode: "worktree",
-  baseRef: "main",
-  existingWorktreePath: "",
-  modelKey: "",
-  runtimeMode: "full-access",
-  interactionMode: "default",
-  baseModelSelection: null,
 };
 
 /** Labelled field: a caption sitting above its control. */
@@ -124,7 +82,7 @@ function Field({
   children,
 }: {
   label: string;
-  hint?: string;
+  hint?: string | undefined;
   htmlFor?: string;
   children: ReactNode;
 }) {
@@ -142,32 +100,6 @@ function Field({
       {children}
     </div>
   );
-}
-
-function modelKey(selection: ModelSelection): string {
-  return `${selection.instanceId}:${selection.model}`;
-}
-
-function splitModelKey(value: string): ModelSelection | null {
-  const index = value.indexOf(":");
-  if (index <= 0 || index === value.length - 1) return null;
-  return {
-    instanceId: ProviderInstanceId.make(value.slice(0, index)),
-    model: value.slice(index + 1),
-  };
-}
-
-function scheduleFromDraft(draft: DraftState): ScheduledTaskSchedule {
-  if (draft.scheduleMode === "interval") {
-    const minutes = Math.max(1, Number.parseInt(draft.intervalMinutes, 10) || 1);
-    return { type: "interval", everyMs: minutes * 60_000 };
-  }
-  const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
-  return {
-    type: "fixed_time",
-    timeOfDay: draft.timeOfDay || "09:00",
-    ...(selectedEveryDay ? {} : { weekdays: [...draft.weekdays].toSorted() }),
-  };
 }
 
 export function scheduleLabel(schedule: ScheduledTaskSchedule): string {
@@ -206,39 +138,6 @@ export function relativeLabel(value: string | null): string {
   const hours = Math.round(minutes / 60);
   if (hours < 24) return `in ${hours}h`;
   return `in ${Math.round(hours / 24)}d`;
-}
-
-function taskToDraft(task: ScheduledTask): DraftState {
-  const schedule = task.schedule;
-  const weekdays =
-    schedule.type === "fixed_time" && schedule.weekdays && schedule.weekdays.length > 0
-      ? new Set(schedule.weekdays)
-      : new Set(ALL_WEEKDAYS);
-  return {
-    editingId: task.id,
-    title: task.title,
-    prompt: task.prompt,
-    enabled: task.enabled,
-    scheduleMode: schedule.type === "interval" ? "interval" : "fixed",
-    intervalMinutes:
-      schedule.type === "interval"
-        ? String(Math.max(1, Math.round(schedule.everyMs / 60_000)))
-        : "15",
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
-    weekdays,
-    projectId: task.projectId,
-    threadId: task.threadId ?? "",
-    workspaceMode: task.workspaceStrategy.type,
-    baseRef: task.workspaceStrategy.type === "worktree" ? task.workspaceStrategy.baseRef : "main",
-    existingWorktreePath:
-      task.workspaceStrategy.type === "existing_worktree"
-        ? task.workspaceStrategy.worktreePath
-        : "",
-    modelKey: modelKey(task.modelSelection),
-    runtimeMode: task.runtimeMode,
-    interactionMode: task.interactionMode,
-    baseModelSelection: task.modelSelection,
-  };
 }
 
 function statusVariant(status: ScheduledTask["lastRunStatus"]) {
@@ -314,6 +213,9 @@ function EnvironmentScheduledTasksSettings({
   const upsertTask = useAtomCommand(serverEnvironment.upsertScheduledTask, {
     label: "scheduled task upsert",
   });
+  const updateTask = useAtomCommand(serverEnvironment.updateScheduledTask, {
+    label: "scheduled task update",
+  });
   const deleteTask = useAtomCommand(serverEnvironment.deleteScheduledTask, {
     label: "scheduled task delete",
   });
@@ -333,6 +235,10 @@ function EnvironmentScheduledTasksSettings({
   const [draft, setDraft] = useState<DraftState>(() =>
     linkedTask ? taskToDraft(linkedTask) : EMPTY_DRAFT,
   );
+  // The draft as the editor opened it. Dirty detection compares the draft
+  // against this snapshot — not the live task — so edits another client
+  // commits while the dialog is open are never reverted by a save.
+  const [baselineDraft, setBaselineDraft] = useState(draft);
   const [dialogOpen, setDialogOpen] = useState(() => linkedTask !== undefined);
   const [saving, setSaving] = useState(false);
   const editingTaskMissing =
@@ -356,16 +262,20 @@ function EnvironmentScheduledTasksSettings({
   );
 
   const openForCreate = useCallback(() => {
-    setDraft({
+    const next = {
       ...EMPTY_DRAFT,
       projectId: projects[0]?.id ?? "",
       modelKey: defaultModelKey,
-    });
+    };
+    setBaselineDraft(next);
+    setDraft(next);
     setDialogOpen(true);
   }, [defaultModelKey, projects]);
 
   const openForEdit = useCallback((task: ScheduledTask) => {
-    setDraft(taskToDraft(task));
+    const next = taskToDraft(task);
+    setBaselineDraft(next);
+    setDraft(next);
     setDialogOpen(true);
   }, []);
 
@@ -386,6 +296,13 @@ function EnvironmentScheduledTasksSettings({
       reportFailure("Schedule task is incomplete", "Add a title, prompt, project, and model.");
       return;
     }
+    if (!workspaceStrategyReady(draft)) {
+      reportFailure(
+        "Schedule task is incomplete",
+        "Choose a checkout path for the worktree workspace.",
+      );
+      return;
+    }
     // Keep the original selection object (with provider options) when the
     // picker still points at the same instance+model.
     const modelSelection =
@@ -394,37 +311,64 @@ function EnvironmentScheduledTasksSettings({
       draft.baseModelSelection.model === selection.model
         ? draft.baseModelSelection
         : selection;
-    const workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy =
-      draft.workspaceMode === "root"
-        ? { type: "root" }
-        : draft.workspaceMode === "existing_worktree"
-          ? { type: "existing_worktree", worktreePath: draft.existingWorktreePath.trim() }
-          : { type: "worktree", baseRef: draft.baseRef.trim() || "main", startFromOrigin: true };
-    const input: ScheduledTaskUpsertInput = {
-      ...(draft.editingId ? { id: draft.editingId as ScheduledTaskId } : {}),
-      title: draft.title.trim(),
-      prompt: draft.prompt.trim(),
-      enabled: draft.enabled,
-      schedule: scheduleFromDraft(draft),
-      projectId: draft.projectId as ProjectId,
-      threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
-      workspaceStrategy,
-      modelSelection,
-      runtimeMode: draft.runtimeMode,
-      interactionMode: draft.interactionMode,
-      creationSource: "web",
-    };
+    const workspaceStrategy = workspaceStrategyFromDraft(draft);
     setSaving(true);
-    const result = await upsertTask({ environmentId, input });
+    // Existing tasks save as a dirty-field patch through the atomic update
+    // path: a stale editor can never overwrite fields another client changed,
+    // and a delete racing the save is a typed not-found, not a resurrection.
+    let result;
+    if (draft.editingId !== null) {
+      // editingTaskMissing already guarantees the task is in the live list.
+      const editingTask = tasks.find((task) => task.id === draft.editingId);
+      if (editingTask === undefined) {
+        setSaving(false);
+        return;
+      }
+      const patch = buildScheduledTaskUpdateInput(
+        draft,
+        baselineDraft,
+        editingTask,
+        modelSelection,
+        workspaceStrategy,
+      );
+      result = patch === null ? null : await updateTask({ environmentId, input: patch });
+    } else {
+      result = await upsertTask({
+        environmentId,
+        input: {
+          title: draft.title.trim(),
+          prompt: draft.prompt.trim(),
+          enabled: draft.enabled,
+          schedule: scheduleFromDraft(draft),
+          projectId: draft.projectId as ProjectId,
+          threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+          workspaceStrategy,
+          modelSelection,
+          runtimeMode: draft.runtimeMode,
+          interactionMode: draft.interactionMode,
+          creationSource: "web",
+        } satisfies ScheduledTaskUpsertInput,
+      });
+    }
     setSaving(false);
-    if (result._tag === "Failure") {
+    if (result !== null && result._tag === "Failure") {
       if (!isAtomCommandInterrupted(result)) {
         reportFailure("Could not save schedule task", squashAtomCommandFailure(result));
       }
       return;
     }
     setDialogOpen(false);
-  }, [defaultModelKey, draft, editingTaskMissing, environmentId, saving, upsertTask]);
+  }, [
+    baselineDraft,
+    defaultModelKey,
+    draft,
+    editingTaskMissing,
+    environmentId,
+    saving,
+    tasks,
+    updateTask,
+    upsertTask,
+  ]);
 
   const handleDelete = useCallback(
     async (task: ScheduledTask) => {
@@ -586,7 +530,14 @@ function EnvironmentScheduledTasksSettings({
             </Field>
 
             <div className="grid gap-3 sm:grid-cols-2">
-              <Field label="Project">
+              <Field
+                label="Project"
+                hint={
+                  moveDetachesThreadBinding(draft, baselineDraft)
+                    ? "detaches the thread binding"
+                    : undefined
+                }
+              >
                 <Select
                   value={draft.projectId}
                   onValueChange={(projectId) =>

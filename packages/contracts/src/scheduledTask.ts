@@ -140,6 +140,27 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 
+/**
+ * Atomic partial update: only the provided fields are written, and only while
+ * the task still exists in `projectId`. Implemented as a targeted UPDATE —
+ * never an insert — so an edit racing a delete cannot resurrect the task and
+ * disjoint concurrent edits keep their own columns.
+ */
+export const ScheduledTaskUpdateInput = Schema.Struct({
+  id: ScheduledTaskId,
+  projectId: ProjectId,
+  title: Schema.optional(TrimmedNonEmptyString),
+  prompt: Schema.optional(TrimmedNonEmptyString),
+  enabled: Schema.optional(Schema.Boolean),
+  schedule: Schema.optional(ScheduledTaskUpsertSchedule),
+  threadId: Schema.optional(Schema.NullOr(ThreadId)),
+  workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),
+  modelSelection: Schema.optional(ModelSelection),
+  /** Moves the task to another project; `projectId` stays the lookup scope. */
+  nextProjectId: Schema.optional(ProjectId),
+});
+export type ScheduledTaskUpdateInput = typeof ScheduledTaskUpdateInput.Type;
+
 /** Partial update that flips only the enabled flag — never overwrites other fields. */
 export const ScheduledTaskSetEnabledInput = Schema.Struct({
   id: ScheduledTaskId,
