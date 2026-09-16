@@ -2947,8 +2947,16 @@ export class OrchestrationV2GetThreadProjectionError extends Schema.TaggedError<
   {
     threadId: ThreadId,
     message: Schema.String,
-    /** Optional failure category so clients can branch without parsing `message`. */
-    reason: Schema.optionalKey(Schema.Literals(["invalid_history_cursor"])),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {}
+
+/** Raised when a history-page cursor no longer resolves, so callers reseed instead of retrying it. */
+export class OrchestrationV2InvalidHistoryCursorError extends Schema.TaggedError<OrchestrationV2InvalidHistoryCursorError>()(
+  "OrchestrationV2InvalidHistoryCursorError",
+  {
+    threadId: ThreadId,
+    message: Schema.String,
     cause: Schema.optional(Schema.Defect()),
   },
 ) {}
@@ -2975,6 +2983,7 @@ export const OrchestrationV2RpcError = Schema.Union([
   OrchestrationV2DispatchCommandError,
   OrchestrationV2GetThreadProjectionError,
   OrchestrationV2GetShellSnapshotError,
+  OrchestrationV2InvalidHistoryCursorError,
   OrchestrationV2ThreadLaunchError,
 ]);
 export type OrchestrationV2RpcError = typeof OrchestrationV2RpcError.Type;
