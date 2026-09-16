@@ -1,11 +1,12 @@
 // @effect-diagnostics preferSchemaOverJson:off - JSON string literals embed paths safely into generated JavaScript.
 /**
  * A directory holding an `agent-device` launcher that runs the pinned install
- * with the server's Node. Prepended to provider subprocess PATHs so the agent
+ * with a Node runtime. Prepended to provider subprocess PATHs so the agent
  * types `agent-device …` and gets the version the injected instructions were
  * written for, regardless of what is or is not globally installed.
  */
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -20,9 +21,9 @@ export const ensureAgentDeviceShim = Effect.fn("AgentDeviceShim.ensure")(functio
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
+  const node = yield* resolveNodeExecutable("Device automation");
   const shimDir = path.join(input.stateDir, SHIM_DIR);
   yield* fs.makeDirectory(shimDir, { recursive: true });
-  const node = process.execPath;
   const launcherPath = path.join(shimDir, "agent-device-launcher.mjs");
   yield* fs.writeFileString(
     launcherPath,

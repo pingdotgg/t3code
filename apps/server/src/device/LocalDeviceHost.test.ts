@@ -1,6 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as NodePath from "@effect/platform-node/NodePath";
-import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessEnvironment,
+  HostProcessPlatform,
+  HostProcessIsExecutable,
+} from "@t3tools/shared/hostProcess";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Path from "effect/Path";
@@ -157,6 +161,11 @@ it.effect(
         ),
       );
       expect(yield* host.current).toBeNull();
+      const error = yield* host
+        .ensureReady(() => Effect.die("Must not install without Node"))
+        .pipe(Effect.flip, Effect.provideService(HostProcessIsExecutable, true));
+      expect(error.message).toContain("Local device support requires Node.js");
+      expect(error.message).toContain("Install Node.js");
       yield* host.stop;
       expect(yield* fs.exists(`${baseDir}/tools`)).toBe(false);
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

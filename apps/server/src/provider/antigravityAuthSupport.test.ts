@@ -3,7 +3,11 @@ import * as NodeChildProcess from "node:child_process";
 
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { ProviderInstanceId } from "@t3tools/contracts";
-import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  HostProcessExecutablePath,
+  HostProcessIsExecutable,
+  HostProcessPlatform,
+} from "@t3tools/shared/hostProcess";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -531,6 +535,48 @@ describe("Antigravity stderr compatibility", () => {
 });
 
 it.layer(NodeServices.layer)("Antigravity profile preparation", (it) => {
+  it.effect("runs the browser helper with installed Node in standalone builds", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const profile = yield* prepareAntigravityProfile({
+        profileDirectory: path.join(directory, "profile"),
+        baseEnv: { PATH: path.dirname(process.execPath) },
+      });
+      expect(profile.browserCommand).not.toContain("/packaged/t3");
+      expect(yield* fs.exists(profile.acpDirectory)).toBe(true);
+    }).pipe(
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+    ),
+  );
+
+  it.effect("reports missing Node before creating the standalone sign-in profile", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const profileDirectory = path.join(directory, "profile");
+      const result = yield* prepareAntigravityProfile({
+        profileDirectory,
+        baseEnv: { PATH: "" },
+      }).pipe(Effect.result);
+      expect(Result.isFailure(result)).toBe(true);
+      if (Result.isFailure(result)) {
+        expect(result.failure).toMatchObject({
+          _tag: "AcpTransportError",
+          detail: expect.stringContaining("Install Node.js"),
+          cause: {
+            _tag: "NodeRuntimeUnavailableError",
+            cause: { _tag: "CommandResolutionError" },
+          },
+        });
+      }
+      expect(yield* fs.exists(profileDirectory)).toBe(false);
+    }).pipe(Effect.provideService(HostProcessIsExecutable, true)),
+  );
+
   it.effect("preflights the no-browser helper and creates private directories only", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
