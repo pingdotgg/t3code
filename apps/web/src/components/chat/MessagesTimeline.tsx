@@ -39,9 +39,10 @@ import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments"
 import {
   emptyAgentPanelModel,
   formatSubagentModelLabel,
-  formatSubagentTokenCount,
+  formatSubagentTokenMetric,
   isActiveSubagentStatus,
   isTerminalSubagentStatus,
+  subagentTokenMetricValue,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 
 const EMPTY_AGENT_PANEL_MODEL = emptyAgentPanelModel();
@@ -234,6 +235,7 @@ import { createContextPresentationRegistry } from "../contextPresentationRegistr
 import { useOpenPrLink } from "~/lib/openPullRequestLink";
 import type { ChatMarkdownContextReference } from "../ChatMarkdown";
 import { useMediaQuery } from "~/hooks/useMediaQuery";
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { useUiStateStore } from "~/uiStateStore";
 import { type TimestampFormat } from "@t3tools/contracts/settings";
@@ -4035,6 +4037,7 @@ function AgentSpawnMemberRow({
   onToggleEntry?: ((collapsed: boolean) => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
+  const tokenMetric = useClientSettings((settings) => settings.agentsPanelTokenMetric);
   const activeStatus = isActiveSubagentStatus(agent.status);
   const activity = activeStatus
     ? (agent.progress ?? (agent.lastToolName ? `▸ ${agent.lastToolName}` : null))
@@ -4043,11 +4046,10 @@ function AgentSpawnMemberRow({
     agent.startedAt && agent.completedAt
       ? Date.parse(agent.completedAt) - Date.parse(agent.startedAt)
       : null;
+  const tokens = subagentTokenMetricValue(agent.usage, tokenMetric);
   const meta = [
     durationMs !== null && durationMs >= 0 ? formatDuration(durationMs) : null,
-    agent.usage && agent.usage.totalTokens > 0
-      ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok`
-      : null,
+    tokens ? formatSubagentTokenMetric(tokens, tokenMetric) : null,
   ]
     .filter(Boolean)
     .join(" · ");

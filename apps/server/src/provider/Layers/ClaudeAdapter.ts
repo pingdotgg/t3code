@@ -373,6 +373,9 @@ interface ClaudeTaskAgentState {
    * assistant snapshots (authoritative API model). */
   model: string | undefined;
   effort: string | undefined;
+  /** Current context size from the subagent's latest assistant snapshot;
+   * rides on the next cumulative rollup. */
+  usedTokens: number | undefined;
 }
 
 /**
@@ -1311,6 +1314,16 @@ function normalizeTaskUsage(usage: unknown): RuntimeTaskUsage | undefined {
     ...(toolUses !== undefined ? { toolUses } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
+}
+
+/** Stamps the task's current context size onto its cumulative rollup. */
+function withTaskContext(
+  typedUsage: RuntimeTaskUsage | undefined,
+  agent: ClaudeTaskAgentState | undefined,
+): RuntimeTaskUsage | undefined {
+  return typedUsage && agent?.usedTokens !== undefined
+    ? { ...typedUsage, usedTokens: agent.usedTokens }
+    : typedUsage;
 }
 
 /** SDK task_updated patch status → the shared wire vocabulary. */
@@ -3219,6 +3232,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             owningAgentId: existing?.owningAgentId,
             model: existing?.model,
             effort: existing?.effort,
+            usedTokens: existing?.usedTokens,
           });
         }
       }
@@ -3270,6 +3284,12 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             snapshotModel,
           );
         }
+      }
+      // The snapshot's usage is the subagent's own request size, i.e. its
+      // current context; the next task_progress rollup carries it out.
+      const usedTokens = claudeTotalProcessedTokens(message.message.usage);
+      if (owningAgent && usedTokens !== undefined) {
+        owningAgent.usedTokens = usedTokens;
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3664,6 +3684,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           owningAgentId,
           model,
           effort,
+          usedTokens: undefined,
         });
         context.liveTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
@@ -3694,7 +3715,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         );
         const linkage = taskLinkageFor(context.taskAgents, message.task_id);
-        const typedUsage = normalizeTaskUsage(message.usage);
+        const typedUsage = withTaskContext(
+          normalizeTaskUsage(message.usage),
+          context.taskAgents.get(message.task_id),
+        );
         // Phases ride on the coordinator's ONE progress row per tick. A
         // separate phases-only row shared the stable ingestion activity id
         // with this full row, and the thinner upsert overwrote usage and
@@ -3760,7 +3784,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             rawPayload: message,
           },
         );
-        const typedUsage = normalizeTaskUsage(message.usage);
+        const typedUsage = withTaskContext(
+          normalizeTaskUsage(message.usage),
+          context.taskAgents.get(message.task_id),
+        );
         yield* offerRuntimeEvent({
           ...base,
           type: "task.completed",

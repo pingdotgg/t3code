@@ -18,6 +18,7 @@
  * metadata).
  */
 import type { OrchestrationThreadActivity } from "@t3tools/contracts";
+import type { AgentsPanelTokenMetric } from "@t3tools/contracts/settings";
 
 export type RuntimeSubagentStatus =
   | "pending"
@@ -31,6 +32,7 @@ export type RuntimeSubagentStatus =
 
 export interface SubagentUsage {
   readonly totalTokens: number;
+  readonly usedTokens?: number;
   readonly inputTokens?: number;
   readonly cachedInputTokens?: number;
   readonly outputTokens?: number;
@@ -157,6 +159,7 @@ function asUsage(value: unknown): SubagentUsage | undefined {
   }
   const usage: {
     totalTokens: number;
+    usedTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
@@ -164,6 +167,8 @@ function asUsage(value: unknown): SubagentUsage | undefined {
     toolUses?: number;
     durationMs?: number;
   } = { totalTokens };
+  const usedTokens = asCount(record.usedTokens);
+  if (usedTokens !== undefined) usage.usedTokens = usedTokens;
   const inputTokens = asCount(record.inputTokens);
   if (inputTokens !== undefined) usage.inputTokens = inputTokens;
   const cachedInputTokens = asCount(record.cachedInputTokens);
@@ -188,6 +193,8 @@ function asUsage(value: unknown): SubagentUsage | undefined {
  *   also max-merges. The distinction matters when v2 sums activations.
  * Field-wise: a terminal payload carrying only totalTokens must not wipe a
  * known breakdown.
+ * usedTokens is a context-size snapshot, not a running total: the latest
+ * frame wins so compaction is reflected instead of ratcheted away.
  */
 function mergeUsageMax(
   current: SubagentUsage | null,
@@ -203,6 +210,7 @@ function mergeUsageMax(
     a === undefined ? b : b === undefined ? a : Math.max(a, b);
   const merged: {
     totalTokens: number;
+    usedTokens?: number;
     inputTokens?: number;
     cachedInputTokens?: number;
     outputTokens?: number;
@@ -210,6 +218,8 @@ function mergeUsageMax(
     toolUses?: number;
     durationMs?: number;
   } = { totalTokens: Math.max(current.totalTokens, incoming.totalTokens) };
+  const usedTokens = incoming.usedTokens ?? current.usedTokens;
+  if (usedTokens !== undefined) merged.usedTokens = usedTokens;
   const inputTokens = pick(current.inputTokens, incoming.inputTokens);
   if (inputTokens !== undefined) merged.inputTokens = inputTokens;
   const cachedInputTokens = pick(current.cachedInputTokens, incoming.cachedInputTokens);
@@ -703,6 +713,8 @@ export interface AgentPanelModel {
   readonly idleCount: number;
   readonly settledCount: number;
   readonly totalTokens: number;
+  /** Undefined until a counted agent reports a context size. */
+  readonly usedTokens: number | undefined;
   readonly hasAgents: boolean;
   readonly liveCount: number;
 }
@@ -715,6 +727,7 @@ const EMPTY_PANEL_MODEL: AgentPanelModel = {
   idleCount: 0,
   settledCount: 0,
   totalTokens: 0,
+  usedTokens: undefined,
   hasAgents: false,
   liveCount: 0,
 };
@@ -831,6 +844,7 @@ export function deriveAgentPanelModel({
   let idleCount = 0;
   let settledCount = 0;
   let totalTokens = 0;
+  let usedTokens: number | undefined;
   for (const agent of source) {
     // A workflow coordinator with members is a container for those members, not
     // work of its own: it reports running for the whole run and aggregates their
@@ -842,6 +856,9 @@ export function deriveAgentPanelModel({
     else if (agent.status === "idle") idleCount += 1;
     else settledCount += 1;
     totalTokens += agent.usage?.totalTokens ?? 0;
+    if (agent.usage?.usedTokens !== undefined) {
+      usedTokens = (usedTokens ?? 0) + agent.usage.usedTokens;
+    }
   }
 
   return {
@@ -856,6 +873,7 @@ export function deriveAgentPanelModel({
     idleCount,
     settledCount,
     totalTokens,
+    usedTokens,
     hasAgents: true,
     liveCount: runningCount + waitingCount,
   };
@@ -878,6 +896,23 @@ export function formatSubagentModelLabel(
     .replace(/-\d{8}$/, "")
     .replace(/-latest$/, "");
   return effort ? `${compact} · ${effort}` : compact;
+}
+
+/** The figure the Agents panel shows for one agent or a whole roster under the chosen metric. */
+export function subagentTokenMetricValue(
+  usage: { readonly totalTokens: number; readonly usedTokens?: number | undefined } | null,
+  metric: AgentsPanelTokenMetric,
+): number | undefined {
+  return metric === "context" ? usage?.usedTokens : usage?.totalTokens;
+}
+
+/** "12k ctx", "340k tok", or a dash when the provider gave no figure. */
+export function formatSubagentTokenMetric(
+  value: number | undefined,
+  metric: AgentsPanelTokenMetric,
+): string {
+  const count = value === undefined ? "—" : formatSubagentTokenCount(value);
+  return `${count} ${metric === "context" ? "ctx" : "tok"}`;
 }
 
 export function formatSubagentTokenCount(totalTokens: number): string {
