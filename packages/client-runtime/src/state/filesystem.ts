@@ -69,7 +69,7 @@ export function getBrowseCreateDirectoryTarget(input: {
   readonly caseSensitive: boolean;
 }): { readonly parentPath: string; readonly name: string } | null {
   const name = input.leafName.trim();
-  if (input.directoryPath.length === 0 || !isCreatableDirectoryName(name)) {
+  if (input.directoryPath.length === 0 || name.length > 255 || !isCreatableDirectoryName(name)) {
     return null;
   }
 

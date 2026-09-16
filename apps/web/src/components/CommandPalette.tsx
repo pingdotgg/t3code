@@ -596,6 +596,8 @@ function OpenCommandPaletteDialog(props: {
     reportDefect: false,
     refresh: true,
   });
+  const createBrowseDirectoryInFlightRef = useRef(false);
+  const [isCreatingBrowseDirectory, setIsCreatingBrowseDirectory] = useState(false);
   const createBrowseDirectoryCommand = useAtomCommand(filesystemEnvironment.createDirectory, {
     reportFailure: false,
   });
@@ -2176,39 +2178,58 @@ function OpenCommandPaletteDialog(props: {
     readonly parentPath: string;
     readonly name: string;
   }): Promise<void> {
-    if (browseEnvironmentId === null) {
+    if (browseEnvironmentId === null || createBrowseDirectoryInFlightRef.current) {
       return;
     }
-    const browseCwd = currentProjectCwdForBrowse;
-    const result = await createBrowseDirectoryCommand({
-      environmentId: browseEnvironmentId,
-      input: {
-        parentPath: target.parentPath,
-        name: target.name,
-        ...(browseCwd ? { cwd: browseCwd } : {}),
-      },
-    });
-    if (result._tag === "Failure") {
-      if (!isAtomCommandInterrupted(result)) {
-        toastManager.add(
-          stackedThreadToast({
-            type: "error",
-            title: "Could not create folder",
-            description: errorMessage(squashAtomCommandFailure(result)),
-          }),
-        );
+    createBrowseDirectoryInFlightRef.current = true;
+    setIsCreatingBrowseDirectory(true);
+    try {
+      const browseCwd = currentProjectCwdForBrowse;
+      const result = await createBrowseDirectoryCommand({
+        environmentId: browseEnvironmentId,
+        input: {
+          parentPath: target.parentPath,
+          name: target.name,
+          ...(browseCwd ? { cwd: browseCwd } : {}),
+        },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not create folder",
+              description: errorMessage(squashAtomCommandFailure(result)),
+            }),
+          );
+        }
+        return;
       }
-      return;
-    }
 
-    await reloadBrowsePath({
-      environmentId: browseEnvironmentId,
-      input: {
-        partialPath: target.parentPath,
-        ...(browseCwd ? { cwd: browseCwd } : {}),
-      },
-    });
-    await browseTo(target.name);
+      const reloadResult = await reloadBrowsePath({
+        environmentId: browseEnvironmentId,
+        input: {
+          partialPath: target.parentPath,
+          ...(browseCwd ? { cwd: browseCwd } : {}),
+        },
+      });
+      if (reloadResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(reloadResult)) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not refresh folders",
+              description: errorMessage(squashAtomCommandFailure(reloadResult)),
+            }),
+          );
+        }
+        return;
+      }
+      await browseTo(target.name);
+    } finally {
+      createBrowseDirectoryInFlightRef.current = false;
+      setIsCreatingBrowseDirectory(false);
+    }
   }
 
   const browseGroups = buildBrowseGroups({
@@ -2226,6 +2247,7 @@ function OpenCommandPaletteDialog(props: {
             name: createDirectoryTarget.name,
             directoryPath: createDirectoryTarget.parentPath,
             icon: <FolderPlusIcon className={ITEM_ICON_CLASS} />,
+            disabled: isCreatingBrowseDirectory,
             run: () => createBrowseDirectory(createDirectoryTarget),
           },
   });

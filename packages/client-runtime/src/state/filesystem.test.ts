@@ -68,6 +68,12 @@ describe("browse folder creation", () => {
     }
   });
 
+  it("limits directory names to 255 characters after trimming", () => {
+    const name = "a".repeat(255);
+    expect(target(`  ${name}  `)).toEqual({ parentPath: "~/", name });
+    expect(target("a".repeat(256))).toBeNull();
+  });
+
   it("needs a browsed directory to create the folder in", () => {
     expect(
       getBrowseCreateDirectoryTarget({

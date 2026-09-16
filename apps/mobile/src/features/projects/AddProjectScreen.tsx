@@ -33,6 +33,10 @@ import {
   isWindowsPlatform,
 } from "@t3tools/client-runtime/state/projects";
 import {
+  isAtomCommandInterrupted,
+  squashAtomCommandFailure,
+} from "@t3tools/client-runtime/state/runtime";
+import {
   CommandId,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -791,6 +795,15 @@ function FolderBrowser(props: {
           entries: browseState.data.entries,
           caseSensitive: !isWindowsPlatform(props.environment.platform),
         });
+  const createGenerationRef = useRef(0);
+  useEffect(() => {
+    return () => {
+      createGenerationRef.current += 1;
+    };
+    // Invalidate pending creation when the browse context changes or unmounts.
+    // oxlint-disable-next-line react/exhaustive-effect-dependencies
+  }, [props.pathInput, props.environment.environmentId, props.pinnedDirectoryName]);
+  const createInFlightRef = useRef(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [isCreatingDirectory, setIsCreatingDirectory] = useState(false);
   const createDirectory = useAtomCommand(filesystemEnvironment.createDirectory, {
@@ -806,29 +819,42 @@ function FolderBrowser(props: {
     readonly parentPath: string;
     readonly name: string;
   }) => {
-    if (isCreatingDirectory) return;
+    if (createInFlightRef.current) return;
+    createInFlightRef.current = true;
+    const generation = createGenerationRef.current;
     setCreateError(null);
     setIsCreatingDirectory(true);
-    const result = await createDirectory({
-      environmentId: props.environment.environmentId,
-      input: { parentPath: target.parentPath, name: target.name },
-    });
-    if (AsyncResult.isFailure(result)) {
-      setCreateError(errorMessage(Cause.squash(result.cause)));
+    try {
+      const result = await createDirectory({
+        environmentId: props.environment.environmentId,
+        input: { parentPath: target.parentPath, name: target.name },
+      });
+      if (result._tag === "Failure") {
+        if (!isAtomCommandInterrupted(result)) {
+          setCreateError(errorMessage(squashAtomCommandFailure(result)));
+        }
+        return;
+      }
+      // Refresh the parent even if the user has moved elsewhere during creation.
+      const reloadResult = await reloadBrowsePath({
+        environmentId: props.environment.environmentId,
+        input: { partialPath: target.parentPath },
+      });
+      if (reloadResult._tag === "Failure") {
+        if (!isAtomCommandInterrupted(reloadResult)) {
+          setCreateError(errorMessage(squashAtomCommandFailure(reloadResult)));
+        }
+        return;
+      }
+      if (generation !== createGenerationRef.current) return;
+      await props.navigateToBrowsePath({
+        browseDirectoryPath: target.parentPath,
+        selectedDirectoryName: target.name,
+      });
+    } finally {
+      createInFlightRef.current = false;
       setIsCreatingDirectory(false);
-      return;
     }
-    // Re-read the folder it was created in before stepping into it, so going
-    // back up shows the new folder instead of the cached listing.
-    await reloadBrowsePath({
-      environmentId: props.environment.environmentId,
-      input: { partialPath: target.parentPath },
-    });
-    await props.navigateToBrowsePath({
-      browseDirectoryPath: target.parentPath,
-      selectedDirectoryName: target.name,
-    });
-    setIsCreatingDirectory(false);
   };
 
   return (
@@ -877,6 +903,7 @@ function FolderBrowser(props: {
             right={null}
             onPress={() => {
               if (browsePath.parentPath) {
+                createGenerationRef.current += 1;
                 void props.navigateToBrowsePath({
                   browseDirectoryPath: browsePath.parentPath,
                 });
@@ -899,6 +926,7 @@ function FolderBrowser(props: {
             isFirst={index === 0 && !browsePath.canBrowseUp && createDirectoryTarget === null}
             right={null}
             onPress={() => {
+              createGenerationRef.current += 1;
               void props.navigateToBrowsePath({
                 browseDirectoryPath: browsePath.directoryPath,
                 selectedDirectoryName: entry.name,

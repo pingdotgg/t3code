@@ -388,6 +388,7 @@ export interface BrowseCreateDirectoryAction {
   readonly name: string;
   /** The browsed directory the folder is created in, shown as the item description. */
   readonly directoryPath: string;
+  readonly disabled?: boolean;
   readonly icon: ReactNode;
   readonly run: () => void | Promise<void>;
 }
@@ -418,6 +419,7 @@ export function buildBrowseGroups(input: {
       ],
       title: `New folder "${createDirectory.name}"`,
       description: `Create in ${createDirectory.directoryPath}`,
+      disabled: createDirectory.disabled ?? false,
       icon: createDirectory.icon,
       keepOpen: true,
       run: async () => {

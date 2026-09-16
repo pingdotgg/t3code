@@ -1,7 +1,5 @@
 import type { BrowsePathSegment } from "@t3tools/client-runtime/state/projects";
 
-import { cn } from "../lib/utils";
-
 /**
  * The directory the picker is listing, one selectable crumb per level. The
  * typed path can point deeper than the listing (a partial folder name, or the
@@ -34,26 +32,25 @@ export function CommandPaletteBrowseBreadcrumb(props: {
             {previousLabel !== null && !previousLabel.endsWith(separator) ? (
               <span className="text-muted-foreground/60">{separator}</span>
             ) : null}
-            <button
-              aria-current={isCurrent ? "location" : undefined}
-              className={cn(
-                "max-w-40 truncate rounded-sm px-1 py-0.5 text-start",
-                isCurrent
-                  ? "font-medium text-foreground"
-                  : "cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground",
-              )}
-              onMouseDown={(event) => {
-                event.preventDefault();
-              }}
-              onClick={() => {
-                if (!isCurrent) {
-                  props.onNavigate(segment.path);
-                }
-              }}
-              type="button"
-            >
-              {segment.label}
-            </button>
+            {isCurrent ? (
+              <span
+                aria-current="location"
+                className="max-w-40 truncate rounded-sm px-1 py-0.5 text-start font-medium text-foreground"
+              >
+                {segment.label}
+              </span>
+            ) : (
+              <button
+                className="max-w-40 cursor-pointer truncate rounded-sm px-1 py-0.5 text-start text-muted-foreground hover:bg-accent hover:text-foreground"
+                onMouseDown={(event) => {
+                  event.preventDefault();
+                }}
+                onClick={() => props.onNavigate(segment.path)}
+                type="button"
+              >
+                {segment.label}
+              </button>
+            )}
           </span>
         );
       })}
