@@ -407,6 +407,50 @@ export function remainingPercent(window: ServerProviderUsageWindow): number {
   return Math.round(100 - Math.max(0, Math.min(100, window.usedPercent)));
 }
 
+/**
+ * The one window a compact meter shows, or null when there is nothing to draw.
+ * The session window wins when the provider reports one: it is the number
+ * Claude Code and Codex put in their own status lines, and the one that moves
+ * while you work. Providers without a session window fall back to whichever
+ * window has the least left. Ties go to the shorter window by reported
+ * duration, and to the shorter kind when a duration is missing. The choice
+ * never depends on the clock, so deciding whether to mount the meter does not
+ * need one.
+ */
+export function usageLimitsMeterWindow(
+  limits: ServerProviderUsageLimits | undefined,
+): ServerProviderUsageWindow | null {
+  if (!limits || limitsNotice(limits) !== null) return null;
+  return (
+    limits.windows.find((window) => window.kind === "session") ??
+    [...limits.windows].sort(
+      (left, right) =>
+        remainingPercent(left) - remainingPercent(right) || byWindowLength(left, right),
+    )[0] ??
+    null
+  );
+}
+
+/** Shorter window first: by reported duration when both report one, else by kind. */
+function byWindowLength(left: ServerProviderUsageWindow, right: ServerProviderUsageWindow): number {
+  const leftMins = left.windowDurationMins;
+  const rightMins = right.windowDurationMins;
+  if (leftMins !== undefined && rightMins !== undefined && leftMins !== rightMins) {
+    return leftMins - rightMins;
+  }
+  return WINDOW_KIND_ORDER[left.kind] - WINDOW_KIND_ORDER[right.kind];
+}
+
+/**
+ * Whether a reading can still be trusted. A window that has rolled over since
+ * it was read must render as unknown, never as its number: the quota it
+ * reports belongs to a window that no longer exists.
+ */
+export function windowExpired(window: ServerProviderUsageWindow, now: number): boolean {
+  const resetsAt = resetMillis(window);
+  return resetsAt !== null && resetsAt <= now;
+}
+
 function resetMillis(window: ServerProviderUsageWindow): number | null {
   if (window.resetsAt === undefined) return null;
   const at = Date.parse(window.resetsAt);

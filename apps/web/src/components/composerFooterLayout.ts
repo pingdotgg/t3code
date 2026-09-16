@@ -113,6 +113,8 @@ export interface RestingComposerControlsMeasurement {
   minimumFixedWidth: number;
   blockWidths: readonly number[];
   overflowWidth: number;
+  /** Trailing blocks that have no overflow menu entry, so hiding only them shows no trigger. */
+  menulessTrailingCount?: number;
 }
 
 function restingComposerControlsWidth(
@@ -122,11 +124,12 @@ function restingComposerControlsWidth(
 ): number {
   const { blockWidths, gap } = input;
   const visibleCount = blockWidths.length - hiddenCount;
+  const showsOverflow = hiddenCount > (input.menulessTrailingCount ?? 0);
   return (
     fixedWidth +
     blockWidths.slice(0, visibleCount).reduce((sum, width) => sum + width, 0) +
-    (hiddenCount > 0 ? input.overflowWidth : 0) +
-    gap * (visibleCount + (hiddenCount > 0 ? 1 : 0))
+    (showsOverflow ? input.overflowWidth : 0) +
+    gap * (visibleCount + (showsOverflow ? 1 : 0))
   );
 }
 
@@ -190,6 +193,23 @@ export function resolveRestingComposerControlsLayout(
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
   return { hiddenCount, visible };
+}
+
+/**
+ * The trailing block ids a hidden-block count covers.
+ *
+ * The count comes from the last measurement, so the list can be shorter by
+ * the time it is applied: the opt-in usage meter leaves when its setting is
+ * toggled off or its reading ages out. Without the clamp the slice would
+ * count back from the end and hide the wrong blocks until the layout effect
+ * re-measures.
+ */
+export function resolveRestingHiddenBlockIds<Id extends string>(
+  blockIds: readonly Id[],
+  hiddenCount: number,
+): Id[] {
+  const clamped = Math.min(Math.max(hiddenCount, 0), blockIds.length);
+  return blockIds.slice(blockIds.length - clamped);
 }
 
 export function resolveScrollToEndClearance(input: {
