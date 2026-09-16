@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off -- Local socket ownership checks need lstat uid and an atomic stale-socket unlink at the Node adapter boundary.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
@@ -7,6 +8,10 @@ import {
   DESKTOP_APP_ACTIVATION_PROTOCOL_VERSION,
   DesktopAppActivationRequest,
   type DesktopAppActivationResponse,
+  type DesktopAppConnectionCompletion,
+  DesktopAppConnectionRequest,
+  type DesktopAppConnectionResponse,
+  desktopAppConnectionFailure,
 } from "@t3tools/contracts";
 import { resolveDesktopAppControlAddress } from "@t3tools/shared/desktopAppControl";
 import { HostProcessUserId } from "@t3tools/shared/hostProcess";
@@ -21,15 +26,33 @@ import * as Scope from "effect/Scope";
 import type * as Electron from "electron";
 
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
-import { DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL } from "../ipc/channels.ts";
+import {
+  DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL,
+  DESKTOP_APP_CONNECTION_CANCEL_CHANNEL,
+  DESKTOP_APP_CONNECTION_REQUEST_CHANNEL,
+} from "../ipc/channels.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { DesktopAppActivationBroker } from "./DesktopAppActivationBroker.ts";
+import { DesktopAppConnectionBroker } from "./DesktopAppConnectionBroker.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 
 const MAX_REQUEST_BYTES = 64 * 1024;
 const REQUEST_TIMEOUT_MS = 15_000;
+// Connection requests may cross SSH or the relay, so they get a longer budget
+// than a local activation, and a bounded number may be in flight at once.
+const CONNECTION_REQUEST_TIMEOUT_MS = 30_000;
+const CONNECTION_MAX_PENDING = 32;
 const isDesktopAppActivationRequest = Schema.is(DesktopAppActivationRequest);
+const isDesktopAppConnectionRequest = Schema.is(DesktopAppConnectionRequest);
+
+type DesktopAppControlResponse = DesktopAppActivationResponse | DesktopAppConnectionResponse;
+
+function isConnectionRequestShape(value: unknown): boolean {
+  return (
+    typeof value === "object" && value !== null && "type" in value && value.type === "connection"
+  );
+}
 
 export class DesktopAppActivationStartError extends Schema.TaggedError<DesktopAppActivationStartError>()(
   "DesktopAppActivationStartError",
@@ -95,6 +118,10 @@ export async function startDesktopAppControlServer(input: {
   readonly userId: number | undefined;
   readonly handle: (request: DesktopAppActivationRequest) => Promise<DesktopAppActivationResponse>;
   readonly cancel: (requestId: string) => void;
+  readonly handleConnection?: (
+    request: DesktopAppConnectionRequest,
+  ) => Promise<DesktopAppConnectionResponse>;
+  readonly cancelConnection?: (request: DesktopAppConnectionRequest) => void;
 }): Promise<RunningControlServer> {
   if (input.directory !== null) {
     await prepareUnixSocket({
@@ -111,11 +138,13 @@ export async function startDesktopAppControlServer(input: {
     let buffer = "";
     let handled = false;
     let responseSent = false;
-    let activeRequestId: string | null = null;
+    // Cancellation is bound to this socket's own parsed request so a rejected
+    // duplicate id can never cancel another socket's request.
+    let cancelActive: (() => void) | null = null;
 
     socket.setTimeout(5_000, () => socket.destroy());
 
-    const finish = (response: DesktopAppActivationResponse) => {
+    const finish = (response: DesktopAppControlResponse) => {
       responseSent = true;
       if (!socket.destroyed) socket.end(`${JSON.stringify(response)}\n`);
     };
@@ -142,13 +171,38 @@ export async function startDesktopAppControlServer(input: {
         return;
       }
 
+      if (isConnectionRequestShape(parsed)) {
+        if (!isDesktopAppConnectionRequest(parsed) || input.handleConnection === undefined) {
+          finish(
+            desktopAppConnectionFailure(
+              requestIdFromUnknown(parsed),
+              "invalid-request",
+              "The desktop app connection request is invalid.",
+            ),
+          );
+          return;
+        }
+        const cancelConnection = input.cancelConnection;
+        cancelActive = cancelConnection === undefined ? null : () => cancelConnection(parsed);
+        void input.handleConnection(parsed).then(finish, () => {
+          finish(
+            desktopAppConnectionFailure(
+              parsed.requestId,
+              "internal-error",
+              "T3 Code could not process the desktop app connection request.",
+            ),
+          );
+        });
+        return;
+      }
+
       if (!isDesktopAppActivationRequest(parsed)) {
         finish(
           invalidResponse(requestIdFromUnknown(parsed), "The desktop app request is invalid."),
         );
         return;
       }
-      activeRequestId = parsed.requestId;
+      cancelActive = () => input.cancel(parsed.requestId);
       void input.handle(parsed).then(finish, () => {
         finish(
           invalidResponse(parsed.requestId, "T3 Code could not process the desktop app request."),
@@ -158,7 +212,7 @@ export async function startDesktopAppControlServer(input: {
     socket.on("error", () => socket.destroy());
     socket.on("close", () => {
       sockets.delete(socket);
-      if (!responseSent && activeRequestId !== null) input.cancel(activeRequestId);
+      if (!responseSent) cancelActive?.();
     });
   });
 
@@ -208,6 +262,10 @@ export class DesktopAppActivation extends Context.Service<
     readonly start: Effect.Effect<void, DesktopAppActivationStartError, Scope.Scope>;
     readonly setRendererReady: (ready: boolean) => Effect.Effect<void>;
     readonly complete: (response: DesktopAppActivationResponse) => Effect.Effect<void>;
+    readonly setConnectionRendererReady: (ready: boolean) => Effect.Effect<void>;
+    readonly completeConnection: (
+      completion: DesktopAppConnectionCompletion,
+    ) => Effect.Effect<void>;
   }
 >()("@t3tools/desktop/app/DesktopAppActivation") {}
 
@@ -242,12 +300,46 @@ export const make = Effect.gen(function* () {
     },
   });
 
+  const connectionBroker = new DesktopAppConnectionBroker({
+    requestTimeoutMs: CONNECTION_REQUEST_TIMEOUT_MS,
+    maxPending: CONNECTION_MAX_PENDING,
+    nextDispatchId: () => NodeCrypto.randomUUID(),
+  });
+
   const clearRegisteredRenderer = () => {
     detachRendererListeners?.();
     detachRendererListeners = null;
     registeredWebContents = null;
     broker.clearRenderer();
+    connectionBroker.clearRenderer();
   };
+
+  // Both brokers share one renderer: tracking it once keeps reload and close
+  // cleanup identical for activation and connection requests.
+  const trackRenderer = Effect.fn("DesktopAppActivation.trackRenderer")(function* () {
+    const main = yield* electronWindow.main;
+    if (Option.isNone(main)) return null;
+    const webContents = main.value.webContents;
+    if (webContents.isDestroyed()) return null;
+
+    if (registeredWebContents !== webContents) {
+      clearRegisteredRenderer();
+      registeredWebContents = webContents;
+      const onUnavailable = () => clearRegisteredRenderer();
+      const onNavigation = (
+        event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
+      ) => {
+        if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
+      };
+      webContents.on("did-start-navigation", onNavigation);
+      webContents.once("destroyed", onUnavailable);
+      detachRendererListeners = () => {
+        webContents.removeListener("did-start-navigation", onNavigation);
+        webContents.removeListener("destroyed", onUnavailable);
+      };
+    }
+    return webContents;
+  });
 
   return DesktopAppActivation.of({
     start: Effect.acquireRelease(
@@ -258,6 +350,8 @@ export const make = Effect.gen(function* () {
             userId,
             handle: (request) => broker.request(request),
             cancel: (requestId) => broker.cancel(requestId),
+            handleConnection: (request) => connectionBroker.request(request),
+            cancelConnection: (request) => connectionBroker.cancel(request),
           }),
         catch: (cause) => new DesktopAppActivationStartError({ address: address.address, cause }),
       }),
@@ -266,41 +360,47 @@ export const make = Effect.gen(function* () {
           Effect.catchCause((cause) =>
             logWarning("failed to close the desktop app control socket", { cause }),
           ),
-          Effect.ensuring(Effect.sync(() => broker.close())),
+          Effect.ensuring(
+            Effect.sync(() => {
+              broker.close();
+              connectionBroker.close();
+            }),
+          ),
         ),
     ).pipe(Effect.asVoid),
     setRendererReady: Effect.fn("DesktopAppActivation.setRendererReady")(function* (ready) {
       if (!ready) {
-        clearRegisteredRenderer();
+        broker.clearRenderer();
         return;
       }
-      const main = yield* electronWindow.main;
-      if (Option.isNone(main)) return;
-      const webContents = main.value.webContents;
-      if (webContents.isDestroyed()) return;
-
-      if (registeredWebContents !== webContents) {
-        clearRegisteredRenderer();
-        registeredWebContents = webContents;
-        const onUnavailable = () => clearRegisteredRenderer();
-        const onNavigation = (
-          event: Electron.Event<Electron.WebContentsDidStartNavigationEventParams>,
-        ) => {
-          if (event.isMainFrame && !event.isSameDocument) clearRegisteredRenderer();
-        };
-        webContents.on("did-start-navigation", onNavigation);
-        webContents.once("destroyed", onUnavailable);
-        detachRendererListeners = () => {
-          webContents.removeListener("did-start-navigation", onNavigation);
-          webContents.removeListener("destroyed", onUnavailable);
-        };
-      }
-
+      const webContents = yield* trackRenderer();
+      if (webContents === null) return;
       broker.registerRenderer((request) => {
         webContents.send(DESKTOP_APP_ACTIVATION_REQUEST_CHANNEL, request);
       });
     }),
+    setConnectionRendererReady: Effect.fn("DesktopAppActivation.setConnectionRendererReady")(
+      function* (ready) {
+        if (!ready) {
+          connectionBroker.clearRenderer();
+          return;
+        }
+        const webContents = yield* trackRenderer();
+        if (webContents === null) return;
+        connectionBroker.registerRenderer({
+          dispatch: (dispatch) => {
+            webContents.send(DESKTOP_APP_CONNECTION_REQUEST_CHANNEL, dispatch);
+          },
+          cancel: (dispatchId) => {
+            if (!webContents.isDestroyed()) {
+              webContents.send(DESKTOP_APP_CONNECTION_CANCEL_CHANNEL, dispatchId);
+            }
+          },
+        });
+      },
+    ),
     complete: (response) => Effect.sync(() => broker.complete(response)),
+    completeConnection: (completion) => Effect.sync(() => connectionBroker.complete(completion)),
   });
 });
 

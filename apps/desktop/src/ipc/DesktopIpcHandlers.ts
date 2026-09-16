@@ -78,6 +78,8 @@ export const installDesktopIpcHandlers = Effect.fn("desktop.ipc.installHandlers"
 
   yield* ipc.handle(AppActivationIpc.setReady);
   yield* ipc.handle(AppActivationIpc.complete);
+  yield* ipc.handle(AppActivationIpc.setConnectionReady);
+  yield* ipc.handle(AppActivationIpc.completeConnection);
 
   yield* ipc.handleSync(getAppBranding);
   yield* ipc.handleSync(getSystemLocale);

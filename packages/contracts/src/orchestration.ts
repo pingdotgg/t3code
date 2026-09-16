@@ -1454,6 +1454,33 @@ export const ClientOrchestrationCommand = Schema.Union([
 ]);
 export type ClientOrchestrationCommand = typeof ClientOrchestrationCommand.Type;
 
+/**
+ * The subset of client commands the desktop control socket forwards for local
+ * tools. Kept next to `ClientOrchestrationCommand` so new commands are added
+ * here deliberately rather than by default.
+ */
+export const DesktopAppConnectionCommand = Schema.Union([
+  ProjectCreateCommand,
+  ThreadCreateCommand,
+  ClientThreadTurnStartCommand,
+  ThreadMetaUpdateCommand,
+  ThreadArchiveCommand,
+  ThreadUnarchiveCommand,
+  ThreadPinCommand,
+  ThreadUnpinCommand,
+  ThreadSettleCommand,
+  ThreadUnsettleCommand,
+  ThreadSnoozeCommand,
+  ThreadUnsnoozeCommand,
+  ThreadDeleteCommand,
+  ThreadTurnInterruptCommand,
+  ThreadSessionStopCommand,
+  ThreadApprovalRespondCommand,
+  ThreadUserInputRespondCommand,
+  ThreadUserInputDismissCommand,
+]);
+export type DesktopAppConnectionCommand = typeof DesktopAppConnectionCommand.Type;
+
 const ThreadSessionSetCommand = Schema.Struct({
   type: Schema.Literal("thread.session.set"),
   commandId: CommandId,

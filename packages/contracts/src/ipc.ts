@@ -112,6 +112,10 @@ import type {
   DesktopAppActivationRequest,
   DesktopAppActivationResponse,
 } from "./desktopAppActivation.ts";
+import type {
+  DesktopAppConnectionCompletion,
+  DesktopAppConnectionDispatch,
+} from "./desktopAppConnection.ts";
 
 export interface ContextMenuItem<T extends string = string> {
   id: T;
@@ -1336,6 +1340,14 @@ export interface DesktopBridge {
     setReady: (ready: boolean) => Promise<void>;
     complete: (response: DesktopAppActivationResponse) => Promise<void>;
     onRequest: (listener: (request: DesktopAppActivationRequest) => void) => () => void;
+  };
+  /** Present when the desktop shell lends its signed-in connections to local tools over the control socket. */
+  appConnection?: {
+    setReady: (ready: boolean) => Promise<void>;
+    complete: (completion: DesktopAppConnectionCompletion) => Promise<void>;
+    onRequest: (listener: (dispatch: DesktopAppConnectionDispatch) => void) => () => void;
+    /** Fires with the dispatch id when the caller disconnected or main timed the request out. */
+    onCancel: (listener: (dispatchId: string) => void) => () => void;
   };
   /**
    * Desktop-only preview surface. Present iff the renderer is hosted by the

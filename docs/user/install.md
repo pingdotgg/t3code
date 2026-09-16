@@ -85,6 +85,18 @@ Pass a path, such as `t3 app ../my-project`, to open another directory. It requi
 the desktop app, so a standalone server or an SSH session is not enough. If the
 command cannot reach the app, start or update the desktop app and try again.
 
+### Let local tools use your connections
+
+The [T3 thread MCP server](https://github.com/samdickson22/t3code-thread-mcp) can use
+the desktop app's signed-in connections with `t3code-thread-mcp --desktop`. The
+app must be open; the tool sees the environments added in **Settings → Connections**,
+including SSH and T3 Connect ones.
+
+This lets local tools create projects (and their directories), start agent work,
+read and manage threads, delete threads, and answer pending approval or input
+requests on those environments. Closing the app cuts off new requests; work
+already accepted by a server may continue. Connection credentials stay inside T3.
+
 ## Mobile app
 
 Install T3 Code from the

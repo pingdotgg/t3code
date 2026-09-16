@@ -275,6 +275,38 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       };
     },
   },
+  appConnection: {
+    setReady: (ready) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_CONNECTION_READY_CHANNEL, ready),
+    complete: (completion) =>
+      ipcRenderer.invoke(IpcChannels.DESKTOP_APP_CONNECTION_COMPLETE_CHANNEL, completion),
+    onRequest: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, dispatch: unknown) => {
+        if (typeof dispatch !== "object" || dispatch === null) return;
+        listener(dispatch as Parameters<typeof listener>[0]);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_APP_CONNECTION_REQUEST_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DESKTOP_APP_CONNECTION_REQUEST_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
+    onCancel: (listener) => {
+      const wrappedListener = (_event: Electron.IpcRendererEvent, dispatchId: unknown) => {
+        if (typeof dispatchId !== "string") return;
+        listener(dispatchId);
+      };
+      ipcRenderer.on(IpcChannels.DESKTOP_APP_CONNECTION_CANCEL_CHANNEL, wrappedListener);
+      return () => {
+        ipcRenderer.removeListener(
+          IpcChannels.DESKTOP_APP_CONNECTION_CANCEL_CHANNEL,
+          wrappedListener,
+        );
+      };
+    },
+  },
   preview: {
     createTab: (tabId, defaults) =>
       ipcRenderer.invoke(IpcChannels.PREVIEW_CREATE_TAB_CHANNEL, {
