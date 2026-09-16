@@ -373,6 +373,7 @@ interface ProviderInstanceCardProps {
    */
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
+  readonly newThreadDefaults?: ReactNode;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -415,6 +416,7 @@ export function ProviderInstanceCard({
   onDelete,
   headerAction,
   setup,
+  newThreadDefaults,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -850,6 +852,7 @@ export function ProviderInstanceCard({
         aria-disabled={readOnly || undefined}
         className={readOnly ? "opacity-50 select-none" : undefined}
       >
+        {newThreadDefaults}
         {driverOption ? (
           <ProviderSettingsForm
             definition={driverOption}
