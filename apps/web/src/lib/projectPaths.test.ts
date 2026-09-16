@@ -92,8 +92,27 @@ describe("projectPaths", () => {
     expect(getBrowseParentPath("C:\\Work\\Repo\\")).toBe("C:\\Work\\");
     expect(getBrowseParentPath("\\\\server\\share\\")).toBeNull();
     expect(getBrowseParentPath("\\\\server\\share\\repo\\")).toBe("\\\\server\\share\\");
-    expect(getBrowseParentPath("C:\\")).toBeNull();
+    expect(getBrowseParentPath("C:\\")).toBe("\\");
     expect(getBrowseParentPath("/home/user\\project/docs/")).toBe("/home/user\\project/");
+  });
+
+  it("reaches other drives through the drive list", () => {
+    // A drive root goes up to the drive list instead of dead-ending, so a
+    // project on D:/F: is reachable without typing its path blind.
+    expect(getBrowseParentPath("F:\\work\\")).toBe("F:\\");
+    expect(getBrowseParentPath("F:\\")).toBe("\\");
+    expect(canNavigateUp("C:\\")).toBe(true);
+    expect(getBrowseParentPath("\\")).toBeNull();
+    expect(canNavigateUp("\\")).toBe(false);
+
+    expect(appendBrowsePathSegment("\\", "F:")).toBe("F:\\");
+    expect(appendBrowsePathSegment("\\f", "F:")).toBe("F:\\");
+    expect(getBrowseDirectoryPath("\\f")).toBe("\\");
+    expect(getBrowseLeafPathSegment("\\f")).toBe("f");
+
+    expect(isFilesystemBrowseQuery("\\", "Win32")).toBe(true);
+    expect(isFilesystemBrowseQuery("\\f", "Win32")).toBe(true);
+    expect(isFilesystemBrowseQuery("\\", "MacIntel")).toBe(false);
   });
 
   it("detects browse path boundaries", () => {

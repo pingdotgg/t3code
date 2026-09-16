@@ -2,9 +2,11 @@ import {
   isExplicitRelativePath,
   isUncPath,
   isWindowsAbsolutePath,
+  isWindowsDriveListPath,
   isWindowsDrivePath,
   normalizeProjectPathForComparison,
   normalizeProjectPathForDispatch,
+  WINDOWS_DRIVE_LIST_PATH,
 } from "@t3tools/shared/path";
 
 export { normalizeProjectPathForComparison, normalizeProjectPathForDispatch };
@@ -79,6 +81,9 @@ function splitAbsolutePath(value: string): {
 
 export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
   const allowWindowsPaths = isWindowsPlatform(platform);
+  // A leading backslash is the drive list, optionally followed by filter text
+  // ("\c"). UNC paths land here too, and `isWindowsAbsolutePath` already covers
+  // them, so the prefix check only has to widen the entry point.
   return (
     value.startsWith("./") ||
     value.startsWith("../") ||
@@ -86,7 +91,7 @@ export function isFilesystemBrowseQuery(value: string, platform = ""): boolean {
     value.startsWith("..\\") ||
     value.startsWith("/") ||
     value.startsWith("~/") ||
-    (allowWindowsPaths && isWindowsAbsolutePath(value))
+    (allowWindowsPaths && (isWindowsAbsolutePath(value) || value.startsWith("\\")))
   );
 }
 
@@ -146,8 +151,12 @@ export function inferProjectTitleFromPath(value: string): string {
 }
 
 export function appendBrowsePathSegment(currentPath: string, segment: string): string {
-  const separator = preferredPathSeparator(currentPath);
-  return `${getBrowseDirectoryPath(currentPath)}${segment}${separator}`;
+  const directoryPath = getBrowseDirectoryPath(currentPath);
+  // Drive-list entries are drive roots ("C:"), not children of the sentinel.
+  if (isWindowsDriveListPath(directoryPath)) {
+    return `${segment}\\`;
+  }
+  return `${directoryPath}${segment}${preferredPathSeparator(currentPath)}`;
 }
 
 export function getBrowseLeafPathSegment(currentPath: string): string {
@@ -173,9 +182,15 @@ export function ensureBrowseDirectoryPath(currentPath: string): string {
 
 export function getBrowseParentPath(currentPath: string): string | null {
   const trimmed = normalizeProjectPathForDispatch(currentPath);
+  // The drive list is the top of a Windows environment; nothing sits above it.
+  if (isWindowsDriveListPath(trimmed)) return null;
   const absolutePath = splitAbsolutePath(trimmed);
   if (absolutePath) {
-    if (absolutePath.segments.length === 0) return null;
+    if (absolutePath.segments.length === 0) {
+      // A drive root goes up to the drive list, so other drives stay reachable
+      // without knowing their paths. UNC shares have no such level.
+      return isWindowsDrivePath(trimmed) ? WINDOWS_DRIVE_LIST_PATH : null;
+    }
     if (absolutePath.segments.length === 1) return absolutePath.root;
     const parentSegments = absolutePath.segments.slice(0, -1).join(absolutePath.separator);
     return `${absolutePath.root}${parentSegments}${absolutePath.separator}`;
