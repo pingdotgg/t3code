@@ -9,7 +9,11 @@ import {
   isAtomCommandInterrupted,
   squashAtomCommandFailure,
 } from "@t3tools/client-runtime/state/runtime";
-import { type EnvironmentId, resolveEnvironmentMachineKind } from "@t3tools/contracts";
+import {
+  type EnvironmentId,
+  resolveEnvironmentMachineKind,
+  type ServerConfig,
+} from "@t3tools/contracts";
 import type {
   RelayClientEnvironmentRecord,
   RelayEnvironmentStatusResponse,
@@ -44,6 +48,8 @@ function discoveredCompatibilityError(
 export interface SavedCloudEnvironmentConnection {
   readonly environmentId: EnvironmentId;
   readonly connection: EnvironmentConnectionPresentation;
+  /** Present once connected; carries the user's icon override. */
+  readonly serverConfig?: ServerConfig | null;
 }
 
 function RemoteEnvironmentRowsSkeleton() {
@@ -308,11 +314,13 @@ export function CloudEnvironmentConnectRows({
       : savedEnvironment
         ? presentSavedCloudEnvironmentConnection(savedEnvironment.connection)
         : null;
-    // The relay's health probe carries the server's descriptor, so a machine
-    // can wear its detected glyph before this device ever connects to it.
+    // A connected machine's own config (with the user's icon pick) wins. Before
+    // that, the relay's health probe already carries the server's descriptor, so
+    // a machine can wear its detected glyph before this device ever connects.
     const descriptor = status === undefined ? undefined : Option.getOrNull(status)?.descriptor;
     const machineKind = resolveEnvironmentMachineKind(
-      descriptor === undefined ? null : { environment: descriptor },
+      savedEnvironment?.serverConfig ??
+        (descriptor === undefined ? null : { environment: descriptor }),
     );
     const dotClassName = savedConnection
       ? savedConnection.tone === "connected"
