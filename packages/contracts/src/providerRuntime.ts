@@ -672,13 +672,6 @@ const taskAgentLinkageFields = {
 export const TaskAgentLinkage = Schema.Struct(taskAgentLinkageFields);
 export type TaskAgentLinkage = typeof TaskAgentLinkage.Type;
 
-const TaskStartedPayload = Schema.Struct({
-  taskId: RuntimeTaskId,
-  description: Schema.optional(TrimmedNonEmptyStringSchema),
-  ...taskAgentLinkageFields,
-});
-export type TaskStartedPayload = typeof TaskStartedPayload.Type;
-
 export const RuntimeTaskStatus = Schema.Literals([
   "pending",
   "running",
@@ -690,6 +683,20 @@ export const RuntimeTaskStatus = Schema.Literals([
   "interrupted",
 ]);
 export type RuntimeTaskStatus = typeof RuntimeTaskStatus.Type;
+
+const TaskStartedPayload = Schema.Struct({
+  taskId: RuntimeTaskId,
+  description: Schema.optional(TrimmedNonEmptyStringSchema),
+  /**
+   * Set when the provider re-registers a task that already settled (Claude
+   * emits a fresh task_started when SendMessage resumes a subagent). Client
+   * folds treat a start row without a status as metadata only, so a
+   * reactivation has to say so explicitly.
+   */
+  status: Schema.optional(RuntimeTaskStatus),
+  ...taskAgentLinkageFields,
+});
+export type TaskStartedPayload = typeof TaskStartedPayload.Type;
 
 const TaskProgressPayload = Schema.Struct({
   taskId: RuntimeTaskId,
