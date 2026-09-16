@@ -7,6 +7,7 @@ import {
   terminalSelectionLineRange,
   terminalSelectionMenuItems,
   terminalThemeFromApp,
+  writeTerminalOutputSegments,
 } from "./ThreadTerminalDrawer";
 
 describe("terminal selection menus", () => {
@@ -35,7 +36,7 @@ describe("terminalThemeFromApp", () => {
   it("uses terminal colors inherited by the mount instead of a light document theme", () => {
     const root = { classList: { contains: () => false } };
     const body = {};
-    const drawer = {};
+    const drawer = { append() {} };
     let canvasColor = "#000";
     const colors: Record<string, [number, number, number, number]> = {
       "#000": [0, 0, 0, 255],
@@ -49,6 +50,8 @@ describe("terminalThemeFromApp", () => {
       body,
       querySelector: () => drawer,
       createElement: () => ({
+        style: {},
+        remove() {},
         width: 0,
         height: 0,
         getContext: () => ({
@@ -141,5 +144,28 @@ describe("terminal selection actions", () => {
     expect(shouldHandleTerminalExit("exited", "running", false)).toBe(true);
     expect(shouldHandleTerminalExit("exited", "exited", false)).toBe(false);
     expect(shouldHandleTerminalExit("closed", "running", true)).toBe(false);
+  });
+});
+
+describe("writeTerminalOutputSegments", () => {
+  it("closes a streamed replay before writing live terminal output", () => {
+    const actions: string[] = [];
+    const result = writeTerminalOutputSegments({
+      terminal: {
+        beginStreamingReplay: (data) => actions.push(`begin:${data}`),
+        appendStreamingReplay: (data) => actions.push(`append:${data}`),
+        completeStreamingReplay: () => actions.push("complete"),
+        write: (data) => actions.push(`write:${data}`),
+      },
+      segments: [
+        { data: "history", delivery: "replay" },
+        { data: "\u001b[5n", delivery: "live" },
+      ],
+      replayState: "waiting",
+      onReplayComplete: () => actions.push("restore-scroll"),
+    });
+
+    expect(actions).toEqual(["begin:history", "complete", "restore-scroll", "write:\u001b[5n"]);
+    expect(result).toEqual({ replayState: "idle", didWrite: true });
   });
 });

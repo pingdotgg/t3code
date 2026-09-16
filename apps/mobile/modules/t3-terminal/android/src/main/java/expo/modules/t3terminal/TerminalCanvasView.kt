@@ -181,6 +181,14 @@ internal class TerminalCanvasView(context: Context) : View(context) {
     invalidate()
   }
 
+  fun clearFrame() {
+    frame = null
+    cursorOn = true
+    removeCallbacks(cursorBlink)
+    resetSelectionState()
+    invalidate()
+  }
+
   fun resetSelectionState() {
     selectionActive = false
     dragSelecting = false
