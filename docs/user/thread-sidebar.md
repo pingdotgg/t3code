@@ -107,6 +107,12 @@ On web and desktop, right-click a pull request link in a thread and choose
 same link to return to the branch PR, if one exists.
 The linked pull request participates in automatic settlement.
 
+A linked pull request also shows its number on the thread's sidebar row and on
+the thread header's own button. Right-click either number for the same
+**Unlink from thread**, alongside **Copy link** and opening the PR on its host.
+The number a thread picked up from its branch can be copied and opened the same
+way, but not unlinked, because nothing linked it.
+
 ## Find and reference work
 
 On web and desktop, open the command palette with `Cmd/Ctrl+K` to search threads

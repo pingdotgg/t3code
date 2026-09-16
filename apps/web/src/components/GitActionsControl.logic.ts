@@ -10,23 +10,30 @@ import {
   type ChangeRequestTerminology,
 } from "../sourceControlPresentation";
 
-export type GitActionIconName = "commit" | "push" | "pr";
+export type GitActionIconName = "commit" | "push";
 
-export type GitDialogAction = "commit" | "push" | "create_pr";
+export type GitDialogAction = "commit" | "push";
 
 export interface GitActionMenuItem {
-  id: "commit" | "push" | "pr";
+  id: "commit" | "push";
   label: string;
   disabled: boolean;
   icon: GitActionIconName;
-  kind: "open_dialog" | "open_pr";
+  kind: "open_dialog";
   dialogAction?: GitDialogAction;
 }
 
+/**
+ * Only ever moves the ref along: commit, push, pull, publish.
+ *
+ * Viewing and creating a pull request live on the header's own pill. Those two used to surface
+ * here, which meant one button read "Commit & push" while work was in flight and "View PR" once it
+ * landed, so the control under the cursor changed meaning as the branch did.
+ */
 export interface GitQuickAction {
   label: string;
   disabled: boolean;
-  kind: "run_action" | "run_pull" | "open_pr" | "open_publish" | "show_hint";
+  kind: "run_action" | "run_pull" | "open_publish" | "show_hint";
   action?: GitStackedAction;
   hint?: string;
 }
@@ -97,13 +104,10 @@ export function buildMenuItems(
   hasPrimaryRemote = true,
 ): GitActionMenuItem[] {
   if (!gitStatus) return [];
-  const terminology = resolveChangeRequestTerminology(gitStatus);
 
   const hasBranch = gitStatus.refName !== null;
   const hasChanges = gitStatus.hasWorkingTreeChanges;
-  const hasOpenPr = gitStatus.pr?.state === "open";
   const isBehind = gitStatus.behindCount > 0;
-  const hasDefaultBranchDelta = (gitStatus.aheadOfDefaultCount ?? gitStatus.aheadCount) > 0;
   const canPushWithoutUpstream = hasPrimaryRemote && !gitStatus.hasUpstream;
   const canCommit = !isBusy && hasChanges;
   const canPush =
@@ -112,15 +116,6 @@ export function buildMenuItems(
     !isBehind &&
     gitStatus.aheadCount > 0 &&
     (gitStatus.hasUpstream || canPushWithoutUpstream);
-  const canCreatePr =
-    !isBusy &&
-    hasBranch &&
-    !hasChanges &&
-    !hasOpenPr &&
-    hasDefaultBranchDelta &&
-    !isBehind &&
-    (gitStatus.hasUpstream || canPushWithoutUpstream);
-  const canOpenPr = !isBusy && hasOpenPr;
 
   const commitItem: GitActionMenuItem = {
     id: "commit",
@@ -145,22 +140,6 @@ export function buildMenuItems(
       kind: "open_dialog",
       dialogAction: "push",
     },
-    hasOpenPr
-      ? {
-          id: "pr",
-          label: `View ${terminology.shortLabel}`,
-          disabled: !canOpenPr,
-          icon: "pr",
-          kind: "open_pr",
-        }
-      : {
-          id: "pr",
-          label: `Create ${terminology.shortLabel}`,
-          disabled: !canCreatePr,
-          icon: "pr",
-          kind: "open_dialog",
-          dialogAction: "create_pr",
-        },
   ];
 }
 
@@ -205,21 +184,18 @@ export function resolveQuickAction(
     if (!gitStatus.hasUpstream && !hasPrimaryRemote) {
       return { label: "Commit", disabled: false, kind: "run_action", action: "commit" };
     }
-    if (hasOpenPr || isDefaultRef) {
-      return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
-    }
-    return {
-      label: `Commit, push & ${terminology.shortLabel}`,
-      disabled: false,
-      kind: "run_action",
-      action: "commit_push_pr",
-    };
+    return { label: "Commit & push", disabled: false, kind: "run_action", action: "commit_push" };
   }
 
   if (!gitStatus.hasUpstream) {
     if (!hasPrimaryRemote) {
       if (hasOpenPr && !isAhead) {
-        return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
+        return {
+          label: "Push",
+          disabled: true,
+          kind: "show_hint",
+          hint: `Nothing to push. This ref already has an open ${terminology.singular}.`,
+        };
       }
       return {
         label: "Publish repository",
@@ -228,9 +204,6 @@ export function resolveQuickAction(
       };
     }
     if (!isAhead) {
-      if (hasOpenPr) {
-        return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
-      }
       return {
         label: "Push",
         disabled: true,
@@ -238,19 +211,11 @@ export function resolveQuickAction(
         hint: "No local commits to push.",
       };
     }
-    if (hasOpenPr || isDefaultRef) {
-      return {
-        label: "Push",
-        disabled: false,
-        kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
-      };
-    }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: "Push",
       disabled: false,
       kind: "run_action",
-      action: "create_pr",
+      action: isDefaultRef ? "commit_push" : "push",
     };
   }
 
@@ -272,32 +237,35 @@ export function resolveQuickAction(
   }
 
   if (isAhead) {
-    if (hasOpenPr || isDefaultRef) {
-      return {
-        label: "Push",
-        disabled: false,
-        kind: "run_action",
-        action: isDefaultRef ? "commit_push" : "push",
-      };
-    }
     return {
-      label: `Push & create ${terminology.shortLabel}`,
+      label: "Push",
       disabled: false,
       kind: "run_action",
-      action: "create_pr",
+      action: isDefaultRef ? "commit_push" : "push",
     };
   }
 
-  if (hasOpenPr && gitStatus.hasUpstream) {
-    return { label: `View ${terminology.shortLabel}`, disabled: false, kind: "open_pr" };
+  // Nothing left to move. Where a change request could still be opened or read, the hint says so
+  // rather than leaving "no action needed" over work that is not finished.
+  //
+  // An existing one is reported as a fact about the ref, not as a place to click. The header's pill
+  // shows the thread's own pull request, and a ref can carry one the thread never linked, so
+  // pointing at the pill here would sometimes name a button that is not on screen.
+  if (hasOpenPr) {
+    return {
+      label: "Push",
+      disabled: true,
+      kind: "show_hint",
+      hint: `Everything is pushed. This ref already has an open ${terminology.singular}.`,
+    };
   }
 
   if (hasDefaultBranchDelta && !isDefaultRef) {
     return {
-      label: `Create ${terminology.shortLabel}`,
-      disabled: false,
-      kind: "run_action",
-      action: "create_pr",
+      label: "Push",
+      disabled: true,
+      kind: "show_hint",
+      hint: `Everything is pushed. Open a ${terminology.singular} from the header's own button.`,
     };
   }
 

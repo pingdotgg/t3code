@@ -22,6 +22,7 @@ import {
   ThreadWorktreeIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
+import { useThreadPullRequestLinkContextMenu } from "./pullRequest/useThreadPullRequestLinkContextMenu";
 import { EnvironmentMachineIcon } from "./EnvironmentMachineIcon";
 import { ProjectFavicon } from "./ProjectFavicon";
 import { useAtomValue } from "@effect/atom-react";
@@ -609,6 +610,17 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       threadRef,
     ],
   );
+  const openPrContextMenu = useThreadPullRequestLinkContextMenu(threadRef);
+  // Without this the row's own menu answers, because the number sits inside the row.
+  const handlePrContextMenu = useCallback(
+    (event: React.MouseEvent<HTMLAnchorElement>) => {
+      openPrContextMenu(event, {
+        url: prStatus?.url ?? currentLinkedPr?.url,
+        providerKind: linkedPullRequestStatus?.sourceControlProvider.kind,
+      });
+    },
+    [currentLinkedPr, linkedPullRequestStatus, openPrContextMenu, prStatus],
+  );
   const handleRenameInputRef = useCallback(
     (element: HTMLInputElement | null) => {
       if (element && renamingInputRef.current !== element) {
@@ -733,6 +745,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                     className={`inline-flex items-center justify-center ${prStatus.colorClass} cursor-pointer rounded-sm outline-hidden focus-visible:ring-1 focus-visible:ring-ring`}
                     onPointerDown={(event) => event.stopPropagation()}
                     onClick={handlePrClick}
+                    onContextMenu={handlePrContextMenu}
                   >
                     <ChangeRequestStatusIcon
                       state={pr.state}
@@ -754,6 +767,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               rel="noopener noreferrer"
               onPointerDown={(event) => event.stopPropagation()}
               onClick={handlePrClick}
+              onContextMenu={handlePrContextMenu}
               className="text-muted-foreground"
               aria-label={`PR #${currentLinkedPr.number}, status pending`}
             >

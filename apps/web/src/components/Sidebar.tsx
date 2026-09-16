@@ -203,6 +203,7 @@ import {
   type TerminalStatusIndicator,
   useLinkedThreadPullRequest,
 } from "./ThreadStatusIndicators";
+import { useThreadPullRequestLinkContextMenu } from "./pullRequest/useThreadPullRequestLinkContextMenu";
 import {
   resolveSnoozePresets,
   snoozeWakeDescription,
@@ -1393,6 +1394,16 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
       threadRef,
     ],
   );
+  const openPrContextMenu = useThreadPullRequestLinkContextMenu(threadRef);
+  const handlePrContextMenu = useCallback(
+    (event: ReactMouseEvent<HTMLAnchorElement>) => {
+      openPrContextMenu(event, {
+        url: pr?.url ?? currentLinkedPr?.url,
+        providerKind: linkedPullRequestStatus?.sourceControlProvider.kind,
+      });
+    },
+    [currentLinkedPr, linkedPullRequestStatus, openPrContextMenu, pr],
+  );
 
   // All sidebar rows share one surface model. Live threads used to look
   // like elevated cards while settled threads were plain rows, leaving neither
@@ -1507,13 +1518,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
   const prBadge =
     prBadgeShape?.kind === "stack" || pr || currentLinkedPr ? (
       <ThreadPullRequestBadgeControl
-        variant="underline"
         badge={prBadgeShape}
         number={pr?.number ?? currentLinkedPr?.number}
         url={pr?.url ?? currentLinkedPr?.url}
         status={prStatus}
         onOpenStack={handlePrStackClick}
         onOpenPullRequest={handlePrClick}
+        onContextMenuPullRequest={handlePrContextMenu}
       />
     ) : null;
   const terminalStatusIcon = terminalStatus ? (
