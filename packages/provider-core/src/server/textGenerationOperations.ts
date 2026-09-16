@@ -147,6 +147,7 @@ export function fromRunner(name: string, run: Runner): ProviderTextGeneration {
         message: input.message,
         attachments: input.attachments,
         naming: input.naming,
+        policy: input.policy,
       }),
     });
     return { branch: formatGeneratedBranchName(generated.branch, input.naming) };

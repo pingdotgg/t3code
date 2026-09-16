@@ -69,6 +69,8 @@ export interface BranchNameGenerationInput {
   message: string;
   attachments?: ReadonlyArray<ChatAttachment> | undefined;
   modelSelection: ModelSelection;
+  /** Optional repository-specific instructions for generated branch names. */
+  policy?: TextGenerationPolicy | undefined;
 }
 
 export interface BranchNameGenerationResult {
