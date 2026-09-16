@@ -2097,14 +2097,14 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+    // The subscription already buffers post-handoff events; start the consumer
+    // before recovery so dispatches it makes reach the workers.
+    yield* forkParked(Stream.runForEach(liveDomainEvents, processEvent));
     const activation = yield* ServerActivation;
     if (activation === undefined) {
       yield* recoverStartupWork;
-      yield* forkParked(Stream.runForEach(liveDomainEvents, processEvent));
     } else {
-      yield* forkParked(
-        recoverStartupWork.pipe(Effect.andThen(Stream.runForEach(liveDomainEvents, processEvent))),
-      );
+      yield* forkParked(recoverStartupWork);
     }
   });
 
