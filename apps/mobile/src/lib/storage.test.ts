@@ -121,6 +121,25 @@ describe("mobile connection storage", () => {
     vi.clearAllMocks();
   });
 
+  it("persists file tree expansion separately for each environment and workspace", async () => {
+    const paths = {
+      [JSON.stringify(["env-1", "/repo"])]: ["apps", "apps/web", "apps/web/src"],
+      [JSON.stringify(["env-2", "/repo"])]: ["docs"],
+      [JSON.stringify(["env-1", "/other"])]: [],
+    };
+    await savePreferencesPatch({ fileTreeExpandedPaths: paths });
+    expect((await loadPreferences()).fileTreeExpandedPaths).toEqual(paths);
+    await savePreferencesPatch({
+      fileTreeExpandedPaths: { ...paths, [JSON.stringify(["env-1", "/repo"])]: [] },
+    });
+    expect((await loadPreferences()).fileTreeExpandedPaths).toEqual({
+      ...paths,
+      [JSON.stringify(["env-1", "/repo"])]: [],
+    });
+    mocks.setPreferencesJson(JSON.stringify({ fileTreeExpandedPaths: { bad: [42] } }), 1);
+    expect((await loadPreferences()).fileTreeExpandedPaths).toBeUndefined();
+  });
+
   it("persists relay-managed connections without their ephemeral access token", async () => {
     await saveConnection(managedConnection);
 

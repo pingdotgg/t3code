@@ -127,6 +127,7 @@ export function useDirectoryEntries(environmentId: EnvironmentId, cwd: string) {
 
   return {
     entries,
+    loadedDirectories: useMemo(() => new Set(directories.keys()), [directories]),
     load,
     refresh,
     isPending: pending > 0,

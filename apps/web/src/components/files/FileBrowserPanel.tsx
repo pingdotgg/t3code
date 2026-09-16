@@ -6,6 +6,7 @@ import type {
 import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import * as Schema from "effect/Schema";
 import { ChevronsDownUpIcon, ChevronsUpDownIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 
@@ -15,6 +16,7 @@ import { toastManager } from "~/components/ui/toast";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
 import { useComposerHandleContext } from "~/composerHandleContext";
 import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { getLocalStorageItem, setLocalStorageItem } from "~/hooks/useLocalStorage";
 import { useTheme } from "~/hooks/useTheme";
 import { useWorkspaceMutationRefresh } from "~/hooks/useWorkspaceMutationRefresh";
 import { readLocalApi } from "~/localApi";
@@ -26,6 +28,8 @@ import { areAllDirectoriesExpanded, setAllDirectoriesExpanded } from "./fileTree
 import { buildFileTreePathUpdates } from "./fileTreePathReconciliation";
 import { useDirectoryEntries } from "./useDirectoryEntries";
 import { useProjectPathSearch } from "~/state/queries";
+
+const ExpandedPaths = Schema.Array(Schema.String);
 
 interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
@@ -107,6 +111,7 @@ export default function FileBrowserPanel({
   const composerRef = useComposerHandleContext();
   const {
     entries: directoryEntries,
+    loadedDirectories,
     load,
     refresh,
     ready,
@@ -277,6 +282,7 @@ export default function FileBrowserPanel({
   );
   const toggleAllDirectories = () => {
     const expanded = !(expandAll || allDirectoriesExpanded);
+    if (!expanded) restoringPathsRef.current?.clear();
     setExpandAll(expanded);
     setAllDirectoriesExpanded(model, directoryPaths, expanded);
   };
@@ -284,30 +290,6 @@ export default function FileBrowserPanel({
     setQuery("");
     search.close();
   };
-  const expandedPathsRef = useRef(new Set<string>());
-  useEffect(() => {
-    const currentPaths = new Set(directoryPaths);
-    for (const path of expandedPathsRef.current) {
-      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
-    }
-    const loadExpanded = () => {
-      if (model.isSearchOpen()) return;
-      for (const path of directoryPaths) {
-        const item = model.getItem(path);
-        if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
-          if (!expandedPathsRef.current.has(path)) {
-            expandedPathsRef.current.add(path);
-            void load(path.replace(/\/$/, ""));
-          }
-        } else {
-          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
-          expandedPathsRef.current.delete(path);
-        }
-      }
-    };
-    loadExpanded();
-    return model.subscribe(loadExpanded);
-  }, [directoryPaths, load, model]);
   useEffect(() => {
     model.setGitStatus(
       entries
@@ -366,6 +348,70 @@ export default function FileBrowserPanel({
     const updates = buildFileTreePathUpdates(previousTreePaths, treePaths);
     if (updates.length > 0) model.batch(updates);
   }, [ready, entryKinds, model, treePaths]);
+
+  const storageKey = `t3code.fileTreeExpansion:${JSON.stringify([environmentId, cwd])}`;
+  const [storedPaths] = useState(() => {
+    try {
+      return getLocalStorageItem(storageKey, ExpandedPaths) ?? [];
+    } catch {
+      return [];
+    }
+  });
+  const restoringPathsRef = useRef<Set<string> | null>(null);
+  const expandedPathsRef = useRef(new Set<string>());
+  const savedPathsRef = useRef("");
+  useEffect(() => {
+    if (!ready || model.isSearchOpen()) return;
+    if (restoringPathsRef.current === null) restoringPathsRef.current = new Set(storedPaths);
+    const restoringPaths = restoringPathsRef.current;
+    const currentPaths = new Set(directoryPaths);
+    // A missing path is only gone once its parent has actually been listed.
+    for (const path of restoringPaths) {
+      const segments = path.replace(/\/$/, "").split("/");
+      for (let index = 0; index < segments.length; index++) {
+        const parent = segments.slice(0, index).join("/");
+        const ancestor = `${segments.slice(0, index + 1).join("/")}/`;
+        if (loadedDirectories.has(parent) && !currentPaths.has(ancestor)) {
+          restoringPaths.delete(path);
+          break;
+        }
+      }
+    }
+    for (const path of expandedPathsRef.current) {
+      if (!currentPaths.has(path)) expandedPathsRef.current.delete(path);
+    }
+    for (const path of directoryPaths) {
+      if (!restoringPaths.delete(path)) continue;
+      const item = model.getItem(path);
+      if (item && "expand" in item) item.expand();
+    }
+    const loadExpanded = () => {
+      if (model.isSearchOpen()) return;
+      for (const path of directoryPaths) {
+        const item = model.getItem(path);
+        if (item?.isDirectory() && "isExpanded" in item && item.isExpanded()) {
+          if (!expandedPathsRef.current.has(path)) {
+            expandedPathsRef.current.add(path);
+            void load(path.replace(/\/$/, ""));
+          }
+        } else {
+          if (item?.isDirectory() && expandedPathsRef.current.has(path)) setExpandAll(false);
+          expandedPathsRef.current.delete(path);
+        }
+      }
+      const paths = [...new Set([...restoringPaths, ...expandedPathsRef.current])];
+      const serialized = JSON.stringify(paths);
+      if (serialized === savedPathsRef.current) return;
+      try {
+        setLocalStorageItem(storageKey, paths, ExpandedPaths);
+        savedPathsRef.current = serialized;
+      } catch (error) {
+        console.warn("Could not save file tree expansion.", error);
+      }
+    };
+    loadExpanded();
+    return model.subscribe(loadExpanded);
+  }, [directoryPaths, load, loadedDirectories, model, ready, storageKey, storedPaths]);
 
   useEffect(() => {
     if (expandAll && !query.trim()) setAllDirectoriesExpanded(model, directoryPaths, true);

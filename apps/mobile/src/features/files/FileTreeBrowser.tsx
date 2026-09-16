@@ -1,6 +1,18 @@
-import type { ProjectEntry } from "@t3tools/contracts";
+import { useAtomSet, useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/unstable/reactivity";
+import { mobilePreferencesAtom, updateMobilePreferencesAtom } from "../../state/preferences";
+import type { EnvironmentId, ProjectEntry } from "@t3tools/contracts";
 import { SymbolView } from "../../components/AppSymbol";
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  memo,
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { ActivityIndicator, FlatList, Pressable, RefreshControl, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 
@@ -107,6 +119,8 @@ const FileTreeRow = memo(function FileTreeRow(props: {
 });
 
 export function FileTreeBrowser(props: {
+  readonly environmentId: EnvironmentId;
+  readonly cwd: string;
   readonly entries: ReadonlyArray<ProjectEntry>;
   readonly error: string | null;
   readonly isPending: boolean;
@@ -119,7 +133,54 @@ export function FileTreeBrowser(props: {
   readonly onRefresh: () => void;
   readonly onSelectFile: (path: string) => void;
 }) {
-  const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(() => new Set());
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const workspaceKey = JSON.stringify([props.environmentId, props.cwd]);
+  const preferencesReady = AsyncResult.isSuccess(preferences);
+  const storedPaths = AsyncResult.isSuccess(preferences)
+    ? preferences.value.fileTreeExpandedPaths
+    : undefined;
+  // Local changes win over late preference loads and failed saves.
+  const [expansionChanges, setExpansionChanges] = useState<ReadonlyMap<string, boolean>>(
+    () => new Map(),
+  );
+  const expandedPaths = useMemo(() => {
+    const paths = new Set(storedPaths?.[workspaceKey] ?? []);
+    for (const [path, expanded] of expansionChanges) {
+      if (expanded) paths.add(path);
+      else paths.delete(path);
+    }
+    return paths;
+  }, [expansionChanges, storedPaths, workspaceKey]);
+  const persistExpansion = useEffectEvent(() => {
+    savePreferences({
+      fileTreeExpandedPaths: { ...storedPaths, [workspaceKey]: [...expandedPaths] },
+    });
+  });
+  // A preference rollback must not trigger another write.
+  useEffect(() => {
+    if (preferencesReady && expansionChanges.size > 0) persistExpansion();
+  }, [expansionChanges, preferencesReady]);
+  const expandedPathsRef = useRef(expandedPaths);
+  useLayoutEffect(() => {
+    expandedPathsRef.current = expandedPaths;
+  }, [expandedPaths]);
+  const setExpandedPaths = useCallback(
+    (update: (current: ReadonlySet<string>) => ReadonlySet<string>) => {
+      const current = expandedPathsRef.current;
+      const next = update(current);
+      if (next.size === current.size && [...next].every((path) => current.has(path))) return;
+      expandedPathsRef.current = new Set(next);
+      setExpansionChanges((changes) => {
+        const result = new Map(changes);
+        for (const path of new Set([...current, ...next])) {
+          if (current.has(path) !== next.has(path)) result.set(path, next.has(path));
+        }
+        return result;
+      });
+    },
+    [],
+  );
   const [pendingSelection, setPendingSelection] = useState<{
     readonly path: string;
     readonly selectedPathAtPress: string | null;
@@ -154,12 +215,17 @@ export function FileTreeBrowser(props: {
     [expandedPaths, props.searchQuery, tree],
   );
 
+  const revealedPathRef = useRef<string | null>(null);
   useEffect(() => {
     if (!controlledSelectedPath) {
+      revealedPathRef.current = null;
       return;
     }
+    if (revealedPathRef.current === controlledSelectedPath) return;
+    revealedPathRef.current = controlledSelectedPath;
+    const ancestors = ancestorPaths(controlledSelectedPath);
+    for (const ancestor of ancestors) onLoadDirectory(ancestor);
     setExpandedPaths((current) => {
-      const ancestors = ancestorPaths(controlledSelectedPath);
       if (ancestors.every((ancestor) => current.has(ancestor))) {
         return current;
       }
@@ -169,11 +235,14 @@ export function FileTreeBrowser(props: {
       }
       return next;
     });
-  }, [controlledSelectedPath]);
+  }, [controlledSelectedPath, onLoadDirectory, setExpandedPaths]);
 
   useEffect(() => {
-    for (const path of expandedPaths) onLoadDirectory(path);
-  }, [expandedPaths, onLoadDirectory]);
+    // ponytail: skip stale saved paths; prune them if preference size becomes a problem.
+    for (const entry of props.entries) {
+      if (entry.kind === "directory" && expandedPaths.has(entry.path)) onLoadDirectory(entry.path);
+    }
+  }, [expandedPaths, onLoadDirectory, props.entries]);
 
   useEffect(
     () => () => {
@@ -184,17 +253,20 @@ export function FileTreeBrowser(props: {
     [],
   );
 
-  const toggleDirectory = useCallback((path: string) => {
-    setExpandedPaths((current) => {
-      const next = new Set(current);
-      if (next.has(path)) {
-        next.delete(path);
-      } else {
-        next.add(path);
-      }
-      return next;
-    });
-  }, []);
+  const toggleDirectory = useCallback(
+    (path: string) => {
+      setExpandedPaths((current) => {
+        const next = new Set(current);
+        if (next.has(path)) {
+          next.delete(path);
+        } else {
+          next.add(path);
+        }
+        return next;
+      });
+    },
+    [setExpandedPaths],
+  );
   const handleSelectFile = useCallback(
     (path: string) => {
       if (pendingSelectionTimeoutRef.current !== null) {
