@@ -34,6 +34,7 @@ it("isolates Claude capability probes without dropping workspace setting sources
       FORCE_CODE_TERMINAL: "1",
     },
     cwd: "/workspace/project",
+    enterpriseMcpConfigPresent: false,
   });
 
   assert.deepEqual(options.mcpServers, {});
@@ -50,6 +51,22 @@ it("isolates Claude capability probes without dropping workspace setting sources
   assert.equal(options.env?.FORCE_CODE_TERMINAL, undefined);
   assert.equal(options.env?.CLAUDE_CODE_AUTO_CONNECT_IDE, "0");
   assert.equal(options.env?.CLAUDE_CODE_IDE_SKIP_AUTO_INSTALL, "1");
+});
+
+it("leaves strict MCP mode off when an enterprise MCP config is installed", () => {
+  const options = buildClaudeCapabilitiesProbeQueryOptions({
+    executablePath: "/usr/bin/claude",
+    abortController: new AbortController(),
+    environment: { HOME: "/home/user" },
+    cwd: undefined,
+    enterpriseMcpConfigPresent: true,
+  });
+
+  // Claude refuses --strict-mcp-config next to managed-mcp.json; the empty
+  // explicit map still keeps the probe from adding servers of its own.
+  assert.equal(options.strictMcpConfig, undefined);
+  assert.deepEqual(options.mcpServers, {});
+  assert.equal(options.env?.ENABLE_CLAUDEAI_MCP_SERVERS, "false");
 });
 
 it.layer(NodeServices.layer)("Claude capability probe SDK boundary", (it) => {

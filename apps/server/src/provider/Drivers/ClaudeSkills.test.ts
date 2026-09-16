@@ -5,7 +5,11 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
-import { discoverClaudeSkills, skillOverrideSettingsPaths } from "./ClaudeSkills.ts";
+import {
+  claudeManagedMcpConfigPath,
+  discoverClaudeSkills,
+  skillOverrideSettingsPaths,
+} from "./ClaudeSkills.ts";
 
 const writeSkill = Effect.fn(function* (
   skillsDir: string,
@@ -514,13 +518,17 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
 
       assert.deepEqual(
         skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {
+          ProgramFiles: "D:\\Program Files",
           PROGRAMDATA: "C:\\ProgramData",
         }).at(-1),
-        "C:\\ProgramData\\ClaudeCode\\managed-settings.json",
+        "D:\\Program Files\\ClaudeCode\\managed-settings.json",
       );
       assert.deepEqual(
         skillOverrideSettingsPaths(win32Path, "C:\\Users\\me\\.claude", undefined, "win32", {}),
-        ["C:\\Users\\me\\.claude\\settings.json"],
+        [
+          "C:\\Users\\me\\.claude\\settings.json",
+          "C:\\Program Files\\ClaudeCode\\managed-settings.json",
+        ],
       );
 
       // Only the repository root's local file joins in, after the
@@ -552,6 +560,35 @@ it.layer(NodeServices.layer)("discoverClaudeSkills", (it) => {
           "/etc/claude-code/managed-settings.json",
         ],
       );
+    }),
+  );
+
+  it.effect("locates the enterprise MCP config beside the managed policy file", () =>
+    Effect.gen(function* () {
+      const path = yield* Path.Path.pipe(Effect.provide(NodePath.layerPosix));
+      const win32Path = yield* Path.Path.pipe(Effect.provide(NodePath.layerWin32));
+
+      assert.equal(
+        claudeManagedMcpConfigPath(path, "darwin", {}),
+        "/Library/Application Support/ClaudeCode/managed-mcp.json",
+      );
+      assert.equal(
+        claudeManagedMcpConfigPath(path, "linux", {}),
+        "/etc/claude-code/managed-mcp.json",
+      );
+      assert.equal(
+        claudeManagedMcpConfigPath(win32Path, "win32", {
+          ProgramFiles: " D:\\Program Files ",
+          PROGRAMDATA: "C:\\ProgramData",
+        }),
+        "D:\\Program Files\\ClaudeCode\\managed-mcp.json",
+      );
+      for (const environment of [{}, { ProgramFiles: "   " }, { PROGRAMDATA: "C:\\ProgramData" }]) {
+        assert.equal(
+          claudeManagedMcpConfigPath(win32Path, "win32", environment),
+          "C:\\Program Files\\ClaudeCode\\managed-mcp.json",
+        );
+      }
     }),
   );
 
