@@ -88,7 +88,13 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
   const calls: string[] = [];
   const launches: Array<Parameters<AntigravityAdapterOptions["makeRuntime"]>[0]> = [];
   const stops: Array<Effect.Effect<void>> = [];
-  const controls = { failModel: false, failAuth: false, authInvalidations: 0, closed: 0 };
+  const controls = {
+    failModel: false,
+    failAuth: false,
+    failCancelTimeout: false,
+    authInvalidations: 0,
+    closed: 0,
+  };
   let currentModel = nativeDefault;
   let promptIndex = 0;
   let active: NativePrompt | undefined;
@@ -207,6 +213,33 @@ const makeHarness = Effect.fn("makeAntigravityAdapterHarness")(function* (option
       calls.push(`cancel:${prompt.index}`);
       yield* Queue.offer(cancellations, prompt.index);
       if (options?.holdCancel) yield* Deferred.await(cancelRelease);
+      if (controls.failCancelTimeout) {
+        controls.failCancelTimeout = false;
+        yield* Deferred.fail(
+          prompt.result,
+          new AcpErrors.AcpTransportError({
+            operation: "call-rpc",
+            method: "session/prompt",
+            detail: "session/prompt was interrupted while waiting for cancellation to complete.",
+            cause: undefined,
+          }),
+        );
+        yield* emitNative({
+          _tag: "ConnectionTerminated",
+          error: new AcpErrors.AcpTransportError({
+            operation: "call-rpc",
+            method: "session/cancel",
+            detail: "The ACP agent did not finish cancellation. Its process was stopped.",
+            cause: undefined,
+          }),
+        });
+        return yield* new AcpErrors.AcpTransportError({
+          operation: "call-rpc",
+          method: "session/cancel",
+          detail: "The ACP agent did not finish cancellation. Its process was stopped.",
+          cause: undefined,
+        });
+      }
       yield* Deferred.succeed(prompt.result, { stopReason: "cancelled" });
       yield* Deferred.await(prompt.result);
       yield* drainEvents;
@@ -587,6 +620,32 @@ it.layer(layer)("AntigravityAdapter", (it) => {
       expect(ended.payload.state).toBe("cancelled");
       expect(h.seen.some((event) => event.type === "user-input.resolved")).toBe(true);
     }),
+  );
+
+  it.effect(
+    "settles an interrupted turn as cancelled when cancellation times out and kills the process",
+    () =>
+      Effect.gen(function* () {
+        const h = yield* makeHarness();
+        yield* h.adapter.startSession({
+          threadId,
+          cwd: process.cwd(),
+          runtimeMode: "approval-required",
+        });
+        const sending = yield* h.adapter
+          .sendTurn({ threadId, input: "Long prompt" })
+          .pipe(Effect.forkChild);
+        yield* h.nextPrompt;
+        h.controls.failCancelTimeout = true;
+        yield* h.adapter.interruptTurn(threadId);
+        const ended = yield* h.waitForEvent((event) => event.type === "turn.completed");
+        expect(ended.payload.state).toBe("cancelled");
+        expect(ended.payload.errorMessage).toBeUndefined();
+        const exited = yield* h.waitForEvent((event) => event.type === "session.exited");
+        expect(exited.payload.exitKind).toBe("graceful");
+        const sendExit = yield* Fiber.await(sending);
+        expect(Exit.isFailure(sendExit)).toBe(true);
+      }),
   );
 
   it.effect("waits for native cancellation before a steer changes the model", () =>

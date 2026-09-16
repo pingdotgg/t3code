@@ -93,6 +93,7 @@ const ResumeCursor = Schema.Struct({
 });
 const decodeResumeCursor = Schema.decodeUnknownOption(ResumeCursor);
 const isAcpError = Schema.is(EffectAcpErrors.AcpError);
+const isAcpTransportError = Schema.is(EffectAcpErrors.AcpTransportError);
 
 type Adapter = ProviderAdapterShape<ProviderAdapterError>;
 type Runtime = Pick<
@@ -204,6 +205,7 @@ interface SessionContext {
   /** Keep only IDs after settlement or MCP exclusion so merged late updates cannot change identity. */
   readonly subagents: Map<string, OpenSubagent | "finished" | "mcp">;
   readonly turns: Array<{ id: TurnId; items: Array<unknown> }>;
+  readonly interruptedTurnIds: Set<TurnId>;
   session: ProviderSession;
   activeTurnId: TurnId | undefined;
   promptFiber: Fiber.Fiber<EffectAcpSchema.PromptResponse, EffectAcpErrors.AcpError> | undefined;
@@ -238,7 +240,10 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
-    if (!roots.some((root) => isInsideRoot(path, root, real))) {
+    const allRoots = [...input.allowedRoots, ...roots];
+    if (
+      !allRoots.some((root) => isInsideRoot(path, root, real) || isInsideRoot(path, root, resolved))
+    ) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Path '${input.requestPath}' is outside the session workspace.`,
       );
@@ -436,20 +441,24 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           context.closed = true;
           if (sessions.get(context.threadId) === context) sessions.delete(context.threadId);
           yield* finishBackgroundCommands(context);
+          const wasInterrupted = context.interruptedTurnIds.size > 0;
           yield* finishSubagents(
             context,
-            context.disconnected ? "failed" : "cancelled",
-            context.disconnected ? "Antigravity process stopped." : undefined,
+            context.disconnected && !wasInterrupted ? "failed" : "cancelled",
+            context.disconnected && !wasInterrupted ? "Antigravity process stopped." : undefined,
           );
           context.subagents.clear();
+          context.interruptedTurnIds.clear();
           yield* emit({
             type: "session.exited",
             ...(yield* stamp),
             provider: PROVIDER,
             threadId: context.threadId,
             payload: {
-              exitKind: context.disconnected ? "error" : "graceful",
-              ...(context.disconnected ? { reason: "Antigravity process stopped." } : {}),
+              exitKind: context.disconnected && !wasInterrupted ? "error" : "graceful",
+              ...(context.disconnected && !wasInterrupted
+                ? { reason: "Antigravity process stopped." }
+                : {}),
             },
           });
         }),
@@ -876,6 +885,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                 commands: new Map(),
                 subagents: new Map(),
                 turns: [],
+                interruptedTurnIds: new Set(),
                 session,
                 activeTurnId: undefined,
                 promptFiber: undefined,
@@ -993,7 +1003,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     // The caller holds promptLock while it changes or settles the active turn.
     const finishTurn = (turn: TurnIntent, payload: TurnCompletedPayload) =>
       Effect.gen(function* () {
-        if (turn.settled || context.stopped || context.generation !== turn.generation) return;
+        if (turn.settled || context.generation !== turn.generation) return;
         turn.settled = true;
         yield* promoteBackgroundCommands(context);
         yield* finishSubagents(
@@ -1007,15 +1017,17 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         );
         context.activeTurnId = undefined;
         context.promptFiber = undefined;
-        context.session = {
-          ...context.session,
-          status: payload.state === "failed" ? "error" : "ready",
-          activeTurnId: undefined,
-          updatedAt: yield* nowIso,
-          ...(payload.errorMessage
-            ? { lastError: payload.errorMessage }
-            : { lastError: undefined }),
-        };
+        if (!context.stopped) {
+          context.session = {
+            ...context.session,
+            status: payload.state === "failed" ? "error" : "ready",
+            activeTurnId: undefined,
+            updatedAt: yield* nowIso,
+            ...(payload.errorMessage
+              ? { lastError: payload.errorMessage }
+              : { lastError: undefined }),
+          };
+        }
         yield* emit({
           type: "turn.completed",
           ...(yield* stamp),
@@ -1049,6 +1061,7 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
           intent = turn;
           context.activeTurnId = turnId;
           if (!steering) {
+            context.interruptedTurnIds.clear();
             yield* emit({
               type: "turn.started",
               ...(yield* stamp),
@@ -1137,13 +1150,16 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
         isAcpError(cause) ? mapAntigravityError(input.threadId, "session/prompt", cause) : cause,
       ),
       Effect.tapError((cause) =>
-        Effect.suspend(() =>
-          intent
-            ? context.promptLock.withPermit(
-                finishTurn(intent, { state: "failed", errorMessage: cause.message }),
-              )
-            : Effect.void,
-        ),
+        Effect.suspend(() => {
+          if (!intent) return Effect.void;
+          const wasInterrupted = context.interruptedTurnIds.has(intent.turnId);
+          return context.promptLock.withPermit(
+            finishTurn(intent, {
+              state: wasInterrupted ? "cancelled" : "failed",
+              ...(wasInterrupted ? { stopReason: "cancelled" } : { errorMessage: cause.message }),
+            }),
+          );
+        }),
       ),
       Effect.onInterrupt(() =>
         context.promptLock.withPermit(
@@ -1162,14 +1178,26 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
     );
   });
 
-  const interruptTurn: Adapter["interruptTurn"] = (threadId) =>
+  const interruptTurn: Adapter["interruptTurn"] = (threadId, turnId) =>
     Effect.gen(function* () {
       const context = yield* requireSession(threadId);
       yield* context.promptLock
         .withPermit(
           Effect.gen(function* () {
+            const targetTurnId = turnId ?? context.activeTurnId;
+            if (targetTurnId) {
+              context.interruptedTurnIds.add(targetTurnId);
+            }
             yield* cancelRequests(context);
-            yield* context.runtime.cancel;
+            yield* context.runtime.cancel.pipe(
+              Effect.catchIf(
+                (error) =>
+                  isAcpTransportError(error) &&
+                  error.detail ===
+                    "The ACP agent did not finish cancellation. Its process was stopped.",
+                () => Effect.void,
+              ),
+            );
           }),
         )
         .pipe(Effect.mapError((cause) => mapAntigravityError(threadId, "session/cancel", cause)));
