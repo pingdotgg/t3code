@@ -454,6 +454,23 @@ export class GhosttyTerminalCore {
     );
   }
 
+  isSynchronizedOutput(): boolean {
+    this.ensureActive();
+    this.runtime.bytes(this.scratch, 1)[0] = 0;
+    return (
+      this.runtime.call("ghostty_terminal_mode_get", this.terminal, 2026, this.scratch) ===
+        GHOSTTY_SUCCESS && this.runtime.bytes(this.scratch, 1)[0] !== 0
+    );
+  }
+
+  endSynchronizedOutput(): void {
+    this.ensureActive();
+    this.assertSuccess(
+      "ghostty_terminal_mode_set",
+      this.runtime.call("ghostty_terminal_mode_set", this.terminal, 2026, 0),
+    );
+  }
+
   isAlternateScreen(): boolean {
     this.ensureActive();
     this.runtime.bytes(this.scratch, 4).fill(0);
