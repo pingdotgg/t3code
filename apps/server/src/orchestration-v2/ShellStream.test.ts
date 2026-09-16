@@ -5,7 +5,7 @@ import type {
   OrchestrationV2StoredEvent,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
-import { ThreadId } from "@t3tools/contracts";
+import { ProjectId, ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Stream from "effect/Stream";
 
@@ -15,6 +15,7 @@ import {
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
+  dedupeShellEnrichment,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -378,5 +379,117 @@ describe("composeShellStreamWithEnrichment", () => {
       expect(items).toContain("tail-b");
       expect(items.indexOf("enrichment")).toBeGreaterThanOrEqual(2);
     }),
+  );
+});
+
+describe("dedupeShellEnrichment", () => {
+  const project = {
+    id: ProjectId.make("project-a"),
+    title: "A project",
+    workspaceRoot: "/workspace/a",
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-09-01T00:00:00Z",
+    updatedAt: "2026-09-01T00:00:00Z",
+  };
+  const initial = {
+    kind: "snapshot" as const,
+    snapshot: { ...emptyShellSnapshot, projects: [project] },
+  };
+  const marked = { ...initial, resolvedRepositoryIdentityRoots: [project.workspaceRoot] };
+
+  it.effect(
+    "keeps initial/resume resolution and real changes but drops sequence-only repeats",
+    () =>
+      Effect.gen(function* () {
+        const repeated = {
+          ...marked,
+          snapshot: { ...marked.snapshot, snapshotSequence: 10, projects: [{ ...project }] },
+        };
+        const progressed = {
+          ...repeated,
+          resolvedRepositoryIdentityRoots: [project.workspaceRoot, "/workspace/b"],
+        };
+        const changed = {
+          ...progressed,
+          snapshot: { ...progressed.snapshot, projects: [{ ...project, title: "Renamed" }] },
+        };
+        const items = yield* Stream.make(
+          initial,
+          marked,
+          repeated,
+          progressed,
+          changed,
+          changed,
+        ).pipe(dedupeShellEnrichment, Stream.runCollect);
+        expect(items).toEqual([initial, marked, progressed, changed]);
+        const resumed = Stream.make(marked, repeated).pipe(dedupeShellEnrichment);
+        expect(yield* Stream.runCollect(resumed)).toEqual([marked]);
+        expect(yield* Stream.runCollect(resumed)).toEqual([marked]);
+      }),
+  );
+
+  it.effect("keeps authoritative snapshots and invalidates metadata after project deltas", () =>
+    Effect.gen(function* () {
+      const removed = { kind: "project.removed" as const, projectId: project.id, sequence: 2 };
+      const updated = { kind: "project.updated" as const, project, sequence: 3 };
+      const withThreads = {
+        ...marked,
+        snapshot: { ...marked.snapshot, threads: [shellFixture({})] },
+      };
+      const values = [
+        initial,
+        initial,
+        marked,
+        removed,
+        marked,
+        updated,
+        marked,
+        withThreads,
+        withThreads,
+      ];
+      expect(
+        yield* Stream.fromIterable(values).pipe(dedupeShellEnrichment, Stream.runCollect),
+      ).toEqual(values);
+    }),
+  );
+
+  it.effect(
+    "deduplicates across thread deltas without dropping those deltas or identity clears",
+    () =>
+      Effect.gen(function* () {
+        const delta = {
+          kind: "thread.removed" as const,
+          threadId: ThreadId.make("thread-a"),
+          location: "active" as const,
+          sequence: 2,
+        };
+        const resolved = {
+          ...marked,
+          snapshot: {
+            ...marked.snapshot,
+            projects: [
+              {
+                ...project,
+                repositoryIdentity: {
+                  canonicalKey: "github.com/test/repo",
+                  locator: {
+                    source: "git-remote" as const,
+                    remoteName: "origin",
+                    remoteUrl: "https://github.com/test/repo.git",
+                  },
+                },
+              },
+            ],
+          },
+        };
+        expect(
+          yield* Stream.make(marked, delta, marked, resolved, marked).pipe(
+            dedupeShellEnrichment,
+            Stream.runCollect,
+          ),
+        ).toEqual([marked, delta, resolved, marked]);
+      }),
   );
 });

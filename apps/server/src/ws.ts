@@ -120,6 +120,7 @@ import {
   coalesceShellApplicationEvents,
   coalesceStoredThreadEvents,
   composeShellStreamWithEnrichment,
+  dedupeShellEnrichment,
   shellStreamItemFromEnrichmentRefresh,
   shellStreamItemFromThreadShell,
   shellStreamItemsFromInitialSnapshot,
@@ -1629,6 +1630,7 @@ const makeWsRpcLayer = (
           );
 
           return stream.pipe(
+            dedupeShellEnrichment,
             Stream.mapError(
               (cause) =>
                 new OrchestrationV2GetShellSnapshotError({
