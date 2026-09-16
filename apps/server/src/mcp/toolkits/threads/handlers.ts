@@ -78,7 +78,8 @@ const threadsCreate = (input: ThreadsCreateInput) =>
       );
     }
     const projectId = input.projectId ?? callingThread.projectId;
-    if (!readModel.projects.some((project) => project.id === projectId)) {
+    const targetProject = readModel.projects.find((project) => project.id === projectId);
+    if (!targetProject || targetProject.deletedAt !== null) {
       return yield* Effect.fail(
         new ThreadsSurfaceError({
           operation: "threads_create",
