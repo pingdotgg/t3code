@@ -1,5 +1,5 @@
 import { type ResolvedKeybindingsConfig } from "@t3tools/contracts";
-import { ChevronRightIcon } from "lucide-react";
+import { ChevronRightIcon, StarIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../keybindings";
 import {
   type CommandPaletteActionItem,
@@ -14,6 +14,7 @@ import {
   CommandList,
   CommandShortcut,
 } from "./ui/command";
+import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { cn } from "~/lib/utils";
 
 function foldAsciiCase(value: string): string {
@@ -178,6 +179,12 @@ function CommandPaletteResultRow(props: {
       onMouseDown={(event) => {
         event.preventDefault();
       }}
+      onPointerDownCapture={(event) => {
+        if ((event.target as Element).closest("[data-command-palette-favorite]")) {
+          event.preventDefault();
+          event.stopPropagation();
+        }
+      }}
       onClick={() => {
         props.onExecuteItem(props.item);
       }}
@@ -205,6 +212,34 @@ function CommandPaletteResultRow(props: {
         </span>
       )}
       {props.item.titleTrailingContent}
+      {props.item.favorite ? (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                data-command-palette-favorite
+                className={cn(
+                  "inline-flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-sm outline-none hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring",
+                  props.item.favorite.isFavorite
+                    ? "text-yellow-500 hover:text-yellow-400"
+                    : "text-muted-foreground/40 hover:text-muted-foreground",
+                )}
+                aria-label={props.item.favorite.label}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.item.favorite?.toggle();
+                }}
+              >
+                <StarIcon
+                  className={cn("size-3", props.item.favorite.isFavorite && "fill-current")}
+                />
+              </button>
+            }
+          />
+          <TooltipPopup side="top">{props.item.favorite.label}</TooltipPopup>
+        </Tooltip>
+      ) : null}
       {props.item.timestamp ? (
         <span className="min-w-12 shrink-0 text-right text-xs tabular-nums text-muted-foreground/70">
           {props.item.timestamp}

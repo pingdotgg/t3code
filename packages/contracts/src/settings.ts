@@ -407,6 +407,9 @@ export const ClientSettingsSchema = Schema.Struct({
       model: TrimmedNonEmptyString,
     }),
   ).pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  favoriteProjectKeys: Schema.Array(TrimmedNonEmptyString).pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   providerModelPreferences: Schema.Record(
     ProviderInstanceId,
     Schema.Struct({
@@ -1483,6 +1486,7 @@ export const ClientSettingsPatch = Schema.Struct({
       }),
     ),
   ),
+  favoriteProjectKeys: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
   providerModelPreferences: Schema.optionalKey(
     Schema.Record(
       ProviderInstanceId,
