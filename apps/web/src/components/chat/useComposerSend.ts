@@ -1354,6 +1354,9 @@ export function useComposerSend(input: ComposerSendInput) {
                       ...(draftThread?.worktreeBranch
                         ? { branch: draftThread.worktreeBranch }
                         : {}),
+                      ...(!draftThread?.worktreeBranch && !startFromOrigin
+                        ? { reuseBaseBranchIfAvailable: true }
+                        : {}),
                       ...(startFromOrigin ? { startFromOrigin: true } : {}),
                     },
                     runSetupScript: true,

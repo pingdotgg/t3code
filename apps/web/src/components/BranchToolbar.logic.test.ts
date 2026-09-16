@@ -294,3 +294,16 @@ describe("explicit worktree branch", () => {
   });
 
 });
+
+describe("worktree branch reuse label", () => {
+  it("shows an available branch directly when the worktree will reuse it", () => {
+    expect(resolveBranchTriggerLabel({
+      activeWorktreePath: null,
+      effectiveEnvMode: "worktree",
+      resolvedActiveBranch: "jm/bugfix/existing",
+      resolvedActiveBranchIsRemote: false,
+      startFromOrigin: false,
+      reuseSelectedBranch: true,
+    })).toBe("jm/bugfix/existing");
+  });
+});

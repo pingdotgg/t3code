@@ -331,6 +331,7 @@ export function BranchToolbarBranchSelector({
       : queriedActiveBranch
         ? queriedActiveBranch.isRemote === true
         : null;
+  const resolvedActiveBranchRef = listedActiveBranch ?? queriedActiveBranch ?? null;
   const [isBranchActionPending, startBranchActionTransition] = useTransition();
   const totalBranchCount = branchRefState.data?.totalCount ?? 0;
   const branchStatusText = isInitialBranchesLoadPending
@@ -558,6 +559,12 @@ export function BranchToolbarBranchSelector({
     resolvedActiveBranchIsRemote,
     startFromOrigin,
     worktreeBranch,
+    reuseSelectedBranch:
+      isSelectingWorktreeBase &&
+      !startFromOrigin &&
+      !worktreeBranch &&
+      resolvedActiveBranchRef?.isRemote === false &&
+      resolvedActiveBranchRef.worktreePath === null,
   });
 
   const branchPrBranch = resolveBranchToolbarPrBranch({
@@ -733,7 +740,7 @@ export function BranchToolbarBranchSelector({
                   onComposerFocusRequest?.();
                 }}
               >
-                Use generated branch name
+                Reuse selected branch when available
               </Button>
             ) : null}
           </div>
