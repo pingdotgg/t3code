@@ -6,7 +6,7 @@ import type {
   PullRequestMergeMethod,
 } from "@t3tools/contracts";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
-import { GitMergeIcon, LayersIcon, RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
+import { RefreshCwIcon, TriangleAlertIcon } from "lucide-react";
 import { useState } from "react";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { pullRequestEnvironment } from "~/state/pullRequests";
@@ -25,6 +25,7 @@ import { toastManager } from "../ui/toast";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
 import { PullRequestStackLayerContent } from "./PullRequestStackLayerContent";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 export function PullRequestStackMenu({
   stack,
@@ -133,7 +134,8 @@ export function PullRequestStackMenu({
                   />
                 }
               >
-                <LayersIcon aria-hidden className="size-3.5" /> {position}/{stack.layers.length}
+                <PullRequestGlyph.stack aria-hidden className="size-3.5" /> {position}/
+                {stack.layers.length}
                 {onRetry ? <TriangleAlertIcon aria-hidden className="size-3 text-warning" /> : null}
               </MenuTrigger>
             }
@@ -166,7 +168,7 @@ export function PullRequestStackMenu({
               <MenuSeparator />
               {canMerge ? (
                 <MenuItem disabled={mergeDisabled} onClick={() => setConfirmation("merge")}>
-                  <GitMergeIcon aria-hidden />
+                  <PullRequestGlyph.merged aria-hidden />
                   Merge stack ({mergeLayers.length})
                 </MenuItem>
               ) : null}
@@ -199,7 +201,7 @@ export function PullRequestStackMenu({
                   disabled={mergeDisabled}
                   onClick={() => setConfirmation("merge")}
                 >
-                  <GitMergeIcon aria-hidden className="size-3.5" />
+                  <PullRequestGlyph.merged aria-hidden className="size-3.5" />
                   Merge stack
                 </Button>
               </span>

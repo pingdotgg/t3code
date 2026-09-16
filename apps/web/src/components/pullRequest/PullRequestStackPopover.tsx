@@ -1,11 +1,11 @@
 import { Tooltip, TooltipTrigger, TooltipPopup } from "../ui/tooltip";
 import type { EnvironmentId, PullRequestRef, PullRequestStackMembership } from "@t3tools/contracts";
-import { LayersIcon } from "lucide-react";
 import { useState } from "react";
 import { usePullRequestStack } from "~/state/usePullRequestStack";
 import { Menu, MenuTrigger, MenuPopup, MenuGroup, MenuGroupLabel, MenuItem } from "../ui/menu";
 import { PullRequestStackLayers } from "./PullRequestStackLayers";
 import { PullRequestStackHeader } from "./PullRequestStackHeader";
+import { PullRequestGlyph } from "./pullRequestIcons";
 
 /** Mounted only while the menu is open, so list rows do not each fetch a stack. */
 function StackBody({
@@ -74,7 +74,7 @@ export function PullRequestStackPopover({
               onClick={(event) => event.stopPropagation()}
               onKeyDown={(event) => event.stopPropagation()}
             >
-              <LayersIcon aria-hidden className="size-3" />
+              <PullRequestGlyph.stack aria-hidden className="size-3" />
               {membership.position}/{membership.size}
             </MenuTrigger>
           }

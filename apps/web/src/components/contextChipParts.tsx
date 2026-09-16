@@ -1,5 +1,5 @@
 import type { PullRequestContextMetadata } from "@t3tools/contracts";
-import { CircleDashedIcon, FilmIcon, GitPullRequestIcon, ImageIcon } from "lucide-react";
+import { CircleDashedIcon, FilmIcon, ImageIcon } from "lucide-react";
 import {
   useState,
   type ComponentProps,
@@ -9,6 +9,7 @@ import {
 } from "react";
 
 import { cn } from "~/lib/utils";
+import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { PierreEntryIcon } from "./chat/PierreEntryIcon";
 import {
   COMPOSER_INLINE_CHIP_ICON_CLASS_NAME,
@@ -134,7 +135,9 @@ export function PullRequestChip(props: {
             data-markdown-copy={props.copyMarkdown}
             onClick={(event) => props.onOpen(event, props.metadata.url)}
           >
-            <GitPullRequestIcon className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")} />
+            <PullRequestGlyph.pullRequest
+              className={cn(COMPOSER_INLINE_CHIP_ICON_CLASS_NAME, "size-3.5")}
+            />
             <span className={props.labelClassName}>{props.label}</span>
           </Button>
         }
