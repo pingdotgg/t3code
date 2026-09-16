@@ -1157,6 +1157,83 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
+  it.effect("leaves a $ mention of a skill switched off in T3 Code as prose", () => {
+    // The provider still has the skill; the user switched it off in T3 Code.
+    // `Deploy ` proves the key is matched on the trimmed, case-folded name.
+    const homeDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-skills-folded-"));
+    NodeFS.mkdirSync(NodePath.join(homeDir, "skills", "deploy"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(homeDir, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deploy.\n---\n# Body\n",
+    );
+    const harness = makeHarness({ claudeConfig: { homePath: homeDir } });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(homeDir, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run $deploy now",
+        attachments: [],
+        disabledSkills: [{ source: "personal", name: "Deploy " }],
+      });
+
+      const promptText = yield* Effect.promise(() =>
+        readFirstPromptText(harness.getLastCreateQueryInput()),
+      );
+      assert.equal(promptText, "run $deploy now");
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("still dispatches a skill whose name is switched off under another source", () => {
+    // A `deploy` from `<home>/skills` is a Personal skill. The key names a Repo
+    // `deploy`, so it is a different skill and this one still runs.
+    const homeDir = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "claude-skills-source-"));
+    NodeFS.mkdirSync(NodePath.join(homeDir, "skills", "deploy"), { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(homeDir, "skills", "deploy", "SKILL.md"),
+      "---\ndescription: Deploy.\n---\n# Body\n",
+    );
+    const harness = makeHarness({ claudeConfig: { homePath: homeDir } });
+    return Effect.gen(function* () {
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => NodeFS.rmSync(homeDir, { recursive: true, force: true })),
+      );
+      const adapter = yield* ClaudeAdapter;
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({
+        threadId: session.threadId,
+        input: "run $deploy now",
+        attachments: [],
+        disabledSkills: [{ source: "repo", name: "deploy" }],
+      });
+
+      const promptMessage = yield* Effect.promise(() =>
+        readFirstPromptMessage(harness.getLastCreateQueryInput()),
+      );
+      assert.deepEqual(promptMessage?.message.content, [
+        { type: "text", text: "run" },
+        { type: "text", text: "/deploy now" },
+      ]);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
   it.effect("maps Claude stream/runtime messages to canonical provider runtime events", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {

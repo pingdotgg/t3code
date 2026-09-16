@@ -2509,6 +2509,12 @@ export const makeCodexAdapter = Effect.fn("makeCodexAdapter")(function* (
   });
 
   const sendTurn: CodexAdapterShape["sendTurn"] = Effect.fn("sendTurn")(function* (input) {
+    // `input.disabledSkills` is not supported here: Codex parses `$name`
+    // itself, so the prompt goes out as typed and there is no rewrite to fold
+    // the user's disabled skills into. Switching a skill off only hides it
+    // from the picker. Anything that starts dispatching skills here must fold
+    // that list first (`resolveEffectiveSkills`), the way ClaudeAdapter does.
+    //
     // Codex ingests images only. Anything else would be base64-encoded as an
     // image and rejected or misread; generic files reach the agent through the
     // path line ProviderService puts in the prompt.

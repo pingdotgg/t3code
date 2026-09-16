@@ -1000,6 +1000,11 @@ export function makeCursorAdapter(
           const promptParts: Array<EffectAcpSchema.ContentBlock> = [];
           const rawPrompt = input.input?.trim() ?? "";
           if (rawPrompt) {
+            // `input.disabledSkills` is not supported here yet, and unlike the
+            // other non-Claude adapters this one does rewrite `$name`, so a
+            // skill switched off in T3 Code still dispatches on Cursor. Folding
+            // it needs this per-session `cursorSkillNames` cache invalidated on
+            // a settings change; ClaudeAdapter rescans per send and has no cache.
             let cursorSkillNames = ctx.cursorSkillNames;
             if (hasCursorSkillMention(rawPrompt) && cursorSkillNames === undefined) {
               const skills = yield* discoverCursorSkills(

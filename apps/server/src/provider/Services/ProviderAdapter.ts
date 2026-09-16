@@ -16,6 +16,7 @@ import type {
   ProviderSendTurnInput,
   ProviderSession,
   ProviderSessionStartInput,
+  ProviderSkillKey,
   ProviderUploadFeedbackInput,
   ProviderUploadFeedbackResult,
   ThreadId,
@@ -64,6 +65,19 @@ export interface ProviderThreadSnapshot {
   readonly turns: ReadonlyArray<ProviderThreadTurnSnapshot>;
 }
 
+/**
+ * The wire input plus what `ProviderService` resolved for this turn. These
+ * fields are server-internal: a client never sends them, and adding one here
+ * rather than to `ProviderSendTurnInput` keeps it off the wire.
+ */
+export interface ProviderAdapterSendTurnInput extends ProviderSendTurnInput {
+  /**
+   * Skills the user switched off for this thread's project, already resolved
+   * against the project's override. Absent means nothing is switched off.
+   */
+  readonly disabledSkills?: ReadonlyArray<ProviderSkillKey>;
+}
+
 export interface ProviderAdapterShape<TError> {
   /**
    * Provider kind implemented by this adapter.
@@ -82,7 +96,7 @@ export interface ProviderAdapterShape<TError> {
    * Send a turn to an active provider session.
    */
   readonly sendTurn: (
-    input: ProviderSendTurnInput,
+    input: ProviderAdapterSendTurnInput,
   ) => Effect.Effect<ProviderTurnStartResult, TError>;
 
   /** Omitted when this adapter does not support manual context compaction. */

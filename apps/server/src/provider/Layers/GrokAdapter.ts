@@ -1503,6 +1503,10 @@ export function makeGrokAdapter(grokSettings: GrokSettings, options?: GrokAdapte
         }).pipe(Effect.scoped),
       );
 
+    // `input.disabledSkills` is not supported here: Grok has no `$name`
+    // rewrite, so the prompt goes out as typed and switching a skill off only
+    // hides it from the picker. Anything that starts dispatching skills here
+    // must fold that list first (`resolveEffectiveSkills`), as ClaudeAdapter does.
     const sendTurn: GrokAdapterShape["sendTurn"] = (input) =>
       Effect.gen(function* () {
         if (/^\/always-approve(?:\s|$)/i.test(input.input?.trim() ?? "")) {
