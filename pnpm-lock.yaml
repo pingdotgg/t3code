@@ -90,7 +90,7 @@ patchedDependencies:
   '@expo/metro-config@57.0.12': 96f1a75347e6ea02dc4b7034ace815d8ee39e18b8166ebfb573d9e58328f0dc2
   '@ff-labs/fff-node@0.9.4': c4e3cc2420ceb9dc650f9d189e9c24baf7e83f342998bacda5f459a4ce7927a8
   '@legendapp/list@3.3.5': 680cc6a5c5b4a4032e467e7b3fde22f89a84c0ee2e6eac6fda737d6277cc0806
-  '@opencode/client@2.0.3': ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2
+  '@opencode/client@2.0.5': ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2
   '@pierre/diffs@1.3.0-beta.10': 0ccee155b93b63d810e2c1a40c1fd676fb6fbcfa72cf6430dcedf1a3ae475ab4
   '@react-native-ai/apple@0.12.0': 2d09870c2848d185cb05b53ed823a46e12dba519324d8dd8e584e28731990f9d
   '@react-native-menu/menu@2.0.0': f63d256bf6a97a873b5e628eb595bd6ef0075ddd5bdd890fc920f7a6024290dd
@@ -511,11 +511,11 @@ importers:
         specifier: ^1.3.15
         version: 1.15.13
       '@opencode/client':
-        specifier: 2.0.3
-        version: 2.0.3(patch_hash=ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
+        specifier: 2.0.5
+        version: 2.0.5(patch_hash=ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))
       '@opencode/schema':
-        specifier: 2.0.3
-        version: 2.0.3
+        specifier: 2.0.5
+        version: 2.0.5
       effect:
         specifier: 4.0.0-rc.112
         version: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
@@ -3704,8 +3704,8 @@ packages:
   '@opencode-ai/sdk@1.15.13':
     resolution: {integrity: sha512-4TwojIoQ8EG6/mVBuUVYZXiFcwNmiiytEnjnvyuvSJjGwFIlw2YIBFxtSVC3FbwwbwHT63teh1RHiQUUC4U5xw==}
 
-  '@opencode/client@2.0.3':
-    resolution: {integrity: sha512-b+LcpMI131fXnGqf+O+9Y33H4XmwAkQibfYvtpEOROftkTpkcMj3R7WW/wGl2VTBNTZECAk2Yd+TACTzzAwk0A==}
+  '@opencode/client@2.0.5':
+    resolution: {integrity: sha512-+eCp8XOzONSLDdCRCKJfD7JO8ofTxMyBhuuskgAETFDw0HSgHY40TDmcAZqWh6W9pMDElGJv9L1mDaufPPp6AQ==}
     peerDependencies:
       effect: 4.0.0-rc.112
       solid-js: '>=1.9.0'
@@ -3715,11 +3715,11 @@ packages:
       solid-js:
         optional: true
 
-  '@opencode/protocol@2.0.3':
-    resolution: {integrity: sha512-DNHbkLDTuAyMsmVdnjuKulcfoDbllW2dxt4W19r2aJEYvswJpEO9168CSK6Sjbx1FOh/B9yL7SQgoDRMd4K5Vw==}
+  '@opencode/protocol@2.0.5':
+    resolution: {integrity: sha512-RUuDNN87/ZK8nuPQnAhlyQ6szt+xllgQFk4MIhsU0W1Oez1C7b7w8Sv+p7xnylLfnEHVlz108MTeJTsmbNQKLw==}
 
-  '@opencode/schema@2.0.3':
-    resolution: {integrity: sha512-thPeBbqw4+SkZ/0LOuqfahSRGuWogRa/wwfIVyiQYsoE0vzLx8XUpHQ+FSUWkdz6llDtP0+ZsyBqXUMpXmPgbg==}
+  '@opencode/schema@2.0.5':
+    resolution: {integrity: sha512-Cf6HyFDROTjipoCYFkv+6RoKGMSXZEgbjAvMBy2teUtAluP1APcCIvqDGutueUdqAlzqIeaWHwJTxLXbyKAq5w==}
 
   '@oslojs/encoding@1.1.0':
     resolution: {integrity: sha512-70wQhgYmndg4GCPxPPxPGevRKqTIJ2Nh4OkiMWmDAVYsTQ+Ta7Sq+rPevXyXGdzr30/qZBnyOalCszoMxlyldQ==}
@@ -14552,19 +14552,19 @@ snapshots:
     dependencies:
       cross-spawn: 7.0.6
 
-  '@opencode/client@2.0.3(patch_hash=ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
+  '@opencode/client@2.0.5(patch_hash=ddee0c183e5362990e9b13fb04d4c53f2688037ca4e92946478b70e345262ea2)(effect@4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2))':
     dependencies:
-      '@opencode/protocol': 2.0.3
-      '@opencode/schema': 2.0.3
+      '@opencode/protocol': 2.0.5
+      '@opencode/schema': 2.0.5
     optionalDependencies:
       effect: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
 
-  '@opencode/protocol@2.0.3':
+  '@opencode/protocol@2.0.5':
     dependencies:
-      '@opencode/schema': 2.0.3
+      '@opencode/schema': 2.0.5
       effect: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
 
-  '@opencode/schema@2.0.3':
+  '@opencode/schema@2.0.5':
     dependencies:
       '@standard-schema/spec': 1.1.0
       effect: 4.0.0-rc.112(patch_hash=8bef799f35729cf3465eb428196f617b434a7c9f658d56acb2874d74b21b98b2)
