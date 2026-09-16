@@ -84,6 +84,7 @@ export function ThreadFileNavigatorPane(props: {
       loadedDirectories={entriesQuery.loadedDirectories}
       onLoadDirectory={entriesQuery.loadDirectory}
       error={entriesQuery.error}
+      isInitialLoad={entriesData === null}
       isPending={entriesQuery.isPending}
       searchQuery={searchQuery}
       searchTruncated={entriesQuery.searchTruncated}
