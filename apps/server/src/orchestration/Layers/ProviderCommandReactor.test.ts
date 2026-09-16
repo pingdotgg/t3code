@@ -45,6 +45,7 @@ import {
   ProviderWorkspaceMissingError,
   type ProviderServiceError,
 } from "../../provider/Errors.ts";
+import { PersistenceSqlError } from "../../persistence/Errors.ts";
 import { OrchestrationEventStoreLive } from "../../persistence/Layers/OrchestrationEventStore.ts";
 import { OrchestrationCommandReceiptRepositoryLive } from "../../persistence/Layers/OrchestrationCommandReceipts.ts";
 import { SqlitePersistenceMemory } from "../../persistence/Layers/Sqlite.ts";
@@ -175,6 +176,10 @@ describe("ProviderCommandReactor", () => {
     readonly requiresNewThreadForModelChange?: boolean;
     readonly unreadableHistory?: boolean;
     readonly titleRegenerationCompletionDispatchFailures?: number;
+    readonly queueCompletionFailures?: number;
+    readonly afterQueueCompletion?: () => Effect.Effect<void>;
+    readonly beforeTurnStartRead?: () => Effect.Effect<void>;
+
     readonly titleRegenerationBeforeStart?: "one" | "two";
     readonly serverActivation?: Effect.Effect<void>;
     readonly beforeReadySessionDispatch?: () => Effect.Effect<void>;
@@ -417,7 +422,22 @@ describe("ProviderCommandReactor", () => {
       Layer.provide(RepositoryIdentityResolver.layer),
       Layer.provide(SqlitePersistenceMemory),
     );
+    const reactorSnapshotLayer = Layer.effect(
+      ProjectionSnapshotQuery,
+      Effect.gen(function* () {
+        const query = yield* ProjectionSnapshotQuery;
+        return {
+          ...query,
+          getTurnStartMessage: (request) =>
+            (input?.beforeTurnStartRead?.() ?? Effect.void).pipe(
+              Effect.andThen(query.getTurnStartMessage(request)),
+            ),
+        } satisfies ProjectionSnapshotQuery["Service"];
+      }),
+    ).pipe(Layer.provide(projectionSnapshotLayer));
     let titleRegenerationCompletionDispatchAttempts = 0;
+    const queueCompletions: boolean[] = [];
+
     const reactorOrchestrationLayer = Layer.effect(
       OrchestrationEngineService,
       Effect.gen(function* () {
@@ -427,6 +447,13 @@ describe("ProviderCommandReactor", () => {
           readThreadEvents: engine.readThreadEvents,
           getThreadReplayStats: engine.getThreadReplayStats,
           dispatch: (command) => {
+            if (command.type === "thread.queue.complete") {
+              queueCompletions.push(command.failed);
+              if (queueCompletions.length <= (input?.queueCompletionFailures ?? 0)) {
+                return Effect.fail(new PersistenceSqlError({ operation: "queue completion test" }));
+              }
+            }
+
             if (command.type === "thread.title.regeneration.complete") {
               titleRegenerationCompletionDispatchAttempts += 1;
               if (
@@ -450,6 +477,11 @@ describe("ProviderCommandReactor", () => {
               Effect.tap(() =>
                 isReplay ? (input?.afterTurnStartDispatch?.() ?? Effect.void) : Effect.void,
               ),
+              Effect.tap(() =>
+                command.type === "thread.queue.complete"
+                  ? (input?.afterQueueCompletion?.() ?? Effect.void)
+                  : Effect.void,
+              ),
             );
           },
           get streamDomainEvents() {
@@ -462,7 +494,7 @@ describe("ProviderCommandReactor", () => {
     ).pipe(Layer.provide(orchestrationLayer));
     const layer = ProviderCommandReactorLive.pipe(
       Layer.provideMerge(reactorOrchestrationLayer),
-      Layer.provideMerge(projectionSnapshotLayer),
+      Layer.provideMerge(reactorSnapshotLayer),
       Layer.provideMerge(Layer.succeed(ProviderService, service)),
       Layer.provide(Layer.mock(ProviderAuthService, { tryHandlePromptCommand })),
       Layer.provideMerge(makeProviderRegistryLayer(providerSnapshots as never)),
@@ -610,6 +642,7 @@ describe("ProviderCommandReactor", () => {
             `;
           }),
         ),
+      queueCompletions,
       tryHandlePromptCommand,
       startSession,
       sendTurn,
@@ -708,6 +741,134 @@ describe("ProviderCommandReactor", () => {
         expect(harness.sendTurn).toHaveBeenCalledWith(
           expect.objectContaining({ input: "Run after the tool" }),
         );
+      }),
+  );
+
+  effectIt.effect.each(["send", "auth", "compact"] as const)(
+    "Stop cancels a queued %s handoff waiting for preparation",
+    (operation) =>
+      Effect.gen(function* () {
+        const preparing = yield* Deferred.make<void>();
+        const resume = yield* Deferred.make<void>();
+        const completed = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            ...(operation === "auth"
+              ? {
+                  beforeTurnStartRead: () =>
+                    Deferred.succeed(preparing, undefined).pipe(
+                      Effect.andThen(Deferred.await(resume)),
+                    ),
+                }
+              : {}),
+            tryHandlePromptCommandEffect: () => Effect.succeed(operation === "auth"),
+            startSessionEffect: (session) =>
+              Deferred.succeed(preparing, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.as(session),
+              ),
+            afterQueueCompletion: () => Deferred.succeed(completed, undefined),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        if (operation === "compact") {
+          yield* harness.engine.dispatch({
+            type: "thread.message.user.append",
+            commandId: CommandId.make("existing-conversation-before-stop"),
+            threadId,
+            message: { messageId: asMessageId("earlier"), text: "Earlier turn", attachments: [] },
+            createdAt: "2025-12-31T00:00:00.000Z",
+          });
+        }
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("queued-before-stop"),
+          threadId,
+          message: {
+            messageId: asMessageId("queued-before-stop"),
+            role: "user",
+            text:
+              operation === "auth" ? "/logout" : operation === "compact" ? "/compact" : "Follow up",
+            attachments: [],
+          },
+          deliveryMode: "queue",
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(preparing);
+        yield* harness.engine.dispatch({
+          type: "thread.turn.interrupt",
+          commandId: CommandId.make("stop-queued-handoff"),
+          threadId,
+          createdAt: "2026-01-01T00:00:01.000Z",
+        });
+        yield* Deferred.succeed(resume, undefined);
+        yield* Deferred.await(completed);
+        yield* Effect.promise(harness.drain);
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        expect(harness.compactThread).not.toHaveBeenCalled();
+        if (operation === "auth") expect(harness.tryHandlePromptCommand).not.toHaveBeenCalled();
+        expect(harness.queueCompletions).toEqual([true]);
+        const detail = Option.getOrThrow(
+          yield* harness.snapshotQuery.getThreadDetailById(threadId),
+        );
+        expect(detail.queuedMessages).toMatchObject([
+          { messageId: "queued-before-stop", status: "held" },
+        ]);
+      }),
+  );
+
+  effectIt.effect.each(["send", "auth", "compact"] as const)(
+    "retries queue acknowledgment without repeating the successful %s action",
+    (operation) =>
+      Effect.gen(function* () {
+        const completed = yield* Deferred.make<void>();
+        const harness = yield* Effect.promise(() =>
+          createHarness({
+            queueCompletionFailures: 1,
+            afterQueueCompletion: () => Deferred.succeed(completed, undefined),
+            tryHandlePromptCommandEffect: () => Effect.succeed(operation === "auth"),
+          }),
+        );
+        const threadId = ThreadId.make("thread-1");
+        if (operation === "compact") {
+          yield* harness.engine.dispatch({
+            type: "thread.message.user.append",
+            commandId: CommandId.make("existing-conversation"),
+            threadId,
+            message: { messageId: asMessageId("earlier"), text: "Earlier turn", attachments: [] },
+            createdAt: "2025-12-31T00:00:00.000Z",
+          });
+        }
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("queued-success"),
+          threadId,
+          message: {
+            messageId: asMessageId("queued-success"),
+            role: "user",
+            text:
+              operation === "auth" ? "/logout" : operation === "compact" ? "/compact" : "Follow up",
+            attachments: [],
+          },
+          deliveryMode: "queue",
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt: "2026-01-01T00:00:00.000Z",
+        });
+        yield* Deferred.await(completed);
+        expect(harness.queueCompletions).toEqual([false, false]);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(operation === "send" ? 1 : 0);
+        expect(harness.tryHandlePromptCommand).toHaveBeenCalledTimes(1);
+        expect(harness.compactThread).toHaveBeenCalledTimes(operation === "compact" ? 1 : 0);
+        const detail = Option.getOrThrow(
+          yield* harness.snapshotQuery.getThreadDetailById(threadId),
+        );
+        expect(detail.queuedMessages).toEqual([]);
+        expect(
+          detail.activities.some((activity) => activity.kind === "provider.turn.start.failed"),
+        ).toBe(false);
       }),
   );
 

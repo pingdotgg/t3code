@@ -327,8 +327,8 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
   const preferences = useAtomValue(mobilePreferencesAtom);
   const queueFollowUp =
     props.serverConfig?.environment.capabilities.messageQueue === true &&
-    AsyncResult.isSuccess(preferences) &&
-    (preferences.value.followUpBehavior ?? "queue") === "queue" &&
+    (!AsyncResult.isSuccess(preferences) ||
+      (preferences.value.followUpBehavior ?? "queue") === "queue") &&
     (props.selectedThread.session?.status === "running" || props.queueCount > 0);
   const sendLabel =
     queueFollowUp ||

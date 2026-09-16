@@ -459,12 +459,13 @@ export function useThreadComposerState() {
     // the tap frame instead of after file I/O. If the write fails the message
     // is rolled out of the queue and the content is merged back into the
     // draft, preserving anything typed since.
-    if (!AsyncResult.isSuccess(preferences)) return null;
+    const followUpBehavior = AsyncResult.isSuccess(preferences)
+      ? (preferences.value.followUpBehavior ?? "queue")
+      : "queue";
     const deliveryMode =
       serverConfig?.environment.capabilities.messageQueue === true &&
-      (preferences.value.followUpBehavior ?? "queue") === "queue" &&
-      (thread.session?.status === "running" ||
-        selectedThreadQueuedMessages.some((message) => message.serverMessage))
+      followUpBehavior === "queue" &&
+      (thread.session?.status === "running" || selectedThreadQueuedMessages.length > 0)
         ? ("queue" as const)
         : ("steer" as const);
     const enqueuePromise = enqueueThreadOutboxMessage({

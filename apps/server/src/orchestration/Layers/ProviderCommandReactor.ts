@@ -247,6 +247,7 @@ const make = Effect.gen(function* () {
 
   const threadModelSelections = new Map<string, ModelSelection>();
   const compactingThreadIds = new Set<ThreadId>();
+  const queueInterruptSequences = new Map<ThreadId, number>();
   type QueuedTurnStart = Extract<ProviderIntentEvent, { type: "thread.turn-start-requested" }>;
   // Turn starts received while a thread compacts, replayed in order once its session is restored.
   const turnsAfterCompaction = new Map<ThreadId, Array<QueuedTurnStart>>();
@@ -1209,18 +1210,37 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    const queuedMessageId = event.payload.queuedMessageId;
     const completeQueuedSend = (failed: boolean) =>
-      event.payload.queuedMessageId === undefined
+      queuedMessageId === undefined
         ? Effect.void
-        : orchestrationEngine
-            .dispatch({
+        : Effect.suspend(() =>
+            orchestrationEngine.dispatch({
               type: "thread.queue.complete",
               commandId: CommandId.make(`queue-complete:${event.eventId}:${failed}`),
               threadId: event.payload.threadId,
-              messageId: event.payload.queuedMessageId,
+              messageId: queuedMessageId,
               failed,
-            })
-            .pipe(Effect.asVoid);
+            }),
+          ).pipe(
+            Effect.retry({ times: 2 }),
+            Effect.asVoid,
+            // A failed acknowledgment must not turn a successful provider action into a retry.
+            Effect.catchCause((cause) =>
+              Cause.hasInterruptsOnly(cause)
+                ? Effect.interrupt
+                : Effect.logWarning("failed to persist queued message delivery", {
+                    threadId: event.payload.threadId,
+                    messageId: event.payload.queuedMessageId,
+                    failed,
+                    cause: Cause.pretty(cause),
+                  }),
+            ),
+          );
+    const queuedSendWasInterrupted = () =>
+      event.payload.queuedMessageId !== undefined &&
+      (queueInterruptSequences.get(event.payload.threadId) ?? 0) > event.sequence;
+    if (queuedSendWasInterrupted()) return yield* completeQueuedSend(true);
     const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
       threadId: thread.id,
       messageId: event.payload.messageId,
@@ -1283,6 +1303,7 @@ const make = Effect.gen(function* () {
         ),
       );
 
+    if (queuedSendWasInterrupted()) return yield* completeQueuedSend(true);
     const authCommandHandled = yield* Effect.gen(function* () {
       // Native account commands belong to the thread's existing provider session.
       const instanceId =
@@ -1329,8 +1350,12 @@ const make = Effect.gen(function* () {
         createdAt: event.payload.createdAt,
       });
       return true;
-    }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
-    if (authCommandHandled) {
+    }).pipe(
+      Effect.map(Option.some),
+      Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(Option.none()))),
+    );
+    if (Option.isNone(authCommandHandled)) return;
+    if (authCommandHandled.value) {
       yield* completeQueuedSend(false);
       return;
     }
@@ -1449,14 +1474,19 @@ const make = Effect.gen(function* () {
         if (event.payload.modelSelection !== undefined) {
           threadModelSelections.set(event.payload.threadId, event.payload.modelSelection);
         }
+        if (queuedSendWasInterrupted()) return false;
         yield* providerService.compactThread(
           event.payload.threadId,
           event.payload.modelSelection,
           event.payload.messageId,
         );
+        return true;
       }).pipe(
-        Effect.andThen(restoreCompaction(event.payload.threadId, true)),
-        Effect.andThen(completeQueuedSend(false)),
+        Effect.flatMap((compacted) =>
+          restoreCompaction(event.payload.threadId, compacted).pipe(
+            Effect.andThen(completeQueuedSend(!compacted)),
+          ),
+        ),
         Effect.andThen(clearCompacting),
         Effect.andThen(resumeTurnsAfterCompaction(event.payload.threadId)),
         Effect.catchCause((cause) =>
@@ -1505,13 +1535,17 @@ const make = Effect.gen(function* () {
       return;
     }
 
-    const send = providerService
-      .sendTurn(sendTurnRequest.value)
-      .pipe(
-        Effect.andThen(completeQueuedSend(false)),
-        Effect.asVoid,
-        Effect.catchCause(recoverTurnStartFailure),
-      );
+    const send = Effect.suspend(() =>
+      queuedSendWasInterrupted()
+        ? completeQueuedSend(true)
+        : providerService
+            .sendTurn(sendTurnRequest.value)
+            .pipe(
+              Effect.andThen(completeQueuedSend(false)),
+              Effect.asVoid,
+              Effect.catchCause(recoverTurnStartFailure),
+            ),
+    );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
@@ -1901,6 +1935,9 @@ const make = Effect.gen(function* () {
   const worker = yield* makeDrainableWorker(processDomainEventSafely);
 
   const start: ProviderCommandReactorShape["start"] = Effect.fn("start")(function* () {
+    const startupQueueSnapshot = yield* projectionSnapshotQuery
+      .getShellSnapshot()
+      .pipe(Effect.orDie);
     const pendingTitles = yield* findPendingThreadTitles().pipe(
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1913,6 +1950,14 @@ const make = Effect.gen(function* () {
       }),
     );
     const processEvent = Effect.fn("processEvent")(function* (event: OrchestrationEvent) {
+      if (
+        event.type === "thread.turn-interrupt-requested" ||
+        event.type === "thread.session-stop-requested"
+      ) {
+        // Observe Stop before the worker can finish preparing an older queued handoff.
+        queueInterruptSequences.set(event.payload.threadId, event.sequence);
+      }
+
       if (
         (event.type === "thread.meta-updated" &&
           (event.payload.regenerateTitle === true ||
@@ -1940,8 +1985,7 @@ const make = Effect.gen(function* () {
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
 
     const recoverQueue = Effect.gen(function* () {
-      const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
-      for (const thread of snapshot.threads) {
+      for (const thread of startupQueueSnapshot.threads) {
         if (!thread.queuedMessageCount) continue;
         yield* orchestrationEngine.dispatch({
           type: "thread.queue.recover",

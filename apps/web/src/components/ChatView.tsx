@@ -3948,12 +3948,13 @@ export default function ChatView(props: ChatViewProps) {
     const serverQueue = queuedMessagesRef.current.filter(
       (message) => message.serverMessage?.status !== "sending" && message.serverMessage,
     );
+    const cancelServerQueue = cancelServerQueueRef.current;
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
       input,
     });
     if (result._tag === "Success") {
-      for (const message of serverQueue) await cancelServerQueueRef.current(message);
+      for (const message of serverQueue) await cancelServerQueue(message);
     }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
@@ -8301,12 +8302,6 @@ export default function ChatView(props: ChatViewProps) {
         httpBaseUrl: connection.httpBaseUrl,
         createAssetUrl: createAttachmentAssetUrl,
       });
-      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
-      if (
-        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
-        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
-      )
-        throw new Error("Make room for this message's attachments in the composer first.");
       const restored: QueuedComposerMessage = {
         ...message,
         images: [],
