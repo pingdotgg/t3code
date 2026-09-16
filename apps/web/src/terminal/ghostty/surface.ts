@@ -392,7 +392,7 @@ export function isTerminalPasteShortcut(
     return event.shiftKey && !event.ctrlKey && !event.metaKey;
   }
   if (key !== "v") return false;
-  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey && event.shiftKey;
+  return isMacPlatform(platform) ? event.metaKey : event.ctrlKey;
 }
 
 /**
