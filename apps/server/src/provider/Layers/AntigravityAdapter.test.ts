@@ -1327,6 +1327,22 @@ it.layer(layer)("AntigravityAdapter", (it) => {
         path: path.join(cwd, "missing.txt"),
       }).pipe(Effect.flip);
       expect(missing._tag).toBe("AcpRequestError");
+
+      yield* fs.writeFileString(path.join(outside, "secret.txt"), "secret-data");
+      yield* fs.symlink(path.join(outside, "secret.txt"), path.join(cwd, "secret-link.txt"));
+      const symlinkEscapeRead = yield* read({
+        sessionId: nativeSessionId,
+        path: path.join(cwd, "secret-link.txt"),
+      }).pipe(Effect.flip);
+      expect(symlinkEscapeRead._tag).toBe("AcpRequestError");
+
+      const symlinkEscapeWrite = yield* write({
+        sessionId: nativeSessionId,
+        path: path.join(cwd, "secret-link.txt"),
+        content: "overwritten",
+      }).pipe(Effect.flip);
+      expect(symlinkEscapeWrite._tag).toBe("AcpRequestError");
+      expect(yield* fs.readFileString(path.join(outside, "secret.txt"))).toBe("secret-data");
     }).pipe(Effect.scoped),
   );
 

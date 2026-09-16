@@ -237,11 +237,22 @@ const resolveClientFilePath = Effect.fn("AntigravityAdapter.resolveClientFilePat
     const parent = yield* input.fileSystem
       .realPath(path.dirname(resolved))
       .pipe(Effect.orElseSucceed(() => path.dirname(resolved)));
-    const real = path.join(parent, path.basename(resolved));
+    const leafReal = yield* input.fileSystem
+      .realPath(resolved)
+      .pipe(Effect.orElseSucceed(() => undefined));
     const roots = yield* Effect.forEach(input.allowedRoots, (root) =>
       input.fileSystem.realPath(root).pipe(Effect.orElseSucceed(() => root)),
     );
     const allRoots = [...input.allowedRoots, ...roots];
+    if (leafReal !== undefined) {
+      if (!allRoots.some((root) => isInsideRoot(path, root, leafReal))) {
+        return yield* EffectAcpErrors.AcpRequestError.invalidParams(
+          `Path '${input.requestPath}' is outside the session workspace.`,
+        );
+      }
+      return leafReal;
+    }
+    const real = path.join(parent, path.basename(resolved));
     if (!allRoots.some((root) => isInsideRoot(path, root, real))) {
       return yield* EffectAcpErrors.AcpRequestError.invalidParams(
         `Path '${input.requestPath}' is outside the session workspace.`,
@@ -452,7 +463,6 @@ export const makeAntigravityAdapter = Effect.fn("makeAntigravityAdapter")(functi
                   : undefined,
               );
               context.subagents.clear();
-              context.interruptedTurnIds.clear();
             }),
           );
           yield* emit({
