@@ -133,7 +133,7 @@ describe("environment shell projections", () => {
           harness.shellStateAtom(ENVIRONMENT_ID),
           shellState({
             status: "cached",
-            updatedAt: new Date(Date.UTC(2026, 6, 1, 0, 0, index)).toISOString(),
+            updatedAt: `2026-07-01T00:00:${String(index).padStart(2, "0")}.000Z`,
             snapshotSequence: index + 2,
           }),
         );
