@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import {
@@ -10,12 +11,15 @@ import {
 } from "./hostProcess.ts";
 import { CommandResolutionCache, resolveCommandPath } from "./shell.ts";
 
+export const nodeRuntimeUnavailableMessage = (feature: string): string =>
+  `${feature} requires Node.js. Install Node.js and make sure node is on PATH, then retry.`;
+
 export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeUnavailableError>()(
   "NodeRuntimeUnavailableError",
   { feature: Schema.String, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
-    return `${this.feature} requires Node.js. Install Node.js and make sure node is on PATH, then retry.`;
+    return nodeRuntimeUnavailableMessage(this.feature);
   }
 }
 
@@ -42,6 +46,22 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
     .realPath(nodePath)
     .pipe(Effect.mapError((cause) => new NodeRuntimeUnavailableError({ feature, cause })));
   if (resolvedPath === executablePath) return yield* new NodeRuntimeUnavailableError({ feature });
+  const [hostInfo, nodeInfo] = yield* Effect.all([
+    fs.stat(executablePath).pipe(Effect.option),
+    fs.stat(nodePath).pipe(Effect.option),
+  ]);
+  if (
+    Option.isSome(hostInfo) &&
+    Option.isSome(nodeInfo) &&
+    hostInfo.value.dev === nodeInfo.value.dev &&
+    Option.isSome(hostInfo.value.ino) &&
+    Option.isSome(nodeInfo.value.ino) &&
+    Number.isSafeInteger(hostInfo.value.ino.value) &&
+    hostInfo.value.ino.value > 0 &&
+    hostInfo.value.ino.value === nodeInfo.value.ino.value
+  ) {
+    return yield* new NodeRuntimeUnavailableError({ feature });
+  }
   // Launchers such as Vite+ dispatch by argv[0]; keep the node name intact.
   return nodePath;
 });

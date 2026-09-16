@@ -36,7 +36,7 @@ import {
   type ThreadId,
 } from "@t3tools/contracts";
 import * as FileSystem from "effect/FileSystem";
-import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
+import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Path from "effect/Path";
 import { ensureAgentDevice } from "./DeviceToolchain.ts";
 import * as ServerConfig from "../config.ts";
@@ -263,7 +263,15 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, { status: "failed", detail: error.message }),
           ),
           Effect.mapError(
-            (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+            (error) =>
+              new DeviceHostUnavailableError({
+                hostId: host.id,
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Local device support")
+                    : `Device host ${error.hostId} failed while ${error.step}.`,
+                cause: error,
+              }),
           ),
         );
       if (hosts.get(host.id) !== host)
@@ -306,7 +314,17 @@ export const makeWithHosts = Effect.fn("DeviceService.makeWithHosts")(function* 
             setHostStatus(host.id, { status: "failed", detail: error.message }),
           ),
           Effect.mapError(
-            (error) => new DeviceHostUnavailableError({ hostId: host.id, reason: error.message }),
+            (error) =>
+              new DeviceHostUnavailableError({
+                hostId: host.id,
+                reason:
+                  error._tag === "NodeRuntimeUnavailableError"
+                    ? nodeRuntimeUnavailableMessage("Local device support")
+                    : error._tag === "DeviceHostTimeoutError"
+                      ? `Device host ${error.hostId} did not start agent tools within ${error.timeoutMs} ms.`
+                      : `Device host ${error.hostId} failed while ${error.step}.`,
+                cause: error,
+              }),
           ),
         );
       const hostSummaries = yield* Effect.forEach(hosts.values(), (candidate) => candidate.summary);
@@ -1012,7 +1030,11 @@ export const make = Effect.gen(function* () {
       Effect.map((tool) => tool.entryPath),
       Effect.mapError((error) =>
         error._tag === "NodeRuntimeUnavailableError"
-          ? new DeviceHostUnavailableError({ hostId: LOCAL_DEVICE_HOST_ID, reason: error.message })
+          ? new DeviceHostUnavailableError({
+              hostId: LOCAL_DEVICE_HOST_ID,
+              reason: nodeRuntimeUnavailableMessage("Device automation"),
+              cause: error,
+            })
           : new DeviceOperationError({
               operation: "install agent CLI",
               reason: "command_failed",

@@ -6,7 +6,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@t3tools/shared/hostProcess";
-import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
+import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
@@ -522,7 +522,9 @@ export const makeAntigravityInstallation = Effect.fn("AntigravityInstallation.ma
         Effect.provideService(FileSystem.FileSystem, fs),
         Effect.provideService(Path.Path, path),
         Effect.provideService(HostProcessPlatform, platform),
-        Effect.mapError((cause) => installationError("verify", cause.message, cause)),
+        Effect.mapError((cause) =>
+          installationError("verify", nodeRuntimeUnavailableMessage("Antigravity"), cause),
+        ),
       );
       const report = (phase: ProviderInstallState["phase"], message: string | null) =>
         SubscriptionRef.update(state, (current) => ({ ...current, phase, message }));

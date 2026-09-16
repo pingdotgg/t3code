@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 
 import type { AntigravityAuthMethod, ProviderInstanceId } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
+import { resolveNodeExecutable, nodeRuntimeUnavailableMessage } from "@t3tools/shared/nodeRuntime";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
@@ -311,7 +311,13 @@ export const prepareAntigravityProfile = Effect.fn("prepareAntigravityProfile")(
   const runtimeExecutablePath =
     input.runtimeExecutablePath ??
     (yield* resolveNodeExecutable("Antigravity sign-in", input.baseEnv).pipe(
-      Effect.mapError((error) => authSupportError(error.message)),
+      Effect.mapError(
+        (cause) =>
+          new AcpErrors.AcpTransportError({
+            detail: nodeRuntimeUnavailableMessage("Antigravity sign-in"),
+            cause,
+          }),
+      ),
     ));
   const helperExecutable =
     platform === "win32" ? runtimeExecutablePath.replaceAll("\\", "/") : runtimeExecutablePath;

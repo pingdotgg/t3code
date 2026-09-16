@@ -18,7 +18,10 @@ import {
 } from "@t3tools/contracts";
 import { waitForHttpReady } from "@t3tools/shared/httpReadiness";
 import { HostProcessEnvironment, HostProcessPlatform } from "@t3tools/shared/hostProcess";
-import { resolveNodeExecutable } from "@t3tools/shared/nodeRuntime";
+import {
+  resolveNodeExecutable,
+  type NodeRuntimeUnavailableError,
+} from "@t3tools/shared/nodeRuntime";
 import * as NetService from "@t3tools/shared/Net";
 import { isCommandAvailable } from "@t3tools/shared/shell";
 import * as Clock from "effect/Clock";
@@ -531,7 +534,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const ensureHubReady = Effect.fn("LocalDeviceHost.ensureHubReady")(function* (
     onPhase: (phase: "installing" | "starting") => Effect.Effect<void>,
-  ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError> {
+  ): Effect.fn.Return<RunningHost, DeviceHost.DeviceHostError | NodeRuntimeUnavailableError> {
     const running = yield* Ref.get(runningRef);
     if (running) {
       const alive = yield* running.hub.child.isRunning.pipe(Effect.orElseSucceed(() => false));
@@ -542,15 +545,6 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
       Effect.provideService(FileSystem.FileSystem, fs),
       Effect.provideService(Path.Path, path),
       Effect.provideService(HostProcessPlatform, hostPlatform),
-      Effect.mapError(
-        (cause) =>
-          new DeviceHost.DeviceHostError({
-            hostId,
-            step: "finding Node.js",
-            detail: cause.message,
-            cause,
-          }),
-      ),
     );
     const installed = yield* isDeviceHubInstalled(config.baseDir).pipe(
       Effect.provideService(FileSystem.FileSystem, fs),
@@ -597,7 +591,12 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const ensureAgentReady: DeviceHost.DeviceHost["Service"]["ensureAgentReady"] = (onPhase) =>
     startLock.withPermits(1)(
       Effect.gen(function* (): Generator<
-        Effect.Effect<unknown, DeviceHost.DeviceHostError | DeviceHost.DeviceHostTimeoutError>,
+        Effect.Effect<
+          unknown,
+          | DeviceHost.DeviceHostError
+          | DeviceHost.DeviceHostTimeoutError
+          | NodeRuntimeUnavailableError
+        >,
         DeviceHost.DeviceHostAgentReady
       > {
         const running = yield* ensureHubReady(onPhase);

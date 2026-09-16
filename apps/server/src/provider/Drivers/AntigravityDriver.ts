@@ -1,6 +1,10 @@
 import { withAgentDeviceEnvironment } from "../../mcp/McpProviderSession.ts";
 import { AntigravitySettings, ProviderDriverKind, ProviderSetupError } from "@t3tools/contracts";
 import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
+import {
+  NodeRuntimeUnavailableError,
+  nodeRuntimeUnavailableMessage,
+} from "@t3tools/shared/nodeRuntime";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -59,6 +63,7 @@ import { discoverAntigravitySkills, resolveAntigravityUserHome } from "./Antigra
 
 const DRIVER = ProviderDriverKind.make("antigravity");
 const decodeSettings = Schema.decodeSync(AntigravitySettings);
+const isNodeRuntimeUnavailableError = Schema.is(NodeRuntimeUnavailableError);
 
 export type AntigravityDriverEnv =
   | AntigravityInstallation
@@ -164,14 +169,15 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
           Effect.provideService(FileSystem.FileSystem, fileSystem),
           Effect.provideService(Path.Path, path),
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
-          Effect.mapError(
-            (cause) =>
-              new ProviderSetupError({
-                instanceId,
-                operation: "start",
-                detail: cause.detail ?? cause.message,
-                cause,
-              }),
+          Effect.mapError((cause) =>
+            isNodeRuntimeUnavailableError(cause.cause)
+              ? new ProviderSetupError({
+                  instanceId,
+                  operation: "start",
+                  detail: nodeRuntimeUnavailableMessage("Antigravity sign-in"),
+                  cause,
+                })
+              : cause,
           ),
         );
         // Each process unpacks into its own directory that dies with the

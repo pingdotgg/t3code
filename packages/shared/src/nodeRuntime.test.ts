@@ -78,6 +78,30 @@ describe("Node runtime selection", () => {
     ),
   );
 
+  it.effect("rejects a hard-linked node alias pointing back at the standalone app", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const platform = yield* HostProcessPlatform;
+      const executable = path.join(directory, platform === "win32" ? "t3.exe" : "t3");
+      const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
+      yield* fs.writeFileString(executable, "standalone executable fixture");
+      yield* fs.chmod(executable, 0o755);
+      yield* fs.link(executable, node);
+      const error = yield* resolveNodeExecutable("Device support", { PATH: directory }).pipe(
+        Effect.provideService(HostProcessExecutablePath, executable),
+        Effect.flip,
+      );
+      expect(error._tag).toBe("NodeRuntimeUnavailableError");
+      expect(error.message).toContain("Install Node.js");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect.skipIf(!symlinksSupported)("preserves the node alias used by runtime launchers", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
