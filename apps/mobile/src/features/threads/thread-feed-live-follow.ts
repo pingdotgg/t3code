@@ -65,6 +65,14 @@ export function resolveThreadFeedSubmissionAnchor<AnchorId>(input: {
   return input.queuedMessageCount > 0 ? null : input.submittedMessageId;
 }
 
+export function shouldShowThreadFeedScrollToEnd(input: {
+  readonly endFollowEnabled: boolean;
+  readonly isAtEnd: boolean;
+}) {
+  // A drag pauses live-follow before moving away from the end.
+  return !input.endFollowEnabled && !input.isAtEnd;
+}
+
 export function resolveThreadFeedLiveFollow(
   current: boolean,
   event: ThreadFeedLiveFollowEvent,

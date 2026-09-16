@@ -258,6 +258,7 @@ export interface ThreadFeedProps {
   readonly usesAutomaticContentInsets?: boolean;
   readonly onHeaderMaterialVisibilityChange?: (visible: boolean) => void;
   readonly onEndFollowEnabledChange?: (enabled: boolean) => void;
+  readonly onIsAtEndChange?: (isAtEnd: boolean) => void;
   readonly skills?: ReadonlyArray<SelectableMarkdownSkill>;
   readonly onUseArtifactTemplate?: (template: CodexArtifactTemplate) => void;
   /** Non-null when older turns exist beyond the loaded window. */
@@ -2419,6 +2420,17 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     }
   }, [listMountKey, props.contentInsetEndAdjustment, props.listRef]);
 
+  // Subscribe to edge transitions without updating the screen on every scroll.
+  useLayoutEffect(() => {
+    const listState = props.listRef.current?.getState();
+    const onIsAtEndChange = props.onIsAtEndChange;
+    if (!listState || !onIsAtEndChange) {
+      return;
+    }
+    onIsAtEndChange(listState.isAtEnd);
+    return listState.listen("isAtEnd", onIsAtEndChange);
+  }, [listMountKey, props.listRef, props.onIsAtEndChange]);
+
   const anchoredEndSpace = useMemo(
     () =>
       resolveChatListAnchoredEndSpace(
@@ -2491,6 +2503,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         // Reconcile follow before a later layout or resume can re-pin it.
         const listState = props.listRef.current?.getState();
         if (listState) {
+          // Row resizing can change the end without notifying the edge subscription.
+          props.onIsAtEndChange?.(listState.isAtEnd);
           transitionEndFollow({
             type: "disclosure-settled",
             isAtEnd: listState.isAtEnd,
@@ -2503,7 +2517,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         disclosureSettleSecondFrameRef.current = null;
       });
     });
-  }, [props.listRef, transitionEndFollow]);
+  }, [props.listRef, props.onIsAtEndChange, transitionEndFollow]);
 
   const suspendEndScrollMaintenanceForDisclosure = useCallback((anchorKey: string | null) => {
     disclosureAnchorKeyRef.current = anchorKey;
