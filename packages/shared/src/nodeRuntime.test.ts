@@ -4,8 +4,6 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Result from "effect/Result";
-// @effect-diagnostics-next-line nodeBuiltinImport:off - FileSystem has no symbolic-link API.
-import * as NodeFSP from "node:fs/promises";
 
 import {
   HostProcessExecutablePath,
@@ -78,6 +76,55 @@ describe("Node runtime selection", () => {
     ),
   );
 
+  it.effect("uses node.exe even when Windows batch wrappers appear first on PATH", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      const wrappers = path.join(directory, "wrappers");
+      const runtime = path.join(directory, "runtime");
+      yield* fs.makeDirectory(wrappers);
+      yield* fs.makeDirectory(runtime);
+      yield* fs.writeFileString(path.join(wrappers, "node.cmd"), "@echo off");
+      yield* fs.writeFileString(path.join(wrappers, "node.bat"), "@echo off");
+      const node = path.join(runtime, "node.exe");
+      yield* fs.copyFile(process.execPath, node);
+      expect(
+        yield* resolveNodeExecutable("Device support", {
+          PATH: `${wrappers};${runtime}`,
+          PATHEXT: ".CMD;.BAT",
+        }),
+      ).toBe(node);
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessExecutablePath, "/packaged/t3"),
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
+  it.effect("reports install guidance when Windows only has batch runtime wrappers", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fs.makeTempDirectoryScoped();
+      yield* fs.writeFileString(path.join(directory, "node.cmd"), "@echo off");
+      yield* fs.writeFileString(path.join(directory, "node.bat"), "@echo off");
+      const error = yield* resolveNodeExecutable("Device support", {
+        PATH: directory,
+        PATHEXT: ".CMD;.BAT;.EXE",
+      }).pipe(Effect.flip);
+      expect(error._tag).toBe("NodeRuntimeUnavailableError");
+      expect(error.message).toContain("Install Node.js");
+    }).pipe(
+      Effect.scoped,
+      Effect.provideService(HostProcessIsExecutable, true),
+      Effect.provideService(HostProcessPlatform, "win32"),
+      Effect.provide(NodeServices.layer),
+    ),
+  );
+
   it.effect("rejects a hard-linked node alias pointing back at the standalone app", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -109,7 +156,7 @@ describe("Node runtime selection", () => {
       const directory = yield* fs.makeTempDirectoryScoped();
       const platform = yield* HostProcessPlatform;
       const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
-      yield* Effect.tryPromise(() => NodeFSP.symlink(process.execPath, node));
+      yield* fs.symlink(process.execPath, node);
       expect(yield* resolveNodeExecutable("Device support", { PATH: directory })).toBe(node);
     }).pipe(
       Effect.scoped,
@@ -128,7 +175,7 @@ describe("Node runtime selection", () => {
         const directory = yield* fs.makeTempDirectoryScoped();
         const platform = yield* HostProcessPlatform;
         const node = path.join(directory, platform === "win32" ? "node.exe" : "node");
-        yield* Effect.tryPromise(() => NodeFSP.symlink(process.execPath, node));
+        yield* fs.symlink(process.execPath, node);
         const error = yield* resolveNodeExecutable("Device support", { PATH: directory }).pipe(
           Effect.flip,
         );

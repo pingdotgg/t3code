@@ -8,6 +8,7 @@ import {
   HostProcessEnvironment,
   HostProcessExecutablePath,
   HostProcessIsExecutable,
+  HostProcessPlatform,
 } from "./hostProcess.ts";
 import { CommandResolutionCache, resolveCommandPath } from "./shell.ts";
 
@@ -33,8 +34,11 @@ export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutabl
 
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
-  const nodePath = yield* resolveCommandPath("node", {
-    env: environment ?? (yield* HostProcessEnvironment),
+  const platform = yield* HostProcessPlatform;
+  const env = environment ?? (yield* HostProcessEnvironment);
+  const nodePath = yield* resolveCommandPath(platform === "win32" ? "node.exe" : "node", {
+    // Batch wrappers require a shell; helper callers launch the runtime directly.
+    env: platform === "win32" ? { ...env, PATHEXT: ".EXE" } : env,
   }).pipe(
     // Refresh immediately after the user installs Node and retries setup.
     Effect.provideService(CommandResolutionCache, new Map()),
