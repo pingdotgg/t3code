@@ -54,6 +54,7 @@ import * as SqlClient from "effect/unstable/sql/SqlClient";
 
 import {
   ProviderAdapterRequestError,
+  ProviderAdapterSessionClosedError,
   ProviderAdapterSessionNotFoundError,
   ProviderUnsupportedError,
   ProviderValidationError,
@@ -78,6 +79,7 @@ import * as ServerSettings from "../../serverSettings.ts";
 import * as AnalyticsService from "../../telemetry/AnalyticsService.ts";
 import { makeAdapterRegistryMock } from "../testUtils/providerAdapterRegistryMock.ts";
 import * as ProjectionSnapshotQuery from "../../orchestration/Services/ProjectionSnapshotQuery.ts";
+import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 
 const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const defaultServerSettingsLayer = ServerSettings.ServerSettingsService.layerTest();
@@ -143,27 +145,28 @@ function makeFakeCodexAdapter(
   const sessions = new Map<ThreadId, ProviderSession>();
   const runtimeEventPubSub = Effect.runSync(PubSub.unbounded<ProviderRuntimeEvent>());
 
-  const startSession = vi.fn((input: ProviderSessionStartInput) =>
-    Effect.sync(() => {
-      const now = "2026-01-01T00:00:00.000Z";
-      const session: ProviderSession = {
-        provider,
-        ...(input.providerInstanceId !== undefined
-          ? { providerInstanceId: input.providerInstanceId }
-          : {}),
-        status: "ready",
-        runtimeMode: input.runtimeMode,
-        threadId: input.threadId,
-        resumeCursor: input.resumeCursor ?? {
-          opaque: `resume-${String(input.threadId)}`,
-        },
-        cwd: input.cwd ?? process.cwd(),
-        createdAt: now,
-        updatedAt: now,
-      };
-      sessions.set(session.threadId, session);
-      return session;
-    }),
+  const startSession = vi.fn(
+    (input: ProviderSessionStartInput): Effect.Effect<ProviderSession, ProviderAdapterError> =>
+      Effect.sync(() => {
+        const now = "2026-01-01T00:00:00.000Z";
+        const session: ProviderSession = {
+          provider,
+          ...(input.providerInstanceId !== undefined
+            ? { providerInstanceId: input.providerInstanceId }
+            : {}),
+          status: "ready",
+          runtimeMode: input.runtimeMode,
+          threadId: input.threadId,
+          resumeCursor: input.resumeCursor ?? {
+            opaque: `resume-${String(input.threadId)}`,
+          },
+          cwd: input.cwd ?? process.cwd(),
+          createdAt: now,
+          updatedAt: now,
+        };
+        sessions.set(session.threadId, session);
+        return session;
+      }),
   );
 
   const sendTurn = vi.fn(
@@ -1755,6 +1758,83 @@ routing.layer("ProviderServiceLive routing", (it) => {
         assert.equal(startPayload.threadId, session.threadId);
       }
       assert.equal(routing.codex.sendTurn.mock.calls.length, 1);
+    }),
+  );
+
+  it.effect("retries once then falls back to a fresh session when resume stays closed", () =>
+    Effect.gen(function* () {
+      const provider = yield* ProviderService.ProviderService;
+      const threadId = asThreadId("thread-fallback-closed-session");
+      yield* provider.startSession(threadId, {
+        provider: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        threadId,
+        cwd: fixtureCwd("project"),
+        runtimeMode: "full-access",
+      });
+
+      const initialCursor = { threadId: "persisted-resume-cursor-closed" };
+      routing.codex.updateSession(threadId, (s) => ({
+        ...s,
+        resumeCursor: initialCursor,
+      }));
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const binding = yield* directory.getBinding(threadId);
+      assert(Option.isSome(binding));
+      yield* directory.upsert({
+        ...binding.value,
+        resumeCursor: initialCursor,
+      });
+
+      yield* provider.stopSession({ threadId });
+      routing.codex.startSession.mockClear();
+
+      const originalStartSession = routing.codex.startSession.getMockImplementation();
+      routing.codex.startSession.mockImplementation((input) => {
+        if (input.resumeCursor) {
+          return Effect.fail(
+            new ProviderAdapterSessionClosedError({
+              provider: "antigravity",
+              threadId,
+              cause: "received 1000 (OK); then sent 1000 (OK)",
+            }),
+          );
+        }
+        return originalStartSession!(input);
+      });
+
+      // Stands in for the MCP session prepared before recovery. A per-attempt
+      // clear would delete it on the failed resume and never re-prepare it, so
+      // its survival proves the fresh session keeps its MCP endpoint and tools.
+      McpProviderSession.setMcpProviderSession({
+        environmentId: EnvironmentId.make("source-environment/remote"),
+        threadId,
+        providerSessionId: "mcp-provider-session-fallback",
+        providerInstanceId: codexInstanceId,
+        endpoint: "http://127.0.0.1:0/mcp",
+        authorizationHeader: "Bearer test",
+        capabilities: new Set(),
+      });
+
+      yield* provider.sendTurn({
+        threadId,
+        input: "retry after clean close",
+        attachments: [],
+      });
+
+      const mcpSessionAfterRecovery = McpProviderSession.readMcpProviderSession(threadId);
+      McpProviderSession.clearMcpProviderSession(threadId);
+      const calls = routing.codex.startSession.mock.calls.map((call) => call[0]);
+      routing.codex.startSession.mockImplementation(originalStartSession!);
+
+      assert.equal(calls.length, 3);
+      assert.deepEqual(calls[0]?.resumeCursor, initialCursor);
+      assert.deepEqual(calls[1]?.resumeCursor, initialCursor);
+      assert.equal(calls[2]?.resumeCursor, undefined);
+      assert(
+        mcpSessionAfterRecovery !== undefined,
+        "MCP session must survive a successful fresh-session fallback",
+      );
     }),
   );
 
