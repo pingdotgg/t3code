@@ -9,6 +9,10 @@ import {
   type OrchestrationThreadActivity,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import {
+  formatFileChangeInput,
+  hasFileChangeInput,
+} from "../../../packages/client-runtime/src/work-log/presentation.ts";
 
 import { buildThreadFeed, type ThreadFeedActivity } from "../../mobile/src/lib/threadActivity.ts";
 import { deriveLatestContextWindowSnapshot } from "../../web/src/lib/contextWindow.ts";
@@ -230,6 +234,126 @@ describe("projectActivityPayload", () => {
     expect(mobileRow?.getCopyText()).toBe(`Command run\n${command}\n\nfirst output line`);
   });
 
+  it.each([
+    {
+      toolName: "Edit",
+      input: { old_string: "  return false;\n", new_string: "  return true;\n" },
+    },
+    { toolName: "Edit", input: { old_string: "remove me", new_string: "" } },
+    { toolName: "Write", input: { content: "  export const ready = true;\n" } },
+    { toolName: "Write", input: { content: "" } },
+  ])("retains verbatim $toolName input for expanded rows", ({ toolName, input }) => {
+    const source = makeActivity("claude-edit", "file_change", {
+      toolName,
+      input: { file_path: "src/example.ts", ...input, ignored: "x".repeat(10_000) },
+    });
+    const projected = projectActivityPayload(source);
+    expect(projected.payload).toMatchObject({
+      data: { input, files: [{ path: "src/example.ts" }] },
+    });
+    expect(projectActivityPayload(projected)).toEqual(projected);
+    expect(JSON.stringify(projected).length).toBeLessThan(1_000);
+
+    const [webEntry] = deriveWorkLogEntries([projected]);
+    expect(webEntry).toMatchObject({ toolData: { input } });
+    expect(hasFileChangeInput(webEntry!)).toBe(true);
+    const [mobileGroup] = buildThreadFeed(makeThread([projected]));
+    expect(mobileGroup?.type).toBe("activity-group");
+    if (mobileGroup?.type !== "activity-group") return;
+    const [mobileRow] = mobileGroup.activities;
+    expect(mobileRow?.canExpand).toBe(true);
+    const expected =
+      "content" in input
+        ? `After\n${input.content}`
+        : `Before\n${input.old_string}\n\nAfter\n${input.new_string}`;
+    expect(formatFileChangeInput(webEntry!)).toBe(expected);
+    expect(mobileRow?.getFullDetail()).toContain(expected);
+    expect(mobileRow?.getCopyText()).toContain(expected);
+  });
+
+  it("bounds each field, preserves truncation on replay, and leaves persisted input intact", () => {
+    const input = { old_string: `${"a".repeat(4_095)}😀tail`, new_string: "b".repeat(4_096) };
+    const source = makeActivity("large-edit", "file_change", { toolName: "Edit", input });
+    const projected = projectActivityPayload(source);
+    expect(projected.payload).toMatchObject({
+      data: {
+        input: { old_string: "a".repeat(4_095), new_string: input.new_string },
+        inputTruncated: { old_string: true, new_string: false },
+      },
+    });
+    expect(projectActivityPayload(projected)).toEqual(projected);
+    expect(source.payload).toMatchObject({ data: { input } });
+    const [entry] = deriveWorkLogEntries([projected]);
+    expect(formatFileChangeInput(entry!)).toBe(
+      `Before (truncated)\n${"a".repeat(4_095)}\n\nAfter\n${input.new_string}`,
+    );
+
+    const write = projectActivityPayload(
+      makeActivity("large-write", "file_change", {
+        toolName: "Write",
+        input: { content: "x".repeat(100_000) },
+      }),
+    );
+    expect(write.payload).toMatchObject({
+      data: { input: { content: "x".repeat(4_096) }, inputTruncated: { content: true } },
+    });
+    expect(JSON.stringify(write).length).toBeLessThan(5_000);
+  });
+
+  it.each([undefined, null, [], { content: 123 }, { content: { text: "not a string" } }])(
+    "ignores malformed Write input: %j",
+    (input) => {
+      const projected = projectActivityPayload(
+        makeActivity("invalid-write", "file_change", {
+          toolName: "Write",
+          input,
+        }),
+      );
+      expect(projected.payload).toMatchObject({ data: { toolName: "Write" } });
+      const [entry] = deriveWorkLogEntries([projected]);
+      expect(hasFileChangeInput(entry!)).toBe(false);
+      expect(formatFileChangeInput(entry!)).toBeNull();
+      const withoutDetail = { ...projected, payload: { ...projected.payload, detail: undefined } };
+      const [mobileGroup] = buildThreadFeed(makeThread([withoutDetail]));
+      expect(mobileGroup?.type).toBe("activity-group");
+      if (mobileGroup?.type !== "activity-group") return;
+      expect(mobileGroup.activities[0]?.canExpand).toBe(false);
+      expect(mobileGroup.activities[0]?.getFullDetail()).toBeNull();
+
+      const withPath = {
+        ...withoutDetail,
+        payload: {
+          ...withoutDetail.payload,
+          data: { toolName: "Write", files: [{ path: "src/example.ts" }] },
+        },
+      };
+      const [pathGroup] = buildThreadFeed(makeThread([withPath]));
+      expect(pathGroup?.type).toBe("activity-group");
+      if (pathGroup?.type !== "activity-group") return;
+      expect(pathGroup.activities[0]?.canExpand).toBe(true);
+      expect(pathGroup.activities[0]?.getCopyText()).toContain("src/example.ts");
+    },
+  );
+
+  it.each(["\uD800", `${"x".repeat(4_095)}\uD800`, `${"x".repeat(4_095)}\uD800tail`])(
+    "preserves lone high surrogates without treating them as split pairs (%#)",
+    (content) => {
+      const projected = projectActivityPayload(
+        makeActivity("lone-surrogate", "file_change", {
+          toolName: "Write",
+          input: { content },
+        }),
+      );
+      expect(projected.payload).toMatchObject({
+        data: {
+          input: { content: content.slice(0, 4_096) },
+          inputTruncated: { content: content.length > 4_096 },
+        },
+      });
+      expect(projectActivityPayload(projected)).toEqual(projected);
+    },
+  );
+
   it("slims MCP tool data to the fields the expanded row renders", () => {
     expect(projectActivityPayload(fixtures[4]!).payload).toEqual({
       itemType: "mcp_tool_call",
@@ -321,8 +445,13 @@ describe("projectActivityPayload", () => {
     }
   });
 
-  it("projects snapshot and event transports without mutating their sources", () => {
-    const activity = fixtures[0]!;
+  it.each([
+    fixtures[0]!,
+    makeActivity("transport-edit", "file_change", {
+      toolName: "Edit",
+      input: { file_path: "src/example.ts", old_string: "before", new_string: "after" },
+    }),
+  ])("projects snapshot and event transports without mutating their sources", (activity) => {
     const thread = makeThread([activity]);
     const snapshot = { snapshotSequence: 7, thread };
     const projectedSnapshot = projectThreadDetailSnapshot(snapshot);
