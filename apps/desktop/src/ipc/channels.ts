@@ -110,6 +110,9 @@ export const PREVIEW_RECORDING_FRAME_CHANNEL = "desktop:preview-recording-frame"
 export const PREVIEW_STATE_CHANGE_CHANNEL = "desktop:preview-state-change";
 export const PREVIEW_POINTER_EVENT_CHANNEL = "desktop:preview-pointer-event";
 
+export const OPEN_TERMINAL_CHANNEL = "desktop:open-terminal";
+
+export const REQUEST_TERMINAL_PERMISSION_CHANNEL = "desktop:request-terminal-permission";
 export const MAC_PERMISSION_HELPER_CHANNEL = "desktop:mac-permission-helper";
 
 export const CHECK_SYSTEM_PERMISSION_CHANNEL = "desktop:check-system-permission";

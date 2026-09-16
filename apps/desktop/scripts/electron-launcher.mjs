@@ -20,7 +20,7 @@ const APP_BUNDLE_ID = isDevelopment
   ? `com.t3tools.t3code.dev.${devBundleIdSuffix || "local"}`
   : "com.t3tools.t3code";
 const APP_PROTOCOL_SCHEMES = isDevelopment ? ["t3code-dev"] : ["t3code"];
-const LAUNCHER_VERSION = 19;
+const LAUNCHER_VERSION = 20;
 const developmentMacIconPngPath = NodePath.join(
   repoRoot,
   "assets",
@@ -269,6 +269,8 @@ export function resolveMacBundleInfoPlistStrings(executableName) {
     CFBundleIdentifier: APP_BUNDLE_ID,
     CFBundleExecutable: executableName,
     CFBundleIconFile: "icon.icns",
+    NSAppleEventsUsageDescription:
+      "T3 Code uses your terminal app to open project directories and SSH sessions.",
     NSScreenCaptureUsageDescription:
       "T3 Code captures the active window when you use the snapshot shortcut.",
     NSDocumentsFolderUsageDescription: "T3 Code reads project files you open in the desktop app.",

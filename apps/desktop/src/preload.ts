@@ -175,6 +175,9 @@ contextBridge.exposeInMainWorld("desktopBridge", {
       items,
       ...(position === undefined ? {} : { position }),
     }),
+  requestTerminalPermission: (terminal) =>
+    ipcRenderer.invoke(IpcChannels.REQUEST_TERMINAL_PERMISSION_CHANNEL, terminal),
+  openTerminal: (input) => ipcRenderer.invoke(IpcChannels.OPEN_TERMINAL_CHANNEL, input),
   openExternal: (url: string) => ipcRenderer.invoke(IpcChannels.OPEN_EXTERNAL_CHANNEL, url),
   checkSystemPermission: (pane: string) =>
     ipcRenderer.invoke(IpcChannels.CHECK_SYSTEM_PERMISSION_CHANNEL, pane),
