@@ -51,7 +51,12 @@ export function planThreadUndo(
     readonly snoozedUntil?: string | null;
   } | null,
 ): ThreadUndoPlan {
-  if (action === "snooze") return [{ action: "unsnooze" }];
+  if (action === "snooze") {
+    // Undoing a reschedule restores the previous wake time rather than waking.
+    return thread?.snoozedUntil != null
+      ? [{ action: "snooze", snoozedUntil: thread.snoozedUntil }]
+      : [{ action: "unsnooze" }];
+  }
   const pin: ThreadUndoStep = {
     action: "pin",
     ...(thread?.pinOrderKey != null ? { orderKey: thread.pinOrderKey } : {}),

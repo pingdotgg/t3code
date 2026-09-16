@@ -2,7 +2,7 @@ import * as ThreadUndo from "@t3tools/client-runtime/state/thread-undo";
 import { useSyncExternalStore } from "react";
 
 type UndoNotice = {
-  readonly action: "Settled" | "Snoozed" | "Unpinned";
+  readonly action: "Settled" | "Snoozed" | "Rescheduled" | "Unpinned";
   readonly claim: ReturnType<typeof ThreadUndo.begin>;
   readonly undo: () => Promise<void>;
 };
