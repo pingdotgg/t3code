@@ -12,6 +12,7 @@ import {
   type UploadChatImageAttachment,
 } from "@t3tools/contracts";
 import type { DocumentPickerResult } from "expo-document-picker";
+import type { ImagePickerResult } from "expo-image-picker";
 import { estimateBase64ByteSize } from "./base64";
 import {
   COMPOSER_ATTACHMENT_DIRECTORY,
@@ -120,7 +121,7 @@ export function isFileBackedComposerAttachment(
 
 /**
  * The bytes a draft attachment can be previewed from without the server. A picture taken from
- * the photo library or the clipboard owns no file and carries its bytes inline, and its
+ * the camera, photo library, or clipboard owns no file and carries its bytes inline, and its
  * `attachmentId` is a local draft id the server has never seen — so falling back to a remote
  * asset for one only ever fails. Returns undefined when the attachment really is remote-only.
  */
@@ -349,7 +350,7 @@ const PHOTO_MAX_EDGE = 2048;
 const PHOTO_JPEG_QUALITY = 0.85;
 
 /**
- * Renders a photo-library pick to a provider-readable JPEG. Decode, downscale, and encode run
+ * Renders a camera or photo-library pick to a provider-readable JPEG. Decode, downscale, and encode run
  * natively; only the bounded result crosses the bridge. Camera photos are 12-48 MP HEIC files,
  * so a full-size conversion is both slow to transfer and far more than a model can use.
  */
@@ -381,11 +382,11 @@ async function renderPhotoAsJpeg(uri: string): Promise<{ base64: string; uri: st
   }
 }
 
-async function loadImagePicker() {
+async function loadImagePicker(unavailableMessage: string) {
   try {
     return await import("expo-image-picker");
   } catch (error) {
-    throw new Error("The photo library is unavailable right now.", { cause: error });
+    throw new Error(unavailableMessage, { cause: error });
   }
 }
 
@@ -408,11 +409,31 @@ export async function pickComposerImages(input: { readonly existingCount: number
   };
 }
 
+export async function takeComposerPhoto(input: { readonly existingCount: number }): Promise<{
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly error: string | null;
+}> {
+  return pickComposerMediaFrom("camera", input);
+}
+
 /** Videos use file uploads; omit maxVideoBytes for image-only destinations. */
 export async function pickComposerMedia(input: {
   readonly existingCount: number;
   readonly maxVideoBytes?: number;
 }): Promise<{
+  readonly attachments: ReadonlyArray<DraftComposerAttachment>;
+  readonly error: string | null;
+}> {
+  return pickComposerMediaFrom("library", input);
+}
+
+async function pickComposerMediaFrom(
+  source: "camera" | "library",
+  input: {
+    readonly existingCount: number;
+    readonly maxVideoBytes?: number;
+  },
+): Promise<{
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;
   readonly error: string | null;
 }> {
@@ -426,34 +447,63 @@ export async function pickComposerMedia(input: {
 
   let imagePicker: Awaited<ReturnType<typeof loadImagePicker>>;
   try {
-    imagePicker = await loadImagePicker();
+    imagePicker = await loadImagePicker(
+      source === "camera"
+        ? "The camera is unavailable right now."
+        : "The photo library is unavailable right now.",
+    );
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "The photo library is unavailable right now.",
+      error:
+        error instanceof Error
+          ? error.message
+          : source === "camera"
+            ? "The camera is unavailable right now."
+            : "The photo library is unavailable right now.",
     };
   }
 
   // The picker covers the Android activity, which reports the app as
   // backgrounded; the guard keeps background-triggered restarts away mid-pick.
   const endHandoff = beginForegroundHandoff();
-  let result: Awaited<ReturnType<typeof imagePicker.launchImageLibraryAsync>>;
+  let result: ImagePickerResult;
   try {
-    result = await imagePicker.launchImageLibraryAsync({
-      mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
-      allowsMultipleSelection: true,
-      selectionLimit: remainingSlots,
-      // Bytes stay in the picker's file until we know how much of them we need. Asking for
-      // base64 here made iOS decode and re-encode every camera photo at full resolution and
-      // hand JS a 10 MB+ string, which stalled the composer for seconds.
-      base64: false,
-      quality: 1,
-      shouldDownloadFromNetwork: true,
-    });
+    if (source === "camera") {
+      const permission = await imagePicker.requestCameraPermissionsAsync();
+      if (!permission.granted) {
+        return {
+          attachments: [],
+          error: "Camera access is required to take a photo.",
+        };
+      }
+      result = await imagePicker.launchCameraAsync({
+        mediaTypes: ["images"],
+        base64: false,
+        quality: 1,
+      });
+    } else {
+      result = await imagePicker.launchImageLibraryAsync({
+        mediaTypes: input.maxVideoBytes === undefined ? ["images"] : ["images", "videos"],
+        allowsMultipleSelection: true,
+        selectionLimit: remainingSlots,
+        // Bytes stay in the picker's file until we know how much of them we need. Asking for
+        // base64 here made iOS decode and re-encode every camera photo at full resolution and
+        // hand JS a 10 MB+ string, which stalled the composer for seconds.
+        base64: false,
+        quality: 1,
+        shouldDownloadFromNetwork: true,
+      });
+    }
   } catch (error) {
     return {
       attachments: [],
-      error: error instanceof Error ? error.message : "Could not open the photo library.",
+      error:
+        error instanceof Error
+          ? error.message
+          : source === "camera"
+            ? "Could not open the camera."
+            : "Could not open the photo library.",
     };
   } finally {
     endHandoff();

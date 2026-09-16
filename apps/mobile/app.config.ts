@@ -366,13 +366,22 @@ const config: ExpoConfig = {
     [
       "expo-camera",
       {
-        cameraPermission: "Allow T3 Code to access your camera so you can scan pairing QR codes.",
+        cameraPermission:
+          "Allow T3 Code to access your camera to scan pairing QR codes and take photos for attachments.",
         microphonePermission: false,
         barcodeScannerEnabled: true,
         recordAudioAndroid: false,
       },
     ],
-    ["expo-image-picker", { photosPermission: false, microphonePermission: false }],
+    [
+      "expo-image-picker",
+      {
+        photosPermission: false,
+        cameraPermission:
+          "Allow T3 Code to access your camera to scan pairing QR codes and take photos for attachments.",
+        microphonePermission: false,
+      },
+    ],
     [
       "expo-splash-screen",
       {

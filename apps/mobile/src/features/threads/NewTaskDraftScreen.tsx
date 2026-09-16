@@ -89,6 +89,7 @@ import {
   pickComposerFiles,
   pickComposerMedia,
   removePersistedComposerAttachmentFile,
+  takeComposerPhoto,
   type DraftComposerFileAttachment,
 } from "../../lib/composerImages";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
@@ -990,22 +991,26 @@ export function NewTaskDraftScreen(props: {
   });
   const showBranchLoading = flow.branchesLoading && flow.availableBranches.length === 0;
 
-  async function handlePickMedia(): Promise<void> {
+  async function handlePickMedia(source: "camera" | "library"): Promise<void> {
     if (isComposerInteractionLocked || voiceInput.isBusy) {
       return;
     }
     const capabilities = selectedEnvironmentServerConfig?.environment.capabilities;
     const insertion = flow.draftKey ? captureComposerDraftInsertion(flow.draftKey) : undefined;
-    const result = await pickComposerMedia({
-      existingCount:
-        flow.draftKey && insertion
-          ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
-          : flow.attachments.length,
-      maxVideoBytes:
-        capabilities?.attachmentUploads === true
-          ? capabilities.fileAttachments?.maxUploadBytes
-          : undefined,
-    });
+    const existingCount =
+      flow.draftKey && insertion
+        ? countComposerDraftAttachmentsAfterSelection(flow.draftKey, insertion)
+        : flow.attachments.length;
+    const result =
+      source === "camera"
+        ? await takeComposerPhoto({ existingCount })
+        : await pickComposerMedia({
+            existingCount,
+            maxVideoBytes:
+              capabilities?.attachmentUploads === true
+                ? capabilities.fileAttachments?.maxUploadBytes
+                : undefined,
+          });
     const rejectedCount =
       result.attachments.length > 0 ? flow.appendAttachments(result.attachments, insertion) : 0;
     const problems = [
@@ -1015,7 +1020,10 @@ export function NewTaskDraftScreen(props: {
         : []),
     ];
     if (problems.length > 0) {
-      Alert.alert("Could not attach photo or video", problems.join("\n\n"));
+      Alert.alert(
+        source === "camera" ? "Could not take photo" : "Could not attach photo or video",
+        problems.join("\n\n"),
+      );
     }
   }
 
@@ -1665,7 +1673,8 @@ export function NewTaskDraftScreen(props: {
                     supportsFiles={Boolean(
                       selectedEnvironmentServerConfig?.environment.capabilities.fileAttachments,
                     )}
-                    onPickMedia={handlePickMedia}
+                    onTakePhoto={() => handlePickMedia("camera")}
+                    onPickMedia={() => handlePickMedia("library")}
                     onPickFiles={handlePickFiles}
                   />
                   <View className="min-w-0 flex-1 flex-row items-center justify-end gap-2">

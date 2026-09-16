@@ -6,6 +6,8 @@ const mocks = vi.hoisted(() => ({
   documentUri: "file:///documents",
   pickFile: vi.fn(),
   pickMedia: vi.fn(),
+  takePhoto: vi.fn(),
+  requestCameraPermission: vi.fn(),
   copy: vi.fn(),
   delete: vi.fn(),
   open: vi.fn(),
@@ -80,7 +82,11 @@ vi.mock("expo-file-system", () => {
   };
 });
 
-vi.mock("expo-image-picker", () => ({ launchImageLibraryAsync: mocks.pickMedia }));
+vi.mock("expo-image-picker", () => ({
+  launchImageLibraryAsync: mocks.pickMedia,
+  launchCameraAsync: mocks.takePhoto,
+  requestCameraPermissionsAsync: mocks.requestCameraPermission,
+}));
 vi.mock("expo-document-picker", () => ({ getDocumentAsync: mocks.pickFile }));
 vi.mock("expo-image-manipulator", () => ({
   SaveFormat: { JPEG: "jpeg", PNG: "png", WEBP: "webp" },
@@ -94,6 +100,7 @@ import {
   pickComposerImages,
   pickComposerMedia,
   removePersistedComposerAttachmentFile,
+  takeComposerPhoto,
 } from "./composerImages";
 import { isForegroundHandoffActive } from "./foreground-handoff";
 import { retainComposerAttachmentFile } from "./composerAttachmentFiles";
@@ -103,6 +110,8 @@ describe("composer file attachments", () => {
     mocks.documentUri = "file:///documents";
     mocks.pickFile.mockReset();
     mocks.pickMedia.mockReset();
+    mocks.takePhoto.mockReset();
+    mocks.requestCameraPermission.mockReset();
     mocks.copy.mockReset();
     mocks.delete.mockReset();
     mocks.open.mockReset();
@@ -152,6 +161,54 @@ describe("composer file attachments", () => {
         };
         return context;
       });
+      mocks.requestCameraPermission.mockResolvedValue({ granted: true });
+    });
+
+    it("requests camera access and attaches a captured photo", async () => {
+      mocks.takePhoto.mockResolvedValue({ canceled: false, assets: [photo] });
+
+      const result = await takeComposerPhoto({ existingCount: 0 });
+
+      expect(mocks.requestCameraPermission).toHaveBeenCalledOnce();
+      expect(mocks.takePhoto).toHaveBeenCalledWith({
+        mediaTypes: ["images"],
+        base64: false,
+        quality: 1,
+      });
+      expect(mocks.pickMedia).not.toHaveBeenCalled();
+      expect(result).toEqual({
+        attachments: [
+          expect.objectContaining({
+            type: "image",
+            name: "photo.jpg",
+            mimeType: "image/jpeg",
+            previewUri: rendered.uri,
+          }),
+        ],
+        error: null,
+      });
+    });
+
+    it("does not open the camera when access is denied", async () => {
+      mocks.requestCameraPermission.mockResolvedValue({ granted: false });
+
+      await expect(takeComposerPhoto({ existingCount: 0 })).resolves.toEqual({
+        attachments: [],
+        error: "Camera access is required to take a photo.",
+      });
+
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
+      expect(isForegroundHandoffActive()).toBe(false);
+    });
+
+    it("does not request camera access when the draft is already full", async () => {
+      await expect(takeComposerPhoto({ existingCount: 8 })).resolves.toEqual({
+        attachments: [],
+        error: "You can attach up to 8 attachments per message.",
+      });
+
+      expect(mocks.requestCameraPermission).not.toHaveBeenCalled();
+      expect(mocks.takePhoto).not.toHaveBeenCalled();
     });
 
     it.each(["image/heic", "image/heif", undefined])(
