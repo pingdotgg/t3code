@@ -41,3 +41,21 @@ export const removeAntigravitySessionFiles = Effect.fn("removeAntigravitySession
   },
   Effect.catch(() => Effect.logWarning("Could not remove temporary Antigravity session files.")),
 );
+
+/**
+ * Removes every per-process runtime temp directory under the profile. Call
+ * once when the driver starts, before it launches any process, so a previous
+ * server that was killed mid-session cannot leave unpacked runtimes behind.
+ * Only the profile-owned directory is touched. The system temp directory
+ * belongs to other programs and Windows does not lock data files, so sweeping
+ * it could gut a live extraction.
+ */
+export const removeAntigravityRuntimeTempDirs = Effect.fn("removeAntigravityRuntimeTempDirs")(
+  function* (tempDirectory: string) {
+    const fs = yield* FileSystem.FileSystem;
+    yield* fs.remove(tempDirectory, { recursive: true, force: true });
+  },
+  Effect.catch(() =>
+    Effect.logWarning("Could not remove leftover Antigravity runtime temp files."),
+  ),
+);
