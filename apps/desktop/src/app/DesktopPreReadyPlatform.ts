@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - pre-ready Electron setup reads settings and prepares the Linux desktop entry synchronously before app services are available.
+// @effect-diagnostics globalTimers:off -- Bounded SIGKILL for a fire-and-forget icon-cache helper before app services exist.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,12 +13,66 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 
 import * as DesktopEarlyElectronStartup from "./DesktopEarlyElectronStartup.ts";
 import { resolveDesktopAppBranding } from "./DesktopEnvironment.ts";
-import { renderUrlHandlerDesktopEntry } from "./DesktopLinuxUrlHandler.ts";
+import {
+  linuxDesktopIconInstallOperations,
+  renderUrlHandlerDesktopEntry,
+} from "./DesktopLinuxUrlHandler.ts";
 import * as ElectronProtocol from "../electron/ElectronProtocol.ts";
 
 export interface DesktopPreReadyCommandLineReader {
   readonly hasSwitch: (switchName: string) => boolean;
   readonly getSwitchValue: (switchName: string) => string;
+}
+
+function linuxDesktopIconNeedsCopy(sourcePath: string, targetPath: string): boolean {
+  if (!NodeFS.existsSync(sourcePath)) return false;
+  if (!NodeFS.existsSync(targetPath)) return true;
+  try {
+    return NodeFS.statSync(sourcePath).size !== NodeFS.statSync(targetPath).size;
+  } catch {
+    return true;
+  }
+}
+
+function refreshLinuxDesktopIconCache(cacheDir: string): void {
+  try {
+    const child = NodeChildProcess.spawn("gtk-update-icon-cache", ["-f", "-t", cacheDir], {
+      stdio: "ignore",
+    });
+    child.unref();
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+    }, 2000);
+    timer.unref();
+    const stop = () => clearTimeout(timer);
+    child.on("error", stop);
+    child.on("exit", stop);
+  } catch {
+    // Icon files are already in place; a missing cache tool is not fatal.
+  }
+}
+
+function installLinuxDesktopIconsFromAppImage(input: {
+  readonly appDir: string;
+  readonly dataHome: string;
+  readonly desktopEntryName: string;
+}): void {
+  const pending = linuxDesktopIconInstallOperations({
+    packagedHicolorRoot: NodePath.posix.join(input.appDir, "usr/share/icons/hicolor"),
+    dataHome: input.dataHome,
+    desktopEntryName: input.desktopEntryName,
+  }).filter((operation) => linuxDesktopIconNeedsCopy(operation.sourcePath, operation.targetPath));
+  if (pending.length === 0) return;
+  const directories = new Set(
+    pending.map((operation) => NodePath.posix.dirname(operation.targetPath)),
+  );
+  for (const directory of directories) {
+    NodeFS.mkdirSync(directory, { recursive: true });
+  }
+  for (const operation of pending) {
+    NodeFS.copyFileSync(operation.sourcePath, operation.targetPath);
+  }
+  refreshLinuxDesktopIconCache(NodePath.posix.join(input.dataHome, "icons/hicolor"));
 }
 
 function readCommandLineSwitchValue(
@@ -62,11 +118,10 @@ export const make = Effect.gen(function* () {
       // The portal also requires a valid desktop entry. An AppImage update may
       // have removed the executable referenced by the previous launch's entry.
       try {
-        const applicationsDir = NodePath.posix.join(
+        const dataHome =
           process.env.XDG_DATA_HOME?.trim() ||
-            NodePath.posix.join(NodeOS.homedir(), ".local", "share"),
-          "applications",
-        );
+          NodePath.posix.join(NodeOS.homedir(), ".local", "share");
+        const applicationsDir = NodePath.posix.join(dataHome, "applications");
         NodeFS.mkdirSync(applicationsDir, { recursive: true });
         NodeFS.writeFileSync(
           NodePath.posix.join(applicationsDir, linux.linuxDesktopEntryName),
@@ -80,8 +135,20 @@ export const make = Effect.gen(function* () {
           }),
           "utf8",
         );
+        const appDir = process.env.APPDIR?.trim();
+        if (appDir) {
+          // Stay inside this Effect.sync. Awaiting fs.promises here returns to
+          // the event loop, Electron emits ready, and Clerk's
+          // registerSchemesAsPrivileged then throws.
+          installLinuxDesktopIconsFromAppImage({
+            appDir,
+            dataHome,
+            desktopEntryName: linux.linuxDesktopEntryName,
+          });
+        }
       } catch {
-        // The URL handler retries with the full environment and logs failures.
+        // Later URL-handler registration retries the desktop entry and logs failures.
+        // Icon install is best-effort and is not retried.
       }
       // Chromium caches its portal registration during startup. Set the identity
       // before any asynchronous work can initialize it with Electron's default.
