@@ -177,7 +177,8 @@ function matchMedia() {
 let MessagesTimeline: typeof import("./MessagesTimeline").MessagesTimeline;
 let resolvePreviewAnnotationImage: typeof import("./MessagesTimeline").resolvePreviewAnnotationImage;
 
-beforeAll(async () => {
+const ElementStub = class ElementStub {};
+function stubDomGlobals() {
   const classList = {
     add: () => {},
     remove: () => {},
@@ -185,6 +186,7 @@ beforeAll(async () => {
     contains: () => false,
   };
 
+  vi.stubGlobal("Element", ElementStub);
   vi.stubGlobal("localStorage", {
     getItem: () => null,
     setItem: () => {},
@@ -192,6 +194,7 @@ beforeAll(async () => {
     clear: () => {},
   });
   vi.stubGlobal("window", {
+    Element: ElementStub,
     matchMedia,
     addEventListener: () => {},
     removeEventListener: () => {},
@@ -208,7 +211,11 @@ beforeAll(async () => {
       offsetHeight: 0,
     },
   });
+}
 
+beforeEach(stubDomGlobals);
+beforeAll(async () => {
+  stubDomGlobals();
   ({ MessagesTimeline, resolvePreviewAnnotationImage } = await import("./MessagesTimeline"));
 }, 30_000);
 
