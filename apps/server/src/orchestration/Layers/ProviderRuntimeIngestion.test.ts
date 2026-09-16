@@ -515,6 +515,84 @@ describe("ProviderRuntimeIngestion", () => {
     expect(thread?.session?.activeTurnId).toBeNull();
   });
 
+  it("drops an armed usage-limit resume when the session recovers to interrupted", async () => {
+    const harness = await createHarness();
+    // The decider judges the window against the real server clock, so the
+    // reset time has to be a genuine future timestamp.
+    const resetsAtMs = (await Effect.runPromise(Clock.currentTimeMillis)) + 60 * 60 * 1000;
+
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-interrupt-limit-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:00.000Z",
+        turnId: asTurnId("turn-1"),
+      },
+      {
+        type: "turn.completed",
+        eventId: asEventId("evt-interrupt-limit-completed"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:01.000Z",
+        turnId: asTurnId("turn-1"),
+        payload: {
+          state: "failed",
+          errorMessage: "Codex usage limit reached.",
+          failureReason: "usage_limit",
+          failureResetsAt: resetsAtMs,
+        },
+      },
+    ]);
+
+    const failedThread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    const resumeAt = failedThread?.session?.lastErrorResetsAt;
+    expect(typeof resumeAt).toBe("string");
+    if (typeof resumeAt !== "string") return;
+    await harness.dispatch({
+      type: "thread.usage-resume.arm",
+      commandId: CommandId.make("cmd-usage-resume-arm-interrupt"),
+      threadId: ThreadId.make("thread-1"),
+      resumeAt,
+      createdAt: "2026-01-01T00:00:02.000Z",
+    });
+    expect((await harness.readThreadShell()).usageLimitResumeAt).toBe(resumeAt);
+
+    // A provider-driven turn bypasses the decider's turn-start disarm. When
+    // it aborts, the session recovers to interrupted and the usage-limit
+    // classification clears — the stale arm must go with it, or the sweep
+    // would fire an unsolicited continuation at the old reset time.
+    await harness.emitAndDrain([
+      {
+        type: "turn.started",
+        eventId: asEventId("evt-interrupt-resume-started"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:03.000Z",
+        turnId: asTurnId("turn-2"),
+      },
+      {
+        type: "turn.aborted",
+        eventId: asEventId("evt-interrupt-resume-aborted"),
+        provider: ProviderDriverKind.make("codex"),
+        threadId: asThreadId("thread-1"),
+        createdAt: "2026-01-01T00:00:04.000Z",
+        turnId: asTurnId("turn-2"),
+        payload: { reason: "Interrupted." },
+      },
+    ]);
+
+    const thread = (await harness.readModel()).threads.find(
+      (entry) => entry.id === asThreadId("thread-1"),
+    );
+    expect(thread?.session?.status).toBe("interrupted");
+    expect(thread?.session?.lastErrorKind).toBeUndefined();
+    expect(thread?.usageLimitResumeAt).toBeNull();
+  });
+
   it.each([
     { delivery: "buffered", responseStreamingMode: "paragraph" as const },
     { delivery: "streamed", responseStreamingMode: "token" as const },
