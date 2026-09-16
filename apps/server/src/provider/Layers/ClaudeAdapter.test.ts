@@ -2489,6 +2489,53 @@ describe("ClaudeAdapterLive", () => {
         payload.errorMessage,
         "Claude usage limit reached. Send the message again once the limit resets.",
       );
+      assert.equal(payload.failureResetsAt, (Math.floor(nowMs / 1000) + 2 * 60 * 60) * 1000);
+    }).pipe(
+      Effect.provideService(Random.Random, makeDeterministicRandomService()),
+      Effect.provide(harness.layer),
+    );
+  });
+
+  it.effect("drops the stale reset when a window re-rejects without one", () => {
+    const harness = makeHarness();
+    return Effect.gen(function* () {
+      const adapter = yield* ClaudeAdapter;
+
+      const runtimeEventsFiber = yield* adapter.streamEvents.pipe(
+        Stream.takeUntil((event) => event.type === "turn.completed"),
+        Stream.runCollect,
+        Effect.forkChild,
+      );
+
+      const session = yield* adapter.startSession({
+        threadId: THREAD_ID,
+        provider: ProviderDriverKind.make("claudeAgent"),
+        runtimeMode: "full-access",
+      });
+      yield* adapter.sendTurn({ threadId: session.threadId, input: "hello", attachments: [] });
+
+      const nowMs = yield* Clock.currentTimeMillis;
+      const rejection = (uuid: string, resetsAt?: number) =>
+        ({
+          type: "rate_limit_event",
+          rate_limit_info: {
+            status: "rejected",
+            rateLimitType: "five_hour",
+            resetsAt,
+          },
+          session_id: "sdk-session-stale-reset",
+          uuid,
+        }) as unknown as SDKMessage;
+      harness.query.emit(rejection("rate-limit-with-reset", Math.floor(nowMs / 1000) + 60 * 60));
+      // The same window rejects again without a credible resetsAt: the stamp
+      // the first rejection left must not leak into the failure's window.
+      harness.query.emit(rejection("rate-limit-no-reset"));
+      harness.query.finish();
+
+      const payload = completedTurn(Array.from(yield* Fiber.join(runtimeEventsFiber)));
+      assert.equal(payload.state, "failed");
+      assert.equal(payload.failureReason, "usage_limit");
+      assert.equal(payload.failureResetsAt, undefined);
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),
       Effect.provide(harness.layer),

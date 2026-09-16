@@ -4071,6 +4071,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             resetsAtMs <= nowMs + CLAUDE_USAGE_LIMIT_MAX_WAIT_MS
           ) {
             context.turnState.usageLimitResetsAtMsByType.set(limitType, resetsAtMs);
+          } else {
+            // A re-rejection that no longer reports a credible reset must not
+            // keep the stamp an earlier rejection left behind.
+            context.turnState.usageLimitResetsAtMsByType.delete(limitType);
           }
         } else if (
           rateLimitInfo.status === "allowed" ||
