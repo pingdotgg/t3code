@@ -15,7 +15,10 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Spinner } from "../ui/spinner";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { composerFloatingLayerProps } from "./composerEventScope";
-import { resolveComposerDispatchMode } from "./composerDispatch";
+import {
+  alternateComposerDispatchAction,
+  resolveComposerDispatchMode,
+} from "@t3tools/client-runtime/state/composer-dispatch";
 
 interface PendingActionState {
   questionIndex: number;
@@ -96,15 +99,11 @@ export const ComposerPrimaryActions = memo(function ComposerPrimaryActions({
   const isQueuing =
     !isEditingQueuedMessage &&
     resolveComposerDispatchMode({
-      phase: isRunning ? "running" : "ready",
+      running: isRunning,
       activeTurnDefault: followUpBehavior,
       alternateModifier: shortcutModifiers.metaKey || shortcutModifiers.ctrlKey,
     }) === "queue";
-  const alternateAction = resolveComposerDispatchMode({
-    phase: "running",
-    activeTurnDefault: followUpBehavior,
-    alternateModifier: true,
-  });
+  const alternateAction = alternateComposerDispatchAction(followUpBehavior);
   const isSendDisabled = sendDisabledReason !== null;
   const stageBackdropVariant = useSidebarStageBackdropVariant(
     environmentIdentificationMode === "artwork",

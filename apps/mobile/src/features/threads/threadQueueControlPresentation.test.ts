@@ -52,6 +52,25 @@ describe("threadQueueControlPresentation", () => {
     expect(busy.canSteer).toBe(false);
   });
 
+  it("keeps the row already open in the composer from being reopened or steered", () => {
+    const editing = resolveThreadQueueRowControls({
+      busy: false,
+      canPromoteToSteer: true,
+      canReorder: true,
+      index: 1,
+      isEditing: true,
+      queuedCount: 3,
+      text: "Being edited",
+    });
+
+    expect(editing.isEditing).toBe(true);
+    expect(editing.canEdit).toBe(false);
+    expect(editing.canSteer).toBe(false);
+    // Reordering and removing a message stay available while it is edited.
+    expect(editing.canMoveUp).toBe(true);
+    expect(editing.canDismiss).toBe(true);
+  });
+
   it("builds cancelQueuedRun command arguments for removal", () => {
     expect(
       buildCancelQueuedRunCommand({
