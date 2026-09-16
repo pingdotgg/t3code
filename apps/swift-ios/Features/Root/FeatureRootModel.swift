@@ -96,6 +96,8 @@ public final class FeatureRootModel {
     private var pendingCompletionSubmissionIDs: Set<String> = []
     private var pendingDiscardSubmissionIDs: Set<String> = []
     private var detailRecency: [String] = []
+    private var selectedThreadID: String?
+    @ObservationIgnored private var selectedThreadLoadTask: Task<Void, Never>?
     private var detailLoadGeneration: UInt64 = 0
     private var detailLoadRevisions: [String: UInt64] = [:]
     private var detailLoadRequestRevision: UInt64 = 0
@@ -721,6 +723,34 @@ public final class FeatureRootModel {
         }
     }
 
+    /// The workspace selection owns transport work. Detail views can disappear
+    /// during split-view navigation even while their thread is being opened.
+    func selectThread(_ id: String?) {
+        guard selectedThreadID != id else { return }
+        selectedThreadLoadTask?.cancel()
+        selectedThreadLoadTask = nil
+        if let previousID = selectedThreadID {
+            releaseThread(previousID)
+        }
+        selectedThreadID = id
+        if let id {
+            loadSelectedThread(id, fresh: false)
+        }
+    }
+
+    func reloadSelectedThread(_ id: String) {
+        guard selectedThreadID == id else { return }
+        loadSelectedThread(id, fresh: true)
+    }
+
+    private func loadSelectedThread(_ id: String, fresh: Bool) {
+        selectedThreadLoadTask?.cancel()
+        selectedThreadLoadTask = Task {
+            guard !Task.isCancelled else { return }
+            _ = await detail(for: id, force: true, fresh: fresh)
+        }
+    }
+
     public func detail(for id: String, force: Bool = false, fresh: Bool = false) async -> FeatureThreadDetail? {
         if !force, let cached = details[id] {
             return cached
@@ -744,6 +774,7 @@ public final class FeatureRootModel {
         }
         do {
             var detail = try await client.loadThread(id: id, fresh: fresh)
+            try Task.checkCancellation()
             guard currentEnvironmentIdentity == environment else {
                 return details[id]
             }
@@ -797,7 +828,7 @@ public final class FeatureRootModel {
         }
     }
 
-    /// Ends any selected-thread transport work when its detail view closes.
+    /// Releases transport work when the workspace changes or clears selection.
     public func releaseThread(_ id: String) {
         client.releaseThread(id: id)
         markDetailRecentlyUsed(id)

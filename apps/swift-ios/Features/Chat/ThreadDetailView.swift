@@ -24,7 +24,6 @@ public struct ThreadDetailView: View {
     @State private var isPreparingRewind = false
     @State private var isPreparingInput = false
     @State private var submittingCompaction = false
-    @State private var isLoading = true
     @State private var sendFailed = false
     @State private var feedbackMessages: [FeatureMessage] = []
     @State private var feedbackRevision: UInt64 = 0
@@ -102,11 +101,6 @@ public struct ThreadDetailView: View {
             }
         }
         .task(id: thread.id) {
-            isLoading = true
-            _ = await model.detail(for: thread.id, force: true)
-            isLoading = false
-        }
-        .task(id: thread.id) {
             // A cached thread can already show its composer while the server
             // is catching up. Local drafts must not wait for that request.
             await model.checkRewindRecovery(for: currentThread)
@@ -143,7 +137,6 @@ public struct ThreadDetailView: View {
             }
         }
         .onDisappear {
-            model.releaseThread(thread.id)
             persistDraftBeforeLeaving()
         }
         .sheet(item: $toolSurface) { surface in
@@ -683,11 +676,12 @@ public struct ThreadDetailView: View {
     }
 
     private func reloadThread() {
-        isLoading = true
-        Task {
-            _ = await model.detail(for: thread.id, force: true, fresh: true)
-            isLoading = false
-        }
+        model.reloadSelectedThread(thread.id)
+    }
+
+    private var isLoading: Bool {
+        model.detailLoadStates[thread.id] == .loading
+            || (model.details[thread.id] == nil && model.detailLoadStates[thread.id] == nil)
     }
 
     private var threadConnectionState: FeatureConnection.State? {
