@@ -103,6 +103,7 @@ import {
 import { formatProviderSkillDisplayName } from "@t3tools/client-runtime/providerSkills";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 import { registerComposerInlineTokenPaste } from "./composerInlineTokenPaste";
+import { ComposerPromptEditorTiptap } from "./ComposerPromptEditorTiptap";
 import { didComposerSelectionChangeVisibly } from "./composerSelection";
 import {
   $consumeComposerCitationCommentRequest,
@@ -414,6 +415,16 @@ function isComposerInlineTokenNode(candidate: unknown): candidate is ComposerInl
 
 function resolvedThemeFromDocument(): "light" | "dark" {
   return document.documentElement.classList.contains("dark") ? "dark" : "light";
+}
+
+function scrollLexicalCaretIntoView(): void {
+  // Programmatic caret moves (controlled rewrites, focus restores) don't
+  // trigger native scroll-into-view, so the composer follows explicitly.
+  const selection = window.getSelection();
+  const anchorNode = selection?.anchorNode;
+  if (!selection?.isCollapsed || !anchorNode) return;
+  const element = anchorNode instanceof Element ? anchorNode : anchorNode.parentElement;
+  element?.scrollIntoView({ block: "nearest" });
 }
 
 function skillSignature(skills: ReadonlyArray<ServerProviderSkill>): string {
@@ -855,9 +866,14 @@ export interface ComposerPromptEditorHandle {
   isCaretOnVisualEdge: (edge: "start" | "end") => boolean;
 }
 
-interface ComposerPromptEditorProps {
+export interface ComposerPromptEditorProps {
   value: string;
   cursor: number;
+  /**
+   * Render the Tiptap rich text surface instead of the Lexical plain
+   * surface. The stored prompt stays markdown either way.
+   */
+  richTextEnabled?: boolean;
   /** Draft records behind the prompt's context references, keyed by context id. */
   contextRecords: ComposerDraftContextRecords;
   /** Structured clipboard payload for the given referenced ids, or null to skip. */
@@ -1764,6 +1780,7 @@ function ComposerPromptEditorInner({
     queueMicrotask(() => {
       isApplyingControlledUpdateRef.current = false;
     });
+    if (isFocused) scrollLexicalCaretIntoView();
   }, [cursor, editor, skillsSignature, value]);
 
   const focusAt = useCallback(
@@ -1779,6 +1796,7 @@ function ComposerPromptEditorInner({
       editor.update(() => {
         $setSelectionAtComposerOffset(boundedCursor);
       });
+      scrollLexicalCaretIntoView();
       if (boundedCursor === snapshotRef.current.cursor) return;
       snapshotRef.current = {
         value: snapshotRef.current.value,
@@ -2065,6 +2083,7 @@ function ComposerPromptEditorInner({
 export function ComposerPromptEditor({
   value,
   cursor,
+  richTextEnabled,
   contextRecords,
   buildContextClipboardFragment,
   importContextFragment,
@@ -2105,6 +2124,35 @@ export function ComposerPromptEditor({
     }),
     [],
   );
+
+  // Branching remounts the surface; both initialize from the controlled
+  // markdown value, so flipping the setting never loses the draft.
+  if (richTextEnabled) {
+    return (
+      <ComposerPromptEditorTiptap
+        value={value}
+        cursor={cursor}
+        contextRecords={contextRecords}
+        buildContextClipboardFragment={buildContextClipboardFragment}
+        importContextFragment={importContextFragment}
+        skills={skills}
+        disabled={disabled}
+        placeholder={placeholder}
+        {...(containerClassName ? { containerClassName } : {})}
+        onChange={onChange}
+        {...(onVisibleSelectionChange ? { onVisibleSelectionChange } : {})}
+        onPaste={onPaste}
+        {...(onCitationSubmitAndSend ? { onCitationSubmitAndSend } : {})}
+        editorRef={editorRef}
+        {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+        {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
+        {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
+        {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
+        {...(className ? { className } : {})}
+        {...(placeholderClassName ? { placeholderClassName } : {})}
+      />
+    );
+  }
 
   return (
     <ComposerSkillsContext value={skills}>

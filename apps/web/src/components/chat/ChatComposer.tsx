@@ -79,6 +79,7 @@ import {
   replaceTextRange,
 } from "../../composer-logic";
 import { DISCONNECTED_COMPOSER_PLACEHOLDER } from "../../composerPlaceholder";
+import { listContinuationForEnter, listIndentForTab } from "../../composer-list-continuation";
 import {
   deriveComposerSendState,
   getAntigravitySendBlockReason,
@@ -3970,6 +3971,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       submitComposer(undefined, submissionIntent);
       return true;
     }
+    // List continuation and indentation run as store replacements so the
+    // Lexical and Tiptap surfaces behave (and serialize) identically.
+    if (key === "Enter" || (key === "Tab" && !event.shiftKey)) {
+      const selection = composerEditorRef.current?.readSelectionRange();
+      const snapshot = readComposerSnapshot();
+      if (selection && selection.start === selection.end && snapshot.value === promptRef.current) {
+        const edit =
+          key === "Enter"
+            ? listContinuationForEnter(snapshot.value, selection.start)
+            : listIndentForTab(snapshot.value, selection.start, selection.end);
+        if (edit && applyPromptReplacement(edit.start, edit.end, edit.replacement)) {
+          return true;
+        }
+      }
+    }
     return false;
   };
 
@@ -6699,6 +6715,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                 <ComposerContextActionsContext value={composerContextActions}>
                   <ComposerPromptEditor
                     editorRef={composerEditorRef}
+                    richTextEnabled={settings.composerRichTextEnabled}
                     value={
                       isComposerApprovalState
                         ? ""
