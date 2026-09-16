@@ -151,6 +151,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                   instanceId,
                   operation: "resolve",
                   detail: cause.detail,
+                  cause,
                 }),
             ),
           );
@@ -172,11 +173,12 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
         const runtimeTempDirectory = yield* Effect.acquireRelease(
           fileSystem.makeTempDirectory({ directory: profile.tempDirectory, prefix: "run-" }).pipe(
             Effect.mapError(
-              () =>
+              (cause) =>
                 new ProviderSetupError({
                   instanceId,
                   operation: "start",
                   detail: "Could not create an Antigravity runtime temp directory.",
+                  cause,
                 }),
             ),
           ),
@@ -316,6 +318,7 @@ export const AntigravityDriver: ProviderDriver<AntigravitySettings, AntigravityD
                   instanceId,
                   operation: "resolve",
                   detail: cause.detail,
+                  cause,
                 }),
             ),
           );
