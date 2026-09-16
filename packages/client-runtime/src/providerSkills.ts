@@ -1,10 +1,14 @@
 import type {
+  ProviderSkillSourceKind,
   ServerProvider,
   ServerProviderSkill,
   ServerProviderSlashCommand,
 } from "@t3tools/contracts";
 
-export type ProviderSkillSourceKind = "app" | "repo" | "project" | "personal" | "system" | "other";
+// The classifier and the disabled-skill fold live in `@t3tools/shared` so the
+// server shares one implementation; re-exported for the clients already here.
+export { resolveProviderSkillSourceKind } from "@t3tools/shared/providerSkills";
+export type { ProviderSkillSourceKind };
 
 function titleCaseWords(value: string): string {
   const words: string[] = [];
@@ -13,10 +17,6 @@ function titleCaseWords(value: string): string {
     words.push(segment.charAt(0).toUpperCase() + segment.slice(1));
   }
   return words.join(" ");
-}
-
-function normalizePathSeparators(pathValue: string): string {
-  return pathValue.replaceAll("\\", "/");
 }
 
 export function formatProviderSkillDisplayName(
@@ -71,36 +71,6 @@ export function getProviderSlashCommandsForSlashMenu(
 ): ServerProviderSlashCommand[] {
   const skillNames = new Set(visibleSkills.map((skill) => skill.name.trim().toLowerCase()));
   return slashCommands.filter((command) => !skillNames.has(command.name.trim().toLowerCase()));
-}
-
-export function resolveProviderSkillSourceKind(
-  skill: Pick<ServerProviderSkill, "path" | "scope">,
-): ProviderSkillSourceKind {
-  const normalizedPath = normalizePathSeparators(skill.path);
-  if (normalizedPath.includes("/.codex/plugins/") || normalizedPath.includes("/.agents/plugins/")) {
-    return "app";
-  }
-
-  const normalizedScope = skill.scope?.trim().toLowerCase();
-  switch (normalizedScope) {
-    case "repo":
-    case "repository":
-      return "repo";
-    case "project":
-    case "workspace":
-    case "local":
-      return "project";
-    case "user":
-    case "personal":
-      return "personal";
-    case "system":
-      return "system";
-    case undefined:
-    case "":
-      return "other";
-    default:
-      return "other";
-  }
 }
 
 function resolveProviderWorkspaceSnapshot(

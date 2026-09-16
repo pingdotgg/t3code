@@ -351,6 +351,8 @@ export function applyServerSettingsPatch(
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),
+    // A list replaces wholesale; deepMerge would otherwise splice it by index.
+    ...(patch.disabledSkills !== undefined ? { disabledSkills: patch.disabledSkills } : {}),
     ...(usageLimitSourcesPatch !== undefined
       ? {
           usageLimitSources: mergeSettingsEntries(

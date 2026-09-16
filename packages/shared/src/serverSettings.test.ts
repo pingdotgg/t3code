@@ -736,3 +736,18 @@ describe("serverSettings helpers", () => {
     expect(resolved.pauseWhenOnBattery).toBe(false);
   });
 });
+
+describe("disabled skills settings", () => {
+  const review = { source: "personal" as const, name: "review" };
+  const deploy = { source: "repo" as const, name: "deploy" };
+
+  it("replaces the environment list instead of splicing it", () => {
+    const first = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      disabledSkills: [review, deploy],
+    });
+    expect(first.disabledSkills).toEqual([review, deploy]);
+    const second = applyServerSettingsPatch(first, { disabledSkills: [deploy] });
+    expect(second.disabledSkills).toEqual([deploy]);
+    expect(applyServerSettingsPatch(second, { disabledSkills: [] }).disabledSkills).toEqual([]);
+  });
+});

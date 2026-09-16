@@ -214,3 +214,43 @@ describe("projectSettingsOverrides patches", () => {
     });
   });
 });
+
+describe("project-scoped disabled skills", () => {
+  const review = { source: "personal" as const, name: "review" };
+  const deploy = { source: "repo" as const, name: "deploy" };
+
+  it("replaces the environment list, and an empty override disables nothing", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      disabledSkills: [review],
+      projectSettingsOverrides: {
+        [projectId]: { disabledSkills: [deploy] },
+        [otherProjectId]: { disabledSkills: [] },
+      },
+    });
+    const overriding = resolveProjectSettings(settings, projectId);
+    expect(overriding.settings.disabledSkills).toEqual([deploy]);
+    expect(overriding.sources.disabledSkills).toBe("project");
+
+    const emptied = resolveProjectSettings(settings, otherProjectId);
+    expect(emptied.settings.disabledSkills).toEqual([]);
+    expect(emptied.sources.disabledSkills).toBe("project");
+
+    const inheriting = resolveProjectSettings(settings, ProjectId.make("project-c"));
+    expect(inheriting.settings.disabledSkills).toEqual([review]);
+    expect(inheriting.sources.disabledSkills).toBe("environment");
+  });
+
+  it("returns a project to the environment list when its override is cleared", () => {
+    const settings = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      disabledSkills: [review],
+      projectSettingsOverrides: { [projectId]: { disabledSkills: [deploy] } },
+    });
+    const cleared = applyServerSettingsPatch(settings, {
+      projectSettingsOverrides: {
+        [projectId]: clearProjectSettingsOverrides(settings, projectId, ["disabledSkills"]),
+      },
+    });
+    expect(resolveProjectSettings(cleared, projectId).settings.disabledSkills).toEqual([review]);
+    expect(resolveProjectSettings(cleared, projectId).sources.disabledSkills).toBe("environment");
+  });
+});
