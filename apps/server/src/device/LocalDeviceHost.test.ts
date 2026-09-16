@@ -14,17 +14,21 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
-const diagnose = (files: ReadonlyArray<string>, environment: NodeJS.ProcessEnv) =>
+const diagnose = (
+  files: ReadonlyArray<string>,
+  environment: NodeJS.ProcessEnv,
+  platform: NodeJS.Platform = "darwin",
+) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
     Effect.provideService(HostProcessEnvironment, environment),
-    Effect.provideService(HostProcessPlatform, "darwin"),
+    Effect.provideService(HostProcessPlatform, platform),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
         exists: (file) => Effect.succeed(files.includes(file)),
       }),
     ),
-    Effect.provide(NodePath.layer),
+    Effect.provide(platform === "win32" ? NodePath.layerWin32 : NodePath.layerPosix),
   );
 
 describe("Android SDK availability", () => {
@@ -40,7 +44,52 @@ describe("Android SDK availability", () => {
       const reason = yield* diagnose(["/sdk/platform-tools/adb", "/sdk/emulator/emulator"], {
         ANDROID_HOME: "/sdk",
       });
-      expect(reason).toContain("Command-line Tools (latest)");
+      expect(reason).toContain("Command-line Tools (latest) are missing");
+    }),
+  );
+
+  it.effect("explains how to upgrade legacy command-line tools in the standard macOS SDK", () =>
+    Effect.gen(function* () {
+      const root = "/test/home/Library/Android/sdk";
+      const reason = yield* diagnose(
+        [`${root}/platform-tools/adb`, `${root}/emulator/emulator`, `${root}/tools/bin/avdmanager`],
+        { HOME: "/test/home" },
+      );
+      expect(reason).toContain("older, unsupported version");
+      expect(reason).toContain(root);
+      expect(reason).toContain(
+        "Install Android SDK Command-line Tools (latest) in Android Studio's SDK Manager under SDK Tools.",
+      );
+    }),
+  );
+
+  it.effect("recognizes legacy command-line tools on Windows", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnose(
+        [
+          "C:\\Android\\Sdk\\platform-tools\\adb.exe",
+          "C:\\Android\\Sdk\\emulator\\emulator.exe",
+          "C:\\Android\\Sdk\\tools\\bin\\avdmanager.bat",
+        ],
+        { ANDROID_HOME: "C:\\Android\\Sdk" },
+        "win32",
+      );
+      expect(reason).toContain("older, unsupported version");
+    }),
+  );
+
+  it.effect("accepts the latest command-line tools when legacy tools are also installed", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnose(
+        [
+          "/sdk/platform-tools/adb",
+          "/sdk/emulator/emulator",
+          "/sdk/tools/bin/avdmanager",
+          "/sdk/cmdline-tools/latest/bin/avdmanager",
+        ],
+        { ANDROID_HOME: "/sdk" },
+      );
+      expect(reason).toBeNull();
     }),
   );
 
