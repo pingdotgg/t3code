@@ -5833,6 +5833,21 @@ export default function ChatView(props: ChatViewProps) {
       void legendListRef.current?.scrollToEnd?.({ animated });
     });
   }, []);
+  const displayedTimelineKeyRef = useRef(displayedTimeline.displayThreadKey);
+  useLayoutEffect(() => {
+    const displayKey = displayedTimeline.displayThreadKey;
+    if (displayKey === null || displayKey !== activeThreadKey) {
+      displayedTimelineKeyRef.current = displayKey;
+      return;
+    }
+    if (displayedTimelineKeyRef.current === displayKey) {
+      return;
+    }
+    displayedTimelineKeyRef.current = displayKey;
+    // Keep the list mounted across jumps; pin the newly displayed thread to
+    // its end the way a remount used to via initialScrollAtEnd.
+    scrollToEnd();
+  }, [activeThreadKey, displayedTimeline.displayThreadKey, scrollToEnd]);
   useEffect(() => {
     let removeListeners: (() => void) | null = null;
     let frame: number | null = null;
