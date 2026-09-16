@@ -1225,6 +1225,12 @@ export function createServerEnvironmentAtoms<R, E>(
       scheduler: configScheduler,
       concurrency: configConcurrency,
     }),
+    updateScheduledTask: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:scheduled-task:update",
+      tag: WS_METHODS.scheduledTasksUpdate,
+      scheduler: configScheduler,
+      concurrency: configConcurrency,
+    }),
     setScheduledTaskEnabled: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:scheduled-task:set-enabled",
       tag: WS_METHODS.scheduledTasksSetEnabled,
