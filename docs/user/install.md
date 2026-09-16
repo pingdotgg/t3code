@@ -23,13 +23,13 @@ irm https://t3.codes/install.ps1 | iex
 This puts `t3` in `~/.local/bin`. Set `T3CODE_CHANNEL=nightly` to install the
 nightly train, or `T3CODE_VERSION` to pin an exact version.
 
-| Task                                  | Command                                                   |
-| ------------------------------------- | --------------------------------------------------------- |
-| Start the server and open the web app | `t3`                                                      |
-| Start the server without a browser    | `t3 serve`                                                |
-| Keep it running in the background     | `t3 service install` ([details](./background-service.md)) |
-| Move to the newest release            | `t3 update`                                               |
-| Remove it again                       | `t3 uninstall`                                            |
+| Task                                             | Command                                                   |
+| ------------------------------------------------ | --------------------------------------------------------- |
+| Start the server and open the web app            | `t3`                                                      |
+| Start the server without a browser               | `t3 serve`                                                |
+| Keep it running in the background (macOS, Linux) | `t3 service install` ([details](./background-service.md)) |
+| Move to the newest release                       | `t3 update`                                               |
+| Remove it again                                  | `t3 uninstall`                                            |
 
 Run `t3 --help` for the full reference.
 
