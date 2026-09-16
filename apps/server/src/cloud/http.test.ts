@@ -342,15 +342,18 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         // The release consults the launcher state file under the configured
         // baseDir, so every harness run gets a scoped temp baseDir.
-        Effect.provide(DesktopAppUpdate.layer),
         Effect.provide(
-          DesktopTelemetryReceiver.layerTest({
-            desktopUpdates: Effect.succeed({ latest: Option.none(), changes: Stream.never }),
-          }),
-        ),
-        Effect.provide(
-          ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
-            Layer.provideMerge(NodeServices.layer),
+          DesktopAppUpdate.layer.pipe(
+            Layer.provideMerge(
+              DesktopTelemetryReceiver.layerTest({
+                desktopUpdates: Effect.succeed({ latest: Option.none(), changes: Stream.never }),
+              }),
+            ),
+            Layer.provideMerge(
+              ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
+                Layer.provideMerge(NodeServices.layer),
+              ),
+            ),
           ),
         ),
         Effect.scoped,
