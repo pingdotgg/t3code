@@ -3529,6 +3529,7 @@ export default function ChatView(props: ChatViewProps) {
     live: liveWorktreeSetup,
     recorded: recordedWorktreeSetup,
     turnStarted: activeThread?.latestTurn?.startedAt != null,
+    followUpSent: (serverMessages?.filter((message) => message.role === "user").length ?? 0) > 1,
   });
   // Sends wait for the agent handoff, not for the setup script: an async
   // script keeps the snapshot running while the agent already works, and a
