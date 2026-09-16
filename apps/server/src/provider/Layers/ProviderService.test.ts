@@ -2809,16 +2809,34 @@ routing.layer("ProviderServiceLive routing", (it) => {
     }),
   );
 
-  it.effect("recovers stale sessions for sendTurn using persisted cwd", () =>
+  it.effect("recovers stale sessions using persisted cwd and legacy model selection", () =>
     Effect.gen(function* () {
       const provider = yield* ProviderService.ProviderService;
+      const directory = yield* ProviderSessionDirectory.ProviderSessionDirectory;
+      const cwd = fixtureCwd("project-send-turn");
+      const modelSelection = createModelSelection(codexInstanceId, "gpt-5.4", [
+        { id: "reasoningEffort", value: "high" },
+      ]);
 
       const initial = yield* provider.startSession(asThreadId("thread-1"), {
         provider: ProviderDriverKind.make("codex"),
         providerInstanceId: codexInstanceId,
         threadId: asThreadId("thread-1"),
-        cwd: fixtureCwd("project-send-turn"),
+        cwd,
+        modelSelection,
         runtimeMode: "full-access",
+      });
+      const binding = Option.getOrThrow(yield* directory.getBinding(initial.threadId));
+      yield* directory.upsert({
+        ...binding,
+        runtimePayload: {
+          ...(binding.runtimePayload as Record<string, unknown>),
+          modelSelection: {
+            provider: "codex",
+            model: modelSelection.model,
+            options: modelSelection.options,
+          },
+        },
       });
 
       yield* routing.codex.stopAll();
@@ -2838,11 +2856,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
         const startPayload = resumedStartInput as {
           provider?: string;
           cwd?: string;
+          modelSelection?: unknown;
           resumeCursor?: unknown;
           threadId?: string;
         };
         assert.equal(startPayload.provider, "codex");
-        assert.equal(startPayload.cwd, fixtureCwd("project-send-turn"));
+        assert.equal(startPayload.cwd, cwd);
+        assert.deepEqual(startPayload.modelSelection, modelSelection);
         assert.deepEqual(startPayload.resumeCursor, initial.resumeCursor);
         assert.equal(startPayload.threadId, initial.threadId);
       }

@@ -5,7 +5,7 @@ import {
   DEFAULT_PROVIDER_INTERACTION_MODE,
   DEFAULT_SERVER_SETTINGS,
   type ServerSettings as ServerSettingsValue,
-  type ModelSelection,
+  ModelSelection,
   type OrchestrationProjectShell,
   ProjectId,
   ProviderInstanceId,
@@ -388,6 +388,13 @@ function readRuntimePayload(runtimePayload: unknown): Record<string, unknown> {
     : {};
 }
 
+const decodeModelSelectionOption = Schema.decodeUnknownOption(ModelSelection);
+
+function readRuntimeModelSelection(runtimePayload: unknown): ModelSelection | undefined {
+  const value = readRuntimePayload(runtimePayload).modelSelection;
+  return Option.getOrUndefined(decodeModelSelectionOption(value));
+}
+
 const isServerUpdateThreadContinuationError = Schema.is(ServerUpdateThreadContinuationError);
 
 function readServerUpdateContinuationTurnId(runtimePayload: unknown): TurnId | null {
@@ -700,12 +707,14 @@ export const reconcileProviderSessions = Effect.gen(function* () {
                 threadId: thread.id,
               });
             }
+            const modelSelection = readRuntimeModelSelection(binding.value.runtimePayload);
             const capabilities = yield* providerService.getCapabilities(providerInstanceId);
             yield* providerService.sendTurn({
               threadId: thread.id,
               ...(capabilities.promptlessTurnContinuation === true
                 ? { continuation: true }
                 : { input: SERVER_UPDATE_CONTINUATION_PROMPT }),
+              ...(modelSelection !== undefined ? { modelSelection } : {}),
               interactionMode: thread.interactionMode,
             });
           });

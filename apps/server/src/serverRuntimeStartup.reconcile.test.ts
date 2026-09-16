@@ -41,11 +41,16 @@ const makeThread = (
   id: ThreadId.make(id),
   archivedAt,
   deletedAt,
+  modelSelection: {
+    instanceId: providerInstanceId,
+    model: "gpt-5.3-codex",
+    options: [{ id: "reasoningEffort", value: "high" }],
+  },
   interactionMode: "default" as const,
   session: {
     threadId: ThreadId.make(id),
     status,
-    providerName: "codex" as const,
+    providerName: ProviderDriverKind.make("codex"),
     providerInstanceId,
     runtimeMode: "full-access" as const,
     activeTurnId,
@@ -193,6 +198,13 @@ it.effect.each(
         recovery === "marked update" ? null : fallbackContinuationTurnId,
       );
       const fallbackProviderInstanceId = ProviderInstanceId.make("claudeAgent");
+      fallback.modelSelection = {
+        instanceId: fallbackProviderInstanceId,
+        model: "claude-opus-4-6",
+        options: [{ id: "effort", value: "high" }],
+      };
+      fallback.session.providerName = ProviderDriverKind.make("claudeAgent");
+      fallback.session.providerInstanceId = fallbackProviderInstanceId;
       const continuationSent = yield* Deferred.make<void>();
       const continuationCleared = yield* Deferred.make<void>();
       const sends: ProviderSendTurnInput[] = [];
@@ -212,6 +224,7 @@ it.effect.each(
             status: "running" as const,
             resumeCursor: { threadId: thread.id },
             runtimePayload: {
+              modelSelection: thread.modelSelection,
               activeTurnId:
                 thread.id === codex.id && persistedTurn !== "current"
                   ? persistedTurn === "previous"
@@ -304,10 +317,16 @@ it.effect.each(
           String(left.threadId).localeCompare(String(right.threadId)),
         ),
         [
-          { threadId: codex.id, continuation: true, interactionMode: "default" },
+          {
+            threadId: codex.id,
+            continuation: true,
+            modelSelection: codex.modelSelection,
+            interactionMode: "default",
+          },
           {
             threadId: fallback.id,
             input: "Continue where you left off.",
+            modelSelection: fallback.modelSelection,
             interactionMode: "default",
           },
         ],
@@ -344,6 +363,7 @@ it.effect.each(
             .filter((binding) => binding.threadId === thread.id)
             .map((binding) => binding.runtimePayload)[0],
           {
+            modelSelection: thread.modelSelection,
             continueAfterServerUpdate: continuationTurnId,
             continueAfterServerUpdatePrepared: true,
             activeTurnId: null,
@@ -364,6 +384,93 @@ it.effect.each(
         true,
       );
     }),
+);
+
+it.effect("continues with the interrupted turn selection after thread metadata changes", () =>
+  Effect.gen(function* () {
+    const turnId = TurnId.make("turn-selection-changed");
+    const thread = makeThread("thread-selection-changed", "running", turnId);
+    const interruptedTurnSelection = thread.modelSelection;
+    const legacyInterruptedTurnSelection = {
+      provider: "codex",
+      model: interruptedTurnSelection.model,
+      options: interruptedTurnSelection.options,
+    };
+    thread.modelSelection = {
+      instanceId: ProviderInstanceId.make("opencode"),
+      model: "openai/gpt-5",
+      options: [],
+    };
+    const sent = yield* Deferred.make<ProviderSendTurnInput>();
+    const cleared = yield* Deferred.make<void>();
+    let binding: ProviderSessionDirectory.ProviderRuntimeBinding = {
+      threadId: thread.id,
+      provider: ProviderDriverKind.make("codex"),
+      providerInstanceId,
+      status: "running",
+      resumeCursor: { threadId: thread.id },
+      runtimePayload: {
+        activeTurnId: turnId,
+        modelSelection: legacyInterruptedTurnSelection,
+      },
+    };
+
+    yield* runReconciliation({
+      threads: [thread],
+      continueAfterRestart: true,
+      providerService: {
+        ...makeProviderService(),
+        getCapabilities: () =>
+          Effect.succeed({
+            sessionModelSwitch: "in-session",
+            promptlessTurnContinuation: true,
+          }),
+        sendTurn: (input) =>
+          Deferred.succeed(sent, input).pipe(
+            Effect.as({
+              threadId: input.threadId,
+              turnId: TurnId.make("continued-selection-changed"),
+            }),
+          ),
+      },
+      directory: {
+        getBinding: () => Effect.sync(() => Option.some(binding)),
+        upsert: (next) =>
+          Effect.gen(function* () {
+            binding = next;
+            const payload = next.runtimePayload;
+            if (
+              payload !== null &&
+              typeof payload === "object" &&
+              !Array.isArray(payload) &&
+              "continueAfterServerUpdate" in payload &&
+              payload.continueAfterServerUpdate === null
+            ) {
+              yield* Deferred.succeed(cleared, undefined);
+            }
+          }),
+        recordImportedTranscript: () => Effect.die("unused"),
+        getProvider: () => Effect.die("unused"),
+        listThreadIds: () => Effect.die("unused"),
+        listBindings: () => Effect.succeed([]),
+      },
+      dispatch: () => Effect.succeed({ sequence: 1 }),
+    });
+
+    assert.deepStrictEqual(yield* Deferred.await(sent), {
+      threadId: thread.id,
+      continuation: true,
+      modelSelection: interruptedTurnSelection,
+      interactionMode: "default",
+    });
+    yield* Deferred.await(cleared);
+    assert.deepStrictEqual(binding.runtimePayload, {
+      activeTurnId: null,
+      modelSelection: legacyInterruptedTurnSelection,
+      continueAfterServerUpdate: null,
+      continueAfterServerUpdatePrepared: null,
+    });
+  }),
 );
 
 it.effect("does not continue archived or deleted marked sessions", () => {
@@ -823,7 +930,10 @@ for (const preparedStatus of [
         providerInstanceId,
         status: "running",
         resumeCursor: { threadId: thread.id },
-        runtimePayload: { activeTurnId: turnId },
+        runtimePayload: {
+          activeTurnId: turnId,
+          modelSelection: thread.modelSelection,
+        },
       };
       const input = {
         threads: [thread],
@@ -881,6 +991,7 @@ for (const preparedStatus of [
       assert.equal(thread.session.activeTurnId, null);
       assert.deepStrictEqual(binding.runtimePayload, {
         activeTurnId: null,
+        modelSelection: thread.modelSelection,
         continueAfterServerUpdate: turnId,
         continueAfterServerUpdatePrepared: true,
       });
@@ -892,6 +1003,7 @@ for (const preparedStatus of [
           status: "stopped",
           runtimePayload: {
             activeTurnId: null,
+            modelSelection: thread.modelSelection,
             continueAfterServerUpdate: turnId,
             continueAfterServerUpdatePrepared: null,
           },
@@ -906,10 +1018,16 @@ for (const preparedStatus of [
       yield* runReconciliation(input);
       yield* Deferred.await(cleared);
       assert.deepStrictEqual(sends, [
-        { threadId: thread.id, continuation: true, interactionMode: "default" },
+        {
+          threadId: thread.id,
+          continuation: true,
+          modelSelection: thread.modelSelection,
+          interactionMode: "default",
+        },
       ]);
       assert.deepStrictEqual(binding.runtimePayload, {
         activeTurnId: null,
+        modelSelection: thread.modelSelection,
         continueAfterServerUpdate: null,
         continueAfterServerUpdatePrepared: null,
       });
