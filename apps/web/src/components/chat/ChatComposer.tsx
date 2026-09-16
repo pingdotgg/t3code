@@ -1,4 +1,7 @@
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
+import { isElectron } from "../../env";
+import { isLocalEnvironmentDisabled } from "../../localEnvironment";
+import { usePrimaryEnvironmentId } from "../../state/environments";
 import { runtimeModeConfig, runtimeModeOptions } from "./runtimeModeConfig";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
@@ -47,6 +50,7 @@ import {
   wouldTextPasteExceedLimit,
 } from "@t3tools/client-runtime/text-paste";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
+import { folderDropTarget } from "./folderDrop";
 import { createModelSelection, normalizeModelSlug } from "@t3tools/shared/model";
 import { USAGE_LIMITS_COMMAND } from "@t3tools/shared/usageLimits";
 import {
@@ -1220,6 +1224,7 @@ export interface ChatComposerHandle {
   restoreAfterTimelineReachedEnd: () => void;
   collapseForTimelineScrollKey: (key: string) => void;
   addDroppedFiles: (files: File[]) => void;
+  addDroppedFolders: (folders: File[]) => void;
   hasPendingAttachments: () => boolean;
   insertTextAtEnd: (
     text: string,
@@ -1525,6 +1530,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onExpandImage,
     onFileOpen,
   } = props;
+  const primaryEnvironmentId = usePrimaryEnvironmentId();
   const activeTasksProgress = props.threadSyncPhase === null ? props.activeTasksProgress : null;
   const activeTaskSteps = props.threadSyncPhase === null ? props.activeTaskSteps : null;
   // ------------------------------------------------------------------
@@ -5712,6 +5718,36 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           if (!inserted) focusComposer();
         });
       },
+      addDroppedFolders: (folders: File[]) => {
+        const target = folderDropTarget({
+          isElectron,
+          localEnvironmentDisabled: isLocalEnvironmentDisabled(),
+          environmentId,
+          primaryEnvironmentId,
+        });
+        if (target === "local") {
+          for (const folder of folders) {
+            const path = window.desktopBridge?.getPathForFile?.(folder);
+            if (typeof path === "string" && path.length > 0) {
+              insertComposerTextAtEnd(`${serializeComposerFileLink(path)} `, {
+                ensureLeadingBoundary: true,
+              });
+            }
+          }
+          focusComposer();
+        } else if (target === "browser") {
+          toastManager.add({
+            type: "error",
+            title: "Folder drops are only supported in the desktop app",
+          });
+        } else {
+          toastManager.add({
+            type: "error",
+            title: "Folder drops aren't supported on remote environments",
+            description: "Type the folder path with @ instead.",
+          });
+        }
+      },
       hasPendingAttachments: () =>
         (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0,
       insertTextAtEnd: insertComposerTextAtEnd,
@@ -5868,6 +5904,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       composerPreviewAnnotations,
       composerReviewComments,
       focusComposer,
+      environmentId,
+      primaryEnvironmentId,
       isConnecting,
       isComposerApprovalState,
       isChoiceOnlyPendingQuestion,
