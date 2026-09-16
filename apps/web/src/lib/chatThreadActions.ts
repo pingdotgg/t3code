@@ -15,6 +15,15 @@ type ComposerModelSelectionState = Pick<
 interface ThreadContextLike {
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  // Only the "new thread in this workspace" shortcut reads the checkout the
+  // context is sitting on; the generic new-thread paths ignore these.
+  branch?: string | null;
+  worktreePath?: string | null;
+}
+
+interface DraftThreadContextLike extends ThreadContextLike {
+  envMode?: DraftThreadEnvMode;
+  startFromOrigin?: boolean;
 }
 
 interface NewThreadHandler {
@@ -31,7 +40,7 @@ interface NewThreadHandler {
 }
 
 export interface ChatThreadActionContext {
-  readonly activeDraftThread: ThreadContextLike | null;
+  readonly activeDraftThread: DraftThreadContextLike | null;
   readonly activeThread: ThreadContextLike | undefined;
   readonly defaultProjectRef: ScopedProjectRef | null;
   readonly handleNewThread: NewThreadHandler;
@@ -98,5 +107,40 @@ export async function startNewThreadFromContext(
   }
 
   await context.handleNewThread(projectRef);
+  return true;
+}
+
+// The `chat.newLocal` shortcut (mod+shift+n) is the keyboard twin of the
+// thread menu's "New thread on <branch>": it starts a thread in the checkout
+// the user is already looking at, so a quick parallel task lands in the same
+// worktree instead of the project's configured defaults. Falls back to plain
+// defaults when nothing is open and only the default project applies.
+export async function startNewLocalThreadFromContext(
+  context: ChatThreadActionContext,
+): Promise<boolean> {
+  const projectRef = resolveThreadActionProjectRef(context);
+  if (!projectRef) {
+    return false;
+  }
+
+  const thread = context.activeThread;
+  const draft = context.activeDraftThread;
+  const source = thread ?? draft;
+  if (!source) {
+    await context.handleNewThread(projectRef);
+    return true;
+  }
+
+  const branch = source.branch ?? null;
+  const worktreePath = source.worktreePath ?? null;
+  await context.handleNewThread(projectRef, {
+    branch,
+    worktreePath,
+    // A draft still owns its env mode outright; a real thread only ever ran
+    // in its own worktree or the local checkout.
+    envMode: (thread ? undefined : draft?.envMode) ?? (worktreePath ? "worktree" : "local"),
+    // Reusing an existing checkout must never re-bootstrap it from origin.
+    startFromOrigin: false,
+  });
   return true;
 }
