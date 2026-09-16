@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   filterPullRequestsByInvolvement,
   findScopedProject,
+  buildPullRequestPartitionTargets,
   mergePullRequestLists,
   pullRequestEntryKey,
   pullRequestEnvironmentSetKey,
@@ -1495,4 +1496,89 @@ describe("the priority groups against a paginated feed", () => {
       groups.find((group) => group.key === "others")?.entries.map((row) => row.number),
     ).toEqual([6123]);
   });
+});
+
+describe("the priority groups' deferred reads", () => {
+  const base = {
+    wanted: true,
+    armed: true,
+    hasBaselineRows: true,
+    environments: [{ environmentId: ENV_1 }],
+    state: "open" as const,
+    limit: 99,
+  };
+
+  it("stays unread until armed, so deleting the guard fails without it", () => {
+    expect(buildPullRequestPartitionTargets({ ...base, armed: false })).toEqual({
+      authored: [],
+      reviewing: [],
+    });
+  });
+
+  it("stays unread without baseline rows or when unwanted", () => {
+    expect(buildPullRequestPartitionTargets({ ...base, hasBaselineRows: false })).toEqual({
+      authored: [],
+      reviewing: [],
+    });
+    expect(buildPullRequestPartitionTargets({ ...base, wanted: false })).toEqual({
+      authored: [],
+      reviewing: [],
+    });
+  });
+
+  it("builds one server-filtered read per involvement once armed", () => {
+    const targets = buildPullRequestPartitionTargets(base);
+    expect(targets.authored).toHaveLength(1);
+    expect(targets.reviewing).toHaveLength(1);
+    expect(targets.authored[0]).toMatchObject({
+      environmentId: ENV_1,
+      input: { state: "open", involvement: "authored", limit: 99 },
+    });
+    expect(targets.reviewing[0]).toMatchObject({
+      environmentId: ENV_1,
+      input: { state: "open", involvement: "reviewing", limit: 99 },
+    });
+  });
+
+  it("fans scoped project, host, and filters out to every environment in feed field order", () => {
+    const filters = { draft: "hide" } as const;
+    const targets = buildPullRequestPartitionTargets({
+      ...base,
+      environments: [{ environmentId: ENV_1 }, { environmentId: ENV_2 }],
+      scopedProjectId: "project-1" as ProjectId,
+      host: "github.com",
+      filters,
+    });
+    expect(targets.authored.map((target) => target.environmentId)).toEqual([ENV_1, ENV_2]);
+    expect(targets.reviewing.map((target) => target.environmentId)).toEqual([ENV_1, ENV_2]);
+    for (const [involvement, group] of [
+      ["authored", targets.authored],
+      ["reviewing", targets.reviewing],
+    ] as const) {
+      for (const target of group) {
+        expect(target.input).toEqual({
+          state: "open",
+          involvement,
+          limit: 99,
+          projectId: "project-1",
+          host: "github.com",
+          filters,
+        });
+        expect(Object.keys(target.input)).toEqual([
+          "state",
+          "involvement",
+          "limit",
+          "projectId",
+          "host",
+          "filters",
+        ]);
+        expect(target.input.projectIds).toBeUndefined();
+      }
+    }
+  });
+
+  // No column render/targets assertion: arming lives in the route's unexported column wiring
+  // (pointer/focus + idle callback into query atoms), which needs the full environment/query
+  // harness to mount; asserting the JSX prop alone would not prove a fetch, so the gating
+  // above carries the guarantee.
 });
