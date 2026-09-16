@@ -2,12 +2,15 @@ import { afterEach, describe, expect, it } from "@effect/vitest";
 import {
   CommandId,
   ComposerContextId,
+  DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
   MessageId,
   ProjectId,
   ProviderInstanceId,
   ThreadId,
 } from "@t3tools/contracts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
+import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { onTestFinished, vi } from "vite-plus/test";
 
 const composerDraftFileMocks = vi.hoisted(() => {
@@ -173,6 +176,7 @@ import {
   findLocalComposerClipboardAttachment,
   flushComposerDrafts,
   getComposerDraftSnapshot,
+  mergeComposerDraftContent,
   mergeComposerDraftContentState,
   migrateLegacyNewTaskDraft,
   releaseUnusedComposerAttachmentFiles,
@@ -1736,6 +1740,104 @@ describe("mobile composer drafts", () => {
     ).toThrow();
   });
 
+  it.each(["new-task:environment-1:project-1", "new-task:existing-id"])(
+    "keeps legacy draft %s implicit so project permission defaults still apply",
+    (key) => {
+      const draft = { text: "saved under project permissions", attachments: [] };
+      const migrated = decodePersistedComposerState({
+        schemaVersion: 1,
+        drafts: { [key]: draft },
+      }).drafts;
+      const restored = Object.values(migrated)[0]!;
+      expect(restored).toMatchObject(draft);
+      expect(restored.runtimeMode).toBeUndefined();
+      const projectId = ProjectId.make("project-1");
+      const settings = resolveProjectSettings(
+        {
+          ...DEFAULT_SERVER_SETTINGS,
+          defaultRuntimeMode: "full-access",
+          projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: "approval-required" } },
+        },
+        projectId,
+      ).settings;
+      expect(
+        resolveNewThreadRuntimeMode(
+          settings,
+          ProviderInstanceId.make("codex"),
+          restored.runtimeMode,
+        ),
+      ).toBe("approval-required");
+      expect(decodePersistedComposerState({ schemaVersion: 2, drafts: migrated }).drafts).toEqual(
+        migrated,
+      );
+    },
+  );
+
+  it("preserves separate explicit model choices in current empty drafts", () => {
+    const first = {
+      text: "",
+      attachments: [],
+      modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" },
+    } satisfies ComposerDraft;
+    const second = {
+      ...first,
+      modelSelection: { instanceId: ProviderInstanceId.make("claude"), model: "claude-sonnet-4-6" },
+    } satisfies ComposerDraft;
+    const drafts = { "new-task:first": first, "new-task:second": second };
+    const restored = decodePersistedComposerState({
+      schemaVersion: 2,
+      drafts,
+      stickyModelSelection: second.modelSelection,
+    });
+    expect(restored.drafts).toEqual(drafts);
+    expect(restored.stickyModelSelection).toEqual(second.modelSelection);
+  });
+
+  it("keeps current new-task drafts implicit across reloads", () => {
+    const draft = { text: "keep drafting", attachments: [] } satisfies ComposerDraft;
+
+    expect(
+      decodePersistedComposerState({
+        schemaVersion: 2,
+        drafts: { "new-task:current-id": draft },
+      }).drafts,
+    ).toEqual({ "new-task:current-id": draft });
+  });
+
+  it("keeps signed-out legacy draft selections unchanged", () => {
+    const draft = {
+      text: "",
+      attachments: [],
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("codex"),
+        model: "gpt-5.4",
+      },
+    } satisfies ComposerDraft;
+
+    expect(
+      Object.values(
+        decodePersistedComposerState({
+          schemaVersion: 1,
+          drafts: {},
+          signedOutDrafts: {
+            "account-a": {
+              drafts: { "new-task:environment-1:project-1": draft },
+              queuedMessages: [],
+            },
+          },
+        }).cloudDrafts.signedOut["account-a"]?.drafts ?? {},
+      ),
+    ).toEqual([
+      expect.objectContaining({
+        ...draft,
+        project: expect.objectContaining({
+          environmentId: "environment-1",
+          projectId: "project-1",
+        }),
+      }),
+    ]);
+  });
+
   it("keeps share-import receipts on otherwise contentless new-task drafts", () => {
     const receiptDraft: ComposerDraft = {
       text: "",
@@ -1766,7 +1868,8 @@ describe("mobile composer drafts", () => {
       importedShareIds: ["share-1"],
       project: { environmentId: "environment-1", projectId: "project-1" },
     });
-    expect(stripped[0]?.modelSelection).toBeUndefined();
+    expect(stripped[0]?.runtimeMode).toBeUndefined();
+    expect(stripped[0]?.modelSelection).toEqual({ instanceId: "codex", model: "gpt-5.4" });
 
     const kept = Object.values(
       decodePersistedComposerState({
@@ -1776,7 +1879,56 @@ describe("mobile composer drafts", () => {
     );
     expect(kept).toHaveLength(1);
     expect(kept[0]).toMatchObject(receiptDraft);
+    expect(kept[0]?.runtimeMode).toBeUndefined();
   });
+
+  it("persists share-import receipts on otherwise contentless drafts", async () => {
+    const draftKey = "new-task:current-id";
+    await mergeComposerDraftContent(draftKey, {
+      text: "",
+      attachments: [],
+      sourceShareId: "share-1",
+    });
+    expect(JSON.parse(composerDraftFileMocks.getDocument()).drafts[draftKey]).toEqual({
+      text: "",
+      attachments: [],
+      importedShareIds: ["share-1"],
+    });
+  });
+
+  it.each([1, 2])(
+    "restores archived draft permissions from schema version %s",
+    async (schemaVersion) => {
+      const project = {
+        environmentId: EnvironmentId.make("environment-1"),
+        projectId: ProjectId.make("project-1"),
+        createdAt: "2026-09-05T12:00:00.000Z",
+      };
+      composerDraftFileMocks.setDocument({
+        schemaVersion,
+        drafts: {},
+        signedOutDrafts: {
+          "account-1": {
+            drafts: {
+              "new-task:implicit-id": { text: "archived", attachments: [], project },
+              "new-task:explicit-id": {
+                text: "configured",
+                attachments: [],
+                project,
+                runtimeMode: "approval-required",
+              },
+            },
+            queuedMessages: [],
+          },
+        },
+      });
+      await restoreCloudComposerDrafts("account-1");
+      expect(getComposerDraftSnapshot("new-task:implicit-id").runtimeMode).toBeUndefined();
+      expect(getComposerDraftSnapshot("new-task:explicit-id").runtimeMode).toBe(
+        "approval-required",
+      );
+    },
+  );
 
   it("migrates archived signed-out new-task drafts the same way as live ones", () => {
     const decoded = decodePersistedComposerState({
@@ -1919,7 +2071,7 @@ describe("mobile composer drafts", () => {
   it("waits for hydration before persisting the latest composer state", async () => {
     vi.useFakeTimers();
     composerDraftFileMocks.setDocument({
-      schemaVersion: 1,
+      schemaVersion: 2,
       drafts: {
         "environment-1:thread-1": DRAFT,
       },
@@ -1945,7 +2097,7 @@ describe("mobile composer drafts", () => {
     await vi.runAllTimersAsync();
 
     expect(JSON.parse(composerDraftFileMocks.getWrites()[0]!)).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       drafts: {
         "environment-1:thread-1": DRAFT,
         "new-task:environment-1:project-1": {
@@ -2093,7 +2245,7 @@ describe("mobile composer drafts", () => {
     await bothWritesCommitted;
 
     expect(JSON.parse(composerDraftFileMocks.getDocument())).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       drafts: {
         "environment-2:thread-2": { text: "keep", attachments: [] },
       },
@@ -2147,11 +2299,13 @@ describe("mobile composer drafts", () => {
         worktreePath: null,
         startFromOrigin: false,
       },
+      runtimeMode: "approval-required",
     };
 
     expect(
       clearComposerDraftContentState({ [draftKey]: draft }, draftKey, {
         clearModelSelection: true,
+        clearRuntimeMode: true,
         clearWorkspaceSelection: true,
       }),
     ).toEqual({});
@@ -2408,7 +2562,7 @@ describe("mobile composer drafts", () => {
     await undoComposerDraftMerge(draftKey, snapshot, merged);
 
     expect(JSON.parse(composerDraftFileMocks.getDocument())).toEqual({
-      schemaVersion: 1,
+      schemaVersion: 2,
       drafts: { [draftKey]: snapshot },
       stickyModelSelection: {
         instanceId: "codex",

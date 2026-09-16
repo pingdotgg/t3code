@@ -20,6 +20,7 @@ import {
 } from "@t3tools/contracts";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import { parseT3ProjectFile } from "@t3tools/shared/t3ProjectFile";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import {
   isDefaultThreadEnvModeSettled,
   resolveDefaultThreadEnvMode,
@@ -472,11 +473,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const draftStartFromOrigin = selectedProjectDraft.workspaceSelection?.startFromOrigin;
   const startFromOrigin =
     draftStartFromOrigin ?? projectSettings.settings.newWorktreesStartFromOrigin;
-  const defaultRuntimeMode = editingPendingTask
-    ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
-    : projectSettings.settings.defaultRuntimeMode;
-  const runtimeMode = selectedProjectDraft.runtimeMode ?? defaultRuntimeMode;
-
   // Antigravity keeps unavailable selections so sign-out or a catalog change
   // cannot switch the user's model. Other providers retain their fallback
   // rules. Implicit defaults also exclude legacy models for those providers.
@@ -515,6 +511,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     stickySelection: stickyModelSelection,
     modelOptions,
   });
+  const runtimeMode = resolveNewThreadRuntimeMode(
+    projectSettings.settings,
+    selectedModel?.instanceId,
+    selectedProjectDraft.runtimeMode ??
+      (editingPendingTask ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE) : undefined),
+  );
   const selectedModelKey = selectedModel
     ? `${selectedModel.instanceId}:${selectedModel.model}`
     : null;
@@ -994,7 +996,14 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         attachments: draft.attachments,
         context: draft.context,
         modelSelection: draftModelSelection,
-        runtimeMode: draft.runtimeMode ?? defaultRuntimeMode,
+        runtimeMode: resolveNewThreadRuntimeMode(
+          projectSettings.settings,
+          draftModelSelection.instanceId,
+          draft.runtimeMode ??
+            (editingPendingTask
+              ? (editingPendingTask.runtimeMode ?? DEFAULT_RUNTIME_MODE)
+              : undefined),
+        ),
         interactionMode: resolvePendingTaskInteractionMode({
           preferenceLoaded: planModePreferenceLoaded,
           planModeEnabled: legacyPlanModeEnabled,
@@ -1030,7 +1039,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       };
     },
     [
-      defaultRuntimeMode,
+      projectSettings.settings,
       editingPendingProject,
       editingPendingTask,
       selectedEnvironmentServerConfig,

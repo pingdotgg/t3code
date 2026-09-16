@@ -1,4 +1,5 @@
 import {
+  DEFAULT_RUNTIME_MODE,
   isProviderDriverKind,
   isProviderAvailable,
   resolveProviderInstanceEnabled,
@@ -7,6 +8,7 @@ import {
   type ProjectScopedServerSettingKey,
   type ProjectSettingsOverrides,
   type ProviderDriverKind,
+  type ProviderInstanceId,
   type ServerProvider,
   ServerSettings,
   type ServerSettingsPatch,
@@ -173,6 +175,23 @@ function mergeSettingsEntries<Value>(
   return Object.fromEntries(next);
 }
 
+export function resolveNewThreadRuntimeMode(
+  settings:
+    | Pick<ServerSettings, "defaultRuntimeMode" | "providerRuntimeModeDefaults">
+    | null
+    | undefined,
+  instanceId: ProviderInstanceId | null | undefined,
+  explicitRuntimeMode?: ServerSettings["defaultRuntimeMode"] | null,
+): ServerSettings["defaultRuntimeMode"] {
+  const providerDefault =
+    instanceId && settings && Object.hasOwn(settings.providerRuntimeModeDefaults, instanceId)
+      ? settings.providerRuntimeModeDefaults[instanceId]
+      : undefined;
+  return (
+    explicitRuntimeMode ?? providerDefault ?? settings?.defaultRuntimeMode ?? DEFAULT_RUNTIME_MODE
+  );
+}
+
 /**
  * Derived views of `projectSettingsOverrides` for clients that still read
  * the legacy per-key maps. Recomputed on every patch and load so they
@@ -273,6 +292,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
+    providerRuntimeModeDefaults: providerRuntimeModeDefaultsPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
@@ -364,6 +384,14 @@ export function applyServerSettingsPatch(
           usagePriceOverrides: mergeSettingsEntries(
             current.usagePriceOverrides,
             usagePriceOverridesPatch,
+          ),
+        }
+      : {}),
+    ...(providerRuntimeModeDefaultsPatch !== undefined
+      ? {
+          providerRuntimeModeDefaults: mergeSettingsEntries(
+            current.providerRuntimeModeDefaults,
+            providerRuntimeModeDefaultsPatch,
           ),
         }
       : {}),

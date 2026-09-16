@@ -54,7 +54,7 @@ import {
 import { flushThreadOutbox, threadOutboxManager } from "./thread-outbox";
 import { composerDraftEnvironmentId } from "../lib/composerAttachmentUploadQueue";
 
-const COMPOSER_DRAFTS_SCHEMA_VERSION = 1;
+const COMPOSER_DRAFTS_SCHEMA_VERSION = 2;
 const COMPOSER_DRAFTS_DIRECTORY = "composer-drafts";
 const COMPOSER_DRAFTS_FILE = "drafts.json";
 const PERSIST_DEBOUNCE_MS = 200;
@@ -393,7 +393,7 @@ const ComposerDraftSchema = Schema.Struct({
 });
 
 const PersistedComposerDraftsSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(COMPOSER_DRAFTS_SCHEMA_VERSION),
+  schemaVersion: Schema.Literals([1, COMPOSER_DRAFTS_SCHEMA_VERSION]),
   drafts: Schema.Record(Schema.String, ComposerDraftSchema),
   stickyModelSelection: Schema.optional(ModelSelectionSchema),
   cloudAccountId: Schema.optional(Schema.String),
@@ -547,6 +547,41 @@ function isEmptyDraft(draft: ComposerDraft): boolean {
   );
 }
 
+function normalizePersistedDrafts(
+  drafts: Record<string, ComposerDraft>,
+  legacyModelSelection: boolean,
+  now: string,
+): Record<string, ComposerDraft> {
+  return Object.fromEntries(
+    Object.entries(drafts)
+      .map(([key, draft]) => {
+        // Stale new-task drafts left on disk by builds before the
+        // model-precedence fix carry a bare modelSelection with no
+        // other selector settings. Strip it so the next compose pass
+        // re-resolves project → sticky → provider defaults. Drafts
+        // with runtime/interaction/workspace settings or actual text /
+        // attachments were deliberately configured and are left alone.
+        const normalized =
+          legacyModelSelection &&
+          key.startsWith("new-task:") &&
+          draft.modelSelection &&
+          draft.text.length === 0 &&
+          draft.attachments.length === 0 &&
+          (draft.importedShareIds?.length ?? 0) === 0 &&
+          draft.runtimeMode === undefined &&
+          draft.interactionMode === undefined &&
+          draft.workspaceSelection === undefined
+            ? { ...draft, modelSelection: undefined }
+            : draft;
+        return migrateLegacyNewTaskDraft(key, normalized, now);
+      })
+      // importedShareIds are share-import receipts: a contentless draft
+      // carrying one is not empty, or the same native share would be
+      // re-imported after restart.
+      .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0),
+  );
+}
+
 /**
  * Writes a draft back, dropping it once empty. A new-task draft keeps its
  * entry while the composer is bound to it (the project stamp is what the
@@ -610,34 +645,7 @@ export function decodePersistedComposerState(value: unknown): {
   const parsed = decodePersistedComposerDraftsDocument(value);
   const now = new Date().toISOString();
   return {
-    drafts: Object.fromEntries(
-      Object.entries(parsed.drafts)
-        .map(([key, draft]) =>
-          migrateLegacyNewTaskDraft(
-            key,
-            // Stale new-task drafts left on disk by builds before the
-            // model-precedence fix carry a bare modelSelection with no
-            // other selector settings. Strip it so the next compose pass
-            // re-resolves project → sticky → provider defaults. Drafts
-            // with runtime/interaction/workspace settings or actual text /
-            // attachments were deliberately configured and are left alone.
-            isNewTaskDraftKey(key) &&
-              draft.modelSelection &&
-              draft.text.length === 0 &&
-              draft.attachments.length === 0 &&
-              draft.runtimeMode === undefined &&
-              draft.interactionMode === undefined &&
-              draft.workspaceSelection === undefined
-              ? { ...draft, modelSelection: undefined }
-              : draft,
-            now,
-          ),
-        )
-        // importedShareIds are share-import receipts: a contentless draft
-        // carrying one is not empty, or the same native share would be
-        // re-imported after restart.
-        .filter(([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0),
-    ),
+    drafts: normalizePersistedDrafts(parsed.drafts, parsed.schemaVersion === 1, now),
     stickyModelSelection: parsed.stickyModelSelection ?? null,
     cloudDrafts: {
       accountId: parsed.cloudAccountId ?? null,
@@ -646,7 +654,7 @@ export function decodePersistedComposerState(value: unknown): {
           id,
           {
             // Archived drafts come back through restoreCloudComposerDrafts
-            // without another decode, so they get the same key migration.
+            // without another decode, so their project identity must migrate here.
             drafts: Object.fromEntries(
               Object.entries(saved.drafts).map(([key, draft]) =>
                 migrateLegacyNewTaskDraft(key, draft, now),
@@ -704,7 +712,9 @@ async function writePersistedComposerState(
     const file = await getComposerDraftsFile();
     operation = "encode";
     const nonEmptyDrafts = Object.fromEntries(
-      Object.entries(drafts).filter(([, draft]) => !isEmptyDraft(draft)),
+      Object.entries(drafts).filter(
+        ([, draft]) => !isEmptyDraft(draft) || (draft.importedShareIds?.length ?? 0) > 0,
+      ),
     );
     const document = {
       schemaVersion: COMPOSER_DRAFTS_SCHEMA_VERSION,
@@ -1471,6 +1481,7 @@ export function clearComposerDraftContentState(
   draftKey: string,
   options?: {
     readonly clearModelSelection?: boolean;
+    readonly clearRuntimeMode?: boolean;
     readonly clearWorkspaceSelection?: boolean;
   },
 ): Record<string, ComposerDraft> {
@@ -1485,6 +1496,7 @@ export function clearComposerDraftContentState(
     importedShareIds: _importedShareIds,
     context: _context,
     modelSelection,
+    runtimeMode,
     workspaceSelection,
     project: _project,
     ...retained
@@ -1492,6 +1504,7 @@ export function clearComposerDraftContentState(
   const draft = {
     ...retained,
     ...(options?.clearModelSelection || modelSelection === undefined ? {} : { modelSelection }),
+    ...(options?.clearRuntimeMode || runtimeMode === undefined ? {} : { runtimeMode }),
     ...(options?.clearWorkspaceSelection || workspaceSelection === undefined
       ? {}
       : { workspaceSelection }),
@@ -1763,6 +1776,7 @@ export function clearComposerDraftContent(
   draftKey: string,
   options?: {
     readonly clearModelSelection?: boolean;
+    readonly clearRuntimeMode?: boolean;
     readonly clearWorkspaceSelection?: boolean;
     // Send clears the draft while the durable outbox write is still in
     // flight. Sweeping then would race the write: a failed enqueue rolls the

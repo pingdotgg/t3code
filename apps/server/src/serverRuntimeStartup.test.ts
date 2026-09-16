@@ -7,6 +7,7 @@ import {
   ThreadId,
 } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -157,7 +158,13 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
   return Effect.gen(function* () {
     const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
     const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-      Effect.provide(ServerSettings.layerTest()),
+      Effect.provide(
+        ServerSettings.layerTest({
+          providerRuntimeModeDefaults: {
+            [ProviderInstanceId.make("codex")]: "auto",
+          },
+        }),
+      ),
       Effect.provideService(ServerConfig.ServerConfig, {
         cwd: "/tmp/startup-project",
         autoBootstrapProjectFromCwd: true,
@@ -228,6 +235,7 @@ it.effect("resolveAutoBootstrapWelcomeTargets returns existing project and threa
 
 it.effect.each([
   {
+    providerMode: null,
     existing: false,
     machineModel: null,
     projectModel: null,
@@ -235,6 +243,7 @@ it.effect.each([
     projectMode: null,
   },
   {
+    providerMode: null,
     existing: false,
     machineModel: "claude-sonnet-4-6",
     projectModel: null,
@@ -242,6 +251,7 @@ it.effect.each([
     projectMode: null,
   },
   {
+    providerMode: null,
     existing: true,
     machineModel: "claude-sonnet-4-6",
     projectModel: null,
@@ -249,6 +259,23 @@ it.effect.each([
     projectMode: null,
   },
   {
+    providerMode: null,
+    existing: true,
+    machineModel: "claude-sonnet-4-6",
+    projectModel: "gpt-5.4",
+    machineMode: "full-access",
+    projectMode: "auto-accept-edits",
+  },
+  {
+    providerMode: "auto",
+    existing: false,
+    machineModel: "claude-sonnet-4-6",
+    projectModel: null,
+    machineMode: "full-access",
+    projectMode: null,
+  },
+  {
+    providerMode: "approval-required",
     existing: true,
     machineModel: "claude-sonnet-4-6",
     projectModel: "gpt-5.4",
@@ -257,7 +284,8 @@ it.effect.each([
   },
 ] as const)("auto-bootstrap model and permissions precedence: %j", (options) =>
   Effect.gen(function* () {
-    const { existing, machineModel, projectModel, machineMode, projectMode } = options;
+    const { existing, machineModel, projectModel, machineMode, projectMode, providerMode } =
+      options;
     const machineSelection = machineModel
       ? { instanceId: ProviderInstanceId.make("claude-code"), model: machineModel }
       : null;
@@ -277,6 +305,12 @@ it.effect.each([
         ServerSettings.layerTest({
           defaultModelSelection: machineSelection,
           defaultRuntimeMode: machineMode,
+          providerRuntimeModeDefaults: providerMode
+            ? {
+                [projectSelection?.instanceId ?? machineSelection?.instanceId ?? "codex"]:
+                  providerMode,
+              }
+            : {},
           projectSettingsOverrides:
             existing && projectSelection
               ? {
@@ -355,7 +389,7 @@ it.effect.each([
       existing ? ["thread.create"] : ["project.create", "thread.create"],
     );
     if (!existing) assert.equal("defaultModelSelection" in commands[0]!, false);
-    assert.equal(commands.at(-1)?.runtimeMode, projectMode ?? machineMode);
+    assert.equal(commands.at(-1)?.runtimeMode, providerMode ?? projectMode ?? machineMode);
     assert.deepStrictEqual(
       commands.at(-1)?.modelSelection,
       projectSelection ??
@@ -368,12 +402,19 @@ it.effect.each([
 );
 
 it.effect(
-  "resolveAutoBootstrapWelcomeTargets preserves a project created before thread failure",
+  "resolveAutoBootstrapWelcomeTargets preserves project creation when settings and thread lookup fail",
   () =>
     Effect.gen(function* () {
       const dispatchCalls = yield* Ref.make<ReadonlyArray<string>>([]);
       const targets = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
-        Effect.provide(ServerSettings.layerTest()),
+        Effect.provideService(ServerSettings.ServerSettingsService, {
+          start: Effect.void,
+          ready: Effect.void,
+          getSettings: Effect.die("settings unavailable"),
+          updateSettings: () => Effect.die("unused"),
+          streamChanges: Stream.empty,
+          subscribeChanges: Effect.succeed(Stream.empty),
+        } satisfies ServerSettings.ServerSettingsService["Service"]),
         Effect.provideService(ServerConfig.ServerConfig, {
           cwd: "/tmp/startup-project",
           autoBootstrapProjectFromCwd: true,
@@ -423,6 +464,34 @@ it.effect(
       assert.equal(targets.bootstrapThreadCreated, undefined);
       assert.deepStrictEqual(yield* Ref.get(dispatchCalls), ["project.create"]);
     }),
+);
+
+it.effect("resolveAutoBootstrapWelcomeTargets propagates settings read interruption", () =>
+  Effect.gen(function* () {
+    const interrupted = yield* ServerRuntimeStartup.resolveAutoBootstrapWelcomeTargets.pipe(
+      Effect.provideService(ServerSettings.ServerSettingsService, {
+        start: Effect.void,
+        ready: Effect.void,
+        getSettings: Effect.interrupt,
+        updateSettings: () => Effect.die("unused"),
+        streamChanges: Stream.empty,
+        subscribeChanges: Effect.succeed(Stream.empty),
+      } satisfies ServerSettings.ServerSettingsService["Service"]),
+      Effect.provideService(ServerConfig.ServerConfig, {
+        cwd: "/tmp/startup-project",
+        autoBootstrapProjectFromCwd: true,
+      } as never),
+      Effect.provideService(ProjectionSnapshotQuery.ProjectionSnapshotQuery, {} as never),
+      Effect.provideService(OrchestrationEngine.OrchestrationEngineService, {} as never),
+      Effect.provide(NodeServices.layer),
+      Effect.matchCause({
+        onFailure: Cause.hasInterrupts,
+        onSuccess: () => false,
+      }),
+    );
+
+    assert.isTrue(interrupted);
+  }),
 );
 
 it.effect("resolveAutoBootstrapWelcomeTargets preserves typed UUID generation failures", () =>
