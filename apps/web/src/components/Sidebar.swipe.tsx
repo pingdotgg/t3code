@@ -128,7 +128,9 @@ export function updateSwipeGesture(
   }
   const direction = dx > 0 ? "start" : "end";
   const width = widths[direction];
-  const limit = Math.max(width + MAX_OVERDRAG, swipeCommitThreshold(width, contentWidth));
+  // A side with no actions has nothing to reveal, so the row stays put.
+  const limit =
+    width === 0 ? 0 : Math.max(width + MAX_OVERDRAG, swipeCommitThreshold(width, contentWidth));
   return {
     _tag: "move",
     state: {
@@ -193,15 +195,13 @@ export function ThreadSwipeable(props: {
     if (startLayerRef.current) startLayerRef.current.style.visibility = "hidden";
     if (endLayerRef.current) endLayerRef.current.style.visibility = "hidden";
   }, []);
-  const closeRef = useRef(close);
-  closeRef.current = close;
-  selfCloseRef.current = close;
 
   useEffect(() => {
+    selfCloseRef.current = close;
     return () => {
       if (activeSwipeableClose === selfCloseRef.current) activeSwipeableClose = null;
     };
-  }, []);
+  }, [close]);
 
   const open = useCallback(
     (direction: "start" | "end") => {
@@ -232,12 +232,11 @@ export function ThreadSwipeable(props: {
       // finger) never steal an in-flight gesture.
       if (event.pointerType === "mouse" || event.button !== 0 || !event.isPrimary) return;
       if ((event.target as HTMLElement).closest("button, a, input, textarea")) return;
-      // A stale swallow flag must not eat the click this contact may
-      // legitimately produce.
-      swallowClickRef.current = false;
       if (openSideRef.current !== null) {
         // The first tap after opening dismisses the actions instead of
-        // activating the row underneath them.
+        // activating the row underneath them. Stop the press here too, or it
+        // bubbles to the sortable row and 6px of movement starts a reorder.
+        event.stopPropagation();
         swallowClickRef.current = true;
         close();
         return;
@@ -258,14 +257,17 @@ export function ThreadSwipeable(props: {
     [close],
   );
 
-  const cancelGesture = useCallback((event: ReactPointerEvent<HTMLDivElement>) => {
-    const gesture = gestureRef.current;
-    if (!gesture || event.pointerId !== gesture.pointerId) return;
-    gestureRef.current = null;
-    if (gesture.decided) {
-      closeRef.current();
-    }
-  }, []);
+  const cancelGesture = useCallback(
+    (event: ReactPointerEvent<HTMLDivElement>) => {
+      const gesture = gestureRef.current;
+      if (!gesture || event.pointerId !== gesture.pointerId) return;
+      gestureRef.current = null;
+      if (gesture.decided) {
+        close();
+      }
+    },
+    [close],
+  );
 
   const handlePointerMove = useCallback(
     (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -284,6 +286,9 @@ export function ThreadSwipeable(props: {
       }
       gestureRef.current = { ...result.state, pointerId: gesture.pointerId };
       const next = gestureRef.current;
+      // Sub-threshold movement reveals nothing: without this guard the
+      // end-side layer would go visible on any tap that twitches a pixel.
+      if (!next.decided) return;
       const content = contentRef.current;
       if (content) {
         content.style.transition = "none";
@@ -305,7 +310,10 @@ export function ThreadSwipeable(props: {
       const gesture = gestureRef.current;
       if (!gesture || event.pointerId !== gesture.pointerId) return;
       gestureRef.current = null;
-      if (!gesture.decided) return;
+      if (!gesture.decided) {
+        close();
+        return;
+      }
       // A completed drag still emits a compatibility click on this element;
       // it must not fall through to the row's activate handler.
       swallowClickRef.current = true;
@@ -317,7 +325,7 @@ export function ThreadSwipeable(props: {
         contentWidth: content?.offsetWidth ?? 0,
       });
       if (release === "commit") {
-        closeRef.current();
+        close();
         // Full swipes commit only the direction's primary action: snooze is
         // never triggered by distance, matching the mobile list.
         const action =
@@ -334,11 +342,21 @@ export function ThreadSwipeable(props: {
       if (release === "open" || release === "commit") {
         open(gesture.direction);
       } else {
-        closeRef.current();
+        close();
       }
     },
-    [actionsWidthFor, open, props.end, props.start],
+    [actionsWidthFor, close, open, props.end, props.start],
   );
+
+  // The swallow flag pairs with the click of the gesture that armed it. A new
+  // contact always produces pointerdown before its click, so clearing on
+  // capture lets a real tap through even when the browser suppressed the
+  // drag's compatibility click. The compat click itself carries no new
+  // pointerdown — and may land on a revealed action button — so it stays
+  // swallowed instead of double-firing the action.
+  const handlePointerDownCapture = useCallback(() => {
+    swallowClickRef.current = false;
+  }, []);
 
   const handleClickCapture = useCallback((event: ReactMouseEvent) => {
     if (!swallowClickRef.current) return;
@@ -349,10 +367,10 @@ export function ThreadSwipeable(props: {
 
   const handleActionPress = useCallback(
     (action: ThreadSwipeAction) => (event: ReactMouseEvent<HTMLButtonElement>) => {
-      closeRef.current();
+      close();
       action.onPress({ x: event.clientX, y: event.clientY });
     },
-    [],
+    [close],
   );
 
   if (props.start === null && props.end.length === 0) {
@@ -380,6 +398,7 @@ export function ThreadSwipeable(props: {
     <div
       className="relative overflow-hidden rounded-md"
       style={{ touchAction: "pan-y" }}
+      onPointerDownCapture={handlePointerDownCapture}
       onClickCapture={handleClickCapture}
     >
       {/* visibility:hidden (set imperatively) keeps the closed layers out of

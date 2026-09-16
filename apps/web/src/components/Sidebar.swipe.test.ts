@@ -185,6 +185,19 @@ describe("updateSwipeGesture", () => {
     expect(result.state.offset).toBeLessThanOrEqual(-143);
   });
 
+  it("keeps the row put when the dragged side has no actions", () => {
+    const result = updateSwipeGesture(
+      { startX: 0, startY: 0, offset: 0, decided: false, direction: "start" },
+      500,
+      0,
+      { start: 0, end: 144 },
+      260,
+    );
+    if (result._tag !== "move") throw new Error("expected move");
+    expect(result.state.decided).toBe(true);
+    expect(result.state.offset).toBe(0);
+  });
+
   it("cancels a vertically dominant undecided drag", () => {
     const result = updateSwipeGesture(
       { startX: 0, startY: 0, offset: 0, decided: false, direction: "end" },
