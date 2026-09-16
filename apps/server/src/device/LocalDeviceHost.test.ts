@@ -14,10 +14,15 @@ import * as NetService from "@t3tools/shared/Net";
 import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 
+const noRunner: ProcessRunner.ProcessRunner["Service"] = {
+  run: () => Effect.die(new Error("Android diagnostics must not run commands")),
+};
+
 const diagnose = (files: ReadonlyArray<string>, environment: NodeJS.ProcessEnv) =>
   LocalDeviceHost.__testing.platformReason("android").pipe(
     Effect.provideService(HostProcessEnvironment, environment),
     Effect.provideService(HostProcessPlatform, "darwin"),
+    Effect.provideService(ProcessRunner.ProcessRunner, noRunner),
     Effect.provideService(
       FileSystem.FileSystem,
       FileSystem.makeNoop({
@@ -62,6 +67,101 @@ describe("Android SDK availability", () => {
   it.effect("reports an absent SDK without running or installing tools", () =>
     Effect.gen(function* () {
       expect(yield* diagnose([], { HOME: "/test/home" })).toContain("Android SDK was not found");
+    }),
+  );
+});
+
+const exited = (code: number, stderr = "", timedOut = false): ProcessRunner.ProcessRunOutput => ({
+  stdout: "",
+  stderr,
+  code: ChildProcessSpawner.ExitCode(code),
+  timedOut,
+  stdoutTruncated: false,
+  stderrTruncated: false,
+  stdoutInvalidUtf8: false,
+  stderrInvalidUtf8: false,
+});
+
+/** Runs the iOS probe on macOS with a fake `xcrun simctl help` outcome. */
+const diagnoseIos = (
+  simctl: Effect.Effect<ProcessRunner.ProcessRunOutput, ProcessRunner.ProcessRunError>,
+) =>
+  LocalDeviceHost.__testing.platformReason("ios").pipe(
+    Effect.provideService(HostProcessEnvironment, {}),
+    Effect.provideService(HostProcessPlatform, "darwin"),
+    Effect.provideService(ProcessRunner.ProcessRunner, {
+      run: (input) => {
+        expect(input.command).toBe("xcrun");
+        expect(input.args).toEqual(["simctl", "help"]);
+        return simctl;
+      },
+    }),
+    Effect.provideService(FileSystem.FileSystem, FileSystem.makeNoop({})),
+    Effect.provide(NodePath.layer),
+  );
+
+describe("iOS Simulator availability", () => {
+  it.effect("is available when xcrun can run simctl", () =>
+    Effect.gen(function* () {
+      expect(yield* diagnoseIos(Effect.succeed(exited(0)))).toBeNull();
+    }),
+  );
+
+  it.effect("tells the user to point xcode-select at Xcode.app when simctl is missing", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(
+        Effect.succeed(exited(72, 'xcrun: error: unable to find utility "simctl"')),
+      );
+      expect(reason).toContain("xcode-select -s /Applications/Xcode.app/Contents/Developer");
+    }),
+  );
+
+  it.effect("passes through other simctl failures instead of blaming xcode-select", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(
+        Effect.succeed(exited(69, "You have not agreed to the Xcode license agreements.")),
+      );
+      expect(reason).toContain("Xcode license");
+      expect(reason).not.toContain("xcode-select");
+    }),
+  );
+
+  it.effect("does not blame xcode-select when the probe times out", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(Effect.succeed(exited(0, "", true)));
+      expect(reason).toContain("did not respond");
+      expect(reason).not.toContain("xcode-select");
+    }),
+  );
+
+  it.effect("surfaces other runner failures instead of claiming tools are missing", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(
+        Effect.fail(
+          new ProcessRunner.ProcessReadError({
+            command: "xcrun",
+            argumentCount: 2,
+            stream: "stdout",
+            cause: new Error("EIO"),
+          }),
+        ),
+      );
+      expect(reason).toContain("Could not run xcrun simctl");
+    }),
+  );
+
+  it.effect("reports missing command line tools when xcrun cannot be spawned", () =>
+    Effect.gen(function* () {
+      const reason = yield* diagnoseIos(
+        Effect.fail(
+          new ProcessRunner.ProcessSpawnError({
+            command: "xcrun",
+            argumentCount: 2,
+            cause: new Error("ENOENT"),
+          }),
+        ),
+      );
+      expect(reason).toBe("Xcode command line tools were not found.");
     }),
   );
 });

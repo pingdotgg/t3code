@@ -51,6 +51,7 @@ import { useAtomCommand } from "~/state/use-atom-command";
 import {
   AgentDeviceSetupStatus,
   DeviceHubSetupStatus,
+  DeviceHostDetail,
   PlatformStatus,
   platformSetupStatus,
   deviceHubDescription,
@@ -680,13 +681,20 @@ function DeviceIntegrationControls({
                 : undefined
             }
             status={
-              <div className="flex flex-wrap gap-x-5 gap-y-2">
-                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
-                <PlatformStatus
-                  compact
-                  platform="Android"
-                  status={platformSetupStatus(state, "android")}
-                />
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PlatformStatus
+                    compact
+                    platform="iOS"
+                    status={platformSetupStatus(state, "ios")}
+                  />
+                  <PlatformStatus
+                    compact
+                    platform="Android"
+                    status={platformSetupStatus(state, "android")}
+                  />
+                </div>
+                <DeviceHostDetail state={state} />
               </div>
             }
             control={
