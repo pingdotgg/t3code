@@ -162,6 +162,31 @@ describe("runProcess", () => {
     );
   });
 
+  it.effect("passes a shell line through untouched when shell mode is requested", () => {
+    const spawner = makeSpawner((command) =>
+      Effect.sync(() => {
+        expect(command.command).toBe("rm -rf node_modules && echo done");
+        expect(command.args).toEqual([]);
+        expect(command.options.shell).toBe(true);
+        return makeHandle({ stdout: "done\n" });
+      }),
+    );
+
+    return runWith(spawner)({
+      command: "rm -rf node_modules && echo done",
+      args: [],
+      shell: true,
+    }).pipe(
+      Effect.provideService(HostProcessPlatform, "darwin"),
+      Effect.provideService(SpawnExecutableResolution, () => {
+        throw new Error("shell mode must not resolve the command as an executable");
+      }),
+      Effect.map((result) => {
+        expect(result.stdout).toBe("done\n");
+      }),
+    );
+  });
+
   it.effect("preserves resolved spawn context and cause", () =>
     Effect.gen(function* () {
       const cause = PlatformError.systemError({

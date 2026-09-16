@@ -5,6 +5,7 @@ import {
   projectScriptCwd,
   projectScriptRuntimeEnv,
   setupProjectScript,
+  teardownProjectScript,
 } from "@t3tools/shared/projectScripts";
 
 import {
@@ -13,6 +14,8 @@ import {
   nextProjectScriptId,
   primaryProjectScript,
   projectScriptIdFromCommand,
+  projectScriptMenuLabel,
+  withExclusiveScriptRoles,
 } from "./projectScripts";
 
 describe("projectScripts helpers", () => {
@@ -24,6 +27,7 @@ describe("projectScripts helpers", () => {
         icon: "debug",
         runOnWorktreeCreate: false,
         waitForSetup: false,
+        runOnThreadSettle: false,
         previewUrl: "http://localhost:5733",
         autoOpenPreview: true,
       }),
@@ -46,6 +50,7 @@ describe("projectScripts helpers", () => {
         icon: "test",
         runOnWorktreeCreate: false,
         waitForSetup: false,
+        runOnThreadSettle: false,
         previewUrl: null,
         autoOpenPreview: false,
       }),
@@ -63,6 +68,7 @@ describe("projectScripts helpers", () => {
       name: "Setup",
       command: "pnpm i",
       icon: "configure",
+      runOnThreadSettle: false,
       previewUrl: null,
       autoOpenPreview: false,
     } as const;
@@ -108,7 +114,7 @@ describe("projectScripts helpers", () => {
     expect(nextProjectScriptId("!!!", [])).toBe("script");
   });
 
-  it("resolves primary and setup scripts", () => {
+  it("resolves primary, setup, and teardown scripts", () => {
     const scripts = [
       {
         id: "setup",
@@ -116,6 +122,14 @@ describe("projectScripts helpers", () => {
         command: "bun install",
         icon: "configure" as const,
         runOnWorktreeCreate: true,
+      },
+      {
+        id: "teardown",
+        name: "Teardown",
+        command: "rm -rf node_modules",
+        icon: "configure" as const,
+        runOnWorktreeCreate: false,
+        runOnThreadSettle: true,
       },
       {
         id: "test",
@@ -128,6 +142,51 @@ describe("projectScripts helpers", () => {
 
     expect(primaryProjectScript(scripts)?.id).toBe("test");
     expect(setupProjectScript(scripts)?.id).toBe("setup");
+    expect(teardownProjectScript(scripts)?.id).toBe("teardown");
+    expect(scripts.map(projectScriptMenuLabel)).toEqual([
+      "Setup (setup)",
+      "Teardown (teardown)",
+      "Test",
+    ]);
+  });
+
+  it("keeps setup and teardown roles exclusive when saving a script", () => {
+    const scripts = [
+      {
+        id: "setup",
+        name: "Setup",
+        command: "bun install",
+        icon: "configure" as const,
+        runOnWorktreeCreate: true,
+      },
+      {
+        id: "teardown",
+        name: "Teardown",
+        command: "rm -rf node_modules",
+        icon: "configure" as const,
+        runOnWorktreeCreate: false,
+        runOnThreadSettle: true,
+      },
+    ];
+    const saved = {
+      id: "both",
+      name: "Both",
+      command: "echo",
+      icon: "play" as const,
+      runOnWorktreeCreate: true,
+      runOnThreadSettle: true,
+    };
+
+    expect(withExclusiveScriptRoles(scripts, saved)).toEqual([
+      { ...scripts[0], runOnWorktreeCreate: false },
+      {
+        id: "teardown",
+        name: "Teardown",
+        command: "rm -rf node_modules",
+        icon: "configure",
+        runOnWorktreeCreate: false,
+      },
+    ]);
   });
 
   it("builds default runtime env for scripts", () => {

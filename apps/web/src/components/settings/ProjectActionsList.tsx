@@ -1,7 +1,7 @@
 import type { ProjectScript, ResolvedKeybindingsConfig } from "@t3tools/contracts";
 import { SettingsIcon } from "lucide-react";
 import { shortcutLabelForCommand } from "../../keybindings";
-import { commandForProjectScript } from "../../projectScripts";
+import { commandForProjectScript, projectScriptRole } from "../../projectScripts";
 import { ScriptIcon } from "../projectScriptEditor";
 import { Button } from "../ui/button";
 import { SettingsRow } from "./settingsLayout";
@@ -33,9 +33,9 @@ export function ProjectActionsList({
           <span className="flex min-w-0 items-center gap-2">
             <ScriptIcon icon={script.icon} className="size-4 shrink-0 text-muted-foreground" />
             <span className="min-w-0 truncate">{script.name}</span>
-            {script.runOnWorktreeCreate ? (
+            {projectScriptRole(script) ? (
               <span className="shrink-0 rounded-sm border border-border/60 px-1.5 py-px text-[11px] font-normal text-muted-foreground">
-                setup
+                {projectScriptRole(script)}
               </span>
             ) : null}
             {script.previewUrl ? (

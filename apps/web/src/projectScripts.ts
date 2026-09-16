@@ -13,6 +13,7 @@ export interface ProjectScriptInput {
   readonly icon: ProjectScript["icon"];
   readonly runOnWorktreeCreate: ProjectScript["runOnWorktreeCreate"];
   readonly waitForSetup: boolean;
+  readonly runOnThreadSettle: boolean;
   readonly previewUrl: Exclude<ProjectScript["previewUrl"], undefined> | null;
   readonly autoOpenPreview: boolean;
 }
@@ -25,6 +26,7 @@ export function buildProjectScript(id: string, input: ProjectScriptInput): Proje
     icon: input.icon,
     runOnWorktreeCreate: input.runOnWorktreeCreate,
     ...(input.runOnWorktreeCreate && input.waitForSetup ? { async: false } : {}),
+    ...(input.runOnThreadSettle ? { runOnThreadSettle: true } : {}),
     ...(input.previewUrl === null
       ? {}
       : {
@@ -87,6 +89,35 @@ export function nextProjectScriptId(name: string, existingIds: Iterable<string>)
 }
 
 export function primaryProjectScript(scripts: ReadonlyArray<ProjectScript>): ProjectScript | null {
-  const regular = scripts.find((script) => !script.runOnWorktreeCreate);
+  const regular = scripts.find((script) => projectScriptRole(script) === null);
   return regular ?? scripts[0] ?? null;
+}
+
+/** Lifecycle role a script plays, if any; shown as a tag next to its name. */
+export function projectScriptRole(script: ProjectScript): "setup" | "teardown" | null {
+  if (script.runOnWorktreeCreate) return "setup";
+  if (script.runOnThreadSettle) return "teardown";
+  return null;
+}
+
+export function projectScriptMenuLabel(script: ProjectScript): string {
+  const role = projectScriptRole(script);
+  return role ? `${script.name} (${role})` : script.name;
+}
+
+/**
+ * Setup and teardown are exclusive roles: saving a script with either flag
+ * clears that flag from every other script.
+ */
+export function withExclusiveScriptRoles(
+  scripts: ReadonlyArray<ProjectScript>,
+  saved: ProjectScript,
+): ProjectScript[] {
+  return scripts.map((script) => {
+    if (script.id === saved.id) return script;
+    const next = { ...script };
+    if (saved.runOnWorktreeCreate) next.runOnWorktreeCreate = false;
+    if (saved.runOnThreadSettle) delete next.runOnThreadSettle;
+    return next;
+  });
 }

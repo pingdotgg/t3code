@@ -411,6 +411,12 @@ export const ProjectScript = Schema.Struct({
    */
   async: Schema.optional(Schema.Boolean),
   /**
+   * When true, the server runs this script in a thread's worktree when the
+   * thread settles (teardown), and runs the setup script again on un-settle.
+   * Optional so persisted projects from older servers still decode.
+   */
+  runOnThreadSettle: Schema.optional(Schema.Boolean),
+  /**
    * URL to open in the in-app browser preview when this script runs (or
    * when the user explicitly requests a preview). Optional; only honored on
    * the desktop build.

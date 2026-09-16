@@ -48,6 +48,12 @@ export const T3ProjectFileScript = Schema.Struct({
         "Only for runOnWorktreeCreate scripts. When true (the default), the agent starts while the script is still running. Set false to hold the agent until the script exits.",
     }),
   ),
+  runOnThreadSettle: Schema.optionalKey(
+    Schema.Boolean.annotate({
+      description:
+        "When true, the script runs automatically in a thread's worktree when the thread settles, e.g. to remove dependencies and reclaim disk. The setup script runs again when the thread is un-settled.",
+    }),
+  ),
   previewUrl: Schema.optionalKey(
     trimmedNonEmpty({
       description:

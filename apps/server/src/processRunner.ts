@@ -25,6 +25,11 @@ export interface ProcessRunInput {
   readonly timeout?: Duration.Input | undefined;
   readonly env?: NodeJS.ProcessEnv | undefined;
   readonly stdin?: string | undefined;
+  /**
+   * Run `command` as a shell line (`/bin/sh -c` on POSIX, `cmd.exe /c` on
+   * Windows) instead of resolving it as an executable. `args` must be empty.
+   */
+  readonly shell?: boolean | undefined;
   readonly maxOutputBytes?: number | undefined;
   readonly outputMode?: "error" | "truncate" | undefined;
   readonly truncatedMarker?: string | undefined;
@@ -291,11 +296,13 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
   const outputMode = input.outputMode ?? "error";
   const truncatedMarker = input.truncatedMarker ?? "";
   const extendEnv = input.env !== undefined;
-  const spawnCommand = yield* resolveSpawnCommand(
-    input.command,
-    input.args,
-    input.env === undefined ? {} : { env: input.env, extendEnv },
-  );
+  const spawnCommand = input.shell
+    ? { command: input.command, args: [...input.args], shell: true }
+    : yield* resolveSpawnCommand(
+        input.command,
+        input.args,
+        input.env === undefined ? {} : { env: input.env, extendEnv },
+      );
 
   const child = yield* spawner
     .spawn(

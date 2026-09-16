@@ -240,6 +240,7 @@ import {
   buildProjectScript,
   commandForProjectScript,
   nextProjectScriptId,
+  withExclusiveScriptRoles,
   projectScriptIdFromCommand,
 } from "~/projectScripts";
 import { newDraftId, newMessageId, newThreadId } from "~/lib/utils";
@@ -4334,14 +4335,10 @@ export default function ChatView(props: ChatViewProps) {
         activeProjectScripts.map((script) => script.id),
       );
       const nextScript = buildProjectScript(nextId, input);
-      const nextScripts = input.runOnWorktreeCreate
-        ? [
-            ...activeProjectScripts.map((script) =>
-              script.runOnWorktreeCreate ? { ...script, runOnWorktreeCreate: false } : script,
-            ),
-            nextScript,
-          ]
-        : [...activeProjectScripts, nextScript];
+      const nextScripts = [
+        ...withExclusiveScriptRoles(activeProjectScripts, nextScript),
+        nextScript,
+      ];
 
       return persistProjectScripts({
         projectId: activeProject.id,
@@ -4368,12 +4365,8 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       const updatedScript = buildProjectScript(existingScript.id, input);
-      const nextScripts = activeProjectScripts.map((script) =>
-        script.id === scriptId
-          ? updatedScript
-          : input.runOnWorktreeCreate
-            ? { ...script, runOnWorktreeCreate: false }
-            : script,
+      const nextScripts = withExclusiveScriptRoles(activeProjectScripts, updatedScript).map(
+        (script) => (script.id === scriptId ? updatedScript : script),
       );
 
       return persistProjectScripts({
