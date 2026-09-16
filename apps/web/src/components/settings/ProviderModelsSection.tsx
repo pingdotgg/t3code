@@ -28,6 +28,7 @@ const CUSTOM_MODEL_PLACEHOLDER_BY_KIND: Partial<Record<ProviderDriverKind, strin
   [ProviderDriverKind.make("claudeAgent")]: "claude-sonnet-5",
   [ProviderDriverKind.make("cursor")]: "claude-sonnet-4-6",
   [ProviderDriverKind.make("opencode")]: "openai/gpt-5",
+  [ProviderDriverKind.make("opencode2")]: "openai/gpt-6-astra",
 };
 
 /** Above this many models the list gets a filter input. */

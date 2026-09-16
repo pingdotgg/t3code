@@ -1,0 +1,18 @@
+diff --git a/dist/effect/index.js b/dist/effect/index.js
+--- a/dist/effect/index.js
++++ b/dist/effect/index.js
+@@ -1 +1 @@
+-export * from "./generated/index";
++export * from "./generated/index.js";
+diff --git a/dist/effect/generated/client.js b/dist/effect/generated/client.js
+--- a/dist/effect/generated/client.js
++++ b/dist/effect/generated/client.js
+@@ -6 +6 @@
+-import { ClientApi } from "../../contract";
++import { ClientApi } from "../../contract.js";
+diff --git a/dist/solid/data.js b/dist/solid/data.js
+--- a/dist/solid/data.js
++++ b/dist/solid/data.js
+@@ -8 +8 @@
+-import { isFormAlreadySettledError, isFormNotFoundError, isPermissionNotFoundError, } from "../promise";
++import { isFormAlreadySettledError, isFormNotFoundError, isPermissionNotFoundError, } from "../promise/index.js";
