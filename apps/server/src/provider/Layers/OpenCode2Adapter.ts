@@ -843,7 +843,7 @@ export function makeOpenCode2Adapter(
       const detail =
         "OpenCode 2 accepted the prompt, but T3 Code could not confirm the session started executing it.";
       yield* context.client.session
-        .interrupt({ sessionID: toSessionId(context.openCodeSessionId), continue: false })
+        .interrupt({ sessionID: toSessionId(context.openCodeSessionId), resume: false })
         .pipe(Effect.timeout("1 second"), Effect.ignore);
       const tokenUsage = takeTurnUsage(context, false);
       context.promptAdmission = undefined;
@@ -1016,7 +1016,7 @@ export function makeOpenCode2Adapter(
         .reply({
           sessionID: toSessionId(ask.sessionID),
           requestID: Permission.ID.create(ask.id),
-          reply: "once",
+          decision: "once",
         })
         .pipe(
           Effect.timeout("10 seconds"),
@@ -1295,7 +1295,7 @@ export function makeOpenCode2Adapter(
           );
         }
       }
-      const forms = yield* context.client.form
+      const forms = yield* context.client.session.form
         .list({ sessionID: context.openCodeSessionId })
         .pipe(Effect.timeout("10 seconds"), Effect.option);
       if (Option.isSome(forms)) {
@@ -1332,7 +1332,7 @@ export function makeOpenCode2Adapter(
       // session, so tell it to stop any run it still owns.
       if (options.interruptRemote) {
         yield* context.client.session
-          .interrupt({ sessionID: toSessionId(context.openCodeSessionId), continue: false })
+          .interrupt({ sessionID: toSessionId(context.openCodeSessionId), resume: false })
           .pipe(Effect.timeout("1 second"), Effect.ignore);
       }
       // Best-effort deregistration of this thread's MCP server; concurrent
@@ -2036,8 +2036,8 @@ export function makeOpenCode2Adapter(
           runtimeMode: context.appliedRulesMode,
           ownMcpServerName: context.mcpServerName,
         });
-        yield* context.client.permission
-          .rules({
+        yield* context.client.session
+          .update({
             sessionID: toSessionId(context.openCodeSessionId),
             permissions: ruleset,
           })
@@ -2153,14 +2153,14 @@ export function makeOpenCode2Adapter(
           runtimeMode,
           ownMcpServerName: context.mcpServerName,
         });
-        yield* context.client.permission
-          .rules({
+        yield* context.client.session
+          .update({
             sessionID: toSessionId(context.openCodeSessionId),
             permissions: ruleset,
           })
           .pipe(
             Effect.timeout("10 seconds"),
-            Effect.mapError(toRequestError("permission.rules", "Failed to set session rules.")),
+            Effect.mapError(toRequestError("session.update", "Failed to set session rules.")),
           );
         context.appliedRulesMode = runtimeMode;
       });
@@ -2377,14 +2377,11 @@ export function makeOpenCode2Adapter(
               // original permissions. An empty ruleset is sent deliberately:
               // it is what clears a supervised session's rules when the thread
               // has since moved to full-access.
-              yield* client.permission
-                .rules({ sessionID: adopted.id, permissions: ruleset })
+              yield* client.session
+                .update({ sessionID: adopted.id, permissions: ruleset })
                 .pipe(
                   Effect.mapError(
-                    toRequestError(
-                      "permission.rules",
-                      "Failed to re-apply session rules on resume.",
-                    ),
+                    toRequestError("session.update", "Failed to re-apply session rules on resume."),
                   ),
                 );
               if (agent) {
@@ -2896,7 +2893,7 @@ export function makeOpenCode2Adapter(
       yield* context.client.session
         .interrupt({
           sessionID: toSessionId(context.openCodeSessionId),
-          continue: false,
+          resume: false,
         })
         .pipe(
           Effect.timeout("10 seconds"),
@@ -2936,7 +2933,7 @@ export function makeOpenCode2Adapter(
         .reply({
           sessionID: toSessionId(ask.sessionID),
           requestID: Permission.ID.create(requestId),
-          reply,
+          decision: reply,
         })
         .pipe(
           Effect.timeout("10 seconds"),
@@ -3015,7 +3012,7 @@ export function makeOpenCode2Adapter(
         }
       }
 
-      yield* context.client.form
+      yield* context.client.session.form
         .reply({
           sessionID: form.sessionID,
           formID: Form.ID.create(form.id),
@@ -3025,7 +3022,7 @@ export function makeOpenCode2Adapter(
           Effect.timeout("10 seconds"),
           Effect.mapError(
             toRequestError(
-              "form.reply",
+              "session.form.reply",
               "OpenCode 2 form reply did not complete within 10 seconds.",
             ),
           ),
@@ -3110,10 +3107,7 @@ export function makeOpenCode2Adapter(
       const fork = yield* context.client.session
         .fork({
           sessionID: toSessionId(context.openCodeSessionId),
-          boundary: {
-            type: "before",
-            messageID: firstRemovedMessageId,
-          },
+          before: firstRemovedMessageId,
         })
         .pipe(Effect.mapError(toRequestError("session.fork", "OpenCode 2 session fork failed.")));
       const forkedSessionId = fork.id;
@@ -3135,11 +3129,11 @@ export function makeOpenCode2Adapter(
           runtimeMode: context.appliedRulesMode,
           ownMcpServerName: context.mcpServerName,
         });
-        yield* context.client.permission
-          .rules({ sessionID: forkedSessionId, permissions: ruleset })
+        yield* context.client.session
+          .update({ sessionID: forkedSessionId, permissions: ruleset })
           .pipe(
             Effect.mapError(
-              toRequestError("permission.rules", "Failed to set rules on the forked session."),
+              toRequestError("session.update", "Failed to set rules on the forked session."),
             ),
           );
       }

@@ -26,7 +26,7 @@ export interface OpenCode2Connection {
   readonly client: OpenCodeClient;
   readonly url: string;
   readonly external: boolean;
-  /** Server version from `health.get`, resolved at connect time. */
+  /** Server version from `server.status`, resolved at connect time. */
   readonly version: string;
 }
 
@@ -225,12 +225,12 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
     );
 
   /**
-   * `health.get` is the connection's liveness + version probe in v2. A healthy
-   * v1 server answers it too, so the version is gated here: adopting one would
-   * only fail later, on the first v2-only call.
+   * `server.status` is the connection's liveness + version probe in v2. A v1
+   * server does not serve it, so adopting one fails here with "did not
+   * respond"; the version gate below stays as a second line of defense.
    */
   const probeConnection = (client: OpenCodeClient) =>
-    client.health.get().pipe(
+    client.server.status().pipe(
       Effect.timeout(OPENCODE2_CONNECT_TIMEOUT),
       Effect.mapError((cause) =>
         ensureRuntimeError(
@@ -354,7 +354,7 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
         skills: skillPage.data.map((skill) => ({
           name: skill.name,
           description: skill.description ?? null,
-          location: skill.location,
+          location: skill.path,
         })),
       } satisfies OpenCode2Inventory;
     });

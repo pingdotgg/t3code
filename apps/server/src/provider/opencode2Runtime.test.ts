@@ -20,13 +20,13 @@ import {
   withOpenCode2Variant,
 } from "./opencode2Runtime.ts";
 
-const HEALTH_BODY = { healthy: true, version: "2.0.3", pid: 1234 };
+const HEALTH_BODY = { version: "2.0.5", pid: 1234, urls: [] as Array<string> };
 
 /**
  * Records every request URL while answering the health probe. Recording the
  * request is the point: the external-server path used to normalize the
  * configured URL with `url.parse(...).toString()`, which evaluates to the
- * string "[object Object]" — the probe then requested "[object Object]/api/health"
+ * string "[object Object]" — the probe then requested "[object Object]/api/status"
  * and every external server looked unreachable. Asserting on the runtime's own
  * arguments would not have caught that.
  */
@@ -65,8 +65,8 @@ it.effect("probes an external server at its configured URL", () =>
     NodeAssert.equal(exit._tag, "Success");
     if (exit._tag !== "Success") return;
     NodeAssert.equal(exit.value.url, "http://127.0.0.1:49374");
-    NodeAssert.equal(exit.value.version, "2.0.3");
-    NodeAssert.deepEqual(requestedUrls, ["http://127.0.0.1:49374/api/health"]);
+    NodeAssert.equal(exit.value.version, "2.0.5");
+    NodeAssert.deepEqual(requestedUrls, ["http://127.0.0.1:49374/api/status"]);
   }),
 );
 
@@ -75,15 +75,16 @@ it.effect("keeps a trailing slash from corrupting the probe URL", () =>
     const { requestedUrls } = yield* connectWithRequestLog("http://127.0.0.1:49374/");
 
     NodeAssert.equal(requestedUrls.length, 1);
-    NodeAssert.ok(requestedUrls[0]?.includes("127.0.0.1:49374/api/health"));
+    NodeAssert.ok(requestedUrls[0]?.includes("127.0.0.1:49374/api/status"));
     NodeAssert.ok(!requestedUrls[0]?.includes("[object Object]"));
   }),
 );
 
 it.effect("rejects a healthy external server that is not a 2.x release", () =>
   Effect.gen(function* () {
-    // A v1 server answers the health probe too; adopting it would only fail
-    // later on the first v2-only call, with no hint about the version.
+    // A server answering the status probe with a non-2.x version is rejected
+    // here; adopting it would only fail later on the first v2-only call,
+    // with no hint about the version.
     const { exit } = yield* connectWithRequestLog("http://127.0.0.1:49374", {
       ...HEALTH_BODY,
       version: "1.12.4",
