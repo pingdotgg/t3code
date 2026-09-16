@@ -28,7 +28,7 @@ The offered action depends on how the server runs:
 | Action                     | What to do                                                                                                                                                                                      |
 | -------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | **Update server**          | Keep the client open while it installs and reconnects. Supported background services update remotely. For a desktop-hosted server, this also closes and relaunches the desktop app on the host. |
-| **Update the desktop app** | Update the desktop app on the machine running the server, then reopen it if needed.                                                                                                             |
+| **Update the desktop app** | Update the desktop app on the machine running the server. It relaunches on the thread you had open.                                                                                             |
 | **Copy update command**    | Stop the command-line server on its host and relaunch with the copied command, keeping your usual startup options.                                                                              |
 
 For a background service, run the matching version's CLI on the host:
