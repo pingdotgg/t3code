@@ -4,6 +4,7 @@ import {
   appendCodexArtifactTemplateUsePrompt,
   type CodexArtifactTemplate,
 } from "@t3tools/client-runtime/codex-artifact-templates";
+import { appendCodexFollowupPrompt } from "@t3tools/client-runtime/codex-markdown-directives";
 import type {
   CodexFeedbackSubmission,
   EnvironmentThreadStatus,
@@ -811,6 +812,24 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     [props.onChangeDraftMessage],
   );
 
+  const handleUseCodexFollowup = useCallback(
+    (prompt: string) => {
+      const targetThreadKey = selectedThreadKey;
+      const currentDraft = draftMessageRef.current;
+      const nextDraft = appendCodexFollowupPrompt(currentDraft, prompt);
+      if (nextDraft !== currentDraft) {
+        draftMessageRef.current = nextDraft;
+        props.onChangeDraftMessage(nextDraft);
+      }
+      requestAnimationFrame(() => {
+        if (selectedThreadKeyRef.current !== targetThreadKey) return;
+        composerEditorRef.current?.focus();
+        composerEditorRef.current?.setSelection({ start: nextDraft.length, end: nextDraft.length });
+      });
+    },
+    [props.onChangeDraftMessage, selectedThreadKey],
+  );
+
   const handleScrollToEnd = useCallback(() => {
     void Haptics.selectionAsync();
     void scrollMessageToEnd({ animated: true, closeKeyboard: false }).catch(() => {
@@ -901,6 +920,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             onEndFollowEnabledChange={setEndFollowEnabled}
             skills={selectedProviderSkills}
             onUseArtifactTemplate={handleUseArtifactTemplate}
+            onUseCodexFollowup={handleUseCodexFollowup}
             loadEarlier={props.loadEarlier ?? null}
           />
         </BlurTargetView>

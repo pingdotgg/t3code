@@ -5,6 +5,7 @@ import {
   normalizeMarkdownLinkDestination,
   parseMarkdownFileLink,
 } from "@t3tools/client-runtime/markdown-links";
+import { codexFollowupPromptFromHref } from "@t3tools/client-runtime/codex-markdown-directives";
 import { videoMimeType } from "@t3tools/shared/video";
 
 import type { MARKDOWN_FILE_ICON_SOURCES } from "./markdownFileIcons.generated";
@@ -264,6 +265,10 @@ export function resolveMarkdownFileIcon(value: string): MarkdownFileIcon {
 }
 
 export function resolveMarkdownLinkPresentation(href: string): MarkdownLinkPresentation {
+  if (codexFollowupPromptFromHref(href) !== null) {
+    return { kind: "link", href };
+  }
+
   const normalized = normalizeMarkdownLinkDestination(href);
   try {
     const parsed = new URL(normalizeNativeMarkdownUrl(normalized));
