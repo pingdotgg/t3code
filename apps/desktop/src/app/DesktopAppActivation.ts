@@ -172,6 +172,16 @@ export async function startDesktopAppControlServer(input: {
       }
 
       if (isConnectionRequestShape(parsed)) {
+        if (input.directory === null) {
+          finish(
+            desktopAppConnectionFailure(
+              requestIdFromUnknown(parsed),
+              "invalid-request",
+              "Desktop connection tools are currently available on macOS and Linux.",
+            ),
+          );
+          return;
+        }
         if (!isDesktopAppConnectionRequest(parsed) || input.handleConnection === undefined) {
           finish(
             desktopAppConnectionFailure(

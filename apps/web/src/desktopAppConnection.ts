@@ -93,11 +93,25 @@ interface ThreadWindowInput {
   readonly turnLimit?: number | undefined;
 }
 
+// Pre-pagination servers reject a window, so `turnLimit` is only sent when the
+// connected session advertised the capability.
+const supportsThreadPagination = Effect.gen(function* () {
+  const supervisor = yield* EnvironmentSupervisor;
+  const session = yield* SubscriptionRef.get(supervisor.session);
+  if (Option.isNone(session)) return false;
+  const config = yield* session.value.initialConfig.pipe(Effect.option);
+  return Option.isSome(config) && config.value.threadSnapshotPagination === true;
+});
+
 function firstThreadSnapshot(input: ThreadWindowInput) {
-  return subscribe(ORCHESTRATION_WS_METHODS.subscribeThread, {
-    threadId: input.threadId,
-    ...(input.turnLimit !== undefined ? { turnLimit: input.turnLimit } : {}),
-  }).pipe(
+  return Stream.unwrap(
+    Effect.map(supportsThreadPagination, (paginated) =>
+      subscribe(ORCHESTRATION_WS_METHODS.subscribeThread, {
+        threadId: input.threadId,
+        ...(paginated && input.turnLimit !== undefined ? { turnLimit: input.turnLimit } : {}),
+      }),
+    ),
+  ).pipe(
     Stream.filter((item) => item.kind === "snapshot"),
     Stream.map((item) => item.snapshot),
     Stream.runHead,
@@ -119,6 +133,12 @@ function pagedThreadSnapshot(input: ThreadWindowInput & { readonly beforeCursor:
       return yield* new BridgeOperationError({
         code: "environment-unavailable",
         message: `${supervisor.target.label} is not connected.`,
+      });
+    }
+    if (!(yield* supportsThreadPagination)) {
+      return yield* new BridgeOperationError({
+        code: "operation-failed",
+        message: "This environment does not support thread history pages.",
       });
     }
     const snapshot = yield* loader.load(prepared.value, input.threadId, {

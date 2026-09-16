@@ -88,8 +88,8 @@ command cannot reach the app, start or update the desktop app and try again.
 ### Let local tools use your connections
 
 The [T3 thread MCP server](https://github.com/samdickson22/t3code-thread-mcp) can use
-the desktop app's signed-in connections with `t3code-thread-mcp --desktop`. The
-app must be open; the tool sees the environments added in **Settings → Connections**,
+the desktop app's signed-in connections with `t3code-thread-mcp --desktop` on
+macOS and Linux. The app must be open; the tool sees the environments added in **Settings → Connections**,
 including SSH and T3 Connect ones.
 
 This lets local tools create projects (and their directories), start agent work,

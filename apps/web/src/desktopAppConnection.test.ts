@@ -80,7 +80,8 @@ const makeHarness = (
           session: yield* SubscriptionRef.make(
             Option.some({
               client: (fixture.client ?? {}) as unknown as WsRpcProtocolClient,
-            } as RpcSession),
+              initialConfig: Effect.succeed({ threadSnapshotPagination: true }),
+            } as unknown as RpcSession),
           ),
           prepared: yield* SubscriptionRef.make(Option.fromNullishOr(fixture.prepared)),
           connect: Effect.void,
