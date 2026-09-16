@@ -129,6 +129,26 @@ describe("DesktopShellEnvironment", () => {
     }),
   );
 
+  it.effect("hydrates the Android SDK location from the login shell on macOS", () =>
+    Effect.gen(function* () {
+      const env: NodeJS.ProcessEnv = { SHELL: "/bin/zsh", PATH: "/usr/bin" };
+
+      yield* runShellEnvironment({
+        env,
+        platform: "darwin",
+        handler: () =>
+          envOutput({
+            PATH: "/usr/bin",
+            ANDROID_HOME: "/Volumes/Work/android-sdk",
+            ANDROID_SDK_ROOT: "/Volumes/Work/android-sdk",
+          }),
+      });
+
+      assert.equal(env.ANDROID_HOME, "/Volumes/Work/android-sdk");
+      assert.equal(env.ANDROID_SDK_ROOT, "/Volumes/Work/android-sdk");
+    }),
+  );
+
   it.effect("preserves inherited POSIX values when present", () =>
     Effect.gen(function* () {
       const env: NodeJS.ProcessEnv = {
