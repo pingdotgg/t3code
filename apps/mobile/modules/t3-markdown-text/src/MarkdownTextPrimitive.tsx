@@ -1,5 +1,12 @@
 import React, { type Ref } from "react";
-import { Platform, StyleSheet, Text as RNText, type TextProps, type ViewStyle } from "react-native";
+import {
+  Platform,
+  StyleSheet,
+  Text as RNText,
+  type TextInstance,
+  type TextProps,
+  type ViewStyle,
+} from "react-native";
 import T3MarkdownTextRunNativeComponent from "./T3MarkdownTextRunNativeComponent";
 import T3MarkdownTextNativeComponent from "./T3MarkdownTextNativeComponent";
 import { flattenStyles } from "./util";
@@ -33,7 +40,7 @@ export type ContextMenuActionEvent = {
  * while the React Native Text fallback reports measured `TextLayoutLine`s.
  */
 export type MarkdownTextPrimitiveProps = Omit<TextProps, "onTextLayout"> & {
-  nativeTextRef?: Ref<RNText>;
+  nativeTextRef?: Ref<TextInstance>;
   uiTextView?: boolean;
   contextMenuConfig?: string;
   contextClipboardConfig?: string;

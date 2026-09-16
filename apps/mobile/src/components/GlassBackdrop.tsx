@@ -1,6 +1,6 @@
 import { BlurView } from "expo-blur";
 import { useContext, type RefObject } from "react";
-import { Platform, StyleSheet, View, type ColorValue } from "react-native";
+import { Platform, StyleSheet, View, type ColorValue, type ViewInstance } from "react-native";
 
 import { useAppearancePreferences } from "../features/settings/appearance/AppearancePreferencesProvider";
 import { GlassBlurTargetContext } from "../lib/glassBlurTarget";
@@ -9,7 +9,7 @@ import { themeColorWithAlpha } from "../lib/mobileTheme";
 /** Frosted backdrop for containers that clip their children to their shape. */
 export function GlassBackdrop(props: {
   readonly fallbackColor?: ColorValue;
-  readonly blurTarget?: RefObject<View | null>;
+  readonly blurTarget?: RefObject<ViewInstance | null>;
 }) {
   const { themeAppearance } = useAppearancePreferences();
   const inheritedBlurTarget = useContext(GlassBlurTargetContext);

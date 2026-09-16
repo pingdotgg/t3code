@@ -1,0 +1,57 @@
+diff --git a/build/BlurView.types.d.ts b/build/BlurView.types.d.ts
+index cc93ffe2cd398a73ac50ebbe5427cbe4187fd83b..7246e9ffbe67af7da4fed20e1e08d0768be812a3 100644
+--- a/build/BlurView.types.d.ts
++++ b/build/BlurView.types.d.ts
+@@ -1,5 +1,5 @@
+ import type { RefObject } from 'react';
+-import type { ViewProps, View } from 'react-native';
++import type { ViewProps, ViewInstance } from 'react-native';
+ /**
+  * Blur method to use on Android.
+  *
+@@ -24,7 +24,7 @@ export type BlurViewProps = {
+      *
+      * @platform android
+      */
+-    blurTarget?: RefObject<View | null>;
++    blurTarget?: RefObject<ViewInstance | null>;
+     /**
+      * A tint mode which will be applied to the view.
+      *
+@@ -68,6 +68,6 @@ export type BlurViewProps = {
+     blurMethod?: BlurMethod;
+ } & ViewProps;
+ export type BlurTargetViewProps = {
+-    ref?: RefObject<View | null>;
++    ref?: RefObject<ViewInstance | null>;
+ } & ViewProps;
+ export type BlurTint = 'light' | 'dark' | 'default' | 'extraLight' | 'regular' | 'prominent' | 'systemUltraThinMaterial' | 'systemThinMaterial' | 'systemMaterial' | 'systemThickMaterial' | 'systemChromeMaterial' | 'systemUltraThinMaterialLight' | 'systemThinMaterialLight' | 'systemMaterialLight' | 'systemThickMaterialLight' | 'systemChromeMaterialLight' | 'systemUltraThinMaterialDark' | 'systemThinMaterialDark' | 'systemMaterialDark' | 'systemThickMaterialDark' | 'systemChromeMaterialDark';
+diff --git a/src/BlurView.types.ts b/src/BlurView.types.ts
+index b63ad6b3a9e30bd0f13cff322be79077d0cb5326..bdc3295af94bc17e8a6457b6c9567ff2d57799a7 100644
+--- a/src/BlurView.types.ts
++++ b/src/BlurView.types.ts
+@@ -1,5 +1,5 @@
+ import type { RefObject } from 'react';
+-import type { ViewProps, View } from 'react-native';
++import type { ViewProps, ViewInstance } from 'react-native';
+ 
+ /**
+  * Blur method to use on Android.
+@@ -27,7 +27,7 @@ export type BlurViewProps = {
+    *
+    * @platform android
+    */
+-  blurTarget?: RefObject<View | null>;
++  blurTarget?: RefObject<ViewInstance | null>;
+   /**
+    * A tint mode which will be applied to the view.
+    *
+@@ -74,7 +74,7 @@ export type BlurViewProps = {
+ } & ViewProps;
+ 
+ export type BlurTargetViewProps = {
+-  ref?: RefObject<View | null>;
++  ref?: RefObject<ViewInstance | null>;
+ } & ViewProps;
+ 
+ export type BlurTint =

@@ -5,6 +5,7 @@ import {
   useColorScheme,
   View,
   type ColorValue,
+  type ViewInstance,
   type ViewProps,
   type ViewStyle,
 } from "react-native";
@@ -20,7 +21,7 @@ const ThemedGlassView = withUniwind(GlassView, {
 });
 
 interface GlassSurfaceProps extends ViewProps {
-  readonly ref?: Ref<View>;
+  readonly ref?: Ref<ViewInstance>;
   readonly children: ReactNode;
   readonly glassEffectStyle?: "clear" | "regular" | "none";
   readonly tintColor?: ColorValue;
@@ -28,7 +29,7 @@ interface GlassSurfaceProps extends ViewProps {
   readonly chrome?: "default" | "none";
   /** Base color for the frosted tint, or solid fill when blur is unavailable. */
   readonly fallbackColor?: ColorValue;
-  readonly blurTarget?: RefObject<View | null>;
+  readonly blurTarget?: RefObject<ViewInstance | null>;
   /** Uniwind styling used only when native Liquid Glass is unavailable. */
   readonly fallbackClassName?: string;
 }

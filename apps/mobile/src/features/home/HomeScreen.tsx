@@ -1134,14 +1134,14 @@ export function HomeScreen(props: HomeScreenProps) {
     );
   }
 
-  const listHeader = Platform.OS === "ios" ? null : <HomeTopContentSpacer />;
+  const listHeader = Platform.OS === "ios" ? undefined : <HomeTopContentSpacer />;
 
   // Project scoping lives in the header filter menu (no inline chip row on
   // mobile — the menu is the one filter surface).
   const v2ListHeader = listHeader;
 
   const listEmpty = !hasResults ? (
-    hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
+    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : selectedProjectScope !== null ? (
       <EmptyState
@@ -1156,11 +1156,11 @@ export function HomeScreen(props: HomeScreenProps) {
     ) : (
       <EmptyState title="No threads yet" detail="Create a task to start a new coding session." />
     )
-  ) : null;
+  ) : undefined;
   // Use the v2 project scope for its empty state. Snoozed threads need no
   // special empty state: their shelf header is a list row even while collapsed.
   const v2ListEmpty =
-    hasSearchQuery && threadSearch.isPending ? null : hasSearchQuery ? (
+    hasSearchQuery && threadSearch.isPending ? undefined : hasSearchQuery ? (
       <EmptyState title="No results" detail={`No threads matching "${props.searchQuery}".`} />
     ) : v2ScopedProjectGroup !== null ? (
       <EmptyState
@@ -1201,7 +1201,7 @@ export function HomeScreen(props: HomeScreenProps) {
                       Show more ({threadListV2Layout.hiddenSettledCount} settled hidden)
                     </Text>
                   </Pressable>
-                ) : null
+                ) : undefined
               }
               ListEmptyComponent={v2ListEmpty}
               style={{ flex: 1 }}

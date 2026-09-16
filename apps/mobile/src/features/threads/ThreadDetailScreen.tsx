@@ -47,6 +47,7 @@ import {
   useWindowDimensions,
   View,
   type GestureResponderEvent,
+  type ViewInstance,
 } from "react-native";
 import {
   KeyboardController,
@@ -300,7 +301,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const composerEditorRef = useRef<ComposerEditorHandle>(null);
   const draftMessageRef = useRef(props.draftMessage);
   draftMessageRef.current = props.draftMessage;
-  const composerOverlayRef = useRef<View>(null);
+  const composerOverlayRef = useRef<ViewInstance>(null);
   const listRef = useRef<LegendListRef>(null);
   const feedTouchStartRef = useRef<{ pageX: number; pageY: number } | null>(null);
   const selectedThreadKeyRef = useRef(selectedThreadKey);
@@ -851,7 +852,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const handleFeedTouchCancel = useCallback(() => {
     feedTouchStartRef.current = null;
   }, []);
-  const feedBlurTarget = useRef<View>(null);
+  const feedBlurTarget = useRef<ViewInstance>(null);
 
   return (
     <View className="flex-1">

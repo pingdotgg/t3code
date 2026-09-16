@@ -1,8 +1,8 @@
 diff --git a/build/Widgets.types.d.ts b/build/Widgets.types.d.ts
-index 15e026868625ce20a3e359e5cc8e5c7e937c4650..f5cc83174ede4fb6e01cbce494f61e088eb4eed8 100644
+index c9f4dfe1f10a3a65ab72bd7e639f6f6d148e5f95..dc0792e1cd7b6762394de5e3fefa0863a253f70c 100644
 --- a/build/Widgets.types.d.ts
 +++ b/build/Widgets.types.d.ts
-@@ -90,6 +90,10 @@ export type LiveActivityEnvironment = {
+@@ -93,6 +93,10 @@ export type LiveActivityEnvironment = {
       * The color scheme of the activity's environment.
       */
      colorScheme: 'light' | 'dark';
@@ -14,27 +14,27 @@ index 15e026868625ce20a3e359e5cc8e5c7e937c4650..f5cc83174ede4fb6e01cbce494f61e08
       * Whether the activity is displayed in a context with reduced luminance.
       * @platform iOS 16+
 diff --git a/ios/Widgets/Utils.swift b/ios/Widgets/Utils.swift
-index 2b4c044b597de7e0fab42dbc47af14d8bb521838..801f0aed65ea2659f221d477dd841787d9146c26 100644
+index 76b2199c2d3f879463fed5d2bd49038b0428a2e7..6cb52c3de4ad9696bc0c51ad62401cce96f405e7 100644
 --- a/ios/Widgets/Utils.swift
 +++ b/ios/Widgets/Utils.swift
-@@ -91,6 +91,10 @@ func getLiveActivityEnvironment(for environment: EnvironmentValues, in context:
-     "colorScheme": "\(environment.colorScheme)"
+@@ -125,6 +125,10 @@ func getLiveActivityEnvironment(for environment: EnvironmentValues, in context:
+     "isStale": context.isStale
    ]
  
 +  if #available(iOS 26.0, *) {
 +    env["isLiquidGlassAvailable"] = true
 +  }
 +  env["widgetRenderingMode"] = environment.widgetRenderingMode.description
-   env["isLuminanceReduced"] = environment.isLuminanceReduced
-   env["isActivityFullscreen"] = environment.isActivityFullscreen
-   if #available(iOS 16.2, *) {
+   if #available(iOS 18.0, *) {
+     env["isActivityUpdateReduced"] = environment.isActivityUpdateReduced
+     env["activityFamily"] = "\(environment.activityFamily)"
 diff --git a/ios/Widgets/WidgetLiveActivity.swift b/ios/Widgets/WidgetLiveActivity.swift
-index 24d4571a52d3ebe9d785b5d049d8e134a149d513..7051c23b17ac91552e5b5c54606c57086c0ebbea 100644
+index 4d135c4e4eb1f846315654ed9d835a935d120d42..dae47445b27516fa2464a25b68bddc8f6dec3e1e 100644
 --- a/ios/Widgets/WidgetLiveActivity.swift
 +++ b/ios/Widgets/WidgetLiveActivity.swift
-@@ -20,53 +20,41 @@ struct LiveActivityAttributes: ActivityAttributes {
+@@ -19,53 +19,41 @@ struct LiveActivityAttributes: ActivityAttributes {
+ }
  
- @available(iOS 16.1, *)
  public struct WidgetLiveActivity: Widget {
 -  @Environment(\.self) var env
 -  
@@ -94,9 +94,9 @@ index 24d4571a52d3ebe9d785b5d049d8e134a149d513..7051c23b17ac91552e5b5c54606c5708
        }
        if let url = context.attributes.url.flatMap(URL.init(string:)) {
          return island.widgetURL(url)
-@@ -79,11 +67,16 @@ public struct WidgetLiveActivity: Widget {
+@@ -77,11 +65,16 @@ public struct WidgetLiveActivity: Widget {
+ }
  
- @available(iOS 16.1, *)
  private struct LiveActivitySectionView: View {
 +  @Environment(\.self) var env
    let context: ActivityViewContext<LiveActivityAttributes>
@@ -112,9 +112,9 @@ index 24d4571a52d3ebe9d785b5d049d8e134a149d513..7051c23b17ac91552e5b5c54606c5708
      if let node = nodes[sectionName] as? [String: Any] {
        WidgetsDynamicView(name: context.activityID, kind: .liveActivity, node: node)
      } else {
-@@ -94,10 +87,17 @@ private struct LiveActivitySectionView: View {
+@@ -91,10 +84,17 @@ private struct LiveActivitySectionView: View {
+ }
  
- @available(iOS 16.1, *)
  private struct LiveActivityBannerView: View {
 +  // Read inside the rendered view: Widget-level values do not include the
 +  // presentation's color scheme, rendering mode, or reduced-luminance state.
@@ -131,11 +131,25 @@ index 24d4571a52d3ebe9d785b5d049d8e134a149d513..7051c23b17ac91552e5b5c54606c5708
      if #available(iOS 18.0, *) {
        LiveActivityBanner(context: context, nodes: nodes)
      } else if let node = nodes["banner"] as? [String: Any] {
+diff --git a/scripts/build-layout-registry.mjs b/scripts/build-layout-registry.mjs
+index d52a60e342c8e0a8a1d78f7174da5e60e6bd1c53..fa9bd77c5c04d459038a5b4a00e1391780b406fa 100644
+--- a/scripts/build-layout-registry.mjs
++++ b/scripts/build-layout-registry.mjs
+@@ -154,6 +154,8 @@ function createLayoutRegistry(expectedWidgets, capturedLayouts) {
+   return registry;
+ }
+ 
+-if (process.argv[1] && path.resolve(process.argv[1]) === __filename) {
++// Compare real paths: pnpm exposes the package through a symlink, so the
++// invoked path and import.meta.url differ while naming the same file.
++if (process.argv[1] && fs.realpathSync(path.resolve(process.argv[1])) === fs.realpathSync(__filename)) {
+   await main();
+ }
 diff --git a/src/Widgets.types.ts b/src/Widgets.types.ts
-index fee5c7475b52218fa0e192a1d347dd32cb0fe1f8..1d3a097b45d8eb5d13e5cedd26f0414caa83a5d6 100644
+index 07706139379384dae27befef4e3e5ae09d04a0db..924fa0029243664e369ce08c81e504b6300bfc7f 100644
 --- a/src/Widgets.types.ts
 +++ b/src/Widgets.types.ts
-@@ -104,6 +104,10 @@ export type LiveActivityEnvironment = {
+@@ -107,6 +107,10 @@ export type LiveActivityEnvironment = {
     * The color scheme of the activity's environment.
     */
    colorScheme: 'light' | 'dark';
