@@ -77,7 +77,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const scope = yield* Effect.scope;
   // The RPC can disappear before shutdown cleanup runs. Retain accepted
   // handoffs across that interruption, but bound them by the install deadline.
-  const pendingRestarts = yield* Ref.make(HashMap.empty<string, number>());
+  const pendingRestarts = yield* Ref.make(HashMap.empty<symbol, number>());
 
   const isRestartPending = Effect.gen(function* () {
     const now = yield* Clock.currentTimeMillis;
@@ -211,6 +211,8 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       return yield* failWith("This server cannot commit a desktop app update.");
     }
     let handoffAccepted = false;
+    // Retries share a request ID, but each control write owns its cleanup.
+    const handoffId: symbol = Symbol();
     const handoff = yield* Deferred.make<void>();
     const install = Effect.gen(function* () {
       const terminal = yield* Effect.scoped(
@@ -225,14 +227,14 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
               const now = yield* Clock.currentTimeMillis;
               yield* Ref.update(
                 pendingRestarts,
-                HashMap.set(requestId, now + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
+                HashMap.set(handoffId, now + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
               );
               yield* receiver.commitDesktopUpdate(requestId);
               handoffAccepted = true;
               const acceptedAt = yield* Clock.currentTimeMillis;
               yield* Ref.update(
                 pendingRestarts,
-                HashMap.set(requestId, acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
+                HashMap.set(handoffId, acceptedAt + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
               );
             }).pipe(
               Effect.mapError((error) =>
@@ -267,7 +269,7 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
       Effect.onExit((exit) =>
         exit._tag === "Failure" && handoffAccepted && Cause.hasInterruptsOnly(exit.cause)
           ? Effect.void
-          : Ref.update(pendingRestarts, HashMap.remove(requestId)),
+          : Ref.update(pendingRestarts, HashMap.remove(handoffId)),
       ),
       Effect.ensuring(Deferred.succeed(handoff, undefined)),
     );

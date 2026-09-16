@@ -366,6 +366,35 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
     }),
   );
 
+  it.effect("does not let a failed duplicate commit clear an accepted handoff", () =>
+    Effect.gen(function* () {
+      const accepted = yield* Deferred.make<void>();
+      let controlWrites = 0;
+      const { service } = yield* makeHarness({
+        keepOpen: true,
+        receiver: {
+          commitDesktopUpdate: () =>
+            Effect.gen(function* () {
+              if (controlWrites++ > 0) {
+                return yield* new DesktopTelemetryReceiver.DesktopTelemetryControlStalled({
+                  fd: 5,
+                  remainingBytes: 1,
+                });
+              }
+            }),
+        },
+      });
+      const commit = yield* service
+        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(accepted);
+      yield* Fiber.interrupt(commit);
+      yield* service.commit("update-1").pipe(Effect.flip);
+
+      expect(yield* service.isRestartPending).toBe(true);
+    }),
+  );
+
   it.effect("fails when the desktop stops reporting before a terminal outcome", () =>
     Effect.gen(function* () {
       const { service } = yield* makeHarness({
