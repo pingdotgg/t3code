@@ -16,8 +16,10 @@ import {
 } from "@t3tools/contracts";
 
 import * as ServerConfig from "../config.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
+import { listManagedWorktreesRoots } from "../worktreesDirectory.ts";
 
 export class ReviewService extends Context.Service<
   ReviewService,
@@ -67,13 +69,22 @@ export const make = Effect.gen(function* () {
     operation: "ReviewService.getDiffPreview" | "ReviewService.getDiffFileContents",
     cwd: string,
   ) {
-    const [candidate, workspaceRoot, worktreesRoot] = yield* Effect.all([
+    const settings = yield* ServerSettings.ServerSettingsService;
+    const configured = yield* settings.getSettings.pipe(
+      Effect.map((current) => current.worktreesDirectory),
+      Effect.orElseSucceed(() => ""),
+    );
+    const worktreesRoots = listManagedWorktreesRoots(configured, config.worktreesDir, path);
+    const [candidate, workspaceRoot, ...canonicalWorktreeRoots] = yield* Effect.all([
       canonicalizePath(cwd),
       canonicalizePath(config.cwd),
-      canonicalizePath(config.worktreesDir),
+      ...worktreesRoots.map((root) => canonicalizePath(root)),
     ]);
 
-    if (isWithinRoot(candidate, workspaceRoot) || isWithinRoot(candidate, worktreesRoot)) {
+    if (
+      isWithinRoot(candidate, workspaceRoot) ||
+      canonicalWorktreeRoots.some((root) => isWithinRoot(candidate, root))
+    ) {
       return;
     }
 
