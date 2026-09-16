@@ -15,6 +15,7 @@ import {
   WorktreeSetupSnapshot,
   worktreeSetupActivityId,
 } from "@t3tools/contracts";
+import { resolveNewThreadRuntimeMode } from "@t3tools/shared/serverSettings";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import * as Console from "effect/Console";
@@ -205,7 +206,15 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
   let bootstrapThreadCreated = false;
 
   if (serverConfig.autoBootstrapProjectFromCwd) {
-    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+    const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings.pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.failCause(cause)
+          : Effect.logWarning("failed to load settings for automatic bootstrap", { cause }).pipe(
+              Effect.as(DEFAULT_SERVER_SETTINGS),
+            ),
+      ),
+    );
     const defaultModelSelection =
       settings.defaultModelSelection ?? getAutoBootstrapThreadModelSelection();
     yield* Effect.gen(function* () {
@@ -252,8 +261,10 @@ export const resolveAutoBootstrapWelcomeTargets = Effect.gen(function* () {
             title: "New thread",
             modelSelection: nextThreadModelSelection,
             interactionMode: DEFAULT_PROVIDER_INTERACTION_MODE,
-            runtimeMode: resolveProjectSettings(settings, nextProjectId).settings
-              .defaultRuntimeMode,
+            runtimeMode: resolveNewThreadRuntimeMode(
+              resolveProjectSettings(settings, nextProjectId).settings,
+              nextThreadModelSelection.instanceId,
+            ),
             branch: null,
             worktreePath: null,
             createdAt,

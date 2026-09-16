@@ -112,6 +112,10 @@ vi.mock("@t3tools/shared/threadEnvMode", () => ({
     readonly globalDefault: "local" | "worktree";
   }) => input.projectFile ?? input.globalDefault,
 }));
+vi.mock("@t3tools/shared/serverSettings", () => ({
+  resolveNewThreadRuntimeMode: (settings: { defaultRuntimeMode?: string }) =>
+    settings.defaultRuntimeMode ?? "full-access",
+}));
 vi.mock("@tanstack/react-router", () => ({
   useParams: () => null,
   useRouter: () => testState.router,
@@ -160,8 +164,10 @@ vi.mock("../state/entities", () => ({
   ],
   readThreadShell: () => null,
   useProjects: () => [],
+  useServerConfigs: () => new Map(),
   useThread: () => null,
 }));
+vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../state/server", () => ({
   environmentServerConfigsAtom: {},
   primaryServerSettingsAtom: "primary-settings",
@@ -226,6 +232,29 @@ describe.each([
     expect(testState.draftStore.setLogicalProjectDraftThreadId).not.toHaveBeenCalled();
   });
 
+  it("re-resolves an implicit reusable draft's runtime mode", async () => {
+    testState.reset({
+      draftId: "draft-existing",
+      environmentId: "environment-ssh",
+      promotedTo: null,
+      threadId: "thread-existing",
+    });
+    const openThread = useNewThreadHandler();
+    const pendingOpen = openThread({
+      environmentId: "environment-ssh",
+      projectId: "project-remote",
+    } as never);
+
+    testState.completeProjectFileRead(null);
+    await pendingOpen;
+
+    expect(testState.draftStore.setLogicalProjectDraftThreadId).toHaveBeenCalledWith(
+      "remote-project",
+      { environmentId: "environment-ssh", projectId: "project-remote" },
+      "draft-existing",
+      expect.objectContaining({ runtimeMode: "full-access" }),
+    );
+  });
   it.each([true, false])(
     "uses the target environment's start-from-origin default of %s",
     async (startFromOrigin) => {
