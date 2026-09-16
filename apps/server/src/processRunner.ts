@@ -308,6 +308,9 @@ const runProcessCore = Effect.fn("processRunner.runProcessCore")(function* (
             }
           : {}),
         shell: spawnCommand.shell,
+        // This runner has no interactive input channel. An unused pipe would
+        // leave commands waiting for stdin until the process timeout.
+        stdin: input.stdin === undefined ? "ignore" : "pipe",
       }),
     )
     .pipe(
