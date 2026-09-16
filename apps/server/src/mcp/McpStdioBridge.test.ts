@@ -92,6 +92,10 @@ describe("McpStdioBridge", () => {
             res.writeHead(500, { "content-type": "text/plain" });
             res.end("upstream exploded");
             return;
+          case "boom/json":
+            res.writeHead(401, { "content-type": "application/json" });
+            res.end(JSON.stringify({ error: "invalid_mcp_credential" }));
+            return;
           default:
             res.writeHead(202);
             res.end();
@@ -138,7 +142,8 @@ describe("McpStdioBridge", () => {
       send({ jsonrpc: "2.0", id: 2, method: "tools/list", params: {} });
       send({ jsonrpc: "2.0", id: 3, method: "tools/call", params: { name: "x" } });
       send({ jsonrpc: "2.0", id: 4, method: "boom/fail", params: {} });
-      await waitForResponses(4);
+      send({ jsonrpc: "2.0", id: 5, method: "boom/json", params: {} });
+      await waitForResponses(5);
 
       const byId = new Map(
         stdout.filter((message) => "id" in message).map((message) => [message.id, message]),
@@ -149,6 +154,9 @@ describe("McpStdioBridge", () => {
       expect(byId.get(3)).toMatchObject({ result: { ok: true } });
       // A non-JSON error body becomes a JSON-RPC error carrying the request id.
       expect(byId.get(4)).toMatchObject({ error: { code: -32603 } });
+      // A JSON error body on a non-2xx is not forwarded as an MCP message; the
+      // request id still gets a JSON-RPC error.
+      expect(byId.get(5)).toMatchObject({ error: { code: -32603 } });
 
       const initialize = seen.find((request) => request.method === "initialize");
       expect(initialize?.authorization).toBe("Bearer test-token");

@@ -65,6 +65,14 @@ async function postMessage(line, parsed) {
   sessionId = response.headers.get("mcp-session-id") ?? sessionId;
   protocolVersion = response.headers.get("mcp-protocol-version") ?? protocolVersion;
 
+  if (!response.ok) {
+    await response.arrayBuffer();
+    if (parsed && typeof parsed === "object" && "id" in parsed) {
+      respondError(parsed.id, "MCP endpoint returned HTTP " + response.status + ".");
+    }
+    return;
+  }
+
   const contentType = response.headers.get("content-type") ?? "";
   if (contentType.includes("text/event-stream")) {
     for (const message of parseSseEvents(await response.text())) {
@@ -84,9 +92,6 @@ async function postMessage(line, parsed) {
     } catch {
       // Fall through and synthesize an error below.
     }
-  }
-  if (!response.ok && parsed && typeof parsed === "object" && "id" in parsed) {
-    respondError(parsed.id, "MCP endpoint returned HTTP " + response.status + ".");
   }
 }
 
