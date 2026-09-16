@@ -347,8 +347,8 @@ export function ProjectDefaultsSettings({ category }: { category: ProjectSetting
             title="Automatically pull"
             description={
               isProjectScope
-                ? "Keeps this project's default branch current when the checkout has no local changes or commits."
-                : "Keeps the default branch current when the checkout has no local changes or commits. Projects can override it."
+                ? "Keeps this project's default branch current when it can fast-forward without overwriting local changes."
+                : "Keeps the default branch current when it can fast-forward without overwriting local changes. Projects can override it."
             }
             resetAction={
               settings.defaultAutoPull ? (
