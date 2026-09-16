@@ -157,6 +157,18 @@ const collectStderr = collectStdout;
 
 const decodeTailscaleStatusJson = Schema.decodeEffect(Schema.fromJsonString(TailscaleStatusJson));
 
+// `tailscale serve status --json` nests the mapping under
+// Web["<host>:<port>"].Handlers["/"].Proxy. Only that leaf is needed and the
+// surrounding shape moves between tailscale releases, so it is walked as
+// unknown rather than modelled.
+const TailscaleServeStatusJson = Schema.Struct({
+  Web: Schema.optional(Schema.Unknown),
+});
+
+const decodeTailscaleServeStatusJson = Schema.decodeEffect(
+  Schema.fromJsonString(TailscaleServeStatusJson),
+);
+
 function normalizeMagicDnsName(status: TailscaleStatusJson): string | null {
   const dnsName = status.Self?.DNSName;
   if (typeof dnsName !== "string") {
@@ -216,63 +228,79 @@ export const parseTailscaleStatus = (
     }),
   );
 
-export const readTailscaleStatus = Effect.gen(function* () {
-  const args = ["status", "--json"];
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  const hostPlatform = yield* HostProcessPlatform;
-  const executable = tailscaleCommandForPlatform(hostPlatform);
-  const commandContext = {
-    executable,
-    subcommand: "status" as const,
-    argumentCount: args.length,
-  };
-  return yield* Effect.gen(function* () {
-    const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
-      Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      // Spawning can also fail as a defect rather than a typed error - a
-      // non-directory entry on PATH makes node throw ENOTDIR synchronously.
-      // `mapError` never sees that, so it would escape as an uncaught error.
-      Effect.catchDefect((cause) =>
-        Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-      ),
-    );
-    const [stdout, stderr, exitCode] = yield* Effect.all(
-      [
-        collectStdout(child.stdout),
-        collectStderr(child.stderr),
-        child.exitCode.pipe(Effect.map(Number)),
-      ],
-      { concurrency: "unbounded" },
-    ).pipe(
-      Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
-    );
-    if (exitCode !== 0) {
-      return yield* new TailscaleCommandExitError({
-        ...commandContext,
-        exitCode,
-        stdoutLength: stdout.length,
-        stderrLength: stderr.length,
-        ...(stderrDiagnosticOf(stderr) !== undefined
-          ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-          : {}),
-      });
-    }
-    return yield* parseTailscaleStatus(stdout);
-  }).pipe(
-    Effect.scoped,
-    Effect.timeout(TAILSCALE_STATUS_TIMEOUT),
-    Effect.catchTags({
-      TimeoutError: (cause) =>
-        Effect.fail(
-          new TailscaleCommandTimeoutError({
-            ...commandContext,
-            timeoutMs: Duration.toMillis(TAILSCALE_STATUS_TIMEOUT),
-            cause,
-          }),
+/**
+ * Runs a tailscale subcommand and returns its stdout. Shared by every reader
+ * here so the scoped spawn, the timeout, and the redacted error shape stay
+ * identical across `status` and `serve status`.
+ */
+const captureTailscaleCommand = (
+  args: readonly string[],
+  subcommand: "status" | "serve",
+  timeoutInput: Duration.Input,
+): Effect.Effect<string, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+    const hostPlatform = yield* HostProcessPlatform;
+    const executable = tailscaleCommandForPlatform(hostPlatform);
+    const commandContext = {
+      executable,
+      subcommand,
+      argumentCount: args.length,
+    };
+    const timeout = Duration.fromInputUnsafe(timeoutInput);
+    return yield* Effect.gen(function* () {
+      const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
+        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
+        // Spawning can also fail as a defect rather than a typed error - a
+        // non-directory entry on PATH makes node throw ENOTDIR synchronously.
+        // `mapError` never sees that, so it would escape as an uncaught error.
+        Effect.catchDefect((cause) =>
+          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
         ),
-    }),
-  );
-});
+      );
+      const [stdout, stderr, exitCode] = yield* Effect.all(
+        [
+          collectStdout(child.stdout),
+          collectStderr(child.stderr),
+          child.exitCode.pipe(Effect.map(Number)),
+        ],
+        { concurrency: "unbounded" },
+      ).pipe(
+        Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
+      );
+      if (exitCode !== 0) {
+        return yield* new TailscaleCommandExitError({
+          ...commandContext,
+          exitCode,
+          stdoutLength: stdout.length,
+          stderrLength: stderr.length,
+          ...(stderrDiagnosticOf(stderr) !== undefined
+            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
+            : {}),
+        });
+      }
+      return stdout;
+    }).pipe(
+      Effect.scoped,
+      Effect.timeout(timeout),
+      Effect.catchTags({
+        TimeoutError: (cause) =>
+          Effect.fail(
+            new TailscaleCommandTimeoutError({
+              ...commandContext,
+              timeoutMs: Duration.toMillis(timeout),
+              cause,
+            }),
+          ),
+      }),
+    );
+  });
+
+export const readTailscaleStatus = captureTailscaleCommand(
+  ["status", "--json"],
+  "status",
+  TAILSCALE_STATUS_TIMEOUT,
+).pipe(Effect.flatMap(parseTailscaleStatus));
 
 export function buildTailscaleHttpsBaseUrl(input: {
   readonly magicDnsName: string;
@@ -291,54 +319,7 @@ const runTailscaleCommand = (
   args: readonly string[],
   timeoutInput: Duration.Input,
 ): Effect.Effect<void, TailscaleCommandError, ChildProcessSpawner.ChildProcessSpawner> =>
-  Effect.gen(function* () {
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    const hostPlatform = yield* HostProcessPlatform;
-    const executable = tailscaleCommandForPlatform(hostPlatform);
-    const commandContext = {
-      executable,
-      subcommand: "serve" as const,
-      argumentCount: args.length,
-    };
-    const timeout = Duration.fromInputUnsafe(timeoutInput);
-    return yield* Effect.gen(function* () {
-      const child = yield* spawner.spawn(ChildProcess.make(executable, args)).pipe(
-        Effect.mapError((cause) => new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        Effect.catchDefect((cause) =>
-          Effect.fail(new TailscaleCommandSpawnError({ ...commandContext, cause })),
-        ),
-      );
-      const [stderr, exitCode] = yield* Effect.all(
-        [collectStderr(child.stderr), child.exitCode.pipe(Effect.map(Number))],
-        { concurrency: "unbounded" },
-      ).pipe(
-        Effect.mapError((cause) => new TailscaleCommandOutputError({ ...commandContext, cause })),
-      );
-      if (exitCode !== 0) {
-        return yield* new TailscaleCommandExitError({
-          ...commandContext,
-          exitCode,
-          stderrLength: stderr.length,
-          ...(stderrDiagnosticOf(stderr) !== undefined
-            ? { stderrDiagnostic: stderrDiagnosticOf(stderr) }
-            : {}),
-        });
-      }
-    }).pipe(
-      Effect.scoped,
-      Effect.timeout(timeout),
-      Effect.catchTags({
-        TimeoutError: (cause) =>
-          Effect.fail(
-            new TailscaleCommandTimeoutError({
-              ...commandContext,
-              timeoutMs: Duration.toMillis(timeout),
-              cause,
-            }),
-          ),
-      }),
-    );
-  });
+  captureTailscaleCommand(args, "serve", timeoutInput).pipe(Effect.asVoid);
 
 export const ensureTailscaleServe = (input: {
   readonly localPort: number;
@@ -381,3 +362,103 @@ export const probeTailscaleHttpsEndpoint = (input: {
       onSome: (httpResponse) => httpResponse.status >= 200 && httpResponse.status < 300,
     });
   }).pipe(Effect.orElseSucceed(() => false));
+
+/** Where a serve mapping points: the local origin Tailscale proxies to. */
+export interface TailscaleServeTarget {
+  readonly localHost: string;
+  readonly localPort: number;
+}
+
+/**
+ * The Web section is keyed by "<host>:<port>"; a key without a port is the
+ * implicit HTTPS default.
+ */
+const servePortOfWebKey = (hostPort: string): number => {
+  const separator = hostPort.lastIndexOf(":");
+  if (separator === -1) {
+    return DEFAULT_TAILSCALE_SERVE_PORT;
+  }
+  const port = Number.parseInt(hostPort.slice(separator + 1), 10);
+  return Number.isInteger(port) ? port : DEFAULT_TAILSCALE_SERVE_PORT;
+};
+
+const rootProxyOfWebEntry = (entry: unknown): string | undefined => {
+  if (typeof entry !== "object" || entry === null) {
+    return undefined;
+  }
+  const handlers = (entry as { readonly Handlers?: unknown }).Handlers;
+  if (typeof handlers !== "object" || handlers === null) {
+    return undefined;
+  }
+  const root = (handlers as Record<string, unknown>)["/"];
+  if (typeof root !== "object" || root === null) {
+    return undefined;
+  }
+  const proxy = (root as { readonly Proxy?: unknown }).Proxy;
+  return typeof proxy === "string" && proxy.length > 0 ? proxy : undefined;
+};
+
+const parseProxyTarget = (proxy: string): TailscaleServeTarget | null => {
+  // Tailscale writes a full URL, but a bare host:port is tolerated so a
+  // hand-written mapping classifies as occupied instead of as absent.
+  for (const candidate of [proxy, `http://${proxy}`]) {
+    let url: URL;
+    try {
+      url = new URL(candidate);
+    } catch {
+      continue;
+    }
+    const port =
+      url.port.length > 0 ? Number.parseInt(url.port, 10) : url.protocol === "https:" ? 443 : 80;
+    if (!Number.isInteger(port) || url.hostname.length === 0) {
+      continue;
+    }
+    return { localHost: url.hostname, localPort: port };
+  }
+  return null;
+};
+
+/**
+ * The local target of the serve mapping on `servePort`, or null when that port
+ * carries no mapping this can read as a proxy.
+ */
+export const parseTailscaleServeTarget = (
+  rawServeStatusJson: string,
+  input: { readonly servePort?: number } = {},
+): Effect.Effect<TailscaleServeTarget | null, TailscaleStatusParseError> =>
+  decodeTailscaleServeStatusJson(rawServeStatusJson).pipe(
+    Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+    Effect.map((parsed) => {
+      const servePort = input.servePort ?? DEFAULT_TAILSCALE_SERVE_PORT;
+      const web = parsed.Web;
+      if (typeof web !== "object" || web === null) {
+        return null;
+      }
+      for (const [hostPort, entry] of Object.entries(web as Record<string, unknown>)) {
+        if (servePortOfWebKey(hostPort) !== servePort) {
+          continue;
+        }
+        const proxy = rootProxyOfWebEntry(entry);
+        if (proxy === undefined) {
+          continue;
+        }
+        return parseProxyTarget(proxy);
+      }
+      return null;
+    }),
+  );
+
+/**
+ * Reads who currently owns the serve mapping. Callers use this to avoid
+ * repointing a mapping that already fronts a live server.
+ */
+export const readTailscaleServeTarget = (
+  input: { readonly servePort?: number } = {},
+): Effect.Effect<
+  TailscaleServeTarget | null,
+  TailscaleCommandError | TailscaleStatusParseError,
+  ChildProcessSpawner.ChildProcessSpawner
+> =>
+  captureTailscaleCommand(["serve", "status", "--json"], "serve", TAILSCALE_STATUS_TIMEOUT).pipe(
+    Effect.flatMap((stdout) => parseTailscaleServeTarget(stdout, input)),
+  );

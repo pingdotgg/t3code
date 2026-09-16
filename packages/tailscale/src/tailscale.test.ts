@@ -16,7 +16,9 @@ import {
   ensureTailscaleServe,
   isTailscaleIpv4Address,
   parseTailscaleMagicDnsName,
+  parseTailscaleServeTarget,
   parseTailscaleStatus,
+  readTailscaleServeTarget,
   readTailscaleStatus,
   TAILSCALE_STATUS_TIMEOUT,
   TailscaleCommandExitError,
@@ -66,6 +68,18 @@ function assertCarriesNoSecret(error: object, secret: string): void {
 }
 const tailscaleStatusJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.100.100.100","fd7a:115c:a1e0::1","192.168.1.20"]}}`;
 const tailscaleStatusWithSingleIpJson = `{"Self":{"DNSName":"desktop.tail.ts.net.","TailscaleIPs":["100.90.1.2"]}}`;
+
+const tailscaleServeStatusJson = JSON.stringify({
+  TCP: { "10010": { HTTPS: true } },
+  Web: {
+    "desktop.tail.ts.net:10010": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:3773" } },
+    },
+    "desktop.tail.ts.net:443": {
+      Handlers: { "/": { Proxy: "http://127.0.0.1:5173" } },
+    },
+  },
+});
 
 function mockHandle(result: { stdout?: string; stderr?: string; code?: number }) {
   return ChildProcessSpawner.makeHandle({
@@ -378,4 +392,38 @@ describe("tailscale", () => {
       ]);
     });
   });
+
+  it.effect("reads the serve mapping's local target", () => {
+    const layer = mockSpawnerLayer((command, args) => {
+      assert.equal(command, "tailscale");
+      assert.deepEqual(args, ["serve", "status", "--json"]);
+      return { stdout: tailscaleServeStatusJson };
+    });
+
+    return Effect.gen(function* () {
+      assert.deepEqual(
+        yield* readTailscaleServeTarget({ servePort: 10010 }).pipe(Effect.provide(layer)),
+        {
+          localHost: "127.0.0.1",
+          localPort: 3773,
+        },
+      );
+      // A serve port with no mapping must read as unclaimed, not as the
+      // mapping that happens to sit on another port.
+      assert.equal(
+        yield* readTailscaleServeTarget({ servePort: 8443 }).pipe(Effect.provide(layer)),
+        null,
+      );
+    });
+  });
+
+  it.effect("defaults the serve port to HTTPS", () =>
+    Effect.gen(function* () {
+      assert.deepEqual(yield* parseTailscaleServeTarget(tailscaleServeStatusJson), {
+        localHost: "127.0.0.1",
+        localPort: 5173,
+      });
+      assert.equal(yield* parseTailscaleServeTarget("{}", { servePort: 10010 }), null);
+    }),
+  );
 });
