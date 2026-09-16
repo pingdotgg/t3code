@@ -7,6 +7,7 @@ import {
   type RecordingStatus,
 } from "expo-audio";
 import { File } from "expo-file-system";
+import { activateKeepAwakeAsync, deactivateKeepAwake } from "expo-keep-awake";
 import { useFocusEffect } from "@react-navigation/native";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
@@ -26,6 +27,7 @@ import {
 import { normalizeVoiceInputDecibels, VOICE_WAVEFORM_SAMPLE_COUNT } from "./voiceInputMetering";
 
 const INITIAL_STATE: VoiceInputState = { phase: "idle", error: null, errorAction: null };
+const VOICE_KEEP_AWAKE_TAG = "voice-input";
 const VOICE_METERING_INTERVAL_MS = 80;
 const VOICE_RECORDING_OPTIONS = {
   ...RecordingPresets.HIGH_QUALITY,
@@ -156,6 +158,21 @@ export function useVoiceInputController(input: {
 
   useEffect(() => () => controller.dispose(), [controller]);
 
+  const isBusy = voiceInputBlocksSubmission(state);
+  useEffect(() => {
+    // Auto-lock backgrounds the app, which discards the take. Low Power Mode
+    // shortens the lock timer to 30 seconds, well inside the recording limit.
+    if (!isBusy) return;
+    void activateKeepAwakeAsync(VOICE_KEEP_AWAKE_TAG).catch(() => {
+      // Keep-awake is best effort. Recording proceeds without it.
+    });
+    return () => {
+      void deactivateKeepAwake(VOICE_KEEP_AWAKE_TAG).catch(() => {
+        // Releasing rejects on Android once the Activity is gone.
+      });
+    };
+  }, [isBusy]);
+
   useEffect(() => {
     if (state.phase !== "preparing" && state.phase !== "recording") return;
 
@@ -210,7 +227,7 @@ export function useVoiceInputController(input: {
     state,
     audioLevels,
     elapsedSeconds,
-    isBusy: voiceInputBlocksSubmission(state),
+    isBusy,
     freezesEditor: voiceInputFreezesEditor(state),
     blocksSubmission: voiceInputBlocksSubmission(state),
     start,
