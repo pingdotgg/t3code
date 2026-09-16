@@ -2153,6 +2153,58 @@ export function makeOpenCodeAdapter(
       yield* run.pipe(Effect.forkIn(context.sessionScope));
     });
 
+    const recoverBusyOpenCodeTurn = Effect.fn("recoverBusyOpenCodeTurn")(function* (
+      context: OpenCodeSessionContext,
+      raw: unknown,
+    ) {
+      const generation = context.promptGeneration;
+      const canRecover = () =>
+        sessions.get(context.session.threadId) === context &&
+        context.activeTurnId === undefined &&
+        context.promptGeneration === generation &&
+        context.promptAdmission === undefined &&
+        context.cancellation === undefined &&
+        context.interruptedTurnId === undefined &&
+        !context.reconcileIdleStatus &&
+        !context.awaitingBusyAfterInterruption;
+      if (!canRecover()) {
+        return;
+      }
+      // T3 can get a busy event after its turn ends.
+      // Read the live status before recovery from a different client.
+      const response = yield* runOpenCodeSdk("session.status", (signal) =>
+        context.client.session.status(undefined, { signal }),
+      ).pipe(Effect.timeout("1 second"), Effect.option);
+      const statuses = Option.isSome(response)
+        ? Option.getOrUndefined(decodeOpenCodeSessionStatusMap(response.value.data))
+        : undefined;
+      const status = statuses?.[context.openCodeSessionId];
+      if (status?.type !== "busy" && status?.type !== "retry") {
+        return;
+      }
+      const turnId = TurnId.make(`opencode-turn-${yield* randomUUIDv4}`);
+      const base = yield* buildEventBase({ threadId: context.session.threadId, turnId, raw });
+      const stopped = yield* Ref.get(context.stopped);
+      if (stopped || !canRecover()) {
+        return;
+      }
+      context.promptGeneration += 1;
+      context.activeTurnId = turnId;
+      context.turnTokenUsage = makeOpenCodeTurnTokenUsageAccumulator();
+      context.turnTokenUsage.complete = false;
+      applyProviderSessionUpdate(
+        context,
+        { status: "running", activeTurnId: turnId },
+        { clearLastError: true },
+        base.createdAt,
+      );
+      emitUnsafe({
+        ...base,
+        type: "turn.started",
+        payload: { model: context.session.model },
+      });
+    });
+
     const handleSubscribedEvent = Effect.fn("handleSubscribedEvent")(function* (
       context: OpenCodeSessionContext,
       event: OpenCodeSubscribedEvent,
@@ -2242,6 +2294,13 @@ export function makeOpenCodeAdapter(
         return;
       }
 
+      if (
+        event.type === "session.status" &&
+        (event.properties.status.type === "busy" || event.properties.status.type === "retry") &&
+        context.activeTurnId === undefined
+      ) {
+        yield* recoverBusyOpenCodeTurn(context, event);
+      }
       const turnId = context.activeTurnId;
       yield* writeNativeEventBestEffort(context.session.threadId, {
         observedAt: yield* nowIso,
