@@ -91,6 +91,7 @@ export class VcsProjectConfig extends Context.Service<
     ) => Effect.Effect<VcsDriverKindType | "auto">;
     readonly resolveBranchNaming: (input: {
       readonly cwd: string;
+      readonly fallback?: VcsBranchNamingConfig;
     }) => Effect.Effect<VcsBranchNamingConfig>;
     readonly resolveHooks: (input: { readonly cwd: string }) => Effect.Effect<VcsHooksConfig>;
   }
@@ -100,13 +101,14 @@ function configuredKind(config: ProjectVcsConfigFile): VcsDriverKindType | "auto
   return config.vcs?.kind ?? config.vcsKind ?? "auto";
 }
 
-function configuredBranchNaming(config: ProjectVcsConfigFile): VcsBranchNamingConfig {
+function configuredBranchNaming(
+  config: ProjectVcsConfigFile,
+  fallback = defaultBranchNamingConfig,
+): VcsBranchNamingConfig {
   const configuredPrefix = config.branchNaming?.defaultPrefix;
   return {
-    defaultPrefix:
-      configuredPrefix === undefined ? defaultBranchNamingConfig.defaultPrefix : configuredPrefix,
-    preserveNamespaces:
-      config.branchNaming?.preserveNamespaces ?? defaultBranchNamingConfig.preserveNamespaces,
+    defaultPrefix: configuredPrefix === undefined ? fallback.defaultPrefix : configuredPrefix,
+    preserveNamespaces: config.branchNaming?.preserveNamespaces ?? fallback.preserveNamespaces,
   };
 }
 
@@ -228,8 +230,8 @@ export const make = Effect.gen(function* () {
     return yield* resolveConfig(input.cwd).pipe(
       Effect.map(
         Option.match({
-          onNone: () => defaultBranchNamingConfig,
-          onSome: configuredBranchNaming,
+          onNone: () => input.fallback ?? defaultBranchNamingConfig,
+          onSome: (config) => configuredBranchNaming(config, input.fallback),
         }),
       ),
     );

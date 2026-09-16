@@ -393,9 +393,12 @@ export function buildBranchNamePrompt(input: BranchNamePromptInput) {
     message: input.message,
     attachments: input.attachments,
     additionalInstructions:
-      input.naming?.mode === "custom"
-        ? input.naming.instructions
-        : input.policy?.branchInstructions,
+      [
+        input.naming?.mode === "custom" ? input.naming.instructions : undefined,
+        input.policy?.branchInstructions,
+      ]
+        .filter(Boolean)
+        .join("\n") || undefined,
   });
   const outputSchema = Schema.Struct({
     branch: Schema.String,

@@ -2492,3 +2492,45 @@ it.effect("replays an accepted send after the project disables the instance", ()
     }
   }).pipe(Effect.provide(Layer.mergeAll(harness.layer, layerFiles)));
 });
+
+it.effect("uses repository instructions and naming policy for generated worktree branches", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const worktree = yield* fs.makeTempDirectoryScoped({ prefix: "t3-branch-policy-" });
+    yield* fs.makeDirectory(worktree + "/.t3code");
+    yield* fs.writeFileString(
+      worktree + "/.t3code/commit-message.md",
+      "Use jm/feature branch names.",
+    );
+    yield* fs.writeFileString(
+      worktree + "/.t3code/vcs.json",
+      '{"branchNaming":{"defaultPrefix":"jm","preserveNamespaces":false}}',
+    );
+    const renamed = yield* Deferred.make<string>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Effect.succeed({
+          worktree: { path: worktree, refName: input.newRefName!, headSha: "abc" },
+        }),
+      generateBranchName: (input) => {
+        assert.strictEqual(input.policy?.branchInstructions, "Use jm/feature branch names.");
+        return Effect.succeed({ branch: "feature/naming-policy" });
+      },
+      renameBranch: (input) =>
+        Deferred.succeed(renamed, input.newBranch).pipe(Effect.as({ branch: input.newBranch })),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch(
+        launchInput({
+          command: "command:launch:repo-policy",
+          thread: "thread:launch:repo-policy",
+          message: "Improve branch naming",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+      );
+      assert.strictEqual(yield* Deferred.await(renamed), "jm/feature/naming-policy");
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
