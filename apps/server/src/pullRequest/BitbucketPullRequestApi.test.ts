@@ -855,7 +855,7 @@ layer("BitbucketPullRequestApi.layer", (it) => {
 
       assert.isFalse(yield* api.getRepositoryPermission({ repository: "acme/web" }));
 
-      expect(callAt(0).url).toContain("/user/permissions/repositories");
+      expect(callAt(0).url).toContain("/user/workspaces/acme/permissions/repositories");
       assert.strictEqual(filterOfCall(0), 'repository.full_name="acme/web"');
     }),
   );
@@ -874,27 +874,34 @@ layer("BitbucketPullRequestApi.layer", (it) => {
   );
 
   it.effect(
-    "reads a removed permissions endpoint as granted rather than failing the merge on it",
+    "uses the supported workspace permission endpoint when the removed one returns 404",
     () =>
       Effect.gen(function* () {
-        // Bitbucket retired /user/permissions/repositories under CHANGE-2770: every account now
-        // gets HTTP 410 here, whatever it may do.
-        mockedRequest.mockReturnValue(
-          Effect.fail(
-            new BitbucketApi.BitbucketResponseError({
-              operation: "request",
-              status: 410,
-              responseBodyLength: 0,
-            }),
-          ),
+        mockedRequest.mockImplementation((input) =>
+          input.url.startsWith("/user/workspaces/acme/permissions/repositories?")
+            ? Effect.succeed(
+                response(
+                  JSON.stringify({
+                    values: [{ type: "repository_permission", permission: "write" }],
+                  }),
+                ),
+              )
+            : Effect.fail(
+                new BitbucketApi.BitbucketResponseError({
+                  operation: "request",
+                  status: 404,
+                  responseBodyLength: 0,
+                }),
+              ),
         );
         const api = yield* BitbucketPullRequestApi.BitbucketPullRequestApi;
 
         assert.isTrue(yield* api.getRepositoryPermission({ repository: "acme/web" }));
+        expect(callAt(0).url).toContain("/user/workspaces/acme/permissions/repositories");
       }),
   );
 
-  it.effect("still fails the permission read on a failure that is not the removed endpoint", () =>
+  it.effect("fails the permission read on an authentication failure", () =>
     Effect.gen(function* () {
       mockedRequest.mockReturnValue(
         Effect.fail(
