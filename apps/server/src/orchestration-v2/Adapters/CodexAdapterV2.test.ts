@@ -4883,6 +4883,190 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       ),
   );
 
+  for (const [nativeStatus, expectedStatus, terminal] of [
+    ["pendingInit", "pending", false],
+    ["running", "running", false],
+    ["interrupted", "interrupted", true],
+    ["completed", "completed", true],
+    ["errored", "failed", true],
+    ["shutdown", "cancelled", true],
+    ["notFound", "failed", true],
+  ] as const) {
+    it.effect(`maps collaboration subagent status ${nativeStatus} to ${expectedStatus}`, () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const nativeThreadId = "collab-parent";
+          const nativeTurnId = "collab-turn";
+          const childThreadId = "collab-child";
+          const prompt = "Delegate a task.";
+          const projected = yield* Deferred.make<void>();
+          const transcript = makeCodexReplayTranscript({
+            scenario: `collab-status-${nativeStatus}`,
+            entries: [
+              ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+              ...[
+                { status: "completed" as const, message: "Previous result" },
+                { status: nativeStatus, message: null },
+                { status: nativeStatus, message: "" },
+              ].map((state, index): CodexReplay.CodexAppServerReplayEntry => ({
+                type: "emit_inbound",
+                label: `item/completed/collab-${index}`,
+                frame: {
+                  method: "item/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turnId: nativeTurnId,
+                    item: {
+                      type: "collabAgentToolCall",
+                      id: `collab-${index}`,
+                      tool: index === 0 ? "spawnAgent" : "wait",
+                      status: "completed",
+                      senderThreadId: nativeThreadId,
+                      receiverThreadIds: [childThreadId],
+                      prompt,
+                      agentsStates: { [childThreadId]: state },
+                    },
+                  },
+                },
+              })),
+            ],
+          });
+          const harness = yield* makeCodexReplayHarness(transcript, (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "subagent" &&
+            event.turnItem.result === ""
+              ? Deferred.succeed(projected, undefined)
+              : Effect.void,
+          );
+          const now = yield* DateTime.now;
+          yield* harness.runtime.startTurn(
+            makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now,
+              attemptId: RunAttemptId.make(`attempt-collab-${nativeStatus}`),
+              text: prompt,
+            }),
+          );
+          yield* Deferred.await(projected);
+
+          assert.equal(yield* harness.hasPendingBackgroundWork, !terminal);
+          const updates = harness.subagentUpdates().slice(-3);
+          assert.lengthOf(updates, 3);
+          assert.equal(updates[0]?.subagent.result, "Previous result");
+          for (const [index, update] of updates.slice(1).entries()) {
+            assert.equal(update.subagent.status, expectedStatus);
+            assert.equal(update.subagent.result, index === 0 ? "Previous result" : "");
+            assert.deepEqual(update.subagent.completedAt, terminal ? now : null);
+            assert.deepEqual(update.subagent.updatedAt, now);
+          }
+          const projectedItems = harness.events
+            .filter(
+              (event): event is Extract<ProviderAdapterV2Event, { type: "turn_item.updated" }> =>
+                event.type === "turn_item.updated" && event.turnItem.type === "subagent",
+            )
+            .slice(-2);
+          assert.lengthOf(projectedItems, 2);
+          for (const event of projectedItems) {
+            assert.equal(event.turnItem.status, expectedStatus);
+            assert.deepEqual(event.turnItem.completedAt, terminal ? now : null);
+          }
+        }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+      ),
+    );
+  }
+
+  for (const childStartsFirst of [false, true]) {
+    it.effect(
+      `marks an initializing subagent running when its first native turn starts (child first: ${childStartsFirst})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const nativeThreadId = "pending-parent";
+            const nativeTurnId = "pending-parent-turn";
+            const childThreadId = "pending-child";
+            const childTurnId = "pending-child-turn";
+            const prompt = "Delegate a task.";
+            const transcript = makeCodexReplayTranscript({
+              scenario: "pending-subagent-first-turn",
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt }),
+                {
+                  type: "emit_inbound",
+                  label: "item/completed/spawn-pending",
+                  frame: {
+                    method: "item/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turnId: nativeTurnId,
+                      item: {
+                        type: "collabAgentToolCall",
+                        id: "spawn-pending",
+                        tool: "spawnAgent",
+                        status: "completed",
+                        senderThreadId: nativeThreadId,
+                        receiverThreadIds: [childThreadId],
+                        prompt,
+                        agentsStates: { [childThreadId]: { status: "pendingInit", message: null } },
+                      },
+                    },
+                  },
+                },
+                {
+                  type: "emit_inbound",
+                  label: "turn/started/child",
+                  frame: {
+                    method: "turn/started",
+                    params: {
+                      threadId: childThreadId,
+                      turn: makeCodexReplayTurn({ id: childTurnId, status: "inProgress" }),
+                    },
+                  },
+                },
+              ],
+            });
+            const entries = [...transcript.entries];
+            if (childStartsFirst) {
+              const childStart = entries.pop()!;
+              const spawn = entries.pop()!;
+              entries.push(childStart, spawn);
+            }
+            entries.push({
+              type: "emit_inbound",
+              label: "turn/completed/parent",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            });
+            const harness = yield* makeCodexReplayHarness({ ...transcript, entries });
+            const now = yield* DateTime.now;
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make("attempt-pending-first-turn"),
+                text: prompt,
+              }),
+            );
+            yield* harness.firstTerminal;
+            if (!childStartsFirst) {
+              assert.isTrue(
+                harness.subagentUpdates().some((event) => event.subagent.status === "pending"),
+              );
+            }
+            assert.isTrue(yield* harness.hasPendingBackgroundWork);
+            assert.equal(harness.subagentUpdates().at(-1)?.subagent.status, "running");
+            assert.isNull(harness.subagentUpdates().at(-1)?.subagent.completedAt);
+          }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+        ),
+    );
+  }
+
   const RESUME_SCENARIO = "codex-resume-subagent";
   const RESUME_NATIVE_THREAD = "native-codex-resume-thread";
   const RESUME_NATIVE_TURN = "native-codex-resume-root-turn";
