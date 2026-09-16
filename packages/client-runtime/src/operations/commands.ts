@@ -57,6 +57,8 @@ export type RevertThreadCheckpointInput = CommandInput<"thread.checkpoint.revert
   readonly restoreFiles?: boolean;
 };
 export type StopThreadSessionInput = CommandInput<"thread.session.stop">;
+export type ArmThreadUsageResumeInput = CommandInput<"thread.usage-resume.arm">;
+export type DisarmThreadUsageResumeInput = CommandInput<"thread.usage-resume.disarm">;
 
 type DispatchTag = typeof ORCHESTRATION_WS_METHODS.dispatchCommand;
 type CommandEffect = Effect.Effect<
@@ -308,6 +310,29 @@ export const startThreadTurn: (input: StartThreadTurnInput) => CommandEffect = E
     createdAt: metadata.createdAt,
   });
 });
+
+export const armThreadUsageResume: (input: ArmThreadUsageResumeInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.armThreadUsageResume",
+)(function* (input) {
+  const metadata = yield* timestampedCommandMetadata(input);
+  return yield* dispatch({
+    ...input,
+    type: "thread.usage-resume.arm",
+    commandId: metadata.commandId,
+    createdAt: metadata.createdAt,
+  });
+});
+
+export const disarmThreadUsageResume: (input: DisarmThreadUsageResumeInput) => CommandEffect =
+  Effect.fn("EnvironmentCommands.disarmThreadUsageResume")(function* (input) {
+    const metadata = yield* timestampedCommandMetadata(input);
+    return yield* dispatch({
+      ...input,
+      type: "thread.usage-resume.disarm",
+      commandId: metadata.commandId,
+      createdAt: metadata.createdAt,
+    });
+  });
 
 export const interruptThreadTurn: (input: InterruptThreadTurnInput) => CommandEffect = Effect.fn(
   "EnvironmentCommands.interruptThreadTurn",

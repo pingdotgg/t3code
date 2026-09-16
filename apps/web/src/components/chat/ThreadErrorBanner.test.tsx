@@ -69,6 +69,55 @@ describe("ThreadErrorBanner", () => {
   it("never shows a null error", () => {
     expect(shouldShowThreadErrorBanner("env:thread-e", null, false)).toBe(false);
   });
+
+  it("calms a usage-limit failure to a countdown notice instead of the raw error", () => {
+    const error = "Your org has used all tokens under the current rate limit";
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error={error}
+        usageLimitResetsAt="2099-01-01T12:00:00.000Z"
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("Reached your plan&#x27;s usage limit");
+    // The countdown owns the whole phrase so a passed window can collapse
+    // the preposition without the banner duplicating it.
+    expect(markup).toMatch(/<span[^>]*>tokens return in \d+h \d+m<\/span>/);
+    expect(markup).not.toContain(error);
+    expect(markup).not.toContain('aria-label="Dismiss error"');
+  });
+
+  it("shows the raw error again once the limit class clears", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner error="Provider crashed" usageLimitResetsAt={null} />,
+    );
+
+    expect(markup).toContain("Provider crashed");
+    expect(markup).not.toContain("usage limit");
+  });
+
+  it("keeps a passed window grammatical instead of reading 'ready soon'", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Your org has used all tokens under the current rate limit"
+        usageLimitResetsAt="2020-01-01T12:00:00.000Z"
+        onDismiss={() => {}}
+      />,
+    );
+
+    expect(markup).toContain("tokens return now");
+    expect(markup).not.toContain("ready soon");
+  });
+
+  it("shows the raw error when the usage-limit class is replaced by another error", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner error="Provider crashed" usageLimitResetsAt={null} />,
+    );
+
+    expect(markup).toContain("Provider crashed");
+    expect(markup).not.toContain("Reached your plan");
+  });
   it("aligns the warning and dismiss icons with the first line of a multi-line error", () => {
     const markup = renderToStaticMarkup(
       <ThreadErrorBanner

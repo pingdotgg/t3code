@@ -149,6 +149,7 @@ const ProjectionThreadRuntimeContextDbRowSchema = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
   title: Schema.String,
+  usageLimitResumeAt: Schema.NullOr(IsoDateTime),
   session: Schema.NullOr(ProjectionThreadSessionDbRowSchema),
 });
 const ProjectionCheckpointDbRowSchema = ProjectionCheckpoint.mapFields(
@@ -382,6 +383,12 @@ function mapSessionRow(
     runtimeMode: row.runtimeMode,
     activeTurnId: row.activeTurnId,
     lastError: row.lastError,
+    ...(row.lastErrorKind !== undefined && row.lastErrorKind !== null
+      ? { lastErrorKind: row.lastErrorKind }
+      : {}),
+    ...(row.lastErrorResetsAt !== undefined && row.lastErrorResetsAt !== null
+      ? { lastErrorResetsAt: row.lastErrorResetsAt }
+      : {}),
     updatedAt: row.updatedAt,
   };
 }
@@ -585,6 +592,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          usage_limit_resume_at AS "usageLimitResumeAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -626,6 +634,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          usage_limit_resume_at AS "usageLimitResumeAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -669,6 +678,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          usage_limit_resume_at AS "usageLimitResumeAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -827,6 +837,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_kind AS "lastErrorKind",
+          last_error_resets_at AS "lastErrorResetsAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         ORDER BY thread_id ASC
@@ -848,6 +860,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_kind AS "lastErrorKind",
+          sessions.last_error_resets_at AS "lastErrorResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -873,6 +887,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_kind AS "lastErrorKind",
+          sessions.last_error_resets_at AS "lastErrorResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_thread_sessions sessions
         INNER JOIN projection_threads threads
@@ -1230,6 +1246,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           title_regeneration_request_id AS "titleRegenerationRequestId",
           title_regeneration_started_at AS "titleRegenerationStartedAt",
           latest_user_message_at AS "latestUserMessageAt",
+          usage_limit_resume_at AS "usageLimitResumeAt",
           pending_approval_count AS "pendingApprovalCount",
           pending_user_input_count AS "pendingUserInputCount",
           has_actionable_proposed_plan AS "hasActionableProposedPlan",
@@ -1252,6 +1269,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           threads.project_id AS "projectId",
           threads.title,
           threads.title_state_json AS "titleState",
+          threads.usage_limit_resume_at AS "usageLimitResumeAt",
           sessions.thread_id AS "threadId",
           sessions.status,
           sessions.provider_name AS "providerName",
@@ -1259,6 +1277,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           sessions.runtime_mode AS "runtimeMode",
           sessions.active_turn_id AS "activeTurnId",
           sessions.last_error AS "lastError",
+          sessions.last_error_kind AS "lastErrorKind",
+          sessions.last_error_resets_at AS "lastErrorResetsAt",
           sessions.updated_at AS "updatedAt"
         FROM projection_threads AS threads
         LEFT JOIN projection_thread_sessions AS sessions
@@ -1274,6 +1294,7 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
             projectId: row.projectId,
             title: row.title,
             titleState: row.titleState,
+            usageLimitResumeAt: row.usageLimitResumeAt,
             session: row.threadId === null ? null : row,
           })),
         ),
@@ -1577,6 +1598,8 @@ const makeProjectionSnapshotQuery = Effect.gen(function* () {
           runtime_mode AS "runtimeMode",
           active_turn_id AS "activeTurnId",
           last_error AS "lastError",
+          last_error_kind AS "lastErrorKind",
+          last_error_resets_at AS "lastErrorResetsAt",
           updated_at AS "updatedAt"
         FROM projection_thread_sessions
         WHERE thread_id = ${threadId}
@@ -2250,6 +2273,12 @@ pending_approval_requests AS (
                   runtimeMode: row.runtimeMode,
                   activeTurnId: row.activeTurnId,
                   lastError: row.lastError,
+                  ...(row.lastErrorKind !== undefined && row.lastErrorKind !== null
+                    ? { lastErrorKind: row.lastErrorKind }
+                    : {}),
+                  ...(row.lastErrorResetsAt !== undefined && row.lastErrorResetsAt !== null
+                    ? { lastErrorResetsAt: row.lastErrorResetsAt }
+                    : {}),
                   updatedAt: row.updatedAt,
                 });
               }
@@ -2304,6 +2333,7 @@ pending_approval_requests AS (
                 activeOrderKey: row.activeOrderKey ?? null,
                 titleRegeneration: mapTitleRegeneration(row),
                 titleState: row.titleState,
+                usageLimitResumeAt: row.usageLimitResumeAt ?? null,
                 deletedAt: row.deletedAt,
                 messages: messagesByThread.get(row.threadId) ?? [],
                 proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -2549,6 +2579,7 @@ pending_approval_requests AS (
                   activeOrderKey: row.activeOrderKey ?? null,
                   titleRegeneration: mapTitleRegeneration(row),
                   titleState: row.titleState,
+                  usageLimitResumeAt: row.usageLimitResumeAt ?? null,
                   deletedAt: row.deletedAt,
                   messages: [],
                   proposedPlans: proposedPlansByThread.get(row.threadId) ?? [],
@@ -2707,6 +2738,7 @@ pending_approval_requests AS (
                         titleState: row.titleState,
                         session: sessionByThread.get(row.threadId) ?? null,
                         latestUserMessageAt: row.latestUserMessageAt,
+                        usageLimitResumeAt: row.usageLimitResumeAt ?? null,
                         hasPendingApprovals: row.pendingApprovalCount > 0,
                         hasPendingUserInput: row.pendingUserInputCount > 0,
                         hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -2870,6 +2902,7 @@ pending_approval_requests AS (
                   titleState: row.titleState,
                   session: sessionByThread.get(row.threadId) ?? null,
                   latestUserMessageAt: row.latestUserMessageAt,
+                  usageLimitResumeAt: row.usageLimitResumeAt ?? null,
                   hasPendingApprovals: row.pendingApprovalCount > 0,
                   hasPendingUserInput: row.pendingUserInputCount > 0,
                   hasActionableProposedPlan: row.hasActionableProposedPlan > 0,
@@ -3226,6 +3259,7 @@ pending_approval_requests AS (
         titleState: threadRow.value.titleState,
         session: Option.isSome(sessionRow) ? mapSessionRow(sessionRow.value) : null,
         latestUserMessageAt: threadRow.value.latestUserMessageAt,
+        usageLimitResumeAt: threadRow.value.usageLimitResumeAt ?? null,
         hasPendingApprovals: threadRow.value.pendingApprovalCount > 0,
         hasPendingUserInput: threadRow.value.pendingUserInputCount > 0,
         hasActionableProposedPlan: threadRow.value.hasActionableProposedPlan > 0,
@@ -3251,6 +3285,7 @@ pending_approval_requests AS (
         projectId: row.projectId,
         title: row.title,
         titleState: row.titleState,
+        usageLimitResumeAt: row.usageLimitResumeAt,
         session: row.session === null ? null : mapSessionRow(row.session),
       }));
     });
@@ -3525,6 +3560,7 @@ pending_approval_requests AS (
         activeOrderKey: threadRow.value.activeOrderKey ?? null,
         titleRegeneration: mapTitleRegeneration(threadRow.value),
         titleState: threadRow.value.titleState,
+        usageLimitResumeAt: threadRow.value.usageLimitResumeAt ?? null,
         deletedAt: null,
         messages: messageRows.map((row) => {
           const message = {
