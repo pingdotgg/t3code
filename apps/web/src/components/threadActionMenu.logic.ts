@@ -148,7 +148,7 @@ export function buildThreadActionMenuItems(
     ...(state.supports.snooze
       ? [
           ...(state.isSnoozed
-            ? [{ id: "unsnooze" as const, label: "Wake thread", icon: "clock" }]
+            ? [{ id: "unsnooze" as const, label: "Wake thread", icon: "bell-ring" }]
             : []),
           {
             id: "snooze" as const,
