@@ -173,6 +173,7 @@ export function useComposerCommandMenu({
   onChangeDraftMessage,
   onUpdateInteractionMode,
   onUsageLimits,
+  onRequestEditorFocus,
 }: {
   readonly draftMessage: string;
   readonly ownerKey: string | null;
@@ -190,6 +191,7 @@ export function useComposerCommandMenu({
   readonly onUpdateInteractionMode?: (mode: ProviderInteractionMode) => void;
   /** Picking /usage-limits is the action itself; the draft keeps nothing of it. */
   readonly onUsageLimits?: () => void;
+  readonly onRequestEditorFocus?: () => void;
 }) {
   const [selection, setSelection] = useState(() => composerSelectionAtEnd(draftMessage));
   const previousOwnerKeyRef = useRef(ownerKey);
@@ -524,12 +526,14 @@ export function useComposerCommandMenu({
       if (result.interactionMode !== null) {
         onUpdateInteractionMode?.(result.interactionMode);
       }
+      onRequestEditorFocus?.();
     },
     [
       draftMessage,
       ownerKey,
       items,
       onChangeDraftMessage,
+      onRequestEditorFocus,
       onUpdateInteractionMode,
       onUsageLimits,
       selectedProviderStatus?.showInteractionModeToggle,
