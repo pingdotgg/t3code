@@ -12,6 +12,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
+import { HttpClient } from "effect/unstable/http";
+import { readCursorUsageLimits } from "../Layers/cursorUsageLimits.ts";
 
 import * as BackgroundPolicy from "../../background/BackgroundPolicy.ts";
 import { ServerConfig } from "../../config.ts";
@@ -54,6 +56,7 @@ export type CursorDriverEnv =
   | CursorAdapterV2DriverEnv
   | FileSystem.FileSystem
   | Path.Path
+  | HttpClient.HttpClient
   | BackgroundPolicy.BackgroundPolicy
   | ServerConfig
   | ServerSettingsService;
@@ -71,6 +74,7 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const serverSettings = yield* ServerSettingsService;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
+      const httpClient = yield* HttpClient.HttpClient;
       const processEnv = mergeProviderInstanceEnvironment(environment);
       const continuationIdentity = defaultProviderContinuationIdentity({
         driverKind: DRIVER_KIND,
@@ -106,6 +110,16 @@ export const CursorDriver: ProviderDriver<CursorSettings, CursorDriverEnv> = {
       const textGeneration = yield* makeCursorTextGeneration(effectiveConfig, processEnv);
 
       const checkProvider = checkCursorProviderStatus(effectiveConfig, processEnv).pipe(
+        Effect.flatMap((snapshot) =>
+          effectiveConfig.enabled && snapshot.installed && snapshot.auth.status === "authenticated"
+            ? readCursorUsageLimits(effectiveConfig, processEnv).pipe(
+                Effect.map((usageLimits) => ({ ...snapshot, usageLimits })),
+              )
+            : Effect.succeed(snapshot),
+        ),
+        Effect.provideService(HttpClient.HttpClient, httpClient),
+        Effect.provideService(FileSystem.FileSystem, fileSystem),
+        Effect.provideService(Path.Path, path),
         Effect.map(stampIdentity),
         Effect.provide(CursorSdkCatalogLive),
       );

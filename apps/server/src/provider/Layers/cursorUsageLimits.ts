@@ -107,7 +107,7 @@ export const readCursorUsageLimits = Effect.fn("readCursorUsageLimits")(function
     if (!token) return makeUnavailableUsageLimits({ checkedAt, reason: "unsupported" });
     const client = yield* HttpClient.HttpClient;
     const endpoint = (
-      settings.apiEndpoint.trim() ||
+      settings.apiEndpoint?.trim() ||
       environment.CURSOR_API_ENDPOINT?.trim() ||
       "https://api2.cursor.sh"
     ).replace(/\/$/, "");

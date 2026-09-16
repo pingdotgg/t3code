@@ -1,3 +1,4 @@
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { formatSubagentDisplayTitle } from "@t3tools/client-runtime/state/subagent-display";
 import {
@@ -19,7 +20,6 @@ import {
   BotIcon,
   CornerLeftUpIcon,
   GitForkIcon,
-  GitMergeIcon,
   LoaderCircleIcon,
   MoreHorizontalIcon,
   PlusIcon,
@@ -329,7 +329,7 @@ export function ThreadRelationshipsPanel(props: {
                           {busyAction === "merge" ? (
                             <LoaderCircleIcon className="size-3 animate-spin" />
                           ) : (
-                            <GitMergeIcon className="size-3" />
+                            <PullRequestGlyph.merged className="size-3" />
                           )}
                         </Button>
                       }
