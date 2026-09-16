@@ -1743,7 +1743,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: {
                     "opacity-40 grayscale group-focus-within/sidebar-row:opacity-100 group-focus-within/sidebar-row:grayscale-0 group-hover/sidebar-row:opacity-100 group-hover/sidebar-row:grayscale-0",
                 )}
               >
-                {props.project ? <ProjectFavicon project={props.project} className="size-4" /> : null}
+                {props.project ? (
+                  <ProjectFavicon project={props.project} className="size-4" />
+                ) : null}
               </span>
               {draftIndicator}
               {title}
