@@ -4540,6 +4540,106 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
     }),
   );
 
+  for (const recoverCleanup of [false, true]) {
+    it.effect(
+      `prunes canceled queued attachments and retains queued and delivered attachments (recovery: ${recoverCleanup})`,
+      () =>
+        Effect.gen(function* () {
+          const engine = yield* OrchestrationEngineService;
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { attachmentsDir } = yield* ServerConfig;
+          const projectId = ProjectId.make("project-queue-cleanup");
+          const threadId = ThreadId.make("thread-queue-cleanup");
+          const createdAt = "2026-01-01T00:00:00.000Z";
+          yield* engine.dispatch({
+            type: "project.create",
+            commandId: CommandId.make("queue-cleanup-project"),
+            projectId,
+            title: "Queue",
+            workspaceRoot: "/tmp/queue-cleanup",
+            defaultModelSelection: null,
+            createdAt,
+          });
+          yield* engine.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("queue-cleanup-thread"),
+            threadId,
+            projectId,
+            title: "Queue",
+            modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" },
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            createdAt,
+          });
+          yield* fs.makeDirectory(attachmentsDir, { recursive: true });
+          const attachmentIds = [
+            "thread-queue-cleanup-00000000-0000-4000-8000-000000000001",
+            "thread-queue-cleanup-00000000-0000-4000-8000-000000000002",
+          ];
+          for (const [index, id] of attachmentIds.entries()) {
+            const attachmentPath = path.join(attachmentsDir, `${id}.png`);
+            if (recoverCleanup && index === 0) {
+              // Pruning skips directories, leaving this path for bootstrap recovery.
+              yield* fs.makeDirectory(attachmentPath);
+              yield* fs.writeFileString(path.join(attachmentPath, "blocked"), "image");
+            } else {
+              yield* fs.writeFileString(attachmentPath, "image");
+            }
+            yield* engine.dispatch({
+              type: "thread.turn.start",
+              commandId: CommandId.make(`queue-cleanup-enqueue-${index}`),
+              threadId,
+              message: {
+                messageId: MessageId.make(`queue-message-${index}`),
+                role: "user",
+                text: "Inspect",
+                attachments: [
+                  { type: "image", id, name: "image.png", mimeType: "image/png", sizeBytes: 5 },
+                ],
+              },
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              deliveryMode: "queue",
+              createdAt,
+            });
+          }
+          yield* engine.dispatch({
+            type: "thread.queue.remove",
+            commandId: CommandId.make("queue-cleanup-remove"),
+            threadId,
+            messageId: MessageId.make("queue-message-0"),
+          });
+          if (recoverCleanup) {
+            const canceledPath = path.join(attachmentsDir, `${attachmentIds[0]}.png`);
+            assert.isTrue(yield* fs.exists(canceledPath));
+            yield* fs.remove(canceledPath, { recursive: true });
+            yield* fs.writeFileString(canceledPath, "retry cleanup");
+            const pipeline = yield* OrchestrationProjectionPipeline;
+            yield* pipeline.bootstrap;
+          }
+          assert.isFalse(yield* fs.exists(path.join(attachmentsDir, `${attachmentIds[0]}.png`)));
+          assert.isTrue(yield* fs.exists(path.join(attachmentsDir, `${attachmentIds[1]}.png`)));
+          yield* engine.dispatch({
+            type: "thread.queue.send",
+            commandId: CommandId.make("queue-cleanup-send"),
+            threadId,
+            messageId: MessageId.make("queue-message-1"),
+          });
+          yield* engine.dispatch({
+            type: "thread.queue.complete",
+            commandId: CommandId.make("queue-cleanup-complete"),
+            threadId,
+            messageId: MessageId.make("queue-message-1"),
+            failed: false,
+          });
+          assert.isTrue(yield* fs.exists(path.join(attachmentsDir, `${attachmentIds[1]}.png`)));
+        }),
+    );
+  }
+
   it.effect("cleans attachments only after the command receipt commits", () =>
     Effect.gen(function* () {
       const engine = yield* OrchestrationEngineService;

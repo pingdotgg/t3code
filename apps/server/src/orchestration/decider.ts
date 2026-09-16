@@ -1,5 +1,6 @@
 import {
   EventId,
+  type QueuedThreadMessage,
   MAX_SCRIPT_ID_LENGTH,
   SCRIPT_RUN_COMMAND_PATTERN,
   MessageId,
@@ -108,9 +109,10 @@ function openRequests(thread: Pick<OrchestrationThread, "activities">) {
 
 /** Apply the shared shell-level rule to the detailed command read model. */
 function hasQueuedTurnStartForThread(
-  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session">,
+  thread: Pick<OrchestrationThread, "messages" | "latestTurn" | "session" | "queuedMessages">,
   now: string,
 ): boolean {
+  if (thread.queuedMessages?.length) return true;
   let latestUserMessageAt: string | null = null;
   let latestUserMessageAtMs = Number.NEGATIVE_INFINITY;
   for (const message of thread.messages) {
@@ -208,14 +210,50 @@ const decideCommandSequence = Effect.fn("decideCommandSequence")(function* ({
   return plannedEvents;
 });
 
+function latestQueueBoundary(thread: OrchestrationThread) {
+  return (
+    thread.activities
+      .filter((activity) => activity.kind === "tool.completed")
+      .reduce<OrchestrationThreadActivity | null>(
+        (latest, activity) =>
+          latest === null ||
+          (activity.sequence ?? -1) > (latest.sequence ?? -1) ||
+          ((activity.sequence ?? -1) === (latest.sequence ?? -1) &&
+            activity.createdAt > latest.createdAt)
+            ? activity
+            : latest,
+        null,
+      )?.id ?? null
+  );
+}
+
+const queueUpdated = Effect.fn("queueUpdated")(function* (
+  command: OrchestrationCommand & { readonly threadId: OrchestrationThread["id"] },
+  queuedMessages: ReadonlyArray<QueuedThreadMessage>,
+): Effect.fn.Return<PlannedOrchestrationEvent, PlatformError.PlatformError, Crypto.Crypto> {
+  const updatedAt = yield* nowIso;
+  return {
+    ...(yield* withEventBase({
+      aggregateKind: "thread",
+      aggregateId: command.threadId,
+      occurredAt: updatedAt,
+      commandId: command.commandId,
+    })),
+    type: "thread.queue-updated",
+    payload: { threadId: command.threadId, queuedMessages, updatedAt },
+  };
+});
+
 export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand")(function* ({
   command,
   readModel,
   userInputActivity,
+  queueBlocked = false,
 }: {
   readonly command: OrchestrationCommand;
   readonly readModel: OrchestrationReadModel;
   readonly userInputActivity?: OrchestrationThreadActivity;
+  readonly queueBlocked?: boolean;
 }): Effect.fn.Return<
   DecideOrchestrationCommandResult,
   OrchestrationCommandRejection | PlatformError.PlatformError,
@@ -433,13 +471,13 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.archive": {
-      yield* requireThreadNotArchived({
+      const thread = yield* requireThreadNotArchived({
         readModel,
         command,
         threadId: command.threadId,
       });
       const occurredAt = yield* nowIso;
-      return {
+      const lifecycleEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -453,6 +491,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           updatedAt: occurredAt,
         },
       };
+      return thread.queuedMessages?.length
+        ? [
+            yield* queueUpdated(
+              command,
+              thread.queuedMessages.map((message) =>
+                message.status === "queued" ? { ...message, status: "held" } : message,
+              ),
+            ),
+            lifecycleEvent,
+          ]
+        : lifecycleEvent;
     }
 
     case "thread.unarchive": {
@@ -1365,6 +1414,146 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
       };
     }
 
+    case "thread.queue.remove":
+    case "thread.queue.complete":
+    case "thread.queue.recover": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const queue = thread.queuedMessages ?? [];
+      if (command.type === "thread.queue.recover") {
+        if (!queue.some((message) => message.status === "sending")) return [];
+        // Provider CLIs cannot deduplicate a handoff across a server restart.
+        // Keep ambiguous sends visible for an explicit retry instead of replaying them.
+        return yield* queueUpdated(
+          command,
+          queue.map((message) =>
+            message.status === "sending" ? { ...message, status: "held" } : message,
+          ),
+        );
+      }
+      const message = queue.find((entry) => entry.messageId === command.messageId);
+      if (!message) {
+        if (command.type === "thread.queue.remove")
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "This queued message was already sent or removed.",
+          });
+        return [];
+      }
+      if (command.type === "thread.queue.remove" && message.status === "sending") {
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "This message is already being sent.",
+        });
+      }
+      if (command.type === "thread.queue.complete" && message.status !== "sending") return [];
+      return yield* queueUpdated(
+        command,
+        command.type === "thread.queue.complete" && command.failed
+          ? queue.map((entry) => (entry === message ? { ...entry, status: "held" } : entry))
+          : queue.filter((entry) => entry !== message),
+      );
+    }
+    case "thread.queue.send":
+    case "thread.queue.advance": {
+      const thread = yield* requireThread({ readModel, command, threadId: command.threadId });
+      const queue = thread.queuedMessages ?? [];
+      const message =
+        command.type === "thread.queue.send"
+          ? queue.find((entry) => entry.messageId === command.messageId)
+          : queue[0];
+      if (!message || queue.some((entry) => entry.status === "sending")) return [];
+      if (
+        thread.archivedAt !== null ||
+        thread.deletedAt !== null ||
+        queueBlocked ||
+        openRequests(thread).size > 0
+      )
+        return [];
+      const boundary = latestQueueBoundary(thread);
+      if (
+        command.type === "thread.queue.advance" &&
+        (message.status === "held" ||
+          thread.session?.status === "starting" ||
+          (thread.session?.status !== "running" &&
+            hasQueuedTurnStartForThread({ ...thread, queuedMessages: [] }, yield* nowIso)) ||
+          thread.session?.status === "error" ||
+          thread.session?.status === "interrupted" ||
+          (thread.session?.status === "running" &&
+            (boundary === null || boundary === message.queuedAfterToolActivityId)))
+      )
+        return [];
+      const changed = yield* queueUpdated(
+        command,
+        queue.map((entry) => ({
+          ...entry,
+          status: entry === message ? "sending" : entry.status,
+          queuedAfterToolActivityId: boundary,
+        })),
+      );
+      const settingEvents: PlannedOrchestrationEvent[] = [];
+      for (const setting of [
+        ...(thread.runtimeMode !== message.runtimeMode
+          ? [{ type: "thread.runtime-mode.set" as const, runtimeMode: message.runtimeMode }]
+          : []),
+        ...(thread.interactionMode !== message.interactionMode
+          ? [
+              {
+                type: "thread.interaction-mode.set" as const,
+                interactionMode: message.interactionMode,
+              },
+            ]
+          : []),
+      ]) {
+        const events = yield* decideOrchestrationCommand({
+          readModel,
+          command: {
+            ...setting,
+            createdAt: yield* nowIso,
+            commandId: command.commandId,
+            threadId: thread.id,
+          },
+        });
+        settingEvents.push(...(Array.isArray(events) ? events : [events]));
+      }
+      const started = yield* decideOrchestrationCommand({
+        readModel,
+        command: {
+          type: "thread.turn.start",
+          commandId: command.commandId,
+          threadId: command.threadId,
+          message: {
+            messageId: message.messageId,
+            role: "user",
+            text: message.text,
+            attachments: message.attachments,
+            ...(message.context ? { context: message.context } : {}),
+          },
+          ...(message.modelSelection ? { modelSelection: message.modelSelection } : {}),
+          ...(message.sourceProposedPlan ? { sourceProposedPlan: message.sourceProposedPlan } : {}),
+          runtimeMode: message.runtimeMode,
+          interactionMode: message.interactionMode,
+          createdAt: yield* nowIso,
+        },
+      });
+      return [
+        changed,
+        ...settingEvents,
+        ...(Array.isArray(started) ? started : [started]).map((event) =>
+          event.type === "thread.turn-start-requested"
+            ? {
+                ...event,
+                payload: {
+                  ...event.payload,
+                  queuedMessageId: message.messageId,
+                  runtimeMode: message.runtimeMode,
+                  interactionMode: message.interactionMode,
+                },
+              }
+            : event,
+        ),
+      ];
+    }
+
     case "thread.turn.start": {
       if (isImportedAgentSessionMessageId(command.message.messageId)) {
         return yield* new OrchestrationCommandInvariantError({
@@ -1494,6 +1683,37 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           },
         });
       }
+      if (command.deliveryMode === "queue") {
+        const queue = targetThread.queuedMessages ?? [];
+        if (
+          queue.some((entry) => entry.messageId === command.message.messageId) ||
+          targetThread.messages.some((entry) => entry.id === command.message.messageId)
+        )
+          return [];
+        if (queue.length >= 20)
+          return yield* new OrchestrationCommandInvariantError({
+            commandType: command.type,
+            detail: "The thread already has 20 queued messages.",
+          });
+        return [
+          ...lifecycleResetEvents,
+          yield* queueUpdated(command, [
+            ...queue,
+            {
+              ...command.message,
+              ...(command.modelSelection ? { modelSelection: command.modelSelection } : {}),
+              ...(command.sourceProposedPlan
+                ? { sourceProposedPlan: command.sourceProposedPlan }
+                : {}),
+              runtimeMode: command.runtimeMode,
+              interactionMode: command.interactionMode,
+              createdAt: command.createdAt,
+              status: "queued",
+              queuedAfterToolActivityId: latestQueueBoundary(targetThread),
+            },
+          ]),
+        ];
+      }
       return [
         ...lifecycleResetEvents,
         ...(userMessageEvent ? [userMessageEvent] : []),
@@ -1544,12 +1764,12 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
     }
 
     case "thread.turn.interrupt": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
-      return {
+      const interrupt: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1563,6 +1783,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      if (!thread.queuedMessages?.length) return interrupt;
+      return [
+        yield* queueUpdated(
+          command,
+          (thread.queuedMessages ?? []).map((message) =>
+            message.status === "queued" ? { ...message, status: "held" } : message,
+          ),
+        ),
+        interrupt,
+      ];
     }
 
     case "thread.approval.respond": {
@@ -1797,11 +2027,16 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
 
     case "thread.conversation.revert":
     case "thread.checkpoint.revert": {
-      yield* requireThread({
+      const thread = yield* requireThread({
         readModel,
         command,
         threadId: command.threadId,
       });
+      if (thread.queuedMessages?.length)
+        return yield* new OrchestrationCommandInvariantError({
+          commandType: command.type,
+          detail: "Send or return queued messages to the composer before rewinding this thread.",
+        });
       return {
         ...(yield* withEventBase({
           aggregateKind: "thread",
@@ -1846,7 +2081,7 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           );
         }
       }
-      return {
+      const lifecycleEvent: PlannedOrchestrationEvent = {
         ...(yield* withEventBase({
           aggregateKind: "thread",
           aggregateId: command.threadId,
@@ -1859,6 +2094,17 @@ export const decideOrchestrationCommand = Effect.fn("decideOrchestrationCommand"
           createdAt: command.createdAt,
         },
       };
+      return thread.queuedMessages?.length
+        ? [
+            yield* queueUpdated(
+              command,
+              thread.queuedMessages.map((message) =>
+                message.status === "queued" ? { ...message, status: "held" } : message,
+              ),
+            ),
+            lifecycleEvent,
+          ]
+        : lifecycleEvent;
     }
 
     case "thread.session.set": {

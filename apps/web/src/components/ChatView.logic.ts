@@ -802,7 +802,7 @@ export async function resolveFileAttachmentUrl(input: {
 }
 
 export async function prepareRevertedMessageAttachments(input: {
-  message: ChatMessage;
+  message: Pick<ChatMessage, "attachments">;
   environmentId: EnvironmentId;
   httpBaseUrl: string;
   createAssetUrl: Parameters<typeof resolveFileAttachmentUrl>[0]["createAssetUrl"];

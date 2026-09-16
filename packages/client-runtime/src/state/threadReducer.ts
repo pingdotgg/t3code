@@ -250,6 +250,16 @@ export function applyThreadDetailEvent(
       };
 
     // ── Thread metadata ─────────────────────────────────────────────
+    case "thread.queue-updated":
+      return {
+        kind: "updated",
+        thread: {
+          ...thread,
+          queuedMessages: event.payload.queuedMessages,
+          updatedAt: event.payload.updatedAt,
+        },
+      };
+
     case "thread.meta-updated":
       return {
         kind: "updated",

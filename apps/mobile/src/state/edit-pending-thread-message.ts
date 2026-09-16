@@ -1,3 +1,7 @@
+import type { DraftComposerAttachment } from "../lib/composerImages";
+import { runAtomCommand, squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { threadEnvironment } from "./threads";
+import { importQueuedMessageAttachment } from "../lib/composerContextClipboard";
 import { PROVIDER_SEND_TURN_MAX_ATTACHMENTS } from "@t3tools/contracts";
 import { scopedThreadKey } from "../lib/scopedEntities";
 import { appAtomRegistry } from "./atom-registry";
@@ -9,6 +13,7 @@ import {
 import { removeThreadOutboxMessage } from "./thread-outbox-removal";
 import {
   flushComposerDrafts,
+  scheduleUnusedComposerAttachmentCleanup,
   getComposerDraftSnapshot,
   mergeComposerDraftContent,
   undoComposerDraftMerge,
@@ -37,8 +42,35 @@ export async function editPendingThreadMessage(message: QueuedThreadMessage): Pr
     snapshot: ReturnType<typeof getComposerDraftSnapshot>;
     merged: ReturnType<typeof getComposerDraftSnapshot>;
   } | null = null;
+  const importedAttachments: DraftComposerAttachment[] = [];
   try {
-    if (!(await confirmThreadOutboxMessageQueued(message))) return false;
+    if (message.serverMessage) {
+      const source = message.serverMessage;
+      for (const attachment of source.attachments) {
+        importedAttachments.push(
+          await importQueuedMessageAttachment(attachment, message.environmentId),
+        );
+      }
+      const attachments = importedAttachments;
+      message = {
+        ...message,
+        attachments,
+        context: source.context
+          ? {
+              ...source.context,
+              records: source.context.records.map((record) => {
+                if (!("attachmentId" in record)) return record;
+                const index = source.attachments.findIndex(
+                  (attachment) => attachment.id === record.attachmentId,
+                );
+                return attachments[index]
+                  ? { ...record, attachmentId: attachments[index].id }
+                  : record;
+              }),
+            }
+          : undefined,
+      };
+    } else if (!(await confirmThreadOutboxMessageQueued(message))) return false;
     const revision = threadOutboxRevision(message.messageId);
     await waitForComposerDraftsLoaded();
     const snapshot = getComposerDraftSnapshot(draftKey);
@@ -59,7 +91,13 @@ export async function editPendingThreadMessage(message: QueuedThreadMessage): Pr
     });
     rollback = { snapshot, merged: getComposerDraftSnapshot(draftKey) };
     await flushComposerDrafts();
-    if (!(await removeThreadOutboxMessage(message, revision))) return false;
+    if (message.serverMessage) {
+      const result = await runAtomCommand(appAtomRegistry, threadEnvironment.removeQueuedMessage, {
+        environmentId: message.environmentId,
+        input: { threadId: message.threadId, messageId: message.messageId },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    } else if (!(await removeThreadOutboxMessage(message, revision))) return false;
     rollback = null;
     return true;
   } finally {
@@ -67,6 +105,7 @@ export async function editPendingThreadMessage(message: QueuedThreadMessage): Pr
       if (rollback) await undoComposerDraftMerge(draftKey, rollback.snapshot, rollback.merged);
     } finally {
       releaseEditingQueuedMessage(message.messageId);
+      scheduleUnusedComposerAttachmentCleanup(importedAttachments);
     }
   }
 }

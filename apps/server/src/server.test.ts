@@ -8669,6 +8669,77 @@ it.layer(NodeServices.layer)("server router seam", (it) => {
     }).pipe(Effect.provide(NodeHttpServer.layerTest)),
   );
 
+  it.effect.each(["live", "replay"] as const)(
+    "synchronizes queued messages to both clients through %s thread subscriptions",
+    (mode) =>
+      Effect.gen(function* () {
+        const thread = makeDefaultOrchestrationReadModel().threads[0]!;
+        const event: OrchestrationEvent = {
+          ...makeLiveToolActivityEvent(2),
+          type: "thread.queue-updated",
+          payload: {
+            threadId: defaultThreadId,
+            updatedAt: "2026-01-01T00:00:01.000Z",
+            queuedMessages: [
+              {
+                messageId: MessageId.make("queued-follow-up"),
+                text: "Continue after the tool finishes",
+                attachments: [],
+                runtimeMode: "full-access",
+                interactionMode: "default",
+                status: "queued",
+                createdAt: "2026-01-01T00:00:01.000Z",
+                queuedAfterToolActivityId: null,
+              },
+            ],
+          },
+        };
+        yield* buildAppUnderTest({
+          layers: {
+            orchestrationEngine: {
+              latestSequence: Effect.succeed(2),
+              streamDomainEvents:
+                mode === "live" ? Stream.concat(Stream.make(event), Stream.never) : Stream.never,
+              getThreadReplayStats: () =>
+                Effect.succeed({
+                  eventCount: 1,
+                  payloadBytes: Buffer.byteLength(jsonRequestBody(event.payload)),
+                  hasCreateEvent: false,
+                }),
+              readThreadEvents: () => Stream.make(event),
+            },
+            projectionSnapshotQuery: {
+              getThreadDetailSnapshot: () =>
+                Effect.succeed(Option.some({ snapshotSequence: 1, thread })),
+            },
+          },
+        });
+        const wsUrl = yield* getWsServerUrl("/ws");
+        const clients = yield* Effect.all(
+          [0, 1].map(() =>
+            Effect.scoped(
+              withWsRpcClient(wsUrl, (client) =>
+                client[ORCHESTRATION_WS_METHODS.subscribeThread]({
+                  threadId: defaultThreadId,
+                  ...(mode === "replay" ? { afterSequence: 1 } : {}),
+                  requestCompletionMarker: true,
+                }).pipe(
+                  Stream.takeUntil((item) => item.kind === "synchronized"),
+                  Stream.runCollect,
+                ),
+              ),
+            ),
+          ),
+          { concurrency: "unbounded" },
+        );
+        for (const items of clients) {
+          const update = items.find((item) => item.kind === "event");
+          assertTrue(update?.kind === "event" && update.event.type === "thread.queue-updated");
+          assert.deepEqual(update.event.payload.queuedMessages, event.payload.queuedMessages);
+        }
+      }).pipe(Effect.provide(NodeHttpServer.layerTest)),
+  );
+
   for (const subscription of ["thread", "shell"] as const) {
     it.effect("delivers large raw tool results through the " + subscription + " stream", () =>
       Effect.gen(function* () {

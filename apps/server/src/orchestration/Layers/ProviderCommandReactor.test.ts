@@ -635,6 +635,82 @@ describe("ProviderCommandReactor", () => {
     };
   }
 
+  effectIt.effect(
+    "delivers a durable queue without a client at tool boundaries and persists it in detail snapshots",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* Effect.promise(() => createHarness());
+        const threadId = ThreadId.make("thread-1");
+        const createdAt = "2026-01-01T00:00:00.000Z";
+        yield* harness.engine.dispatch({
+          type: "thread.session.set",
+          commandId: CommandId.make("queue-running"),
+          threadId,
+          session: {
+            threadId,
+            status: "running",
+            providerName: "codex",
+            providerInstanceId: ProviderInstanceId.make("codex"),
+            runtimeMode: "approval-required",
+            activeTurnId: asTurnId("active"),
+            lastError: null,
+            updatedAt: createdAt,
+          },
+          createdAt,
+        });
+        yield* harness.engine.dispatch({
+          type: "thread.turn.start",
+          commandId: CommandId.make("queue-message"),
+          threadId,
+          message: {
+            messageId: asMessageId("queued"),
+            role: "user",
+            text: "Run after the tool",
+            attachments: [],
+          },
+          deliveryMode: "queue",
+          runtimeMode: "approval-required",
+          interactionMode: "default",
+          createdAt,
+        });
+        yield* Effect.promise(() => harness.drain());
+        expect(harness.sendTurn).not.toHaveBeenCalled();
+        const detail = yield* harness.snapshotQuery.getThreadDetailById(threadId);
+        expect(Option.isSome(detail) && detail.value.queuedMessages?.[0]?.text).toBe(
+          "Run after the tool",
+        );
+        const shell = yield* harness.snapshotQuery.getThreadShellById(threadId);
+        expect(Option.isSome(shell) && shell.value.queuedMessageCount).toBe(1);
+        expect(Option.isSome(shell) && "queuedMessages" in shell.value).toBe(false);
+        const sent = yield* Deferred.make<void>();
+        harness.sendTurn.mockImplementation(() =>
+          Deferred.succeed(sent, undefined).pipe(
+            Effect.as({ threadId, turnId: asTurnId("follow-up") }),
+          ),
+        );
+        yield* harness.engine.dispatch({
+          type: "thread.activity.append",
+          commandId: CommandId.make("queue-tool"),
+          threadId,
+          createdAt,
+          activity: {
+            id: EventId.make("queue-tool"),
+            kind: "tool.completed",
+            payload: {},
+            summary: "Tool completed",
+            tone: "info",
+            turnId: asTurnId("active"),
+            createdAt,
+          },
+        });
+        yield* Deferred.await(sent);
+        expect(harness.sendTurn).toHaveBeenCalledTimes(1);
+        expect(harness.sendTurn).toHaveBeenCalledWith(
+          expect.objectContaining({ input: "Run after the tool" }),
+        );
+      }),
+  );
+
   effectIt.effect.each(["new", "ready", "stopped"] as const)(
     "handles sign-out for a %s thread before worktree repair, text helpers, or startup",
     (sessionStatus) =>

@@ -201,3 +201,26 @@ async function persistImportedAttachment(
     ? { ...common, type: "image", previewUri: fileUri }
     : { ...common, type: "file" };
 }
+
+export async function importQueuedMessageAttachment(
+  attachment: import("@t3tools/contracts").ChatAttachment,
+  environmentId: EnvironmentId,
+): Promise<DraftComposerAttachment> {
+  if (attachment.type !== "image" && attachment.type !== "file")
+    throw new Error("Unsupported attachment");
+  const { ComposerContextId } = await import("@t3tools/contracts");
+  return importAttachment(
+    {
+      version: 1,
+      kind: attachment.type === "image" ? "image" : "file",
+      contextId: ComposerContextId.make(attachment.id),
+      label: attachment.name,
+      attachmentId: attachment.id,
+      name: attachment.name,
+      mimeType: attachment.mimeType,
+      sizeBytes: attachment.sizeBytes,
+    },
+    environmentId,
+    new AbortController().signal,
+  );
+}

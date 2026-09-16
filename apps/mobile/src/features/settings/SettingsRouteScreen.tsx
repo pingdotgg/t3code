@@ -595,8 +595,35 @@ function ConfiguredSettingsRouteScreen() {
 }
 
 function GeneralSettingsSection() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const savePreferences = useAtomSet(updateMobilePreferencesAtom);
+  const followUpBehavior = AsyncResult.isSuccess(preferences)
+    ? (preferences.value.followUpBehavior ?? "queue")
+    : "queue";
   return (
     <SettingsSection title="General">
+      <View className="gap-2 p-4">
+        <Text className="text-lg text-foreground">Follow-up behavior</Text>
+        <Text className="text-sm text-foreground-muted">
+          Queue messages for the next tool call, or steer immediately.
+        </Text>
+        <View className="flex-row gap-2">
+          {(["queue", "steer"] as const).map((value) => (
+            <Pressable
+              key={value}
+              accessibilityRole="radio"
+              accessibilityState={{ checked: followUpBehavior === value }}
+              onPress={() => savePreferences({ followUpBehavior: value })}
+              className="min-h-11 flex-1 items-center justify-center rounded-xl bg-subtle"
+            >
+              <Text className="text-foreground">
+                {followUpBehavior === value ? "✓ " : ""}
+                {value === "queue" ? "Queue" : "Steer"}
+              </Text>
+            </Pressable>
+          ))}
+        </View>
+      </View>
       <SettingsRow icon="folder" label="Project Grouping" target="SettingsProjectGrouping" />
       {Platform.OS === "ios" ? (
         <SettingsRow icon="keyboard" label="Keyboard" target="SettingsKeyboard" />

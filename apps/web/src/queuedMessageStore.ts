@@ -1,4 +1,4 @@
-import type { PreviewAnnotationPayload } from "@t3tools/contracts";
+import type { QueuedThreadMessage, PreviewAnnotationPayload } from "@t3tools/contracts";
 import { create } from "zustand";
 
 import type { ComposerSubmissionIntent } from "./composer-logic";
@@ -14,6 +14,7 @@ import type { ReviewCommentContext } from "./reviewCommentContext";
  */
 export interface QueuedComposerMessage {
   id: string;
+  serverMessage?: QueuedThreadMessage;
   prompt: string;
   images: ComposerImageAttachment[];
   files: ComposerFileAttachment[];

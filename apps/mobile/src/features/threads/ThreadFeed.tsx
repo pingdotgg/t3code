@@ -235,6 +235,7 @@ function isFreshTimestamp(input: string): boolean {
 }
 
 export interface ThreadFeedProps {
+  readonly onSendQueuedMessage: (message: QueuedThreadMessage) => void;
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
@@ -1345,6 +1346,7 @@ function renderFeedEntry(
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
+    | "onSendQueuedMessage"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1590,15 +1592,42 @@ function renderFeedEntry(
           </View>
           <View className="mt-1 flex-row items-center justify-end gap-1 pr-0.5">
             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
-              {entry.pendingMessage && !entry.acknowledged ? "Pending" : timestampLabel}
+              {entry.pendingMessage?.serverMessage
+                ? entry.pendingMessage.serverMessage.status === "sending"
+                  ? "Sending…"
+                  : entry.pendingMessage.serverMessage.status === "held"
+                    ? "Waits for Send now"
+                    : "Queued"
+                : entry.pendingMessage && !entry.acknowledged
+                  ? "Pending"
+                  : timestampLabel}
             </Text>
+            {entry.pendingMessage?.serverMessage &&
+            entry.pendingMessage.serverMessage.status !== "sending" ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Send queued message now"
+                hitSlop={8}
+                className="size-9 items-center justify-center"
+                onPress={() => {
+                  if (entry.pendingMessage) props.onSendQueuedMessage(entry.pendingMessage);
+                }}
+              >
+                <SymbolView name="arrow.up" size={14} tintColor={iconSubtleColor} />
+              </Pressable>
+            ) : null}
             {entry.pendingMessage &&
+            entry.pendingMessage.serverMessage?.status !== "sending" &&
             !entry.acknowledged &&
             !entry.pendingMessage.creation &&
             entry.pendingMessage.messageId !== props.dispatchingMessageId ? (
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel="Edit pending message"
+                accessibilityLabel={
+                  entry.pendingMessage.serverMessage
+                    ? "Return queued message to composer"
+                    : "Edit pending message"
+                }
                 hitSlop={8}
                 className="size-7 items-center justify-center"
                 onPress={() => {
@@ -2660,6 +2689,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
+            onSendQueuedMessage: props.onSendQueuedMessage,
             copiedRowId,
             expandedWorkRows,
             workRowSizing,
@@ -2693,6 +2723,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       props.dispatchingMessageId,
       props.onEditPendingMessage,
+      props.onSendQueuedMessage,
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,

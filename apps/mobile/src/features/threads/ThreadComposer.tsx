@@ -1,3 +1,5 @@
+import { AsyncResult } from "effect/unstable/reactivity";
+import { mobilePreferencesAtom } from "../../state/preferences";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { useAppearancePreferences } from "../settings/appearance/AppearancePreferencesProvider";
 import { useAtomValue } from "@effect/atom-react";
@@ -322,10 +324,21 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
     });
   // Every send goes through the outbox; the label says whether it leaves now
   // or waits (for the connection, an earlier queued message, or an upload).
+  const preferences = useAtomValue(mobilePreferencesAtom);
+  const queueFollowUp =
+    props.serverConfig?.environment.capabilities.messageQueue === true &&
+    AsyncResult.isSuccess(preferences) &&
+    (preferences.value.followUpBehavior ?? "queue") === "queue" &&
+    (props.selectedThread.session?.status === "running" || props.queueCount > 0);
   const sendLabel =
-    props.connectionState !== "connected" || props.queueCount > 0 || attachmentsUploading
+    queueFollowUp ||
+    props.connectionState !== "connected" ||
+    props.queueCount > 0 ||
+    attachmentsUploading
       ? "Queue"
-      : "Send";
+      : props.selectedThread.session?.status === "running"
+        ? "Steer"
+        : "Send";
   const currentModelSelection = props.selectedThread.modelSelection;
   const currentRuntimeMode = props.selectedThread.runtimeMode;
   const modelUnavailable =

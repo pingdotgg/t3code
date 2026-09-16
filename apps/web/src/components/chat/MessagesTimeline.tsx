@@ -1531,17 +1531,25 @@ function QueuedMessageTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   const { queuedMessage } = row;
-  const attachmentCount = queuedMessage.images.length + queuedMessage.files.length;
+  const attachmentCount =
+    queuedMessage.serverMessage?.attachments.length ??
+    queuedMessage.images.length + queuedMessage.files.length;
   const contextCount =
+    queuedMessage.serverMessage?.context?.records.filter(
+      (record) => record.kind !== "image" && record.kind !== "file",
+    ).length ??
     queuedMessage.terminalContexts.length +
-    queuedMessage.previewAnnotations.length +
-    queuedMessage.reviewComments.length;
+      queuedMessage.previewAnnotations.length +
+      queuedMessage.reviewComments.length;
   const text = queuedMessage.prompt.trim();
-  const statusLabel = queuedMessage.holdUntilUserAction
-    ? "Waits for Send now"
-    : row.isNext
-      ? "Sends after the next tool call or when the turn ends"
-      : "Sends after the messages above it";
+  const statusLabel =
+    queuedMessage.serverMessage?.status === "sending"
+      ? "Sending…"
+      : queuedMessage.holdUntilUserAction
+        ? "Waits for Send now"
+        : row.isNext
+          ? "Sends after the next tool call or when the turn ends"
+          : "Sends after the messages above it";
   return (
     <div className="flex flex-col items-end" data-queued-message-id={queuedMessage.id}>
       <div className="max-w-[80%] rounded-2xl border border-dashed border-border p-3 text-message-foreground/80">
@@ -1588,6 +1596,7 @@ function QueuedMessageTimelineRow({
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onSteerQueuedMessage(queuedMessage.id)}
                     aria-label="Send now"
+                    disabled={queuedMessage.serverMessage?.status === "sending"}
                   />
                 }
               >
@@ -1611,6 +1620,7 @@ function QueuedMessageTimelineRow({
                     onPointerDown={(event) => event.preventDefault()}
                     onClick={() => ctx.onRemoveQueuedMessage(queuedMessage.id)}
                     aria-label="Cancel and return to the composer"
+                    disabled={queuedMessage.serverMessage?.status === "sending"}
                   />
                 }
               >

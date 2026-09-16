@@ -1,3 +1,8 @@
+import {
+  terminalContextDraftFromRecord,
+  reviewCommentFromRecord,
+  previewAnnotationFromRecord,
+} from "../lib/composerContextRecords";
 import { useLoadBalancedEnvironment } from "../hooks/useLoadBalancedEnvironment";
 import { visibleThreadPullRequests } from "@t3tools/shared/threadPullRequests";
 import type { UsageLimitSourceSnapshots } from "@t3tools/contracts";
@@ -1488,6 +1493,12 @@ export default function ChatView(props: ChatViewProps) {
   const setThreadInteractionMode = useAtomCommand(threadEnvironment.setInteractionMode, {
     reportFailure: false,
   });
+  const sendServerQueuedMessage = useAtomCommand(threadEnvironment.sendQueuedMessage, {
+    reportFailure: false,
+  });
+  const removeServerQueuedMessage = useAtomCommand(threadEnvironment.removeQueuedMessage, {
+    reportFailure: false,
+  });
   const startThreadTurn = useAtomCommand(threadEnvironment.startTurn, { reportFailure: false });
   const createAttachmentAssetUrl = useAtomQueryRunner(assetEnvironment.createUrl, {
     reportFailure: false,
@@ -2553,6 +2564,7 @@ export default function ChatView(props: ChatViewProps) {
   const attachmentUploadsCapabilityKnown = attachmentEnvironmentConfig !== null;
   const supportsQuestionAttachments =
     attachmentEnvironmentConfig?.environment.capabilities.questionAttachments === true;
+  const supportsMessageQueue = serverConfig?.environment.capabilities.messageQueue === true;
   const supportsAttachmentUploads =
     attachmentEnvironmentConfig?.environment.capabilities.attachmentUploads === true;
   const advertisedFileAttachmentBytes =
@@ -3917,6 +3929,10 @@ export default function ChatView(props: ChatViewProps) {
 
   const interruptContextRef = useRef({ activeThread, phase, setThreadError });
   interruptContextRef.current = { activeThread, phase, setThreadError };
+  const queuedMessagesRef = useRef<ReadonlyArray<QueuedComposerMessage>>([]);
+  const cancelServerQueueRef = useRef<(message: QueuedComposerMessage) => Promise<void>>(
+    async () => {},
+  );
   const restoreQueuedMessagesRef = useRef<(messages: ReadonlyArray<QueuedComposerMessage>) => void>(
     () => {},
   );
@@ -3929,10 +3945,16 @@ export default function ChatView(props: ChatViewProps) {
         .getState()
         .drain(scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))),
     );
+    const serverQueue = queuedMessagesRef.current.filter(
+      (message) => message.serverMessage?.status !== "sending" && message.serverMessage,
+    );
     const result = await interruptThreadTurn({
       environmentId: activeThread.environmentId,
       input,
     });
+    if (result._tag === "Success") {
+      for (const message of serverQueue) await cancelServerQueueRef.current(message);
+    }
     if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
       const error = squashAtomCommandFailure(result);
       setThreadError(
@@ -6784,9 +6806,7 @@ export default function ChatView(props: ChatViewProps) {
       }
 
       if (command === "thread.steerQueuedMessage") {
-        const message = activeThreadKey
-          ? useQueuedMessageStore.getState().queuesByThreadKey[activeThreadKey]?.[0]
-          : undefined;
+        const message = activeThreadKey ? queuedMessagesRef.current[0] : undefined;
         if (!message) return;
         event.preventDefault();
         event.stopPropagation();
@@ -7104,25 +7124,48 @@ export default function ChatView(props: ChatViewProps) {
     }
   };
 
-  const queuedMessages = useQueuedMessages(activeThreadKey ?? "");
+  const queueDraftTargetRef = useRef(composerDraftTarget);
+  queueDraftTargetRef.current = composerDraftTarget;
+  const localQueuedMessages = useQueuedMessages(activeThreadKey ?? "");
+  const queuedMessages = useMemo<QueuedComposerMessage[]>(
+    () => [
+      ...(activeThread?.queuedMessages ?? []).map((message) => ({
+        id: message.messageId,
+        serverMessage: message,
+        prompt: message.text,
+        images: [],
+        files: [],
+        terminalContexts: [],
+        previewAnnotations: [],
+        reviewComments: [],
+        submissionIntent: "foreground" as const,
+        queuedAfterToolActivityId: message.queuedAfterToolActivityId,
+        holdUntilUserAction: message.status === "held",
+        createdAt: message.createdAt,
+      })),
+      ...localQueuedMessages,
+    ],
+    [activeThread?.queuedMessages, localQueuedMessages],
+  );
+
   // Puts queued messages back into the composer, e.g. after Stop or a failed
   // send. Prompts join with blank lines; attachments and contexts are added.
   const restoreQueuedMessagesToComposer = (messages: ReadonlyArray<QueuedComposerMessage>) => {
     if (messages.length === 0) return;
-    const prompts = [promptRef.current, ...messages.map((message) => message.prompt)]
+    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+    const isCurrent = queueDraftTargetRef.current === composerDraftTarget;
+    const prompts = [draft?.prompt ?? "", ...messages.map((message) => message.prompt)]
       .map((prompt) => prompt.trim())
       .filter((prompt) => prompt.length > 0);
     const nextPrompt = prompts.join("\n\n");
-    promptRef.current = nextPrompt;
+    if (isCurrent) promptRef.current = nextPrompt;
     setComposerDraftPrompt(composerDraftTarget, nextPrompt);
     // The draft store silently drops attachments over the per-turn cap. Split
     // the overflow back into the queue so nothing is lost; the user can send
     // the first batch and the rest follows as a queued message.
     const attachmentRoom = Math.max(
       0,
-      PROVIDER_SEND_TURN_MAX_ATTACHMENTS -
-        composerImagesRef.current.length -
-        composerFilesRef.current.length,
+      PROVIDER_SEND_TURN_MAX_ATTACHMENTS - (draft?.images.length ?? 0) - (draft?.files.length ?? 0),
     );
     const attachments = messages.flatMap((message) => [...message.images, ...message.files]);
     const restored = attachments.slice(0, attachmentRoom);
@@ -7131,8 +7174,10 @@ export default function ChatView(props: ChatViewProps) {
     const restoredFiles = restored.filter((attachment) => attachment.type === "file");
     // The composer syncs these refs from the draft in an effect; a send before
     // that effect runs must already see the restored content.
-    composerImagesRef.current = [...composerImagesRef.current, ...restoredImages];
-    composerFilesRef.current = [...composerFilesRef.current, ...restoredFiles];
+    if (isCurrent) {
+      composerImagesRef.current = [...(draft?.images ?? []), ...restoredImages];
+      composerFilesRef.current = [...(draft?.files ?? []), ...restoredFiles];
+    }
     if (restoredImages.length > 0) addComposerDraftImages(composerDraftTarget, restoredImages);
     if (restoredFiles.length > 0) addComposerDraftFiles(composerDraftTarget, restoredFiles);
     if (overflow.length > 0 && activeThreadKey) {
@@ -7158,12 +7203,11 @@ export default function ChatView(props: ChatViewProps) {
       );
     }
     const restoredTerminalContexts = [
-      ...composerTerminalContextsRef.current,
+      ...(draft?.terminalContexts ?? []),
       ...messages.flatMap((message) => message.terminalContexts),
     ];
-    composerTerminalContextsRef.current = restoredTerminalContexts;
+    if (isCurrent) composerTerminalContextsRef.current = restoredTerminalContexts;
     setComposerDraftTerminalContexts(composerDraftTarget, restoredTerminalContexts);
-    const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
     setComposerDraftPreviewAnnotations(composerDraftTarget, [
       ...(draft?.previewAnnotations ?? []),
       ...messages.flatMap((message) => message.previewAnnotations),
@@ -7172,11 +7216,12 @@ export default function ChatView(props: ChatViewProps) {
       ...(draft?.reviewComments ?? []),
       ...messages.flatMap((message) => message.reviewComments),
     ]);
-    composerRef.current?.resetCursorState({
-      cursor: collapseExpandedComposerCursor(nextPrompt, nextPrompt.length),
-      prompt: nextPrompt,
-      detectTrigger: true,
-    });
+    if (isCurrent)
+      composerRef.current?.resetCursorState({
+        cursor: collapseExpandedComposerCursor(nextPrompt, nextPrompt.length),
+        prompt: nextPrompt,
+        detectTrigger: true,
+      });
   };
 
   const onSend = async (
@@ -7516,7 +7561,8 @@ export default function ChatView(props: ChatViewProps) {
       !directAnnotation &&
       phase === "running" &&
       activeThreadKey &&
-      settings.followUpBehavior === "queue"
+      settings.followUpBehavior === "queue" &&
+      !supportsMessageQueue
     ) {
       if (composerRef.current?.validateProviderInput(promptForSend) === false) {
         return;
@@ -7543,6 +7589,12 @@ export default function ChatView(props: ChatViewProps) {
       composerRef.current?.resetCursorState();
       return;
     }
+    const queueOnServer =
+      supportsMessageQueue &&
+      !directAnnotation &&
+      !queuedMessage &&
+      settings.followUpBehavior === "queue" &&
+      (phase === "running" || queuedMessages.length > 0);
     const threadIdForSend = activeThread.id;
     const isFirstMessage = !isServerThread || activeThread.messages.length === 0;
     const baseBranchForWorktree =
@@ -7802,20 +7854,21 @@ export default function ChatView(props: ChatViewProps) {
     } else {
       scrollToEnd();
     }
-    setOptimisticUserMessages((existing) => [
-      ...existing,
-      {
-        id: messageIdForSend,
-        role: "user",
-        text: outgoingMessageText,
-        ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
-        ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
-        turnId: null,
-        createdAt: messageCreatedAt,
-        updatedAt: messageCreatedAt,
-        streaming: false,
-      },
-    ]);
+    if (!queueOnServer)
+      setOptimisticUserMessages((existing) => [
+        ...existing,
+        {
+          id: messageIdForSend,
+          role: "user",
+          text: outgoingMessageText,
+          ...(optimisticAttachments.length > 0 ? { attachments: optimisticAttachments } : {}),
+          ...(outgoingMessageContext !== undefined ? { context: outgoingMessageContext } : {}),
+          turnId: null,
+          createdAt: messageCreatedAt,
+          updatedAt: messageCreatedAt,
+          streaming: false,
+        },
+      ]);
     setThreadError(threadIdForSend, null);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
@@ -7953,6 +8006,7 @@ export default function ChatView(props: ChatViewProps) {
         environmentId,
         input: {
           threadId: threadIdForSend,
+          ...(queueOnServer ? { deliveryMode: "queue" as const } : {}),
           message: {
             messageId: messageIdForSend,
             role: "user",
@@ -8022,6 +8076,7 @@ export default function ChatView(props: ChatViewProps) {
         failure = startResult;
       } else {
         turnStartSucceeded = true;
+        if (queueOnServer) resetLocalDispatch();
         // The turn is under way and will spend quota, so that thread's limits
         // snapshot is stale. Uploads may have outlasted a navigation, so only
         // the sending thread's panel clears.
@@ -8204,7 +8259,14 @@ export default function ChatView(props: ChatViewProps) {
     needsLoadBalancing ||
     activeProviderStatus === null;
   useEffect(() => {
-    if (!nextQueuedMessage || isSendBusy || queueBlockedByPendingRequest || queueSendGate) return;
+    if (
+      !nextQueuedMessage ||
+      nextQueuedMessage.serverMessage ||
+      isSendBusy ||
+      queueBlockedByPendingRequest ||
+      queueSendGate
+    )
+      return;
     if (sendInFlightRef.current) return;
     if (!isQueuedMessageDue({ message: nextQueuedMessage, phase, latestToolActivityId })) return;
     sendQueuedMessage(nextQueuedMessage);
@@ -8217,6 +8279,107 @@ export default function ChatView(props: ChatViewProps) {
     queueSendGate,
   ]);
 
+  const cancelServerQueuedMessage = async (message: QueuedComposerMessage) => {
+    if (!activeThread || !message.serverMessage) return;
+    const thread = activeThread;
+    const previewUrls: string[] = [];
+    try {
+      const connection = readPreparedConnection(thread.environmentId);
+      if (!connection) throw new Error("The environment is not connected.");
+      const source = message.serverMessage;
+      if (
+        source.attachments.some(
+          (attachment) => attachment.type !== "image" && attachment.type !== "file",
+        )
+      )
+        throw new Error(
+          "This client cannot edit one of this message's attachments. Use Send now to keep it intact.",
+        );
+      const files = await prepareRevertedMessageAttachments({
+        message: { attachments: source.attachments },
+        environmentId: thread.environmentId,
+        httpBaseUrl: connection.httpBaseUrl,
+        createAssetUrl: createAttachmentAssetUrl,
+      });
+      const draft = useComposerDraftStore.getState().getComposerDraft(composerDraftTarget);
+      if (
+        (draft?.images.length ?? 0) + (draft?.files.length ?? 0) + files.length >
+        PROVIDER_SEND_TURN_MAX_ATTACHMENTS
+      )
+        throw new Error("Make room for this message's attachments in the composer first.");
+      const restored: QueuedComposerMessage = {
+        ...message,
+        images: [],
+        files: [],
+        terminalContexts: [],
+        reviewComments: [],
+        previewAnnotations: [],
+      };
+      files.forEach((file, index) => {
+        const attachment = source.attachments[index];
+        if (!attachment) return;
+        if (attachment.type === "image")
+          restored.images.push({
+            id: attachment.id,
+            type: "image",
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            file,
+            ...("source" in attachment && attachment.source ? { source: attachment.source } : {}),
+            previewUrl: (() => {
+              const url = URL.createObjectURL(file);
+              previewUrls.push(url);
+              return url;
+            })(),
+          });
+        else if (attachment.type === "file")
+          restored.files.push({
+            id: attachment.id,
+            type: "file",
+            name: attachment.name,
+            mimeType: attachment.mimeType,
+            sizeBytes: attachment.sizeBytes,
+            file,
+            ...("source" in attachment && attachment.source ? { source: attachment.source } : {}),
+          });
+      });
+      const unsupportedRecords = (source.context?.records ?? []).filter(
+        (record) =>
+          !["image", "file", "terminal", "review-comment", "preview-annotation"].includes(
+            record.kind,
+          ),
+      );
+      if (unsupportedRecords.length > 0)
+        restored.prompt = serializeLegacyContextMessage({
+          text: restored.prompt,
+          records: unsupportedRecords,
+        });
+      for (const record of source.context?.records ?? []) {
+        if (record.kind === "terminal" && "terminalId" in record)
+          restored.terminalContexts.push(terminalContextDraftFromRecord(record, thread.id));
+        if (record.kind === "review-comment" && "sectionId" in record)
+          restored.reviewComments.push(reviewCommentFromRecord(record));
+        if (record.kind === "preview-annotation" && "annotationId" in record)
+          restored.previewAnnotations.push(previewAnnotationFromRecord(record));
+      }
+      const result = await removeServerQueuedMessage({
+        environmentId: thread.environmentId,
+        input: { threadId: thread.id, messageId: source.messageId },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      restoreQueuedMessagesToComposer([restored]);
+    } catch (error) {
+      previewUrls.forEach((url) => URL.revokeObjectURL(url));
+      setThreadError(
+        thread.id,
+        error instanceof Error
+          ? error.message
+          : "Could not return the queued message to the composer.",
+      );
+    }
+  };
+
   // The row handlers are read from refs at call-time so their identity stays
   // stable and does not bust TimelineRowCtx on every ChatView render.
   const queuedMessageActionsRef = useRef({
@@ -8227,9 +8390,22 @@ export default function ChatView(props: ChatViewProps) {
     steer: (id) => {
       const message = queuedMessages.find((entry) => entry.id === id);
       if (!message || sendInFlightRef.current || queueBlockedByPendingRequest) return;
-      void onSend(undefined, message.submissionIntent, undefined, message);
+      if (message.serverMessage && activeThread) {
+        void sendServerQueuedMessage({
+          environmentId: activeThread.environmentId,
+          input: { threadId: activeThread.id, messageId: message.serverMessage.messageId },
+        }).then((result) => {
+          if (result._tag === "Failure")
+            setThreadError(activeThread.id, String(squashAtomCommandFailure(result)));
+        });
+      } else void onSend(undefined, message.submissionIntent, undefined, message);
     },
     remove: (id) => {
+      const serverMessage = queuedMessages.find((entry) => entry.id === id && entry.serverMessage);
+      if (serverMessage) {
+        void cancelServerQueuedMessage(serverMessage);
+        return;
+      }
       if (!activeThreadKey) return;
       const message = useQueuedMessageStore.getState().remove(activeThreadKey, id);
       if (message) restoreQueuedMessagesToComposer([message]);
@@ -8244,6 +8420,8 @@ export default function ChatView(props: ChatViewProps) {
   // Stop also cancels the queue: the messages return to the composer instead
   // of starting a new turn the moment the interrupted one settles.
   restoreQueuedMessagesRef.current = restoreQueuedMessagesToComposer;
+  queuedMessagesRef.current = queuedMessages;
+  cancelServerQueueRef.current = cancelServerQueuedMessage;
 
   const onRespondToApproval = useCallback(
     async (requestId: ApprovalRequestId, decision: ProviderApprovalDecision) => {

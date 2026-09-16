@@ -1,3 +1,6 @@
+import { AsyncResult } from "effect/unstable/reactivity";
+import { mobilePreferencesAtom } from "./preferences";
+import type { QueuedThreadMessage } from "./thread-outbox-model";
 import type { ComposerTextPaste } from "../native/T3ComposerEditor.types";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -124,6 +127,7 @@ export function useThreadDraftForThread(input: {
 }
 
 export function useThreadComposerState() {
+  const preferences = useAtomValue(mobilePreferencesAtom);
   const {
     selectedThread: selectedThreadShell,
     selectedThreadCreation,
@@ -167,15 +171,31 @@ export function useThreadComposerState() {
     : null;
   // The creation entry is the thread itself (rendered as the first message),
   // not a follow-up waiting behind it.
-  const selectedThreadQueuedMessages = useMemo(
-    () =>
-      selectedThreadKey
-        ? (queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
-            (message) => message.creation === undefined,
-          )
-        : [],
-    [queuedMessagesByThreadKey, selectedThreadKey],
-  );
+  const selectedThreadQueuedMessages = useMemo<ReadonlyArray<QueuedThreadMessage>>(() => {
+    if (!selectedThreadKey || !selectedThreadShell) return [];
+    const server = (selectedThreadDetail?.queuedMessages ?? []).map(
+      (message): QueuedThreadMessage => ({
+        ...message,
+        serverMessage: message,
+        attachments: [],
+        environmentId: selectedThreadShell.environmentId,
+        threadId: selectedThreadShell.id,
+        commandId: CommandId.make(`queue:${message.messageId}`),
+      }),
+    );
+    const serverIds = new Set(server.map((message) => message.messageId));
+    return [
+      ...server,
+      ...(queuedMessagesByThreadKey[selectedThreadKey] ?? []).filter(
+        (message) => message.creation === undefined && !serverIds.has(message.messageId),
+      ),
+    ];
+  }, [
+    queuedMessagesByThreadKey,
+    selectedThreadKey,
+    selectedThreadDetail?.queuedMessages,
+    selectedThreadShell,
+  ]);
   const feedbackSubmissions = useMemo(
     () => (selectedThreadKey ? (feedbackSubmissionsByThreadKey[selectedThreadKey] ?? []) : []),
     [feedbackSubmissionsByThreadKey, selectedThreadKey],
@@ -228,7 +248,10 @@ export function useThreadComposerState() {
     acknowledgedMessages,
   ]);
   useEffect(() => {
-    const echoedIds = new Set(selectedThreadMessages?.map((message) => message.id));
+    const echoedIds = new Set([
+      ...(selectedThreadMessages?.map((message) => message.id) ?? []),
+      ...(selectedThreadDetail?.queuedMessages?.map((message) => message.messageId) ?? []),
+    ]);
     if (acknowledgedMessages.some((message) => echoedIds.has(message.messageId))) {
       appAtomRegistry.set(
         acknowledgedThreadMessagesAtom,
@@ -237,7 +260,7 @@ export function useThreadComposerState() {
           .filter((message) => !echoedIds.has(message.messageId)),
       );
     }
-  }, [acknowledgedMessages, selectedThreadMessages]);
+  }, [acknowledgedMessages, selectedThreadMessages, selectedThreadDetail?.queuedMessages]);
 
   const selectedDraft = selectedThreadKey ? composerDrafts[selectedThreadKey] : null;
   const draftMessage = selectedDraft?.text ?? "";
@@ -436,7 +459,16 @@ export function useThreadComposerState() {
     // the tap frame instead of after file I/O. If the write fails the message
     // is rolled out of the queue and the content is merged back into the
     // draft, preserving anything typed since.
+    if (!AsyncResult.isSuccess(preferences)) return null;
+    const deliveryMode =
+      serverConfig?.environment.capabilities.messageQueue === true &&
+      (preferences.value.followUpBehavior ?? "queue") === "queue" &&
+      (thread.session?.status === "running" ||
+        selectedThreadQueuedMessages.some((message) => message.serverMessage))
+        ? ("queue" as const)
+        : ("steer" as const);
     const enqueuePromise = enqueueThreadOutboxMessage({
+      deliveryMode,
       environmentId: selectedThreadShell.environmentId,
       threadId: selectedThreadShell.id,
       messageId,
@@ -484,6 +516,8 @@ export function useThreadComposerState() {
     selectedThreadDetail,
     selectedThreadShell,
     uploadThreadFeedback,
+    preferences,
+    selectedThreadQueuedMessages,
   ]);
 
   const onChangeDraftMessage = useCallback(

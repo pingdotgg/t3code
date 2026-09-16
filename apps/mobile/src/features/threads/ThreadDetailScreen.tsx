@@ -1,3 +1,6 @@
+import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import { useAtomCommand } from "../../state/use-atom-command";
+import { threadEnvironment } from "../../state/threads";
 import type { ComposerTextPaste } from "../../native/T3ComposerEditor.types";
 import { type EnvironmentConnectionPhase } from "@t3tools/client-runtime/connection";
 import {
@@ -775,6 +778,19 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
     selectedThreadKey,
   ]);
 
+  const sendQueuedMessage = useAtomCommand(threadEnvironment.sendQueuedMessage);
+  const handleSendQueuedMessage = useCallback(
+    (message: QueuedThreadMessage) => {
+      void sendQueuedMessage({
+        environmentId: message.environmentId,
+        input: { threadId: message.threadId, messageId: message.messageId },
+      }).then((result) => {
+        if (result._tag === "Failure")
+          Alert.alert("Could not send queued message", String(squashAtomCommandFailure(result)));
+      });
+    },
+    [sendQueuedMessage],
+  );
   const handleEditPendingMessage = useCallback(async (message: QueuedThreadMessage) => {
     try {
       if (
@@ -881,6 +897,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             queuedMessages={props.queuedMessages}
             dispatchingMessageId={props.dispatchingMessageId}
             onEditPendingMessage={handleEditPendingMessage}
+            onSendQueuedMessage={handleSendQueuedMessage}
             contentPresentation={props.contentPresentation}
             agentLabel={agentLabel}
             latestTurn={props.selectedThread.latestTurn}

@@ -377,3 +377,24 @@ export const stopThreadSession: (input: StopThreadSessionInput) => CommandEffect
     createdAt: metadata.createdAt,
   });
 });
+
+export type SendQueuedMessageInput = CommandInput<"thread.queue.send">;
+export type RemoveQueuedMessageInput = CommandInput<"thread.queue.remove">;
+export const sendQueuedMessage: (input: SendQueuedMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.sendQueuedMessage",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.queue.send",
+    commandId: yield* commandId(input),
+  });
+});
+export const removeQueuedMessage: (input: RemoveQueuedMessageInput) => CommandEffect = Effect.fn(
+  "EnvironmentCommands.removeQueuedMessage",
+)(function* (input) {
+  return yield* dispatch({
+    ...input,
+    type: "thread.queue.remove",
+    commandId: yield* commandId(input),
+  });
+});

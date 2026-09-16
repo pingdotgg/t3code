@@ -804,6 +804,9 @@ export function useThreadOutboxDrain(): void {
         input: {
           commandId: queuedMessage.commandId,
           threadId: queuedMessage.threadId,
+          ...(currentConfig.environment.capabilities.messageQueue === true
+            ? { deliveryMode: queuedMessage.deliveryMode }
+            : {}),
           message: {
             messageId: queuedMessage.messageId,
             role: "user",

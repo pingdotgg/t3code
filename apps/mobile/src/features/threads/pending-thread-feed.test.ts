@@ -62,4 +62,32 @@ describe("pending timeline messages", () => {
     // Folded messages still count as delivered even when absent from the presented rows.
     expect(appendPendingThreadMessages([], [delivered], [queued])).toEqual([]);
   });
+  it.each(["sending", "held"] as const)(
+    "retains %s server queue controls after the user message is persisted",
+    (status) => {
+      const queued = pending("failed-send");
+      const serverQueued: QueuedThreadMessage = {
+        ...queued,
+        serverMessage: {
+          messageId: queued.messageId,
+          text: queued.text,
+          attachments: [],
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          status,
+          createdAt: queued.createdAt,
+          queuedAfterToolActivityId: null,
+        },
+      };
+      const optimistic = appendPendingThreadMessages([], [], [queued])[0]!;
+      const echoed = { ...optimistic, pendingMessage: undefined };
+      const entries = appendPendingThreadMessages([echoed], [echoed], [serverQueued]);
+      expect(entries).toHaveLength(1);
+      expect(entries[0]?.pendingMessage?.serverMessage?.status).toBe(status);
+      expect(appendPendingThreadMessages([], [echoed], [serverQueued])[0]?.pendingMessage).toBe(
+        serverQueued,
+      );
+      expect(appendPendingThreadMessages([echoed], [echoed], [])).toEqual([echoed]);
+    },
+  );
 });

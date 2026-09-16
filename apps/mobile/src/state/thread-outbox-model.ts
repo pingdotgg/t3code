@@ -6,6 +6,7 @@ import {
 import type { EnvironmentShellStatus } from "@t3tools/client-runtime/state/shell";
 import {
   CommandId,
+  type QueuedThreadMessage as ServerQueuedThreadMessage,
   EnvironmentId,
   IsoDateTime,
   MessageId,
@@ -50,6 +51,7 @@ export const QueuedThreadMessageSchema = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
   commandId: CommandId,
+  deliveryMode: Schema.optional(Schema.Literals(["queue", "steer"])),
   text: Schema.String,
   context: Schema.optional(OrchestrationMessageContext),
   attachments: Schema.Array(DraftComposerAttachmentSchema),
@@ -80,6 +82,8 @@ export interface QueuedThreadMessage {
   readonly threadId: ThreadId;
   readonly messageId: MessageId;
   readonly commandId: CommandId;
+  readonly deliveryMode?: "queue" | "steer";
+  readonly serverMessage?: ServerQueuedThreadMessage;
   readonly text: string;
   readonly context?: OrchestrationMessageContext;
   readonly attachments: ReadonlyArray<DraftComposerAttachment>;

@@ -9,6 +9,22 @@ const state = vi.hoisted(() => ({
   confirm: vi.fn(async () => true),
   remove: vi.fn(async () => true),
   flush: vi.fn(async () => {}),
+  serverRemove: vi.fn(async () => ({ _tag: "Success" })),
+}));
+vi.mock("../lib/composerContextClipboard", () => ({
+  importQueuedMessageAttachment: async () => ({
+    id: "downloaded",
+    type: "file",
+    name: "notes.txt",
+    mimeType: "text/plain",
+    sizeBytes: 10,
+    fileUri: "file:///downloaded.txt",
+  }),
+}));
+vi.mock("./threads", () => ({ threadEnvironment: { removeQueuedMessage: "remove-server-queue" } }));
+vi.mock("@t3tools/client-runtime/state/runtime", () => ({
+  runAtomCommand: state.serverRemove,
+  squashAtomCommandFailure: () => new Error("Already sent or removed"),
 }));
 vi.mock("./atom-registry", () => ({
   appAtomRegistry: {
@@ -41,6 +57,7 @@ vi.mock("./use-composer-drafts", () => ({
   },
   updateComposerDraftSettings: () => {},
   flushComposerDrafts: state.flush,
+  scheduleUnusedComposerAttachmentCleanup: () => {},
   undoComposerDraftMerge: async (_key: string, snapshot: typeof state.draft) => {
     state.draft = snapshot;
   },
@@ -73,6 +90,7 @@ beforeEach(() => {
   state.confirm.mockResolvedValue(true);
   state.remove.mockResolvedValue(true);
   state.flush.mockResolvedValue(undefined);
+  state.serverRemove.mockResolvedValue({ _tag: "Success" });
 });
 describe("editing a pending message", () => {
   it("locks delivery and persists text and attachments before removing the queued copy", async () => {
@@ -105,5 +123,43 @@ describe("editing a pending message", () => {
     state.remove.mockResolvedValueOnce(false);
     expect(await editPendingThreadMessage(message)).toBe(false);
     expect(state.draft.text).toBe("Existing draft");
+  });
+});
+
+describe("editing a server queued message", () => {
+  const serverMessage: QueuedThreadMessage = {
+    ...message,
+    attachments: [],
+    serverMessage: {
+      messageId: message.messageId,
+      text: message.text,
+      attachments: [
+        { type: "file", id: "uploaded", name: "notes.txt", mimeType: "text/plain", sizeBytes: 10 },
+      ],
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      status: "queued",
+      createdAt: message.createdAt,
+      queuedAfterToolActivityId: null,
+    },
+  };
+  it("downloads attachments and saves the draft before relinquishing server ownership", async () => {
+    state.serverRemove.mockImplementationOnce(async () => {
+      expect(state.flush).toHaveBeenCalled();
+      expect(state.draft.text).toBe("Existing draft\n\nQueued task");
+      expect(state.draft.attachments).toMatchObject([{ id: "downloaded" }]);
+      return { _tag: "Success" };
+    });
+    expect(await editPendingThreadMessage(serverMessage)).toBe(true);
+    expect(state.confirm).not.toHaveBeenCalled();
+    expect(state.remove).not.toHaveBeenCalled();
+  });
+  it("restores the original draft when another client already claimed the message", async () => {
+    state.serverRemove.mockResolvedValueOnce({ _tag: "Failure" });
+    await expect(editPendingThreadMessage(serverMessage)).rejects.toThrow(
+      "Already sent or removed",
+    );
+    expect(state.draft).toEqual({ text: "Existing draft", attachments: [] });
+    expect(state.held).toEqual({});
   });
 });

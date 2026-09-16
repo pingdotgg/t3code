@@ -591,6 +591,15 @@ export function projectEvent(
         })),
       );
 
+    case "thread.queue-updated":
+      return Effect.succeed({
+        ...nextBase,
+        threads: updateThread(nextBase.threads, event.payload.threadId, {
+          queuedMessages: event.payload.queuedMessages,
+          updatedAt: event.payload.updatedAt,
+        }),
+      });
+
     case "thread.meta-updated":
       return decodeForEvent(ThreadMetaUpdatedPayload, event.payload, event.type, "payload").pipe(
         Effect.map((payload) => {

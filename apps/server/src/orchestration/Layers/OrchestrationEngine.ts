@@ -242,9 +242,17 @@ const makeOrchestrationEngine = Effect.gen(function* () {
           envelope.command.type === "thread.user-input.dismiss"
             ? yield* projectionSnapshotQuery.getUserInputActivity(envelope.command)
             : Option.none();
+        const queueShell =
+          envelope.command.type === "thread.queue.advance" ||
+          envelope.command.type === "thread.queue.send"
+            ? yield* projectionSnapshotQuery.getThreadShellById(envelope.command.threadId)
+            : Option.none();
         const eventBase = yield* decideOrchestrationCommand({
           command: envelope.command,
           readModel: commandReadModel,
+          queueBlocked:
+            Option.isSome(queueShell) &&
+            (queueShell.value.hasPendingApprovals || queueShell.value.hasPendingUserInput),
           ...(Option.isSome(userInputActivity)
             ? { userInputActivity: userInputActivity.value }
             : {}),
@@ -287,6 +295,23 @@ const makeOrchestrationEngine = Effect.gen(function* () {
 
               const lastSavedEvent = committedEvents.at(-1) ?? null;
               if (lastSavedEvent === null) {
+                if (envelope.command.type.startsWith("thread.queue.")) {
+                  const aggregate = commandToAggregateRef(envelope.command);
+                  yield* commandReceiptRepository.upsert({
+                    commandId: envelope.command.commandId,
+                    ...aggregate,
+                    acceptedAt: yield* nowIso,
+                    resultSequence: commandReadModel.snapshotSequence,
+                    status: "accepted",
+                    error: null,
+                  });
+                  return {
+                    committedEvents,
+                    attachmentCleanups,
+                    lastSequence: commandReadModel.snapshotSequence,
+                    nextCommandReadModel,
+                  };
+                }
                 return yield* new OrchestrationCommandInvariantError({
                   commandType: envelope.command.type,
                   detail: "Command produced no events.",

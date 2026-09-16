@@ -71,6 +71,8 @@ type ProviderIntentEvent = Extract<
   OrchestrationEvent,
   {
     type:
+      | "thread.queue-updated"
+      | "thread.activity-appended"
       | "thread.meta-updated"
       | "thread.runtime-mode-set"
       | "thread.turn-start-requested"
@@ -1207,6 +1209,18 @@ const make = Effect.gen(function* () {
     if (!thread) {
       return;
     }
+    const completeQueuedSend = (failed: boolean) =>
+      event.payload.queuedMessageId === undefined
+        ? Effect.void
+        : orchestrationEngine
+            .dispatch({
+              type: "thread.queue.complete",
+              commandId: CommandId.make(`queue-complete:${event.eventId}:${failed}`),
+              threadId: event.payload.threadId,
+              messageId: event.payload.queuedMessageId,
+              failed,
+            })
+            .pipe(Effect.asVoid);
     const turnStart = yield* projectionSnapshotQuery.getTurnStartMessage({
       threadId: thread.id,
       messageId: event.payload.messageId,
@@ -1221,6 +1235,7 @@ const make = Effect.gen(function* () {
         createdAt: event.payload.createdAt,
         requestId: event.payload.messageId,
       });
+      yield* completeQueuedSend(true);
       return;
     }
     const { message, hasOtherUserMessages } = turnStart.value;
@@ -1233,7 +1248,7 @@ const make = Effect.gen(function* () {
         turnId: null,
         createdAt: event.payload.createdAt,
         requestId: event.payload.messageId,
-      });
+      }).pipe(Effect.andThen(completeQueuedSend(true)));
     if (resumed && turnsAfterCompaction.get(event.payload.threadId) !== resumed.queued) {
       return yield* appendTurnStartFailure(
         "Queued message was not sent",
@@ -1316,6 +1331,7 @@ const make = Effect.gen(function* () {
       return true;
     }).pipe(Effect.catchCause((cause) => recoverTurnStartFailure(cause).pipe(Effect.as(true))));
     if (authCommandHandled) {
+      yield* completeQueuedSend(false);
       return;
     }
 
@@ -1440,6 +1456,7 @@ const make = Effect.gen(function* () {
         );
       }).pipe(
         Effect.andThen(restoreCompaction(event.payload.threadId, true)),
+        Effect.andThen(completeQueuedSend(false)),
         Effect.andThen(clearCompacting),
         Effect.andThen(resumeTurnsAfterCompaction(event.payload.threadId)),
         Effect.catchCause((cause) =>
@@ -1490,7 +1507,11 @@ const make = Effect.gen(function* () {
 
     const send = providerService
       .sendTurn(sendTurnRequest.value)
-      .pipe(Effect.asVoid, Effect.catchCause(recoverTurnStartFailure));
+      .pipe(
+        Effect.andThen(completeQueuedSend(false)),
+        Effect.asVoid,
+        Effect.catchCause(recoverTurnStartFailure),
+      );
     // The forked send settles `sent` from here on, so drop the entry the post-processing hook uses.
     if (resumed && event.commandId !== null) resumedTurnStarts.delete(event.commandId);
     yield* send.pipe(
@@ -1757,6 +1778,16 @@ const make = Effect.gen(function* () {
     );
   });
 
+  const advanceQueue = Effect.fn("advanceQueue")(function* (threadId: ThreadId) {
+    const shell = yield* projectionSnapshotQuery.getThreadShellById(threadId);
+    if (Option.isNone(shell) || !shell.value.queuedMessageCount) return;
+    yield* orchestrationEngine.dispatch({
+      type: "thread.queue.advance",
+      commandId: yield* serverCommandId("queue-advance"),
+      threadId,
+    });
+  });
+
   const processDomainEvent = Effect.fn("processDomainEvent")(function* (
     event: ProviderIntentEvent,
   ) {
@@ -1769,12 +1800,17 @@ const make = Effect.gen(function* () {
       eventType: event.type,
     });
     switch (event.type) {
+      case "thread.queue-updated":
+      case "thread.activity-appended":
+        yield* advanceQueue(event.payload.threadId);
+        return;
       case "thread.meta-updated":
         if (event.payload.regenerateTitle) yield* threadTitleRegenerationWorker.enqueue(event);
         else if (event.payload.titleState?.needsRefinement)
           yield* maybeRefineThreadTitle(event.payload.threadId);
         return;
       case "thread.session-set":
+        yield* advanceQueue(event.payload.threadId);
         if (event.payload.session.status === "ready")
           yield* maybeRefineThreadTitle(event.payload.threadId);
         return;
@@ -1841,9 +1877,23 @@ const make = Effect.gen(function* () {
         if (Cause.hasInterruptsOnly(cause)) {
           return Effect.interrupt;
         }
-        return Effect.logWarning("provider command reactor failed to process event", {
-          eventType: event.type,
-          cause: Cause.pretty(cause),
+        return Effect.gen(function* () {
+          if (
+            event.type === "thread.turn-start-requested" &&
+            event.payload.queuedMessageId !== undefined
+          ) {
+            yield* orchestrationEngine.dispatch({
+              type: "thread.queue.complete",
+              commandId: yield* serverCommandId("queue-failed"),
+              threadId: event.payload.threadId,
+              messageId: event.payload.queuedMessageId,
+              failed: true,
+            });
+          }
+          yield* Effect.logWarning("provider command reactor failed to process event", {
+            eventType: event.type,
+            cause: Cause.pretty(cause),
+          });
         });
       }),
     );
@@ -1867,7 +1917,12 @@ const make = Effect.gen(function* () {
         (event.type === "thread.meta-updated" &&
           (event.payload.regenerateTitle === true ||
             event.payload.titleState?.needsRefinement === true)) ||
-        (event.type === "thread.session-set" && event.payload.session.status === "ready") ||
+        event.type === "thread.session-set" ||
+        event.type === "thread.queue-updated" ||
+        (event.type === "thread.activity-appended" &&
+          ["tool.completed", "approval.resolved", "user-input.resolved"].includes(
+            event.payload.activity.kind,
+          )) ||
         event.type === "thread.runtime-mode-set" ||
         event.type === "thread.turn-start-requested" ||
         event.type === "thread.turn-interrupt-requested" ||
@@ -1883,6 +1938,20 @@ const make = Effect.gen(function* () {
     // Subscribe before returning, even while event handling waits for server activation.
     const domainEvents = yield* orchestrationEngine.subscribeDomainEvents;
     yield* forkParked(Stream.runForEach(domainEvents, processEvent));
+
+    const recoverQueue = Effect.gen(function* () {
+      const snapshot = yield* projectionSnapshotQuery.getShellSnapshot();
+      for (const thread of snapshot.threads) {
+        if (!thread.queuedMessageCount) continue;
+        yield* orchestrationEngine.dispatch({
+          type: "thread.queue.recover",
+          commandId: yield* serverCommandId("queue-recover"),
+          threadId: thread.id,
+        });
+        yield* advanceQueue(thread.id);
+      }
+    });
+    yield* forkParked(recoverQueue);
 
     // Earlier events do not replay. Clear interrupted requests by their captured
     // IDs, then schedule persisted refinements after subscribing to their events.

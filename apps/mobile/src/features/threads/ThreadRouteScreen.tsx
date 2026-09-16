@@ -1,3 +1,4 @@
+import { editPendingThreadMessage } from "../../state/edit-pending-thread-message";
 import { NativeStackScreenOptions } from "../../native/StackHeader";
 import {
   StackActions,
@@ -529,7 +530,7 @@ function ThreadRouteContent(
   const handleOpenConnectionEditor = useCallback(() => {
     void navigation.navigate("Connections");
   }, [navigation]);
-  const handleStopThread = useCallback(() => {
+  const handleStopThread = useCallback(async () => {
     if (
       !selectedThread ||
       (selectedThread.session?.status !== "running" &&
@@ -537,7 +538,10 @@ function ThreadRouteContent(
     ) {
       return;
     }
-    return interruptThreadTurn({
+    const queue = composer.selectedThreadQueuedMessages.filter(
+      (message) => message.serverMessage && message.serverMessage.status !== "sending",
+    );
+    const result = await interruptThreadTurn({
       environmentId: selectedThread.environmentId,
       input: {
         threadId: selectedThread.id,
@@ -546,7 +550,18 @@ function ThreadRouteContent(
           : {}),
       },
     });
-  }, [interruptThreadTurn, selectedThread]);
+    if (result._tag === "Success")
+      for (const message of queue) {
+        try {
+          await editPendingThreadMessage(message);
+        } catch (error) {
+          Alert.alert(
+            "Message remains queued",
+            error instanceof Error ? error.message : "Use the queued message to try again.",
+          );
+        }
+      }
+  }, [interruptThreadTurn, selectedThread, composer.selectedThreadQueuedMessages]);
 
   const handleOpenTerminal = useCallback(
     (nextTerminalId?: string | null) => {

@@ -6,7 +6,7 @@ export type PendingThreadFeedEntry = ThreadFeedEntry & {
   readonly acknowledged?: boolean;
 };
 
-/** Append the outbox after all presented activity, until the server echoes each message. */
+/** Server ownership outlives the message echo while delivery is in flight or needs a retry. */
 export function appendPendingThreadMessages(
   presentedFeed: ReadonlyArray<ThreadFeedEntry>,
   feed: ReadonlyArray<ThreadFeedEntry>,
@@ -16,10 +16,15 @@ export function appendPendingThreadMessages(
   const deliveredIds = new Set(
     feed.flatMap((entry) => (entry.type === "message" ? [entry.message.id] : [])),
   );
+  const serverQueuedIds = new Set(
+    queuedMessages.filter((message) => message.serverMessage).map((message) => message.messageId),
+  );
   return [
-    ...presentedFeed,
+    ...presentedFeed.filter(
+      (entry) => entry.type !== "message" || !serverQueuedIds.has(entry.message.id),
+    ),
     ...queuedMessages
-      .filter((message) => !deliveredIds.has(message.messageId))
+      .filter((message) => message.serverMessage || !deliveredIds.has(message.messageId))
       .map((pendingMessage): PendingThreadFeedEntry => ({
         type: "message",
         id: pendingMessage.messageId,
@@ -28,6 +33,9 @@ export function appendPendingThreadMessages(
         message: {
           id: pendingMessage.messageId,
           role: "user",
+          ...(pendingMessage.serverMessage
+            ? { attachments: pendingMessage.serverMessage.attachments }
+            : {}),
           text: pendingMessage.text,
           context: pendingMessage.context,
           createdAt: pendingMessage.createdAt,

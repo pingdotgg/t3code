@@ -761,6 +761,22 @@ export const ThreadPullRequestLink = Schema.Struct({
 });
 export type ThreadPullRequestLink = typeof ThreadPullRequestLink.Type;
 
+/** A follow-up accepted by the server, shared by every client of the thread. */
+export const QueuedThreadMessage = Schema.Struct({
+  messageId: MessageId,
+  text: Schema.String,
+  attachments: Schema.Array(ChatAttachment),
+  context: Schema.optional(OrchestrationMessageContext),
+  modelSelection: Schema.optional(ModelSelection),
+  runtimeMode: RuntimeMode,
+  interactionMode: ProviderInteractionMode,
+  createdAt: IsoDateTime,
+  status: Schema.Literals(["queued", "sending", "held"]),
+  sourceProposedPlan: Schema.optional(SourceProposedPlanReference),
+  queuedAfterToolActivityId: Schema.NullOr(EventId),
+});
+export type QueuedThreadMessage = typeof QueuedThreadMessage.Type;
+
 export const OrchestrationThread = Schema.Struct({
   id: ThreadId,
   projectId: ProjectId,
@@ -813,6 +829,7 @@ export const OrchestrationThread = Schema.Struct({
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
   titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   deletedAt: Schema.NullOr(IsoDateTime),
+  queuedMessages: Schema.optional(Schema.Array(QueuedThreadMessage)),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
@@ -850,6 +867,7 @@ export type OrchestrationProjectShell = typeof OrchestrationProjectShell.Type;
 
 export const OrchestrationThreadShell = Schema.Struct({
   id: ThreadId,
+  queuedMessageCount: Schema.optional(NonNegativeInt),
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   modelSelection: ModelSelection,
@@ -1274,6 +1292,7 @@ export type ThreadTurnStartBootstrap = typeof ThreadTurnStartBootstrap.Type;
 export const ThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
+  deliveryMode: Schema.optional(Schema.Literals(["queue", "steer"])),
   threadId: ThreadId,
   message: Schema.Struct({
     messageId: MessageId,
@@ -1296,6 +1315,7 @@ export const ThreadTurnStartCommand = Schema.Struct({
 const ClientThreadTurnStartCommand = Schema.Struct({
   type: Schema.Literal("thread.turn.start"),
   commandId: CommandId,
+  deliveryMode: Schema.optional(Schema.Literals(["queue", "steer"])),
   threadId: ThreadId,
   message: Schema.Struct({
     messageId: MessageId,
@@ -1379,6 +1399,36 @@ const ThreadSessionStopCommand = Schema.Struct({
   onlyIfSettled: Schema.optional(Schema.Boolean),
 });
 
+const ThreadQueueRemoveCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.remove"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+const ThreadQueueSendCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.send"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+});
+const ThreadQueueAdvanceCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.advance"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+const ThreadQueueCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  messageId: MessageId,
+  failed: Schema.Boolean,
+});
+const ThreadQueueRecoverCommand = Schema.Struct({
+  type: Schema.Literal("thread.queue.recover"),
+  commandId: CommandId,
+  threadId: ThreadId,
+});
+
 const DispatchableClientOrchestrationCommand = Schema.Union([
   ProjectCreateCommand,
   ProjectMetaUpdateCommand,
@@ -1402,6 +1452,8 @@ const DispatchableClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadQueueRemoveCommand,
+  ThreadQueueSendCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadUserInputDismissCommand,
@@ -1435,6 +1487,8 @@ export const ClientOrchestrationCommand = Schema.Union([
   ThreadInteractionModeSetCommand,
   ClientThreadTurnStartCommand,
   ThreadTurnInterruptCommand,
+  ThreadQueueRemoveCommand,
+  ThreadQueueSendCommand,
   ThreadApprovalRespondCommand,
   ThreadUserInputRespondCommand,
   ThreadUserInputDismissCommand,
@@ -1593,6 +1647,9 @@ const ThreadPullRequestLinkSyncCommand = Schema.Struct({
 });
 
 const InternalOrchestrationCommand = Schema.Union([
+  ThreadQueueAdvanceCommand,
+  ThreadQueueCompleteCommand,
+  ThreadQueueRecoverCommand,
   ThreadAutoSettleCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
@@ -1620,6 +1677,7 @@ export const OrchestrationCommand = Schema.Union([
 export type OrchestrationCommand = typeof OrchestrationCommand.Type;
 
 export const OrchestrationEventType = Schema.Literals([
+  "thread.queue-updated",
   "project.created",
   "project.meta-updated",
   "project.deleted",
@@ -1833,6 +1891,12 @@ export const ThreadInteractionModeSetPayload = Schema.Struct({
   updatedAt: IsoDateTime,
 });
 
+export const ThreadQueueUpdatedPayload = Schema.Struct({
+  threadId: ThreadId,
+  queuedMessages: Schema.Array(QueuedThreadMessage),
+  updatedAt: IsoDateTime,
+});
+
 export const ThreadMessageSentPayload = Schema.Struct({
   threadId: ThreadId,
   messageId: MessageId,
@@ -1848,6 +1912,7 @@ export const ThreadMessageSentPayload = Schema.Struct({
 
 export const ThreadTurnStartRequestedPayload = Schema.Struct({
   threadId: ThreadId,
+  queuedMessageId: Schema.optional(MessageId),
   messageId: MessageId,
   modelSelection: Schema.optional(ModelSelection),
   titleSeed: Schema.optional(TrimmedNonEmptyString),
@@ -2034,6 +2099,11 @@ export const OrchestrationEvent = Schema.Union([
     ...EventBaseFields,
     type: Schema.Literal("thread.pin-reordered"),
     payload: ThreadPinReorderedPayload,
+  }),
+  Schema.Struct({
+    ...EventBaseFields,
+    type: Schema.Literal("thread.queue-updated"),
+    payload: ThreadQueueUpdatedPayload,
   }),
   Schema.Struct({
     ...EventBaseFields,

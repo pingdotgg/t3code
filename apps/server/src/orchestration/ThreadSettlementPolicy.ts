@@ -29,9 +29,13 @@ function latestTimestamp(values: ReadonlyArray<string | null | undefined>): stri
  * Absolute age bounds client clock skew in both directions and stops stale
  * pre-adoption data from blocking the thread forever. */
 export function threadHasQueuedTurnStart(
-  thread: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn" | "session">,
+  thread: Pick<
+    OrchestrationThreadShell,
+    "latestUserMessageAt" | "latestTurn" | "session" | "queuedMessageCount"
+  >,
   now: string,
 ): boolean {
+  if (thread.queuedMessageCount) return true;
   if (thread.latestUserMessageAt === null || thread.session?.status === "error") return false;
   const messageAt = Date.parse(thread.latestUserMessageAt);
   const age = Date.parse(now) - messageAt;

@@ -21,9 +21,13 @@ const DAY_MS = 24 * 60 * 60 * 1_000;
  * within the adoption grace window.
  */
 export function hasQueuedTurnStart(
-  shell: Pick<OrchestrationThreadShell, "latestUserMessageAt" | "latestTurn" | "session">,
+  shell: Pick<
+    OrchestrationThreadShell,
+    "latestUserMessageAt" | "latestTurn" | "session" | "queuedMessageCount"
+  >,
   options: { readonly now: string },
 ): boolean {
+  if (shell.queuedMessageCount) return true;
   if (shell.latestUserMessageAt == null) return false;
   // A failed session start clears the queued state: the failure is already
   // visible (status edge / error).

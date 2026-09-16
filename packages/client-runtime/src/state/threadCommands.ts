@@ -1,3 +1,9 @@
+import {
+  sendQueuedMessage,
+  removeQueuedMessage,
+  type SendQueuedMessageInput,
+  type RemoveQueuedMessageInput,
+} from "../operations/commands.ts";
 import * as Crypto from "effect/Crypto";
 import { Atom } from "effect/unstable/reactivity";
 import {
@@ -104,6 +110,18 @@ export function createThreadEnvironmentAtoms<R, E>(
       JSON.stringify([environmentId, input.threadId]),
   };
   const commands = {
+    sendQueuedMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:queue-send",
+      execute: (input: SendQueuedMessageInput) => sendQueuedMessage(input),
+      scheduler,
+      concurrency,
+    }),
+    removeQueuedMessage: createEnvironmentCommand(runtime, {
+      label: "environment-data:commands:thread:queue-remove",
+      execute: (input: RemoveQueuedMessageInput) => removeQueuedMessage(input),
+      scheduler,
+      concurrency,
+    }),
     create: createEnvironmentCommand(runtime, {
       label: "environment-data:commands:thread:create",
       execute: (input: CreateThreadInput) => createThread(input),

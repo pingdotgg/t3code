@@ -797,6 +797,33 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
           return;
         }
 
+        case "thread.queue-updated": {
+          const existingRow = yield* projectionThreadRepository.getById({
+            threadId: event.payload.threadId,
+          });
+          if (Option.isSome(existingRow)) {
+            yield* projectionThreadRepository.upsert({
+              ...existingRow.value,
+              queuedMessages: event.payload.queuedMessages,
+              updatedAt: event.payload.updatedAt,
+            });
+            const retainedMessageIds = new Set(
+              event.payload.queuedMessages.map((message) => message.messageId),
+            );
+            if (
+              existingRow.value.queuedMessages?.some(
+                (message) =>
+                  message.attachments.length > 0 && !retainedMessageIds.has(message.messageId),
+              )
+            ) {
+              attachmentSideEffects.prunedThreadRelativePaths.set(
+                event.payload.threadId,
+                new Set(),
+              );
+            }
+          }
+          return;
+        }
         case "thread.meta-updated": {
           const existingRow = yield* projectionThreadRepository.getById({
             threadId: event.payload.threadId,
@@ -1990,6 +2017,16 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
             threadId: ThreadId.make(threadId),
           });
           const retainedPaths = collectThreadAttachmentRelativePaths(threadId, messages);
+          const thread = yield* projectionThreadRepository.getById({
+            threadId: ThreadId.make(threadId),
+          });
+          if (Option.isSome(thread))
+            for (const message of thread.value.queuedMessages ?? []) {
+              for (const attachment of message.attachments) {
+                const relativePath = attachmentRelativePath(attachment);
+                if (relativePath) retainedPaths.add(relativePath);
+              }
+            }
           const activities = yield* projectionThreadActivityRepository.listByThreadId({
             threadId: ThreadId.make(threadId),
           });
@@ -2131,18 +2168,27 @@ const makeOrchestrationProjectionPipeline = Effect.fn("makeOrchestrationProjecti
         (event) =>
           Effect.sync(() => {
             lastEvent = event;
-            if (event.type === "thread.reverted" || event.type === "thread.deleted") {
+            if (
+              event.type === "thread.reverted" ||
+              event.type === "thread.deleted" ||
+              event.type === "thread.queue-updated"
+            ) {
               pendingCleanup.set(`${event.type}:${event.payload.threadId}`, event);
             }
           }),
       );
       for (const event of pendingCleanup.values()) {
-        if (event.type !== "thread.reverted" && event.type !== "thread.deleted") continue;
+        if (
+          event.type !== "thread.reverted" &&
+          event.type !== "thread.deleted" &&
+          event.type !== "thread.queue-updated"
+        )
+          continue;
         const threadId = event.payload.threadId;
         const cleaned = yield* applyAttachmentSideEffects(event, {
           deletedThreadIds: new Set(event.type === "thread.deleted" ? [threadId] : []),
           prunedThreadRelativePaths: new Map(
-            event.type === "thread.reverted" ? [[threadId, new Set<string>()]] : [],
+            event.type !== "thread.deleted" ? [[threadId, new Set<string>()]] : [],
           ),
         });
         // Leave the cleanup cursor behind this event so the next bootstrap retries it.

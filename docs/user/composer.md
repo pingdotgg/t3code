@@ -31,11 +31,15 @@ See [images and videos](#images-and-videos-in-messages) for previewing and savin
 
 ## Send while the agent is working
 
-On web and desktop, a message sent during a running turn waits at the end of the conversation as a
-dashed bubble. It goes out on its own when the agent finishes its next tool
-call, or when the turn ends. Use the arrow under the bubble to send it right
-away, or the X to move it back into the composer. Stop returns every queued
-message to the composer.
+On web, desktop, and mobile, a queued follow-up waits until the agent finishes
+its next tool call or the turn ends. Once the environment accepts it, you can
+close the app: the message still sends, and the queue stays in sync across your
+connected devices.
+
+Use **Send now** to send a queued message immediately, or return it to the composer
+to edit it. Stop pauses the queue and returns messages to the composer on the
+client where you pressed Stop. If delivery fails or a server restart interrupts
+a handoff, the message stays queued for you to send or edit.
 
 In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
 behavior or **Steer** to send new messages immediately. This setting applies to
