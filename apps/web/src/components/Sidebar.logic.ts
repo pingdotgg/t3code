@@ -1,5 +1,4 @@
-import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
-import type { ThreadPullRequestSearchTarget } from "@t3tools/client-runtime/thread-pull-request-search";
+import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
 import { defaultAnimateLayoutChanges, type AnimateLayoutChanges } from "@dnd-kit/sortable";
 import {
@@ -897,18 +896,19 @@ export { pinOrderKeyBetween, planPinnedReorder } from "@t3tools/client-runtime/s
 export { sortPinnedThreadsByOrderKey as sortPinnedThreadsForSidebar } from "@t3tools/client-runtime/state/thread-sort";
 
 /**
- * Search the already-ordered sidebar thread collection by title or associated PR.
+ * Search the already-ordered sidebar thread collection by title or linked PR.
  * Keeping the input order means lifecycle ordering (active, snoozed, settled)
  * remains stable while the user narrows the list.
  */
 export function searchSidebarThreads<
-  T extends { readonly title: string } & ThreadPullRequestSearchTarget,
+  T extends { readonly title: string } & Parameters<typeof threadPullRequestSearchTerms>[0],
 >(threads: readonly T[], query: string): T[] {
   const normalizedQuery = query.trim().toLowerCase();
   if (normalizedQuery.length === 0) return [];
-  const matchesPullRequest = createThreadPullRequestMatcher(query);
-  return threads.filter(
-    (thread) => thread.title.toLowerCase().includes(normalizedQuery) || matchesPullRequest(thread),
+  return threads.filter((thread) =>
+    [thread.title, ...threadPullRequestSearchTerms(thread)].some((term) =>
+      term.toLowerCase().includes(normalizedQuery),
+    ),
   );
 }
 

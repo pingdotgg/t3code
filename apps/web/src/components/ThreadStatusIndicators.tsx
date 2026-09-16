@@ -1,5 +1,4 @@
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
-import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { pullRequestDetailToVcsStatus } from "@t3tools/client-runtime/state/pull-requests";
 import {
@@ -14,6 +13,7 @@ import {
   resolveThreadPullRequestChains,
   visibleThreadPullRequests,
   type ThreadPullRequestBadge,
+  threadPullRequestSearchTerms,
 } from "@t3tools/shared/threadPullRequests";
 import { FolderGit2Icon, TerminalIcon } from "lucide-react";
 import { useMemo, type MouseEvent, type ComponentProps } from "react";
@@ -621,7 +621,12 @@ export function ThreadSearchPullRequestNumber({
   enabled?: boolean;
   settled?: boolean;
 }) {
-  const matches = createThreadPullRequestMatcher(query);
+  const normalizedQuery = query.trim().toLowerCase();
+  const matches = (candidate: Parameters<typeof threadPullRequestSearchTerms>[0]) =>
+    normalizedQuery.length > 0 &&
+    threadPullRequestSearchTerms(candidate).some((term) =>
+      term.toLowerCase().includes(normalizedQuery),
+    );
   const matchedLink = visibleThreadPullRequests(thread.pullRequests).find((pr) =>
     matches({ pullRequests: [pr] }),
   );

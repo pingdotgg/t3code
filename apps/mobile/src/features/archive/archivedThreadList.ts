@@ -1,4 +1,3 @@
-import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
 import type { ArchivedSnapshotEntry } from "@t3tools/client-runtime/state/threads";
 import {
   scopeProject,
@@ -37,7 +36,6 @@ export function buildArchivedThreadGroups(input: {
   readonly sortOrder: ArchivedThreadSortOrder;
 }): ReadonlyArray<ArchivedThreadGroup> {
   const query = input.searchQuery.trim().toLocaleLowerCase();
-  const matchesPullRequest = createThreadPullRequestMatcher(input.searchQuery);
   const groups: ArchivedThreadGroup[] = [];
 
   for (const entry of input.snapshots) {
@@ -67,10 +65,7 @@ export function buildArchivedThreadGroups(input: {
       const matchingThreads = groupMatches
         ? projectThreads
         : projectThreads.filter(
-            (thread) =>
-              matchesQuery(thread.title, query) ||
-              matchesQuery(thread.branch, query) ||
-              matchesPullRequest(thread),
+            (thread) => matchesQuery(thread.title, query) || matchesQuery(thread.branch, query),
           );
 
       if (matchingThreads.length === 0) {
