@@ -41,3 +41,35 @@ describe("buildHomeListFilterMenu", () => {
     expect(onProjectChange).toHaveBeenNthCalledWith(2, "environment-1:project-2");
   });
 });
+
+describe("buildHomeListFilterMenu clear action", () => {
+  it("offers a top-level Clear filters action only while a scope is active", () => {
+    const onEnvironmentChange = vi.fn();
+    const onProjectChange = vi.fn();
+    const build = (selectedProjectKey: string | null) =>
+      buildHomeListFilterMenu({
+        environments: [],
+        projects: [{ key: "p", label: "P" }],
+        selectedEnvironmentId: null,
+        selectedProjectKey,
+        projectSortOrder: "updated_at",
+        threadSortOrder: "updated_at",
+        onEnvironmentChange,
+        onProjectChange,
+        onProjectSortOrderChange: vi.fn(),
+        onThreadSortOrderChange: vi.fn(),
+      });
+
+    expect(build(null).items.at(-1)).toMatchObject({ type: "submenu", title: "Sort threads" });
+    const group = build("p").items.at(-1);
+    expect(group).toMatchObject({
+      type: "submenu",
+      displayInline: true,
+      items: [{ type: "action", title: "Clear filters" }],
+    });
+    if (group?.type !== "submenu") throw new Error("Expected inline group");
+    group.items[0]?.onPress();
+    expect(onEnvironmentChange).toHaveBeenCalledWith(null);
+    expect(onProjectChange).toHaveBeenCalledWith(null);
+  });
+});
