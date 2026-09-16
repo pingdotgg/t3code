@@ -5,10 +5,13 @@ import {
   type ServerSelfUpdateProgressStage,
   type ServerSelfUpdateResult,
 } from "@t3tools/contracts";
+import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as HashMap from "effect/HashMap";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
@@ -46,6 +49,8 @@ export class DesktopAppUpdate extends Context.Service<
     /** True when this server was spawned by a desktop app that can be
         driven over the telemetry control channel. */
     readonly available: boolean;
+    /** Keeps the managed tunnel while an accepted remote install restarts this server. */
+    readonly isRestartPending: Effect.Effect<boolean>;
     /** Checks and downloads through the desktop app, then returns a token
         while this server is still connected. `commit` starts installation. */
     readonly run: (
@@ -67,6 +72,27 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
   const crypto = yield* Crypto.Crypto;
   const receiver = yield* DesktopTelemetryReceiver.DesktopTelemetryReceiver;
   const inFlight = yield* Ref.make(false);
+  // The RPC can disappear before shutdown cleanup runs. Retain accepted
+  // handoffs across that interruption, but bound them by the install deadline.
+  const pendingRestarts = yield* Ref.make(HashMap.empty<string, number>());
+
+  const isRestartPending = Effect.scoped(
+    Effect.gen(function* () {
+      const now = yield* Clock.currentTimeMillis;
+      const { latest } = yield* receiver.desktopUpdates;
+      const failedRequestId =
+        Option.isSome(latest) && latest.value.outcome === "failed"
+          ? latest.value.requestId
+          : undefined;
+      const pending = yield* Ref.updateAndGet(pendingRestarts, (requests) =>
+        HashMap.filter(
+          requests,
+          (deadline, requestId) => deadline > now && requestId !== failedRequestId,
+        ),
+      );
+      return HashMap.size(pending) > 0;
+    }),
+  );
 
   const available = config.mode === "desktop" && config.desktopTelemetryControlFd !== undefined;
   const failWith = (reason: string, cause?: unknown) =>
@@ -191,41 +217,62 @@ export const make = Effect.fn("desktopUpdate.desktopAppUpdate.make")(function* (
     if (!available) {
       return yield* failWith("This server cannot commit a desktop app update.");
     }
-    const terminal = yield* Effect.scoped(
-      Effect.gen(function* () {
-        const { latest, changes } = yield* receiver.desktopUpdates;
-        const reports = Option.match(latest, {
-          onNone: () => changes,
-          onSome: (report) => Stream.concat(Stream.make(report), changes),
-        });
-        yield* Effect.uninterruptible(
-          receiver.commitDesktopUpdate(requestId).pipe(
-            Effect.mapError((error) => failWith("Could not reach the T3 Code desktop app.", error)),
-            Effect.tap(() => onHandoffAccepted()),
-          ),
-        );
-        return yield* reports.pipe(
-          Stream.filter((report) => report.requestId === requestId && report.outcome === "failed"),
-          Stream.runHead,
-          Effect.timeout(DESKTOP_INSTALL_TIMEOUT),
-          Effect.catchTags({
-            TimeoutError: () =>
-              failWith("The desktop app did not report an install result in time."),
-          }),
-        );
-      }),
-    );
-    if (Option.isNone(terminal)) {
-      return yield* failWith("The desktop app stopped reporting the install.");
-    }
-    return yield* failWith(
-      terminal.value.reason ??
-        terminal.value.state.message ??
-        "The desktop app failed to install the update.",
+    let handoffAccepted = false;
+    return yield* Effect.gen(function* () {
+      const terminal = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const { latest, changes } = yield* receiver.desktopUpdates;
+          const reports = Option.match(latest, {
+            onNone: () => changes,
+            onSome: (report) => Stream.concat(Stream.make(report), changes),
+          });
+          yield* Effect.uninterruptible(
+            Effect.gen(function* () {
+              const now = yield* Clock.currentTimeMillis;
+              yield* Ref.update(
+                pendingRestarts,
+                HashMap.set(requestId, now + Duration.toMillis(DESKTOP_INSTALL_TIMEOUT)),
+              );
+              yield* receiver.commitDesktopUpdate(requestId);
+              handoffAccepted = true;
+            }).pipe(
+              Effect.mapError((error) =>
+                failWith("Could not reach the T3 Code desktop app.", error),
+              ),
+              Effect.tap(() => onHandoffAccepted()),
+            ),
+          );
+          return yield* reports.pipe(
+            Stream.filter(
+              (report) => report.requestId === requestId && report.outcome === "failed",
+            ),
+            Stream.runHead,
+            Effect.timeout(DESKTOP_INSTALL_TIMEOUT),
+            Effect.catchTags({
+              TimeoutError: () =>
+                failWith("The desktop app did not report an install result in time."),
+            }),
+          );
+        }),
+      );
+      if (Option.isNone(terminal)) {
+        return yield* failWith("The desktop app stopped reporting the install.");
+      }
+      return yield* failWith(
+        terminal.value.reason ??
+          terminal.value.state.message ??
+          "The desktop app failed to install the update.",
+      );
+    }).pipe(
+      Effect.onExit((exit) =>
+        exit._tag === "Failure" && handoffAccepted && Cause.hasInterruptsOnly(exit.cause)
+          ? Effect.void
+          : Ref.update(pendingRestarts, HashMap.remove(requestId)),
+      ),
     );
   });
 
-  return DesktopAppUpdate.of({ available, run, commit });
+  return DesktopAppUpdate.of({ available, isRestartPending, run, commit });
 });
 
 export const layer = Layer.effect(DesktopAppUpdate, make());

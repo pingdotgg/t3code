@@ -8,6 +8,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as ServerConfig from "../config.ts";
 import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
@@ -60,6 +61,7 @@ interface HarnessOptions {
       The stream ends after the last one unless `keepOpen` is set. */
   readonly reports?: (requestId: string) => readonly DesktopUpdateStatusReport[];
   readonly keepOpen?: boolean;
+  readonly receiver?: Partial<DesktopTelemetryReceiver.DesktopTelemetryReceiver["Service"]>;
 }
 
 const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* (
@@ -98,6 +100,7 @@ const makeHarness = Effect.fn("test.make_desktop_app_update_harness")(function* 
             latest: Option.none<DesktopUpdateStatusReport>(),
             changes,
           }),
+          ...options.receiver,
         }),
         ServerConfig.layer(config),
       ),
@@ -144,6 +147,7 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       });
       // "downloading" is not repeated for every download report.
       expect(stages).toEqual(["downloading", "installing"]);
+      expect(yield* service.isRestartPending).toBe(false);
 
       // Success releases the in-flight guard: if the desktop rejected the
       // install after reporting, the server must accept a retry instead of
@@ -203,6 +207,111 @@ it.layer(NodeServices.layer)("desktop app update", (it) => {
       expect(
         (yield* service.commit(prepared.desktopUpdateToken ?? "missing").pipe(Effect.flip)).reason,
       ).toBe("installer refused");
+      expect(yield* service.isRestartPending).toBe(false);
+    }),
+  );
+
+  it.effect("retains the tunnel handoff after transport loss, then expires it", () =>
+    Effect.gen(function* () {
+      const accepted = yield* Deferred.make<void>();
+      const { service } = yield* makeHarness({ keepOpen: true });
+      const commit = yield* service
+        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(accepted);
+      expect(yield* service.isRestartPending).toBe(true);
+
+      yield* Fiber.interrupt(commit);
+      expect(yield* service.isRestartPending).toBe(true);
+
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* service.isRestartPending).toBe(false);
+    }),
+  );
+
+  it.effect("clears a failed install even after its remote caller disconnects", () =>
+    Effect.gen(function* () {
+      const accepted = yield* Deferred.make<void>();
+      let latest = Option.none<DesktopUpdateStatusReport>();
+      const { service } = yield* makeHarness({
+        receiver: {
+          desktopUpdates: Effect.sync(() => ({ latest, changes: Stream.never })),
+        },
+      });
+      const commit = yield* service
+        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(accepted);
+      yield* Fiber.interrupt(commit);
+      latest = Option.some(report("update-1", makeState(), { outcome: "failed" }));
+
+      expect(yield* service.isRestartPending).toBe(false);
+    }),
+  );
+
+  it.effect("clears the handoff when the desktop control write fails", () =>
+    Effect.gen(function* () {
+      const { service } = yield* makeHarness({
+        receiver: {
+          commitDesktopUpdate: () =>
+            Effect.fail(
+              new DesktopTelemetryReceiver.DesktopTelemetryControlStalled({
+                fd: 5,
+                remainingBytes: 1,
+              }),
+            ),
+        },
+      });
+
+      yield* service.commit("update-1").pipe(Effect.flip);
+      expect(yield* service.isRestartPending).toBe(false);
+    }),
+  );
+
+  it.effect("clears the handoff when installation times out", () =>
+    Effect.gen(function* () {
+      const waiting = yield* Deferred.make<void>();
+      const { service } = yield* makeHarness({
+        receiver: {
+          desktopUpdates: Effect.succeed({
+            latest: Option.none(),
+            changes: Stream.fromEffect(Deferred.succeed(waiting, undefined)).pipe(
+              Stream.drain,
+              Stream.concat(Stream.never),
+            ),
+          }),
+        },
+      });
+      const commit = yield* service.commit("update-1").pipe(Effect.flip, Effect.forkChild);
+      yield* Deferred.await(waiting);
+      yield* TestClock.adjust("2 minutes");
+
+      expect((yield* Fiber.join(commit)).reason).toBe(
+        "The desktop app did not report an install result in time.",
+      );
+      expect(yield* service.isRestartPending).toBe(false);
+    }),
+  );
+
+  it.effect("does not let a rejected commit clear another install's handoff", () =>
+    Effect.gen(function* () {
+      const accepted = yield* Deferred.make<void>();
+      const { service } = yield* makeHarness({
+        receiver: {
+          desktopUpdates: Effect.succeed({
+            latest: Option.some(report("rejected", makeState(), { outcome: "failed" })),
+            changes: Stream.never,
+          }),
+        },
+      });
+      const commit = yield* service
+        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(accepted);
+      yield* Fiber.interrupt(commit);
+      yield* service.commit("rejected").pipe(Effect.flip);
+
+      expect(yield* service.isRestartPending).toBe(true);
     }),
   );
 

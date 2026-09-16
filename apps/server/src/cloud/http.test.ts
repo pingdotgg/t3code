@@ -454,6 +454,21 @@ describe("releaseManagedTunnelOnShutdown", () => {
     }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
   });
 
+  it.effect("keeps the tunnel while a remote desktop update is restarting", () => {
+    const { store, values } = makeMemorySecretStore(managedLinkSecrets);
+    const applyConfigCalls: Array<unknown> = [];
+    const requests: Array<HttpClientRequest.HttpClientRequest> = [];
+
+    return Effect.gen(function* () {
+      const released = yield* releaseManagedTunnelOnShutdown(Effect.succeed(true));
+
+      expect(released).toBe(false);
+      expect(applyConfigCalls).toEqual([]);
+      expect(requests).toEqual([]);
+      expect(values.has(CLOUD_ENDPOINT_RUNTIME_CONFIG)).toBe(true);
+    }).pipe(provideReleaseHarness({ store, applyConfigCalls, requests }));
+  });
+
   it.effect("still releases a pending update when the launcher is stopping", () => {
     // `t3 service uninstall` or `systemctl stop` during the pending window:
     // the launcher writes its stop marker before signalling the child, so no
