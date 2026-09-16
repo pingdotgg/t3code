@@ -63,6 +63,17 @@ import ChatMarkdown, {
   hasMarkdownFilePrimaryAction,
   shouldUseMarkdownFileBrowserPrimaryAction,
 } from "./ChatMarkdown";
+import { remarkStampSourceLines } from "./files/markdownSourceLines";
+
+/** Source line span of the innermost stamped element wrapping `content`. */
+function sourceLineSpan(html: string, content: string) {
+  const upToContent = html.slice(0, html.indexOf(content));
+  const openingTag = upToContent.lastIndexOf("<");
+  const attributes = upToContent.slice(openingTag);
+  const start = /data-md-start-line="(\d+)"/.exec(attributes)?.[1];
+  const end = /data-md-end-line="(\d+)"/.exec(attributes)?.[1];
+  return { start: Number(start), end: Number(end) };
+}
 
 function codeButton(renderer: ReactTestRenderer, label: string) {
   const button = renderer.root
@@ -858,5 +869,56 @@ describe("ChatMarkdown Windows file links", () => {
     expect(html).not.toContain("javascript:");
     expect(html).not.toContain("d:alert");
     expect(html).not.toContain("chat-markdown-file-link");
+  });
+});
+
+describe("ChatMarkdown source line stamps", () => {
+  const text = ["# Title", "", "Paragraph one", "continues here.", "", "- first", "- second"].join(
+    "\n",
+  );
+
+  it("keeps each block's source lines on its rendered element", () => {
+    const html = renderToStaticMarkup(
+      <ChatMarkdown cwd="/tmp/project" text={text} extraRemarkPlugins={[remarkStampSourceLines]} />,
+    );
+
+    expect(sourceLineSpan(html, "Title")).toEqual({ start: 1, end: 1 });
+    expect(sourceLineSpan(html, "continues here.")).toEqual({ start: 3, end: 4 });
+    expect(sourceLineSpan(html, "second")).toEqual({ start: 7, end: 7 });
+  });
+
+  it("does not stamp a block whose lines were fabricated by an earlier plugin", () => {
+    // `remarkNormalizeListItemIndentation` re-parses over-indented list content
+    // as its own document, so every block after the first carries lines from
+    // that fragment: "recovered B" lives on line 7 but claims line 3.
+    const recovered = [
+      "# Title",
+      "",
+      "- Item one",
+      "",
+      "-       recovered A",
+      "",
+      "        recovered B",
+      "",
+      "- Item three",
+    ].join("\n");
+
+    const html = renderToStaticMarkup(
+      <ChatMarkdown
+        cwd="/tmp/project"
+        text={recovered}
+        extraRemarkPlugins={[remarkStampSourceLines]}
+      />,
+    );
+
+    // Unstamped, so a selection there resolves to the list item that holds it.
+    expect(html).toContain("<p>recovered B</p>");
+    expect(html).toContain('<li data-md-start-line="5" data-md-end-line="7">');
+  });
+
+  it("leaves markdown unstamped for callers that do not ask for it", () => {
+    const html = renderToStaticMarkup(<ChatMarkdown cwd="/tmp/project" text={text} />);
+
+    expect(html).not.toContain("data-md-start-line");
   });
 });
