@@ -432,10 +432,9 @@ export function openCodeQuestionId(
 
 /**
  * Attachments OpenCode can hand to a model as a native file part. Anything
- * else (ZIP, binaries, image formats like BMP/AVIF/SVG that model APIs
- * reject, or files over the direct-attachment size limit) would make the turn
- * fail before it starts, so those ride only as the file path ProviderService
- * puts in the prompt.
+ * else can fail model conversion and poison later turns when history replays.
+ * Text documents, binaries, unsupported images, and oversized files ride only
+ * as the file path ProviderService puts in the prompt.
  */
 const OPENCODE_NATIVE_IMAGE_MIMES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 const OPENCODE_NATIVE_FILE_PART_MAX_BYTES = 20 * 1024 * 1024;
@@ -448,11 +447,7 @@ function isOpenCodeNativeFilePart(input: {
     return false;
   }
   const normalized = input.mimeType.trim().toLowerCase();
-  return (
-    OPENCODE_NATIVE_IMAGE_MIMES.has(normalized) ||
-    normalized.startsWith("text/") ||
-    normalized === "application/pdf"
-  );
+  return OPENCODE_NATIVE_IMAGE_MIMES.has(normalized) || normalized === "application/pdf";
 }
 
 export function toOpenCodeFileParts(input: {

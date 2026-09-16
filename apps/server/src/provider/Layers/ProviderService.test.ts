@@ -2228,6 +2228,13 @@ routing.layer("ProviderServiceLive routing", (it) => {
       assert.include(fileOnlyInput.input ?? "", '[Attached file "report.pdf" is saved at: ');
       assert.deepEqual(fileOnlyInput.attachments, [fileAttachment]);
 
+      const htmlAttachment = { ...fileAttachment, name: "report.html", mimeType: "text/html" };
+      routing.codex.sendTurn.mockClear();
+      yield* provider.sendTurn({ threadId: session.threadId, attachments: [htmlAttachment] });
+      const htmlInput = routing.codex.sendTurn.mock.calls[0]?.[0];
+      assert.include(htmlInput?.input ?? "", '[Attached file "report.html" is saved at: ');
+      assert.deepEqual(htmlInput?.attachments, [htmlAttachment]);
+
       const pastedTextAttachment = {
         type: "file" as const,
         id: "thread-attach-12345678-1234-1234-1234-123456789abc-txt",

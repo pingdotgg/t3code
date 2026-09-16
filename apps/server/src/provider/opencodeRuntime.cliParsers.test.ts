@@ -294,11 +294,16 @@ describe("toOpenCodeFileParts", () => {
     sizeBytes,
   });
 
-  it("sends supported images, text, and PDFs natively and skips what models reject", () => {
+  it("sends supported images and PDFs natively and keeps documents on the path fallback", () => {
     const parts = toOpenCodeFileParts({
       attachments: [
         attachment("application/pdf"),
+        attachment("text/html"),
+        attachment("text/plain"),
         attachment("text/markdown"),
+        attachment("text/csv"),
+        attachment("text/html;charset=utf-8"),
+        attachment(" TEXT/HTML "),
         attachment("image/png"),
         // A ZIP file part makes OpenCode's Anthropic path throw before the
         // turn starts; it must ride only as the prompt's file path line.
@@ -315,7 +320,7 @@ describe("toOpenCodeFileParts", () => {
 
     NodeAssert.deepEqual(
       parts.map((part) => part.mime),
-      ["application/pdf", "text/markdown", "image/png"],
+      ["application/pdf", "image/png"],
     );
   });
 
