@@ -12,12 +12,19 @@ import {
 } from "./hostProcess.ts";
 import { CommandResolutionCache, resolveCommandPath } from "./shell.ts";
 
-export const nodeRuntimeUnavailableMessage = (feature: string): string =>
+const NodeRuntimeFeature = Schema.Literals([
+  "Local device support",
+  "Device automation",
+  "Antigravity",
+  "Antigravity sign-in",
+]);
+
+export const nodeRuntimeUnavailableMessage = (feature: typeof NodeRuntimeFeature.Type): string =>
   `${feature} requires Node.js. Install Node.js and make sure node is on PATH, then retry.`;
 
 export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeUnavailableError>()(
   "NodeRuntimeUnavailableError",
-  { feature: Schema.String, cause: Schema.optional(Schema.Defect()) },
+  { feature: NodeRuntimeFeature, cause: Schema.optional(Schema.Defect()) },
 ) {
   override get message(): string {
     return nodeRuntimeUnavailableMessage(this.feature);
@@ -26,7 +33,7 @@ export class NodeRuntimeUnavailableError extends Schema.TaggedError<NodeRuntimeU
 
 /** A standalone T3 binary runs its embedded CLI, regardless of script arguments. */
 export const resolveNodeExecutable = Effect.fn("nodeRuntime.resolveNodeExecutable")(function* (
-  feature: string,
+  feature: typeof NodeRuntimeFeature.Type,
   environment?: NodeJS.ProcessEnv,
 ) {
   const executablePath = yield* HostProcessExecutablePath;
