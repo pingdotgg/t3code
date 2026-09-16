@@ -2336,26 +2336,32 @@ export const makeCodexSessionRuntime = (
     );
 
     yield* child.exitCode.pipe(
-      Effect.flatMap((exitCode) =>
+      Effect.match({
+        onFailure: (cause) => {
+          const diagnostic = cause instanceof Error ? cause.message : String(cause);
+          return {
+            status: "error" as const,
+            message: `Codex App Server exited unexpectedly: ${diagnostic}.`,
+          };
+        },
+        onSuccess: (exitCode) => ({
+          status: exitCode === 0 ? ("closed" as const) : ("error" as const),
+          message:
+            exitCode === 0
+              ? "Codex App Server exited."
+              : `Codex App Server exited with code ${exitCode}.`,
+        }),
+      }),
+      Effect.flatMap(({ status, message }) =>
         Ref.get(closedRef).pipe(
           Effect.flatMap((closed) => {
             if (closed) {
               return Effect.void;
             }
-            const nextStatus = exitCode === 0 ? "closed" : "error";
             return updateSession(sessionRef, {
-              status: nextStatus,
+              status,
               activeTurnId: undefined,
-            }).pipe(
-              Effect.andThen(
-                emitSessionEvent(
-                  "session/exited",
-                  exitCode === 0
-                    ? "Codex App Server exited."
-                    : `Codex App Server exited with code ${exitCode}.`,
-                ),
-              ),
-            );
+            }).pipe(Effect.andThen(emitSessionEvent("session/exited", message)));
           }),
         ),
       ),
