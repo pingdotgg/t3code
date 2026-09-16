@@ -1267,6 +1267,61 @@ it.effect("ProviderSessionManagerV2 revokes MCP credentials when release persist
   }),
 );
 
+it.effect("ProviderSessionManagerV2 keeps MCP credential claims when release cleanup fails", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const effect = Effect.gen(function* () {
+      const eventSink = yield* EventSinkV2;
+      const idAllocator = yield* IdAllocatorV2;
+      const manager = yield* ProviderSessionManagerV2;
+      const registry = yield* McpSessionRegistry.McpSessionRegistry;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-mcp-cleanup-failure");
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId,
+      });
+
+      yield* eventSink.write({
+        events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId,
+        modelSelection,
+        runtimePolicy,
+      });
+
+      const captured = (yield* Ref.get(mcpConfigs))[0];
+      const token = captured?.authorizationHeader.replace(/^Bearer\s+/, "");
+      assert.isDefined(token);
+      assert.isDefined(yield* registry.resolve(token!));
+
+      const closeError = yield* manager.close(providerSessionId).pipe(Effect.flip);
+      assert.equal(closeError._tag, "ProviderSessionCloseError");
+      // The release stays pending: its provider process may still be alive, so
+      // the pending release must keep claiming the credential it configured
+      // rather than revoking it out from under that process.
+      assert.isDefined(yield* registry.resolve(token!));
+      assert.isDefined(McpProviderSession.readMcpProviderSession(threadId));
+    });
+
+    yield* effect.pipe(
+      Effect.provide(
+        makeTestLayer({
+          state,
+          idleTimeoutMs: 1_000,
+          mcpConfigs,
+          beforeClose: Effect.die("cleanup defect"),
+        }),
+      ),
+    );
+  }),
+);
+
 it.effect("ProviderSessionManagerV2 duplicate detach preserves replacement MCP credentials", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);
@@ -3447,7 +3502,14 @@ for (const cleanupOutcome of ["success", "persistence_failure", "cleanup_failure
             cleanupOutcome === "success" ? "Success" : "Failure",
           );
           assert.equal((yield* Ref.get(state)).closeCount, 2);
-          assert.isUndefined(yield* registry.resolve(token));
+          if (cleanupOutcome === "cleanup_failure") {
+            // The first cleanup failed — its release stays pending and its
+            // provider process may still be alive, so it must keep claiming the
+            // shared token rather than revoking it out from under that process.
+            assert.isDefined(yield* registry.resolve(token));
+          } else {
+            assert.isUndefined(yield* registry.resolve(token));
+          }
         }).pipe(
           Effect.ensuring(
             Effect.forEach(closeGates, (gate) => Deferred.succeed(gate, undefined), {

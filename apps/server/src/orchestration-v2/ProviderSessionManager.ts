@@ -1252,7 +1252,7 @@ export const layerWithOptions = (
             const { release, start } = selected.value;
             if (start) {
               const releaseCredentials = Effect.gen(function* () {
-                // Scope cleanup has settled. Stop claiming these credentials before
+                // Scope cleanup succeeded. Stop claiming these credentials before
                 // checking peers, even if persisting the released status later fails.
                 // Each credential re-reads `sessions`: a peer may record a claim
                 // while an earlier revocation in this sweep is suspended, and a
@@ -1282,7 +1282,13 @@ export const layerWithOptions = (
                   );
                 }
                 yield* Scope.close(entry.scope, Exit.void);
-              }).pipe(Effect.ensuring(releaseCredentials));
+                // On a failed or interrupted close the release stays pending and
+                // its provider process may still be live — the claims in
+                // `release.mcpCredentialIdByThread` must remain recorded until a
+                // cleanup actually completes, or a sweep could revoke a credential
+                // that process still uses.
+                yield* releaseCredentials;
+              });
               // Drain in-flight opens, then release their locks before closing the scope.
               // The adapter-op drain is lock-free: an admitted
               // runtime.ensureThread/resumeThread registers in
