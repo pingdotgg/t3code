@@ -459,17 +459,62 @@ const ProjectLucideIconName = TrimmedNonEmptyString.check(
 
 const ProjectEmoji = TrimmedNonEmptyString.check(Schema.isMaxLength(32));
 
+// Grapheme-count validation belongs to the server command boundary, not snapshot decoding.
+export const ProjectMonogramText = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(32),
+  Schema.isPattern(/^[\p{L}\p{N}][\p{L}\p{N}\p{M}\u200c\u200d]*$/u),
+);
+
+const ProjectLucideIcon = Schema.Struct({
+  kind: Schema.Literal("lucide"),
+  name: ProjectLucideIconName,
+  color: ProjectIconColor,
+});
+const ProjectEmojiIcon = Schema.Struct({
+  kind: Schema.Literal("emoji"),
+  emoji: ProjectEmoji,
+});
+const ProjectMonogramIcon = Schema.Struct({
+  kind: Schema.Literal("monogram"),
+  text: ProjectMonogramText,
+  color: ProjectIconColor,
+});
+const ProjectIcon = Schema.Union([ProjectLucideIcon, ProjectEmojiIcon, ProjectMonogramIcon]);
+const ProjectLucideIconWire = Schema.Struct({
+  ...ProjectLucideIcon.fields,
+  monogramText: Schema.optional(ProjectMonogramText),
+  monogram: Schema.optional(ProjectMonogramText),
+});
+
+// Older peers only know lucide/emoji. Keep monograms out of their validated
+// `monogram` field too: old grapheme counters can reject otherwise valid text.
 export const ProjectIconOverride = Schema.Union([
-  Schema.Struct({
-    kind: Schema.Literal("lucide"),
-    name: ProjectLucideIconName,
-    color: ProjectIconColor,
-  }),
-  Schema.Struct({
-    kind: Schema.Literal("emoji"),
-    emoji: ProjectEmoji,
-  }),
-]);
+  ProjectLucideIconWire,
+  ProjectEmojiIcon,
+  ProjectMonogramIcon,
+]).pipe(
+  Schema.decodeTo(
+    ProjectIcon,
+    SchemaTransformation.transform({
+      decode: (icon): typeof ProjectIcon.Type => {
+        if (icon.kind !== "lucide") return icon;
+        const text = icon.monogramText ?? icon.monogram;
+        return text === undefined
+          ? { kind: "lucide", name: icon.name, color: icon.color }
+          : { kind: "monogram", text, color: icon.color };
+      },
+      encode: (icon) =>
+        icon.kind === "monogram"
+          ? {
+              kind: "lucide" as const,
+              name: "folder-code",
+              color: icon.color,
+              monogramText: icon.text,
+            }
+          : icon,
+    }),
+  ),
+);
 export type ProjectIconOverride = typeof ProjectIconOverride.Type;
 
 export const OrchestrationProject = Schema.Struct({
@@ -615,6 +660,14 @@ export const OrchestrationLatestTurn = Schema.Struct({
 });
 export type OrchestrationLatestTurn = typeof OrchestrationLatestTurn.Type;
 
+// Version changes even when a manual rename keeps the same text.
+export const ThreadTitleState = Schema.Struct({
+  source: Schema.Literals(["manual", "generated"]),
+  version: CommandId,
+  needsRefinement: Schema.Boolean,
+});
+export type ThreadTitleState = typeof ThreadTitleState.Type;
+
 export const ThreadTitleRegeneration = Schema.Struct({
   requestId: CommandId,
   startedAt: IsoDateTime,
@@ -758,6 +811,7 @@ export const OrchestrationThread = Schema.Struct({
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   // Pending-only state. Optional so older servers remain compatible.
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   deletedAt: Schema.NullOr(IsoDateTime),
   messages: Schema.Array(OrchestrationMessage),
   proposedPlans: Schema.Array(OrchestrationProposedPlan).pipe(
@@ -826,6 +880,7 @@ export const OrchestrationThreadShell = Schema.Struct({
   pinOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   activeOrderKey: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   session: Schema.NullOr(OrchestrationSession),
   latestUserMessageAt: Schema.NullOr(IsoDateTime),
   hasPendingApprovals: Schema.Boolean,
@@ -1430,6 +1485,24 @@ const ThreadHistoryImportCommand = Schema.Struct({
   ).check(Schema.isNonEmpty()),
 });
 
+/**
+ * Persists a user message without starting a turn. Used by worktree bootstraps
+ * so the send is durable while the worktree is still being prepared; the
+ * turn that follows references the same message id.
+ */
+const ThreadMessageUserAppendCommand = Schema.Struct({
+  type: Schema.Literal("thread.message.user.append"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  message: Schema.Struct({
+    messageId: MessageId,
+    text: Schema.String,
+    attachments: Schema.Array(ChatAttachment),
+    context: Schema.optional(OrchestrationMessageContext),
+  }),
+  createdAt: IsoDateTime,
+});
+
 const ThreadProposedPlanUpsertCommand = Schema.Struct({
   type: Schema.Literal("thread.proposed-plan.upsert"),
   commandId: CommandId,
@@ -1466,6 +1539,23 @@ const ThreadRevertCompleteCommand = Schema.Struct({
   threadId: ThreadId,
   turnCount: NonNegativeInt,
   createdAt: IsoDateTime,
+});
+
+const ThreadTitleGenerateCompleteCommand = Schema.Struct({
+  type: Schema.Literal("thread.title.generate.complete"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedTitle: TrimmedNonEmptyString,
+  expectedVersion: Schema.NullOr(CommandId),
+  title: TrimmedNonEmptyString,
+  needsRefinement: Schema.Boolean,
+});
+
+const ThreadTitleRefineCommand = Schema.Struct({
+  type: Schema.Literal("thread.title.refine"),
+  commandId: CommandId,
+  threadId: ThreadId,
+  expectedVersion: CommandId,
 });
 
 const ThreadTitleRegenerationCompleteCommand = Schema.Struct({
@@ -1510,11 +1600,14 @@ const InternalOrchestrationCommand = Schema.Union([
   ThreadMessageAssistantDeltaCommand,
   ThreadMessageAssistantCompleteCommand,
   ThreadHistoryImportCommand,
+  ThreadMessageUserAppendCommand,
   ThreadProposedPlanUpsertCommand,
   ThreadTurnDiffCompleteCommand,
   ThreadActivityAppendCommand,
   ThreadRevertCompleteCommand,
   ThreadTitleRegenerationCompleteCommand,
+  ThreadTitleGenerateCompleteCommand,
+  ThreadTitleRefineCommand,
   ThreadPullRequestSyncCommand,
   ThreadPullRequestLinkSyncCommand,
 ]);
@@ -1692,6 +1785,7 @@ export const ThreadMetaUpdatedPayload = Schema.Struct({
   previousTitle: Schema.optional(TrimmedNonEmptyString),
   /** Pending state shared with clients. Null clears a matching request. */
   titleRegeneration: Schema.optional(Schema.NullOr(ThreadTitleRegeneration)),
+  titleState: Schema.optional(Schema.NullOr(ThreadTitleState)),
   modelSelection: Schema.optional(ModelSelection),
   branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
   worktreePath: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
@@ -1848,6 +1942,12 @@ export const OrchestrationEventMetadata = Schema.Struct({
   requestId: Schema.optional(ApprovalRequestId),
   ingestedAt: Schema.optional(IsoDateTime),
   historyImport: Schema.optional(Schema.Boolean),
+  /**
+   * The user message was persisted ahead of its turn (worktree bootstrap).
+   * Reactors that key off a user message as "turn is starting" wait for the
+   * turn-start event instead.
+   */
+  deferredTurn: Schema.optional(Schema.Boolean),
   origin: Schema.optional(OrchestrationClientOrigin),
 });
 export type OrchestrationEventMetadata = typeof OrchestrationEventMetadata.Type;

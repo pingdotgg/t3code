@@ -83,7 +83,7 @@ import { isPdfFile } from "../../lib/filePreview";
 import { flattenThemeColor } from "../../lib/mobileTheme";
 import { PresentationSource } from "../../components/NativePresentation";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import Animated, { FadeIn, LinearTransition, type SharedValue } from "react-native-reanimated";
+import Animated, { FadeIn, type SharedValue } from "react-native-reanimated";
 import { useUniwindTheme } from "../../lib/useUniwindTheme";
 import { IOS_NAV_BAR_HEIGHT } from "../../lib/layoutMetrics";
 import { useFontFamily } from "../../lib/useFontFamily";
@@ -216,8 +216,6 @@ function formatMessageTime(input: string): string {
 // Fixed heights mirror renderFeedEntry's classNames and are only used while
 // text fits at the current font settings. Larger accessibility text is measured.
 const TURN_FOLD_HEIGHT = 42; // min-h-11 (38.5) + mb-1 (3.5), with the mobile 14px rem
-const THREAD_FEED_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
-const THREAD_FEED_IMMEDIATE_TRANSITION = LinearTransition.duration(0);
 // Tailwind spacing on the mobile 14px rem: px-3.5 on the user bubble, px-1 on
 // assistant rows. Images size their frame from these before their own layout.
 const USER_BUBBLE_HORIZONTAL_PADDING = 3.5 * 3.5;
@@ -2825,17 +2823,8 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
               entry.type === "message" ? `message:${entry.message.role}` : entry.type
             }
             getFixedItemSize={getFixedItemSize}
-            // Android can retain stale native row positions when layout transitions
-            // race the measurements arriving during sync, even with duration 0.
-            // Keep its rows on LegendList's non-animated positioning path. On iOS,
-            // keep a transition installed between disclosures so containers don't remount.
-            itemLayoutAnimation={
-              Platform.OS === "android"
-                ? undefined
-                : disclosureToggleSettling
-                  ? THREAD_FEED_LAYOUT_TRANSITION
-                  : THREAD_FEED_IMMEDIATE_TRANSITION
-            }
+            // Virtualized rows must move with their measurements. Native layout
+            // transitions can retain stale positions during sync, even at duration 0.
             onItemSizeChanged={handleItemSizeChanged}
             // Measure rows well before they scroll into view so estimate→actual
             // corrections land offscreen instead of under the user's finger.

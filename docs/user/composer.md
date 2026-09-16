@@ -29,6 +29,23 @@ also send files to T3 Code through another app's system share sheet.
 
 See [images and videos](#images-and-videos-in-messages) for previewing and saving media.
 
+## Send while the agent is working
+
+On web and desktop, a message sent during a running turn waits at the end of the conversation as a
+dashed bubble. It goes out on its own when the agent finishes its next tool
+call, or when the turn ends. Use the arrow under the bubble to send it right
+away, or the X to move it back into the composer. Stop returns every queued
+message to the composer.
+
+In **Settings → General → Follow-up behavior**, choose **Queue** to keep this
+behavior or **Steer** to send new messages immediately. This setting applies to
+the current client. Messages already queued keep their place.
+
+Use `Cmd+Shift+Enter` on macOS or `Ctrl+Shift+Enter` on Windows and Linux to send
+the oldest queued message now. Change `thread.steerQueuedMessage` in
+**Settings → Keybindings** to use another shortcut. It leaves the current draft
+in the composer and waits if the agent needs an approval or an answer.
+
 ## Queue messages offline on mobile
 
 Mobile keeps local copies of draft attachments, so you can preview them and queue
