@@ -729,9 +729,7 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
                 />
               </Animated.View>
             ) : null}
-            <Animated.View
-              className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}
-            >
+            <Animated.View className={isExpanded ? "px-[14px]" : "min-w-0 flex-1 px-[4px]"}>
               <ComposerEditor
                 draftKey={composerOwnerKey}
                 environmentId={props.environmentId}
@@ -905,91 +903,91 @@ export const ThreadComposer = memo(function ThreadComposer(props: ThreadComposer
             {isExpanded ? <View className="h-1" /> : null}
           </ComposerDictationDraftContent>
           {settingsToolbar.mount ? (
-          <Animated.View
-            accessibilityElementsHidden={!isToolbarVisible}
-            collapsable={false}
-            importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
-            pointerEvents={isToolbarVisible ? "auto" : "none"}
-            style={
-              settingsToolbar.overlayEditor
-                ? { position: "absolute", bottom: 2, left: 0, right: 0 }
-                : undefined
-            }
-          >
-            <ComposerDictationToolbar
-              showsDictation={isVoiceInputPresented}
-              visible={isToolbarVisible}
+            <Animated.View
+              accessibilityElementsHidden={!isToolbarVisible}
+              collapsable={false}
+              importantForAccessibility={isToolbarVisible ? "auto" : "no-hide-descendants"}
+              pointerEvents={isToolbarVisible ? "auto" : "none"}
+              style={
+                settingsToolbar.overlayEditor
+                  ? { position: "absolute", bottom: 2, left: 0, right: 0 }
+                  : undefined
+              }
             >
-              <ComposerToolbarRow
-                paddingBottom={0}
-                paddingHorizontal={0}
-                paddingTop={0}
-                style={{ gap: 0 }}
+              <ComposerDictationToolbar
+                showsDictation={isVoiceInputPresented}
+                visible={isToolbarVisible}
               >
-                <ComposerDictationCancelAction
-                  presentation={voicePresentation}
-                  onCancel={voiceInput.cancel}
-                />
-                {isVoiceInputPresented ? (
-                  <ComposerDictationStatus
-                    audioLevels={voiceInput.audioLevels}
-                    elapsedSeconds={voiceInput.elapsedSeconds}
-                    phase={voiceInput.state.phase}
+                <ComposerToolbarRow
+                  paddingBottom={0}
+                  paddingHorizontal={0}
+                  paddingTop={0}
+                  style={{ gap: 0 }}
+                >
+                  <ComposerDictationCancelAction
                     presentation={voicePresentation}
-                    onDismissError={voiceInput.cancel}
-                  />
-                ) : (
-                  <View className="min-w-0 flex-1 flex-row items-center justify-between">
-                    <ComposerAttachmentButton
-                      supportsFiles={Boolean(
-                        props.serverConfig?.environment.capabilities.fileAttachments,
-                      )}
-                      onPickMedia={props.onPickDraftMedia}
-                      onPickFiles={props.onPickDraftFiles}
-                    />
-                    <View className="min-w-0 shrink">
-                      <ComposerInlineControl
-                        accessibilityLabel="Model and reasoning settings"
-                        emphasized
-                        iconNode={
-                          <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
-                        }
-                        label={currentModelOption?.label ?? currentModelSelection.model}
-                        maxWidth="100%"
-                        onPress={openSettings}
-                      />
-                    </View>
-                  </View>
-                )}
-                <View className="shrink-0 flex-row items-center">
-                  <ComposerDictationPrimaryAction
-                    state={voiceInput.state}
-                    presentation={voicePresentation}
-                    isAvailable={voiceInput.isAvailable}
-                    onStart={voiceInput.start}
-                    onConfirm={voiceInput.stop}
                     onCancel={voiceInput.cancel}
                   />
-                  {showStopAction ? (
-                    <ComposerActionButton
-                      accessibilityLabel="Stop agent"
-                      icon="stop.fill"
-                      variant="danger"
-                      onPress={props.onStopThread}
+                  {isVoiceInputPresented ? (
+                    <ComposerDictationStatus
+                      audioLevels={voiceInput.audioLevels}
+                      elapsedSeconds={voiceInput.elapsedSeconds}
+                      phase={voiceInput.state.phase}
+                      presentation={voicePresentation}
+                      onDismissError={voiceInput.cancel}
                     />
-                  ) : voicePresentation.showsSend ? (
-                    <ComposerActionButton
-                      accessibilityLabel={sendBlockedReason ?? sendLabel}
-                      icon="arrow.up"
-                      variant="primary"
-                      disabled={!canSend}
-                      onPress={handleSend}
+                  ) : (
+                    <View className="min-w-0 flex-1 flex-row items-center justify-between">
+                      <ComposerAttachmentButton
+                        supportsFiles={Boolean(
+                          props.serverConfig?.environment.capabilities.fileAttachments,
+                        )}
+                        onPickMedia={props.onPickDraftMedia}
+                        onPickFiles={props.onPickDraftFiles}
+                      />
+                      <View className="min-w-0 shrink">
+                        <ComposerInlineControl
+                          accessibilityLabel="Model and reasoning settings"
+                          emphasized
+                          iconNode={
+                            <ProviderIcon provider={currentModelOption?.providerDriver} size={16} />
+                          }
+                          label={currentModelOption?.label ?? currentModelSelection.model}
+                          maxWidth="100%"
+                          onPress={openSettings}
+                        />
+                      </View>
+                    </View>
+                  )}
+                  <View className="shrink-0 flex-row items-center">
+                    <ComposerDictationPrimaryAction
+                      state={voiceInput.state}
+                      presentation={voicePresentation}
+                      isAvailable={voiceInput.isAvailable}
+                      onStart={voiceInput.start}
+                      onConfirm={voiceInput.stop}
+                      onCancel={voiceInput.cancel}
                     />
-                  ) : null}
-                </View>
-              </ComposerToolbarRow>
-            </ComposerDictationToolbar>
-          </Animated.View>
+                    {showStopAction ? (
+                      <ComposerActionButton
+                        accessibilityLabel="Stop agent"
+                        icon="stop.fill"
+                        variant="danger"
+                        onPress={props.onStopThread}
+                      />
+                    ) : voicePresentation.showsSend ? (
+                      <ComposerActionButton
+                        accessibilityLabel={sendBlockedReason ?? sendLabel}
+                        icon="arrow.up"
+                        variant="primary"
+                        disabled={!canSend}
+                        onPress={handleSend}
+                      />
+                    ) : null}
+                  </View>
+                </ComposerToolbarRow>
+              </ComposerDictationToolbar>
+            </Animated.View>
           ) : null}
         </ComposerSurface>
       </Animated.View>
