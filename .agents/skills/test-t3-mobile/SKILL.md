@@ -108,7 +108,7 @@ After `ensure` succeeds, open the Metro URL:
 xcrun simctl openurl <simulator-udid> <printed-dev-client-url>
 ```
 
-Accept the iOS confirmation prompt and dismiss the developer menu when it obscures the app.
+Accept the iOS confirmation prompt. Append `&disableAutoLaunch=1&disableFab=1` to the URL's query when the developer menu or its floating button would get in the way of screenshots or taps; the dev client applies them before the app loads.
 
 ### Android launch
 
