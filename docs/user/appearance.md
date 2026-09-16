@@ -13,6 +13,10 @@ can be selected separately for light and dark appearances.
 Android also offers **Material You Layout**, which changes shapes and spacing independently
 of the selected theme.
 
+On mobile, choose **App icon** in **Settings → Appearance** to change the home-screen icon.
+The selection stays independent of your theme. Select **T3 Code** to return to the default.
+Your phone's home-screen tint settings may change the displayed colors.
+
 ## Motion
 
 The main sidebar, right panel, and terminal drawer open and close immediately by default. Move the
