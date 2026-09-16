@@ -755,7 +755,10 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   ]);
   const rows = useStableRows(rawRows, listIdentityKey);
   const messageRowIndices = useMemo(
-    () => rows.flatMap((row, index) => (row.kind === "message" ? [index] : [])),
+    () =>
+      rows.flatMap((row, index) =>
+        row.kind === "message" || row.kind === "queued-message" ? [index] : [],
+      ),
     [rows],
   );
   const timelineHeaderSizeRef = useRef(0);
