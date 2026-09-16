@@ -29,6 +29,7 @@ const reads = new Set<string>([
   WS_METHODS.pullRequestsSummary,
   WS_METHODS.pullRequestsStack,
   WS_METHODS.pullRequestsDetail,
+  WS_METHODS.pullRequestsChecks,
   WS_METHODS.pullRequestsActivity,
   WS_METHODS.pullRequestsThreadComments,
   WS_METHODS.pullRequestsDiffFileContents,
@@ -251,7 +252,18 @@ export function createPullRequestRouter() {
       const connected = yield* registry
         .run(id, EnvironmentSupervisor.pipe(Effect.flatMap((s) => SubscriptionRef.get(s.session))))
         .pipe(Effect.orElseSucceed(() => Option.none()));
-      if (Option.isSome(connected)) alternatives.push({ id, local: isLocal(entry) });
+      if (Option.isNone(connected)) continue;
+      if (tag === WS_METHODS.pullRequestsChecks) {
+        const supported = yield* connected.value.initialConfig.pipe(
+          Effect.map((config) => config.environment.capabilities.pullRequestChecks === true),
+          Effect.timeout("2 seconds"),
+          Effect.catchCause((cause) =>
+            Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(false),
+          ),
+        );
+        if (!supported) continue;
+      }
+      alternatives.push({ id, local: isLocal(entry) });
     }
     if (alternatives.length === 0) return yield* finish(source);
 

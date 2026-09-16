@@ -16,6 +16,7 @@ import { buildMessageContext, reviewCommentContextReference } from "~/lib/compos
 import {
   buildAddSelectionToAgentHandoff,
   classifyPullRequestChecks,
+  groupPullRequestChecks,
   describePullRequestChecks,
   resolveThreadPanelPullRequestAction,
   buildAskAboutPullRequestHandoff,
@@ -54,6 +55,27 @@ import {
   writePullRequestDetailSnapshot,
 } from "./pullRequestDetail.logic";
 import type { ReviewCommentContext } from "~/reviewCommentContext";
+
+it("groups checks needing attention before running and completed checks without losing any", () => {
+  const checks = (
+    [
+      "success",
+      "pending",
+      "failure",
+      "skipped",
+      "action-required",
+      "cancelled",
+      "neutral",
+      "pending",
+    ] as const
+  ).map((status, index) => ({ name: `check-${index}`, status, description: null, url: null }));
+  const grouped = groupPullRequestChecks(checks);
+  expect(grouped.attention.map((check) => check.name)).toEqual(["check-2", "check-4", "check-5"]);
+  expect(grouped.running.map((check) => check.name)).toEqual(["check-1", "check-7"]);
+  expect(grouped.completed.map((check) => check.name)).toEqual(["check-0", "check-3", "check-6"]);
+  expect(checks[0]?.status).toBe("success");
+  expect(groupPullRequestChecks([])).toEqual({ attention: [], running: [], completed: [] });
+});
 
 describe("pull request checkout commands", () => {
   it.each([
@@ -1480,6 +1502,9 @@ describe("the compact row's single action slot", () => {
         openDetail({ checks: [check("success"), check("pending")] }),
       ),
     ).toBeNull();
+    expect(
+      resolveThreadPanelPullRequestAction(openDetail({ checks: [check("action-required")] })),
+    ).toBeNull();
   });
 
   it("ranks conflicts above everything, then draft, then failing checks", () => {
@@ -1528,6 +1553,10 @@ describe("the compact row's single action slot", () => {
       ]),
     ).toBe("7 of 16 running · 1 failed");
     expect(describePullRequestChecks([check("failure"), check("success")])).toBe("1 of 2 failing");
+    expect(describePullRequestChecks([check("action-required")])).toBe("1 of 1 awaiting action");
+    expect(describePullRequestChecks([check("action-required"), check("failure")])).toBe(
+      "1 of 2 awaiting action · 1 failed",
+    );
   });
 
   it("reads the checks as one word, failing outranking running", () => {

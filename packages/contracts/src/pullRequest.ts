@@ -861,6 +861,12 @@ export const PullRequestDetail = Schema.Struct({
 });
 export type PullRequestDetail = typeof PullRequestDetail.Type;
 
+export const PullRequestChecks = Schema.Struct({
+  state: PullRequestState,
+  checks: Schema.Array(PullRequestCheck),
+});
+export type PullRequestChecks = typeof PullRequestChecks.Type;
+
 /**
  * The slower, conversation-shaped half of a change request. It is read independently from the
  * core detail so a host with a deeply paginated review history cannot hold the title, body,

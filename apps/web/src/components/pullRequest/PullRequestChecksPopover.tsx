@@ -5,6 +5,8 @@ import type {
   PullRequestRef,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { ChevronDownIcon } from "lucide-react";
+import { useState } from "react";
 
 import { useOpenLink } from "~/browser/useOpenLink";
 import { cn } from "~/lib/utils";
@@ -12,8 +14,11 @@ import { pullRequestEnvironment } from "~/state/pullRequests";
 import { useEnvironmentQuery } from "~/state/query";
 
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
+import { Button } from "../ui/button";
+import { ScrollArea } from "../ui/scroll-area";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { toastManager } from "../ui/toast";
+import { groupPullRequestChecks } from "./pullRequestDetail.logic";
 import {
   PullRequestCheckStatusIcon,
   pullRequestCheckStatusLabel,
@@ -59,43 +64,61 @@ function ChecksBody({
   threadRef: ScopedThreadRef | null;
 }) {
   const openLink = useOpenLink(threadRef);
+  const [showAll, setShowAll] = useState(false);
+  const { attention, running, completed } = groupPullRequestChecks(checks);
+  const canCollapse = attention.length + running.length > 0 && completed.length > 0;
+  const visibleChecks = [...attention, ...running, ...(showAll || !canCollapse ? completed : [])];
   if (checks.length === 0) {
     return <p className="text-muted-foreground text-xs">No checks reported</p>;
   }
   return (
-    <ul className="flex flex-col gap-1">
-      {/* Keyed by position as well as by name: the host is the one that decides how many runs
+    <>
+      <ScrollArea className="max-h-64">
+        <ul className="flex flex-col gap-1">
+          {/* Keyed by position as well as by name: the host is the one that decides how many runs
           share a name, and a repeated key is a rendering fault rather than a wrong list. */}
-      {checks.map((check, index) => (
-        <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
-          <PullRequestCheckStatusIcon status={check.status} />
-          <Tooltip>
-            <TooltipTrigger
-              render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
-            />
-            <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
-          </Tooltip>
-          <span className="shrink-0 text-muted-foreground">
-            {pullRequestCheckStatusLabel(check)}
-          </span>
-          {check.url === null ? null : (
-            <button
-              type="button"
-              className="shrink-0 text-primary hover:underline"
-              onClick={() => {
-                if (!check.url) return;
-                void openLink(check.url).catch((error: unknown) => {
-                  console.error(error);
-                  toastManager.add({ type: "error", title: "Unable to open check details" });
-                });
-              }}
-            >
-              Details
-            </button>
-          )}
-        </li>
-      ))}
-    </ul>
+          {visibleChecks.map((check, index) => (
+            <li key={`${index}:${check.name}`} className="flex items-center gap-2 text-xs">
+              <PullRequestCheckStatusIcon status={check.status} />
+              <Tooltip>
+                <TooltipTrigger
+                  render={<span className="min-w-0 flex-1 truncate">{check.name}</span>}
+                />
+                <TooltipPopup side="top">{check.description ?? check.name}</TooltipPopup>
+              </Tooltip>
+              <span className="shrink-0 text-muted-foreground">
+                {pullRequestCheckStatusLabel(check)}
+              </span>
+              {check.url === null ? null : (
+                <button
+                  type="button"
+                  className="shrink-0 text-primary hover:underline"
+                  onClick={() => {
+                    if (!check.url) return;
+                    void openLink(check.url).catch((error: unknown) => {
+                      console.error(error);
+                      toastManager.add({ type: "error", title: "Unable to open check details" });
+                    });
+                  }}
+                >
+                  Details
+                </button>
+              )}
+            </li>
+          ))}
+        </ul>
+      </ScrollArea>
+      {canCollapse ? (
+        <Button
+          variant="ghost"
+          size="xs"
+          aria-expanded={showAll}
+          onClick={() => setShowAll(!showAll)}
+        >
+          {showAll ? "Show less" : "Show all"}
+        </Button>
+      ) : null}
+    </>
   );
 }
 
@@ -112,6 +135,7 @@ export function PullRequestChecksPopover({
   environmentId,
   reference,
   threadRef = null,
+  variant = "icon",
   className,
 }: {
   checksState: PullRequestChecksState;
@@ -121,29 +145,55 @@ export function PullRequestChecksPopover({
   reference?: PullRequestRef;
   /** Thread the popover sits beside; a listing row has none. */
   threadRef?: ScopedThreadRef | null;
+  variant?: "icon" | "count";
   className?: string;
 }) {
   const presentation = pullRequestChecksStatePresentation(checksState);
   // Counts beat the rollup's own wording where they are known, the way GitHub's own header reads.
   const summary = checks === undefined ? null : summarizePullRequestChecks(checks);
+  const count = checks?.filter((check) =>
+    checksState === "failing"
+      ? check.status === "failure" || check.status === "cancelled"
+      : checksState === "pending"
+        ? check.status === "pending" || check.status === "action-required"
+        : check.status === "success",
+  ).length;
   return (
     <Popover>
       {/* A listing row is itself a button, so the trigger renders as a span: a nested button is
           not valid inside one. The click is stopped here so opening the checks does not also
           select the row it sits on. */}
       <PopoverTrigger
-        nativeButton={false}
+        nativeButton={variant === "count"}
+        aria-label={
+          variant === "count"
+            ? `Open checks: ${summary ?? presentation.label}`
+            : `Checks: ${presentation.label}`
+        }
         render={
-          <span
-            role="button"
-            tabIndex={0}
-            aria-label={`Checks: ${presentation.label}`}
-            className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
-          />
+          variant === "count" ? (
+            <Button variant="ghost" size="sm" className={className} />
+          ) : (
+            <span
+              role="button"
+              tabIndex={0}
+              className={cn("inline-flex shrink-0 cursor-pointer items-center", className)}
+            />
+          )
         }
         onClick={(event) => event.stopPropagation()}
       >
         <presentation.Icon aria-hidden className={cn("size-3.5", presentation.toneClassName)} />
+        {variant === "count" ? (
+          <>
+            {checks === undefined ? null : (
+              <span className="tabular-nums">
+                {count}/{checks.length}
+              </span>
+            )}
+            <ChevronDownIcon aria-hidden className="size-3" />
+          </>
+        ) : null}
       </PopoverTrigger>
       <PopoverPopup align="start" className="w-80 max-w-full" side="bottom">
         <p className="mb-2 font-medium text-sm">{presentation.label}</p>
