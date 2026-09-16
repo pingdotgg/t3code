@@ -745,6 +745,96 @@ describe("OpenCodeAdapterV2", () => {
       }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
   );
 
+  it.effect("admits a native command on its user receipt before generation completes", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const release = promiseGate<void>();
+      const calls = yield* Queue.unbounded<{
+        messageID: string;
+        command: string;
+        arguments: string;
+        model: string;
+      }>();
+      let promptCalls = 0;
+      const sessionId = "native-command";
+      const harness = yield* makeOpenCodeRuntimeHarness("native-command", sessionId, {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({ data: { id: sessionId, time: { created: 1, updated: 1 } } }),
+          command: async (input: {
+            messageID: string;
+            command: string;
+            arguments: string;
+            model: string;
+          }) => {
+            Queue.offerUnsafe(calls, input);
+            await release.promise;
+            return { data: true };
+          },
+          promptAsync: async () => {
+            promptCalls++;
+            return { data: true };
+          },
+        },
+      });
+      const start = yield* harness.startTurn("/review staged changes").pipe(Effect.forkScoped);
+      const call = yield* Queue.take(calls);
+      assert.equal(call.command, "review");
+      assert.equal(call.arguments, "staged changes");
+      assert.equal(call.model, "anthropic/claude-sonnet");
+      yield* Effect.promise(() =>
+        nativeEvents.push({
+          type: "message.updated",
+          properties: {
+            sessionID: sessionId,
+            info: {
+              id: call.messageID,
+              sessionID: sessionId,
+              role: "user",
+              time: { created: DateTime.toEpochMillis(harness.now) },
+            },
+          },
+        }),
+      );
+      yield* Fiber.join(start);
+      assert.equal(promptCalls, 0);
+      release.resolve();
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
+  it.effect("sends unadvertised slash commands as ordinary prompts", () =>
+    Effect.gen(function* () {
+      const nativeEvents = asyncEventStream();
+      const prompts: unknown[] = [];
+      const harness = yield* makeOpenCodeRuntimeHarness("unknown-command", "unknown-command", {
+        event: {
+          subscribe: async (_input: unknown, options: { signal?: AbortSignal }) => {
+            options.signal?.addEventListener("abort", () => nativeEvents.close(), { once: true });
+            return { stream: nativeEvents.stream };
+          },
+        },
+        command: { list: async () => ({ data: [{ name: "review" }] }) },
+        session: {
+          create: async () => ({
+            data: { id: "unknown-command", time: { created: 1, updated: 1 } },
+          }),
+          promptAsync: async (input: { parts: unknown }) => {
+            prompts.push(input.parts);
+            return { data: true };
+          },
+        },
+      });
+      yield* harness.startTurn("/unknown words");
+      assert.deepEqual(prompts, [[{ type: "text", text: "/unknown words" }]]);
+    }).pipe(Effect.provide(idAllocatorLayer), Effect.scoped),
+  );
+
   it.effect("compacts with the native summarize API and emits a completed compaction", () =>
     Effect.gen(function* () {
       const nativeEvents = asyncEventStream();

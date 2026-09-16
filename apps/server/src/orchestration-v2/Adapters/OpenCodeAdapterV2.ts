@@ -44,6 +44,7 @@ import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -67,6 +68,7 @@ import { t3OrchestrationSystemPrompt } from "../../provider/T3OrchestrationInstr
 import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
 import {
   OpenCodeRuntime,
+  loadOpenCodeCommands,
   OpenCodeRuntimeError,
   openCodeQuestionId,
   openCodeRuntimeErrorDetail,
@@ -1042,6 +1044,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
         const events = yield* Queue.unbounded<ProviderAdapterV2Event, Cause.Done>();
         let nativeStreamFailure: OrchestrationV2ProviderFailure | null = null;
         const threads = new Map<string, OpenCodeThreadState>();
+        const commandReceipts = new Map<string, Deferred.Deferred<void>>();
+        const commandControllers = new Map<string, Set<AbortController>>();
         const pendingRequests = new Map<string, PendingOpenCodeRequest>();
         const pendingRequestsByNativeId = new Map<string, PendingOpenCodeRequest>();
         const subagentsByNativeItemId = new Map<string, OpenCodeSubagentContext>();
@@ -2494,6 +2498,8 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
             }
             return;
           }
+          const commandReceipt = commandReceipts.get(message.id);
+          if (commandReceipt) yield* Deferred.succeed(commandReceipt, undefined);
           const isNewUserMessage = !state.userMessageIds.includes(message.id);
           if (isNewUserMessage) state.userMessageIds.push(message.id);
           let turn = state.activeTurn;
@@ -2994,6 +3000,95 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
           };
         });
 
+        // Native commands wait for generation, unlike promptAsync. A user-message
+        // receipt admits the run while the scoped request continues in the background.
+        const submitPrompt = Effect.fn("OpenCode.submitPrompt")(function* (
+          state: OpenCodeThreadState,
+          turn: ActiveOpenCodeTurn,
+          payload: Parameters<typeof client.session.promptAsync>[0] & {
+            messageID: string;
+            sessionID: string;
+          },
+          abortController: AbortController,
+        ) {
+          const text = payload.parts
+            ?.filter((part) => part.type === "text")
+            .map((part) => part.text)
+            .join("\n")
+            .trim();
+          const match = text?.match(/^\/([^\s/]+)(?:\s+([\s\S]*))?$/);
+          const command = match
+            ? (yield* loadOpenCodeCommands(client).pipe(
+                Effect.timeout("10 seconds"),
+                Effect.orElseSucceed(() => []),
+              )).find((entry) => entry.name === match[1])
+            : undefined;
+          if (!command) {
+            return yield* sdkCall("session.promptAsync", payload, (signal) =>
+              client.session.promptAsync(payload, {
+                signal: AbortSignal.any([signal, abortController.signal]),
+              }),
+            ).pipe(Effect.asVoid);
+          }
+          const receipt = Deferred.makeUnsafe<void>();
+          commandReceipts.set(payload.messageID, receipt);
+          const controllers =
+            commandControllers.get(payload.sessionID) ?? new Set<AbortController>();
+          controllers.add(abortController);
+          commandControllers.set(payload.sessionID, controllers);
+          const generation = turn.admissionGeneration;
+          const commandPayload = {
+            sessionID: payload.sessionID,
+            messageID: payload.messageID,
+            command: command.name,
+            arguments: match?.[2] ?? "",
+            ...(payload.model
+              ? { model: `${payload.model.providerID}/${payload.model.modelID}` }
+              : {}),
+            ...(payload.agent ? { agent: payload.agent } : {}),
+            ...(payload.variant ? { variant: payload.variant } : {}),
+            parts: payload.parts?.filter((part) => part.type === "file") ?? [],
+          };
+          const request = yield* sdkCall("session.command", commandPayload, (signal) =>
+            client.session.command(commandPayload, {
+              signal: AbortSignal.any([signal, abortController.signal]),
+            }),
+          ).pipe(
+            Effect.asVoid,
+            Effect.tapError((cause) =>
+              abortController.signal.aborted ||
+              turn.finalized ||
+              turn.admissionGeneration !== generation
+                ? Effect.void
+                : finalizeTurn(state, turn, "failed", {
+                    failure: makeProviderFailure({ cause, class: "provider_error" }),
+                  }),
+            ),
+            Effect.ensuring(
+              Effect.sync(() => {
+                commandReceipts.delete(payload.messageID);
+                controllers.delete(abortController);
+                if (controllers.size === 0) commandControllers.delete(payload.sessionID);
+              }),
+            ),
+            Effect.forkIn(scope),
+          );
+          yield* Effect.raceFirst(Fiber.join(request), Deferred.await(receipt)).pipe(
+            Effect.timeout("10 seconds"),
+            Effect.catchTag("TimeoutError", (cause) => {
+              const error = new OpenCodeRuntimeError({
+                operation: "session.command",
+                detail: "OpenCode command admission did not complete within 10 seconds.",
+                cause,
+              });
+              abortController.abort();
+              return finalizeTurn(state, turn, "failed", {
+                failure: makeProviderFailure({ cause: error, class: "provider_error" }),
+              }).pipe(Effect.andThen(Effect.fail(error)));
+            }),
+          );
+        });
+
         const runtimeSession: ProviderAdapterV2SessionRuntime = {
           instanceId: options.instanceId,
           driver: OPENCODE_PROVIDER,
@@ -3240,8 +3335,9 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 turnInput.modelSelection,
                 "variant",
               );
-              yield* sdkCall(
-                "session.promptAsync",
+              yield* submitPrompt(
+                state,
+                turn,
                 {
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId!,
@@ -3251,19 +3347,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                   system: systemPrompt,
                   parts,
                 },
-                (signal) =>
-                  client.session.promptAsync(
-                    {
-                      sessionID: sessionId,
-                      messageID: turn.admissionMessageId!,
-                      model: parsedModel,
-                      ...(agent === undefined ? {} : { agent }),
-                      ...(variant === undefined ? {} : { variant }),
-                      system: systemPrompt,
-                      parts,
-                    },
-                    { signal: AbortSignal.any([signal, admissionAbortController!.signal]) },
-                  ),
+                admissionAbortController!,
               ).pipe(
                 Effect.tapError((cause) =>
                   admissionAbortController!.signal.aborted
@@ -3358,24 +3442,16 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 turn.usage.promptMessageIds.add(turn.admissionMessageId);
               const admissionSettled = turn.admissionSettled;
               const admissionAbortController = turn.admissionAbortController;
-              yield* sdkCall(
-                "session.promptAsync",
+              yield* submitPrompt(
+                state,
+                turn,
                 {
                   sessionID: sessionId,
                   messageID: turn.admissionMessageId,
                   model: parsedModel,
                   parts,
                 },
-                (signal) =>
-                  client.session.promptAsync(
-                    {
-                      sessionID: sessionId,
-                      messageID: turn.admissionMessageId!,
-                      model: parsedModel,
-                      parts,
-                    },
-                    { signal: AbortSignal.any([signal, admissionAbortController.signal]) },
-                  ),
+                admissionAbortController!,
               ).pipe(
                 Effect.ensuring(
                   Effect.all([
@@ -3420,6 +3496,7 @@ export function makeOpenCodeAdapterV2(options: OpenCodeAdapterV2Options): Provid
                 );
               }
               turn.interrupted = true;
+              for (const controller of commandControllers.get(sessionId) ?? []) controller.abort();
               const admissionWasPending = turn.admissionPending;
               cancelOpenCodePromptAdmission(turn, state!.nextAdmissionGeneration++);
               turn.admissionAbortController?.abort();

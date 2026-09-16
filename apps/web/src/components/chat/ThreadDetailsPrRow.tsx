@@ -1,3 +1,4 @@
+import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 /**
  * The thread details panel's pull request row: what the thread's pull request is, and the one
  * thing worth doing to it right now.
@@ -15,13 +16,7 @@
  */
 import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import type { EnvironmentId, ProjectId, PullRequestRef } from "@t3tools/contracts";
-import {
-  ArrowUpRightIcon,
-  FileDiffIcon,
-  GitBranchIcon,
-  GitPullRequestIcon,
-  TriangleAlertIcon,
-} from "lucide-react";
+import { ArrowUpRightIcon, FileDiffIcon, GitBranchIcon, TriangleAlertIcon } from "lucide-react";
 import { useState, type MouseEvent as ReactMouseEvent } from "react";
 
 import { cn } from "~/lib/utils";
@@ -171,16 +166,13 @@ export function ThreadDetailsPrRow({
     );
   };
 
-  // Once the host has answered, the glyph knows about drafts and conflicts, which the vcs
-  // summary does not. Draft outranks conflicts in it, same as the detail panel.
+  // Host details distinguish drafts; all panels share the same PR-state glyph.
   const statePresentation =
     detail === null
       ? null
       : resolvePullRequestState({
           state: detail.state,
           isDraft: detail.isDraft,
-          mergeability: detail.mergeability,
-          baseBranch: detail.baseBranch,
         });
   const icon = statePresentation ? (
     <statePresentation.Icon
@@ -193,7 +185,7 @@ export function ThreadDetailsPrRow({
       className={cn(THREAD_DETAILS_PANEL_ICON_CLASS, status.colorClass)}
     />
   ) : (
-    <GitPullRequestIcon className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+    <PullRequestGlyph.pullRequest className={THREAD_DETAILS_PANEL_ICON_CLASS} />
   );
 
   // Everything the host reported, at a glance. The row stays one line; the tooltip is where the
