@@ -712,10 +712,7 @@ const makeServerLayer = Layer.unwrap(
           yield* Deferred.succeed(cloudLinkParked, undefined).pipe(Effect.orDie);
           return;
         }
-        const desktopUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
-        const releaseManagedTunnel = releaseManagedTunnelOnShutdown(
-          desktopUpdate.isRestartPending,
-        ).pipe(
+        const releaseManagedTunnel = releaseManagedTunnelOnShutdown().pipe(
           Effect.timeout("10 seconds"),
           Effect.tap((released) =>
             released ? Effect.logInfo("Released the managed tunnel on shutdown") : Effect.void,

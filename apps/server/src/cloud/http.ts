@@ -59,6 +59,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import { requireEnvironmentScope } from "../auth/http.ts";
 import * as ServerConfig from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ManagedEndpointRuntime from "./ManagedEndpointRuntime.ts";
 import {
@@ -669,7 +670,7 @@ const pendingUpdateHandoffExists = Effect.gen(function* () {
 // link reconcile provisions a replacement tunnel under the same URL.
 export const releaseManagedTunnelOnShutdown = Effect.fn(
   "environment.cloud.releaseManagedTunnelOnShutdown",
-)(function* (desktopUpdatePending: Effect.Effect<boolean> = Effect.succeed(false)) {
+)(function* () {
   const dependencies = yield* cloudHttpDependencies;
   // Only a managed link stores a runtime config; publish-only links have no
   // tunnel to release.
@@ -694,7 +695,8 @@ export const releaseManagedTunnelOnShutdown = Effect.fn(
   // boot respawns the connector from the stored config and is reachable as
   // soon as it connects, and the reconcile confirms the still-live tunnel
   // without replacing it.
-  if ((yield* desktopUpdatePending) || (yield* pendingUpdateHandoffExists)) {
+  const desktopUpdate = yield* DesktopAppUpdate.DesktopAppUpdate;
+  if ((yield* desktopUpdate.isRestartPending) || (yield* pendingUpdateHandoffExists)) {
     yield* Effect.logInfo("Keeping the managed tunnel across the update restart");
     return false;
   }

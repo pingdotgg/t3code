@@ -1,12 +1,15 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import * as Deferred from "effect/Deferred";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Tracer from "effect/Tracer";
+import * as Stream from "effect/Stream";
 import {
   HttpClient,
   HttpClientResponse,
@@ -19,6 +22,8 @@ import { RelayClientTracer } from "@t3tools/shared/relayTracing";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
 import * as ServerConfigModule from "../config.ts";
+import * as DesktopAppUpdate from "../desktopUpdate/DesktopAppUpdate.ts";
+import * as DesktopTelemetryReceiver from "../resourceTelemetry/DesktopTelemetryReceiver.ts";
 import { writeServiceState } from "../serviceLauncher.ts";
 import {
   SERVICE_LAUNCHER_PROTOCOL,
@@ -337,6 +342,12 @@ describe("releaseManagedTunnelOnShutdown", () => {
         ),
         // The release consults the launcher state file under the configured
         // baseDir, so every harness run gets a scoped temp baseDir.
+        Effect.provide(DesktopAppUpdate.layer),
+        Effect.provide(
+          DesktopTelemetryReceiver.layerTest({
+            desktopUpdates: Effect.succeed({ latest: Option.none(), changes: Stream.never }),
+          }),
+        ),
         Effect.provide(
           ServerConfigModule.layerTest("/", { prefix: "t3-http-release-test-" }).pipe(
             Layer.provideMerge(NodeServices.layer),
@@ -460,7 +471,24 @@ describe("releaseManagedTunnelOnShutdown", () => {
     const requests: Array<HttpClientRequest.HttpClientRequest> = [];
 
     return Effect.gen(function* () {
-      const released = yield* releaseManagedTunnelOnShutdown(Effect.succeed(true));
+      const config = yield* ServerConfigModule.ServerConfig;
+      const desktopUpdate = yield* DesktopAppUpdate.make().pipe(
+        Effect.provideService(ServerConfigModule.ServerConfig, {
+          ...config,
+          mode: "desktop",
+          desktopTelemetryControlFd: 5,
+        }),
+      );
+      const accepted = yield* Deferred.make<void>();
+      const commit = yield* desktopUpdate
+        .commit("update-1", () => Deferred.succeed(accepted, undefined).pipe(Effect.asVoid))
+        .pipe(Effect.forkChild);
+      yield* Deferred.await(accepted);
+      yield* Fiber.interrupt(commit);
+
+      const released = yield* releaseManagedTunnelOnShutdown().pipe(
+        Effect.provideService(DesktopAppUpdate.DesktopAppUpdate, desktopUpdate),
+      );
 
       expect(released).toBe(false);
       expect(applyConfigCalls).toEqual([]);
