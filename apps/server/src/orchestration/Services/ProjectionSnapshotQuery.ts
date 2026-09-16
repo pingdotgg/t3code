@@ -71,6 +71,8 @@ export interface ProjectionThreadDetailQuery {
    * the activity query. Omit this option to preserve the full detail response.
    */
   readonly activityKinds?: ReadonlyArray<string>;
+  /** Omit message rows when a server caller only needs thread metadata or activities. */
+  readonly includeMessages?: boolean;
 }
 
 /**
