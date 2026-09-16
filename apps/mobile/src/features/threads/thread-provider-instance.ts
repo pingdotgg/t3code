@@ -4,7 +4,7 @@ import {
   resolveProviderInstanceDisplayName,
   shouldShowInstanceBadge,
 } from "@t3tools/client-runtime/state/provider-instance-display";
-import type { EnvironmentId, ProviderDriverKind, ServerConfig } from "@t3tools/contracts";
+import type { ProviderDriverKind, ServerConfig } from "@t3tools/contracts";
 
 /** What a thread row needs to draw the provider glyph and its account badge. */
 export interface ThreadRowProviderInstance {
@@ -20,10 +20,10 @@ export interface ThreadRowProviderInstance {
  * names a different account on every server.
  */
 export function resolveThreadProviderInstance(
-  serverConfigs: ReadonlyMap<EnvironmentId, ServerConfig>,
+  providers: ServerConfig["providers"] | undefined,
   thread: EnvironmentThreadShell,
 ): ThreadRowProviderInstance | null {
-  const providers = serverConfigs.get(thread.environmentId)?.providers ?? [];
+  if (providers === undefined) return null;
   const instanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const snapshot = providers.find((provider) => provider.instanceId === instanceId);
   if (!snapshot) return null;
