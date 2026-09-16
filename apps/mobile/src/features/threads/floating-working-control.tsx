@@ -1,3 +1,4 @@
+import type { SubagentPillSegment } from "@t3tools/client-runtime/state/thread-subagents";
 import { formatDuration } from "@t3tools/shared/orchestrationTiming";
 import { GlassContainer, GlassView } from "expo-glass-effect";
 import { type ReactNode, useEffect, useRef, useState } from "react";
@@ -65,16 +66,27 @@ export function FloatingWorkingControl(props: {
   readonly status: FloatingWorkingStatus | null;
   readonly showScrollToEnd: boolean;
   readonly onScrollToEnd: () => void;
+  readonly agents: SubagentPillSegment | null;
+  readonly onOpenAgents: () => void;
   readonly queuedCount: number;
   readonly onOpenQueue: () => void;
 }) {
   const { width: windowWidth } = useWindowDimensions();
   const [overlayWidth, setOverlayWidth] = useState(windowWidth);
   const [queueWidth, setQueueWidth] = useState(0);
+  const [agentsWidth, setAgentsWidth] = useState(0);
   const hasQueue = props.queuedCount > 0;
+  const agents = props.agents;
+  const hasAgents = agents !== null;
+  // Segments keep their measured width; only the status label absorbs the
+  // remainder, so a long "Working 12m 04s" truncates before a count does.
   const labelWidth = Math.max(
     0,
-    Math.min(overlayWidth, windowWidth) - CONTROL_HEIGHT - 32 - (hasQueue ? queueWidth : 0),
+    Math.min(overlayWidth, windowWidth) -
+      CONTROL_HEIGHT -
+      32 -
+      (hasQueue ? queueWidth : 0) -
+      (hasAgents ? agentsWidth : 0),
   );
   const separationProgress = useSharedValue(props.showScrollToEnd ? 1 : 0);
 
@@ -107,7 +119,7 @@ export function FloatingWorkingControl(props: {
   // Forget the width while no label is shown so the next one appears at its
   // own size instead of animating from the previous label's.
   const hasStatus = props.status !== null;
-  const hasCapsule = hasStatus || hasQueue;
+  const hasCapsule = hasStatus || hasQueue || hasAgents;
   useEffect(() => {
     if (!hasStatus) {
       measuredWidthRef.current = null;
@@ -125,8 +137,8 @@ export function FloatingWorkingControl(props: {
     return null;
   }
 
-  // The queue and reconnect labels have separate tap targets.
-  const statusInteractive = props.status?.kind === "connection" || hasQueue;
+  // The queue, agents, and reconnect labels have separate tap targets.
+  const statusInteractive = props.status?.kind === "connection" || hasQueue || hasAgents;
   // The host stays centered on the capsule, but its measurement constraint
   // comes from the overlay, independent of the capsule's current width.
   const statusContent =
@@ -157,6 +169,22 @@ export function FloatingWorkingControl(props: {
   const capsuleContent = (
     <View className="flex-row items-center">
       {statusContent}
+      {agents !== null ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Open agents, ${agents.accessibilityLabel}`}
+          accessibilityHint="Opens this turn's subagents"
+          onPress={props.onOpenAgents}
+          onLayout={(event) => setAgentsWidth(event.nativeEvent.layout.width)}
+          className="h-11 flex-row items-center gap-1.5 px-3 active:opacity-70"
+        >
+          {hasStatus ? <View className="mr-1 h-4 w-px bg-border" /> : null}
+          <SymbolView name="person.2" size={13} tintColorClassName="accent-foreground-muted" />
+          <Text className="font-t3-medium text-xs tabular-nums" numberOfLines={1}>
+            {agents.label}
+          </Text>
+        </Pressable>
+      ) : null}
       {hasQueue ? (
         <Pressable
           accessibilityRole="button"
@@ -167,7 +195,7 @@ export function FloatingWorkingControl(props: {
           style={{ maxWidth: Math.min(overlayWidth, windowWidth) * 0.45 }}
           className="h-11 flex-row items-center gap-2 px-3 active:opacity-70"
         >
-          {hasStatus ? <View className="mr-1 h-4 w-px bg-border" /> : null}
+          {hasStatus || hasAgents ? <View className="mr-1 h-4 w-px bg-border" /> : null}
           <SymbolView name="list.number" size={13} tintColorClassName="accent-foreground-muted" />
           <Text className="shrink font-t3-medium text-xs tabular-nums" numberOfLines={1}>
             {props.queuedCount} queued
