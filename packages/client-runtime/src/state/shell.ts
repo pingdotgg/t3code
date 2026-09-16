@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
+import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as SubscriptionRef from "effect/SubscriptionRef";
 import { AsyncResult, Atom } from "effect/unstable/reactivity";
@@ -21,6 +22,7 @@ import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { safeErrorLogAttributes } from "../errors/safeLog.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import { runCachePersistence } from "./cachePersistence.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import type { RpcSession } from "../rpc/session.ts";
 import { ShellSnapshotLoader } from "./shellSnapshotHttp.ts";
@@ -80,48 +82,39 @@ export const makeEnvironmentShellState = Effect.fn("EnvironmentShellState.make")
   );
   const persistence = yield* Queue.sliding<OrchestrationV2ShellSnapshot>(1);
 
-  const persist = Effect.fn("EnvironmentShellState.persist")(function* (
-    snapshot: OrchestrationV2ShellSnapshot,
+  const persistenceLock = yield* Semaphore.make(1);
+  let lastPersisted: OrchestrationV2ShellSnapshot | undefined;
+  const persistLatest = Effect.fn("EnvironmentShellState.persistLatest")(function* (
+    flush: boolean,
   ) {
-    let nextSnapshot = snapshot;
     while (true) {
-      yield* cache.saveShell(environmentId, nextSnapshot).pipe(
+      const latest = yield* Ref.get(latestLiveSnapshot);
+      if (Option.isNone(latest) || latest.value === lastPersisted) return;
+      const snapshot = latest.value;
+      const saved = yield* cache.saveShell(environmentId, snapshot).pipe(
+        Effect.as(true),
         Effect.catch((error) =>
           Effect.logWarning("Could not persist environment shell cache.").pipe(
-            Effect.annotateLogs({
-              environmentId,
-              ...safeErrorLogAttributes(error),
-            }),
+            Effect.annotateLogs({ environmentId, ...safeErrorLogAttributes(error) }),
+            Effect.as(false),
           ),
         ),
       );
-
-      const latestSnapshot = yield* Ref.get(latestLiveSnapshot);
-      // Same sequence can still mean newer content (e.g. repository enrichment).
-      if (Option.isNone(latestSnapshot) || latestSnapshot.value === nextSnapshot) {
-        return;
-      }
-      nextSnapshot = latestSnapshot.value;
+      if (!saved) return;
+      lastPersisted = snapshot;
+      // Only lifecycle flushes chase updates that arrived during an in-flight save.
+      // The regular worker leaves those updates for the next write window.
+      if (!flush) return;
     }
-  });
-
-  const flushLiveShellSnapshot = Effect.gen(function* () {
-    const snapshot = yield* Ref.get(latestLiveSnapshot);
-    if (Option.isNone(snapshot)) {
-      return;
-    }
-    yield* persist(snapshot.value);
-  });
+  }, persistenceLock.withPermit);
+  const persist = () => persistLatest(false);
+  const flushLiveShellSnapshot = persistLatest(true);
 
   // Register before scoped worker fibers so reverse finalizer order interrupts
   // those fibers first and this flush sees a stable latestLiveSnapshot.
   yield* Effect.addFinalizer(() => flushLiveShellSnapshot);
 
-  yield* Stream.fromQueue(persistence).pipe(
-    Stream.debounce("500 millis"),
-    Stream.runForEach(persist),
-    Effect.forkScoped,
-  );
+  yield* runCachePersistence(persistence, persist).pipe(Effect.forkScoped);
 
   const setDisconnected = Ref.set(awaitingCompletion, false).pipe(
     Effect.andThen(

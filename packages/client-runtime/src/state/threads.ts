@@ -26,6 +26,7 @@ import { connectionProjectionPhase } from "../connection/model.ts";
 import { EnvironmentSupervisor } from "../connection/supervisor.ts";
 import * as ConnectionWakeups from "../connection/wakeups.ts";
 import { EnvironmentCacheStore } from "../platform/persistence.ts";
+import { runCachePersistence } from "./cachePersistence.ts";
 import { ManagedRelayDpopSigner } from "../relay/managedRelay.ts";
 import { subscribeDynamic } from "../rpc/client.ts";
 import { parseThreadKey, threadKey } from "./entities.ts";
@@ -252,6 +253,8 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     snapshot: OrchestrationV2ThreadDetailSnapshot,
   ) {
     if (resumeCache !== undefined && resumeCache.owner !== owner) return;
+    // A deletion can arrive while an older snapshot waits in the persistence queue.
+    if (committed.state.status === "deleted") return;
     if (
       committed.persisted &&
       matchesThreadSnapshot(
@@ -290,11 +293,27 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
     );
   });
 
-  yield* Stream.fromQueue(persistence).pipe(
-    Stream.debounce("500 millis"),
-    Stream.runForEach(persist),
-    Effect.forkScoped,
+  yield* Effect.addFinalizer(() =>
+    Effect.suspend(() => {
+      const { state: current, sequence: snapshotSequence } = committed;
+      return Option.match(current.data, {
+        onNone: () => Effect.void,
+        onSome: (projection) =>
+          shouldPersistThread(projection, current.history)
+            ? persist(
+                snapshotToPersist(
+                  snapshotSequence,
+                  projection,
+                  current.history,
+                  committed.acceptsBoundedSnapshots === true,
+                ),
+              )
+            : Effect.void,
+      });
+    }),
   );
+
+  yield* runCachePersistence(persistence, persist).pipe(Effect.forkScoped);
 
   const setConnecting = SubscriptionRef.update(state, (current) =>
     current.status === "deleted" || Option.isSome(current.error)
@@ -880,26 +899,6 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         resubscribe: foregroundResubscriptions,
       },
     ).pipe(Stream.runForEachArray(applyItems)),
-  );
-
-  yield* Effect.addFinalizer(() =>
-    Effect.suspend(() => {
-      const { state: current, sequence: snapshotSequence } = committed;
-      return Option.match(current.data, {
-        onNone: () => Effect.void,
-        onSome: (projection) =>
-          shouldPersistThread(projection, current.history)
-            ? persist(
-                snapshotToPersist(
-                  snapshotSequence,
-                  projection,
-                  current.history,
-                  committed.acceptsBoundedSnapshots === true,
-                ),
-              )
-            : Effect.void,
-      });
-    }),
   );
 
   return state;
