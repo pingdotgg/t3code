@@ -31,6 +31,8 @@ import {
   resolveNewThreadModelSelectionOverride,
 } from "../lib/chatThreadActions";
 import { readT3ProjectFileDefaultThreadEnvMode } from "../lib/t3ProjectFileDefaults";
+import { appAtomRegistry } from "../rpc/atomRegistry";
+import { environmentPresentations } from "../state/presentation";
 import { environmentServerConfigsAtom } from "../state/server";
 import { resolveThreadRouteTarget } from "../threadRoutes";
 import { legacyProjectCwdPreferenceKey, useUiStateStore } from "../uiStateStore";
@@ -153,8 +155,18 @@ export function useNewThreadHandler() {
       // The shared resolver owns the priority order. The t3.json read is
       // skipped entirely when a higher-priority source decides, and its
       // query atom caches per project after the first call.
+      /**
+       * Resolve the destination's environment mode without waiting on a
+       * project file owned by an unavailable environment.
+       */
       const resolveDefaultEnvMode = async (): Promise<DraftThreadEnvMode> => {
-        const consultProjectFile = project !== undefined && projectThreadEnvMode == null;
+        // Retrying environments suspend file queries until reconnection. Opening
+        // a local draft must not wait for that optional defaults file.
+        const consultProjectFile =
+          project !== undefined &&
+          projectThreadEnvMode == null &&
+          appAtomRegistry.get(environmentPresentations.presentationAtom(project.environmentId))
+            ?.connection.phase === "connected";
         return resolveDefaultThreadEnvMode({
           projectSetting: projectThreadEnvMode,
           projectFile: consultProjectFile
