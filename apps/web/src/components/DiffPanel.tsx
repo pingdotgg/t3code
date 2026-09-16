@@ -1063,7 +1063,16 @@ export default function DiffPanel({
                       (node): node is HTMLElement =>
                         node instanceof HTMLElement && node.hasAttribute("data-title"),
                     );
-                    const filePath = title?.textContent?.trim();
+                    // Metadata and blank header areas have no data-title in
+                    // the click path; fall back to the enclosing header's
+                    // filename like onClickCapture does.
+                    const header = composedPath.find(
+                      (node): node is HTMLElement =>
+                        node instanceof HTMLElement && node.hasAttribute("data-diffs-header"),
+                    );
+                    const filePath = (
+                      title?.textContent ?? header?.querySelector("[data-title]")?.textContent
+                    )?.trim();
                     if (!filePath) return;
                     event.preventDefault();
                     onFileContextMenu(
