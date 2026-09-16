@@ -45,6 +45,7 @@ const runtimeMock = {
     sdkClientInputs: [] as Array<{
       baseUrl: string;
       directory: string;
+      external: boolean;
       serverPassword?: string;
     }>,
     inventory: {
@@ -372,6 +373,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         {
           baseUrl: "http://127.0.0.1:4301",
           directory: process.cwd(),
+          external: false,
           serverPassword: "secret-password",
         },
       ]);
@@ -390,6 +392,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus", (it) => {
         {
           baseUrl: "http://127.0.0.1:4301",
           directory: process.cwd(),
+          external: false,
           serverPassword: "environment-password",
         },
       ]);
@@ -438,6 +441,7 @@ it.layer(testLayer)("checkOpenCodeProviderStatus with configured server URL", (i
         {
           baseUrl: "http://127.0.0.1:9999",
           directory: process.cwd(),
+          external: true,
         },
       ]);
     }),
