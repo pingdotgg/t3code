@@ -46,14 +46,20 @@ function Step([string] $message) {
 }
 function Draw-Download([long] $bytes, [long] $total) {
   if (-not $interactive) { return }
-  if ($total -gt 0) {
+  $columns = [Console]::WindowWidth
+  if ($columns -le 0) { $columns = 80 }
+  if ($total -gt 0 -and $columns -ge 9) {
     $percent = [Math]::Min(100, [Math]::Floor($bytes * 100.0 / $total))
-    $filled = [int][Math]::Floor($percent * 32 / 100)
+    $width = [Math]::Min(32, $columns - 8)
+    $filled = [int][Math]::Floor($percent * $width / 100)
     $bar = ([string][char]0x25A0) * $filled
-    $rest = ([string][char]0x00B7) * (32 - $filled)
-    [Console]::Error.Write(("`r$esc[2K  $accent$bar$reset$muted$rest$reset {0,3}%  $muted{1:F1} / {2:F1} MB$reset" -f $percent, ($bytes / 1MB), ($total / 1MB)))
+    $rest = ([string][char]0x00B7) * ($width - $filled)
+    $sizes = ("  {0:F1} / {1:F1} MB" -f ($bytes / 1MB), ($total / 1MB))
+    if ($width + 7 + $sizes.Length -ge $columns) { $sizes = "" }
+    [Console]::Error.Write(("`r$esc[2K  $accent$bar$reset$muted$rest$reset {0,3}%" -f $percent) + "$muted$sizes$reset")
   } else {
-    [Console]::Error.Write(("`r$esc[2K  ${muted}Downloading$reset  {0:F1} MB" -f ($bytes / 1MB)))
+    $line = if ($columns -ge 32) { "  Downloading  {0:F1} MB" -f ($bytes / 1MB) } else { "  {0:F1} MB" -f ($bytes / 1MB) }
+    [Console]::Error.Write("`r$esc[2K" + $line.Substring(0, [Math]::Min($line.Length, $columns - 1)))
   }
 }
 function Fetch([string] $uri, [string] $destination, [switch] $progress) {
