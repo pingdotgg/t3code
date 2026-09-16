@@ -92,6 +92,15 @@ export type SpawnExecutableResolver = (
   env: NodeJS.ProcessEnv,
 ) => string | undefined;
 
+// Spawns often resolve the same CLI several times in one operation. Retain
+// positive PATH scans briefly, but check the selected file on every cache hit.
+const spawnExecutableCache = new Map<
+  string,
+  { readonly path: string; readonly expiresAt: number }
+>();
+const SPAWN_EXECUTABLE_CACHE_TTL_MS = 1_000;
+const SPAWN_EXECUTABLE_CACHE_MAX_ENTRIES = 512;
+
 function resolveSpawnExecutableWithNode(
   command: string,
   platform: NodeJS.Platform,
@@ -121,12 +130,36 @@ function resolveSpawnExecutableWithNode(
     return candidates.find(isExecutable);
   }
 
+  const cacheKey = JSON.stringify([
+    platform,
+    readEnvPath(env),
+    windowsPathExtensions,
+    command,
+    process.cwd(),
+  ]);
+  const now = performance.now();
+  const cached = spawnExecutableCache.get(cacheKey);
+  if (cached !== undefined) {
+    if (cached.expiresAt > now && isExecutable(cached.path)) return cached.path;
+    spawnExecutableCache.delete(cacheKey);
+  }
+
   for (const pathEntry of (readEnvPath(env) ?? "").split(pathDelimiterForPlatform(platform))) {
     const normalizedPathEntry = stripWrappingQuotes(pathEntry.trim());
     if (normalizedPathEntry.length === 0) continue;
     for (const candidate of candidates) {
       const candidatePath = path.join(normalizedPathEntry, candidate);
-      if (isExecutable(candidatePath)) return candidatePath;
+      if (isExecutable(candidatePath)) {
+        if (spawnExecutableCache.size >= SPAWN_EXECUTABLE_CACHE_MAX_ENTRIES) {
+          const oldest = spawnExecutableCache.keys().next().value;
+          if (oldest !== undefined) spawnExecutableCache.delete(oldest);
+        }
+        spawnExecutableCache.set(cacheKey, {
+          path: candidatePath,
+          expiresAt: now + SPAWN_EXECUTABLE_CACHE_TTL_MS,
+        });
+        return candidatePath;
+      }
     }
   }
   return undefined;
