@@ -1,6 +1,8 @@
 import AppleTranscription from "@react-native-ai/apple/src/NativeAppleTranscription";
 import { File } from "expo-file-system";
 
+import { cleanVoiceTranscript } from "./voiceTranscriptCleanup.ios";
+
 import {
   VoiceTranscriptionError,
   throwIfVoiceTranscriptionAborted,
@@ -87,10 +89,11 @@ async function transcribeVoiceRecording(
     throwIfVoiceTranscriptionAborted(signal);
     const result = await AppleTranscription.transcribe(audio, locale);
     throwIfVoiceTranscriptionAborted(signal);
-    return result.segments
+    const text = result.segments
       .map((segment) => segment.text)
       .join(" ")
       .trim();
+    return await cleanVoiceTranscript(text, signal);
   } catch (error) {
     throwIfVoiceTranscriptionAborted(signal);
     throw wrapError("transcription-failed", "Voice transcription failed.", error);
