@@ -8,6 +8,7 @@ import {
 } from "@t3tools/contracts";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Encoding from "effect/Encoding";
 import * as Fiber from "effect/Fiber";
@@ -22,9 +23,19 @@ import { HostProcessPlatform } from "@t3tools/shared/hostProcess";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServerSettings from "../serverSettings.ts";
 
+export const GITHUB_OAUTH_FLOW_TIMEOUT = Duration.minutes(15);
+export const GITHUB_OAUTH_STATE_RETENTION = Duration.minutes(5);
+
+interface StateEntry {
+  readonly state: SubscriptionRef.SubscriptionRef<GitHubOAuthState>;
+  subscribers: number;
+  reapRequested: boolean;
+}
+
 interface ActiveFlow {
   readonly flowId: string;
   readonly state: SubscriptionRef.SubscriptionRef<GitHubOAuthState>;
+  readonly entry: StateEntry;
   /** A flow that started without an account may create its account on success. */
   readonly accountExistedAtStart: boolean;
   fiber?: Fiber.Fiber<void, unknown>;
@@ -71,15 +82,41 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
   const processRunner = yield* ProcessRunner.ProcessRunner;
   const serverSettings = yield* ServerSettings.ServerSettingsService;
   const platform = yield* HostProcessPlatform;
-  const states = new Map<GitHubAccountId, SubscriptionRef.SubscriptionRef<GitHubOAuthState>>();
+  const states = new Map<GitHubAccountId, StateEntry>();
   const active = new Map<GitHubAccountId, ActiveFlow>();
 
   const getState = Effect.fn("GitHubOAuth.getState")(function* (accountId: GitHubAccountId) {
     const existing = states.get(accountId);
     if (existing) return existing;
-    const created = yield* SubscriptionRef.make(idleState(accountId));
-    states.set(accountId, created);
-    return created;
+    const entry: StateEntry = {
+      state: yield* SubscriptionRef.make(idleState(accountId)),
+      subscribers: 0,
+      reapRequested: false,
+    };
+    states.set(accountId, entry);
+    return entry;
+  });
+
+  const isTerminal = (phase: GitHubOAuthState["phase"]) =>
+    phase === "succeeded" || phase === "failed" || phase === "cancelled";
+
+  const scheduleStateReap = Effect.fn("GitHubOAuth.scheduleStateReap")(function* (
+    accountId: GitHubAccountId,
+    entry: StateEntry,
+    flowId: string,
+  ) {
+    yield* Effect.sleep(GITHUB_OAUTH_STATE_RETENTION).pipe(
+      Effect.flatMap(() =>
+        Effect.gen(function* () {
+          if (states.get(accountId) !== entry || active.has(accountId)) return;
+          const state = yield* SubscriptionRef.get(entry.state);
+          if (state.flowId !== flowId || !isTerminal(state.phase)) return;
+          entry.reapRequested = true;
+          if (entry.subscribers === 0) states.delete(accountId);
+        }),
+      ),
+      Effect.forkIn(scope),
+    );
   });
 
   const fail = (accountId: GitHubAccountId, operation: string, detail: string, cause?: unknown) =>
@@ -240,6 +277,8 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
     const account = yield* persistCredential(input, flow, token, login);
     if (account === null || active.get(input.accountId) !== flow) return;
     active.delete(input.accountId);
+    yield* scheduleStateReap(input.accountId, flow.entry, flow.flowId);
+    if (active.get(input.accountId) !== undefined) return;
     yield* SubscriptionRef.set(flow.state, {
       accountId: input.accountId,
       phase: "succeeded",
@@ -260,7 +299,6 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
       ),
       Effect.map((settings) => settings.githubAccounts[input.accountId] !== undefined),
     );
-    const state = yield* getState(input.accountId);
     const flowId = Encoding.encodeBase64Url(
       yield* crypto
         .randomBytes(18)
@@ -270,7 +308,9 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
           ),
         ),
     );
-    const flow: ActiveFlow = { flowId, state, accountExistedAtStart };
+    const entry = yield* getState(input.accountId);
+    entry.reapRequested = false;
+    const flow: ActiveFlow = { flowId, state: entry.state, entry, accountExistedAtStart };
     active.set(input.accountId, flow);
     const starting: GitHubOAuthState = {
       accountId: input.accountId,
@@ -281,13 +321,22 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
       account: null,
       message: "Starting GitHub sign-in.",
     };
-    yield* SubscriptionRef.set(state, starting);
+    yield* SubscriptionRef.set(entry.state, starting);
     const fiber = yield* runFlow(input, flow).pipe(
+      Effect.timeoutOrElse({
+        duration: GITHUB_OAUTH_FLOW_TIMEOUT,
+        orElse: () =>
+          Effect.fail(
+            fail(input.accountId, "authorize", "GitHub sign-in timed out. Start sign-in again."),
+          ),
+      }),
       Effect.catch((error) =>
         Effect.gen(function* () {
           if (active.get(input.accountId) !== flow) return;
           active.delete(input.accountId);
-          yield* SubscriptionRef.update(state, (current): GitHubOAuthState => ({
+          yield* scheduleStateReap(input.accountId, entry, flow.flowId);
+          if (active.get(input.accountId) !== undefined) return;
+          yield* SubscriptionRef.update(entry.state, (current): GitHubOAuthState => ({
             ...current,
             phase: "failed",
             verificationUrl: null,
@@ -300,7 +349,28 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
       Effect.forkIn(scope),
     );
     flow.fiber = fiber;
+    if (active.get(input.accountId) !== flow) yield* Fiber.interrupt(fiber);
     return starting;
+  });
+
+  const cancelActiveFlow = Effect.fn("GitHubOAuth.cancelActiveFlow")(function* (
+    accountId: GitHubAccountId,
+    flow: ActiveFlow,
+  ) {
+    if (active.get(accountId) !== flow) return;
+    active.delete(accountId);
+    if (flow.fiber) yield* Fiber.interrupt(flow.fiber);
+    if (active.get(accountId) !== undefined) return;
+    yield* scheduleStateReap(accountId, flow.entry, flow.flowId);
+    if (active.get(accountId) !== undefined) return;
+    const cancelled: GitHubOAuthState = {
+      ...(yield* SubscriptionRef.get(flow.state)),
+      phase: "cancelled",
+      verificationUrl: null,
+      userCode: null,
+      message: "GitHub sign-in cancelled.",
+    };
+    yield* SubscriptionRef.set(flow.state, cancelled);
   });
 
   const cancel: GitHubOAuth["Service"]["cancel"] = Effect.fn("GitHubOAuth.cancel")(
@@ -309,30 +379,39 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
       if (!flow || flow.flowId !== flowId) {
         return yield* fail(accountId, "cancel", "This GitHub sign-in is no longer active.");
       }
-      active.delete(accountId);
-      if (flow.fiber) yield* Fiber.interrupt(flow.fiber);
-      const cancelled: GitHubOAuthState = {
-        ...(yield* SubscriptionRef.get(flow.state)),
-        phase: "cancelled",
-        verificationUrl: null,
-        userCode: null,
-        message: "GitHub sign-in cancelled.",
-      };
-      yield* SubscriptionRef.set(flow.state, cancelled);
-      return cancelled;
+      yield* cancelActiveFlow(accountId, flow);
+      return yield* SubscriptionRef.get(flow.state);
     },
   );
 
   const subscribe = (accountId: GitHubAccountId) =>
     Stream.unwrap(
-      getState(accountId).pipe(
-        Effect.map((state) =>
-          Stream.concat(
-            Stream.fromEffect(SubscriptionRef.get(state)),
-            SubscriptionRef.changes(state),
-          ).pipe(Stream.changes),
-        ),
-      ),
+      Effect.gen(function* () {
+        const entry = yield* getState(accountId);
+        entry.subscribers += 1;
+        const release = Effect.gen(function* () {
+          entry.subscribers = Math.max(0, entry.subscribers - 1);
+          const flow = active.get(accountId);
+          // `start` and `subscribe` are separate RPCs, so retain the flow while
+          // any client is observing it and cancel only when the last one leaves.
+          if (flow?.entry === entry && entry.subscribers === 0) {
+            yield* cancelActiveFlow(accountId, flow);
+            return;
+          }
+          if (
+            entry.subscribers === 0 &&
+            states.get(accountId) === entry &&
+            !active.has(accountId) &&
+            ((yield* SubscriptionRef.get(entry.state)).phase === "idle" || entry.reapRequested)
+          ) {
+            states.delete(accountId);
+          }
+        });
+        return Stream.concat(
+          Stream.fromEffect(SubscriptionRef.get(entry.state)),
+          SubscriptionRef.changes(entry.state),
+        ).pipe(Stream.changes, Stream.ensuring(release));
+      }),
     );
 
   return GitHubOAuth.of({ start, cancel, subscribe });

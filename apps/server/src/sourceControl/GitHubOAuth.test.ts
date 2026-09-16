@@ -1,12 +1,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { GitHubAccountId } from "@t3tools/contracts";
+import { GitHubAccountId, type GitHubOAuthState } from "@t3tools/contracts";
 import { assert, it } from "@effect/vitest";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Sink from "effect/Sink";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import * as ChildProcessSpawner from "effect/unstable/process/ChildProcessSpawner";
 
 import * as ProcessRunner from "../processRunner.ts";
@@ -15,11 +17,25 @@ import * as GitHubOAuth from "./GitHubOAuth.ts";
 
 const encoder = new TextEncoder();
 
+const waitForPhase = Effect.fn("GitHubOAuth.test.waitForPhase")(function* (
+  oauth: GitHubOAuth.GitHubOAuth["Service"],
+  accountId: GitHubAccountId,
+  phase: GitHubOAuthState["phase"],
+) {
+  const reached = yield* Deferred.make<void>();
+  const fiber = yield* oauth.subscribe(accountId).pipe(
+    Stream.runForEach((state) =>
+      state.phase === phase ? Deferred.succeed(reached, undefined) : Effect.void,
+    ),
+    Effect.forkScoped,
+  );
+  return { reached, fiber };
+});
+
 it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
   it.effect("surfaces a pre-subscription device code and persists the OAuth credential", () =>
     Effect.gen(function* () {
       const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
-      const waitingPublished = yield* Deferred.make<void>();
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
           ChildProcessSpawner.makeHandle({
@@ -30,10 +46,7 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
             unref: Effect.succeed(Effect.void),
             stdin: Sink.drain,
             stdout: Stream.empty,
-            stderr: Stream.concat(
-              Stream.make(encoder.encode("! First copy your one-time code: TEST-CODE\n")),
-              Stream.fromEffect(Deferred.succeed(waitingPublished, undefined)).pipe(Stream.drain),
-            ),
+            stderr: Stream.make(encoder.encode("! First copy your one-time code: TEST-CODE\n")),
             all: Stream.empty,
             getInputFd: () => Sink.drain,
             getOutputFd: () => Stream.empty,
@@ -65,21 +78,26 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
       yield* Effect.gen(function* () {
         const oauth = yield* GitHubOAuth.GitHubOAuth;
         const settings = yield* ServerSettings.ServerSettingsService;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        const succeeded = yield* waitForPhase(oauth, accountId, "succeeded");
         yield* oauth.start({ accountId, label: "Personal", host: "github.com" });
-        yield* Deferred.await(waitingPublished);
-        const waiting = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
-        assert.isTrue(Option.isSome(waiting));
-        assert.equal(Option.getOrThrow(waiting).userCode, "TEST-CODE");
-        assert.equal(Option.getOrThrow(waiting).verificationUrl, "https://github.com/login/device");
+        yield* Deferred.await(waiting.reached);
+        const waitingState = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(waitingState));
+        assert.equal(Option.getOrThrow(waitingState).userCode, "TEST-CODE");
+        assert.equal(
+          Option.getOrThrow(waitingState).verificationUrl,
+          "https://github.com/login/device",
+        );
 
         yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
-        const succeeded = yield* oauth.subscribe(accountId).pipe(
-          Stream.filter((state) => state.phase === "succeeded"),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(succeeded));
-        assert.equal(Option.getOrThrow(succeeded).account?.login, "octocat");
+        yield* Deferred.await(succeeded.reached);
+        const succeededState = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(succeededState));
+        assert.equal(Option.getOrThrow(succeededState).account?.login, "octocat");
         assert.isTrue((yield* settings.getSettings).githubAccounts[accountId]?.tokenConfigured);
+        yield* Fiber.interrupt(waiting.fiber);
+        yield* Fiber.interrupt(succeeded.fiber);
       }).pipe(Effect.provide(layer));
     }),
   );
@@ -118,19 +136,173 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
 
       yield* Effect.gen(function* () {
         const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const account = yield* waitForPhase(oauth, accountId, "waiting");
         const started = yield* oauth.start({
           accountId,
           label: "Cancelled",
           host: "github.com",
         });
-        yield* oauth.subscribe(accountId).pipe(
-          Stream.filter((state) => state.phase === "waiting"),
-          Stream.runHead,
-        );
+        yield* Deferred.await(account.reached);
         const cancelled = yield* oauth.cancel(accountId, started.flowId!);
         assert.equal(cancelled.phase, "cancelled");
         assert.isTrue(killed);
+        yield* Fiber.interrupt(account.fiber);
       }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("cancels an active flow when its last subscription disconnects", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      let killed = false;
+      const accountId = GitHubAccountId.make("disconnected");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(3),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.sync(() => void (killed = true)),
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: DISCONNECT-ME\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () => Effect.die("Verification must not run after disconnect."),
+          }),
+        ),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+      );
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const subscription = yield* waitForPhase(oauth, accountId, "waiting");
+        yield* oauth.start({ accountId, label: "Disconnected", host: "github.com" });
+        yield* Deferred.await(subscription.reached);
+        yield* Fiber.interrupt(subscription.fiber);
+
+        const cancelled = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(cancelled));
+        assert.equal(Option.getOrThrow(cancelled).phase, "cancelled");
+        assert.isTrue(killed);
+      }).pipe(Effect.provide(layer));
+    }),
+  );
+
+  it.effect("times out an abandoned GitHub sign-in and kills its process", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      let killed = false;
+      const accountId = GitHubAccountId.make("timed-out");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(4),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.sync(() => void (killed = true)),
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: TIMEOUT-ME\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () => Effect.die("Verification must not run after timeout."),
+          }),
+        ),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+      );
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        const failed = yield* waitForPhase(oauth, accountId, "failed");
+        yield* oauth.start({ accountId, label: "Timed out", host: "github.com" });
+        yield* Deferred.await(waiting.reached);
+        yield* TestClock.adjust(GitHubOAuth.GITHUB_OAUTH_FLOW_TIMEOUT);
+        yield* Deferred.await(failed.reached);
+        assert.isTrue(killed);
+        const state = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(state));
+        assert.equal(
+          Option.getOrThrow(state).message,
+          "GitHub sign-in timed out. Start sign-in again.",
+        );
+        yield* Fiber.interrupt(waiting.fiber);
+        yield* Fiber.interrupt(failed.fiber);
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
+    }),
+  );
+
+  it.effect("reaps terminal state for many unknown account IDs", () =>
+    Effect.gen(function* () {
+      const accountIds = Array.from({ length: 32 }, (_, index) =>
+        GitHubAccountId.make(`unknown-${index}`),
+      );
+      let nextPid = 10;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(nextPid++),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(1)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () => Effect.die("Verification must not run after an authorization failure."),
+          }),
+        ),
+        Layer.provide(ServerSettings.ServerSettingsService.layerTest()),
+      );
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        for (const accountId of accountIds) {
+          yield* oauth.start({ accountId, label: "Unknown", host: "github.com" });
+          const failed = yield* oauth.subscribe(accountId).pipe(
+            Stream.filter((state) => state.phase === "failed"),
+            Stream.runHead,
+          );
+          assert.isTrue(Option.isSome(failed));
+        }
+
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust(GitHubOAuth.GITHUB_OAUTH_STATE_RETENTION);
+        for (const accountId of accountIds) {
+          const state = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+          assert.isTrue(Option.isSome(state));
+          assert.equal(Option.getOrThrow(state).phase, "idle");
+        }
+      }).pipe(Effect.provide(Layer.merge(layer, TestClock.layer())));
     }),
   );
 
@@ -141,7 +313,7 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
       const spawner = ChildProcessSpawner.make(() =>
         Effect.succeed(
           ChildProcessSpawner.makeHandle({
-            pid: ChildProcessSpawner.ProcessId(3),
+            pid: ChildProcessSpawner.ProcessId(5),
             exitCode: Deferred.await(exited),
             isRunning: Effect.succeed(true),
             kill: () => Effect.void,
@@ -183,27 +355,25 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
       yield* Effect.gen(function* () {
         const oauth = yield* GitHubOAuth.GitHubOAuth;
         const settings = yield* ServerSettings.ServerSettingsService;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        const failed = yield* waitForPhase(oauth, accountId, "failed");
         yield* oauth.start({ accountId, label: "Removed later", host: "github.com" });
-        const waiting = yield* oauth.subscribe(accountId).pipe(
-          Stream.filter((state) => state.phase === "waiting"),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(waiting));
+        yield* Deferred.await(waiting.reached);
 
         yield* settings.updateSettings({ githubAccounts: {} });
         assert.isUndefined((yield* settings.getSettings).githubAccounts[accountId]);
 
         yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
-        const failed = yield* oauth.subscribe(accountId).pipe(
-          Stream.filter((state) => state.phase === "failed"),
-          Stream.runHead,
-        );
-        assert.isTrue(Option.isSome(failed));
+        yield* Deferred.await(failed.reached);
+        const failedState = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(failedState));
         assert.equal(
-          Option.getOrThrow(failed).message,
+          Option.getOrThrow(failedState).message,
           "The GitHub account was removed before sign-in completed.",
         );
         assert.isUndefined((yield* settings.getSettings).githubAccounts[accountId]);
+        yield* Fiber.interrupt(waiting.fiber);
+        yield* Fiber.interrupt(failed.fiber);
       }).pipe(Effect.provide(layer));
     }),
   );
