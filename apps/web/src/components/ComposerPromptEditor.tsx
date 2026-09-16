@@ -18,7 +18,6 @@ import {
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
 import {
   $applyNodeReplacement,
-  $createRangeSelectionFromDom,
   $createRangeSelection,
   $getSelection,
   $setSelection,
@@ -1089,23 +1088,22 @@ function ComposerHomeEndKeyPlugin() {
     return editor.registerCommand(
       KEY_DOWN_COMMAND,
       (event) => {
-        if (!isMacPlatform(navigator.platform)) {
-          return false;
-        }
-        if (event.key !== "Home" && event.key !== "End") {
-          return false;
-        }
-        if (event.altKey || event.metaKey || event.ctrlKey || event.isComposing) {
+        const isCommandArrow =
+          isMacPlatform(navigator.platform) &&
+          event.metaKey &&
+          (event.key === "ArrowLeft" || event.key === "ArrowRight");
+        if (
+          (!isCommandArrow && event.key !== "Home" && event.key !== "End") ||
+          event.altKey ||
+          (event.metaKey && !isCommandArrow) ||
+          event.ctrlKey ||
+          event.isComposing
+        ) {
           return false;
         }
 
-        const rootElement = editor.getRootElement();
-        const selection = window.getSelection();
-        const anchorNode = selection?.anchorNode;
-        if (!rootElement || !selection || !anchorNode || !rootElement.contains(anchorNode)) {
-          return false;
-        }
-        if (selection.rangeCount === 0 || typeof selection.modify !== "function") {
+        const selection = $getSelection();
+        if (!$isRangeSelection(selection) || typeof window.getSelection()?.modify !== "function") {
           return false;
         }
 
@@ -1114,12 +1112,9 @@ function ComposerHomeEndKeyPlugin() {
 
         selection.modify(
           event.shiftKey ? "extend" : "move",
-          event.key === "Home" ? "backward" : "forward",
+          event.key === "Home" || event.key === "ArrowLeft",
           "lineboundary",
         );
-        editor.update(() => {
-          $setSelection($createRangeSelectionFromDom(selection, editor));
-        });
         return true;
       },
       COMMAND_PRIORITY_HIGH,
