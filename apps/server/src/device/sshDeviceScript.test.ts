@@ -129,6 +129,19 @@ else { const child=spawn(process.execPath,[process.argv[1],'serve'],{detached:tr
           ]);
           expect(concurrent.hubPort).toBe(manual.hubPort);
           expect(manual.daemonPort).toBeUndefined();
+          // Hubs started before platform filtering have no recorded platform.
+          const hubFile = NodePath.join(root, "hosts/one/hub.json");
+          const legacyHub = JSON.parse(await NodeFSP.readFile(hubFile, "utf8"));
+          delete legacyHub.platform;
+          await NodeFSP.writeFile(hubFile, JSON.stringify(legacyHub));
+          const restarted = await invoke("one", "start");
+          const currentHub = JSON.parse(await NodeFSP.readFile(hubFile, "utf8"));
+          expect(currentHub.pid).not.toBe(legacyHub.pid);
+          expect(currentHub.platform).toBe(platform === "darwin" ? null : "android");
+          expect(
+            (await NodeFSP.readFile(NodePath.join(home, "stops"), "utf8")).split("\n"),
+          ).toContain(String(legacyHub.pid));
+          expect((await invoke("one", "start")).hubPort).toBe(restarted.hubPort);
           const hubArgs = JSON.parse(
             await NodeFSP.readFile(NodePath.join(root, "hosts/one/hub-args.json"), "utf8"),
           );
