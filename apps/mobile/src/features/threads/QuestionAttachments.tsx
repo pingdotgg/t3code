@@ -127,7 +127,12 @@ export function QuestionAttachments(props: {
   /** Runs one system picker while preserving the question's cross-client attachment reservation. */
   const pick = async (kind: "camera" | "media" | "files") => {
     const scope = pickerScope.current;
-    const failureTitle = kind === "camera" ? "Could not take photo" : "Could not attach file";
+    const failureTitle =
+      kind === "camera"
+        ? "Could not take photo"
+        : kind === "media"
+          ? "Could not attach photo or video"
+          : "Could not attach file";
     changeQuestionAttachmentPreparation(key, 1);
     try {
       const existingCount = appAtomRegistry.get(composerDraftsAtom)[key]?.attachments.length ?? 0;
