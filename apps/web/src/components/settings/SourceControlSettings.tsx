@@ -559,6 +559,7 @@ function GitHubAccountSettings(props: { readonly environmentId: EnvironmentId })
             key={id}
             id={id}
             account={account}
+            oauthActive={oauthActive}
             onSignIn={() => {
               setOAuthAccountId(id as GitHubAccountId);
               setOAuthError(null);
@@ -697,9 +698,10 @@ function GitHubAccountSettings(props: { readonly environmentId: EnvironmentId })
   );
 }
 
-function GitHubAccountRow(props: {
+export function GitHubAccountRow(props: {
   readonly id: string;
   readonly account: GitHubAccount;
+  readonly oauthActive: boolean;
   readonly onSave: (account: GitHubAccountPatch) => void;
   readonly onDelete: () => void;
   readonly onSignIn: () => void;
@@ -714,17 +716,20 @@ function GitHubAccountRow(props: {
         <Input
           aria-label={`${props.id} account label`}
           value={label}
+          disabled={props.oauthActive}
           onChange={(e) => setLabel(e.target.value)}
         />
         <Input
           aria-label={`${props.id} GitHub login`}
           placeholder="GitHub login (optional)"
           value={login}
+          disabled={props.oauthActive}
           onChange={(e) => setLogin(e.target.value)}
         />
         <Input
           aria-label={`${props.id} GitHub host`}
           value={host}
+          disabled={props.oauthActive}
           onChange={(e) => setHost(e.target.value)}
         />
         <div className="flex items-center px-1 text-xs text-muted-foreground">
@@ -732,7 +737,7 @@ function GitHubAccountRow(props: {
         </div>
       </div>
       <div className="mt-2 flex items-center justify-end gap-2">
-        <Button size="xs" variant="outline" onClick={props.onSignIn}>
+        <Button size="xs" variant="outline" disabled={props.oauthActive} onClick={props.onSignIn}>
           {props.account.tokenConfigured ? "Sign in again" : "Sign in with GitHub"}
         </Button>
         <Button
@@ -747,6 +752,7 @@ function GitHubAccountRow(props: {
         <Button
           size="xs"
           variant="outline"
+          disabled={props.oauthActive}
           onClick={() =>
             props.onSave({
               label: label.trim() || props.account.label,

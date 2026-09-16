@@ -36,7 +36,7 @@ interface ActiveFlow {
   readonly flowId: string;
   readonly state: SubscriptionRef.SubscriptionRef<GitHubOAuthState>;
   readonly entry: StateEntry;
-  /** A compare-and-set snapshot prevents a deleted account from returning. */
+  /** A compare-and-set snapshot prevents stale metadata or deleted accounts from returning. */
   readonly accountAtStart: GitHubAccount | undefined;
   fiber?: Fiber.Fiber<void, unknown>;
 }
@@ -131,11 +131,14 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
     return yield* commitGate.withPermits(1)(
       Effect.gen(function* () {
         if (active.get(input.accountId) !== flow) return null;
+        const account = flow.accountAtStart
+          ? { label: flow.accountAtStart.label, login, host: flow.accountAtStart.host }
+          : { label: input.label, login, host: input.host };
         const updated = yield* serverSettings
           .persistGitHubAccountTokenIfCurrent({
             accountId: input.accountId,
             expectedAccount: flow.accountAtStart,
-            account: { label: input.label, login, host: input.host },
+            account,
             token,
           })
           .pipe(
@@ -144,10 +147,17 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
             ),
           );
         if (updated === null) {
+          const current = yield* serverSettings.getSettings.pipe(
+            Effect.mapError((cause) =>
+              fail(input.accountId, "save", "Could not read GitHub account settings.", cause),
+            ),
+          );
           return yield* fail(
             input.accountId,
             "save",
-            "The GitHub account was removed before sign-in completed.",
+            current.githubAccounts[input.accountId] === undefined
+              ? "The GitHub account was removed before sign-in completed."
+              : "The GitHub account settings changed before sign-in completed. Start sign-in again.",
           );
         }
         if (active.get(input.accountId) !== flow) return null;
@@ -288,6 +298,16 @@ export const make = Effect.fn("GitHubOAuth.make")(function* () {
       ),
       Effect.map((settings) => settings.githubAccounts[input.accountId]),
     );
+    if (
+      accountAtStart !== undefined &&
+      (accountAtStart.label !== input.label || accountAtStart.host !== input.host)
+    ) {
+      return yield* fail(
+        input.accountId,
+        "start",
+        "The GitHub account settings changed before sign-in started. Refresh and try again.",
+      );
+    }
     const flowId = Encoding.encodeBase64Url(
       yield* crypto
         .randomBytes(18)

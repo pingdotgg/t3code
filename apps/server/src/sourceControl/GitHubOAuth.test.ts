@@ -102,6 +102,120 @@ it.layer(NodeServices.layer)("GitHubOAuth", (it) => {
     }),
   );
 
+  it.effect("rejects a stale account snapshot before starting OAuth", () =>
+    Effect.gen(function* () {
+      const accountId = GitHubAccountId.make("stale-start");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.die("OAuth must not start with stale account metadata."),
+      );
+      const settingsLayer = ServerSettings.ServerSettingsService.layerTest({
+        githubAccounts: {
+          [accountId]: { label: "Current", host: "github.com", tokenConfigured: false },
+        },
+      });
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(
+          Layer.mock(ProcessRunner.ProcessRunner)({
+            run: () => Effect.die("OAuth must not verify with stale account metadata."),
+          }),
+        ),
+        Layer.provide(settingsLayer),
+      );
+      const providedLayer = Layer.merge(layer, settingsLayer);
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const error = yield* Effect.flip(
+          oauth.start({ accountId, label: "Stale", host: "enterprise.example.com" }),
+        );
+        assert.equal(
+          error.message,
+          "The GitHub account settings changed before sign-in started. Refresh and try again.",
+        );
+      }).pipe(Effect.provide(providedLayer));
+    }),
+  );
+
+  it.effect("rejects completion after account metadata changes", () =>
+    Effect.gen(function* () {
+      const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
+      const accountId = GitHubAccountId.make("metadata-race");
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.succeed(
+          ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(8),
+            exitCode: Deferred.await(exited),
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.empty,
+            stderr: Stream.make(encoder.encode("one-time code: METADATA-RACE\n")),
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          }),
+        ),
+      );
+      const processRunner = ProcessRunner.ProcessRunner.of({
+        run: (input) =>
+          Effect.succeed({
+            stdout: input.args[0] === "api" ? "octocat\n" : "oauth-secret\n",
+            stderr: "",
+            code: ChildProcessSpawner.ExitCode(0),
+            timedOut: false,
+            stdoutTruncated: false,
+            stderrTruncated: false,
+            stdoutInvalidUtf8: false,
+            stderrInvalidUtf8: false,
+          }),
+      });
+      const settingsLayer = ServerSettings.ServerSettingsService.layerTest({
+        githubAccounts: {
+          [accountId]: { label: "Original", host: "github.com", tokenConfigured: false },
+        },
+      });
+      const layer = GitHubOAuth.layer.pipe(
+        Layer.provide(Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, spawner)),
+        Layer.provide(Layer.succeed(ProcessRunner.ProcessRunner, processRunner)),
+        Layer.provide(settingsLayer),
+      );
+      const providedLayer = Layer.merge(layer, settingsLayer);
+
+      yield* Effect.gen(function* () {
+        const oauth = yield* GitHubOAuth.GitHubOAuth;
+        const settings = yield* ServerSettings.ServerSettingsService;
+        const waiting = yield* waitForPhase(oauth, accountId, "waiting");
+        const failed = yield* waitForPhase(oauth, accountId, "failed");
+        yield* oauth.start({ accountId, label: "Original", host: "github.com" });
+        yield* Deferred.await(waiting.reached);
+
+        yield* settings.updateSettings({
+          githubAccounts: {
+            [accountId]: { label: "Updated", host: "enterprise.example.com" },
+          },
+        });
+        yield* Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0));
+        yield* Deferred.await(failed.reached);
+
+        const state = yield* oauth.subscribe(accountId).pipe(Stream.runHead);
+        assert.isTrue(Option.isSome(state));
+        assert.equal(
+          Option.getOrThrow(state).message,
+          "The GitHub account settings changed before sign-in completed. Start sign-in again.",
+        );
+        assert.deepEqual((yield* settings.getSettings).githubAccounts[accountId], {
+          label: "Updated",
+          host: "enterprise.example.com",
+          tokenConfigured: false,
+        });
+        yield* Fiber.interrupt(waiting.fiber);
+        yield* Fiber.interrupt(failed.fiber);
+      }).pipe(Effect.provide(providedLayer));
+    }),
+  );
+
   it.effect("cancels an active GitHub sign-in and stops its process", () =>
     Effect.gen(function* () {
       const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
