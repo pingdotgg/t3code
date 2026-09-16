@@ -81,6 +81,7 @@ export function enumerateDays(sinceDay: string, untilDay: string): readonly stri
 }
 
 const HOUR_MS = 60 * 60 * 1000;
+const MINUTE_MS = 60 * 1000;
 
 const dateTimeFormatters = new Map<string, Intl.DateTimeFormat>();
 
@@ -187,7 +188,28 @@ export function formatRelativeHourShort(
   return formatDateTimeShort(hourStart, timeZone);
 }
 
-/** Current local calendar day, from midnight through the current minute. */
+/**
+ * First real minute in a viewer-local calendar day.
+ *
+ * Some zones skip midnight during daylight-saving changes. Searching instants
+ * by their formatted local day avoids starting the query in the prior day.
+ */
+function firstMinuteOfLocalDay(day: string, format: Intl.DateTimeFormat): Date {
+  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
+  const start = Date.UTC(year, month - 1, date) - 24 * HOUR_MS;
+  let low = 0;
+  let high = 48 * 60;
+
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (format.format(new Date(start + middle * MINUTE_MS)) < day) low = middle + 1;
+    else high = middle;
+  }
+
+  return new Date(start + low * MINUTE_MS);
+}
+
+/** Current local calendar day, from its first real minute through current minute. */
 export function makeTodayWindow(now = new Date()): UsageSummaryInput {
   let timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   let dayFormat: Intl.DateTimeFormat;
@@ -208,24 +230,8 @@ export function makeTodayWindow(now = new Date()): UsageSummaryInput {
     });
   }
   const day = dayFormat.format(now);
-  const [year = 0, month = 1, date = 1] = day.split("-").map(Number);
-  const offsetFormat = new Intl.DateTimeFormat("en-US", {
-    timeZone,
-    timeZoneName: "longOffset",
-  });
-  let midnightMs = Date.UTC(year, month - 1, date);
-  for (let index = 0; index < 2; index += 1) {
-    const value = offsetFormat
-      .formatToParts(new Date(midnightMs))
-      .find((part) => part.type === "timeZoneName")?.value;
-    const match = value?.match(/^GMT([+-])(\d{2}):(\d{2})$/);
-    if (!match) break;
-    const minutes = Number(match[2]) * 60 + Number(match[3]);
-    midnightMs =
-      Date.UTC(year, month - 1, date) + (match[1] === "+" ? -minutes : minutes) * 60_000;
-  }
-  const sinceTime = new Date(midnightMs);
-  const untilTime = new Date(Math.floor(now.getTime() / 60_000) * 60_000);
+  const sinceTime = firstMinuteOfLocalDay(day, dayFormat);
+  const untilTime = new Date(Math.floor(now.getTime() / MINUTE_MS) * MINUTE_MS);
   return {
     sinceDay: UsageDay.make(dayFormat.format(sinceTime)),
     untilDay: UsageDay.make(dayFormat.format(untilTime)),

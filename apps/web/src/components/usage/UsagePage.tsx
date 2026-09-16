@@ -90,10 +90,12 @@ const WINDOW_OPTIONS = [
   { days: 90, label: "90 days" },
 ] as const;
 
+/** Narrows stored menu values to supported usage-window choices. */
 function isUsageWindowDays(value: string | number): value is UsagePagePreferences["windowDays"] {
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
+/** Renders usage history and live subscription limits for web. */
 export function UsagePage() {
   const [preferences, setPreferences] = useState(readUsagePagePreferences);
   const [windowSelection, setWindowSelection] = useState(() => ({

@@ -93,6 +93,23 @@ describe("hourly usage formatting", () => {
     }
   });
 
+  it("starts at first local minute when daylight saving skips midnight", () => {
+    const resolved = new Intl.DateTimeFormat().resolvedOptions();
+    const resolvedOptions = vi
+      .spyOn(Intl.DateTimeFormat.prototype, "resolvedOptions")
+      .mockReturnValue({ ...resolved, timeZone: "America/Santiago" });
+
+    try {
+      expect(makeTodayWindow(new Date("2026-09-06T12:37:42.123Z"))).toMatchObject({
+        sinceDay: "2026-09-06",
+        sinceTime: "2026-09-06T04:00:00.000Z",
+        untilTime: "2026-09-06T12:37:00.000Z",
+      });
+    } finally {
+      resolvedOptions.mockRestore();
+    }
+  });
+
   it("degrades an unknown resolved zone to UTC instead of crashing", () => {
     const resolved = new Intl.DateTimeFormat().resolvedOptions();
     const resolvedOptions = vi
