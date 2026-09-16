@@ -1,3 +1,5 @@
+// Mock the native executable check used by shell.ts.
+// @effect-diagnostics-next-line nodeBuiltinImport:off
 import * as NodeFS from "node:fs";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
