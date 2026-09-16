@@ -42,6 +42,17 @@ describe("thread settings sheet state", () => {
     );
   });
 
+  it("matches a model id typed on a Cyrillic layout", () => {
+    // `пзе` is `gpt` on the keys a Russian layout puts those letters on.
+    expect(
+      modelMatchesCatalogQuery({
+        model: modelOption("gpt-next"),
+        providerLabel: "Codex",
+        query: "пзе",
+      }),
+    ).toBe(true);
+  });
+
   it("treats whitespace-only catalog searches as empty", () => {
     expect(
       modelMatchesCatalogQuery({

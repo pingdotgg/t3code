@@ -527,6 +527,41 @@ describe("buildThreadActionItems", () => {
     expect(groups[0]?.items.map((item) => item.value)).toEqual(["setting:theme"]);
   });
 
+  it("keeps settings searchable from a query typed on a Cyrillic layout, below direct matches", () => {
+    const groups = filterCommandPaletteGroups({
+      activeGroups: [],
+      query: "еруьуы",
+      isInSubmenu: false,
+      projectSearchItems: [],
+      settingsSearchItems: [
+        {
+          kind: "action",
+          value: "setting:theme",
+          searchTerms: ["Themes", "Appearance"],
+          title: "Themes",
+          icon: null,
+          run: async () => undefined,
+        },
+        // Matches what was typed, so it outranks the mapped match despite
+        // sitting later in the group.
+        {
+          kind: "action",
+          value: "setting:typed-literally",
+          searchTerms: ["еруьуы"],
+          title: "еруьуы",
+          icon: null,
+          run: async () => undefined,
+        },
+      ],
+      threadSearchItems: [],
+    });
+
+    expect(groups[0]?.items.map((item) => item.value)).toEqual([
+      "setting:typed-literally",
+      "setting:theme",
+    ]);
+  });
+
   it("normalizes case independently of the host locale", () => {
     const toLocaleLowerCase = String.prototype.toLocaleLowerCase;
     const localeLowerCase = vi

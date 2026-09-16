@@ -430,6 +430,31 @@ it.layer(TestLayer, { excludeTestServices: true })("WorkspaceEntries", (it) => {
       }),
     );
 
+    it.effect("retries a query typed on a Cyrillic layout against Latin paths", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-layout-retry-" });
+        yield* writeTextFile(cwd, "src/review.ts");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "кумшуц", limit: 10 });
+
+        expect(result.entries.map((entry) => entry.path)).toContain("src/review.ts");
+      }),
+    );
+
+    it.effect("keeps a directly matching query away from the layout retry", () =>
+      Effect.gen(function* () {
+        const cwd = yield* makeTempDir({ prefix: "t3code-workspace-layout-direct-" });
+        yield* writeTextFile(cwd, "src/review.ts");
+        yield* writeTextFile(cwd, "src/кумшуц.ts");
+
+        const result = yield* searchWorkspaceEntries({ cwd, query: "кумшуц", limit: 10 });
+        const paths = result.entries.map((entry) => entry.path);
+
+        expect(paths).toContain("src/кумшуц.ts");
+        expect(paths).not.toContain("src/review.ts");
+      }),
+    );
+
     it.effect("rebuilds the cached index after refresh fails", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTempDir({ prefix: "t3code-workspace-refresh-failure-" });
