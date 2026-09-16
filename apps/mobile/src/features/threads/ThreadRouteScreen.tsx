@@ -31,8 +31,8 @@ import {
 } from "@t3tools/shared/projectScripts";
 import { Alert, Platform, ScrollView, View } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { useWorkspaceState } from "../../state/workspace";
-import { useEnvironmentShellState } from "../../state/shell";
+import { useConnectionsReady } from "../../state/workspace";
+import { useEnvironmentShellReadiness } from "../../state/shell";
 import { restoredNewTaskDraftKey } from "../../state/new-task-draft-key";
 import { clearPendingThreadCreationOutcome } from "../../state/pending-thread-creation";
 import { recoverFailedThreadDraft } from "../../state/recover-failed-thread-draft";
@@ -243,7 +243,7 @@ function ThreadUnavailableScreen(props: {
 }
 
 export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
-  const { state: workspaceState } = useWorkspaceState();
+  const connectionsReady = useConnectionsReady();
   const { connectionState } = useRemoteConnectionStatus();
   const { selectedThread } = useThreadSelection();
   const params = props.route.params;
@@ -251,7 +251,7 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   const threadIdRaw = firstRouteParam(params.threadId);
   const environmentId = environmentIdRaw ? EnvironmentId.make(environmentIdRaw) : null;
   const routeEnvironmentRuntime = useRemoteEnvironmentRuntime(environmentId);
-  const routeEnvironmentShellState = useEnvironmentShellState(environmentId);
+  const routeEnvironmentShellState = useEnvironmentShellReadiness(environmentId);
   const { onReconnectEnvironment } = useRemoteConnections();
   const navigation = useNavigation();
   const routeConnectionState =
@@ -280,10 +280,10 @@ export function ThreadRouteScreen(props: ThreadRouteScreenProps) {
   }
 
   const stillHydrating = threadRouteIsHydrating({
-    isLoadingConnections: workspaceState.isLoadingConnections,
+    isLoadingConnections: !connectionsReady,
     connectionState: routeConnectionState,
     shellStatus: routeEnvironmentShellState.status,
-    shellHasError: Option.isSome(routeEnvironmentShellState.error),
+    shellHasError: routeEnvironmentShellState.hasError,
     detailStatus: selectedThreadDetailState.status,
     detailHasError: Option.isSome(selectedThreadDetailState.error),
   });

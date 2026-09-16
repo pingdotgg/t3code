@@ -34,7 +34,7 @@ import { useEnvironmentPresentation } from "../../state/presentation";
 import { terminalEnvironment } from "../../state/terminal";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useServerConfigs } from "../../state/entities";
-import { useWorkspaceState } from "../../state/workspace";
+import { useConnectionsReady } from "../../state/workspace";
 import {
   MAX_TERMINAL_FONT_SIZE,
   MIN_TERMINAL_FONT_SIZE,
@@ -249,7 +249,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   const closeTerminal = useAtomCommand(terminalEnvironment.close, "terminal close");
   const openTerminal = useAtomCommand(terminalEnvironment.open, "terminal open");
   const retryEnvironment = useAtomCommand(environmentCatalog.retryNow, "environment retry");
-  const { state: workspaceState } = useWorkspaceState();
+  const connectionsReady = useConnectionsReady();
   const params = props.route.params;
   const { selectedThread, selectedThreadProject, selectedEnvironmentConnection } =
     useThreadSelection();
@@ -1142,7 +1142,7 @@ export function ThreadTerminalRouteScreen(props: ThreadTerminalRouteScreenProps)
   }, [retryEnvironment, routeEnvironmentId]);
 
   if (!selectedThread) {
-    if (workspaceState.isLoadingConnections) {
+    if (!connectionsReady) {
       return <LoadingScreen message="Opening terminal…" />;
     }
 
