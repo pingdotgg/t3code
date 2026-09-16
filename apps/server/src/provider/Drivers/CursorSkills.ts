@@ -164,10 +164,12 @@ const discoverSkillsInRoot = Effect.fn("discoverCursorSkillsInRoot")(function* (
     if (skillInfo?.type === "File") {
       let frontmatter: CursorSkillFrontmatter | undefined = { cliVisible: true };
       if (skillInfo.size <= MAX_SKILL_BYTES && skillInfo.size <= input.budget.remainingBytes) {
-        const contents = yield* orUndefined(fileSystem.readFileString(skillPath));
+        const contents = yield* orUndefined(fileSystem.readFileString(skillPath), input.budget);
         if (contents !== undefined) {
           input.budget.remainingBytes -= skillInfo.size;
           frontmatter = parseSkillFrontmatter(contents);
+        } else {
+          frontmatter = undefined;
         }
       }
       const name = path.basename(directory).trim();
