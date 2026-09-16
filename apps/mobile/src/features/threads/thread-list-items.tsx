@@ -29,6 +29,8 @@ import { buildThreadTitleRegenerationMenuItems } from "./thread-title-regenerati
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { resolveThreadStatus } from "./threadPresentation";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
+import { ThreadDevServerIndicator } from "./thread-dev-server-indicator";
+import { useThreadDevServers } from "../../state/preview";
 
 /**
  * Shared presentation for the thread lists: the compact (phone) Home list and
@@ -492,6 +494,10 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   } = props;
   const status = resolveThreadStatus(thread);
   const pr = useThreadPr(thread);
+  const devServerCount = useThreadDevServers({
+    environmentId: thread.environmentId,
+    threadId: thread.id,
+  }).length;
   const timestamp = relativeTime(
     thread.latestUserMessageAt ?? thread.updatedAt ?? thread.createdAt,
   );
@@ -584,7 +590,7 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
   ) : null;
 
   const subtitleRow =
-    subtitleParts.length > 0 || pr !== null ? (
+    subtitleParts.length > 0 || pr !== null || devServerCount > 0 ? (
       <View className="mt-px flex-row items-center gap-1.5">
         {subtitleParts.length > 0 ? (
           <>
@@ -618,6 +624,9 @@ export const ThreadListRow = memo(function ThreadListRow(props: {
               {subtitleParts.join(" · ")}
             </Text>
           </>
+        ) : null}
+        {devServerCount > 0 ? (
+          <ThreadDevServerIndicator environmentId={thread.environmentId} threadId={thread.id} />
         ) : null}
         {pr !== null ? (
           <View
