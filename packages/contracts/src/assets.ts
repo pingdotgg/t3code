@@ -11,7 +11,34 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
+export const SourceControlMediaReference = Schema.Union([
+  Schema.TaggedStruct("github", {
+    url: TrimmedNonEmptyString.check(
+      Schema.isMaxLength(4096),
+      Schema.isPattern(/^https:\/\/github\.com\/user-attachments\/assets\/[\w-]+$/iu),
+    ),
+  }),
+  Schema.TaggedStruct("gitlab", {
+    origin: TrimmedNonEmptyString.check(
+      Schema.isMaxLength(1024),
+      Schema.isPattern(/^https?:\/\/(?:[a-z\d.-]+|\[[a-f\d:]+\])(?::\d+)?$/iu),
+    ),
+    project: TrimmedNonEmptyString.check(
+      Schema.isMaxLength(1024),
+      Schema.isPattern(/^(?:\d+|(?:(?!\.{1,2}(?:\/|$))[\w.-]+\/)+(?!\.{1,2}$)[\w.-]+)$/u),
+    ),
+    secret: Schema.String.check(Schema.isPattern(/^[a-z\d_-]{16,128}$/iu)),
+    fileName: TrimmedNonEmptyString.check(
+      Schema.isMaxLength(255),
+      Schema.isPattern(/^(?!\.{1,2}$)[^/\\\p{Cc}]+$/u),
+    ),
+  }),
+]);
+export type SourceControlMediaReference = typeof SourceControlMediaReference.Type;
+export const isSourceControlMediaReference = Schema.is(SourceControlMediaReference);
+
 export const AssetResource = Schema.Union([
+  Schema.TaggedStruct("source-control-media", { reference: SourceControlMediaReference }),
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
     path: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
