@@ -2703,6 +2703,7 @@ const layerWsRpc = (
             // An absolute media path can be linked from a thread on another environment.
             if (
               input.resource._tag === "attachment" ||
+              input.resource._tag === "gitcafe-attachment" ||
               input.resource._tag === "native-app-icon" ||
               input.resource._tag === "tool-output-image" ||
               // GitHub media names the repository it authenticates through itself.

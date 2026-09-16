@@ -1,8 +1,35 @@
+import { GitCafeAttachmentHost, GitCafeAttachmentId, type AssetResource } from "@t3tools/contracts";
+import * as Schema from "effect/Schema";
 import {
   findAndReplaceText,
   type MarkdownNode,
   type TextMatch,
 } from "~/vendor/mdast-find-and-replace";
+
+const isGitCafeHost = Schema.is(GitCafeAttachmentHost);
+const isGitCafeAttachmentId = Schema.is(GitCafeAttachmentId);
+
+/** Private forge images must use the environment's credentials, not the browser's cookies. */
+export function pullRequestImageResource(
+  src: string,
+  repositoryUrl: string | null | undefined,
+): Extract<AssetResource, { _tag: "gitcafe-attachment" }> | null {
+  if (!repositoryUrl) return null;
+  try {
+    const repository = new URL(repositoryUrl);
+    if (repository.protocol !== "https:" || !isGitCafeHost(repository.host)) return null;
+    const image = new URL(src, repository);
+    if (image.origin !== repository.origin || image.username || image.password || image.search)
+      return null;
+    const match = /^\/api\/(?:repos\/[^/]+\/[^/]+\/)?attachments\/(attach_[a-z0-9]+)$/u.exec(
+      image.pathname,
+    );
+    if (!match || !isGitCafeAttachmentId(match[1])) return null;
+    return { _tag: "gitcafe-attachment", host: repository.host, attachmentId: match[1] };
+  } catch {
+    return null;
+  }
+}
 
 /** `id` is positional on purpose: the same attachment can be embedded twice in one body. */
 export type PullRequestBodySegment =

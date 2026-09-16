@@ -856,6 +856,14 @@ export function PullRequestSummaryTab({
               ) : null}
             </div>
           )}
+          <PullRequestReactionBar
+            className="mt-2"
+            reactions={detail.reactions ?? []}
+            canReact={detail.capabilities.reactions === true}
+            environmentId={environmentId}
+            reference={reference}
+            onRefresh={onRefresh}
+          />
         </div>
       </Section>
 

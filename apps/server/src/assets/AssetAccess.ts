@@ -57,6 +57,7 @@ import { expandHomePathWith } from "@t3tools/provider-core/server/pathExpansion"
 import * as ProjectFaviconResolver from "../project/ProjectFaviconResolver.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as NativeAppIconResolver from "./NativeAppIconResolver.ts";
+import { downloadGitCafeAttachment, sniffRasterImageMimeType } from "./GitCafeAttachment.ts";
 import { openMediaFile, readMediaFileHeader, type OpenMediaFile } from "./MediaFile.ts";
 
 export const ASSET_ROUTE_PREFIX = "/api/assets";
@@ -121,6 +122,13 @@ const AssetClaimsSchema = Schema.Union([
         download filename and Content-Type. */
     fileName: Schema.optionalKey(Schema.String),
     mimeType: Schema.optionalKey(Schema.String),
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
+    kind: Schema.Literal("gitcafe-attachment"),
+    host: Schema.Literals(["git.cafe", "staging.git.cafe"]),
+    attachmentId: Schema.String,
     expiresAt: Schema.Number,
   }),
   Schema.Struct({
@@ -600,6 +608,17 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = input.resource.fileName ?? path.basename(attachmentPath);
       break;
     }
+    case "gitcafe-attachment": {
+      claims = {
+        version: 1,
+        kind: "gitcafe-attachment",
+        host: input.resource.host,
+        attachmentId: input.resource.attachmentId,
+        expiresAt,
+      };
+      fileName = input.resource.attachmentId;
+      break;
+    }
     case "project-favicon": {
       const workspaceRoot = yield* workspacePaths.normalizeWorkspaceRoot(input.resource.cwd).pipe(
         Effect.mapError(
@@ -800,6 +819,14 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const claims = decodeClaims(encodedPayload);
   if (!claims || claims.expiresAt <= (yield* Clock.currentTimeMillis)) return null;
+
+  if (claims.kind === "gitcafe-attachment") {
+    if (relativePath !== claims.attachmentId) return null;
+    const bytes = yield* downloadGitCafeAttachment(claims.host, claims.attachmentId);
+    if (!bytes) return null;
+    const mimeType = sniffRasterImageMimeType(bytes);
+    return mimeType ? ({ kind: "bytes", bytes, mimeType } satisfies ResolvedAsset) : null;
+  }
 
   if (claims.kind === "attachment") {
     const config = yield* ServerConfig.ServerConfig;

@@ -1,6 +1,41 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { splitPullRequestBody } from "./pullRequestMarkdown.logic";
+import { pullRequestImageResource, splitPullRequestBody } from "./pullRequestMarkdown.logic";
+
+describe("pull request image resources", () => {
+  it("resolves stable and repository-scoped GitCafe attachments on the PR host", () => {
+    for (const host of ["git.cafe", "staging.git.cafe"] as const) {
+      for (const src of [
+        "/api/attachments/attach_123abc",
+        `/api/repos/gitcafe/gc2/attachments/attach_123abc`,
+        `https://${host}/api/attachments/attach_123abc`,
+      ]) {
+        expect(pullRequestImageResource(src, `https://${host}/gitcafe/gc2`)).toEqual({
+          _tag: "gitcafe-attachment",
+          host,
+          attachmentId: "attach_123abc",
+        });
+      }
+    }
+  });
+  it("does not proxy unrelated images, other hosts, credentials or query parameters", () => {
+    for (const src of [
+      "https://example.com/api/attachments/attach_123abc",
+      "https://staging.git.cafe/api/attachments/attach_123abc",
+      "https://user:password@git.cafe/api/attachments/attach_123abc",
+      "/api/attachments/attach_123abc?token=secret",
+      "/api/attachments/not-an-attachment",
+      "./screenshot.png",
+      "/tmp/screenshot.png",
+      "javascript:alert(1)",
+    ])
+      expect(pullRequestImageResource(src, "https://git.cafe/gitcafe/gc2")).toBeNull();
+    expect(
+      pullRequestImageResource("/api/attachments/attach_123abc", "https://github.com/a/b"),
+    ).toBeNull();
+    expect(pullRequestImageResource("/api/attachments/attach_123abc", null)).toBeNull();
+  });
+});
 
 describe("pull request body segmentation", () => {
   it("keeps a plain body as a single markdown run", () => {

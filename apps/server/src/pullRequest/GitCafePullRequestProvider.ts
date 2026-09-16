@@ -70,6 +70,38 @@ const ChecksSchema = Schema.Struct({
     }),
   ),
 });
+const DiffPageSchema = Schema.Struct({
+  ...Json.DiffSchema.fields,
+  version: NonNegativeInt,
+  nextAfter: Schema.NullOr(TrimmedNonEmptyString),
+});
+const DiffCursorSchema = Schema.Struct({
+  version: NonNegativeInt,
+  after: TrimmedNonEmptyString,
+});
+const CommitDiffCursorSchema = Schema.Struct({ after: TrimmedNonEmptyString });
+const encodeCommitDiffCursor = Schema.encodeSync(Schema.fromJsonString(CommitDiffCursorSchema));
+const decodeCommitDiffCursor = Schema.decodeEffect(Schema.fromJsonString(CommitDiffCursorSchema));
+const decodeDiffCursor = Schema.decodeEffect(Schema.fromJsonString(DiffCursorSchema));
+const ComparePageSchema = Schema.Struct({
+  ...Json.DiffSchema.fields,
+  nextAfter: Schema.NullOr(TrimmedNonEmptyString),
+});
+const DiffFileContentsSchema = Schema.Struct({
+  version: NonNegativeInt,
+  file: Schema.Struct({
+    oldContent: Schema.optional(Schema.NullOr(Schema.String)),
+    newContent: Schema.optional(Schema.NullOr(Schema.String)),
+    oldContentUnavailableReason: Schema.optional(TrimmedNonEmptyString),
+    newContentUnavailableReason: Schema.optional(TrimmedNonEmptyString),
+  }),
+});
+const CommitSchema = Schema.Struct({ oid: Schema.String, parents: Schema.Array(Schema.String) });
+const BlobSchema = Schema.Struct({
+  binary: Schema.Boolean,
+  content: Schema.NullOr(Schema.String),
+});
+const encodeDiffCursor = Schema.encodeSync(Schema.fromJsonString(DiffCursorSchema));
 function checkStatus(check: (typeof ChecksSchema.Type.items)[number]) {
   if (check.status !== "completed") return "pending" as const;
   switch (check.conclusion) {
@@ -410,7 +442,7 @@ export const make = Effect.gen(function* () {
     getChangeRequestActivity: Effect.fn("GitCafePullRequestProvider.getChangeRequestActivity")(
       function* (input) {
         const pull = yield* readPull(input);
-        const [comments, reviews, commits] = yield* Effect.all(
+        const [comments, reviews, commits, reactions] = yield* Effect.all(
           [
             readComments(input),
             readReviews(input),
@@ -422,18 +454,38 @@ export const make = Effect.gen(function* () {
                   Json.CommitListSchema,
                   "listCommits",
                 ),
+            read(
+              input,
+              `${yield* target(input)}/${input.number}/reactions`,
+              Json.ReactionsSchema,
+              "listReactions",
+              8 * 1024 * 1024,
+            ).pipe(Effect.orElseSucceed(() => undefined)),
           ],
-          { concurrency: 3 },
+          { concurrency: 4 },
         );
-        return Json.toActivity(comments, reviews, commits, pull.headOid ?? undefined, input.host);
+        return Json.toActivity(
+          comments,
+          reviews,
+          commits,
+          pull.headOid ?? undefined,
+          input.host,
+          reactions,
+        );
       },
     ),
     getViewerPermissions: () => Effect.succeed(gitCafeViewerPermissions()),
     getDiff: Effect.fn("GitCafePullRequestProvider.getDiff")(function* (input) {
-      if (input.cursor !== undefined)
-        return yield* failure("getDiff", "GitCafe diffs do not support continuation cursors.");
       const base = yield* target(input);
       if (input.commit !== undefined) {
+        const cursor =
+          input.cursor === undefined
+            ? null
+            : yield* decodeCommitDiffCursor(input.cursor).pipe(
+                Effect.mapError((cause) =>
+                  failure("getDiff", "Invalid GitCafe diff cursor.", cause),
+                ),
+              );
         const pull = yield* readPull(input);
         const repository =
           pull.sourceRepo === null
@@ -444,7 +496,7 @@ export const make = Effect.gen(function* () {
         const commit = yield* read(
           input,
           `${sourceBase}/commit?${commitQuery}`,
-          Schema.Struct({ oid: Schema.String, parents: Schema.Array(Schema.String) }),
+          CommitSchema,
           "getDiff",
         );
         const parent = commit.parents[0];
@@ -460,26 +512,121 @@ export const make = Effect.gen(function* () {
           headOid: commit.oid,
           limit: "500",
         });
-        return Json.toDiff(
-          yield* read(
-            input,
-            `${sourceBase}/compare?${query}`,
-            Json.DiffSchema,
-            "getDiff",
-            8 * 1024 * 1024,
-          ),
-        );
-      }
-      return Json.toDiff(
-        yield* read(
+        if (cursor !== null) query.set("after", cursor.after);
+        const page = yield* read(
           input,
-          `${base}/${input.number}/diff`,
-          Json.DiffSchema,
+          `${sourceBase}/compare?${query}`,
+          ComparePageSchema,
           "getDiff",
           8 * 1024 * 1024,
-        ),
+        );
+        return {
+          ...Json.toDiff(page),
+          nextCursor:
+            page.nextAfter === null ? null : encodeCommitDiffCursor({ after: page.nextAfter }),
+        };
+      }
+      const cursor =
+        input.cursor === undefined
+          ? null
+          : yield* decodeDiffCursor(input.cursor).pipe(
+              Effect.mapError((cause) => failure("getDiff", "Invalid GitCafe diff cursor.", cause)),
+            );
+      const version = cursor?.version ?? (yield* readPull(input)).version;
+      const query = new URLSearchParams({ expectedVersion: String(version), limit: "500" });
+      if (cursor !== null) query.set("after", cursor.after);
+      const page = yield* read(
+        input,
+        `${base}/${input.number}/diff?${query}`,
+        DiffPageSchema,
+        "getDiff",
+        8 * 1024 * 1024,
       );
+      const diff = Json.toDiff(page);
+      return {
+        ...diff,
+        nextCursor:
+          page.nextAfter === null
+            ? null
+            : encodeDiffCursor({ version: page.version, after: page.nextAfter }),
+      };
     }),
+    getDiffFileContents: Effect.fn("GitCafePullRequestProvider.getDiffFileContents")(
+      function* (input) {
+        const pull = yield* readPull(input);
+        const unavailable = (side: "old" | "new", reason?: string) =>
+          failure(
+            "getDiffFileContents",
+            `GitCafe cannot provide the ${side} file contents${reason === undefined ? "." : `: ${reason}.`}`,
+          );
+        if (input.commit === undefined) {
+          const base = yield* target(input);
+          const query = new URLSearchParams({
+            path: input.changeType === "deleted" ? input.oldPath : input.newPath,
+            expectedVersion: String(pull.version),
+          });
+          const result = yield* read(
+            input,
+            `${base}/${input.number}/diff-file?${query}`,
+            DiffFileContentsSchema,
+            "getDiffFileContents",
+            3 * 1024 * 1024,
+          );
+          if (input.changeType !== "new" && result.file.oldContent == null)
+            return yield* unavailable("old", result.file.oldContentUnavailableReason);
+          if (input.changeType !== "deleted" && result.file.newContent == null)
+            return yield* unavailable("new", result.file.newContentUnavailableReason);
+          return {
+            oldContents: input.changeType === "new" ? "" : result.file.oldContent!,
+            newContents: input.changeType === "deleted" ? "" : result.file.newContent!,
+          };
+        }
+
+        const repository =
+          pull.sourceRepo === null
+            ? input.repository
+            : `${pull.sourceRepo.owner}/${pull.sourceRepo.name}`;
+        const sourceBase = (yield* target({ ...input, repository })).slice(0, -6);
+        const commitQuery = new URLSearchParams({ ref: "HEAD", oid: input.commit });
+        const commit = yield* read(
+          input,
+          `${sourceBase}/commit?${commitQuery}`,
+          CommitSchema,
+          "getDiffFileContents",
+        );
+        const parent = commit.parents[0];
+        if (parent === undefined && input.changeType !== "new")
+          return yield* unavailable("old", "the commit has no parent");
+        const content = (oid: string, path: string, side: "old" | "new") => {
+          const query = new URLSearchParams({ ref: "HEAD", oid, path });
+          return read(
+            input,
+            `${sourceBase}/blob?${query}`,
+            BlobSchema,
+            "getDiffFileContents",
+            2 * 1024 * 1024,
+          ).pipe(
+            Effect.flatMap((blob) =>
+              blob.binary || blob.content === null
+                ? Effect.fail(unavailable(side, blob.binary ? "binary" : "unavailable"))
+                : Effect.succeed(blob.content),
+            ),
+          );
+        };
+        const [oldContents, newContents] = yield* Effect.all(
+          [
+            input.changeType === "new"
+              ? Effect.succeed("")
+              : content(parent!, input.oldPath, "old"),
+            input.changeType === "deleted"
+              ? Effect.succeed("")
+              : content(commit.oid, input.newPath, "new"),
+          ],
+          { concurrency: 2 },
+        );
+        return { oldContents, newContents };
+      },
+    ),
     runAction: () => unsupported("runAction"),
     comment: () => unsupported("comment"),
     submitReview: () => unsupported("submitReview"),

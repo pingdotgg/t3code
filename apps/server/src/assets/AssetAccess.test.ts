@@ -20,8 +20,11 @@ import * as Redacted from "effect/Redacted";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
+import * as Sink from "effect/Sink";
+import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse, HttpServerResponse } from "effect/http";
+import { ChildProcessSpawner } from "effect/process";
 import { vi } from "vite-plus/test";
 
 import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
@@ -203,6 +206,56 @@ describe("AssetAccess", () => {
     }).pipe(Effect.provide(layerTest)),
   );
 
+  it.effect(
+    "signs exact GitCafe attachment access and rejects tampering, sibling ids and expiry",
+    () => {
+      const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10, 128, 255]);
+      let downloads = 0;
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.sync(() => {
+          downloads++;
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.succeed(ChildProcessSpawner.ExitCode(0)),
+            isRunning: Effect.succeed(false),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.drain,
+            stdout: Stream.make(png),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      return Effect.gen(function* () {
+        const url = yield* issueAssetUrl({
+          resource: {
+            _tag: "gitcafe-attachment",
+            host: "git.cafe",
+            attachmentId: "attach_123abc",
+          },
+        });
+        const suffix = url.relativeUrl.slice(`${ASSET_ROUTE_PREFIX}/`.length);
+        const token = suffix.slice(0, suffix.indexOf("/"));
+        expect(yield* resolveAsset(token, "attach_123abc")).toEqual({
+          kind: "bytes",
+          bytes: png,
+          mimeType: "image/png",
+        });
+        expect(downloads).toBe(1);
+        expect(yield* resolveAsset(token, "attach_other")).toBeNull();
+        expect(yield* resolveAsset(`${token}tampered`, "attach_123abc")).toBeNull();
+        yield* TestClock.adjust("61 minutes");
+        expect(yield* resolveAsset(token, "attach_123abc")).toBeNull();
+        expect(downloads).toBe(1);
+      }).pipe(
+        Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+        Effect.provide(layerTest),
+      );
+    },
+  );
   it.effect("issues exact URLs for media and browser documents outside the workspace", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;

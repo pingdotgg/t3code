@@ -11,6 +11,15 @@ import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
 const ASSET_PATH_MAX_LENGTH = 1024;
 
+export const GitCafeAttachmentHost = Schema.Literals(["git.cafe", "staging.git.cafe"]);
+export type GitCafeAttachmentHost = typeof GitCafeAttachmentHost.Type;
+
+export const GitCafeAttachmentId = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(128),
+  Schema.isPattern(/^attach_[a-z0-9]+$/),
+);
+export type GitCafeAttachmentId = typeof GitCafeAttachmentId.Type;
+
 export const AssetResource = Schema.Union([
   Schema.TaggedStruct("workspace-file", {
     threadId: ThreadId,
@@ -47,6 +56,10 @@ export const AssetResource = Schema.Union([
     threadId: ThreadId,
     itemId: TurnItemId,
     index: NonNegativeInt,
+  }),
+  Schema.TaggedStruct("gitcafe-attachment", {
+    host: GitCafeAttachmentHost,
+    attachmentId: GitCafeAttachmentId,
   }),
   Schema.TaggedStruct("project-favicon", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
