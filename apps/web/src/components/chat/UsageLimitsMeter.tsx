@@ -64,14 +64,11 @@ export function UsageLimitsMeter(props: {
         }
       >
         <span
-          className="h-1 w-14 shrink-0 overflow-hidden rounded-full"
+          className="h-1 w-14 shrink-0 overflow-hidden rounded-full bg-[color-mix(in_oklab,var(--color-muted-foreground)_24%,transparent)]"
           role="progressbar"
           aria-valuemin={0}
           aria-valuemax={100}
           {...(stale ? {} : { "aria-valuenow": remainingPercent })}
-          style={{
-            backgroundColor: "color-mix(in oklab, var(--color-muted-foreground) 24%, transparent)",
-          }}
         >
           {stale ? null : (
             <span
