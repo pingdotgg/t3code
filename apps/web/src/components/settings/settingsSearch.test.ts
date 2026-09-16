@@ -42,6 +42,13 @@ const ITEMS: ReadonlyArray<SettingsSearchItem> = [
     title: "Automatic updates",
     to: "/settings/general",
   },
+  // What a Russian layout emits for the keys of "claude", so one query matches
+  // this item directly and "providers" only after being mapped back.
+  {
+    id: "typed-literally",
+    title: "сдфгву",
+    to: "/settings/general",
+  },
 ];
 
 describe("searchSettings", () => {
@@ -66,6 +73,17 @@ describe("searchSettings", () => {
       localeLowerCase.mockRestore();
     }
     expect(searchSettings("xyzzy")).toEqual([]);
+  });
+
+  it("matches a query typed on a Cyrillic layout", () => {
+    expect(searchSettings("еруьуы")[0]?.id).toBe("theme");
+  });
+
+  it("ranks a layout-mapped match below a direct one", () => {
+    expect(searchSettings("сдфгву", ITEMS).map((item) => item.id)).toEqual([
+      "typed-literally",
+      "providers",
+    ]);
   });
 
   it("keeps catalog order for multiple title matches", () => {

@@ -1,6 +1,12 @@
+import { expandQueryAcrossKeyboardLayouts } from "@t3tools/shared/keyboardLayouts";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 
-/** Match the terms a user can actually see or recognize in the model picker. */
+/**
+ * Match the terms a user can actually see or recognize in the model picker. The
+ * query is also read as the US QWERTY keys that produced it, so a model id or
+ * provider name still matches when a non-Latin layout was active: `/model` in
+ * the composer menu leaves the user here with that layout still on.
+ */
 export function modelMatchesCatalogQuery(input: {
   readonly model: ModelOption;
   readonly providerLabel: string;
@@ -11,12 +17,16 @@ export function modelMatchesCatalogQuery(input: {
     return true;
   }
 
+  const queryForms = [query, ...expandQueryAcrossKeyboardLayouts(query)];
   return [
     input.model.label,
     input.model.subtitle,
     input.model.selection.model,
     input.providerLabel,
-  ].some((value) => value.toLocaleLowerCase().includes(query));
+  ].some((value) => {
+    const lowercased = value.toLocaleLowerCase();
+    return queryForms.some((queryForm) => lowercased.includes(queryForm));
+  });
 }
 
 /** Preserve staged provider options when the highlighted model is tapped again. */

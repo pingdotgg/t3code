@@ -1,4 +1,5 @@
 import { MessageId, ProjectId, ThreadId } from "@t3tools/contracts";
+import { expandQueryAcrossKeyboardLayouts } from "@t3tools/shared/keyboardLayouts";
 import { type CxOptions, cx } from "class-variance-authority";
 import * as Encoding from "effect/Encoding";
 import { twMerge } from "tailwind-merge";
@@ -18,6 +19,49 @@ export function isWindowsPlatform(platform: string): boolean {
 
 export function normalizeSearchText(value: string): string {
   return value.normalize("NFKD").replace(/\p{M}/gu, "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+export interface SearchQueryForm {
+  readonly normalizedQuery: string;
+  readonly queryTokens: ReadonlyArray<string>;
+  /** Subtracted from this form's rank; zero for the form that was typed. */
+  readonly rankPenalty: number;
+}
+
+/**
+ * What was typed, first, followed by the keyboard layout variants of it, so a
+ * query typed while a non-Latin layout was active still reaches Latin names.
+ * Callers rank an item by the first form it matches and subtract that form's
+ * `rankPenalty`, which keeps every direct match ahead of every mapped one as
+ * long as `layoutRankPenalty` exceeds the spread of the caller's rank scale.
+ *
+ * Variants come off the raw query, because `normalizeSearchText` applies NFKD
+ * and strips combining marks, which destroys `й` and `ё`.
+ */
+export function buildSearchQueryForms(input: {
+  query: string;
+  normalizedQuery: string;
+  layoutRankPenalty: number;
+}): ReadonlyArray<SearchQueryForm> {
+  return [
+    {
+      normalizedQuery: input.normalizedQuery,
+      queryTokens: input.normalizedQuery.split(" "),
+      rankPenalty: 0,
+    },
+    ...expandQueryAcrossKeyboardLayouts(input.query).flatMap((variant) => {
+      const normalizedVariant = normalizeSearchText(variant);
+      return normalizedVariant.length === 0
+        ? []
+        : [
+            {
+              normalizedQuery: normalizedVariant,
+              queryTokens: normalizedVariant.split(" "),
+              rankPenalty: input.layoutRankPenalty,
+            },
+          ];
+    }),
+  ];
 }
 
 export function getLocalFileManagerName(platform: string): string {

@@ -34,7 +34,7 @@ describe("mobile slash commands", () => {
     "keeps native /plan with legacy mode enabled=%s",
     (allowInteractionMode) => {
       const items = buildComposerSlashCommandItems({
-        query: "pl",
+        queryForms: ["pl"],
         atMessageStart: true,
         hasThread: true,
         allowInteractionMode,
@@ -56,10 +56,23 @@ describe("mobile slash commands", () => {
     },
   );
 
+  it("offers a command reached through a keyboard layout variant", () => {
+    // `ьщвуд` is `model` typed while a Russian layout was active.
+    expect(
+      buildComposerSlashCommandItems({
+        queryForms: ["ьщвуд", "model"],
+        atMessageStart: true,
+        hasThread: true,
+        allowInteractionMode: true,
+        selectedProviderStatus: antigravity,
+      }).map((item) => item.label),
+    ).toEqual(["/model"]);
+  });
+
   it("does not offer a native command inside the message", () => {
     expect(
       buildComposerSlashCommandItems({
-        query: "plan",
+        queryForms: ["plan"],
         atMessageStart: false,
         hasThread: false,
         allowInteractionMode: true,
@@ -70,7 +83,7 @@ describe("mobile slash commands", () => {
 
   it("still applies the T3 plan command for supported providers", () => {
     const items = buildComposerSlashCommandItems({
-      query: "plan",
+      queryForms: ["plan"],
       atMessageStart: true,
       hasThread: true,
       allowInteractionMode: true,
