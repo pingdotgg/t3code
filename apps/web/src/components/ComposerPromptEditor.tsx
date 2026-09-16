@@ -890,6 +890,7 @@ interface ComposerPromptEditorProps {
   onPageScrollKeyUp?: (key: string) => void;
   onPageScrollRelease?: () => void;
   onCitationSubmitAndSend?: () => void;
+  resolvePickerNavigationKey?: (event: KeyboardEvent) => "ArrowDown" | "ArrowUp" | null;
   onPaste: React.ClipboardEventHandler<HTMLElement>;
   editorRef: React.RefObject<ComposerPromptEditorHandle | null>;
 }
@@ -959,6 +960,7 @@ function ComposerCommandKeyPlugin(props: {
     key: "ArrowDown" | "ArrowUp" | "Enter" | "Tab",
     event: KeyboardEvent,
   ) => boolean;
+  resolvePickerNavigationKey?: (event: KeyboardEvent) => "ArrowDown" | "ArrowUp" | null;
 }) {
   const [editor] = useLexicalComposerContext();
 
@@ -1004,12 +1006,42 @@ function ComposerCommandKeyPlugin(props: {
       (event) => handleCommand("Tab", event),
       COMMAND_PRIORITY_HIGH,
     );
+    const unregisterPickerNavigation = editor.registerCommand(
+      KEY_DOWN_COMMAND,
+      (event) => {
+        if (
+          !props.resolvePickerNavigationKey ||
+          event.isComposing ||
+          event.key === "ArrowDown" ||
+          event.key === "ArrowUp"
+        ) {
+          return false;
+        }
+        const navigationKey = props.resolvePickerNavigationKey(event);
+        if (!navigationKey) return false;
+
+        const handled = handleCommand(navigationKey, event);
+        if (handled) return true;
+
+        // Keep non-text shortcuts scoped to the picker even when it has no items.
+        const insertsText =
+          event.key.length === 1 && !event.altKey && !event.ctrlKey && !event.metaKey;
+        if (!insertsText) {
+          event.preventDefault();
+          event.stopPropagation();
+          return true;
+        }
+        return false;
+      },
+      COMMAND_PRIORITY_HIGH,
+    );
 
     return () => {
       unregisterArrowDown();
       unregisterArrowUp();
       unregisterEnter();
       unregisterTab();
+      unregisterPickerNavigation();
     };
   }, [editor, props]);
 
@@ -1636,6 +1668,7 @@ function ComposerPromptEditorInner({
   onPageScrollKeyUp,
   onPageScrollRelease,
   onCitationSubmitAndSend,
+  resolvePickerNavigationKey,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -2044,7 +2077,10 @@ function ComposerPromptEditorInner({
             ErrorBoundary={LexicalErrorBoundary}
           />
           <OnChangePlugin onChange={handleEditorChange} />
-          <ComposerCommandKeyPlugin {...(onCommandKeyDown ? { onCommandKeyDown } : {})} />
+          <ComposerCommandKeyPlugin
+            {...(onCommandKeyDown ? { onCommandKeyDown } : {})}
+            {...(resolvePickerNavigationKey ? { resolvePickerNavigationKey } : {})}
+          />
           <ComposerSurroundSelectionPlugin skills={skills} />
           <ComposerHomeEndKeyPlugin />
           <ComposerInlineTokenArrowPlugin />
@@ -2081,6 +2117,7 @@ export function ComposerPromptEditor({
   onPageScrollKeyUp,
   onPageScrollRelease,
   onCitationSubmitAndSend,
+  resolvePickerNavigationKey,
   onPaste,
   editorRef,
 }: ComposerPromptEditorProps) {
@@ -2128,6 +2165,7 @@ export function ComposerPromptEditor({
           {...(onPageScrollKeyDown ? { onPageScrollKeyDown } : {})}
           {...(onPageScrollKeyUp ? { onPageScrollKeyUp } : {})}
           {...(onPageScrollRelease ? { onPageScrollRelease } : {})}
+          {...(resolvePickerNavigationKey ? { resolvePickerNavigationKey } : {})}
           {...(className ? { className } : {})}
           {...(placeholderClassName ? { placeholderClassName } : {})}
         />
