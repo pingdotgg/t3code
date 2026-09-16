@@ -518,14 +518,14 @@ describe("ClientSettings sidebar", () => {
 });
 
 describe("ClientSettings context window meter", () => {
-  it("defaults off and preserves an explicit legacy opt-in", () => {
-    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(false);
+  it("defaults on and preserves an explicit opt-out", () => {
+    expect(decodeClientSettings({}).contextWindowMeterEnabled).toBe(true);
     expect(
-      decodeClientSettings({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+      decodeClientSettings({ contextWindowMeterEnabled: false }).contextWindowMeterEnabled,
+    ).toBe(false);
     expect(
-      decodeClientSettingsPatch({ contextWindowMeterEnabled: true }).contextWindowMeterEnabled,
-    ).toBe(true);
+      decodeClientSettingsPatch({ contextWindowMeterEnabled: false }).contextWindowMeterEnabled,
+    ).toBe(false);
   });
 });
 
