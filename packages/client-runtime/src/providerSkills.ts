@@ -56,13 +56,53 @@ export function isProviderSkillUserInvocable(
   return skill.enabled && skill.userInvocable !== false;
 }
 
+const NO_SKILLS: ReadonlyArray<ServerProviderSkill> = [];
+const visibleSkillsByList = new WeakMap<
+  ReadonlyArray<ServerProviderSkill>,
+  ReadonlyArray<ServerProviderSkill>
+>();
+
+/**
+ * The rows every picker starts from: the skills a user can pick, deduped by
+ * name. A skill switched off in T3 Code's settings arrives here already
+ * `enabled: false` from the shared fold, so it drops out with the ones the
+ * provider itself switched off.
+ *
+ * Memoised on the list the server published, so a settings change that leaves
+ * the skills alone hands the composer the same array back and repaints no row.
+ */
+export function getVisibleProviderSkills(
+  skills: ReadonlyArray<ServerProviderSkill>,
+): ReadonlyArray<ServerProviderSkill> {
+  const cached = visibleSkillsByList.get(skills);
+  if (cached) return cached;
+  const visible = dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable));
+  visibleSkillsByList.set(skills, visible);
+  return visible;
+}
+
 export function getProviderSkillsForSlashMenu(
   skills: ReadonlyArray<ServerProviderSkill>,
   showSkillsInSlashMenu: boolean,
-): ServerProviderSkill[] {
-  return showSkillsInSlashMenu
-    ? dedupeProviderSkillsByName(skills.filter(isProviderSkillUserInvocable))
-    : [];
+): ReadonlyArray<ServerProviderSkill> {
+  return showSkillsInSlashMenu ? getVisibleProviderSkills(skills) : NO_SKILLS;
+}
+
+const SKILL_SOURCE_LABEL_BY_KIND: Record<ProviderSkillSourceKind, string> = {
+  app: "App",
+  repo: "Repo",
+  project: "Project",
+  personal: "Personal",
+  system: "System",
+  other: "Other",
+};
+
+/**
+ * The short source label a picker row carries, so a Personal `review` and a
+ * Project `review` are tellable apart. One map for every client.
+ */
+export function formatProviderSkillSourceLabel(kind: ProviderSkillSourceKind): string {
+  return SKILL_SOURCE_LABEL_BY_KIND[kind];
 }
 
 export function getProviderSlashCommandsForSlashMenu(

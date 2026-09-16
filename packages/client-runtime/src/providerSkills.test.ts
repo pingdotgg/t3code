@@ -1,11 +1,18 @@
-import { ProviderDriverKind, ProviderInstanceId, type ServerProvider } from "@t3tools/contracts";
+import {
+  ProviderDriverKind,
+  ProviderInstanceId,
+  type ServerProvider,
+  type ServerProviderSkill,
+} from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
   dedupeProviderSkillsByName,
   formatProviderSkillDisplayName,
+  formatProviderSkillSourceLabel,
   getProviderSlashCommandsForSlashMenu,
   getProviderSkillsForSlashMenu,
+  getVisibleProviderSkills,
   resolveProviderSkillsForCwd,
   resolveProviderSlashCommandsForCwd,
   resolveProviderSkillSourceKind,
@@ -154,6 +161,52 @@ describe("getProviderSkillsForSlashMenu", () => {
     expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
       "deploy",
     ]);
+  });
+});
+
+describe("getVisibleProviderSkills", () => {
+  const skills = [
+    {
+      name: "review",
+      path: "/workspace/project-a/.claude/skills/review/SKILL.md",
+      scope: "project",
+      enabled: true,
+    },
+    {
+      name: "deploy",
+      path: "/Users/matt/.claude/skills/deploy/SKILL.md",
+      scope: "user",
+      enabled: false,
+      disabledBy: "settings",
+    },
+  ] satisfies ServerProviderSkill[];
+
+  it("hides a skill the user switched off in T3 Code", () => {
+    expect(getVisibleProviderSkills(skills).map((skill) => skill.name)).toEqual(["review"]);
+    expect(getProviderSkillsForSlashMenu(skills, true).map((skill) => skill.name)).toEqual([
+      "review",
+    ]);
+  });
+
+  it("still hides every skill when the slash menu is switched off", () => {
+    expect(getProviderSkillsForSlashMenu(skills, false)).toEqual([]);
+  });
+
+  it("hands back the same list while the published skills do not change", () => {
+    const first = getVisibleProviderSkills(skills);
+    expect(getVisibleProviderSkills(skills)).toBe(first);
+    expect(getProviderSkillsForSlashMenu(skills, true)).toBe(first);
+    expect(getVisibleProviderSkills([...skills])).not.toBe(first);
+  });
+});
+
+describe("formatProviderSkillSourceLabel", () => {
+  it("labels every source kind", () => {
+    expect(
+      (["app", "repo", "project", "personal", "system", "other"] as const).map(
+        formatProviderSkillSourceLabel,
+      ),
+    ).toEqual(["App", "Repo", "Project", "Personal", "System", "Other"]);
   });
 });
 
