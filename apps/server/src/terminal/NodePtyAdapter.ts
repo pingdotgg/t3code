@@ -1,5 +1,6 @@
 import * as NodeModule from "node:module";
 
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
@@ -24,10 +25,24 @@ export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoad
 
 type NodePtyModuleLoader = () => Promise<typeof import("node-pty")>;
 
+// node-pty stays external to the CLI bundle because it dlopens a native
+// addon. Inside a Node single-executable, `import()` cannot load files from
+// disk (only built-ins resolve), while `require` always reads the real
+// filesystem, so both the module and its spawn-helper resolve through it.
+const requireForNodePty = NodeModule.createRequire(import.meta.url);
+
+const loadNodePty: NodePtyModuleLoader = () =>
+  Promise.resolve().then(() => requireForNodePty("node-pty") as typeof import("node-pty"));
+
+/** Injectable so tests can substitute a fake module; `require` bypasses module mocks. */
+export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
+  "server/terminal/NodePtyModuleLoader",
+  { defaultValue: () => loadNodePty },
+);
+
 let didEnsureSpawnHelperExecutable = false;
 
 const resolveNodePtySpawnHelperPath = Effect.gen(function* () {
-  const requireForNodePty = NodeModule.createRequire(import.meta.url);
   const path = yield* Path.Path;
   const fs = yield* FileSystem.FileSystem;
   const platform = yield* HostProcessPlatform;
@@ -113,9 +128,8 @@ class NodePtyProcess implements PtyAdapter.PtyProcess {
   }
 }
 
-export const make = Effect.fn("NodePtyAdapter.make")(function* (
-  loadNodePtyModule: NodePtyModuleLoader = () => import("node-pty"),
-) {
+export const make = Effect.fn("NodePtyAdapter.make")(function* () {
+  const loadNodePtyModule = yield* NodePtyModuleLoaderRef;
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;

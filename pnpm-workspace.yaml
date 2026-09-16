@@ -23,20 +23,18 @@ allowBuilds:
   workerd: false
 
 catalog:
-  "@clerk/backend": 3.14.0
-  "@clerk/clerk-js": 6.30.1
-  "@clerk/electron": 0.0.37
+  "@clerk/backend": 3.18.1
+  "@clerk/clerk-js": 6.32.1
+  "@clerk/electron": 0.0.44
   "@clerk/electron-passkeys": 0.0.3
-  "@clerk/expo": 4.2.0
-  "@clerk/react": 6.14.7
-  "@clerk/shared": 4.30.1
+  "@clerk/expo": 4.6.8
+  "@clerk/react": 6.16.1
+  "@clerk/shared": 4.33.0
   "@effect/atom-react": 4.0.0-rc.112
   "@effect/openapi-generator": 4.0.0-rc.112
-  "@effect/platform-bun": 4.0.0-rc.112
   "@effect/platform-node": 4.0.0-rc.112
   "@effect/platform-node-shared": 4.0.0-rc.112
   "@effect/sql-pg": 4.0.0-rc.112
-  "@effect/sql-sqlite-bun": 4.0.0-rc.112
   "@effect/tsgo": 0.41.0
   "@effect/vitest": 4.0.0-rc.112
   "@legendapp/list": 3.3.5
@@ -57,12 +55,12 @@ catalog:
   yaml: ^2.9.0
 
 minimumReleaseAgeExclude:
-  - "@clerk/backend@3.14.0"
-  - "@clerk/clerk-js@6.30.1"
-  - "@clerk/electron@0.0.37"
-  - "@clerk/expo@4.2.0"
-  - "@clerk/react@6.14.7"
-  - "@clerk/shared@4.30.1"
+  - "@clerk/backend@3.18.1"
+  - "@clerk/clerk-js@6.32.1"
+  - "@clerk/electron@0.0.44"
+  - "@clerk/expo@4.6.8"
+  - "@clerk/react@6.16.1"
+  - "@clerk/shared@4.33.0"
   - "@distilled.cloud/aws@0.30.2"
   - "@distilled.cloud/axiom@0.30.2"
   - "@distilled.cloud/cloudflare@0.30.2"
@@ -71,11 +69,9 @@ minimumReleaseAgeExclude:
   - "@distilled.cloud/planetscale@0.30.2"
   - "@effect/atom-react@4.0.0-rc.112"
   - "@effect/openapi-generator@4.0.0-rc.112"
-  - "@effect/platform-bun@4.0.0-rc.112"
   - "@effect/platform-node-shared@4.0.0-rc.112"
   - "@effect/platform-node@4.0.0-rc.112"
   - "@effect/sql-pg@4.0.0-rc.112"
-  - "@effect/sql-sqlite-bun@4.0.0-rc.112"
   - "@effect/vitest@4.0.0-rc.112"
   - alchemy@2.0.0-beta.76
   - effect@4.0.0-rc.112
@@ -121,11 +117,9 @@ overrides:
   "@clerk/react": "catalog:"
   "@clerk/shared": "catalog:"
   "@effect/atom-react": "catalog:"
-  "@effect/platform-bun": "catalog:"
   "@effect/platform-node": "catalog:"
   "@effect/platform-node-shared": "catalog:"
   "@effect/sql-pg": "catalog:"
-  "@effect/sql-sqlite-bun": "catalog:"
   "@effect/vitest": "catalog:"
   "@effect/vitest>vitest": "-"
   "@expo/dom-webview": 57.0.1
@@ -163,7 +157,7 @@ packageExtensions:
       vite: "catalog:"
 
 patchedDependencies:
-  "@clerk/expo@4.2.0": patches/@clerk__expo@4.2.0.patch
+  "@clerk/expo@4.6.8": patches/@clerk__expo@4.6.8.patch
   "@effect/vitest@4.0.0-rc.112": patches/@effect__vitest@4.0.0-rc.112.patch
   "@expo/metro-config@57.0.12": patches/@expo__metro-config@57.0.12.patch
   "@ff-labs/fff-node@0.9.4": patches/@ff-labs__fff-node@0.9.4.patch
@@ -176,11 +170,12 @@ patchedDependencies:
   effect@4.0.0-rc.112: patches/effect@4.0.0-rc.112.patch
   expo-audio@57.0.4: patches/expo-audio@57.0.4.patch
   expo-sharing@57.0.17: patches/expo-sharing@57.0.17.patch
+  expo-widgets@57.0.15: patches/expo-widgets@57.0.15.patch
   react-native-gesture-handler@2.32.0: patches/react-native-gesture-handler@2.32.0.patch
   react-native-keyboard-controller@1.21.13: patches/react-native-keyboard-controller@1.21.13.patch
   react-native-nitro-modules@0.35.9: patches/react-native-nitro-modules@0.35.9.patch
   # Preserve the final layout frame. Backport of [#10171](https://github.com/software-mansion/react-native-reanimated/pull/10171).
-  react-native-reanimated@4.5.1: patches/react-native-reanimated@4.5.1.patch
+  react-native-reanimated@4.5.5: patches/react-native-reanimated@4.5.5.patch
   react-native-screens@4.26.2: patches/react-native-screens@4.26.2.patch
   uniwind@1.11.0: patches/uniwind@1.11.0.patch
 

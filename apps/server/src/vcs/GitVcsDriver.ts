@@ -48,6 +48,12 @@ export interface ExecuteGitInput {
   readonly timeoutMs?: number | null;
   readonly maxOutputBytes?: number;
   readonly appendTruncationMarker?: boolean;
+  /**
+   * With `appendTruncationMarker`, keep invoking the line callbacks after the
+   * buffered copy is full. For long-running commands whose output is only
+   * consumed through `progress`.
+   */
+  readonly keepLineCallbacksAfterTruncation?: boolean;
   readonly progress?: ExecuteGitProgress;
 }
 
@@ -100,6 +106,36 @@ export interface ExecuteGitProgress {
     exitCode: number | null;
     durationMs: number | null;
   }) => Effect.Effect<void, never>;
+}
+
+/**
+ * Progress callbacks for `createWorktree`. Git prints `Updating files: 78% (2104/2700)`
+ * to stderr during checkout, and `Submodule path 'x': checked out` during
+ * submodule init. The tracker uses these to drive the worktree setup card.
+ */
+export interface CreateWorktreeProgress {
+  /**
+   * Fires once `git worktree add` has created and registered the directory,
+   * before the (possibly long) submodule step. Git refuses an existing path,
+   * so a path reported here belongs to this call and is safe to remove on
+   * cancel.
+   */
+  readonly onWorktreeClaimed?: (path: string) => Effect.Effect<void, never>;
+  readonly onCheckoutProgress?: (input: {
+    percent: number;
+    completed: number;
+    total: number;
+  }) => Effect.Effect<void, never>;
+  readonly onSubmodulesStarted?: () => Effect.Effect<void, never>;
+  readonly onSubmoduleLine?: (line: string) => Effect.Effect<void, never>;
+  readonly onSubmodulesFinished?: (input: {
+    ok: boolean;
+    detail: string | null;
+  }) => Effect.Effect<void, never>;
+}
+
+export interface CreateWorktreeOptions {
+  readonly progress?: CreateWorktreeProgress;
 }
 
 export interface GitCommitProgress {
@@ -201,6 +237,7 @@ export interface GitFetchRemoteTrackingBranchInput {
 export interface GitFetchRemoteInput {
   cwd: string;
   remoteName: string;
+  refName?: string;
 }
 
 export interface GitRemoteExistsInput {
@@ -280,6 +317,7 @@ export class GitVcsDriver extends Context.Service<
     readonly pullCurrentBranch: (cwd: string) => Effect.Effect<VcsPullResult, GitCommandError>;
     readonly createWorktree: (
       input: VcsCreateWorktreeInput,
+      options?: CreateWorktreeOptions,
     ) => Effect.Effect<VcsCreateWorktreeResult, GitCommandError>;
     readonly fetchPullRequestBranch: (
       input: GitFetchPullRequestBranchInput,
@@ -735,12 +773,45 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
       yield* Effect.gen(function* () {
         const headExists = yield* hasHeadCommit(input.cwd);
         if (headExists) {
-          yield* execute({
-            operation,
-            cwd: input.cwd,
-            args: ["read-tree", "HEAD"],
-            env: commitEnv,
-          });
+          const reusedIndex = yield* Effect.gen(function* () {
+            const indexPath = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["rev-parse", "--path-format=absolute", "--git-path", "index"],
+            });
+            const { mtime } = yield* fileSystem.stat(indexPath.stdout.trim());
+            if (Option.isNone(mtime)) return false;
+            // Stay below the source timestamp even if Date rounded up, preserving Git's racy check.
+            const indexTime = Math.floor((mtime.value.getTime() - 1) / 1000);
+            if (indexTime <= 0) return false;
+            yield* fileSystem.copyFile(indexPath.stdout.trim(), tempIndexPath);
+            // Retain stat data only where the copied index already matches HEAD.
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["-c", "core.fsmonitor=false", "read-tree", "--reset", "HEAD"],
+              env: commitEnv,
+            });
+            // read-tree can rewrite the index, so restore its racy timestamp afterward.
+            yield* fileSystem.utimes(tempIndexPath, indexTime, indexTime);
+            const entries = yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["ls-files", "-v"],
+              env: commitEnv,
+              maxOutputBytes: WORKSPACE_FILES_MAX_OUTPUT_BYTES,
+            });
+            // A fresh index must still capture assume-unchanged/skip-worktree files.
+            return !entries.stdoutTruncated && !/^[a-zS] /m.test(entries.stdout);
+          }).pipe(Effect.orElseSucceed(() => false));
+          if (!reusedIndex) {
+            yield* execute({
+              operation,
+              cwd: input.cwd,
+              args: ["read-tree", "HEAD"],
+              env: commitEnv,
+            });
+          }
         }
 
         yield* execute({
