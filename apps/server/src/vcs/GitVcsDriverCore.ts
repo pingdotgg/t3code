@@ -2174,7 +2174,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.pullCurrentBranch",
           cwd,
-          args: ["pull", "--ff-only"],
+          args: ["pull", "--ff-only", "--no-rebase", "--no-autostash"],
         }),
         detail: "Cannot pull from detached HEAD.",
       });
@@ -2184,7 +2184,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
         ...gitCommandContext({
           operation: "GitVcsDriver.pullCurrentBranch",
           cwd,
-          args: ["pull", "--ff-only"],
+          args: ["pull", "--ff-only", "--no-rebase", "--no-autostash"],
         }),
         detail: "Current branch has no upstream configured. Push with upstream first.",
       });
@@ -2195,10 +2195,15 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       ["rev-parse", "HEAD"],
       true,
     ).pipe(Effect.map((stdout) => stdout.trim()));
-    yield* executeGit("GitVcsDriver.pullCurrentBranch.pull", cwd, ["pull", "--ff-only"], {
-      timeoutMs: 30_000,
-      fallbackErrorDetail: "git pull failed",
-    });
+    yield* executeGit(
+      "GitVcsDriver.pullCurrentBranch.pull",
+      cwd,
+      ["pull", "--ff-only", "--no-rebase", "--no-autostash"],
+      {
+        timeoutMs: 30_000,
+        fallbackErrorDetail: "git pull failed",
+      },
+    );
     const afterSha = yield* runGitStdout(
       "GitVcsDriver.pullCurrentBranch.afterSha",
       cwd,
