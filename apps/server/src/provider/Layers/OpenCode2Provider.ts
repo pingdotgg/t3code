@@ -24,32 +24,63 @@ const OPENCODE2_PRESENTATION = {
 } as const;
 const OPENCODE2_PROBE_TIMEOUT = "8 seconds";
 
-const DEFAULT_OPENCODE2_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
-  optionDescriptors: [
-    {
-      id: "variant",
-      label: "Reasoning",
-      type: "select",
-      options: [
-        { id: "low", label: "Low" },
-        { id: "medium", label: "Medium", isDefault: true },
-        { id: "high", label: "High" },
-        { id: "xhigh", label: "Extra High" },
-      ],
-      currentValue: "medium",
-    },
-    {
-      id: "agent",
-      label: "Agent",
-      type: "select",
-      options: [
-        { id: "build", label: "Build", isDefault: true },
-        { id: "plan", label: "Plan" },
-      ],
-      currentValue: "build",
-    },
+const OPENCODE2_AGENT_DESCRIPTOR = {
+  id: "agent",
+  label: "Agent",
+  type: "select",
+  options: [
+    { id: "build", label: "Build", isDefault: true },
+    { id: "plan", label: "Plan" },
   ],
+  currentValue: "build",
+} as const;
+
+/**
+ * Capabilities for models whose variants are unknown (custom models, the
+ * fallback catalog). No Reasoning selector: OpenCode 2 rejects a variant the
+ * model does not declare, so guessing one breaks every turn.
+ */
+const DEFAULT_OPENCODE2_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabilities({
+  optionDescriptors: [OPENCODE2_AGENT_DESCRIPTOR],
 });
+
+function titleCaseSlug(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(" ");
+}
+
+/** Reasoning options come from the model's own declared variants. */
+function openCode2CapabilitiesForModel(
+  model: OpenCode2Runtime.OpenCode2Inventory["models"][number],
+): ModelCapabilities {
+  if (model.variants.length === 0) {
+    return DEFAULT_OPENCODE2_MODEL_CAPABILITIES;
+  }
+  const defaultVariant = model.variants.includes("medium")
+    ? "medium"
+    : model.variants.includes("high")
+      ? "high"
+      : undefined;
+  return createModelCapabilities({
+    optionDescriptors: [
+      {
+        id: "variant",
+        label: "Reasoning",
+        type: "select",
+        options: model.variants.map((variant) =>
+          variant === defaultVariant
+            ? { id: variant, label: titleCaseSlug(variant), isDefault: true as const }
+            : { id: variant, label: titleCaseSlug(variant) },
+        ),
+        ...(defaultVariant ? { currentValue: defaultVariant } : {}),
+      },
+      OPENCODE2_AGENT_DESCRIPTOR,
+    ],
+  });
+}
 
 function flattenOpenCode2Models(
   inventory: OpenCode2Runtime.OpenCode2Inventory,
@@ -64,7 +95,7 @@ function flattenOpenCode2Models(
         name,
         ...(subProvider ? { subProvider } : {}),
         isCustom: false,
-        capabilities: DEFAULT_OPENCODE2_MODEL_CAPABILITIES,
+        capabilities: openCode2CapabilitiesForModel(model),
       } satisfies ServerProviderModel,
     ];
   });

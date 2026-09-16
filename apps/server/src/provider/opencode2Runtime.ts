@@ -157,6 +157,8 @@ export interface OpenCode2Inventory {
     readonly id: string;
     readonly providerId: string;
     readonly name: string;
+    /** Variant ids the model accepts; v2 rejects any other in the model ref. */
+    readonly variants: ReadonlyArray<string>;
   }>;
   readonly skills: ReadonlyArray<{
     readonly name: string;
@@ -347,6 +349,7 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
           id: model.id,
           providerId: model.providerID,
           name: model.name,
+          variants: model.variants.map((variant) => variant.id),
         })),
         skills: skillPage.data.map((skill) => ({
           name: skill.name,
