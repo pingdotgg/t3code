@@ -1,4 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
+import { ThreadId, type TerminalAttachStreamEvent } from "@t3tools/contracts";
+import {
+  applyTerminalAttachStreamEvent,
+  EMPTY_TERMINAL_BUFFER_STATE,
+  INITIAL_TERMINAL_OUTPUT_CURSOR,
+  readTerminalOutputUpdate,
+} from "@t3tools/client-runtime/state/terminal";
+import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
 
 import { GhosttyTerminalCore, type GhosttyCell, type GhosttyRow } from "./core";
 import {
@@ -17,6 +25,7 @@ import {
   primeTerminalCopyInput,
   resolveTerminalMouseData,
   resolveTerminalMouseTrackingState,
+  resolveTerminalAsyncPasteClaim,
   shouldBlinkTerminalCursor,
   shouldReportTerminalMouse,
   terminalGridCellAt,
@@ -97,8 +106,10 @@ describe("GhosttyTerminalSurface visibility", () => {
 
     const canvas = new TerminalTestElement();
     const mount = new TerminalTestElement();
+    const paintedText: Array<{ text: string; color: string }> = [];
     const context = {
       canvas,
+      fillStyle: "",
       beginPath() {},
       clip() {},
       rect() {},
@@ -108,7 +119,10 @@ describe("GhosttyTerminalSurface visibility", () => {
       setTransform() {},
       fillRect: (...args: number[]) => paint("fillRect", args),
       strokeRect: (...args: number[]) => paint("strokeRect", args),
-      fillText: (...args: [string, number, number, number?]) => paint("fillText", args),
+      fillText: (...args: [string, number, number, number?]) => {
+        paintedText.push({ text: args[0], color: context.fillStyle });
+        paint("fillText", args);
+      },
       measureText: (text: string) => ({
         width: text.length * 8,
         actualBoundingBoxAscent: 9,
@@ -151,6 +165,7 @@ describe("GhosttyTerminalSurface visibility", () => {
       mount,
       frames,
       paint,
+      paintedText,
       requestFrame,
       snapshot,
       onData,
@@ -208,6 +223,81 @@ describe("GhosttyTerminalSurface visibility", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
+  });
+
+  it.each(["idle", "waiting"] as const)(
+    "answers live queries when replay, completion and live output batch into a reset (%s)",
+    async (replayState) => {
+      const harness = createHarness();
+      const surface = await harness.create();
+      const target = { threadId: ThreadId.make("thread-1"), terminalId: "default" };
+      const events: TerminalAttachStreamEvent[] = [
+        { type: "replay-start", ...target },
+        {
+          type: "snapshot",
+          snapshot: {
+            ...target,
+            cwd: "/tmp",
+            worktreePath: null,
+            status: "running",
+            pid: 1,
+            history: "",
+            exitCode: null,
+            exitSignal: null,
+            label: "Terminal",
+            updatedAt: "2026-09-08T00:00:00.000Z",
+          },
+        },
+        { type: "output", ...target, data: "old\x1b[6n" },
+        { type: "replay-complete", ...target },
+        { type: "output", ...target, data: "live\x1b[6n" },
+      ];
+      const state = events.reduce(
+        (state, event) => applyTerminalAttachStreamEvent(state, event),
+        EMPTY_TERMINAL_BUFFER_STATE,
+      );
+      const update = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
+      expect(update.type).toBe("reset");
+      writeTerminalOutputUpdate(surface, update, replayState);
+      harness.flushFrame();
+      harness.flushFrame();
+      expect(harness.onData.mock.calls).toEqual([["\x1b[1;8R"]]);
+      expect(harness.renderedSnapshot.rowData[0]?.text).toContain("oldlive");
+
+      // Recreating a surface repaints consumed live queries without replying
+      // twice, while a newly arrived query still gets an answer.
+      const next = applyTerminalAttachStreamEvent(state, {
+        type: "output",
+        ...target,
+        data: "\x1b[6n",
+      });
+      const reset = readTerminalOutputUpdate(next.output, update.cursor, true);
+      writeTerminalOutputUpdate(surface, reset);
+      harness.flushFrame();
+      expect(harness.onData.mock.calls).toEqual([["\x1b[1;8R"], ["\x1b[1;8R"]]);
+    },
+  );
+
+  it("preserves explicit truecolor equal to either host default in the alternate screen", async () => {
+    const harness = createHarness();
+    const surface = await harness.create({
+      theme: {
+        background: { r: 255, g: 255, b: 255 },
+        foreground: { r: 20, g: 20, b: 20 },
+        cursor: { r: 20, g: 20, b: 20 },
+      },
+    });
+    surface.write(
+      "\x1b[?1049h\x1b[38;2;255;255;255m\x1b[48;2;20;20;20mA" +
+        "\x1b[38;2;20;20;20m\x1b[48;2;255;255;255mB",
+    );
+    harness.flushFrame();
+    expect(harness.renderedSnapshot.rowData[0]?.cells.slice(0, 2)).toMatchObject([
+      { foreground: { r: 255, g: 255, b: 255 }, background: { r: 20, g: 20, b: 20 } },
+      { foreground: { r: 20, g: 20, b: 20 }, background: { r: 255, g: 255, b: 255 } },
+    ]);
+    expect(harness.paintedText).toContainEqual({ text: "A", color: "rgb(255, 255, 255)" });
+    expect(harness.paintedText).toContainEqual({ text: "B", color: "rgb(20, 20, 20)" });
   });
 
   it("stops hidden snapshots and paint while preserving live VT replies and the next cursor", async () => {
@@ -783,6 +873,23 @@ describe("isTerminalPasteShortcut", () => {
     expect(isTerminalPasteShortcut(event({ key: "Insert", shiftKey: true }), "MacIntel")).toBe(
       false,
     );
+  });
+});
+
+describe("resolveTerminalAsyncPasteClaim", () => {
+  it("leaves a duplicate marker while the native shortcut event can still arrive", () => {
+    expect(resolveTerminalAsyncPasteClaim(4, 4, true)).toEqual({
+      nextToken: 4,
+      deliveredToken: 4,
+    });
+  });
+
+  it("invalidates a late async marker after keyup ends the shortcut", () => {
+    expect(resolveTerminalAsyncPasteClaim(4, 4, false)).toEqual({
+      nextToken: 5,
+      deliveredToken: null,
+    });
+    expect(resolveTerminalAsyncPasteClaim(4, 5, false)).toBeNull();
   });
 });
 

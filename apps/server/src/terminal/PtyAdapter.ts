@@ -39,6 +39,10 @@ export interface PtyProcess {
   write(data: string): void;
   resize(cols: number, rows: number): void;
   kill(signal?: string): void;
+  /** Pause PTY output at the producer when the adapter supports flow control. */
+  pauseOutput?(): void;
+  /** Resume PTY output after the manager has drained its bounded backlog. */
+  resumeOutput?(): void;
   onData(callback: (data: string) => void): () => void;
   onExit(callback: (event: PtyExitEvent) => void): () => void;
 }

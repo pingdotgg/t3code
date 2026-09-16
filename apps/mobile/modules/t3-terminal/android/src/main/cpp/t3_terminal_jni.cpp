@@ -12,7 +12,10 @@ namespace {
 
 constexpr uint32_t kSnapshotMagic = 0x54563354;  // "T3VT" in little endian.
 constexpr uint16_t kSnapshotVersion = 1;
-constexpr size_t kMaxScrollbackRows = 10000;
+// libghostty-vt applies max_scrollback to internal cell storage even though
+// older headers describe it as a line count. Text expands once cells carry
+// terminal state, so leave enough room for the client's 4 MB replay.
+constexpr size_t kMaxScrollbackBytes = 64 * 1024 * 1024;
 
 enum CellFlag : uint16_t {
   kBold = 1 << 0,
@@ -205,7 +208,7 @@ Java_expo_modules_t3terminal_GhosttyBridge_nativeCreate(
   GhosttyTerminalOptions options = {
       .cols = static_cast<uint16_t>(std::clamp(cols, 1, 65535)),
       .rows = static_cast<uint16_t>(std::clamp(rows, 1, 65535)),
-      .max_scrollback = kMaxScrollbackRows,
+      .max_scrollback = kMaxScrollbackBytes,
   };
   if (ghostty_terminal_new(nullptr, &session->terminal, options) != GHOSTTY_SUCCESS ||
       ghostty_render_state_new(nullptr, &session->render_state) != GHOSTTY_SUCCESS ||

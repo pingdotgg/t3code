@@ -7,11 +7,27 @@ import {
   readTerminalOutputUpdate,
   terminalOutputText,
   type TerminalBufferState,
+  type TerminalOutputUpdate,
 } from "@t3tools/client-runtime/state/terminal";
 
-import { writeTerminalOutputUpdate } from "../../components/ThreadTerminalDrawer";
+import { writeTerminalOutputUpdate as writeSurfaceOutputUpdate } from "../../components/ThreadTerminalDrawer";
 import { GHOSTTY_CELL_WIDE, GhosttyTerminalCore, ghosttyCellText } from "./core";
 import { loadGhosttyRuntime } from "./runtime";
+
+function writeTerminalOutputUpdate(core: GhosttyTerminalCore, update: TerminalOutputUpdate) {
+  return writeSurfaceOutputUpdate(
+    {
+      beginStreamingReplay: (data) => {
+        core.beginReplay();
+        core.writeReplay(data);
+      },
+      appendStreamingReplay: (data) => core.writeReplay(data),
+      completeStreamingReplay: () => core.endReplay(),
+      write: (data) => core.write(data),
+    },
+    update,
+  );
+}
 
 vi.mock("./vendor/ghostty-vt.wasm?url", async () => ({
   default: (await import("./vendor/ghostty-vt.wasm?inline")).default,
@@ -194,7 +210,7 @@ describe("GhosttyTerminalCore snapshots", () => {
       writeTerminalOutputUpdate(core, first);
       reference.resetAndWrite(initial);
       let cursor = first.cursor;
-      const reset = vi.spyOn(core, "resetAndWrite");
+      const reset = vi.spyOn(core, "beginReplay");
       const inputs: string[] = [];
       let receivedCharacters = 0;
 
@@ -226,7 +242,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     const first = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
     writeTerminalOutputUpdate(core, first);
     let cursor = first.cursor;
-    const reset = vi.spyOn(core, "resetAndWrite");
+    const reset = vi.spyOn(core, "beginReplay");
     const inputs = [
       `${"a".repeat(16_383)}🙂`,
       "\x1b[3",
@@ -290,7 +306,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     let state = createSession("\x1b[31mold");
     const initial = readTerminalOutputUpdate(state.output, INITIAL_TERMINAL_OUTPUT_CURSOR);
     writeTerminalOutputUpdate(core, initial);
-    const reset = vi.spyOn(core, "resetAndWrite");
+    const reset = vi.spyOn(core, "beginReplay");
     const data = "line\r\n".repeat(8192);
     for (let index = 0; index < 16; index += 1) state = append(state, data);
 
@@ -322,7 +338,7 @@ describe("GhosttyTerminalCore snapshots", () => {
     writeTerminalOutputUpdate(core, first);
     const reference = await createCore();
     reference.resetAndWrite(terminalOutputText(state.output));
-    const reset = vi.spyOn(core, "resetAndWrite");
+    const reset = vi.spyOn(core, "beginReplay");
 
     state = append(state, "\r\nafter");
     const next = readTerminalOutputUpdate(state.output, first.cursor);
