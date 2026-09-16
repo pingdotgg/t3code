@@ -65,12 +65,18 @@ function writableQueryFamily<A, E>(
   );
   return ({
     environmentId,
-    input: { projectId, host, repository, number },
+    input: { projectId, host, repository, number, allowStale },
   }: Parameters<typeof family>[0]) =>
     writable(
       family({
         environmentId,
-        input: { projectId, ...(host === undefined ? {} : { host }), repository, number },
+        input: {
+          projectId,
+          ...(host === undefined ? {} : { host }),
+          repository,
+          number,
+          ...(allowStale === undefined ? {} : { allowStale }),
+        },
       }),
     );
 }
@@ -231,6 +237,13 @@ export function createPullRequestEnvironmentAtoms<R, E>(
     }),
     detail,
     preview,
+    checks: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "environment-data:pull-requests:checks",
+      tag: WS_METHODS.pullRequestsChecks,
+      execute: (input) => routedRequest(WS_METHODS.pullRequestsChecks, input),
+      staleTimeMs: 45_000,
+      refreshTrigger: ({ environmentId }) => refreshes({ environmentId, input: {} }),
+    }),
     activity,
     threadComments: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:pull-requests:thread-comments",
