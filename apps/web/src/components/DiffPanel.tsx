@@ -1079,7 +1079,12 @@ export default function DiffPanel({
                       {
                         environmentId: activeThread?.environmentId ?? null,
                         filePath,
-                        workspaceRoot: activeCwd,
+                        // The branch preview can retry at the environment cwd
+                        // when the worktree is rejected; resolve files against
+                        // the cwd the rendered diff actually came from.
+                        workspaceRoot: selectedTurn
+                          ? activeCwd
+                          : (branchDiffPreview.data?.cwd ?? activeCwd),
                         repositoryRoot: activeRepositoryRoot,
                       },
                       event,
