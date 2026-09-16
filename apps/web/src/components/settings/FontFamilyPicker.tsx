@@ -8,6 +8,7 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxListVirtualized,
+  ComboboxItemSeparator,
   ComboboxPopup,
   ComboboxTrigger,
 } from "../ui/combobox";
@@ -238,9 +239,10 @@ export function FontFamilyPicker({
                 data={items}
                 keyExtractor={(item) => item}
                 renderItem={({ item, index }) => renderItem(item, index)}
+                ItemSeparatorComponent={ComboboxItemSeparator}
                 estimatedItemSize={30}
                 drawDistance={360}
-                style={{ height: Math.min(items.length * 30, 288) }}
+                style={{ height: Math.min(items.length * 30 + Math.max(0, items.length - 1), 288) }}
               />
             </ComboboxListVirtualized>
           </div>

@@ -67,6 +67,7 @@ import {
   ComboboxInput,
   ComboboxItem,
   ComboboxListVirtualized,
+  ComboboxItemSeparator,
   ComboboxPopup,
   ComboboxStatus,
   ComboboxTrigger,
@@ -854,6 +855,7 @@ export function BranchToolbarBranchSelector({
                       : "branch"
                 }
                 renderItem={({ item, index }) => renderPickerItem(item, index)}
+                ItemSeparatorComponent={ComboboxItemSeparator}
                 estimatedItemSize={28}
                 drawDistance={336}
                 onLayout={() => {
