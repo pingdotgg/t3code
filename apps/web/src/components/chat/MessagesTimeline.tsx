@@ -16,6 +16,8 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type ModelSelection,
+  type ProviderInstanceId,
   type ScopedThreadRef,
   type ServerProviderSkill,
   type ToolActivityIcon,
@@ -104,6 +106,7 @@ import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   BotIcon,
+  ArrowRightLeftIcon,
   BrainIcon,
   CheckIcon,
   ChevronDownIcon,
@@ -116,6 +119,7 @@ import {
   GlobeIcon,
   HammerIcon,
   MessageCircleIcon,
+  MessagesSquareIcon,
   Minimize2Icon,
   MousePointerClickIcon,
   PaintbrushIcon,
@@ -134,6 +138,7 @@ import type {
   KnownComposerContextRecord,
 } from "@t3tools/contracts";
 import { Button } from "../ui/button";
+import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import type { QueuedComposerMessage } from "../../queuedMessageStore";
 import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "../../assets/assetUrls";
 import { MediaVideoPlayer } from "../media/MediaVideoPlayer";
@@ -155,6 +160,10 @@ import {
   timelineContentOverflowsViewport,
 } from "./timelineScrollAnchoring";
 import { MessageCopyButton } from "./MessageCopyButton";
+import { ModelPickerContent } from "./ModelPickerContent";
+import type { ModelEsque } from "./providerIconUtils";
+import type { ProviderInstanceEntry } from "../../providerInstances";
+import type { ThreadContinuationIntent } from "@t3tools/client-runtime/thread-continuation";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 import { inferEntryKindFromPath } from "../../pierre-icons";
 import { AssistantSelectionToolbar } from "./AssistantSelectionToolbar";
@@ -281,6 +290,7 @@ interface TimelineRowSharedState {
   agentPanelModel: AgentPanelModel;
   expandedSpawnEntryIds: ReadonlySet<string>;
   onOpenAgents: () => void;
+  continuationPicker: MessagesTimelineProps["continuationPicker"];
   onCancelWorktreeSetup: (() => void) | null;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
@@ -439,6 +449,17 @@ interface MessagesTimelineProps {
   topFadeEnabled?: boolean;
   /** Non-null when older turns exist beyond the loaded window. */
   loadEarlier?: CitationHistoryPage | null;
+  continuationPicker?: {
+    activeModelSelection: ModelSelection;
+    instanceEntries: ReadonlyArray<ProviderInstanceEntry>;
+    modelOptionsByInstance: ReadonlyMap<ProviderInstanceId, ReadonlyArray<ModelEsque>>;
+    disabled?: boolean;
+    onSelect: (
+      intent: ThreadContinuationIntent,
+      message: ChatMessage,
+      modelSelection: ModelSelection,
+    ) => void;
+  };
   /** Messages sent during the running turn. They render as ghost bubbles after the live rows. */
   queuedMessages?: ReadonlyArray<QueuedComposerMessage>;
   onSteerQueuedMessage?: (id: string) => void;
@@ -496,6 +517,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   hideEmptyPlaceholder = false,
   topFadeEnabled = false,
   loadEarlier = null,
+  continuationPicker,
   queuedMessages = EMPTY_QUEUED_MESSAGES,
   onSteerQueuedMessage = NOOP_QUEUED_MESSAGE_ACTION,
   steerQueuedMessageShortcutLabel = null,
@@ -939,6 +961,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       agentPanelModel: agentPanelModel ?? EMPTY_AGENT_PANEL_MODEL,
       expandedSpawnEntryIds: paintedExpandedSpawnEntryIds,
       onOpenAgents,
+      continuationPicker,
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
@@ -972,6 +995,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       agentPanelModel,
       paintedExpandedSpawnEntryIds,
       onOpenAgents,
+      continuationPicker,
       onCancelWorktreeSetup,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
@@ -2153,6 +2177,12 @@ function AssistantMessageMeta({
         showCopyButton={showCopyButton}
         streaming={copyStreaming}
       />
+      {!message.streaming && message.turnId && ctx.continuationPicker ? (
+        <>
+          <TurnContinuationAction intent="handoff" message={message} />
+          <TurnContinuationAction intent="second-opinion" message={message} />
+        </>
+      ) : null}
       {!message.streaming && (
         <Tooltip>
           <TooltipTrigger render={<p className="text-muted-foreground text-xs tabular-nums" />}>
@@ -2164,6 +2194,71 @@ function AssistantMessageMeta({
         </Tooltip>
       )}
     </div>
+  );
+}
+
+function TurnContinuationAction({
+  intent,
+  message,
+}: {
+  intent: ThreadContinuationIntent;
+  message: ChatMessage;
+}) {
+  const ctx = use(TimelineRowCtx);
+  const picker = ctx.continuationPicker;
+  const [open, setOpen] = useState(false);
+  if (!picker) return null;
+
+  const label = intent === "handoff" ? "Hand off" : "Second opinion";
+  const Icon = intent === "handoff" ? ArrowRightLeftIcon : MessagesSquareIcon;
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  aria-label={label}
+                  disabled={picker.disabled}
+                />
+              }
+            />
+          }
+        >
+          <Icon className="size-3" />
+        </TooltipTrigger>
+        <TooltipPopup side="top">{label}</TooltipPopup>
+      </Tooltip>
+      <PopoverPopup
+        align="start"
+        className="before:hidden [--viewport-inline-padding:0]"
+        viewportClassName="overflow-hidden! rounded-[calc(var(--radius-lg)-1px)] p-0 [clip-path:inset(0_round_calc(var(--radius-lg)-1px))]"
+      >
+        <div className="border-b px-3 py-2 text-xs text-muted-foreground">
+          {intent === "handoff"
+            ? "Continue this work in a new thread"
+            : "Review this turn in a read-only thread"}
+        </div>
+        <ModelPickerContent
+          activeInstanceId={picker.activeModelSelection.instanceId}
+          model={picker.activeModelSelection.model}
+          lockedProvider={null}
+          lockedContinuationGroupKey={null}
+          instanceEntries={picker.instanceEntries}
+          modelOptionsByInstance={picker.modelOptionsByInstance}
+          terminalOpen={false}
+          onRequestClose={() => setOpen(false)}
+          onInstanceModelChange={(instanceId, model) => {
+            setOpen(false);
+            picker.onSelect(intent, message, { instanceId, model });
+          }}
+        />
+      </PopoverPopup>
+    </Popover>
   );
 }
 

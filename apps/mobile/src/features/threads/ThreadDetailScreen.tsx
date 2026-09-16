@@ -106,6 +106,7 @@ import {
 } from "./ThreadComposer";
 import { ThreadFeed } from "./ThreadFeed";
 import type { ThreadContentPresentation } from "./threadContentPresentation";
+import type { ThreadContinuationIntent } from "@t3tools/client-runtime/thread-continuation";
 import { resolveThreadFeedSubmissionAnchor } from "./thread-feed-live-follow";
 
 export interface ThreadDetailScreenProps {
@@ -141,6 +142,10 @@ export interface ThreadDetailScreenProps {
   readonly threadSyncStatus?: EnvironmentThreadStatus;
   /** Non-null when older turns exist beyond the loaded window. */
   readonly loadEarlier?: { readonly loading: boolean; readonly onLoadEarlier: () => void } | null;
+  readonly onContinueTurn?: (
+    intent: ThreadContinuationIntent,
+    message: Extract<ThreadFeedEntry, { type: "message" }>["message"],
+  ) => void;
   readonly environmentId: EnvironmentId;
   readonly projectWorkspaceRoot: string | null;
   readonly threadCwd: string | null;
@@ -881,6 +886,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
             queuedMessages={props.queuedMessages}
             dispatchingMessageId={props.dispatchingMessageId}
             onEditPendingMessage={handleEditPendingMessage}
+            onContinueTurn={props.onContinueTurn}
             contentPresentation={props.contentPresentation}
             agentLabel={agentLabel}
             latestTurn={props.selectedThread.latestTurn}

@@ -27,6 +27,7 @@ import {
 import { resolveAssetUrl } from "@t3tools/client-runtime/state/assets";
 import { formatAttachmentSize } from "@t3tools/client-runtime/state/attachments";
 import { squashAtomCommandFailure } from "@t3tools/client-runtime/state/runtime";
+import type { ThreadContinuationIntent } from "@t3tools/client-runtime/thread-continuation";
 import {
   classifyMarkdownImageSource,
   markdownImageSourceFragment,
@@ -238,6 +239,10 @@ export interface ThreadFeedProps {
   readonly queuedMessages: ReadonlyArray<QueuedThreadMessage>;
   readonly dispatchingMessageId: MessageId | null;
   readonly onEditPendingMessage: (message: QueuedThreadMessage) => void;
+  readonly onContinueTurn?: (
+    intent: ThreadContinuationIntent,
+    message: Extract<ThreadFeedEntry, { type: "message" }>["message"],
+  ) => void;
   readonly environmentId: EnvironmentId;
   readonly threadId: ThreadId;
   readonly workspaceRoot?: string | null;
@@ -1345,6 +1350,7 @@ function renderFeedEntry(
     | "skills"
     | "dispatchingMessageId"
     | "onEditPendingMessage"
+    | "onContinueTurn"
   > & {
     readonly copiedRowId: string | null;
     readonly expandedWorkRows: Record<string, boolean>;
@@ -1688,6 +1694,34 @@ function renderFeedEntry(
               buttonSize={28}
               iconSize={13}
             />
+            {props.onContinueTurn ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Continue turn"
+                hitSlop={8}
+                onPress={() => {
+                  Alert.alert("Continue turn", "Choose how another agent should use this turn.", [
+                    { text: "Cancel", style: "cancel" },
+                    {
+                      text: "Hand off",
+                      onPress: () => props.onContinueTurn?.("handoff", message),
+                    },
+                    {
+                      text: "Second opinion",
+                      onPress: () => props.onContinueTurn?.("second-opinion", message),
+                    },
+                  ]);
+                }}
+                className="h-7 w-7 items-center justify-center rounded-full active:bg-adaptive-neutral-200-800"
+              >
+                <SymbolView
+                  name="ellipsis"
+                  size={15}
+                  tintColor={iconSubtleColor}
+                  type="monochrome"
+                />
+              </Pressable>
+            ) : null}
             <Text className="font-t3-medium text-xs tabular-nums text-adaptive-neutral-600-400">
               {timestampLabel}
             </Text>
@@ -2660,6 +2694,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
             environmentId: props.environmentId,
             dispatchingMessageId: props.dispatchingMessageId,
             onEditPendingMessage: props.onEditPendingMessage,
+            onContinueTurn: props.onContinueTurn,
             copiedRowId,
             expandedWorkRows,
             workRowSizing,
@@ -2693,6 +2728,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     [
       props.dispatchingMessageId,
       props.onEditPendingMessage,
+      props.onContinueTurn,
       copiedRowId,
       disclosureToggleSettling,
       expandedWorkRows,

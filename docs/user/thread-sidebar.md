@@ -20,6 +20,17 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Continue a completed turn with another agent
+
+Use **Hand off** on a completed response to open an editable new-thread draft containing that
+turn's request, response, and changed-file list. Choose any available provider and model before
+sending it. The new thread uses the same project, branch, and working directory.
+
+Use **Second opinion** to ask another agent to review the turn without changing files. On web and
+desktop, choosing a model starts the review immediately in approval-required mode. On mobile, the
+action opens the prepared review draft so you can choose its provider and model before sending.
+On web and desktop, the header actions include the full conversation instead of one completed turn.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.
