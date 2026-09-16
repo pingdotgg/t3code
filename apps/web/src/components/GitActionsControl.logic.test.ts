@@ -1,10 +1,12 @@
-import type { VcsStatusResult } from "@t3tools/contracts";
+import type { SourceControlProviderDiscoveryItem, VcsStatusResult } from "@t3tools/contracts";
+import * as Option from "effect/Option";
 import { assert, describe, it } from "vite-plus/test";
 import {
   buildGitActionProgressStages,
   buildMenuItems,
   requiresDefaultBranchConfirmation,
   resolveAutoFeatureBranchName,
+  resolveChangeRequestProviderReadiness,
   resolveDefaultBranchActionDialogCopy,
   resolveLiveThreadBranchUpdate,
   resolveQuickAction,
@@ -1121,6 +1123,174 @@ describe("resolveThreadBranchMetadataPatch", () => {
         expectedBranch: "feature/previous-ref",
       },
     );
+  });
+});
+
+function discoveredProvider(
+  overrides: Partial<SourceControlProviderDiscoveryItem> = {},
+): SourceControlProviderDiscoveryItem {
+  return {
+    kind: "github",
+    label: "GitHub",
+    executable: "gh",
+    status: "available",
+    version: Option.some("gh version 2.62.0"),
+    installHint: "Install the GitHub command-line tool (`gh`) via https://cli.github.com/.",
+    detail: Option.none(),
+    auth: {
+      status: "authenticated",
+      account: Option.some("octocat"),
+      host: Option.some("github.com"),
+      detail: Option.none(),
+    },
+    ...overrides,
+  };
+}
+
+const GITHUB_PROVIDER_INFO = {
+  kind: "github",
+  name: "GitHub",
+  baseUrl: "https://github.com",
+} as const;
+
+describe("resolveChangeRequestProviderReadiness", () => {
+  it("is ready while discovery has not loaded", () => {
+    const readiness = resolveChangeRequestProviderReadiness(GITHUB_PROVIDER_INFO, null);
+    assert.deepEqual(readiness, { ready: true, hint: null });
+  });
+
+  it("is ready when the repository provider is not known", () => {
+    const readiness = resolveChangeRequestProviderReadiness(undefined, [discoveredProvider()]);
+    assert.deepEqual(readiness, { ready: true, hint: null });
+  });
+
+  it("is ready when the provider CLI is authenticated", () => {
+    const readiness = resolveChangeRequestProviderReadiness(GITHUB_PROVIDER_INFO, [
+      discoveredProvider(),
+    ]);
+    assert.deepEqual(readiness, { ready: true, hint: null });
+  });
+
+  it("is not ready with the install hint when the provider CLI is missing", () => {
+    const readiness = resolveChangeRequestProviderReadiness(GITHUB_PROVIDER_INFO, [
+      discoveredProvider({ status: "missing" }),
+    ]);
+    assert.deepEqual(readiness, {
+      ready: false,
+      hint: "Install the GitHub command-line tool (`gh`) via https://cli.github.com/.",
+    });
+  });
+
+  it("is not ready with the auth detail when the provider CLI is unauthenticated", () => {
+    const readiness = resolveChangeRequestProviderReadiness(GITHUB_PROVIDER_INFO, [
+      discoveredProvider({
+        auth: {
+          status: "unauthenticated",
+          account: Option.none(),
+          host: Option.none(),
+          detail: Option.some("Run `gh auth login` to authenticate GitHub CLI."),
+        },
+      }),
+    ]);
+    assert.deepEqual(readiness, {
+      ready: false,
+      hint: "Run `gh auth login` to authenticate GitHub CLI.",
+    });
+  });
+
+  it("is ready when the provider auth state is unknown", () => {
+    const readiness = resolveChangeRequestProviderReadiness(GITHUB_PROVIDER_INFO, [
+      discoveredProvider({
+        auth: {
+          status: "unknown",
+          account: Option.none(),
+          host: Option.none(),
+          detail: Option.none(),
+        },
+      }),
+    ]);
+    assert.deepEqual(readiness, { ready: true, hint: null });
+  });
+});
+
+describe("when: the source control provider CLI is unauthenticated", () => {
+  const unauthenticated = {
+    ready: false,
+    hint: "Run `gh auth login` to authenticate GitHub CLI.",
+  } as const;
+
+  it("buildMenuItems disables create PR but keeps push enabled", () => {
+    const items = buildMenuItems(status({ aheadCount: 2, pr: null }), false, true, unauthenticated);
+    assert.deepInclude(items[1], { id: "push", disabled: false });
+    assert.deepInclude(items[2], { id: "pr", label: "Create PR", disabled: true });
+  });
+
+  it("resolveQuickAction degrades commit-push-PR to commit & push", () => {
+    const quick = resolveQuickAction(
+      status({ hasWorkingTreeChanges: true }),
+      false,
+      false,
+      true,
+      unauthenticated,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "commit_push",
+      label: "Commit & push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction degrades push-and-create-PR to plain push", () => {
+    const quick = resolveQuickAction(
+      status({ aheadCount: 2, pr: null }),
+      false,
+      false,
+      true,
+      unauthenticated,
+    );
+    assert.deepInclude(quick, {
+      kind: "run_action",
+      action: "push",
+      label: "Push",
+      disabled: false,
+    });
+  });
+
+  it("resolveQuickAction disables create PR with the auth hint when synced", () => {
+    const quick = resolveQuickAction(
+      status({ aheadCount: 0, behindCount: 0, aheadOfDefaultCount: 1, pr: null }),
+      false,
+      false,
+      true,
+      unauthenticated,
+    );
+    assert.deepEqual(quick, {
+      label: "Create PR",
+      disabled: true,
+      kind: "show_hint",
+      hint: "Run `gh auth login` to authenticate GitHub CLI.",
+    });
+  });
+
+  it("resolveQuickAction still opens an existing PR", () => {
+    const quick = resolveQuickAction(
+      status({
+        pr: {
+          number: 17,
+          title: "Existing PR",
+          url: "https://example.com/pr/17",
+          baseRef: "main",
+          headRef: "feature/test",
+          state: "open",
+        },
+      }),
+      false,
+      false,
+      true,
+      unauthenticated,
+    );
+    assert.deepInclude(quick, { kind: "open_pr", label: "View PR", disabled: false });
   });
 });
 
