@@ -355,6 +355,26 @@ export function latestPullRequestReviewOutcomes(
   return [...latest.values()].filter((entry) => entry.outcome !== "dismissed");
 }
 
+/**
+ * Approvals that still stand, and only those. A superseded one is dimmed beside the reviewer
+ * who gave it, so counting it here would have the header assert in a number what the row next
+ * to it has just qualified.
+ *
+ * Not counted at all from a conversation this page only holds the recent end of: an approval
+ * older than the window would be missing, and "1" beside a tick is read as the whole answer.
+ */
+export function countStandingApprovals(
+  comments: ReadonlyArray<PullRequestComment>,
+  /** Left empty by a caller with no commits to hand, which makes no verdict stale. */
+  commits: ReadonlyArray<PullRequestCommit> = [],
+  commentsTruncated = false,
+): number {
+  if (commentsTruncated) return 0;
+  return latestPullRequestReviewOutcomes(comments, commits).filter(
+    (entry) => entry.outcome === "approved" && !entry.stale,
+  ).length;
+}
+
 export interface PullRequestTimelineEvent {
   readonly id: string;
   readonly at: string;
