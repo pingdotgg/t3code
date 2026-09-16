@@ -110,12 +110,12 @@ export type BitbucketPullRequestApiError =
 
 /**
  * `/user/permissions/repositories` answering CHANGE-2770's removal notice rather than a
- * permission — Bitbucket sends this for every account now, not only ones it would have refused.
+ * permission — production has returned both 404 and 410 for the retired endpoint.
  */
 function isRepositoryPermissionRemovedError(
   error: BitbucketPullRequestApiError,
 ): error is BitbucketApi.BitbucketResponseError {
-  return error._tag === "BitbucketResponseError" && error.status === 410;
+  return error._tag === "BitbucketResponseError" && (error.status === 404 || error.status === 410);
 }
 
 /**
