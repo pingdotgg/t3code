@@ -197,6 +197,9 @@ export const makeOpenCode2TextGeneration = (openCode2Settings: OpenCode2Settings
       Effect.gen(function* () {
         const { prompt, outputSchema } = buildThreadTitlePrompt({
           message: input.message,
+          previousTitle: input.previousTitle,
+          linkedContext: input.linkedContext,
+          attachments: input.attachments,
         });
         const generated = yield* generate({
           operation: "generateThreadTitle",
@@ -207,6 +210,7 @@ export const makeOpenCode2TextGeneration = (openCode2Settings: OpenCode2Settings
 
         return {
           title: sanitizeThreadTitle(generated.title),
+          ...(generated.needsRefinement ? { needsRefinement: true } : {}),
         };
       });
 

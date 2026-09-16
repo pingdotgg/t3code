@@ -157,12 +157,8 @@ export interface OpenCode2Inventory {
     readonly id: string;
     readonly providerId: string;
     readonly name: string;
-    readonly contextWindow: number;
-    readonly maxOutputTokens: number;
-    readonly status?: string;
   }>;
   readonly skills: ReadonlyArray<{
-    readonly id: string;
     readonly name: string;
     readonly description?: string | null;
     readonly location: string;
@@ -351,12 +347,8 @@ const makeOpenCode2Runtime = Effect.gen(function* () {
           id: model.id,
           providerId: model.providerID,
           name: model.name,
-          contextWindow: model.limit.context,
-          maxOutputTokens: model.limit.output,
-          status: model.status,
         })),
         skills: skillPage.data.map((skill) => ({
-          id: skill.id,
           name: skill.name,
           description: skill.description ?? null,
           location: skill.location,

@@ -23,14 +23,16 @@ const INSTANCE = ProviderInstanceId.make("opencode2");
 const runtimeReturning = (
   text: () => string,
   requestedModels?: Array<Record<string, unknown>>,
+  requestedPrompts?: Array<string>,
 ): OpenCode2Runtime["Service"] => ({
   connect: () =>
     Effect.succeed({
       client: {
         generate: {
-          text: (input: { readonly model?: Record<string, unknown> }) =>
+          text: (input: { readonly model?: Record<string, unknown>; readonly prompt?: string }) =>
             Effect.sync(() => {
               requestedModels?.push(input.model ?? {});
+              requestedPrompts?.push(input.prompt ?? "");
               return { text: text() };
             }),
         },
@@ -42,11 +44,15 @@ const runtimeReturning = (
   loadInventory: () => Effect.die("not used"),
 });
 
-const makeTextGeneration = (text: () => string, requestedModels?: Array<Record<string, unknown>>) =>
+const makeTextGeneration = (
+  text: () => string,
+  requestedModels?: Array<Record<string, unknown>>,
+  requestedPrompts?: Array<string>,
+) =>
   makeOpenCode2TextGeneration(decodeSettings({ enabled: true })).pipe(
     Effect.provideService(
       OpenCode2Runtime,
-      OpenCode2Runtime.of(runtimeReturning(text, requestedModels)),
+      OpenCode2Runtime.of(runtimeReturning(text, requestedModels, requestedPrompts)),
     ),
   );
 
@@ -125,5 +131,40 @@ it.effect("fails with a TextGenerationError when the output is not JSON", () =>
       .map((reason) => (reason as { readonly error?: unknown }).error)
       .find((candidate) => candidate !== undefined) as { readonly _tag?: string } | undefined;
     NodeAssert.equal(error?._tag, "TextGenerationError");
+  }),
+);
+
+it.effect("uses the regeneration prompt when a previous title is supplied", () =>
+  Effect.gen(function* () {
+    // Regression: only `message` was forwarded, so regenerating a title always
+    // built the *initial* prompt and the model never saw the previous title.
+    const requestedPrompts: Array<string> = [];
+    const textGeneration = yield* makeTextGeneration(
+      () => JSON.stringify({ title: "Fix flaky CI job" }),
+      undefined,
+      requestedPrompts,
+    );
+    yield* textGeneration.generateThreadTitle({
+      message: "investigate the flaky CI job",
+      previousTitle: "Investigate CI",
+      cwd: process.cwd(),
+      modelSelection: createModelSelection(INSTANCE, "openai/gpt-6-astra"),
+    });
+
+    NodeAssert.equal(requestedPrompts.length, 1);
+    NodeAssert.ok(
+      requestedPrompts[0]?.includes("Investigate CI"),
+      "regeneration prompt should carry the previous title",
+    );
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
+
+it.effect("surfaces needsRefinement from the model", () =>
+  Effect.gen(function* () {
+    // Regression: the field was dropped, so the refine-title flow never saw it.
+    const result = yield* generateTitle(() =>
+      JSON.stringify({ title: "Untitled", needsRefinement: true }),
+    );
+    NodeAssert.equal(result.needsRefinement, true);
   }),
 );

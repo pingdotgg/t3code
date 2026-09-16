@@ -16,11 +16,7 @@ import {
   providerModelsFromSettings,
   type ServerProviderDraft,
 } from "../providerSnapshot.ts";
-import {
-  OpenCode2Runtime,
-  OpenCode2RuntimeError,
-  type OpenCode2Inventory,
-} from "../opencode2Runtime.ts";
+import * as OpenCode2Runtime from "../opencode2Runtime.ts";
 
 const OPENCODE2_PRESENTATION = {
   displayName: "OpenCode 2",
@@ -55,7 +51,9 @@ const DEFAULT_OPENCODE2_MODEL_CAPABILITIES: ModelCapabilities = createModelCapab
   ],
 });
 
-function flattenOpenCode2Models(inventory: OpenCode2Inventory): ReadonlyArray<ServerProviderModel> {
+function flattenOpenCode2Models(
+  inventory: OpenCode2Runtime.OpenCode2Inventory,
+): ReadonlyArray<ServerProviderModel> {
   return inventory.models.flatMap((model) => {
     const name = nonEmptyTrimmed(model.name);
     if (!name) return [];
@@ -73,7 +71,7 @@ function flattenOpenCode2Models(inventory: OpenCode2Inventory): ReadonlyArray<Se
 }
 
 function openCode2SkillsToServerProviderSkills(
-  input: OpenCode2Inventory["skills"] | undefined,
+  input: OpenCode2Runtime.OpenCode2Inventory["skills"] | undefined,
 ): ReadonlyArray<ServerProviderSkill> {
   const skills: Array<ServerProviderSkill> = [];
   for (const skill of input ?? []) {
@@ -125,8 +123,8 @@ export const makePendingOpenCode2Provider = (
 export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderStatus")(function* (
   openCode2Settings: OpenCode2Settings,
   cwd: string,
-): Effect.fn.Return<ServerProviderDraft, never, OpenCode2Runtime> {
-  const openCode2Runtime = yield* OpenCode2Runtime;
+): Effect.fn.Return<ServerProviderDraft, never, OpenCode2Runtime.OpenCode2Runtime> {
+  const openCode2Runtime = yield* OpenCode2Runtime.OpenCode2Runtime;
   const checkedAt = DateTime.formatIso(yield* DateTime.now);
   const customModels = openCode2Settings.customModels;
   const isExternalServer = openCode2Settings.serverUrl.trim().length > 0;
@@ -134,15 +132,16 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
   // `connect` and `loadInventory` already fail with an `OpenCode2RuntimeError`
   // carrying a human-readable `detail`, so the probe surfaces that directly
   // instead of re-wrapping the failure to recover the message.
-  const fallback = (detail: string) =>
+  const fallback = (detail: string, connection?: OpenCode2Runtime.OpenCode2Connection) =>
     buildServerProvider({
       presentation: OPENCODE2_PRESENTATION,
       enabled: openCode2Settings.enabled,
       checkedAt,
       models: providerModelsFromSettings([], customModels, DEFAULT_OPENCODE2_MODEL_CAPABILITIES),
       probe: {
-        installed: false,
-        version: null,
+        // A reachable server that fails inventory is still installed.
+        installed: connection !== undefined,
+        version: connection?.version ?? null,
         status: "error",
         auth: { status: "unknown" },
         message: detail,
@@ -181,7 +180,7 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
         duration: OPENCODE2_PROBE_TIMEOUT,
         orElse: () =>
           Effect.fail(
-            new OpenCode2RuntimeError({
+            new OpenCode2Runtime.OpenCode2RuntimeError({
               operation: "connect",
               detail: "OpenCode 2 connection probe timed out.",
             }),
@@ -201,7 +200,7 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
         duration: OPENCODE2_PROBE_TIMEOUT,
         orElse: () =>
           Effect.fail(
-            new OpenCode2RuntimeError({
+            new OpenCode2Runtime.OpenCode2RuntimeError({
               operation: "inventory",
               detail: "OpenCode 2 inventory loading timed out.",
             }),
@@ -210,7 +209,7 @@ export const checkOpenCode2ProviderStatus = Effect.fn("checkOpenCode2ProviderSta
       Effect.result,
     );
   if (Result.isFailure(inventoryResult)) {
-    return fallback(inventoryResult.failure.detail);
+    return fallback(inventoryResult.failure.detail, connection);
   }
   const inventory = inventoryResult.success;
 
