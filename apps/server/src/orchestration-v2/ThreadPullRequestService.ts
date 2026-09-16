@@ -62,6 +62,19 @@ function pullRequestMatchesProject(
   );
 }
 
+export const resolveProjectForPullRequestDiscovery = Effect.fn(
+  "ThreadPullRequestServiceV2.resolveProject",
+)(function* (
+  project: OrchestrationProjectShell,
+  repositoryIdentities: RepositoryIdentityResolver.RepositoryIdentityResolver["Service"],
+) {
+  const repositoryIdentity = yield* repositoryIdentities.resolve(project.workspaceRoot);
+  return {
+    project: { ...project, repositoryIdentity },
+    repository: sourceControlRepositorySelector(repositoryIdentity),
+  };
+});
+
 export function projectWorkspaceMatchesSnapshot(
   currentProject: Option.Option<Pick<OrchestrationProjectShell, "workspaceRoot">>,
   expectedWorkspaceRoot: string,
@@ -143,7 +156,8 @@ export const make = Effect.gen(function* () {
           const first = group[0]!;
           const project = projects.get(first.projectId);
           if (project === undefined) return finishBackfill(group);
-          const repository = sourceControlRepositorySelector(project.repositoryIdentity);
+          const { project: resolvedProject, repository } =
+            yield* resolveProjectForPullRequestDiscovery(project, repositoryIdentities);
           if (first.branch !== null && repository === null) return finishBackfill(group);
           const worktreeExists =
             first.worktreePath !== null && (yield* fileSystem.exists(first.worktreePath));
@@ -158,7 +172,7 @@ export const make = Effect.gen(function* () {
                   { cwd, branch: first.branch },
                   { refresh: request.refresh },
                 );
-          if (detected !== null && !pullRequestMatchesProject(detected, project)) {
+          if (detected !== null && !pullRequestMatchesProject(detected, resolvedProject)) {
             return finishBackfill(group);
           }
           const detectedReference =
