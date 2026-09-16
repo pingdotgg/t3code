@@ -1,4 +1,7 @@
-import { threadPullRequestsOf } from "@t3tools/shared/threadPullRequests";
+import {
+  threadPullRequestKeysEqual,
+  threadPullRequestsOf,
+} from "@t3tools/shared/threadPullRequests";
 import {
   ChatAttachment,
   OrchestrationMessageContext,
@@ -191,6 +194,13 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     decodePullRequests(parseJson(row.pull_requests_json)),
     () => [],
   );
+  const linkedPullRequest = linkedPullRequestFor(row);
+  const legacyLink = threadPullRequestsOf({ linkedPullRequest })[0];
+  const importedPullRequests =
+    legacyLink !== undefined &&
+    !pullRequests.some((link) => threadPullRequestKeysEqual(link, legacyLink))
+      ? [...pullRequests, legacyLink]
+      : pullRequests;
   return {
     createdBy: "system",
     creationSource: "server",
@@ -203,11 +213,8 @@ function importedThread(row: LegacyThreadRow): OrchestrationV2AppThread {
     interactionMode: interactionModeFor(row.interaction_mode),
     branch,
     worktreePath,
-    linkedPullRequest: linkedPullRequestFor(row),
-    pullRequests:
-      pullRequests.length > 0
-        ? pullRequests
-        : threadPullRequestsOf({ linkedPullRequest: linkedPullRequestFor(row) }),
+    linkedPullRequest,
+    pullRequests: importedPullRequests,
     branchPullRequest: branchPullRequestFor(row),
     activeOrderKey: row.active_order_key?.trim() || null,
     activeProviderThreadId: null,
@@ -470,6 +477,7 @@ const make = Effect.gen(function* () {
          OR json_type(projection.payload_json, '$.snoozedAt') IS NULL
          OR json_type(projection.payload_json, '$.unsettledAt') IS NULL
          OR json_type(projection.payload_json, '$.linkedPullRequest') IS NULL
+         OR json_type(projection.payload_json, '$.pullRequests') IS NULL
          OR json_type(projection.payload_json, '$.branchPullRequest') IS NULL
          OR json_type(projection.payload_json, '$.activeOrderKey') IS NULL
       ORDER BY thread.created_at ASC, thread.thread_id ASC
@@ -480,6 +488,7 @@ const make = Effect.gen(function* () {
       if (Option.isNone(decoded)) continue;
       const current = decoded.value;
       const legacy = importedThread(row);
+      const legacyPullRequests = legacy.pullRequests ?? [];
       const repaired: OrchestrationV2AppThread = {
         ...current,
         pinnedAt: current.pinnedAt === undefined ? legacy.pinnedAt : current.pinnedAt,
@@ -492,6 +501,19 @@ const make = Effect.gen(function* () {
           current.linkedPullRequest === undefined
             ? legacy.linkedPullRequest
             : current.linkedPullRequest,
+        pullRequests:
+          current.pullRequests === undefined
+            ? current.linkedPullRequest === null
+              ? []
+              : legacyPullRequests.length > 0
+                ? legacyPullRequests
+                : threadPullRequestsOf({
+                    linkedPullRequest:
+                      current.linkedPullRequest === undefined
+                        ? legacy.linkedPullRequest
+                        : current.linkedPullRequest,
+                  })
+            : current.pullRequests,
         branchPullRequest:
           current.branchPullRequest === undefined
             ? legacy.branchPullRequest
