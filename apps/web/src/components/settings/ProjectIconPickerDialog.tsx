@@ -54,9 +54,7 @@ export function ProjectIconPickerDialog({
   readonly onSelect: (icon: ProjectIconOverride) => void;
 }) {
   const automatic = deriveProjectIdentity(projectName);
-  const [mode, setMode] = useState<ProjectIconOverride["kind"] | "monogram">(
-    current?.kind === "lucide" && current.monogram ? "monogram" : (current?.kind ?? "lucide"),
-  );
+  const [mode, setMode] = useState<ProjectIconOverride["kind"]>(current?.kind ?? "lucide");
   const [iconName, setIconName] = useState<IconName>(
     current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON,
   );
@@ -64,7 +62,7 @@ export function ProjectIconPickerDialog({
     current && current.kind !== "emoji" ? current.color : automatic.color,
   );
   const [letters, setLetters] = useState(
-    current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
+    current?.kind === "monogram" ? current.text : automatic.monogram,
   );
   const [emoji, setEmoji] = useState(current?.kind === "emoji" ? current.emoji : "💻");
   const [query, setQuery] = useState("");
@@ -73,14 +71,10 @@ export function ProjectIconPickerDialog({
 
   useEffect(() => {
     if (open && !previousOpenRef.current) {
-      setMode(
-        current?.kind === "lucide" && current.monogram ? "monogram" : (current?.kind ?? "lucide"),
-      );
+      setMode(current?.kind ?? "lucide");
       setIconName(current?.kind === "lucide" ? (current.name as IconName) : DEFAULT_ICON);
       setColor(current && current.kind !== "emoji" ? current.color : automatic.color);
-      setLetters(
-        current?.kind === "lucide" && current.monogram ? current.monogram : automatic.monogram,
-      );
+      setLetters(current?.kind === "monogram" ? current.text : automatic.monogram);
       setEmoji(current?.kind === "emoji" ? current.emoji : "💻");
       setQuery("");
       setCustomEmoji("");
@@ -96,7 +90,7 @@ export function ProjectIconPickerDialog({
     if (mode === "monogram" && !validMonogram) return;
     onSelect(
       mode === "monogram"
-        ? { kind: "lucide", name: DEFAULT_ICON, monogram, color }
+        ? { kind: "monogram", text: monogram, color }
         : mode === "lucide"
           ? { kind: "lucide", name: iconName, color }
           : { kind: "emoji", emoji },

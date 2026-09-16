@@ -4371,14 +4371,19 @@ engineLayer("OrchestrationProjectionPipeline via engine dispatch", (it) => {
         type: "project.meta.update",
         commandId: CommandId.make("cmd-monogram-save"),
         projectId,
-        projectIcon: { kind: "lucide", name: "folder-code", color: "violet", monogram: "T3" },
+        projectIcon: { kind: "monogram", text: "T3", color: "violet" },
       });
       const saved = yield* sql<{
         readonly icon: string | null;
       }>`SELECT project_icon_json AS icon FROM projection_projects WHERE project_id = ${projectId}`;
       assert.deepEqual(saved, [
-        { icon: '{"kind":"lucide","name":"folder-code","color":"violet","monogram":"T3"}' },
+        { icon: '{"kind":"lucide","name":"folder-code","color":"violet","monogramText":"T3"}' },
       ]);
+      const persisted = yield* sql<{ readonly icon: string }>`
+        SELECT json_extract(payload_json, '$.projectIcon') AS icon FROM orchestration_events
+        WHERE command_id = ${CommandId.make("cmd-monogram-save")}
+      `;
+      assert.deepEqual(persisted, saved);
       yield* engine.dispatch({
         type: "project.meta.update",
         commandId: CommandId.make("cmd-monogram-clear"),
