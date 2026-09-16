@@ -28,6 +28,12 @@ const NativeToolFields = Schema.Struct({
   workingDir: Schema.optional(Schema.String),
   combinedOutput: Schema.optional(Schema.String),
   combined_output: Schema.optional(Schema.String),
+  output: Schema.optional(Schema.String),
+  stdout: Schema.optional(Schema.String),
+  stderr: Schema.optional(Schema.String),
+  result: Schema.optional(Schema.Union([Schema.String, Schema.Unknown])),
+  formatted_output: Schema.optional(Schema.String),
+  formattedOutput: Schema.optional(Schema.String),
   exitCode: Schema.optional(Schema.Int),
   exit_code: Schema.optional(Schema.Int),
   imagePath: Schema.optional(Schema.String),
@@ -181,6 +187,14 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
     : copyBoundedText(`${TOOL_TEXT_TRUNCATED}${text.slice(-limit)}`);
 }
 
+function extractStructuredResultText(value: unknown): string | undefined {
+  if (typeof value === "string") return value;
+  if (!Predicate.isObject(value)) return undefined;
+  if (typeof value.content === "string") return value.content;
+  if (typeof value.text === "string") return value.text;
+  return undefined;
+}
+
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
@@ -291,6 +305,8 @@ function localImagePath(imagePath: string | undefined): string | undefined {
 export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToolCallState {
   const input = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawInput));
   const output = Option.getOrUndefined(decodeNativeToolFields(toolCall.data.rawOutput));
+  const rawOutputString =
+    typeof toolCall.data.rawOutput === "string" ? toolCall.data.rawOutput : undefined;
   const nativeCommand =
     input?.CommandLine ??
     input?.command_line ??
@@ -298,6 +314,7 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
     input?.command ??
     output?.commandLine ??
     output?.command_line ??
+    (typeof toolCall.data.command === "string" ? toolCall.data.command : undefined) ??
     toolCall.command;
   const command = nativeCommand?.trim() ? boundText(nativeCommand.trim()) : undefined;
   const nativeCwd =
@@ -307,9 +324,26 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
     input?.workingDir ??
     input?.cwd ??
     output?.workingDir ??
-    output?.working_dir;
+    output?.working_dir ??
+    (typeof toolCall.data.cwd === "string" ? toolCall.data.cwd : undefined);
   const cwd = nativeCwd?.trim() ? boundText(nativeCwd.trim()) : undefined;
-  const nativeOutput = output?.combinedOutput ?? output?.combined_output;
+  const outputStreams = [output?.stdout, output?.stderr]
+    .map((stream) => (typeof stream === "string" && stream.trim().length > 0 ? stream : null))
+    .filter((stream): stream is string => stream !== null);
+  const combinedStreams = outputStreams.length > 0 ? outputStreams.join("\n") : undefined;
+  const candidateOutputs = [
+    output?.combinedOutput,
+    output?.combined_output,
+    output?.output,
+    output?.formatted_output,
+    output?.formattedOutput,
+    combinedStreams,
+    extractStructuredResultText(output?.result),
+    rawOutputString,
+  ];
+  const nativeOutput =
+    candidateOutputs.find((entry) => typeof entry === "string" && entry.length > 0) ??
+    candidateOutputs.find((entry) => typeof entry === "string");
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
