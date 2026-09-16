@@ -366,6 +366,40 @@ describe("buildProjectActionItems", () => {
 });
 
 describe("buildThreadActionItems", () => {
+  it("finds threads by exact associated PR number", () => {
+    const pr = {
+      projectId: PROJECT_ID,
+      repository: "owner/repo",
+      number: 123,
+      url: "https://github.com/owner/repo/pull/123",
+    };
+    const threadItems = buildThreadActionItems({
+      threads: [
+        makeThread({ linkedPullRequest: pr }),
+        makeThread({
+          id: ThreadId.make("other"),
+          branchPullRequest: { ...pr, number: 1234, url: `${pr.url}4` },
+        }),
+      ],
+      projectTitleById: new Map(),
+      sortOrder: "updated_at",
+      icon: null,
+      runThread: async () => undefined,
+    });
+    for (const query of ["123", "#123"]) {
+      const groups = filterCommandPaletteGroups({
+        activeGroups: [],
+        query,
+        isInSubmenu: false,
+        projectSearchItems: [],
+        threadSearchItems: threadItems,
+      });
+      expect(groups.flatMap((group) => group.items.map((item) => item.value))).toEqual([
+        "thread:thread-1",
+      ]);
+    }
+  });
+
   it("orders threads by most recent activity and formats timestamps from updatedAt", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-03-25T12:00:00.000Z"));
@@ -700,6 +734,9 @@ describe("filterPinnedBrowseEntries", () => {
 it.each([
   "#10839",
   "10839",
+  "pingdotgg t3code",
+  "cafe",
+  "cleanup cafe",
   "pingdotgg/t3code#10839",
   "https://github.com/pingdotgg/t3code/pull/10839",
 ])("finds linked threads from PR query %s", (query) => {
@@ -715,7 +752,15 @@ it.each([
             url: "https://github.com/pingdotgg/t3code/pull/10839",
             source: "manual",
             linkedAt: "2026-09-08T00:00:00Z",
-            snapshot: null,
+            snapshot: {
+              title: "Café cleanup",
+              state: "open",
+              headBranch: "feature",
+              baseBranch: "main",
+              isDraft: false,
+              updatedAt: null,
+              syncedAt: "2026-09-08T00:00:00Z",
+            },
             stack: null,
           },
         ],

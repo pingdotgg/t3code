@@ -1,5 +1,7 @@
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import type { CommandPaletteLinkedThreads } from "../commandPaletteBus";
+import { createThreadPullRequestMatcher } from "@t3tools/client-runtime/thread-pull-request-search";
+import type { ThreadPullRequestSearchTarget } from "@t3tools/client-runtime/thread-pull-request-search";
 import {
   type EnvironmentId,
   type FilesystemBrowseEntry,
@@ -130,6 +132,7 @@ export interface CommandPaletteItem {
   readonly searchTerms: ReadonlyArray<string>;
   readonly title: ReactNode;
   readonly description?: ReactNode;
+  readonly threadPullRequests?: ThreadPullRequestSearchTarget;
   readonly threadContentMatch?: CommandPaletteThreadContentMatch;
   readonly timestamp?: string;
   readonly icon: ReactNode;
@@ -242,11 +245,11 @@ export type BuildThreadActionItemsThread = Pick<
   | "session"
   | "title"
   | "worktreePath"
-> & {
-  pullRequests?: SidebarThreadSummary["pullRequests"];
-  updatedAt: string;
-  latestUserMessageAt?: string | null;
-};
+> &
+  ThreadPullRequestSearchTarget & {
+    updatedAt: string;
+    latestUserMessageAt?: string | null;
+  };
 
 export function buildThreadActionItems<TThread extends BuildThreadActionItemsThread>(input: {
   threads: ReadonlyArray<TThread>;
@@ -298,11 +301,11 @@ export function buildThreadActionItems<TThread extends BuildThreadActionItemsThr
         value: `thread:${thread.id}`,
         searchTerms: [
           thread.title,
-          ...threadPullRequestSearchTerms(thread),
           projectTitle ?? ``,
           thread.branch ?? ``,
           contentMatch?.snippet ?? ``,
         ],
+        threadPullRequests: thread,
         title: thread.title,
         description,
         timestamp: formatRelativeTimeLabel(
@@ -385,6 +388,8 @@ export function filterCommandPaletteGroups(input: {
     return [...input.activeGroups];
   }
   const queryTokens = normalizedQuery.split(" ");
+  const matchesPullRequest = createThreadPullRequestMatcher(searchQuery);
+  const isPullRequestNumberQuery = /^#?\d+$/.test(searchQuery.trim());
 
   let baseGroups = [...input.activeGroups];
   if (isActionsFilter) {
@@ -420,15 +425,21 @@ export function filterCommandPaletteGroups(input: {
 
   return searchableGroups.flatMap((group) => {
     const items = Arr.filterMap(group.items, (item, index) => {
-      const haystack = normalizeSearchText(item.searchTerms.join(" "));
-      if (!queryTokens.every((token) => haystack.includes(token))) {
+      const searchTerms =
+        !isPullRequestNumberQuery && item.threadPullRequests
+          ? [...item.searchTerms, ...threadPullRequestSearchTerms(item.threadPullRequests)]
+          : item.searchTerms;
+      const haystack = normalizeSearchText(searchTerms.join(" "));
+      const pullRequestMatch =
+        item.threadPullRequests !== undefined && matchesPullRequest(item.threadPullRequests);
+      if (!pullRequestMatch && !queryTokens.every((token) => haystack.includes(token))) {
         return Result.failVoid;
       }
 
       return Result.succeed({
         item,
         index,
-        rank: rankCommandPaletteItemMatch(item, normalizedQuery, queryTokens),
+        rank: rankCommandPaletteItemMatch({ ...item, searchTerms }, normalizedQuery, queryTokens),
       });
     })
       .toSorted((left, right) => right.rank - left.rank || left.index - right.index)
