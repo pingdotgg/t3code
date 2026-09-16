@@ -3763,7 +3763,7 @@ describe("ClaudeAdapterLive", () => {
     );
   });
 
-  it.effect("a subagent snapshot that beats task_started still wins over the seed", () => {
+  it.effect("a subagent snapshot that beats task_started preserves its model and context", () => {
     const harness = makeHarness();
     return Effect.gen(function* () {
       const adapter = yield* ClaudeAdapter;
@@ -3798,6 +3798,7 @@ describe("ClaudeAdapterLive", () => {
         parent_tool_use_id: "toolu_agent_early",
         message: {
           model: SYNTHETIC_SUBAGENT_MODEL,
+          usage: { input_tokens: 20, cache_read_input_tokens: 10, output_tokens: 5 },
           content: [],
         },
         uuid: "early-snapshot-uuid",
@@ -3834,6 +3835,12 @@ describe("ClaudeAdapterLive", () => {
       assert.equal(progress?.type, "task.progress");
       if (progress?.type === "task.progress") {
         assert.equal(progress.payload.model, SYNTHETIC_SUBAGENT_MODEL);
+        assert.deepEqual(progress.payload.typedUsage, {
+          totalTokens: 100,
+          usedTokens: 35,
+          toolUses: 1,
+          durationMs: 10,
+        });
       }
     }).pipe(
       Effect.provideService(Random.Random, makeDeterministicRandomService()),

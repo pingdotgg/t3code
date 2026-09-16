@@ -1059,7 +1059,10 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         ["collabAgent/turnStarted", {}],
         ["collabAgent/turnCompleted", { turn: { status: "completed" } }],
         ["collabAgent/statusChanged", { status: { type: "active", activeFlags: [] } }],
-        ["collabAgent/tokenUsage", { tokenUsage: { total: { totalTokens: 42 } } }],
+        [
+          "collabAgent/tokenUsage",
+          { tokenUsage: { total: { totalTokens: 42 }, last: { totalTokens: 0 } } },
+        ],
         ["collabAgent/item", { item: { type: "commandExecution", command: "pwd" } }],
         ["collabAgent/closed", {}],
         ["collabAgent/metadataUpdated", {}],
@@ -1120,6 +1123,9 @@ lifecycleLayer("CodexAdapterLive lifecycle", (it) => {
         NodeAssert.equal(payload.effort, "high");
       }
 
+      const usageEvent = events[5];
+      NodeAssert.ok(usageEvent?.type === "task.progress");
+      NodeAssert.deepStrictEqual(usageEvent.payload.typedUsage, { totalTokens: 42, usedTokens: 0 });
       const metadataPayload = events[8]?.payload as Record<string, unknown>;
       NodeAssert.equal("status" in metadataPayload, false);
       const blankMetadataPayload = events[9]?.payload as Record<string, unknown>;

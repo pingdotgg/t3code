@@ -18,12 +18,14 @@ import type {
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import {
   formatSubagentModelLabel,
-  formatSubagentTokenCount,
+  formatSubagentTokenMetric,
+  subagentTokenMetricValue,
 } from "@t3tools/client-runtime/state/subagentRuntime";
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { Bot, Braces, Check, ChevronDown, ChevronRight, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
+import { useClientSettings } from "~/hooks/useSettings";
 import { cn } from "~/lib/utils";
 import { orchestrationEnvironment } from "~/state/orchestration";
 import { ScrollArea } from "~/components/ui/scroll-area";
@@ -138,6 +140,7 @@ function agentActivityText(agent: RuntimeSubagent): string | null {
 
 /** Flat, non-interactive agent status line. No unfold. */
 function AgentRow({ agent }: { agent: RuntimeSubagent }) {
+  const tokenMetric = useClientSettings((settings) => settings.agentsPanelTokenMetric);
   const visuals = STATUS_VISUALS[agent.status];
   const statusLabel =
     agent.kind === "subagent_batch" && agent.status === "idle" ? "Idle" : visuals.label;
@@ -149,7 +152,7 @@ function AgentRow({ agent }: { agent: RuntimeSubagent }) {
       : agent.role;
   const metadata = [
     modelLabel,
-    agent.usage ? `${formatSubagentTokenCount(agent.usage.totalTokens)} tok` : "— tok",
+    formatSubagentTokenMetric(subagentTokenMetricValue(agent.usage, tokenMetric), tokenMetric),
     agent.usage?.toolUses !== undefined ? `${agent.usage.toolUses} tools` : null,
     agent.activationCount > 1 ? `run ${agent.activationCount}` : null,
   ].filter((value): value is string => value !== null);
@@ -462,13 +465,17 @@ function CollapsedWorkflowSection({
   group: AgentPanelWorkflowGroup;
   onExpand: () => void;
 }) {
+  const tokenMetric = useClientSettings((settings) => settings.agentsPanelTokenMetric);
   const members = workflowMembers(group);
   const failed = members.filter((member) => member.status === "failed").length;
   // Coordinator usage may already aggregate members (panel-footer rule):
   // count it only when there are no member rows to sum.
-  const totalTokens = members.reduce(
-    (sum, member) => sum + (member.usage?.totalTokens ?? 0),
-    members.length === 0 ? (group.workflow.usage?.totalTokens ?? 0) : 0,
+  const tokens = (members.length === 0 ? [group.workflow] : members).reduce<number | undefined>(
+    (sum, member) => {
+      const value = subagentTokenMetricValue(member.usage, tokenMetric);
+      return value === undefined ? sum : (sum ?? 0) + value;
+    },
+    undefined,
   );
   const elapsed =
     group.workflow.startedAt && group.workflow.completedAt
@@ -489,7 +496,7 @@ function CollapsedWorkflowSection({
         <span className="ml-auto flex items-center gap-1.5 font-mono text-[.7rem] text-muted-foreground/80">
           {failed > 0 ? <span className="text-destructive-foreground">{failed} failed</span> : null}
           <span>{members.length} agents</span>
-          <span className="tabular-nums">· {formatSubagentTokenCount(totalTokens)} tok</span>
+          <span className="tabular-nums">· {formatSubagentTokenMetric(tokens, tokenMetric)}</span>
           {elapsed ? <span className="tabular-nums">· {elapsed}</span> : null}
           <ChevronRight aria-hidden className="size-3" />
         </span>
@@ -530,6 +537,7 @@ export function AgentsPanel({
   environmentId?: EnvironmentId | null;
   threadId?: ThreadId | null;
 }) {
+  const tokenMetric = useClientSettings((settings) => settings.agentsPanelTokenMetric);
   if (!model.hasAgents) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
@@ -577,7 +585,9 @@ export function AgentsPanel({
           {model.idleCount > 0 ? <span>{model.idleCount} idle</span> : null}
           {model.settledCount > 0 ? <span>{model.settledCount} settled</span> : null}
         </span>
-        <span className="tabular-nums">Σ {formatSubagentTokenCount(model.totalTokens)} tok</span>
+        <span className="tabular-nums">
+          Σ {formatSubagentTokenMetric(subagentTokenMetricValue(model, tokenMetric), tokenMetric)}
+        </span>
       </footer>
     </div>
   );

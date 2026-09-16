@@ -373,27 +373,32 @@ interface ClaudeTaskAgentState {
    * assistant snapshots (authoritative API model). */
   model: string | undefined;
   effort: string | undefined;
+  /** Current context size from the subagent's latest assistant snapshot;
+   * rides on the next cumulative rollup. */
+  usedTokens: number | undefined;
 }
 
 /**
- * How many racing snapshot models to buffer per session. A snapshot whose
+ * How many racing snapshots to buffer per session. A snapshot whose
  * task_started never arrives would otherwise pin its entry for the session's
  * lifetime; oldest entries evict first.
  */
-const PENDING_TASK_MODEL_CAP = 64;
+const PENDING_TASK_SNAPSHOT_CAP = 64;
+
+type PendingTaskSnapshot = Partial<Pick<ClaudeTaskAgentState, "model" | "usedTokens">>;
 
 /**
- * Buffers a subagent snapshot's authoritative model under its
+ * Buffers a subagent snapshot's model and context size under its
  * parent_tool_use_id, for snapshots that beat their task_started to the
  * stream. task_started consumes the entry when it registers the task.
  */
-function rememberPendingTaskModel(
-  pending: Map<string, string>,
+function rememberPendingTaskSnapshot(
+  pending: Map<string, PendingTaskSnapshot>,
   parentToolUseId: string,
-  model: string,
+  snapshot: PendingTaskSnapshot,
 ): void {
-  pending.set(parentToolUseId, model);
-  if (pending.size > PENDING_TASK_MODEL_CAP) {
+  pending.set(parentToolUseId, { ...pending.get(parentToolUseId), ...snapshot });
+  if (pending.size > PENDING_TASK_SNAPSHOT_CAP) {
     const oldest = pending.keys().next();
     if (!oldest.done) {
       pending.delete(oldest.value);
@@ -425,11 +430,11 @@ interface ClaudeSessionContext {
   readonly claudeTasks: Map<string, ClaudeTaskState>;
   readonly taskAgents: Map<string, ClaudeTaskAgentState>;
   /**
-   * Authoritative subagent models from assistant snapshots that arrived before
+   * Subagent models and context sizes from assistant snapshots that arrived before
    * their task_started registered the task, keyed by parent_tool_use_id.
-   * Written through `rememberPendingTaskModel`, consumed by task_started.
+   * Written through `rememberPendingTaskSnapshot`, consumed by task_started.
    */
-  readonly pendingTaskModels: Map<string, string>;
+  readonly pendingTaskSnapshots: Map<string, PendingTaskSnapshot>;
   /**
    * Last emitted workflow-member fingerprint per member slot. A coordinator
    * task_progress repeats the FULL member array every tick; without a
@@ -1311,6 +1316,16 @@ function normalizeTaskUsage(usage: unknown): RuntimeTaskUsage | undefined {
     ...(toolUses !== undefined ? { toolUses } : {}),
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
+}
+
+/** Stamps the task's current context size onto its cumulative rollup. */
+function withTaskContext(
+  typedUsage: RuntimeTaskUsage | undefined,
+  agent: ClaudeTaskAgentState | undefined,
+): RuntimeTaskUsage | undefined {
+  return typedUsage && agent?.usedTokens !== undefined
+    ? { ...typedUsage, usedTokens: agent.usedTokens }
+    : typedUsage;
 }
 
 /** SDK task_updated patch status → the shared wire vocabulary. */
@@ -3219,6 +3234,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             owningAgentId: existing?.owningAgentId,
             model: existing?.model,
             effort: existing?.effort,
+            usedTokens: existing?.usedTokens,
           });
         }
       }
@@ -3258,18 +3274,19 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const owningTaskId = agentIdForParentToolUse(context.taskAgents, assistantParentToolUseId);
       const snapshotModel = trimmedString(message.message.model);
       const owningAgent = owningTaskId ? context.taskAgents.get(owningTaskId) : undefined;
-      if (snapshotModel) {
-        if (owningAgent) {
+      const usedTokens = claudeTotalProcessedTokens(message.message.usage);
+      if (owningAgent) {
+        if (snapshotModel) {
           owningAgent.model = snapshotModel;
-        } else {
-          // The snapshot beat its task_started (or its tool_use_id was never
-          // recorded): hold the model until the task registers.
-          rememberPendingTaskModel(
-            context.pendingTaskModels,
-            assistantParentToolUseId,
-            snapshotModel,
-          );
         }
+        if (usedTokens !== undefined) {
+          owningAgent.usedTokens = usedTokens;
+        }
+      } else if (snapshotModel || usedTokens !== undefined) {
+        rememberPendingTaskSnapshot(context.pendingTaskSnapshots, assistantParentToolUseId, {
+          ...(snapshotModel ? { model: snapshotModel } : {}),
+          ...(usedTokens !== undefined ? { usedTokens } : {}),
+        });
       }
       context.lastAssistantUuid = message.uuid;
       yield* updateResumeCursor(context);
@@ -3636,12 +3653,14 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         // named level or an integer.
         const launchInput = launchingTool?.input;
         const toolUseId = message.tool_use_id;
-        const bufferedModel = toolUseId ? context.pendingTaskModels.get(toolUseId) : undefined;
+        const bufferedSnapshot = toolUseId
+          ? context.pendingTaskSnapshots.get(toolUseId)
+          : undefined;
         if (toolUseId) {
-          context.pendingTaskModels.delete(toolUseId);
+          context.pendingTaskSnapshots.delete(toolUseId);
         }
         const model =
-          bufferedModel ??
+          bufferedSnapshot?.model ??
           trimmedString(launchInput?.model) ??
           trimmedString(context.session.model ?? undefined);
         const rawLaunchEffort = launchInput?.effort;
@@ -3664,6 +3683,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           owningAgentId,
           model,
           effort,
+          usedTokens: bufferedSnapshot?.usedTokens,
         });
         context.liveTaskIds.add(message.task_id);
         yield* offerRuntimeEvent({
@@ -3694,7 +3714,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
           },
         );
         const linkage = taskLinkageFor(context.taskAgents, message.task_id);
-        const typedUsage = normalizeTaskUsage(message.usage);
+        const typedUsage = withTaskContext(
+          normalizeTaskUsage(message.usage),
+          context.taskAgents.get(message.task_id),
+        );
         // Phases ride on the coordinator's ONE progress row per tick. A
         // separate phases-only row shared the stable ingestion activity id
         // with this full row, and the thinner upsert overwrote usage and
@@ -3760,7 +3783,10 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
             rawPayload: message,
           },
         );
-        const typedUsage = normalizeTaskUsage(message.usage);
+        const typedUsage = withTaskContext(
+          normalizeTaskUsage(message.usage),
+          context.taskAgents.get(message.task_id),
+        );
         yield* offerRuntimeEvent({
           ...base,
           type: "task.completed",
@@ -4345,7 +4371,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
       const inFlightTools = new Map<number, ToolInFlight>();
       const claudeTasks = new Map<string, ClaudeTaskState>();
       const taskAgents = new Map<string, ClaudeTaskAgentState>();
-      const pendingTaskModels = new Map<string, string>();
+      const pendingTaskSnapshots = new Map<string, PendingTaskSnapshot>();
       const workflowMemberFingerprints = new Map<string, string>();
       const liveTaskIds = new Set<string>();
 
@@ -4935,7 +4961,7 @@ export const makeClaudeAdapter = Effect.fn("makeClaudeAdapter")(function* (
         inFlightTools,
         claudeTasks,
         taskAgents,
-        pendingTaskModels,
+        pendingTaskSnapshots,
         workflowMemberFingerprints,
         liveTaskIds,
         turnState: undefined,
