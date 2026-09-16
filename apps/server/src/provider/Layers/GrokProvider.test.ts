@@ -14,6 +14,7 @@ import {
   buildGrokModelsFromSessionModelState,
   buildInitialGrokProviderSnapshot,
   checkGrokProviderStatus,
+  grokSlashCommandsFromInitialize,
   parseGrokModelsCliOutput,
 } from "./GrokProvider.ts";
 import { execScriptSource, writeFakeCli } from "../../testUtils/fakeCli.ts";
@@ -53,6 +54,69 @@ describe("parseGrokModelsCliOutput", () => {
 
   it("returns unknown auth for unrecognized output", () => {
     expect(parseGrokModelsCliOutput("grok 9.9.9\n").authenticated).toBeNull();
+  });
+});
+
+describe("grokSlashCommandsFromInitialize", () => {
+  it("publishes native ACP commands and input hints without permission overrides", () => {
+    const commands = grokSlashCommandsFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        availableCommands: [
+          { name: "compact", description: "Compress history", input: { hint: "what to preserve" } },
+          {
+            name: "always-approve",
+            description: "Skip permission prompts",
+            input: { hint: "on|off" },
+          },
+          { name: "context", description: "Show context usage", input: null },
+          { name: "session-info", description: "Show session details" },
+          { name: "deep-research", description: "Research a topic", input: { hint: "<query>" } },
+          { name: "workflow", description: "Manage workflows", input: { hint: "runs" } },
+          { name: "goal", description: "Manage an autonomous goal", input: { hint: "status" } },
+        ],
+      },
+    });
+    expect(commands.map((command) => command.name)).toEqual([
+      "compact",
+      "session-info",
+      "deep-research",
+      "workflow",
+      "goal",
+    ]);
+    expect(commands[0]?.input).toEqual({ hint: "what to preserve" });
+    expect(commands[2]).toEqual({
+      name: "deep-research",
+      description: "Research a topic",
+      input: { hint: "<query>" },
+    });
+  });
+
+  it("keeps valid commands when other metadata entries are malformed", () => {
+    const commands = grokSlashCommandsFromInitialize({
+      protocolVersion: 1,
+      _meta: {
+        availableCommands: [
+          null,
+          { name: "broken", description: 42 },
+          { name: " ", description: "Empty name" },
+          { name: " session-info ", description: " Session details " },
+          { name: "session-info", description: "Updated session details" },
+        ],
+      },
+    });
+    expect(commands.map((command) => command.name)).toEqual(["compact", "session-info"]);
+    expect(commands[1]?.description).toBe("Updated session details");
+  });
+
+  it("keeps compact available for older agents without command metadata", () => {
+    for (const _meta of [undefined, {}, { availableCommands: "invalid" }]) {
+      expect(
+        grokSlashCommandsFromInitialize({ protocolVersion: 1, ...(_meta ? { _meta } : {}) }).map(
+          (command) => command.name,
+        ),
+      ).toEqual(["compact"]);
+    }
   });
 });
 
@@ -438,6 +502,7 @@ it.layer(NodeServices.layer)("checkGrokProviderStatus", (it) => {
         ["grok-4.5", false],
       ]);
       expect(snapshot.message).toContain("ACP initialize failed");
+      expect(snapshot.slashCommands.map((command) => command.name)).toEqual(["compact"]);
     }),
   );
 
