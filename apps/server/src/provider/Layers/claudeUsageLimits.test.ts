@@ -166,6 +166,102 @@ describe("claudeRateLimitEventToUpdate", () => {
     });
   });
 
+  // Verbatim shape of a Claude Team event: every window under
+  // `unifiedWindows`, nothing at the top level to scale.
+  it("reads the account windows a Team event carries without a top-level utilization", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          resetsAt: 1_789_236_000,
+          overageStatus: "rejected",
+          overageDisabledReason: "org_level_disabled",
+          ...({
+            unifiedWindows: {
+              five_hour: { utilization: 0.85, resetsAt: 1_789_236_000 },
+              seven_day: { utilization: 0.74, resetsAt: 1_789_405_200 },
+            },
+          } as object),
+        },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 85,
+          windowDurationMins: 300,
+          resetsAt: "2026-09-12T18:00:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 74,
+          windowDurationMins: 10080,
+          resetsAt: "2026-09-14T17:00:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("prefers the unified window over the top-level fields naming the same window", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "five_hour",
+          utilization: 0.1,
+          resetsAt: 1_784_000_000,
+          ...({ unifiedWindows: { five_hour: { utilization: 0.85 } } } as object),
+        },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 85,
+          windowDurationMins: 300,
+        },
+      ],
+    });
+  });
+
+  it("keeps the scoped overage row beside the unified windows", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed",
+          rateLimitType: "seven_day_overage_included" as never,
+          utilization: 0.4,
+          ...({ unifiedWindows: { seven_day: { utilization: 0.2 } } } as object),
+        },
+        { overageIncluded: "Fable" },
+      )?.windows.map((window) => window.id),
+    ).toEqual(["seven_day", "seven_day_fable"]);
+  });
+
+  it("ignores a malformed unified window", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "rejected",
+          rateLimitType: "five_hour",
+          ...({
+            unifiedWindows: { five_hour: { utilization: null }, seven_day: null },
+          } as object),
+        },
+        noNames,
+      ),
+    ).toBeUndefined();
+  });
+
   it("ignores windows the page does not render and events without a utilization", () => {
     expect(
       claudeRateLimitEventToUpdate(

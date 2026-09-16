@@ -4,6 +4,7 @@ import {
   ServerSettingsError,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
@@ -54,6 +55,7 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
+  readonly keepPublishedWindowsWhenProbeUnsupported?: boolean;
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -151,6 +153,9 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const probedSnapshot = yield* input.checkProvider;
+    // Drivers that never report usage limits leave no timestamp to age
+    // preserved windows against, so the refresh itself is the clock.
+    const refreshedAt = DateTime.formatIso(yield* DateTime.now);
     const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
       snapshotStateRef,
       (state) => {
@@ -162,6 +167,13 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
           resolveUsageLimitsAfterProbe({
             published: state.snapshot.usageLimits,
             probed: probedSnapshot.usageLimits,
+            asOf: refreshedAt,
+            ...(input.keepPublishedWindowsWhenProbeUnsupported !== undefined
+              ? {
+                  keepPublishedWindowsWhenProbeUnsupported:
+                    input.keepPublishedWindowsWhenProbeUnsupported,
+                }
+              : {}),
           }),
         );
         return [

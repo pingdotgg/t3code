@@ -6,7 +6,13 @@
  * - `get_usage` (on demand, during the capabilities probe) reports every
  *   window at once as 0–100 percentages with ISO reset times.
  * - `rate_limit_event` (streamed during a turn) names one window at a time
- *   with a 0–1 utilization fraction and an epoch-seconds reset.
+ *   with a 0–1 utilization fraction and an epoch-seconds reset, and may also
+ *   carry every window at once under `unifiedWindows`.
+ *
+ * Team and Enterprise accounts have only the second source: `get_usage`
+ * answers `rate_limits_available: false` for them no matter how much API
+ * traffic has gone by, and their events carry `unifiedWindows` with no
+ * top-level `utilization`.
  *
  * @module provider/Layers/claudeUsageLimits
  */
@@ -100,6 +106,31 @@ function readModelScoped(rateLimits: object): ReadonlyArray<ModelScopedWindow> {
   );
 }
 
+/**
+ * The account-wide windows a single `rate_limit_event` can carry, keyed the
+ * same way as {@link WINDOWS}. Utilization is a 0–1 fraction and `resetsAt` is
+ * epoch seconds, matching the event's top-level fields. Read structurally for
+ * the same reason as `model_scoped`: it postdates the SDK typings we pin.
+ */
+function readUnifiedWindows(
+  info: SDKRateLimitInfo,
+): ReadonlyArray<readonly [string, { readonly utilization: number; readonly resetsAt?: number }]> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null) return [];
+  const entries: Array<readonly [string, { utilization: number; resetsAt?: number }]> = [];
+  for (const id of Object.keys(WINDOWS)) {
+    const entry = (raw as Record<string, unknown>)[id];
+    if (typeof entry !== "object" || entry === null) continue;
+    const { utilization, resetsAt } = entry as {
+      readonly utilization?: unknown;
+      readonly resetsAt?: unknown;
+    };
+    if (typeof utilization !== "number") continue;
+    entries.push([id, { utilization, ...(typeof resetsAt === "number" ? { resetsAt } : {}) }]);
+  }
+  return entries;
+}
+
 function isoFromEpochSeconds(value: number | undefined): string | undefined {
   if (value === undefined || !Number.isFinite(value) || value <= 0) return undefined;
   const dt = DateTime.make(value * 1000);
@@ -127,27 +158,34 @@ function makeWindow(
 }
 
 /**
- * Utilization is a 0–1 fraction on the streamed event. An overage-included
- * event before any probe has named the bucket is dropped: guessing a name
- * would draw a row the next probe cannot reconcile.
+ * Utilization is a 0–1 fraction on the streamed event, both under
+ * `unifiedWindows` and at the top level. `unifiedWindows` wins where the two
+ * overlap because it reports the whole account at once while the top-level
+ * fields describe whichever window the event happens to name. An
+ * overage-included event before any probe has named the bucket is dropped:
+ * guessing a name would draw a row the next probe cannot reconcile.
  */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
   names: ClaudeScopedLimitNames,
 ): ProviderUsageLimitsUpdate | undefined {
+  const windows: ServerProviderUsageWindow[] = [];
+  for (const [id, window] of readUnifiedWindows(info)) {
+    windows.push(makeWindow(id, window.utilization * 100, isoFromEpochSeconds(window.resetsAt)));
+  }
   const type: string | undefined = info.rateLimitType;
-  if (!type || typeof info.utilization !== "number") {
-    return undefined;
+  if (type && typeof info.utilization === "number") {
+    const usedPercent = info.utilization * 100;
+    const resetsAt = isoFromEpochSeconds(info.resetsAt);
+    if (type in WINDOWS) {
+      if (!windows.some((window) => window.id === type)) {
+        windows.push(makeWindow(type, usedPercent, resetsAt));
+      }
+    } else if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
+      windows.push(scopedWindow(names.overageIncluded, usedPercent, resetsAt));
+    }
   }
-  const usedPercent = info.utilization * 100;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)] };
-  }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)] };
-  }
-  return undefined;
+  return windows.length > 0 ? { windows } : undefined;
 }
 
 /**

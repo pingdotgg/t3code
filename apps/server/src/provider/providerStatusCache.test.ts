@@ -13,6 +13,7 @@ import * as Logger from "effect/Logger";
 
 import {
   hydrateCachedProvider,
+  hydrateCachedUsageLimits,
   isCachedProviderCorrelated,
   readProviderStatusCache,
   resolveProviderStatusCachePath,
@@ -20,6 +21,7 @@ import {
 } from "./providerStatusCache.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
+const NOW = Date.parse("2026-04-11T00:00:00.000Z");
 const CODEX_DRIVER = ProviderDriverKind.make("codex");
 const CLAUDE_AGENT_DRIVER = ProviderDriverKind.make("claudeAgent");
 const OPENCODE_DRIVER = ProviderDriverKind.make("opencode");
@@ -158,6 +160,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({
         cachedProvider: cachedCodex,
         fallbackProvider: fallbackCodex,
+        nowMillis: NOW,
       }),
       {
         ...fallbackCodex,
@@ -206,6 +209,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({
         cachedProvider: cachedCodex,
         fallbackProvider: fallbackCodex,
+        nowMillis: NOW,
       }).models,
       [builtIn],
     );
@@ -229,8 +233,106 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({
         cachedProvider: cachedCodex,
         fallbackProvider: disabledFallback,
+        nowMillis: NOW,
       }),
       disabledFallback,
+    );
+  });
+
+  it("restores the cached usage windows that have not rolled over yet", () => {
+    const cachedClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      usageLimits: {
+        checkedAt: "2026-04-10T23:00:00.000Z",
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent: 85,
+            resetsAt: "2026-04-11T02:00:00.000Z",
+            windowDurationMins: 300,
+          },
+        ],
+      },
+    });
+    const fallbackClaude = makeProvider(CLAUDE_AGENT_DRIVER);
+
+    assert.deepStrictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedClaude,
+        fallbackProvider: fallbackClaude,
+        nowMillis: NOW,
+      }).usageLimits,
+      cachedClaude.usageLimits,
+    );
+  });
+
+  it("drops cached windows whose period has rolled over", () => {
+    const expired = {
+      checkedAt: "2026-04-10T12:00:00.000Z",
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 85,
+          resetsAt: "2026-04-10T17:00:00.000Z",
+        },
+      ],
+    } as const;
+
+    assert.strictEqual(
+      hydrateCachedUsageLimits({ cachedLimits: expired, nowMillis: NOW }),
+      undefined,
+    );
+  });
+
+  // A window with no reset time is still bounded by how long its period runs
+  // from the read that cached it.
+  it("ages a cached window out by its own duration when it names no reset", () => {
+    const window = {
+      id: "primary",
+      kind: "session",
+      label: "Session",
+      usedPercent: 40,
+      windowDurationMins: 300,
+    } as const;
+
+    assert.strictEqual(
+      hydrateCachedUsageLimits({
+        cachedLimits: { checkedAt: "2026-04-10T18:00:00.000Z", windows: [window] },
+        nowMillis: NOW,
+      })?.windows,
+      undefined,
+    );
+    assert.deepStrictEqual(
+      hydrateCachedUsageLimits({
+        cachedLimits: { checkedAt: "2026-04-10T23:00:00.000Z", windows: [window] },
+        nowMillis: NOW,
+      })?.windows,
+      [window],
+    );
+  });
+
+  // The probe's verdict on the account is this run's to make. Replaying the
+  // last one would put "no subscription limits" back on screen before the
+  // first turn has had a chance to prove it wrong.
+  it("does not replay a cached unavailable verdict", () => {
+    const cachedClaude = makeProvider(CLAUDE_AGENT_DRIVER, {
+      usageLimits: {
+        checkedAt: "2026-04-10T23:00:00.000Z",
+        windows: [],
+        unavailable: { reason: "unsupported" },
+      },
+    });
+
+    assert.strictEqual(
+      hydrateCachedProvider({
+        cachedProvider: cachedClaude,
+        fallbackProvider: makeProvider(CLAUDE_AGENT_DRIVER),
+        nowMillis: NOW,
+      }).usageLimits,
+      undefined,
     );
   });
 
@@ -279,6 +381,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({
         cachedProvider: legacyCachedCodex,
         fallbackProvider: fallbackCodex,
+        nowMillis: NOW,
       }),
       fallbackCodex,
     );
@@ -293,6 +396,7 @@ it.layer(NodeServices.layer)("providerStatusCache", (it) => {
       hydrateCachedProvider({
         cachedProvider: mismatchedCachedCodex,
         fallbackProvider: fallbackCodex,
+        nowMillis: NOW,
       }),
       fallbackCodex,
     );

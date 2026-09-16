@@ -30,6 +30,7 @@ import {
   type ServerProviderUpdateState,
 } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as FileSystem from "effect/FileSystem";
@@ -296,6 +297,7 @@ export const ProviderRegistryLive = Layer.effect(
     // below.
     const bootInstances = yield* instanceRegistry.listInstances;
     const bootSources = bootInstances.map(buildSnapshotSource);
+    const bootNowMillis = yield* Clock.currentTimeMillis;
     const fallbackProviders = yield* loadProviders(bootSources);
     const fallbackByInstance = new Map<ProviderInstanceId, ServerProvider>();
     for (let index = 0; index < fallbackProviders.length; index++) {
@@ -334,6 +336,7 @@ export const ProviderRegistryLive = Layer.effect(
               const correlation = {
                 cachedProvider,
                 fallbackProvider,
+                nowMillis: bootNowMillis,
               } as const;
               if (!isCachedProviderCorrelated(correlation)) {
                 return Effect.logWarning("provider status cache identity mismatch, ignoring", {
@@ -356,6 +359,38 @@ export const ProviderRegistryLive = Layer.effect(
         ),
       ),
     );
+    // Replay the cached windows into the instances that own them, not just
+    // into `providersRef`. The probe that follows publishes its own
+    // `usageLimits` over whatever this list holds, so bars restored here
+    // would blink out a second later unless the instance counts them as
+    // published — which is also what lets a provider opting into
+    // `keepPublishedWindowsWhenProbeUnsupported` survive a probe that cannot
+    // see its account's limits at all.
+    const bootInstancesById = new Map(
+      bootInstances.map((instance) => [instance.instanceId, instance] as const),
+    );
+    yield* Effect.forEach(
+      cachedProviders,
+      (provider) =>
+        Effect.gen(function* () {
+          const usageLimits = provider.usageLimits;
+          if (usageLimits === undefined || usageLimits.windows.length === 0) {
+            return;
+          }
+          const instance = bootInstancesById.get(provider.instanceId);
+          if (instance === undefined) {
+            return;
+          }
+          // The cached `checkedAt` rides along so the UI dates the bars to
+          // the read that produced them rather than to this boot.
+          yield* instance.snapshot.applyUsageLimits({
+            windows: usageLimits.windows,
+            checkedAt: usageLimits.checkedAt,
+          });
+        }).pipe(Effect.ignoreCause({ log: true })),
+      { concurrency: "unbounded", discard: true },
+    );
+
     const providersRef = yield* Ref.make<ReadonlyArray<ServerProvider>>(cachedProviders);
     const workspaceRefreshesRef = yield* Ref.make<
       ReadonlyMap<ProviderInstance, ReadonlySet<string>>
