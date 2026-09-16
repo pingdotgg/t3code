@@ -157,6 +157,48 @@ it.effect("submits a Forgejo review without sending its summary in the prelimina
   );
 });
 
+it.effect("reads Forgejo checks without repository or viewer requests", () => {
+  const paths: string[] = [];
+  return Effect.gen(function* () {
+    const provider = yield* ForgejoPullRequestProvider.make;
+    const read = provider.getChangeRequestChecks;
+    if (read === undefined) return yield* Effect.die("checks read missing");
+    const result = yield* read({
+      cwd: "/repo",
+      repository: "acme/web",
+      host: "forgejo.test",
+      number: 1,
+    });
+    assert.strictEqual(result.state, "open");
+    assert.strictEqual(result.checks[0]?.status, "failure");
+    assert.deepStrictEqual(paths, [
+      "repos/acme/web/pulls/1",
+      "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=1",
+      "repos/acme/web/statuses/head?sort=recentupdate&limit=50&page=2",
+    ]);
+  }).pipe(
+    Effect.provide(
+      Layer.mock(ForgejoCli.ForgejoCli)({
+        api: (input) => {
+          paths.push(input.path);
+          assert.match(input.path, /^repos\/acme\/web\/(pulls\/1|statuses\/head)/);
+          return Effect.succeed(
+            processOutput(
+              input.path.endsWith("pulls/1")
+                ? `{"number":1,"title":"Checks","body":"","html_url":"https://forgejo.test/acme/web/pulls/1", "user":null,"state":"open","merged":false,
+            "head":{"ref":"feature","sha":"head","repo":null},"base":{"ref":"main","sha":"base","repo":null},
+            "created_at":"2026-09-16T00:00:00Z","updated_at":"2026-09-16T00:00:00Z","closed_at":null,"merged_at":null,"labels":[]}`
+                : input.path.endsWith("page=1")
+                  ? `[{"context":"build","status":"failure","description":null,"target_url":null,"updated_at":"2026-09-16T00:00:00Z"}]`
+                  : "[]",
+            ),
+          );
+        },
+      }),
+    ),
+  );
+});
+
 it.effect("loads Forgejo pull request references from files and commits views", () =>
   Effect.gen(function* () {
     const provider = yield* ForgejoSourceControlProvider.make;
