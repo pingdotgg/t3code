@@ -67,6 +67,16 @@ export class DesktopShellEnvironment extends Context.Service<
   }
 >()("@t3tools/desktop/shell/DesktopShellEnvironment") {}
 
+// The server reads these from plain process env, and we document them as shell
+// exports. A GUI launch inherits nothing from the shell, so without forwarding
+// them the desktop app reports Bitbucket as unauthenticated while the very same
+// credentials work in a terminal-started server.
+const BITBUCKET_CREDENTIAL_ENV_NAMES = [
+  "T3CODE_BITBUCKET_ACCESS_TOKEN",
+  "T3CODE_BITBUCKET_EMAIL",
+  "T3CODE_BITBUCKET_API_TOKEN",
+] as const;
+
 const LOGIN_SHELL_ENV_NAMES = [
   "PATH",
   "DBUS_SESSION_BUS_ADDRESS",
@@ -85,6 +95,7 @@ const LOGIN_SHELL_ENV_NAMES = [
   "XDG_SESSION_DESKTOP",
   "XDG_SESSION_TYPE",
   "WAYLAND_DISPLAY",
+  ...BITBUCKET_CREDENTIAL_ENV_NAMES,
 ] as const;
 const WINDOWS_PROFILE_ENV_NAMES = ["PATH", "FNM_DIR", "FNM_MULTISHELL_PATH"] as const;
 const LOCALE_ENV_NAMES = ["LANG", "LC_ALL", "LC_CTYPE"] as const;
@@ -477,6 +488,18 @@ const installPosixEnvironment = Effect.fn("desktop.shellEnvironment.installPosix
     ] as const) {
       if (!config.env[name] && shellEnvironment[name]) {
         config.env[name] = shellEnvironment[name];
+      }
+    }
+
+    // Bitbucket credentials form one precedence group: an access token outranks an
+    // email plus API token, so adding a shell-probed pair next to an inherited
+    // access token would leave the probed values silently unused. Take the whole
+    // set from one source, and prefer whatever the process already carries.
+    if (BITBUCKET_CREDENTIAL_ENV_NAMES.every((name) => !config.env[name])) {
+      for (const name of BITBUCKET_CREDENTIAL_ENV_NAMES) {
+        if (shellEnvironment[name]) {
+          config.env[name] = shellEnvironment[name];
+        }
       }
     }
 
