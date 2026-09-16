@@ -78,6 +78,7 @@ const T3_MCP_TOOL_LABELS: Record<
   link_pull_request: ["Link", "Linking", "Linked", "a pull request"],
   unlink_pull_request: ["Unlink", "Unlinking", "Unlinked", "a pull request"],
   list_thread_pull_requests: ["Check", "Checking", "Checked", "linked pull requests"],
+  rename_thread: ["Rename", "Renaming", "Renamed", "the thread"],
   orchestrator_capabilities: ["Get", "Getting", "Got", "orchestration capabilities"],
   delegate_task: ["Delegate", "Delegating", "Delegated", "a child task"],
   task_status: ["Get", "Getting", "Got", "delegated task status"],

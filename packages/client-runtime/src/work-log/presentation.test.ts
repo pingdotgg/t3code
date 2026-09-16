@@ -302,6 +302,7 @@ describe("resolveWorkEntryToolPresentation", () => {
       "Handing off thread to a git worktree",
       "Handed off thread to a git worktree",
     ],
+    ["rename_thread", "Renaming the thread", "Renamed the thread"],
   ])("preserves verb forms and the rest of %s's label", (tool, running, completed) => {
     const entry = { label: `t3-code.${tool}` };
     expect(

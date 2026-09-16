@@ -20,6 +20,13 @@ on Windows and Linux to start a new thread and immediately open another draft. T
 next draft keeps the workspace mode and base branch you selected. With **New
 worktree**, each background submission creates its own worktree.
 
+## Name a thread
+
+T3 Code names a thread from your first message. Rename it from its menu, or ask the
+agent to rename the thread it is running in, for example to a task ID followed by a
+short description that a skill has picked. A name set either way stays until you
+change it, so automatic naming does not replace it.
+
 ## Pin and reorder threads
 
 Pin a thread from its menu to keep it above your active work.

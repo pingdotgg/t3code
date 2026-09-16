@@ -63,6 +63,21 @@ const PullRequestsTestLayer = McpHttpServer.PullRequestsToolkitRegistrationLive.
     ),
   ),
 );
+const dispatchedCommands: unknown[] = [];
+const ThreadTestLayer = McpHttpServer.ThreadToolkitRegistrationLive.pipe(
+  Layer.provideMerge(McpServer.McpServer.layer),
+  Layer.provide(
+    Layer.mergeAll(
+      Layer.mock(OrchestrationEngineService)({
+        dispatch: (command) => {
+          dispatchedCommands.push(command);
+          return Effect.succeed({ sequence: 1 });
+        },
+      }),
+      NodeServices.layer,
+    ),
+  ),
+);
 
 const snapshotResult = {
   url: "http://example.test/",
@@ -398,6 +413,30 @@ it.effect(
         { type: "text", text: "MCP credential does not grant the pull-requests capability." },
       ]);
     }).pipe(Effect.provide(PullRequestsTestLayer)),
+);
+
+it.effect("renames the calling thread with the trimmed title and rejects a blank one", () =>
+  Effect.gen(function* () {
+    const server = yield* McpServer.McpServer;
+    const rename = (title: string) =>
+      server
+        .callTool({ name: "rename_thread", arguments: { title } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, invocation),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+
+    const renamed = yield* rename("  CU-869y9uv0 change the button to green  ");
+    expect(renamed.structuredContent).toEqual({ title: "CU-869y9uv0 change the button to green" });
+    expect(dispatchedCommands).toMatchObject([
+      { type: "thread.meta.update", threadId, title: "CU-869y9uv0 change the button to green" },
+    ]);
+
+    // A blank title fails parameter validation before the handler runs.
+    const blank = yield* rename("   ").pipe(Effect.flip);
+    expect(blank).toMatchObject({ _tag: "InvalidParams" });
+    expect(dispatchedCommands).toHaveLength(1);
+  }).pipe(Effect.provide(ThreadTestLayer)),
 );
 
 it.effect("keeps the snapshot text under the agent's output ceiling", () =>
