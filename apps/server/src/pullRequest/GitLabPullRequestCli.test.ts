@@ -670,8 +670,51 @@ layer("GitLabPullRequestCli.layer", (it) => {
         newPath: "src/first.ts",
       });
 
-      expect(contents).toEqual({ oldContents: "", newContents: "first contents\n" });
+      expect(contents).toEqual({
+        oldContents: "",
+        newContents: "first contents\n",
+        // No parent to echo: a root commit's new file leaves `baseSha` absent.
+        headSha: "a1b2c3d",
+      });
       expect(argsOfCall(1)[1]).toContain("raw?ref=a1b2c3d");
+    }),
+  );
+
+  it.effect("echoes the revisions the host actually read", () =>
+    Effect.gen(function* () {
+      mockedExecute.mockReturnValueOnce(
+        Effect.succeed(
+          output(
+            // @effect-diagnostics-next-line preferSchemaOverJson:off
+            JSON.stringify({
+              diff_refs: {
+                base_sha: "a1b2c3d",
+                head_sha: "b1c2d3e",
+                start_sha: "a1b2c3d",
+              },
+            }),
+          ),
+        ),
+      );
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("before\n")));
+      mockedExecute.mockReturnValueOnce(Effect.succeed(output("after\n")));
+      const cli = yield* GitLabPullRequestCli.GitLabPullRequestCli;
+
+      const contents = yield* cli.getMergeRequestDiffFileContents({
+        cwd: "/w",
+        repository: "acme/web",
+        number: 7,
+        changeType: "change",
+        oldPath: "src/a.ts",
+        newPath: "src/a.ts",
+      });
+
+      expect(contents).toEqual({
+        oldContents: "before\n",
+        newContents: "after\n",
+        baseSha: "a1b2c3d",
+        headSha: "b1c2d3e",
+      });
     }),
   );
 

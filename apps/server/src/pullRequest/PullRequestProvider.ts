@@ -256,6 +256,9 @@ export interface ProviderDiffSlice {
 export interface ProviderDiffFileContents {
   readonly oldContents: string;
   readonly newContents: string;
+  /** Echoed read revisions (see PullRequestDiffFileContentsResult); absent means unknown. */
+  readonly baseSha?: string | undefined;
+  readonly headSha?: string | undefined;
 }
 
 export interface ProviderRepositoryRef {
