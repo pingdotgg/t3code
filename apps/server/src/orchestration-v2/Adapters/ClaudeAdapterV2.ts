@@ -741,20 +741,21 @@ export function makeClaudeQueryOptions(input: {
     "dangerously-skip-permissions": launchArgSkipPermissions,
     ...extraArgs
   } = input.settings === undefined ? {} : parseCliArgs(input.settings.launchArgs).flags;
+  const requestThinkingSummaries =
+    compiledSelection.settings.alwaysThinkingEnabled !== false &&
+    extraArgs["thinking-display"] !== "omitted";
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
     : { sessionId: input.nativeThreadId };
   const selectedTools = input.tools ?? CLAUDE_CODE_PRESET_TOOLS;
-  const selectionSettings =
-    Object.keys(compiledSelection.settings).length === 0
-      ? undefined
-      : (compiledSelection.settings as ClaudeSdkSettings);
+  const selectionSettings = {
+    ...compiledSelection.settings,
+    ...(requestThinkingSummaries ? { showThinkingSummaries: true } : {}),
+  } as ClaudeSdkSettings;
   const querySettings =
-    selectionSettings === undefined
-      ? input.sdkSettings
-      : typeof input.sdkSettings === "object" && input.sdkSettings !== null
-        ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
-        : selectionSettings;
+    typeof input.sdkSettings === "object" && input.sdkSettings !== null
+      ? ({ ...input.sdkSettings, ...selectionSettings } as ClaudeSdkSettings)
+      : selectionSettings;
   const effectiveQuerySettings =
     input.settings?.autoCompactWindow === undefined || input.settings.autoCompactWindow.length === 0
       ? querySettings
@@ -906,6 +907,22 @@ function assistantTextFromSdkMessage(
     nativeItemId: message.uuid,
     text: textFromClaudeContent(message.message.content),
   };
+}
+
+/**
+ * Claude never returns the raw chain of thought; `thinking` blocks carry the
+ * summary the CLI shows when `showThinkingSummaries` is on.
+ */
+function assistantThinkingFromSdkMessage(
+  message: SDKMessage,
+): { readonly nativeItemId: string; readonly text: string } | null {
+  if (message.type !== "assistant") {
+    return null;
+  }
+  const text = message.message.content
+    .flatMap((part) => (part.type === "thinking" ? [part.thinking] : []))
+    .join("\n\n");
+  return text.length === 0 ? null : { nativeItemId: `${message.uuid}:thinking`, text };
 }
 
 function resultTextFromSdkMessage(
@@ -2238,6 +2255,71 @@ function buildAssistantArtifacts(input: {
       updatedAt: input.completedAt,
       type: "assistant_message",
       messageId,
+      text: input.text,
+      streaming: false,
+    },
+  };
+}
+
+function buildReasoningArtifacts(input: {
+  readonly idAllocator: IdAllocatorV2Shape;
+  readonly turnInput: ProviderAdapterV2TurnInput;
+  readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
+  readonly nativeItemId: string;
+  readonly text: string;
+  readonly ordinal: number;
+  readonly completedAt: DateTime.Utc;
+}): {
+  readonly node: OrchestrationV2ExecutionNode;
+  readonly turnItem: OrchestrationV2TurnItem;
+} {
+  const nodeId = input.idAllocator.derive.nodeFromProviderItem({
+    driver: CLAUDE_PROVIDER,
+    nativeItemId: input.nativeItemId,
+  });
+  const turnItemId = input.idAllocator.derive.turnItemFromProviderItem({
+    driver: CLAUDE_PROVIDER,
+    nativeItemId: input.nativeItemId,
+  });
+  const nativeItemRef = {
+    driver: CLAUDE_PROVIDER,
+    nativeId: input.nativeItemId,
+    strength: "strong" as const,
+  };
+  return {
+    node: {
+      id: nodeId,
+      threadId: input.turnInput.threadId,
+      runId: input.turnInput.runId,
+      parentNodeId: input.turnInput.rootNodeId,
+      rootNodeId: input.turnInput.rootNodeId,
+      kind: "reasoning",
+      status: "completed",
+      countsForRun: false,
+      providerThreadId: input.turnInput.providerThread.id,
+      providerTurnId: input.providerTurnId,
+      nativeItemRef,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: input.completedAt,
+      completedAt: input.completedAt,
+    },
+    turnItem: {
+      id: turnItemId,
+      threadId: input.turnInput.threadId,
+      runId: input.turnInput.runId,
+      nodeId,
+      providerThreadId: input.turnInput.providerThread.id,
+      providerTurnId: input.providerTurnId,
+      nativeItemRef,
+      parentItemId: null,
+      ordinal: input.ordinal,
+      status: "completed",
+      title: null,
+      startedAt: input.completedAt,
+      completedAt: input.completedAt,
+      updatedAt: input.completedAt,
+      type: "reasoning",
       text: input.text,
       streaming: false,
     },
@@ -4174,6 +4256,38 @@ export function makeClaudeAdapterV2(
           );
         });
 
+        const emitReasoningArtifacts = Effect.fnUntraced(function* (input: {
+          readonly context: ActiveClaudeTurnContext;
+          readonly nativeItemId: string;
+          readonly text: string;
+        }) {
+          if (input.context.assistant.emittedNativeItemIds.has(input.nativeItemId)) {
+            return;
+          }
+          input.context.assistant.emittedNativeItemIds.add(input.nativeItemId);
+          const now = yield* DateTime.now;
+          const ordinal = yield* resolveItemOrdinal(input.context, input.nativeItemId);
+          const artifacts = buildReasoningArtifacts({
+            idAllocator,
+            turnInput: input.context.input,
+            providerTurnId: input.context.providerTurnId,
+            nativeItemId: input.nativeItemId,
+            text: input.text,
+            ordinal,
+            completedAt: now,
+          });
+          yield* emitProviderEvent({
+            type: "node.updated",
+            driver: CLAUDE_PROVIDER,
+            node: artifacts.node,
+          });
+          yield* emitProviderEvent({
+            type: "turn_item.updated",
+            driver: CLAUDE_PROVIDER,
+            turnItem: artifacts.turnItem,
+          });
+        });
+
         const finalizeActiveTurnAfterQueryExit = Effect.fnUntraced(function* (
           cause?: Cause.Cause<ClaudeAgentSdkQueryRunnerError>,
         ) {
@@ -4940,6 +5054,15 @@ export function makeClaudeAdapterV2(
             });
             yield* emitToolCallArtifacts(artifacts);
             context.toolCalls.delete(toolCall.nativeItemId);
+          }
+
+          const assistantThinking = assistantThinkingFromSdkMessage(message);
+          if (assistantThinking !== null) {
+            yield* emitReasoningArtifacts({
+              context,
+              nativeItemId: assistantThinking.nativeItemId,
+              text: assistantThinking.text,
+            });
           }
 
           const assistantText = assistantTextFromSdkMessage(message);

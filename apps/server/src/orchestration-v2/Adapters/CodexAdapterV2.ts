@@ -1098,6 +1098,11 @@ function codexAgentMessageBufferKey(turnId: string, itemId: string): string {
   return `${turnId}\u0000${itemId}`;
 }
 
+/** Raw chain-of-thought is projected as its own block beside the summary. */
+function codexRawReasoningItemId(itemId: string): string {
+  return `${itemId}:raw`;
+}
+
 export const makeCodexAgentMessageDeltaCoalescer = Effect.fn(
   "CodexAdapterV2.makeCodexAgentMessageDeltaCoalescer",
 )(function* (input: {
@@ -2873,6 +2878,137 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             }),
         });
 
+        const buildReasoningArtifacts = (
+          context: ActiveCodexTurnContext,
+          item: { readonly id: string; readonly text: string },
+          completed: boolean,
+        ) =>
+          Effect.gen(function* () {
+            const updatedAt = yield* DateTime.now;
+            const completedAt = completed ? updatedAt : null;
+            const nodeId = idAllocator.derive.nodeFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const ordinal = yield* resolveItemOrdinal(context, item.id);
+            const turnItemId = idAllocator.derive.turnItemFromProviderItem({
+              driver: CODEX_PROVIDER,
+              nativeItemId: item.id,
+            });
+            const node: OrchestrationV2ExecutionNode = {
+              id: nodeId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              parentNodeId: context.itemParentNodeId,
+              rootNodeId: context.rootNodeId,
+              kind: "reasoning",
+              status: completed ? "completed" : "running",
+              countsForRun: false,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              runtimeRequestId: null,
+              checkpointScopeId: null,
+              startedAt: context.startedAt,
+              completedAt,
+            };
+            const turnItem: OrchestrationV2TurnItem = {
+              id: turnItemId,
+              threadId: context.projectionThreadId,
+              runId: context.projectionRunId,
+              nodeId,
+              providerThreadId: context.providerThread.id,
+              providerTurnId: context.providerTurnId,
+              nativeItemRef: codexNativeItemRef(item.id),
+              parentItemId: null,
+              ordinal,
+              status: completed ? "completed" : "running",
+              title: null,
+              startedAt: context.startedAt,
+              completedAt,
+              updatedAt,
+              type: "reasoning",
+              text: item.text,
+              streaming: !completed,
+            };
+            return { node, turnItem };
+          });
+
+        const reasoningDeltas = yield* makeCodexAgentMessageDeltaCoalescer({
+          flushIntervalMs: CODEX_ASSISTANT_DELTA_FLUSH_INTERVAL_MS,
+          emit: (update) =>
+            Effect.gen(function* () {
+              const context = yield* awaitActiveTurn(update.turnId);
+              if (context === undefined) {
+                return;
+              }
+              const artifacts = yield* buildReasoningArtifacts(
+                context,
+                { id: update.itemId, text: update.text },
+                update.completed,
+              );
+              yield* emitProviderEvent({
+                type: "node.updated",
+                driver: CODEX_PROVIDER,
+                node: artifacts.node,
+              });
+              yield* emitProviderEvent({
+                type: "turn_item.updated",
+                driver: CODEX_PROVIDER,
+                turnItem: artifacts.turnItem,
+              });
+            }),
+        });
+
+        /**
+         * Codex streams a reasoning item as indexed parts (summary and raw
+         * text alike); the index is the only signal that one part ended and
+         * the next began, so the blank line between them is inserted here.
+         */
+        const reasoningPartIndexByBufferKey = yield* Ref.make(new Map<string, number>());
+        const appendReasoningDelta = (input: {
+          readonly turnId: string;
+          readonly itemId: string;
+          readonly partIndex: number;
+          readonly delta: string;
+        }) =>
+          Effect.gen(function* () {
+            if (input.delta.length === 0) {
+              return;
+            }
+            const key = codexAgentMessageBufferKey(input.turnId, input.itemId);
+            const separate = yield* Ref.modify(reasoningPartIndexByBufferKey, (current) => {
+              const last = current.get(key);
+              const updated = new Map(current);
+              updated.set(key, input.partIndex);
+              return [last !== undefined && last !== input.partIndex, updated];
+            });
+            yield* reasoningDeltas.append({
+              turnId: input.turnId,
+              itemId: input.itemId,
+              delta: separate ? `\n\n${input.delta}` : input.delta,
+            });
+          });
+        const completeReasoningItem = (input: {
+          readonly turnId: string;
+          readonly itemId: string;
+          readonly parts: ReadonlyArray<string>;
+        }) =>
+          Effect.gen(function* () {
+            const finalText = input.parts.filter((part) => part.length > 0).join("\n\n");
+            yield* reasoningDeltas.complete({
+              turnId: input.turnId,
+              itemId: input.itemId,
+              ...(finalText.length > 0 ? { finalText } : {}),
+              emitEmpty: false,
+            });
+            yield* Ref.update(reasoningPartIndexByBufferKey, (current) => {
+              const updated = new Map(current);
+              updated.delete(codexAgentMessageBufferKey(input.turnId, input.itemId));
+              return updated;
+            });
+          });
+
         const emitSubagentUserMessage = (
           context: ActiveCodexTurnContext,
           item: Extract<
@@ -3508,6 +3644,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           }),
         );
 
+        yield* client.handleServerNotification("item/reasoning/summaryTextDelta", (payload) =>
+          appendReasoningDelta({
+            turnId: payload.turnId,
+            itemId: payload.itemId,
+            partIndex: payload.summaryIndex,
+            delta: payload.delta,
+          }),
+        );
+
+        yield* client.handleServerNotification("item/reasoning/textDelta", (payload) =>
+          appendReasoningDelta({
+            turnId: payload.turnId,
+            itemId: codexRawReasoningItemId(payload.itemId),
+            partIndex: payload.contentIndex,
+            delta: payload.delta,
+          }),
+        );
+
         yield* client.handleServerNotification("item/plan/delta", (payload) =>
           Effect.gen(function* () {
             const context = yield* awaitActiveTurn(payload.turnId);
@@ -3891,6 +4045,20 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               if (yield* emitSubagentUserMessage(context, payload.item)) {
                 return;
               }
+            }
+
+            if (payload.item.type === "reasoning") {
+              yield* completeReasoningItem({
+                turnId: payload.turnId,
+                itemId: payload.item.id,
+                parts: payload.item.summary ?? [],
+              });
+              yield* completeReasoningItem({
+                turnId: payload.turnId,
+                itemId: codexRawReasoningItemId(payload.item.id),
+                parts: payload.item.content ?? [],
+              });
+              return;
             }
 
             if (payload.item.type === "commandExecution") {
@@ -4757,6 +4925,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 });
               }
               yield* agentMessageDeltas.flushTurn(input.nativeTurnId);
+              yield* reasoningDeltas.flushTurn(input.nativeTurnId);
               yield* emitProviderEvent({
                 type: "provider_turn.updated",
                 driver: CODEX_PROVIDER,

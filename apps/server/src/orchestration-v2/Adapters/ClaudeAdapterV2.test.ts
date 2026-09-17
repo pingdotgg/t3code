@@ -2444,6 +2444,101 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
   );
 
+  it.effect("projects assistant thinking blocks as a completed reasoning item", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarness;
+      const now = yield* DateTime.now;
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now,
+          attemptId: RunAttemptId.make("attempt-thinking"),
+          text: "Think first",
+          attachments: [],
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        claudeSdkFrame({
+          type: "assistant",
+          uuid: "00000000-0000-4000-8000-000000000701",
+          session_id: WAKE_NATIVE_SESSION,
+          parent_tool_use_id: null,
+          message: {
+            id: "msg_thinking",
+            model: "claude-sonnet-4-6",
+            type: "message",
+            role: "assistant",
+            content: [
+              { type: "thinking", thinking: "Weighing options.", signature: "sig-1" },
+              { type: "thinking", thinking: "Picking the shortest path.", signature: "sig-2" },
+              { type: "text", text: "Done." },
+            ],
+            stop_reason: "end_turn",
+            stop_sequence: null,
+            usage: {
+              input_tokens: 1,
+              output_tokens: 1,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+          },
+        }),
+      );
+      yield* Queue.offer(
+        harness.sdkMessages,
+        makeResultFrame({ uuid: "00000000-0000-4000-8000-000000000702", result: "Done." }),
+      );
+      yield* Queue.take(harness.terminalReceipts);
+      const items = harness.events.flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const reasoning = items.filter((item) => item.type === "reasoning");
+      assert.equal(reasoning.length, 1);
+      const [item] = reasoning;
+      if (item?.type !== "reasoning") assert.fail("expected a reasoning item");
+      assert.equal(item.text, "Weighing options.\n\nPicking the shortest path.");
+      assert.equal(item.status, "completed");
+      assert.equal(item.streaming, false);
+      const nodes = harness.events.flatMap((event) =>
+        event.type === "node.updated" && event.node.kind === "reasoning" ? [event.node] : [],
+      );
+      assert.equal(nodes.length, 1);
+      const assistant = items.find((item) => item.type === "assistant_message");
+      if (assistant?.type !== "assistant_message") assert.fail("expected an assistant message");
+      assert.equal(assistant.text, "Done.");
+      assert.isBelow(item.ordinal, assistant.ordinal);
+    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, idAllocatorLayer))),
+  );
+
+  it("requests thinking summaries unless thinking is off or display is omitted", () => {
+    const settingsFor = (input: {
+      readonly launchArgs?: string;
+      readonly modelSelection?: typeof CLAUDE_TEST_MODEL_SELECTION;
+    }) =>
+      makeClaudeQueryOptions({
+        modelSelection: input.modelSelection ?? CLAUDE_TEST_MODEL_SELECTION,
+        nativeThreadId: "native-thinking-summaries",
+        resume: false,
+        cwd: "/workspace",
+        settings: { ...AUTO_COMPACT_CLAUDE_SETTINGS, launchArgs: input.launchArgs ?? "" },
+      }).settings as { showThinkingSummaries?: boolean } | undefined;
+    assert.equal(settingsFor({}).showThinkingSummaries, true);
+    assert.isUndefined(
+      settingsFor({ launchArgs: "--thinking-display omitted" })?.showThinkingSummaries,
+    );
+    assert.isUndefined(
+      settingsFor({
+        modelSelection: {
+          ...CLAUDE_TEST_MODEL_SELECTION,
+          model: "claude-haiku-4-5",
+          options: [{ id: "thinking", value: false }],
+        },
+      })?.showThinkingSummaries,
+    );
+  });
+
   it.effect("preserves typed Claude plans and todos through generic tool completion", () =>
     Effect.scoped(
       Effect.gen(function* () {

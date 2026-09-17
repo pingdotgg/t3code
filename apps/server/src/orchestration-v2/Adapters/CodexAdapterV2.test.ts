@@ -2542,6 +2542,172 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
+  it.effect("streams reasoning summary and raw text as separate reasoning items", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-reasoning-trace";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const reasoningId = "reasoning-1";
+        const summaryDelta = (
+          summaryIndex: number,
+          delta: string,
+        ): CodexReplay.CodexAppServerReplayEntry => ({
+          type: "emit_inbound",
+          label: `item/reasoning/summaryTextDelta/${summaryIndex}`,
+          frame: {
+            method: "item/reasoning/summaryTextDelta",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              itemId: reasoningId,
+              summaryIndex,
+              delta,
+            },
+          },
+        });
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "Think, then answer.",
+            }),
+            {
+              type: "emit_inbound",
+              label: "item/started/reasoning",
+              frame: {
+                method: "item/started",
+                params: {
+                  item: { type: "reasoning", id: reasoningId, summary: [], content: [] },
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  startedAtMs: 1782622440500,
+                },
+              },
+            },
+            summaryDelta(0, "**Weighing"),
+            summaryDelta(0, " options**"),
+            summaryDelta(1, "**Picking a path**"),
+            {
+              type: "emit_inbound",
+              label: "item/reasoning/textDelta/0",
+              frame: {
+                method: "item/reasoning/textDelta",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  itemId: reasoningId,
+                  contentIndex: 0,
+                  delta: "raw chain of thought",
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/completed/reasoning",
+              afterMs: 100,
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: {
+                    type: "reasoning",
+                    id: reasoningId,
+                    summary: ["**Weighing options**", "**Picking a path**"],
+                    content: ["raw chain of thought"],
+                  },
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622441000,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "item/completed/answer",
+              frame: {
+                method: "item/completed",
+                params: {
+                  item: {
+                    type: "agentMessage",
+                    id: "answer-1",
+                    text: "Done.",
+                    phase: "final_answer",
+                    memoryCitation: null,
+                  },
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622441001,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        const now = yield* DateTime.now;
+
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-codex-reasoning-trace"),
+            text: "Think, then answer.",
+          }),
+        );
+        const reasoningItems = () =>
+          harness.events.flatMap((event) =>
+            event.type === "turn_item.updated" && event.turnItem.type === "reasoning"
+              ? [event.turnItem]
+              : [],
+          );
+        yield* Effect.yieldNow;
+        yield* TestClock.adjust("50 millis");
+        yield* awaitUntil(
+          () => reasoningItems().some((item) => item.streaming),
+          "streamed reasoning",
+        );
+        const streamed = reasoningItems().find(
+          (item) => item.nativeItemRef?.nativeId === reasoningId,
+        );
+        assert.equal(streamed?.type, "reasoning");
+        if (streamed?.type === "reasoning") {
+          assert.equal(streamed.text, "**Weighing options**\n\n**Picking a path**");
+          assert.equal(streamed.streaming, true);
+        }
+
+        yield* TestClock.adjust("50 millis");
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "root turn terminal");
+        const completed = reasoningItems().filter((item) => item.status === "completed");
+        assert.deepEqual(
+          completed.map((item) => [item.nativeItemRef?.nativeId, item.text, item.streaming]),
+          [
+            [reasoningId, "**Weighing options**\n\n**Picking a path**", false],
+            [`${reasoningId}:raw`, "raw chain of thought", false],
+          ],
+        );
+        const answer = assistantMessages(harness.events).at(-1);
+        assert.equal(answer?.message.text, "Done.");
+        const reasoningNodes = harness.events.filter(
+          (event) => event.type === "node.updated" && event.node.kind === "reasoning",
+        );
+        assert.isAtLeast(reasoningNodes.length, 2);
+      }).pipe(Effect.provide(Layer.merge(idAllocatorLayer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("preserves a sole empty final answer", () =>
     Effect.scoped(
       Effect.gen(function* () {

@@ -35,6 +35,7 @@ import {
   type TimelineEntry,
   workEntryIndicatesToolFailure,
   workEntryDisplayIndicatesToolFailure,
+  workEntryIndicatesToolNeutralStatus,
   workEntryIndicatesToolSuccess,
 } from "./session-logic";
 import { makeStreamingTimelineFixture, makeThreadProjectionFixture } from "./test-fixtures";
@@ -1165,6 +1166,21 @@ describe("work-log failure policy (#7999/#7893)", () => {
   it("recovered failure text no longer counts as success", () => {
     const entry = toolEntry({ toolLifecycleStatus: "completed", detail: "ENOENT: no such file" });
     expect(workEntryIndicatesToolSuccess(entry)).toBe(false);
+  });
+
+  it("keeps a completed thinking trace with text out of the neutral-hidden bucket", () => {
+    const reasoning = {
+      label: "Thinking",
+      tone: "thinking",
+      itemType: "reasoning",
+      toolLifecycleStatus: "completed",
+    };
+    expect(workEntryIndicatesToolNeutralStatus(toolEntry(reasoning))).toBe(true);
+    expect(
+      workEntryIndicatesToolNeutralStatus(
+        toolEntry({ ...reasoning, detail: "**Weighing options**" }),
+      ),
+    ).toBe(false);
   });
 });
 

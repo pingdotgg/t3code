@@ -177,6 +177,10 @@ export function workEntryIndicatesToolSuccess(entry: WorkLogEntry): boolean {
 
 /** Tool-like row with neither clear success nor failure (empty, incomplete, in progress, etc.). */
 export function workEntryIndicatesToolNeutralStatus(entry: WorkLogEntry): boolean {
+  // A thinking trace with text is content, not a status placeholder.
+  if (entry.itemType === "reasoning" && entry.detail !== undefined) {
+    return false;
+  }
   return (
     workLogEntryIsToolLike(entry) &&
     !workEntryIndicatesToolFailure(entry) &&
