@@ -110,14 +110,17 @@ function AutoSettleSettingsRows() {
       environmentId: reference.environment.environmentId,
       projectId: reference.projectId,
       settings: referenceSettings,
-      supportsScope: reference.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
+      supportsScope:
+        reference.environment.serverConfig.environment.capabilities.threadAutoSettlementScope ===
+        true,
     },
     displayTargets.map((target) => ({
       environmentId: target.environment.environmentId,
       projectId: target.projectId,
       label: target.environment.label,
       settings: target.settings,
-      supportsScope: target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
+      supportsScope:
+        target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope === true,
     })),
   );
 
@@ -177,53 +180,64 @@ function AutoSettleSettingsRows() {
           disabled={disabled}
           onValueChange={(value) => writeToAll({ sidebarAutoSettleOnMerge: value })}
         />
-      <ControlPillMenu
-        disabled={disabled}
-        accessibilityLabel="Auto-settle inactive threads"
-        actions={[
-          { id: "off", title: "Off", state: afterDays === null ? "on" : "off" },
-          {
-            id: "all",
-            title: "All threads",
-            state:
-              afterDays !== null && referenceSettings.sidebarAutoSettleScope === "all"
-                ? "on"
-                : "off",
-          },
-          {
-            id: "without-pr",
-            title: "Threads without a PR",
-            state:
-              afterDays !== null && referenceSettings.sidebarAutoSettleScope === "without-pr"
-                ? "on"
-                : "off",
-            attributes: {
-              disabled:
-                syncTargets.some((target) => target.environment.serverConfig.environment.capabilities.threadAutoSettlementScope !== true),
+        <ControlPillMenu
+          accessibilityLabel="Auto-settle inactive threads"
+          actions={[
+            {
+              id: "off",
+              title: "Off",
+              state: afterDays === null ? "on" : "off",
+              attributes: { disabled },
             },
-          },
-        ]}
-        onPressAction={({ nativeEvent }) => {
-          const value = nativeEvent.event;
-          if (value !== "off" && value !== "all" && value !== "without-pr") return;
-          writeToAll({
-            sidebarAutoSettleAfterDays:
-              value === "off" ? null : (afterDays ?? AUTO_SETTLE_DEFAULT_DAYS),
-            sidebarAutoSettleScope: value === "off" ? "all" : value,
-          });
-        }}
-      >
-        <View className="gap-1 p-4">
-          <Text className="text-lg text-foreground">Auto-settle inactive threads</Text>
-          <Text className="text-sm text-foreground-muted">
-            {afterDays === null
-              ? "Off"
-              : referenceSettings.sidebarAutoSettleScope === "all"
-                ? "All threads"
-                : "Threads without a PR"}
-          </Text>
-        </View>
-      </ControlPillMenu>
+            {
+              id: "all",
+              title: "All threads",
+              attributes: { disabled },
+              state:
+                afterDays !== null && referenceSettings.sidebarAutoSettleScope === "all"
+                  ? "on"
+                  : "off",
+            },
+            {
+              id: "without-pr",
+              title: "Threads without a PR",
+              state:
+                afterDays !== null && referenceSettings.sidebarAutoSettleScope === "without-pr"
+                  ? "on"
+                  : "off",
+              attributes: {
+                disabled:
+                  disabled ||
+                  syncTargets.some(
+                    (target) =>
+                      target.environment.serverConfig.environment.capabilities
+                        .threadAutoSettlementScope !== true,
+                  ),
+              },
+            },
+          ]}
+          onPressAction={({ nativeEvent }) => {
+            if (disabled) return;
+            const value = nativeEvent.event;
+            if (value !== "off" && value !== "all" && value !== "without-pr") return;
+            writeToAll({
+              sidebarAutoSettleAfterDays:
+                value === "off" ? null : (afterDays ?? AUTO_SETTLE_DEFAULT_DAYS),
+              sidebarAutoSettleScope: value === "off" ? "all" : value,
+            });
+          }}
+        >
+          <View className="gap-1 p-4">
+            <Text className="text-lg text-foreground">Auto-settle inactive threads</Text>
+            <Text className="text-sm text-foreground-muted">
+              {afterDays === null
+                ? "Off"
+                : referenceSettings.sidebarAutoSettleScope === "all"
+                  ? "All threads"
+                  : "Threads without a PR"}
+            </Text>
+          </View>
+        </ControlPillMenu>
         {afterDays !== null ? (
           <View
             className={cn(
