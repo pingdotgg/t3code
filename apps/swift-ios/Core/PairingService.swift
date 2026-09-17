@@ -140,7 +140,9 @@ public actor PairingService {
         form.queryItems = fields
         var request = URLRequest(url: endpoint(target.httpBaseURL, path: "/oauth/token"))
         request.httpMethod = "POST"
-        request.httpBody = form.percentEncodedQuery?.data(using: .utf8)
+        request.httpBody = form.percentEncodedQuery?
+            .replacingOccurrences(of: "+", with: "%2B")
+            .data(using: .utf8)
         request.setValue(
             "application/x-www-form-urlencoded",
             forHTTPHeaderField: "Content-Type"
