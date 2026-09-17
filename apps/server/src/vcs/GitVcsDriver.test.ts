@@ -199,7 +199,9 @@ it.effect("checkpoint recovery refuses excessive candidates before probing", () 
     const driver = yield* GitVcsDriver.makeVcsDriverShape();
     const cwd = yield* fs.makeTempDirectoryScoped({ prefix: "t3-checkpoint-recovery-cap-" });
     const { git, checkpointRef } = yield* makeCheckpointFixture(driver, cwd);
-    yield* git(["init", "empty"]);
+    yield* git(["init", "empty0"]);
+    for (let i = 1; i < 65; i++)
+      yield* fs.copy(path.join(cwd, "empty0"), path.join(cwd, `empty${i}`));
     const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
     let stageError: VcsProcessExitError | undefined;
     let nestedProbes = 0;
@@ -214,14 +216,6 @@ it.effect("checkpoint recovery refuses excessive candidates before probing", () 
               if (error._tag === "VcsProcessExitError") stageError = error;
               return Effect.void;
             }),
-            Effect.map((result) =>
-              input.args.includes("--others")
-                ? {
-                    ...result,
-                    stdout: Array.from({ length: 65 }, (_, i) => `empty${i}/`).join("\0") + "\0",
-                  }
-                : result,
-            ),
           );
         },
       }),
@@ -249,6 +243,7 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
       yield* git(["init", "empty"]);
       const originalIndex = yield* fs.readFile(path.join(cwd, ".git", "index"));
       const entered = yield* Deferred.make<void>();
+      const discovered = yield* Deferred.make<void>();
       let stageError: VcsProcessExitError | undefined;
       let privateIndex: string | undefined;
       let interrupted = false;
@@ -273,6 +268,13 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
                 ),
               );
             return liveProcess.run(input).pipe(
+              Effect.tap(() =>
+                blockedPhase === "probe" && input.args.includes("--others")
+                  ? Deferred.succeed(discovered, undefined).pipe(
+                      Effect.andThen(Effect.sleep("3 seconds")),
+                    )
+                  : Effect.void,
+              ),
               Effect.tapError((error) => {
                 if (staging && error._tag === "VcsProcessExitError") stageError = error;
                 return Effect.void;
@@ -284,8 +286,12 @@ for (const blockedPhase of ["discovery", "probe", "retry"] as const) {
       const fiber = yield* captureDriver.checkpoints
         .captureCheckpoint({ cwd, checkpointRef })
         .pipe(Effect.flip, Effect.forkScoped);
+      if (blockedPhase === "probe") {
+        yield* Deferred.await(discovered);
+        yield* TestClock.adjust("3 seconds");
+      }
       yield* Deferred.await(entered);
-      yield* TestClock.adjust("5 seconds");
+      yield* TestClock.adjust(blockedPhase === "probe" ? "2 seconds" : "5 seconds");
       const error = yield* Fiber.join(fiber);
       assert.strictEqual(error, stageError);
       assert.isTrue(interrupted);
