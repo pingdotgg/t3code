@@ -3,9 +3,11 @@ import { describe, expect, it } from "vite-plus/test";
 import {
   REMOVE_QUEUED_MESSAGE_ACCESSIBILITY_LABEL,
   buildCancelQueuedRunCommand,
+  resolveQueueDragBeforeRunId,
   resolveThreadQueueRowControls,
   resolveQueueDropBeforeRunId,
 } from "./threadQueueControlPresentation";
+import { threadDragGapOffset } from "./threadDragGap";
 
 describe("threadQueueControlPresentation", () => {
   it("preserves queue reorder and steer controls with removal", () => {
@@ -99,6 +101,24 @@ describe("queue drag insertion", () => {
     expect(resolveQueueDropBeforeRunId(rows, rows[0]!.id, 140)).toBe("third");
     expect(resolveQueueDropBeforeRunId(rows, rows[0]!.id, 300)).toBeNull();
     expect(resolveQueueDropBeforeRunId(rows, rows[2]!.id, -300)).toBe("first");
+  });
+
+  it("opens the destination gap while the dragged row crosses other rows", () => {
+    const offsets = (runId: (typeof rows)[number]["id"], translation: number) => {
+      const before = resolveQueueDragBeforeRunId(rows, runId, translation);
+      if (before === undefined) return;
+      const source = rows.find((row) => row.id === runId)!;
+      const last = rows.at(-1)!;
+      const insertion =
+        before === null ? last.y + last.height : rows.find((row) => row.id === before)!.y;
+      return rows.map((row) => threadDragGapOffset(row.y, source.y, source.height, insertion));
+    };
+
+    expect(resolveQueueDragBeforeRunId(rows, rows[0]!.id, 0)).toBe(rows[1]!.id);
+    expect(offsets(rows[0]!.id, 140)).toEqual([0, -80, 0]);
+    expect(offsets(rows[0]!.id, 300)).toEqual([0, -80, -80]);
+    expect(offsets(rows[2]!.id, -300)).toEqual([80, 80, 0]);
+    expect(offsets(rows[1]!.id, 0)).toEqual([0, 0, 0]);
   });
 
   it("does not send a reorder for an unchanged or unmeasured drop", () => {
